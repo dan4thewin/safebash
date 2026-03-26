@@ -77,6 +77,18 @@ does not sandbox the operations the script performs.
    - portable
    - suitable for compilation and verification
 
+   The safe subset is informed by ShellCheck's ~500 documented rules
+   (https://www.shellcheck.net/wiki/). Constructs that ShellCheck
+   flags as dangerous or error-prone are rejected by the safe subset.
+
+   Two modes:
+   - **Strict mode** — reject scripts that use unsafe constructs.
+     The compiler reports what needs to change and why.
+   - **Coerce mode** — automatically transform unsafe constructs
+     into their safe equivalents where possible (e.g., unquoted
+     `$var` → `"$var"`, backtick substitution → `$()`). Error
+     only for constructs with no safe counterpart.
+
 3. **Rust Front-End**
 
    The compiler front-end:
