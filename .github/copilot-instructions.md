@@ -15,7 +15,7 @@ DG directs the effort. The AI implements under his direction.
 
 - **Small, conservative goals** — each experiment yields a working
   artifact with a test, collected in `exp/` directories
-  (e.g., `exp/001-treesitter-parse/{Makefile,src/,...}`).
+  (e.g., `exp/001-treesitter-parse/{mkfile,src/,...}`).
 - **Compile and test at every step** — don't move on until the
   current experiment passes.
 - **Surface contradictions immediately.** If stored facts, code
@@ -64,6 +64,8 @@ Every task ends with:
 ## Style
 
 - Rust: follow `rustfmt` defaults, `clippy` clean
+- Build: use `mk` (Plan 9 mk), not `make`. Each experiment has an
+  `mkfile` with a `test` target. `cargo` is invoked by `mk` rules.
 - Commit messages: short, descriptive
 - Comments: only when code needs clarification, not boilerplate
 

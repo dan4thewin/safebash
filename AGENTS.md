@@ -15,7 +15,7 @@ your first session. It sets the tone for everything.
 
 Work proceeds as numbered experiments in `exp/`. Each experiment:
 - Lives in its own directory (`exp/NNN-short-name/`)
-- Has a Makefile with a `test` target
+- Has an `mkfile` with a `test` target (Plan 9 `mk`, not `make`)
 - Produces a working artifact that demonstrates one concept
 - Is documented in `exp/JOURNAL.md`
 
@@ -25,7 +25,7 @@ before the next begins.
 ## Completion checklist
 
 Every task ends with:
-1. All tests pass (`cd exp && make testall`)
+1. All tests pass (`cd exp && mk testall`)
 2. Update `exp/JOURNAL.md` (goals, actions, reasoning)
 3. Update `exp/GUIDE.md` if new architecture introduced
 4. Add deferred work to `exp/TODO.md`
