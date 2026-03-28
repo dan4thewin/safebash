@@ -44,3 +44,13 @@ Investigate whether it's a bug.
 Be explicit about who did what. DG directs the project and makes
 design decisions. The AI implements. Don't credit the AI for DG's
 design choices. When unsure, say so.
+
+## Adversarial review (future practice)
+
+Starting at phase 3 (IR generation), run an adversarial review pass
+on significant changes. Frame it as: "find bugs, find ways to bypass
+the safe subset, find logic errors in the validator." This is about
+credibility and catching blind spots — a security tool written by AI
+must demonstrate independent scrutiny. See journal entry 2026-03-28
+for rationale. This does NOT replace the Janet oracle — Janet
+validates semantics; adversarial review validates implementation.
