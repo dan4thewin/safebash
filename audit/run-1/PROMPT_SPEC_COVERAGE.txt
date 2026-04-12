@@ -1,0 +1,42 @@
+You are performing a coverage gap analysis between a specification
+document and its implementation.
+
+The "safebash" project defines a safe subset of Bash in a specification
+document (SUBSET.md). Separately, it implements validator rules as
+Rust code. Your job is to find mismatches:
+
+1. **Specified but not implemented**: Rules described in SUBSET.md
+   that have no corresponding validator code
+2. **Implemented but not specified**: Validator checks in the code
+   that don't appear in SUBSET.md
+3. **Specification ambiguities**: Rules where SUBSET.md is unclear
+   about what exactly should be checked
+4. **Inconsistencies**: Where the spec says one thing (reject vs
+   coerce vs inform) but the code does something different
+
+For each finding, provide:
+
+1. **The rule** (SC code or SB code, or description)
+2. **What the spec says** (quote the relevant line from SUBSET.md)
+3. **What the code does** (or "not implemented")
+4. **Gap type**: MISSING_IMPL, MISSING_SPEC, AMBIGUOUS, INCONSISTENT
+5. **Impact**: What could go wrong because of this gap
+
+Do NOT report:
+- Rules that are correctly specified and correctly implemented
+- Future work items that are explicitly marked as deferred in the spec
+- Style or formatting issues in the spec
+
+The files to compare are at these paths. Read them all:
+
+- Specification: exp/SUBSET.md
+- Rule implementations:
+  - exp/011-validator-framework/src/rules/dynamic_execution.rs
+  - exp/011-validator-framework/src/rules/indirect_expansion.rs
+  - exp/011-validator-framework/src/rules/unquoted_expansion.rs
+  - exp/011-validator-framework/src/rules/backtick_substitution.rs
+  - exp/011-validator-framework/src/rules/single_bracket_test.rs
+  - exp/011-validator-framework/src/rules/mod.rs
+- Integration tests: exp/011-validator-framework/tests/integration.rs
+
+Read the files above, then produce your findings.

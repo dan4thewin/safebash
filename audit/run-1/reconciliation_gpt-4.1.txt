@@ -1,0 +1,98 @@
+Here is a reconciled remediation plan for the safebash audit findings, synthesizing Plans A and B. Where the plans disagree, I resolve in favor of the more conservative or actionable approach, with rationale.
+
+---
+
+## Reconciled Remediation Plan
+
+### CRITICAL (Fix Now)
+
+1. **B1: `builtin eval` / `command eval` bypass**
+   - Adopt Plan A’s precise logic: In `exp/011-validator-framework/src/rules/dynamic_execution.rs`, extend `DynamicExecution::check` to unwrap wrappers (`builtin`, `command`), resolve the effective command, and reject `eval`, `source`, or `.`. Add helpers for token extraction. Add integration tests.
+   - Rationale: Plan A is more explicit about helper structure and test coverage.
+
+2. **B2: `bash -c` / `sh -c` arbitrary execution**
+   - Synthesize: In `dynamic_execution.rs`, add SB4005: reject `{bash,sh,dash,zsh,ksh}` with `-c` in args, including through wrappers. Add tests for direct and wrapped invocations. Update `exp/SUBSET.md`.
+   - Rationale: Both plans agree; Plan A’s test and doc coverage is stronger.
+
+3. **B3: `trap` with code string**
+   - Synthesize: Add new rule file `trap_safety.rs` (register in `rules/mod.rs`). Only allow bare function-name as trap action; reject code strings or expansions. Emit SB4006. Add tests for all cases. Update `exp/SUBSET.md`.
+   - Rationale: Plan A’s file structure and test detail is clearer.
+
+4. **B4: ANSI-C obfuscation `$'...'`**
+   - Adopt Plan A: In `dynamic_execution.rs`, decode ANSI-C escapes before command comparison, both for command and wrapper args. Add tests for obfuscated forms.
+   - Rationale: Plan A is more thorough in handling all command-token paths.
+
+---
+
+### HIGH Priority (Strengthen)
+
+5. **B5: Alias-based bypass**
+   - Synthesize: Add rule (new file or extend dynamic rule) to reject `shopt -s expand_aliases` and `alias name='eval ...'` (expansion starts with forbidden command). Emit SB4007/SB4008. Add integration tests. Update `exp/SUBSET.md`.
+   - Rationale: Plan A covers both alias and shopt; Plan B only alias.
+
+6. **B6: `exec` not checked**
+   - Adopt Plan A: Include `exec` in wrapper resolution; apply forbidden-command and shell-`-c` checks to exec target. Add tests for `exec sh -c ...`, `exec eval ...`.
+
+7. **B8: `env` wrapper**
+   - Synthesize: In wrapper resolution, add `env`: skip env assignments/options, then re-run forbidden-command checks. Add tests for `env eval ...`, `env FOO=1 bash -c ...`. Document in `exp/SUBSET.md`.
+
+8. **S3: Update SUBSET.md for wrappers**
+   - Adopt Plan A: In `exp/SUBSET.md` Category 2, explicitly specify wrapper-unwrapping policy for all wrappers and that checks apply to effective command.
+
+9. **S2: Array reject vs coerce**
+   - Synthesize: In `unquoted_expansion.rs`, detect array assignment context; emit SC2206/SC2207 as error, not coerce. Update tests and `exp/SUBSET.md`.
+
+---
+
+### Soundness Guardrail
+
+10. **B10/I3/I4/I5: Unsupported constructs (process substitution, brace expansion, select, coproc)**
+    - Adopt Plan A: Add `unsupported_constructs.rs` rule to reject these with explicit codes (SB4010–SB4013). Add tests and document as out-of-scope in `exp/SUBSET.md`.
+
+---
+
+### IR Fidelity Upgrades
+
+11. **I1: Heredoc mode lost**
+    - Synthesize: In `exp/014-cst-to-ir-complete/src/ir.rs`, extend redirect model with heredoc metadata (`quoted`, `strip_tabs`, delimiter). Update lowering logic and tests.
+
+12. **I2: Process substitution not handled**
+    - Synthesize: Immediate: reject via unsupported_constructs. Future: add `ExprKind::ProcessSubstitution` to IR, implement lowering, add tests.
+
+13. **I7: Array subscript assignment not preserved**
+    - Adopt Plan A: Evolve IR assignment to preserve target/index/operator. Update lowering and tests.
+
+---
+
+### Deferred/Documented
+
+14. **B7: xargs ... sh -c**
+    - Dismiss for now (Plan B rationale: too complex, out-of-scope). Document in `exp/SUBSET.md`.
+
+15. **B9: Nameref with untrusted target**
+    - Defer, but add explicit threat-model caveat in `exp/SUBSET.md` (Plan A).
+
+16. **I6, I8, I9, S4: Various deferred improvements**
+    - Defer or document as intentional design choices. Add to `exp/TODO.md` as needed.
+
+17. **S1: Most spec rules unimplemented**
+    - Adopt Plan A: Update `exp/TODO.md` with rule-by-rule backlog.
+
+---
+
+## Final Ordered Action List
+
+1. Fix B1–B4 in `dynamic_execution.rs` and `trap_safety.rs` with helpers, tests, and doc updates.
+2. Implement B5–B8, S3, S2: alias/shopt/exec/env wrappers, SUBSET.md, array reject logic, with tests.
+3. Add unsupported_constructs.rs for B10/I3/I4/I5, with tests and doc.
+4. Upgrade IR for I1, I2, I7 in `ir.rs`/`lower.rs`, with tests.
+5. Document/defer B7, B9, I6, I8, I9, S4, S1 in `exp/SUBSET.md`, `exp/TODO.md`.
+6. Ensure all changes are tested and pass `mk test` in each experiment.
+7. Update `exp/JOURNAL.md` and `exp/GUIDE.md` after each milestone.
+
+This plan preserves the strongest assertions from both plans, resolves disagreements in favor of explicitness and security, and maps every action to concrete files and logic.
+
+
+Changes   +0 -0
+Requests  0 Premium (57s)
+Tokens    ↑ 22.4k • ↓ 1.3k • 0 (cached)

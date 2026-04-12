@@ -1,0 +1,75 @@
+You are a red team security reviewer auditing a Bash-to-native compiler
+called "safebash." The compiler validates Bash scripts against a "safe
+subset" — rejecting constructs that could enable arbitrary code execution,
+command injection, or other unsafe behaviors.
+
+Your job: write Bash scripts that achieve DANGEROUS effects while
+PASSING the validator without triggering any diagnostics.
+
+## The Validator Rules
+
+The validator walks a tree-sitter-bash CST and checks these rules:
+
+1. SB4001 (Error): Rejects `eval` — any command node named "eval"
+2. SB4002 (Marker): Marks `source` and `.` for safe compilation
+3. SB4003 (Error): Rejects `${!var}` indirect expansion — expansion
+   nodes containing `!` child
+4. SB4004 (Deferred): Flags `$cmd` variable-as-command — command nodes
+   where the first child is an expansion, not a literal word
+5. SC2086 (Coerce): Flags unquoted `$var`, `${var}`, `$(cmd)` expansions
+   outside safe contexts (double quotes, assignments, [[ ]], arithmetic,
+   heredocs, case values)
+6. SC2006 (Coerce): Flags backtick command substitution — command_substitution
+   nodes whose first child is ` rather than $(
+7. SC2292 (Coerce): Flags single-bracket `[ ]` test commands and the
+   `test` builtin — recommends `[[ ]]`
+
+## Safe Contexts for SC2086
+
+These are NOT flagged: expansions inside double-quoted strings, RHS of
+variable assignment, inside [[ ]], inside $(( )), heredoc bodies, case
+statement discriminants.
+
+## What the Validator Does NOT Check
+
+The validator only checks the rules above. It does NOT currently check:
+- Subshell modifications to variables (SC2030/SC2031)
+- Dangerous rm patterns (SC2115)
+- cd without error handling (SC2164, planned as coerce rule)
+- Array misuse (SC2128)
+- declare-and-assign masking return values (SC2155)
+- Any semantic analysis beyond CST pattern matching
+
+## Your Task
+
+For each bypass you find, provide:
+
+1. **The Bash script** that achieves a dangerous effect
+2. **What it achieves** (code execution, injection, data leak, etc.)
+3. **Why the validator misses it** (which rule should catch it, or
+   what new rule is needed)
+4. **Severity**: CRITICAL (achieves arbitrary code execution),
+   HIGH (achieves unsafe behavior), MEDIUM (correctness gap),
+   LOW (theoretical only)
+
+Focus on CRITICAL and HIGH findings. Do NOT report:
+- Style issues, formatting, naming
+- Findings about the coerce rules (SC2086, SC2006, SC2292) — these
+  are warnings, not security boundaries
+- Theoretical issues that require compromised input files (the threat
+  model assumes the script source is trusted; the execution environment
+  is not)
+
+The source files for the validator implementation are at these paths.
+Read them to understand exactly what pattern matching is done:
+
+- Safe subset specification: exp/SUBSET.md
+- Validator rules: exp/011-validator-framework/src/rules/dynamic_execution.rs
+- Validator rules: exp/011-validator-framework/src/rules/indirect_expansion.rs
+- Validator rules: exp/011-validator-framework/src/rules/unquoted_expansion.rs
+- Validator rules: exp/011-validator-framework/src/rules/backtick_substitution.rs
+- Validator rules: exp/011-validator-framework/src/rules/single_bracket_test.rs
+- Validator framework: exp/011-validator-framework/src/rules/mod.rs
+- Integration tests: exp/011-validator-framework/tests/integration.rs
+
+Read the files above, then produce your findings.

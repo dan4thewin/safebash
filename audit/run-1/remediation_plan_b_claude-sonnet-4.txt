@@ -1,0 +1,197 @@
+● List directory .
+  └ 7 files found
+
+● List directory exp/014-cst-to-ir-complete/src
+  └ 4 files found
+
+● Read SUBSET.md
+  │ exp/SUBSET.md
+  └ 340 lines read
+
+● List directory exp/011-validator-framework/src/rules
+  └ 6 files found
+
+● Initialize remediation tracking (sql)
+  │ CREATE TABLE remediation_items (
+  └ Schema operation completed successfully.
+
+● Read dynamic_execution.rs
+  │ exp/011-validator-framework/src/rules/dynamic_execution.rs
+  └ 51 lines read
+
+● Read ir.rs
+  │ exp/014-cst-to-ir-complete/src/ir.rs
+  └ 290 lines read
+
+Now I'll examine the current codebase more deeply to understand how to implement the remediation plan:
+
+● Create plan.md +23
+  └ ~/.copilot/session-state/f6e204bd-1014-4789-8c50-de7c3698e106/plan.md
+
+Now I'll create a comprehensive remediation plan by analyzing each finding and mapping to specific code changes:
+
+● Add CRITICAL bypass findings (sql)
+  │ INSERT INTO remediation_items VALUES
+  └ 4 row(s) inserted. Last inserted row ID: 4.
+
+● Add HIGH priority bypass findings (sql)
+  │ INSERT INTO remediation_items VALUES
+  └ 6 row(s) inserted. Last inserted row ID: 10.
+
+● Add IR fidelity findings (sql)
+  │ INSERT INTO remediation_items VALUES
+  └ 9 row(s) inserted. Last inserted row ID: 19.
+
+● Add spec coverage findings (sql)
+  │ INSERT INTO remediation_items VALUES
+  └ 4 row(s) inserted. Last inserted row ID: 23.
+
+Now let me generate the comprehensive remediation plan:
+
+● Get prioritized remediation plan (sql)
+  │ SELECT
+  └ 23 row(s) returned
+
+Based on my analysis of the audit findings and the current codebase, here's the comprehensive remediation plan:
+
+# safebash Security Audit Remediation Plan
+
+## Executive Summary
+
+The audit identified 20 findings across 3 categories. **Four CRITICAL bypass vulnerabilities (B1-B4) require immediate fixes** as they allow arbitrary code execution and directly compromise safebash's security claims. The remaining findings split between HIGH-priority gaps that strengthen the system and MEDIUM-priority improvements that can be deferred.
+
+---
+
+## CRITICAL Fixes (fix-now priority)
+
+### B1: `builtin eval` / `command eval` bypass
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`  
+- **Function:** `check`
+- **Exact change:** In the `check` function, after extracting the command word, add logic to inspect arguments when the command is `"builtin"` or `"command"`. If the first argument is `"eval"`, `"source"`, `"."`, or any rejected command, emit the same diagnostic as if that command were called directly.
+- **Priority:** fix-now
+- **Action:** act
+
+### B2: `bash -c` / `sh -c` arbitrary execution  
+- **Change type:** combination (code + test)
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add new rule SB4005. When command word is `"bash"`, `"sh"`, `"dash"`, `"zsh"`, or `"ksh"`, inspect arguments. If any argument is `"-c"`, emit error diagnostic: "SB4005: shell interpreter with -c executes arbitrary code".
+- **Priority:** fix-now  
+- **Action:** act
+
+### B3: `trap` with code string
+- **Change type:** combination (code + test + spec)
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check` 
+- **Exact change:** When command word is `"trap"`, inspect first argument. If it's not a function name (contains spaces, quotes, or shell metacharacters), emit error: "SB4006: trap with code string executes arbitrary code at signal time - use function reference instead".
+- **Priority:** fix-now
+- **Action:** act
+
+### B4: `$'\x65\x76\x61\x6c'` (ANSI-C quoting obfuscation)
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Before comparing command words, add helper function to decode ANSI-C strings. When first_child.kind() is `"ansi_c_string"`, decode hex/octal escapes before string comparison. `$'\x65\x76\x61\x6c'` should decode to `"eval"` and be caught by SB4001.
+- **Priority:** fix-now
+- **Action:** act
+
+---
+
+## HIGH Priority Fixes (strengthen)
+
+### B5: alias-based bypass
+- **Change type:** combination (code + test)
+- **File:** `exp/011-validator-framework/src/rules/` (new file: `alias.rs`)
+- **Function:** new rule
+- **Exact change:** Create new rule that matches `"command"` nodes where first word is `"alias"`. Parse assignment form `alias name=expansion`. If expansion starts with rejected command (`eval`, `source`, etc.), emit error: "SB4007: alias expands to rejected command".
+- **Priority:** strengthen
+- **Action:** act
+
+### B6: `exec` not checked  
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add `"exec"` to the match arms. Apply same argument inspection as B2 - if exec is followed by shell interpreter + `-c`, emit error.
+- **Priority:** strengthen
+- **Action:** act
+
+### B8: `env` wrapper
+- **Change type:** code  
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add `"env"` to match arms. Skip environment assignments (KEY=VALUE args) and apply same argument inspection to the actual command being executed.
+- **Priority:** strengthen
+- **Action:** act
+
+### S3: Update SUBSET.md for wrapper commands
+- **Change type:** spec
+- **File:** `exp/SUBSET.md`
+- **Function:** Category 2: Eval and Dynamic Execution
+- **Exact change:** Add section under SB4001 explaining that `builtin eval`, `command eval`, `env eval` are also rejected. Update table to include SB4005 for shell interpreters with `-c`.
+- **Priority:** strengthen  
+- **Action:** act
+
+---
+
+## MEDIUM Priority Fixes (strengthen)
+
+### IR Fidelity Issues
+
+#### I1: Heredoc expansion mode lost
+- **Change type:** code
+- **File:** `exp/014-cst-to-ir-complete/src/ir.rs`
+- **Function:** `RedirectOp::HereDoc`
+- **Exact change:** Replace `HereDoc` with `HereDoc { quoted: bool, strip_tabs: bool }` to distinguish `<<EOF` (quoted=false), `<<'EOF'` (quoted=true), `<<-EOF` (strip_tabs=true).
+- **Priority:** strengthen
+- **Action:** act
+
+#### I2: Process substitution not handled  
+- **Change type:** code
+- **File:** `exp/014-cst-to-ir-complete/src/ir.rs`
+- **Function:** `ExprKind`
+- **Exact change:** Add `ProcessSubstitution { direction: ProcessDirection, commands: Vec<Statement> }` where `ProcessDirection` is enum `Input` (for `<(cmd)`) or `Output` (for `>(cmd)`).
+- **Priority:** strengthen
+- **Action:** act
+
+#### Other IR issues (I3, I4, I7) follow similar patterns of adding missing AST nodes.
+
+### S2: Array reject vs coerce inconsistency
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/unquoted_expansion.rs`  
+- **Function:** `check`
+- **Exact change:** Add context detection for array assignment. When unquoted expansion occurs in `arr=($var)` context, emit reject diagnostic instead of coerce to match spec.
+- **Priority:** strengthen
+- **Action:** act
+
+---
+
+## Deferred Items
+
+### B7: xargs sh -c pattern
+- **Action:** dismiss  
+- **Rationale:** Too complex to detect generically; xargs is external tool with arbitrary arguments. Document as out-of-scope.
+
+### B9: Nameref risk
+- **Action:** dismiss
+- **Rationale:** By design - namerefs are explicitly allowed per design decision #3. Risk is acceptable.
+
+### I6, I8, I9, S4: Various deferred improvements
+- **Action:** defer to future work or dismiss as intentional design choices
+
+---
+
+## Implementation Order
+
+1. **Week 1:** Fix B1-B4 (CRITICAL bypass vulnerabilities)
+2. **Week 2:** Implement B5, B6, B8 (HIGH security gaps)  
+3. **Week 3:** Update S3 spec, fix S2 consistency issue
+4. **Week 4:** Address I1, I2, I7 IR fidelity issues
+5. **Later:** Remaining IR and spec improvements
+
+All changes require comprehensive tests and must pass existing test suites. Each fix should be implemented as a separate experiment in the `exp/` directory following the project's incremental development model.
+
+
+Changes   +23 -0
+Requests  1 Premium (2m 8s)
+Tokens    ↑ 337.6k • ↓ 5.9k • 289.9k (cached)

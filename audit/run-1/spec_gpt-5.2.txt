@@ -1,0 +1,6 @@
+I’m going to inspect the actual validator framework (diagnostic severities, mode handling, rule registration) and then compare each spec rule against what’s implemented, including edge-case bypasses (e.g., `command eval`, `$cmd` as command).
+
+Next I’ll read the validator framework code (diagnostic types, CLI flags, how “coerce” is handled) and then enumerate which spec rules are missing or behave differently than specified (including known bypass patterns).
+
+I’ll now confirm a few key behavioral gaps by running the current validator on representative inputs (e.g., `builtin eval`) and then I’ll produce the mismatch report with exact citations.
+

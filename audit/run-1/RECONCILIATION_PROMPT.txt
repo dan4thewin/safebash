@@ -1,0 +1,222 @@
+You are given two remediation plans (Plan A and Plan B) for the same
+set of audit findings from a security review of the safebash compiler.
+Produce a single reconciled plan.
+
+For each finding:
+- State which plan you prefer, or synthesize both
+- Where plans disagree, resolve the disagreement with rationale
+- Preserve the strongest assertions from each plan
+- Output a final ordered action list with exact file/function/logic
+
+PLAN A was produced by gpt-5.3-codex.
+PLAN B was produced by claude-sonnet-4.
+
+=== PLAN A ===
+I’ll map each finding to concrete code/spec/test touchpoints in this repo so the plan names exact files and functions, then provide a prioritized act-vs-dismiss triage.
+I’ve confirmed the validator hotspots; next I’m mapping the IR findings to exact enum/lowering points so each remediation item is implementable.
+✗ Run bypass harness for parse/output (shell)
+Here’s a concrete triage/remediation plan keyed to each finding.
+### Pass 1 — Bypass findings
+1. **B1 `builtin eval` / `command eval`**  
+**Type:** code + tests + spec | **Priority:** fix-now | **Decision:** **Act**  
+**Change:** In `exp/011-validator-framework/src/rules/dynamic_execution.rs`, extend `DynamicExecution::check` to resolve an **effective command** by unwrapping wrapper commands (`builtin`, `command`) and inspecting their first argument. If effective command is `eval`, emit `SB4001`; if `source`/`.`, emit `SB4002`. Add helper(s) in same file (e.g., `extract_literal_token`, `resolve_effective_command`). Add tests in `exp/011-validator-framework/tests/integration.rs` for `builtin eval "$x"` and `command eval "$x"`.
+2. **B2 `bash -c` / `sh -c`**  
+**Type:** code + tests + spec | **Priority:** fix-now | **Decision:** **Act**  
+**Change:** In `dynamic_execution.rs`, add `SB4005` check: reject effective command in `{bash, sh, dash, zsh, ksh}` when args contain `-c` (or equivalent option form). Add tests for direct and wrapped invocations (`bash -c`, `sh -c`, `command bash -c`, `env bash -c`). Add `SB4005` row in `exp/SUBSET.md` Category 2.
+3. **B3 `trap` with code string**  
+**Type:** code + tests + spec | **Priority:** fix-now | **Decision:** **Act**  
+**Change:** Add new rule file `exp/011-validator-framework/src/rules/trap_safety.rs` (register in `rules/mod.rs`). In `check`, detect `trap` command and reject first action argument if it is a string/expansion/concatenation (code string). Allow only bare function-name action token (no expansions). Emit new reject code (e.g., `SB4006`). Add tests for `trap 'rm -rf /' EXIT`, `trap "$payload" EXIT` (reject), and `trap cleanup EXIT` (allow). Update `exp/SUBSET.md` to reflect reject policy (not SC2064-style coercion for safebash).
+4. **B4 ANSI-C obfuscation `$'...'`**  
+**Type:** code + tests | **Priority:** fix-now | **Decision:** **Act**  
+**Change:** In `dynamic_execution.rs`, make command-token extraction handle `ansi_c_string` command names/args by decoding escapes before command comparison. Apply this in both command-name and wrapper-argument paths. Add tests for `$'\x65\x76\x61\x6c' x` and wrapper variants.
+5. **B5 alias bypass**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Add alias guard rule (new file or extend dynamic rule):  
+- Reject `shopt -s expand_aliases` (new code, e.g., `SB4007`).  
+- Reject `alias name='eval ...'` (expansion starts with forbidden command; `SB4008`).  
+Add integration tests for both. Add explicit alias policy in `exp/SUBSET.md`.
+6. **B6 `exec` not checked**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Include `exec` in wrapper resolution in `dynamic_execution.rs`; unwrap and apply same forbidden-command and shell-`-c` checks to exec target. Add tests: `exec sh -c ...`, `exec eval ...`.
+7. **B7 `xargs ... sh -c` pattern**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In `dynamic_execution.rs`, add targeted heuristic for command `xargs`: if argument sequence includes shell interpreter token followed by `-c`, reject (new code e.g., `SB4009`). Add tests for positive (`xargs ... sh -c`) and negative (`xargs echo`). Document this explicit subset restriction in `exp/SUBSET.md` Category 8.
+8. **B8 `env` wrapper**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In wrapper resolution, add `env`: skip env options/`NAME=VALUE` args until first command token, then re-run forbidden-command checks on that token and args. Add tests `env eval ...`, `env FOO=1 bash -c ...`. Document in `exp/SUBSET.md`.
+9. **B9 nameref with untrusted target**  
+**Type:** spec (+ optional test) | **Priority:** defer | **Decision:** **Act**  
+**Change:** In `exp/SUBSET.md` nameref section, add explicit threat-model caveat: nameref remains allowed, but variable-name provenance must be trusted at call sites. Keep current behavior test in `integration.rs` to prevent accidental policy drift.
+10. **B10 process substitution unscrutinized**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Add `unsupported_constructs` rule (`exp/011-validator-framework/src/rules/unsupported_constructs.rs`) that rejects process substitution nodes (e.g., `<(...)`, `>(...)`) with explicit code (e.g., `SB4010`) **until IR support lands**. Register rule in `rules/mod.rs`; add tests for both forms; note temporary exclusion in `exp/SUBSET.md`.
+---
+### Pass 2 — IR fidelity findings
+11. **I1 heredoc mode lost**  
+**Type:** code + tests | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In `exp/014-cst-to-ir-complete/src/ir.rs`, extend redirect model with heredoc metadata (e.g., `quoted`, `strip_tabs`, delimiter text). In `lower.rs::lower_redirect`, parse `<<` vs `<<-` and quoted delimiter form. Add lowering tests in `exp/014-cst-to-ir-complete/tests/lowering.rs` for `<<EOF`, `<<'EOF'`, `<<-EOF`.
+12. **I2 process substitution not handled**  
+**Type:** code + tests (+ spec if enabled) | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Two-phase:  
+- **Immediate guard:** reject via `unsupported_constructs` (B10).  
+- **Full support:** add `ExprKind::ProcessSubstitution` in `ir.rs`; implement lowering arm in `lower.rs::lower_expr` for process substitution node; add tests in `lowering.rs`.
+13. **I3 brace expansion not handled**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Prefer safe boundary now: reject brace expansion in `unsupported_constructs.rs` (new code e.g., `SB4011`) and document in `exp/SUBSET.md` Out-of-Scope. Add tests `echo {a,b}` and `echo {1..10}`.
+14. **I4 `select` loop not handled**  
+**Type:** code + tests + spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** Reject `select` in `unsupported_constructs.rs` (`SB4012`) and document as unsupported in `exp/SUBSET.md`. Add integration test in validator suite.
+15. **I5 coproc not handled**  
+**Type:** code + tests + spec | **Priority:** defer | **Decision:** **Act**  
+**Change:** Reject coproc syntax in `unsupported_constructs.rs` (`SB4013`) and mark concurrency/coprocess out-of-scope in `exp/SUBSET.md`. Add validator test.
+16. **I6 trap semantics not represented**  
+**Type:** spec/TODO | **Priority:** defer | **Decision:** **Dismiss as separate IR item**  
+**Rationale:** If B3 enforces trap policy (no code-string trap), IR semantic trap node is not required for current safety claim. Track `StmtKind::Trap` as future enhancement only if trap support is broadened.
+17. **I7 array subscript assignment not preserved**  
+**Type:** code + tests | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In `ir.rs`, evolve `Assignment` to preserve assignment target/index and operator (`=` vs `+=`) (e.g., `AssignTarget{name,index}`, `AssignOp::{Set,Append}`). In `lower.rs::lower_assignment`, parse subscript and operator from CST. Add tests in `lowering.rs` for `arr[0]=value` and `arr+=("x")`.
+18. **I8 `declare` flags not interpreted**  
+**Type:** tests + spec/TODO | **Priority:** defer | **Decision:** **Act**  
+**Change:** Keep `Declaration.flags` as-is now; add tests proving `-i/-a/-A` are preserved in IR, and add deferred SSA typing task in `exp/TODO.md` + note in `exp/GUIDE.md`/`SUBSET.md`.
+19. **I9 `[ ]` vs `[[ ]]` conflated**  
+**Type:** spec + tests | **Priority:** defer | **Decision:** **Dismiss (intentional canonicalization)**  
+**Rationale:** Validator already enforces `SC2292`; IR may intentionally normalize test forms. Document this explicitly in `exp/SUBSET.md` (and optionally add test that both forms lower identically).
+---
+### Pass 3 — Spec coverage findings
+20. **S1 most spec rules unimplemented**  
+**Type:** planning/spec tracking | **Priority:** defer | **Decision:** **Dismiss as known gap**  
+**Change:** No bug fix; update `exp/TODO.md` with rule-by-rule implementation backlog mapped to `SB/SC` codes and experiment IDs.
+21. **S2 SC2206/SC2207 reject vs coerce mismatch**  
+**Type:** code + tests | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In `exp/011-validator-framework/src/rules/unquoted_expansion.rs`, update `check` to detect array-assignment context and emit `Diagnostic::error` with `SC2206` (`$var`) or `SC2207` (`$(cmd)`), not SC2086/SC2046 coerce. Keep non-array contexts unchanged. Update `integration.rs` expectations (`arr=($var)` → SC2206; add `arr=($(date))` → SC2207).
+22. **S3 wrappers missing from spec**  
+**Type:** spec | **Priority:** strengthen | **Decision:** **Act**  
+**Change:** In `exp/SUBSET.md` Category 2, explicitly specify wrapper-unwrapping policy for `builtin`, `command`, `env`, `exec` and that checks apply to effective command (`SB4001/SB4002/SB4005/...`).
+23. **S4 coerce/strict mode not implemented**  
+**Type:** code + tests + spec | **Priority:** defer | **Decision:** **Act**  
+**Change:** In `exp/011-validator-framework/src/main.rs`, add mode flag (`--coerce`) and central blocking logic: in strict mode `Coerce` is blocking; in coerce mode `Coerce` is non-blocking warning, while `Error`/`Deferred` remain blocking. Add tests for mode behavior (unit or CLI smoke tests). Keep `exp/SUBSET.md` mode section aligned with actual CLI behavior.
+---
+**Recommended execution order:**  
+1. **Immediate security blockers:** B1–B4.  
+2. **Wrapper/surface hardening:** B5–B8, S3, S2.  
+3. **Soundness guardrail:** B10 + I3/I4/I5 reject rules (no silent drops).  
+4. **IR fidelity upgrades:** I1, I7, then I2 full support.  
+5. **Non-blocking consistency:** B9, I8, S4, docs/TODO cleanup.
+Changes   +0 -0
+Requests  1 Premium (2m 25s)
+Tokens    ↑ 358.0k • ↓ 13.0k • 314.8k (cached) • 9.0k (reasoning)
+
+=== PLAN B ===
+Now I'll examine the current codebase more deeply to understand how to implement the remediation plan:
+Now I'll create a comprehensive remediation plan by analyzing each finding and mapping to specific code changes:
+Now let me generate the comprehensive remediation plan:
+Based on my analysis of the audit findings and the current codebase, here's the comprehensive remediation plan:
+# safebash Security Audit Remediation Plan
+## Executive Summary
+The audit identified 20 findings across 3 categories. **Four CRITICAL bypass vulnerabilities (B1-B4) require immediate fixes** as they allow arbitrary code execution and directly compromise safebash's security claims. The remaining findings split between HIGH-priority gaps that strengthen the system and MEDIUM-priority improvements that can be deferred.
+---
+## CRITICAL Fixes (fix-now priority)
+### B1: `builtin eval` / `command eval` bypass
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`  
+- **Function:** `check`
+- **Exact change:** In the `check` function, after extracting the command word, add logic to inspect arguments when the command is `"builtin"` or `"command"`. If the first argument is `"eval"`, `"source"`, `"."`, or any rejected command, emit the same diagnostic as if that command were called directly.
+- **Priority:** fix-now
+- **Action:** act
+### B2: `bash -c` / `sh -c` arbitrary execution  
+- **Change type:** combination (code + test)
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add new rule SB4005. When command word is `"bash"`, `"sh"`, `"dash"`, `"zsh"`, or `"ksh"`, inspect arguments. If any argument is `"-c"`, emit error diagnostic: "SB4005: shell interpreter with -c executes arbitrary code".
+- **Priority:** fix-now  
+- **Action:** act
+### B3: `trap` with code string
+- **Change type:** combination (code + test + spec)
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check` 
+- **Exact change:** When command word is `"trap"`, inspect first argument. If it's not a function name (contains spaces, quotes, or shell metacharacters), emit error: "SB4006: trap with code string executes arbitrary code at signal time - use function reference instead".
+- **Priority:** fix-now
+- **Action:** act
+### B4: `$'\x65\x76\x61\x6c'` (ANSI-C quoting obfuscation)
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Before comparing command words, add helper function to decode ANSI-C strings. When first_child.kind() is `"ansi_c_string"`, decode hex/octal escapes before string comparison. `$'\x65\x76\x61\x6c'` should decode to `"eval"` and be caught by SB4001.
+- **Priority:** fix-now
+- **Action:** act
+---
+## HIGH Priority Fixes (strengthen)
+### B5: alias-based bypass
+- **Change type:** combination (code + test)
+- **File:** `exp/011-validator-framework/src/rules/` (new file: `alias.rs`)
+- **Function:** new rule
+- **Exact change:** Create new rule that matches `"command"` nodes where first word is `"alias"`. Parse assignment form `alias name=expansion`. If expansion starts with rejected command (`eval`, `source`, etc.), emit error: "SB4007: alias expands to rejected command".
+- **Priority:** strengthen
+- **Action:** act
+### B6: `exec` not checked  
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add `"exec"` to the match arms. Apply same argument inspection as B2 - if exec is followed by shell interpreter + `-c`, emit error.
+- **Priority:** strengthen
+- **Action:** act
+### B8: `env` wrapper
+- **Change type:** code  
+- **File:** `exp/011-validator-framework/src/rules/dynamic_execution.rs`
+- **Function:** `check`
+- **Exact change:** Add `"env"` to match arms. Skip environment assignments (KEY=VALUE args) and apply same argument inspection to the actual command being executed.
+- **Priority:** strengthen
+- **Action:** act
+### S3: Update SUBSET.md for wrapper commands
+- **Change type:** spec
+- **File:** `exp/SUBSET.md`
+- **Function:** Category 2: Eval and Dynamic Execution
+- **Exact change:** Add section under SB4001 explaining that `builtin eval`, `command eval`, `env eval` are also rejected. Update table to include SB4005 for shell interpreters with `-c`.
+- **Priority:** strengthen  
+- **Action:** act
+---
+## MEDIUM Priority Fixes (strengthen)
+### IR Fidelity Issues
+#### I1: Heredoc expansion mode lost
+- **Change type:** code
+- **File:** `exp/014-cst-to-ir-complete/src/ir.rs`
+- **Function:** `RedirectOp::HereDoc`
+- **Exact change:** Replace `HereDoc` with `HereDoc { quoted: bool, strip_tabs: bool }` to distinguish `<<EOF` (quoted=false), `<<'EOF'` (quoted=true), `<<-EOF` (strip_tabs=true).
+- **Priority:** strengthen
+- **Action:** act
+#### I2: Process substitution not handled  
+- **Change type:** code
+- **File:** `exp/014-cst-to-ir-complete/src/ir.rs`
+- **Function:** `ExprKind`
+- **Exact change:** Add `ProcessSubstitution { direction: ProcessDirection, commands: Vec<Statement> }` where `ProcessDirection` is enum `Input` (for `<(cmd)`) or `Output` (for `>(cmd)`).
+- **Priority:** strengthen
+- **Action:** act
+#### Other IR issues (I3, I4, I7) follow similar patterns of adding missing AST nodes.
+### S2: Array reject vs coerce inconsistency
+- **Change type:** code
+- **File:** `exp/011-validator-framework/src/rules/unquoted_expansion.rs`  
+- **Function:** `check`
+- **Exact change:** Add context detection for array assignment. When unquoted expansion occurs in `arr=($var)` context, emit reject diagnostic instead of coerce to match spec.
+- **Priority:** strengthen
+- **Action:** act
+---
+## Deferred Items
+### B7: xargs sh -c pattern
+- **Action:** dismiss  
+- **Rationale:** Too complex to detect generically; xargs is external tool with arbitrary arguments. Document as out-of-scope.
+### B9: Nameref risk
+- **Action:** dismiss
+- **Rationale:** By design - namerefs are explicitly allowed per design decision #3. Risk is acceptable.
+### I6, I8, I9, S4: Various deferred improvements
+- **Action:** defer to future work or dismiss as intentional design choices
+---
+## Implementation Order
+1. **Week 1:** Fix B1-B4 (CRITICAL bypass vulnerabilities)
+2. **Week 2:** Implement B5, B6, B8 (HIGH security gaps)  
+3. **Week 3:** Update S3 spec, fix S2 consistency issue
+4. **Week 4:** Address I1, I2, I7 IR fidelity issues
+5. **Later:** Remaining IR and spec improvements
+All changes require comprehensive tests and must pass existing test suites. Each fix should be implemented as a separate experiment in the `exp/` directory following the project's incremental development model.
+Changes   +23 -0
+Requests  1 Premium (2m 8s)
+Tokens    ↑ 337.6k • ↓ 5.9k • 289.9k (cached)

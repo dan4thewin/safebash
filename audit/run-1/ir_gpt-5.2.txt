@@ -1,0 +1,144 @@
+I’m going to inspect the IR types, the CST→IR lowering, and the IR printer, then enumerate constructs that get dropped, conflated, or mis-modeled vs real Bash semantics.
+
+Next I’ll scan the lowering code for fallthroughs/panics/unhandled CST nodes, and compare that to IR coverage (expressions, redirects, heredocs, quoting, etc.).
+
+### 1) Command-prefix environment assignments are dropped
+1. **Construct:** `VAR=1 echo hi`
+2. **Bash:** runs `echo` with `VAR` set in its environment (and for special builtins can also affect shell vars).
+3. **IR:** `StmtKind::Command(name="echo", args=["hi"])` — the `VAR=1` prefix is **not represented** (`lower_command` doesn’t collect `variable_assignment` children).
+4. **Impact:** environment-sensitive behavior/analysis is wrong; security policies based on env can be bypassed.
+5. **Severity:** **HIGH**
+
+---
+
+### 2) `export/readonly/local/declare` names without `=` are lost (IR can’t represent them)
+1. **Construct:** `export PATH` / `readonly x` / `local y`
+2. **Bash:** marks an existing variable for export/readonly/local scope, even without assignment.
+3. **IR:** `StmtKind::Declaration { keyword: Export, flags: [], assignments: [] }` — variable name is **dropped** (lowering ignores non-flag `word` nodes; IR schema only has `assignments: Vec<Assignment>`).
+4. **Impact:** exported/readonly/local side effects disappear; downstream may think nothing happened.
+5. **Severity:** **HIGH**
+
+---
+
+### 3) `for name; do ...; done` implicit `in "$@"` is erased
+1. **Construct:** `for x; do echo "$x"; done`
+2. **Bash:** iterates over positional parameters (`"$@"`) when no `in ...` list is given.
+3. **IR:** `For { variable: "x", words: [], body: ... }` (no representation of the implicit `"$@"`).
+4. **Impact:** loop becomes “iterate over nothing” in IR-based execution/analysis.
+5. **Severity:** **HIGH**
+
+---
+
+### 4) Heredoc *body* is not represented at all
+1. **Construct:**
+   ```bash
+   cat <<EOF
+   $HOME
+   EOF
+   ```
+2. **Bash:** feeds a multi-line string to stdin; body may undergo expansions depending on delimiter quoting.
+3. **IR:** `Redirect { op: HereDoc, target: Expr("EOF") }` — **heredoc content is not represented** anywhere.
+4. **Impact:** data-flow into commands is missing; expansion-vs-literal semantics cannot be validated.
+5. **Severity:** **HIGH**
+
+---
+
+### 5) Heredoc delimiter quoting / `<<-` tab-stripping are not modeled (and likely mis-parsed)
+1. **Construct:** `cat <<'EOF'` vs `cat <<EOF` vs `cat <<-EOF`
+2. **Bash:** quoted delimiter disables expansions; `<<-` strips leading tabs in body.
+3. **IR:** only `RedirectOp::HereDoc` exists; no fields for *quoted delimiter* or *strip-tabs*. Additionally, lowering only recognizes operator kind `"<<"` (not `"<<-"`), so `<<-EOF` will likely default to `RedirectOp::Write` (`>`), i.e. **wrong op**.
+4. **Impact:** literal-vs-expanded heredocs conflated; `<<-` may become a file redirect in IR.
+5. **Severity:** **HIGH**
+
+---
+
+### 6) Many redirection operators are unhandled → silently become plain `>`
+1. **Constructs:** `&>out`, `&>>out`, `>|out`, `1> >(cmd)`, etc.
+2. **Bash:** these have distinct semantics (redirect both streams, noclobber override, process substitution target, …).
+3. **IR:** `lower_redirect` only matches `> >> < >& <& <> << <<<`. Anything else leaves `op` at default `Write` (`>`).
+4. **Impact:** behavior changes (sometimes radically), but IR still “looks valid”.
+5. **Severity:** **HIGH**
+
+---
+
+### 7) FD-closing redirects are conflated with FD-duplication
+1. **Construct:** `exec 3>&-` / `cmd 2<&-`
+2. **Bash:** closes the specified FD.
+3. **IR:** `RedirectOp::DupOutput` / `DupInput` with `target` literal `"-"` (no “close fd” operator).
+4. **Impact:** an executor/optimizer could treat “close” as “dup from file named '-' / fd '-'”, or miss the close side-effect.
+5. **Severity:** **HIGH**
+
+---
+
+### 8) Parameter expansion operators are largely dropped (`- + = ?` without leading `:`)
+1. **Construct:** `${v-default}` / `${v=default}` / `${v?msg}` / `${v+alt}`
+2. **Bash:** these are defined operators (and differ from the `:${op}` forms).
+3. **IR:** `ParameterExpansion { name:"v", operator: None, operand: None }` because lowering only records operators that start with `:` or are `% %% # ## / //`.
+4. **Impact:** defaulting/error/alternate-value behavior disappears; IR claims it’s a plain `${v}`.
+5. **Severity:** **HIGH**
+
+---
+
+### 9) `${1}`, `${@}`, `${?}`, `${!name}`-style cases likely lose the “name” entirely
+1. **Construct:** `echo "${1}" "${@}" "${?}"`
+2. **Bash:** expands positional/special parameters.
+3. **IR:** `lower_parameter_expansion` only captures child kind `"variable_name"` (and a special `"subscript"` path). If tree-sitter uses other node kinds for numeric/special parameters, IR ends up with `name=""`.
+4. **Impact:** expansions become ambiguous/empty in IR, breaking evaluation/analysis.
+5. **Severity:** **HIGH**
+
+---
+
+### 10) `[[ ... ]]` boolean structure is not lowered (&&, ||, !, parens collapse to “unknown text”)
+1. **Construct:** `[[ -n $a && ( $b = x || ! -f y ) ]]`
+2. **Bash:** structured boolean expression with short-circuiting and precedence rules.
+3. **IR:** `lower_test_expr` only handles `unary_expression` and `binary_expression`; everything else becomes:
+   `TestExpr::Unary { op:"?", operand: Literal("<full text>") }`.
+4. **Impact:** any reasoning about conditions (or faithful re-execution) is wrong; precedence/short-circuit lost.
+5. **Severity:** **HIGH**
+
+---
+
+### 11) `case` has 3 terminators, IR has 2 states (`;;` vs `;&`), so `;;&` is misrepresented
+1. **Construct:**
+   ```bash
+   case $x in
+     a) echo one ;;&
+     b) echo two ;;
+   esac
+   ```
+2. **Bash:** `;;&` continues pattern testing with the *next* pattern list (different from `;&`).
+3. **IR:** `CaseItem { fallthrough: bool }` can’t represent `;;&`; lowering sets `fallthrough = (text == ";&")`, so `;;&` becomes `false` (same as `;;`).
+4. **Impact:** control-flow changes.
+5. **Severity:** **HIGH**
+
+---
+
+### 12) Whole CST nodes are silently dropped by default (`_ => return None`)
+1. **Constructs:** `trap 'cmd' EXIT`, `coproc p { ...; }`, `((i++))`, `time cmd`, `cmd &`, C-style `for ((...))`, etc. (anything tree-sitter parses into a distinct statement kind not listed)
+2. **Bash:** these are real statements with runtime effects.
+3. **IR:** **not represented**; `lower_statement` returns `None` for unknown kinds, deleting them from the program.
+4. **Impact:** IR can describe a *different program* than the source without any error.
+5. **Severity:** **HIGH**
+
+---
+
+### 13) Pattern/glob/extglob/brace expansion semantics are conflated into `Literal(String)`
+1. **Construct:** `echo *.txt ; echo {a,b} ; echo @(foo|bar)`
+2. **Bash:** performs pathname expansion / brace expansion / extglob (if enabled) producing multiple words.
+3. **IR:** `ExprKind::Literal("*.txt")` and `ExprKind::Literal("{a,b}")` and `ExprKind::Literal("@(foo|bar)")` — no node-level distinction that these *expand*.
+4. **Impact:** an IR consumer may treat them as plain strings (single arg) instead of word-generators.
+5. **Severity:** **MEDIUM** (can become HIGH if IR is executed)
+
+---
+
+### 14) Array subscripts in `${arr[idx]}` are flattened into a string
+1. **Construct:** `${a[$i+1]}` vs `${a[1]}` vs `${a[@]}`
+2. **Bash:** index expression has its own parsing/expansion rules; `[@]/*` have special semantics.
+3. **IR:** parameter expansion name becomes formatted text like `"a[<raw idx text>]"` (index isn’t an `Expr`).
+4. **Impact:** index semantics and special forms cannot be analyzed or normalized.
+5. **Severity:** **MEDIUM**
+
+---
+
+**Systemic theme:** the IR/lowering frequently chooses “stringly-typed” fallbacks (`Literal(text)` or `return None`) rather than a typed node or an error, which makes semantic drift silent and hard to detect.
+

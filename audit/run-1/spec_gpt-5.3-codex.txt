@@ -1,0 +1,28 @@
+I’m going to quickly run the validator tests to confirm behavior before writing the gap matrix.
+
+**Coverage gaps identified** (excluding correctly matched rules and explicitly deferred SB4004 cases):
+
+| Rule (SC/SB) | Spec says | Code does | Gap type | Impact |
+|---|---|---|---|---|
+| **SC2048, SC2068** | Special handling for unquoted `$*`/`${array[*]}` and `$@`/`${array[@]}` | Emits generic **SC2086** coerce for both (`echo $*`, `echo $@`) | **INCONSISTENT** | Wrong remediation/code semantics; misses required transformation to `"$@"` / `"${array[@]}"`. |
+| **SC2206, SC2207** | Unquoted expansion/`$(...)` in array assignment is **reject** | `arr=($var)` -> **SC2086 coerce**; `arr=($(cmd))` -> **SC2046 coerce** | **INCONSISTENT** | Dangerous array-splitting patterns are not blocked as required. |
+| **SC2231** | For-loop glob variable part should be specifically coerced (quote variable part) | `for f in $dir/*.txt` gets generic **SC2086** | **INCONSISTENT** | Loses rule-specific fix guidance. |
+| **SC2254** | Unquoted expansion in case pattern gets SC2254-specific coerce | `case x in $pat) ...` gets **SC2086** | **INCONSISTENT** | Wrong rule identity and fix behavior for case patterns. |
+| **SC2291, SC2248** | Inform/optional coerce checks exist in quoting category | Not implemented | **MISSING_IMPL** | Reduced diagnostic coverage for common quoting pitfalls. |
+| **SC2089, SC2090** | Reject quoted/backslash-containing command strings in vars used as commands | Not implemented (no dedicated checks) | **MISSING_IMPL** | Command-construction hazards slip through or are only broadly deferred. |
+| **SB4001, SB4002** | `eval` rejected; `source`/`.` marked for transform | Only direct command word match; wrapped forms like `builtin eval ...` / `command source ...` pass | **INCONSISTENT** | Easy bypass of dynamic-execution controls. |
+| **SB4002** | Marker must correspond to compilation into safe `sash-expand` KVP loader behavior | Rule emits marker only; no implementation of loader transform shown in this implementation slice | **MISSING_IMPL** | Safety depends on downstream behavior that is not present here. |
+| **SC2294** | Explicit reject rule for eval+arrays | Not implemented (effectively subsumed by SB4001) | **AMBIGUOUS** | Rule catalog and implementation diverge; code identity/reporting incomplete. |
+| **SC2007, SC2003, SC2219, SC2196, SC2197, SC2230, SC2112, SC2268** | Legacy/deprecated syntax coercions | Not implemented | **MISSING_IMPL** | Large legacy-syntax surface remains unnormalized. |
+| **SC2070, SC2074, SC2081, SC2107, SC2109, SC2166** | Specific `[ ]`-related coercions | Only broad SC2292 conversion is implemented | **AMBIGUOUS** | Spec lists granular rule IDs/actions that are not represented distinctly. |
+| **SC2130, SC2071** | Type/operator misuse in tests should be rejected | Not implemented | **MISSING_IMPL** | Type-confusion test bugs are not blocked. |
+| **SC2030, SC2031** | Reject pipeline-subshell variable-loss patterns | Not implemented | **MISSING_IMPL** | High-risk scope bugs remain undetected. |
+| **SC2164, SC2115, SC2155, SC2064, SC2162, SC2172** | Core safety/robustness coercions+rejects | Not implemented | **MISSING_IMPL** | Critical operational safety protections absent. |
+| **SC2128, SC2199, SC2198, SC2124, SC2178, SC2190, SC2313** | Array misuse checks (reject/coerce) | Not implemented | **MISSING_IMPL** | Array semantics remain largely unchecked. |
+| **SC2045, SC2044, SC2156, SC2035** | Command/process-safety checks | Not implemented | **MISSING_IMPL** | Command injection and unsafe file/process patterns not covered. |
+| **SC2004, SC2255, SC2304** | Arithmetic safety/coercion/reject rules | Not implemented | **MISSING_IMPL** | Arithmetic misuse remains unchecked. |
+| **SC2033, SC2106, SC2181, SC2310, SC2311, SC2251, SC2179, SC2180, SC2010, SC2012, SC2080, SC2079** | Inform-level warnings should exist | No inform rules implemented (and no inform severity in this implementation) | **MISSING_IMPL** | Warning-only safety guidance layer is absent. |
+| **SC2006, SC2046, SC2086, SC2292 (all coerce rules)** | Coerce behavior depends on mode (JIT warns/auto-fixes; AOT strict blocks) | Coerce diagnostics always cause nonzero exit in CLI path; no mode toggle | **INCONSISTENT** | JIT/coerce workflow from spec is not realized. |
+
+
+

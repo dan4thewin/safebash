@@ -1,0 +1,134 @@
+Now I have enough information to perform the gap analysis. Let me compile my findings:
+
+## Coverage Gap Analysis: SUBSET.md vs Implementation
+
+### 1. SC2294 — eval negates benefit of arrays
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2294 |
+| **Spec says** | reject — "Drop eval" |
+| **Code does** | Not implemented (only SB4001 catches `eval`) |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Low — SB4001 already rejects all `eval`, so SC2294 is redundant |
+
+### 2. SC2089/SC2090 — Quotes in variables used as commands
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2089, SC2090 |
+| **Spec says** | reject — "Intent unclear — use an array" |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Medium — requires data-flow analysis to detect stored command strings |
+
+### 3. SC2048/SC2068 — Unquoted `$*` / `$@` / array expansions
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2048, SC2068 |
+| **Spec says** | coerce — Change to quoted `"$@"` / `"${array[@]}"` |
+| **Code does** | Handled generically by SC2086 rule |
+| **Gap type** | AMBIGUOUS |
+| **Impact** | Low — correctly detected but wrong code emitted (SC2086 vs SC2048/SC2068) |
+
+### 4. SC2206/SC2207 — Unquoted expansion in array assignment
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2206, SC2207 |
+| **Spec says** | reject — "Use `mapfile` or `read -a`" |
+| **Code does** | `is_quoted_or_safe()` returns `false` for `array` parent but emits coerce, not reject |
+| **Gap type** | INCONSISTENT |
+| **Impact** | Medium — spec says reject, code coerces |
+
+### 5. SC2231 — Unquoted expansion in for-loop glob
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2231 |
+| **Spec says** | coerce — "Quote the variable part" |
+| **Code does** | Not specifically implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Low — SC2086 likely catches most cases |
+
+### 6. SC2254 — Unquoted expansion in case pattern
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2254 |
+| **Spec says** | coerce — "Add double quotes for literal match" |
+| **Code does** | Only checks `case_statement` value field (match value), not patterns |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Medium — case patterns are not checked |
+
+### 7. Category 3: Deprecated Syntax (7 rules)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2007, SC2003, SC2219, SC2196, SC2197, SC2230, SC2112, SC2268 |
+| **Spec says** | coerce — Convert to modern equivalents |
+| **Code does** | Not implemented (only SC2006 backticks implemented) |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Medium — deprecated syntax passes validation |
+
+### 8. Category 4: Test Constructs (7 rules beyond SC2292)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2070, SC2074, SC2081, SC2107, SC2109, SC2166, SC2130, SC2071 |
+| **Spec says** | Various coerce/reject actions |
+| **Code does** | Only SC2292 (`[ ]` vs `[[ ]]`) implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Low — SC2292 covers the coerce cases; SC2130/SC2071 type errors not caught |
+
+### 9. Category 5: Subshell/Scope (SC2030/SC2031)
+| Field | Value |
+|-------|-------|
+| **Rule** | SC2030, SC2031 |
+| **Spec says** | reject — Variable modified in subshell |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | High — common source of bugs, explicitly noted as rejectable at CST level |
+
+### 10. Category 6: Safety (SC2164, SC2115, SC2155, SC2064, SC2162, SC2172)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2164, SC2115, SC2155, SC2064, SC2162, SC2172 |
+| **Spec says** | Various coerce/reject actions |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | High — SC2164 (cd without exit) and SC2115 (rm -rf $dir/) are critical safety rules |
+
+### 11. Category 7: Arrays (SC2128, SC2199, SC2198, SC2124, SC2178, SC2190, SC2313)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2128, SC2199, SC2198, SC2124, SC2178, SC2190, SC2313 |
+| **Spec says** | Various reject/coerce actions |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Medium — array misuse is common but less dangerous |
+
+### 12. Category 8: Command Safety (SC2045, SC2044, SC2156, SC2035)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2045, SC2044, SC2156, SC2035 |
+| **Spec says** | Various reject/coerce actions |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Medium — iterating over `ls`/`find` output is a common anti-pattern |
+
+### 13. Category 9: Arithmetic (SC2004, SC2255, SC2304)
+| Field | Value |
+|-------|-------|
+| **Rules** | SC2004, SC2255, SC2304 |
+| **Spec says** | coerce/reject |
+| **Code does** | Not implemented |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Low — arithmetic issues rarely cause safety problems |
+
+### 14. Severity::Inform — Missing from implementation
+| Field | Value |
+|-------|-------|
+| **Rule** | N/A (infrastructure) |
+| **Spec says** | `inform` severity for warnings that don't block compilation |
+| **Code does** | `Severity` enum has Error, Coerce, Deferred, Marker — no Inform |
+| **Gap type** | MISSING_IMPL |
+| **Impact** | Low — inform rules can't be implemented until severity exists |
+
+---
+
+**Summary:** 5 implemented rules (SB4001–SB4004, SC2006, SC2046, SC2086, SC2292), ~50 specified but not implemented. The highest-impact gaps are SC2030/SC2031 (subshell scope), SC2164 (cd without exit), and SC2115 (rm -rf safety).
+

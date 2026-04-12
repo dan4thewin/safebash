@@ -1,0 +1,255 @@
+Here are HIGH and MEDIUM severity semantic fidelity issues in the IR design and lowering, based on the provided code:
+
+---
+
+### 1. Bash Arrays: Indexed and Associative
+
+**Bash Construct:**  
+- Indexed: `arr[2]=foo`
+- Associative: `declare -A map; map[bar]=baz`
+
+**What Bash Does:**  
+- Supports both indexed and associative arrays. Assignment, expansion, and iteration semantics differ from scalars.
+
+**What the IR Represents:**  
+- `Assignment { name: "arr[2]", value: ... }` (name is a string, not structured)
+- No distinction between scalar and array assignment; no explicit array/associative type.
+
+**Impact:**  
+- Loses distinction between scalar and array variables.
+- Cannot represent array element assignment, indexed access, or associative keys.
+- Breaks round-trip and disables correct semantic analysis, e.g., for `for i in "${arr[@]}"`.
+
+**Severity:** HIGH
+
+---
+
+### 2. Function Definitions: Local Scope and Redefinition
+
+**Bash Construct:**  
+```bash
+foo() { ... }
+function foo { ... }
+```
+
+**What Bash Does:**  
+- Functions can be redefined at runtime.
+- Functions have their own local scope for variables (with `local`).
+- `function` keyword (with/without parentheses) is supported.
+
+**What the IR Represents:**  
+- `Function { name, body }` (no distinction between `foo()` and `function foo`)
+- No representation of function redefinition or local variable scope.
+
+**Impact:**  
+- Cannot distinguish between function definition forms.
+- No way to model function-local variable scope or redefinition semantics.
+- May miscompile scripts that rely on dynamic function redefinition or local variable shadowing.
+
+**Severity:** MEDIUM
+
+---
+
+### 3. Command/Word Splitting and Globbing
+
+**Bash Construct:**  
+```bash
+echo $foo
+echo "$foo"
+ls *.txt
+```
+
+**What Bash Does:**  
+- Word splitting and globbing are context-sensitive: unquoted expansions are split and globbed, quoted are not.
+
+**What the IR Represents:**  
+- `ExprKind::Literal`, `ExprKind::SimpleExpansion`, `ExprKind::DoubleQuoted`, etc., but no explicit flag for "needs splitting/globbing" at the command argument level.
+
+**Impact:**  
+- IR does not encode whether an argument should be split or globbed, only the syntactic form.
+- Downstream passes cannot reliably reconstruct Bash's context-sensitive evaluation.
+
+**Severity:** HIGH
+
+---
+
+### 4. Redirections: Ambiguous/Multiple Redirections
+
+**Bash Construct:**  
+```bash
+echo foo >a >b
+```
+
+**What Bash Does:**  
+- Only the last redirection for a given FD takes effect.
+
+**What the IR Represents:**  
+- `Redirected { body, redirects: Vec<Redirect> }` — all redirections are preserved, but no ordering or FD conflict resolution.
+
+**Impact:**  
+- IR consumer must reimplement Bash's FD resolution rules; risk of miscompilation if not handled.
+- Not a loss of information, but a risk of semantic change if not modeled carefully.
+
+**Severity:** MEDIUM
+
+---
+
+### 5. Subshells vs. Groups: Variable Scope
+
+**Bash Construct:**  
+```bash
+( x=1 )   # subshell: changes do not persist
+{ x=1; }  # group: changes persist in current shell
+```
+
+**What Bash Does:**  
+- Subshells run in a child process; variable changes are not visible outside.
+- Groups run in the same shell; changes persist.
+
+**What the IR Represents:**  
+- `Subshell { body }` vs. `Group { body }` — distinction is present.
+
+**Impact:**  
+- If IR consumers do not treat these differently, semantic changes will occur.
+- The IR itself preserves the distinction, but the risk is in downstream handling.
+
+**Severity:** MEDIUM
+
+---
+
+### 6. Test Command: [ vs [[
+
+**Bash Construct:**  
+```bash
+[ "$a" = "$b" ]
+[[ $a == $b ]]
+```
+
+**What Bash Does:**  
+- `[ ... ]` is a command, subject to word splitting and globbing.
+- `[[ ... ]]` is a keyword, no word splitting or globbing, different operator set.
+
+**What the IR Represents:**  
+- Both are lowered to `StmtKind::Command` with name `[[` and args, or to `ExprKind::Test`.
+- No explicit distinction between `[ ... ]` and `[[ ... ]]` in the IR.
+
+**Impact:**  
+- Loses semantic differences: word splitting, globbing, operator set, and error handling.
+- Downstream passes cannot distinguish between the two forms.
+
+**Severity:** HIGH
+
+---
+
+### 7. Here Documents: Quoting and Expansion
+
+**Bash Construct:**  
+```bash
+cat <<EOF
+$foo
+EOF
+
+cat <<'EOF'
+$foo
+EOF
+```
+
+**What Bash Does:**  
+- Quoted heredoc delimiters disable expansion; unquoted enable it.
+
+**What the IR Represents:**  
+- `RedirectOp::HereDoc`, but no field for whether the delimiter was quoted.
+
+**Impact:**  
+- Cannot determine if expansions should occur in heredoc content.
+- Breaks scripts relying on literal vs. expanded heredocs.
+
+**Severity:** HIGH
+
+---
+
+### 8. Arithmetic Contexts: let, ((...)), $((...))
+
+**Bash Construct:**  
+```bash
+let "a = 1 + 2"
+(( a = 1 + 2 ))
+a=$((1 + 2))
+```
+
+**What Bash Does:**  
+- Arithmetic contexts have different parsing and error rules than normal commands or expansions.
+
+**What the IR Represents:**  
+- `ExprKind::ArithmeticExpansion(String)` for `$((...))`, but `let` and `((...))` as commands or statements, not as arithmetic contexts.
+
+**Impact:**  
+- Loses distinction between arithmetic statements and arithmetic expansions.
+- May miscompile scripts that rely on arithmetic context side effects or error handling.
+
+**Severity:** MEDIUM
+
+---
+
+### 9. Special Builtins: set, eval, exec, trap
+
+**Bash Construct:**  
+```bash
+set -e
+eval "$foo"
+exec ls
+trap 'echo hi' EXIT
+```
+
+**What Bash Does:**  
+- Special builtins affect shell state, error handling, and control flow.
+
+**What the IR Represents:**  
+- All as `Command { name, args }`, no distinction for special builtins.
+
+**Impact:**  
+- IR consumer must know which commands are special builtins and handle them accordingly.
+- Not a loss of information, but a risk of semantic change if not modeled.
+
+**Severity:** MEDIUM
+
+---
+
+### 10. Compound Assignments: Multiple Variables
+
+**Bash Construct:**  
+```bash
+read a b
+declare x=1 y=2
+```
+
+**What Bash Does:**  
+- Some commands and declarations can assign multiple variables at once.
+
+**What the IR Represents:**  
+- `Declaration { assignments: Vec<Assignment> }` — supports multiple assignments, but for `read`, arguments are just command args, not assignments.
+
+**Impact:**  
+- For `read`, IR does not represent variable assignment semantics, only as a command with arguments.
+
+**Severity:** MEDIUM
+
+---
+
+## Summary Table
+
+| # | Construct                  | Severity |
+|---|----------------------------|----------|
+| 1 | Arrays (indexed/assoc)     | HIGH     |
+| 2 | Function scope/redef       | MEDIUM   |
+| 3 | Word splitting/globbing    | HIGH     |
+| 4 | Redirection conflicts      | MEDIUM   |
+| 5 | Subshell vs. group scope   | MEDIUM   |
+| 6 | [ vs [[ test commands      | HIGH     |
+| 7 | Heredoc quoting/expansion  | HIGH     |
+| 8 | Arithmetic contexts        | MEDIUM   |
+| 9 | Special builtins           | MEDIUM   |
+|10 | Compound assignments       | MEDIUM   |
+
+Let me know if you want detailed examples or further analysis for any item.
+

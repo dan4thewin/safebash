@@ -1,0 +1,53 @@
+Based on my analysis of the safebash specification against its implementation, here are the significant coverage gaps:
+
+## Critical Missing Implementations (MISSING_IMPL)
+
+### **Safety-Critical Rules**
+1. **SC2048** - Unquoted `$*`/`${array[*]}`: Should coerce to `"$@"`/`"${array[@]}"` to prevent array word splitting with whitespace
+2. **SC2068** - Unquoted `$@`/`${array[@]}`: Should coerce to add double quotes for same reason  
+3. **SC2206** - Unquoted expansion in array assignment: Should reject as ambiguous (use mapfile/read -a)
+4. **SC2207** - Unquoted `$(cmd)` in array assignment: Should reject as unsafe array construction
+5. **SC2030/SC2031** - Variable modifications in pipeline subshells: Should reject as changes are lost 
+6. **SC2164** - `cd` without error handling: Should coerce (JIT: append `|| exit 1`, AOT: error)
+7. **SC2115** - `rm -rf $dir/` may expand to `rm -rf /`: Should reject without `${var:?}` guard
+8. **SC2128** - `$array` only gives first element: Should reject, require `"${array[@]}"`
+9. **SC2045** - Iterating over `ls` output: Should reject (use globs instead)
+10. **SC2044** - For loops over `find` output: Should reject (use `find -exec` or `while read`)
+11. **SC2156** - Filename injection in `-exec sh -c`: Should reject (use parameters)
+
+### **Type Safety Rules**
+12. **SC2130** - `-eq` for string comparison: Should reject as type error
+13. **SC2071** - `>` for numeric comparison: Should reject as type error
+14. **SC2294** - `eval` negating array benefits: Should reject
+
+## High-Priority Missing Implementations
+
+### **Test Construct Safety**
+15. **SC2070/SC2074/SC2107/SC2109/SC2166** - Various `[ ]` limitations: Should coerce all to `[[ ]]`
+16. **SC2199/SC2198** - Arrays in test constructs: Should reject, require loops
+
+### **Command Safety** 
+17. **SC2035** - Glob as first argument: Should coerce to prefix with `./`
+18. **SC2089/SC2090** - Variables as commands with quotes: Should reject as unclear intent
+
+### **Data Safety**
+19. **SC2155** - `export foo=$(cmd)` masks return value: Should coerce to separate declaration/assignment  
+20. **SC2162** - `read` without `-r` mangles backslashes: Should coerce to add `-r`
+21. **SC2064** - Trap string expansion timing: Should coerce to single quotes
+
+## Implementation Inconsistencies (INCONSISTENT)
+
+22. **SB4004** - Variable-as-command detection: Implementation only handles non-word commands, may miss cases where word nodes contain variable expansions
+
+## Ambiguities Needing Verification (AMBIGUOUS)
+
+23. **SC2086** - Unquoted expansion context detection: Implementation has custom logic that may not match all spec-defined safe contexts (assignment RHS, `[[ ]]`, `$(( ))`, etc.)
+
+## Impact Assessment
+
+**Critical gaps** (12 rules): Could lead to data loss, security vulnerabilities, or silent failures
+**High-priority gaps** (8 rules): Affect reliability and type safety  
+**Medium/Low gaps** (40+ rules): Affect style, portability, and code quality
+
+The implementation covers only 5 of ~65 specified rules, with significant gaps in array handling, test constructs, pipeline safety, and command injection prevention. The most urgent missing implementations are the safety-critical rules that prevent filesystem damage, data corruption, and command injection.
+

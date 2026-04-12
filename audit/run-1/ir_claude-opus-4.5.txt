@@ -1,0 +1,326 @@
+The lower.rs file is large. Let me read it in sections to understand the CST→IR lowering logic:
+
+Now I have a complete picture of the IR types and lowering logic. Let me produce my findings on semantic fidelity issues:
+
+---
+
+# Bash-to-IR Semantic Fidelity Audit
+
+## Finding 1: Heredoc Expansion Mode Lost
+
+**Bash construct:**
+```bash
+cat <<EOF       # Variables expanded
+Hello $USER
+EOF
+
+cat <<'EOF'     # Variables NOT expanded (literal)
+Hello $USER
+EOF
+
+cat <<-EOF      # Tabs stripped from content
+	indented
+EOF
+```
+
+**What Bash does:** `<<EOF` expands variables, `<<'EOF'` treats content literally, `<<-EOF` strips leading tabs.
+
+**What IR represents:** `RedirectOp::HereDoc` with no flag distinguishing quoted vs unquoted delimiter or dash prefix. The delimiter and content are lowered via `lower_expr()` but quoting distinction is lost.
+
+**Impact:** Compiler cannot know whether to expand variables in heredoc content or strip tabs.
+
+**Severity:** HIGH — Variables will be incorrectly expanded or left literal.
+
+---
+
+## Finding 2: Process Substitution Not Handled
+
+**Bash construct:**
+```bash
+diff <(cmd1) <(cmd2)
+tee >(logger)
+```
+
+**What Bash does:** `<()` runs cmd in a subshell, provides a `/dev/fd/N` path. `>()` provides a writable fd.
+
+**What IR represents:** Not represented. Falls through to the default case at line 690-693, becomes `ExprKind::Literal("<(cmd1)")` — the raw text.
+
+**Impact:** Process substitutions treated as literal filenames; commands will fail to find `/dev/fd/...`.
+
+**Severity:** HIGH — Behavior completely broken.
+
+---
+
+## Finding 3: Brace Expansion Not Distinguished
+
+**Bash construct:**
+```bash
+echo {a,b,c}
+echo file{1..10}.txt
+```
+
+**What Bash does:** Expands to `a b c` or `file1.txt file2.txt ... file10.txt` before globbing.
+
+**What IR represents:** `ExprKind::Literal("{a,b,c}")` — raw text, indistinguishable from a literal brace pattern.
+
+**Impact:** Brace expansion won't occur; `{a,b,c}` passed as a single argument.
+
+**Severity:** HIGH — Multiple-argument expansion becomes single-argument literal.
+
+---
+
+## Finding 4: `;;;&` Case Fallthrough Variant Not Captured
+
+**Bash construct:**
+```bash
+case $x in
+  a) echo a ;;    # stop
+  b) echo b ;&    # fallthrough to next body
+  c) echo c ;;&   # fallthrough to test next pattern
+esac
+```
+
+**What Bash does:** `;;` stops, `;&` falls through unconditionally, `;;&` tests the next pattern (Bash 4.0+).
+
+**What IR represents:** `CaseItem.fallthrough: bool` only distinguishes `;;` vs `;&`. The `;;&` variant is conflated with `;&`.
+
+**Impact:** `;;&&` (continue pattern matching) treated as unconditional fallthrough.
+
+**Severity:** MEDIUM — Different control flow for `;;&` cases.
+
+---
+
+## Finding 5: `trap` Command Not Represented
+
+**Bash construct:**
+```bash
+trap 'cleanup' EXIT
+trap 'handle_int' SIGINT
+trap - SIGTERM
+```
+
+**What Bash does:** Registers/clears signal handlers affecting script execution flow.
+
+**What IR represents:** Parsed as a regular `Command` with name `trap` and string arguments.
+
+**Impact:** No semantic knowledge that signals are being trapped; static analysis cannot reason about cleanup paths.
+
+**Severity:** MEDIUM — Information loss for flow analysis.
+
+---
+
+## Finding 6: Coproc Not Handled
+
+**Bash construct:**
+```bash
+coproc myproc { cmd; }
+echo "data" >&"${myproc[1]}"
+```
+
+**What Bash does:** Launches a coprocess with bidirectional pipes, sets `$COPROC` array.
+
+**What IR represents:** Falls through to default case — `lower_statement` returns `None` for `coproc` node kind (line 100).
+
+**Impact:** Coproc statements silently dropped from IR.
+
+**Severity:** HIGH — Entire statement lost.
+
+---
+
+## Finding 7: Extended Glob Semantics Not Preserved
+
+**Bash construct:**
+```bash
+echo ?(pattern)   # zero or one
+echo *(pattern)   # zero or more  
+echo +(pattern)   # one or more
+echo @(a|b)       # exactly one of
+echo !(pattern)   # not matching
+```
+
+**What Bash does:** When `extglob` is set, these are special patterns.
+
+**What IR represents:** `ExprKind::Literal("?(pattern)")` — raw text. The code at line 601 handles `extglob_pattern` but just captures the text.
+
+**Impact:** No distinction between extended glob and literal text containing `?()`.
+
+**Severity:** MEDIUM — Depends on whether extglob is enabled at runtime.
+
+---
+
+## Finding 8: Array Subscript Assignment Lost
+
+**Bash construct:**
+```bash
+arr[0]=value
+arr+=("append")
+declare -A hash; hash[key]=value
+```
+
+**What Bash does:** Assigns to specific array index or appends.
+
+**What IR represents:** `Assignment.name` captures full `arr[0]` as a string (lines 107-112), but the `+=` operator is not distinguished from `=`.
+
+**Impact:** `arr+=value` (append) conflated with `arr=value` (assign).
+
+**Severity:** HIGH — String append vs replace is different behavior.
+
+---
+
+## Finding 9: `declare` Flags Not Semantically Interpreted
+
+**Bash construct:**
+```bash
+declare -i num=5    # integer arithmetic
+declare -a arr      # indexed array
+declare -A hash     # associative array
+declare -r const=1  # readonly
+declare -x exported # export
+declare -l lower    # lowercase
+declare -u upper    # uppercase
+```
+
+**What Bash does:** Each flag changes variable semantics (integer arithmetic, array type, etc.).
+
+**What IR represents:** Flags stored as `Vec<String>` (line 99), but not interpreted. `-i` (integer) is just a string, not a semantic marker.
+
+**Impact:** Compiler cannot know `$((num + 1))` uses integer semantics, or that `hash[key]` is associative.
+
+**Severity:** MEDIUM — Loss of type information for analysis.
+
+---
+
+## Finding 10: `select` Loop Not Handled
+
+**Bash construct:**
+```bash
+select choice in a b c; do
+    echo "You chose $choice"
+    break
+done
+```
+
+**What Bash does:** Interactive menu selection loop.
+
+**What IR represents:** Falls through at line 100 — `select_statement` not matched.
+
+**Impact:** `select` statements silently dropped.
+
+**Severity:** HIGH — Entire construct lost.
+
+---
+
+## Finding 11: Arithmetic `let` and `(())` Constructs
+
+**Bash construct:**
+```bash
+let x=1+2
+let "x += 5"
+((x++))
+(( y = x * 2 ))
+```
+
+**What Bash does:** `let` and `(())` perform arithmetic; `(())` as a statement sets exit code.
+
+**What IR represents:** `let` becomes a `Command` with name "let". `(())` falls through (it's an `arithmetic_expansion` at statement level, not expression level).
+
+**Impact:** `(( x++ ))` may be dropped or misrepresented; no arithmetic statement type.
+
+**Severity:** MEDIUM — Arithmetic side effects not modeled.
+
+---
+
+## Finding 12: `[` vs `[[` Not Distinguished
+
+**Bash construct:**
+```bash
+[ -f "$file" ]    # POSIX test, word splitting applies
+[[ -f $file ]]    # Bash test, no word splitting
+[[ $x =~ regex ]] # Regex only in [[
+```
+
+**What Bash does:** `[` is a command with different quoting rules; `[[` is a keyword with special parsing.
+
+**What IR represents:** Both render to `ExprKind::Test` or a command with name `[[` (lines 86-95, 286-290).
+
+**Impact:** Quoting requirements differ; regex `=~` only valid in `[[`.
+
+**Severity:** MEDIUM — Semantic conflation.
+
+---
+
+## Finding 13: Here-String Content Type
+
+**Bash construct:**
+```bash
+cat <<< "expanded $var"
+cat <<< 'literal'
+cat <<< $var
+```
+
+**What Bash does:** Expands the word (double-quoted context by default), feeds as stdin.
+
+**What IR represents:** `RedirectOp::HereString` with target lowered via `lower_expr()`. The quoting is preserved in `target`, but `$var` without quotes behaves like double-quoted.
+
+**Impact:** `cat <<< $var` — unquoted variable behaves as quoted but IR shows `SimpleExpansion`.
+
+**Severity:** LOW — Usually correct, edge cases around word splitting differ.
+
+---
+
+## Finding 14: Background Operator `&` Not Represented
+
+**Bash construct:**
+```bash
+long_running_cmd &
+cmd1 & cmd2 &
+```
+
+**What Bash does:** Runs command asynchronously, returns immediately.
+
+**What IR represents:** Not captured. The `&` is parsed by tree-sitter as part of a list or separate, but lowering doesn't model async execution.
+
+**Impact:** No knowledge of which commands run in background; wait semantics lost.
+
+**Severity:** MEDIUM — Execution model not captured.
+
+---
+
+## Finding 15: Quoting in Glob Patterns
+
+**Bash construct:**
+```bash
+ls *.txt         # glob expands
+ls "*.txt"       # literal *.txt
+ls '*.txt'       # literal *.txt
+```
+
+**What Bash does:** Quoted globs are literal; unquoted expand.
+
+**What IR represents:** `ExprKind::Literal("*.txt")` for unquoted, `SingleQuoted`/`DoubleQuoted` for quoted. **This is correct**, but downstream must check variant.
+
+**Impact:** None if downstream checks `ExprKind` variant.
+
+**Severity:** LOW — Information preserved.
+
+---
+
+## Summary Table
+
+| # | Construct | Severity | Issue |
+|---|-----------|----------|-------|
+| 1 | Heredoc quoting | HIGH | `<<'EOF'` vs `<<EOF` indistinguishable |
+| 2 | Process substitution | HIGH | `<(cmd)` becomes literal text |
+| 3 | Brace expansion | HIGH | `{a,b,c}` not expanded |
+| 4 | `;;&` case | MEDIUM | Conflated with `;&` |
+| 5 | `trap` | MEDIUM | Just a command, no semantic model |
+| 6 | `coproc` | HIGH | Silently dropped |
+| 7 | Extended glob | MEDIUM | No distinction from literal |
+| 8 | `+=` assignment | HIGH | Conflated with `=` |
+| 9 | `declare` flags | MEDIUM | Not semantically interpreted |
+| 10 | `select` | HIGH | Silently dropped |
+| 11 | `let`/`(())` stmt | MEDIUM | Arithmetic statements mishandled |
+| 12 | `[` vs `[[` | MEDIUM | Conflated |
+| 13 | Here-string | LOW | Edge cases |
+| 14 | Background `&` | MEDIUM | Not modeled |
+

@@ -1,0 +1,101 @@
+Here is a coverage gap analysis between the safebash specification (SUBSET.md) and the implementation (rules in mod.rs and submodules):
+
+---
+
+### 1. SC2048, SC2068, SC2206, SC2207, SC2231, SC2254, SC2291, SC2248 (Quoting and Word Splitting)
+- **Spec:** Requires handling of various unquoted expansions, array assignments, for-loop globs, and case patterns.
+- **Code:** Only SC2086 (unquoted expansion) and SC2046 (unquoted command substitution) are implemented in `unquoted_expansion.rs`. The rest are not present.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Scripts with these unsafe patterns may not be detected or fixed, reducing safety.
+
+---
+
+### 2. SC2089, SC2090, SB4004 (Dynamic Execution)
+- **Spec:** Rejects ambiguous command variables and quotes in command names; SB4004 defers variable-as-command to SSA.
+- **Code:** SB4004 is deferred in `dynamic_execution.rs`, but SC2089/SC2090 are not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Unsafe command execution patterns may go undetected.
+
+---
+
+### 3. SC2007, SC2003, SC2219, SC2196, SC2197, SC2230, SC2112, SC2268 (Deprecated Syntax)
+- **Spec:** Requires coercion of legacy syntax (e.g., $[expr], expr, let, egrep, fgrep, which, function keyword, x-prefix).
+- **Code:** Only SC2006 (backtick substitution) is implemented in `backtick_substitution.rs`.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Legacy, ambiguous, or unsafe syntax may not be upgraded or rejected.
+
+---
+
+### 4. SC2070, SC2074, SC2081, SC2107, SC2109, SC2166, SC2130, SC2071 (Test Constructs)
+- **Spec:** Requires coercion/rejection of various `[ ]` test patterns and type errors.
+- **Code:** Only SC2292 ([ ] vs [[ ]]) is implemented in `single_bracket_test.rs`.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Unsafe or ambiguous test expressions may not be detected.
+
+---
+
+### 5. SC2030, SC2031, SC2033, SC2106 (Subshell and Scope)
+- **Spec:** Rejects variable modification in subshells, informs on function passing and exit in pipelines.
+- **Code:** Not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Subtle bugs from subshell scope may not be caught.
+
+---
+
+### 6. SC2164, SC2115, SC2155, SC2064, SC2162, SC2172, SC2181, SC2310, SC2311, SC2251 (Safety and Robustness)
+- **Spec:** Requires coercion/rejection/informing on unsafe `cd`, `rm`, export, trap, read, signal, and error handling patterns.
+- **Code:** Not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Dangerous or brittle constructs may be allowed.
+
+---
+
+### 7. SC2128, SC2199, SC2198, SC2124, SC2178, SC2179, SC2180, SC2190, SC2313 (Arrays)
+- **Spec:** Rejects/informs on unsafe or incorrect array usage.
+- **Code:** Not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Array misuse may go undetected.
+
+---
+
+### 8. SC2045, SC2010, SC2044, SC2156, SC2035, SC2012 (Command and Process Safety)
+- **Spec:** Rejects/informs on unsafe iteration, globbing, and command injection.
+- **Code:** Not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Unsafe file and process handling may be missed.
+
+---
+
+### 9. SC2004, SC2080, SC2079, SC2255, SC2304 (Arithmetic)
+- **Spec:** Coerce/reject/inform on arithmetic issues.
+- **Code:** Not implemented.
+- **Gap type:** MISSING_IMPL
+- **Impact:** Arithmetic bugs or ambiguities may persist.
+
+---
+
+### 10. SB4002 (source/. marker)
+- **Spec:** `source`/`.` are not rejected but marked for special compilation.
+- **Code:** Implemented as a marker in `dynamic_execution.rs`.
+- **Gap type:** None (correctly matched).
+
+---
+
+### 11. Ambiguity: is_quoted_or_safe logic
+- **Spec:** Only certain contexts suppress word splitting.
+- **Code:** The `is_quoted_or_safe` function in `unquoted_expansion.rs` may not fully match the spec's context list (e.g., array assignments, for-loop globs, case patterns).
+- **Gap type:** AMBIGUOUS/INCONSISTENT
+- **Impact:** Some expansions may be incorrectly considered safe or unsafe, leading to false positives/negatives.
+
+---
+
+### 12. Out of Scope/Deferred Items
+- **Spec:** Explicitly defers SC1xxx, SC3xxx, style, and unused variable rules.
+- **Code:** No implementation, as intended.
+- **Gap type:** None (correctly deferred).
+
+---
+
+**Summary:**  
+Most rules in the spec are not yet implemented; only a handful (SB4001, SB4002, SB4003, SB4004, SC2086, SC2046, SC2006, SC2292) are present. The main gap is MISSING_IMPL, with some potential AMBIGUOUS/INCONSISTENT handling of expansion contexts. This limits safebash's ability to enforce its safety guarantees.
+

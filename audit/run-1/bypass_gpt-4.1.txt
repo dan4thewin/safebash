@@ -1,0 +1,143 @@
+● Read mod.rs
+  │ exp/011-validator-framework/src/rules/mod.rs
+  └ 24 lines read
+
+● Read backtick_substitution.rs
+  │ exp/011-validator-framework/src/rules/backtick_substitution.rs
+  └ 28 lines read
+
+● Read unquoted_expansion.rs
+  │ exp/011-validator-framework/src/rules/unquoted_expansion.rs
+  └ 92 lines read
+
+● Read indirect_expansion.rs
+  │ exp/011-validator-framework/src/rules/indirect_expansion.rs
+  └ 28 lines read
+
+● Read single_bracket_test.rs
+  │ exp/011-validator-framework/src/rules/single_bracket_test.rs
+  └ 55 lines read
+
+● Read dynamic_execution.rs
+  │ exp/011-validator-framework/src/rules/dynamic_execution.rs
+  └ 51 lines read
+
+● Read SUBSET.md
+  │ exp/SUBSET.md
+  └ 340 lines read
+
+● Read integration.rs
+  │ exp/011-validator-framework/tests/integration.rs
+  └ 335 lines read
+
+I've reviewed the safebash validator rules and implementation. Here are initial CRITICAL/HIGH bypass ideas, with explanations:
+
+---
+
+### 1. Dangerous Use of `declare -n` (Nameref) for Indirect Assignment
+
+**Script:**
+```bash
+declare -n ref=target
+ref="rm -rf /"   # Indirectly assigns to $target
+bash -c "$target"
+```
+
+**What it achieves:**  
+Arbitrary code execution by assigning a dangerous string to a variable via a nameref, then executing it.
+
+**Why the validator misses it:**  
+The validator explicitly allows `declare -n`/`local -n` (see SUBSET.md and tests). It does not check what is assigned via the nameref, nor how the referent is used. No rule checks for dangerous values being constructed or executed via this indirection.
+
+**Severity:**  
+CRITICAL
+
+---
+
+### 2. Command Injection via Safe Context Expansion
+
+**Script:**
+```bash
+cmd="ls; rm -rf /"
+bash -c "$cmd"
+```
+
+**What it achieves:**  
+Arbitrary code execution (injection) if `$cmd` is attacker-controlled.
+
+**Why the validator misses it:**  
+The validator only checks for `$cmd` as a command name (SB4004), not for expansions in argument position or inside double quotes. Expansions inside double quotes are considered "safe context" and not flagged (see unquoted_expansion.rs and SUBSET.md). No semantic analysis is done to check if the value is later executed.
+
+**Severity:**  
+CRITICAL
+
+---
+
+### 3. Dangerous Use of `source`/`.` with Malicious File
+
+**Script:**
+```bash
+echo 'KEY=$(rm -rf /)' > evil.env
+source evil.env
+```
+
+**What it achieves:**  
+Code execution via malicious environment file.
+
+**Why the validator misses it:**  
+The validator marks `source`/`.` as a marker (SB4002) and relies on the runtime helper (`sash-expand`) to validate the file. If the helper is bypassed or has a bug, this is a risk. However, if the helper is robust, this is not a direct validator bypass.
+
+**Severity:**  
+HIGH (if helper is buggy), else MEDIUM
+
+---
+
+### 4. Variable-as-Command Deferred to SSA
+
+**Script:**
+```bash
+cmd="rm"
+$cmd -rf /
+```
+
+**What it achieves:**  
+Arbitrary code execution.
+
+**Why the validator misses it:**  
+The validator defers `$cmd` as command name to SSA (SB4004). If SSA is not implemented or is incomplete, this is a CRITICAL bypass.
+
+**Severity:**  
+CRITICAL (if SSA is not enforced)
+
+---
+
+### 5. Dangerous Use of Arrays and Indirect Expansion
+
+**Script:**
+```bash
+declare -a arr
+i=0
+arr[$i]="rm -rf /"
+bash -c "${arr[0]}"
+```
+
+**What it achieves:**  
+Arbitrary code execution.
+
+**Why the validator misses it:**  
+No rule checks for array contents or their use in command execution. The validator only checks for array misuse (SC2128, etc.), not for dangerous values.
+
+**Severity:**  
+HIGH
+
+---
+
+**Summary:**  
+The validator's CST-only approach and explicit allowance of namerefs, variable indirection, and expansions in "safe" contexts allow several CRITICAL/HIGH bypasses. Most stem from lack of semantic analysis—dangerous values can be constructed and executed without triggering any diagnostics.
+
+Would you like more detailed PoCs or further exploration of these vectors?
+
+
+Changes   +0 -0
+Requests  0 Premium (24s)
+Tokens    ↑ 53.2k • ↓ 1.1k • 25.7k (cached)

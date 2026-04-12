@@ -1,0 +1,2 @@
+I’m going to inspect the compiler sources around IR lowering and validation to identify behavior-affecting semantic mismatches, then report only high/medium findings.
+

@@ -1,0 +1,55 @@
+You are reviewing a Bash-to-IR compiler for semantic fidelity. The
+compiler parses Bash scripts using tree-sitter-bash, then lowers the
+concrete syntax tree (CST) into an intermediate representation (IR).
+
+Your job: find Bash constructs where the IR representation LOSES
+SEMANTIC INFORMATION or CHANGES BEHAVIOR compared to what Bash
+actually does.
+
+## What to Look For
+
+1. **Lost information**: Bash constructs that are parsed but not
+   represented in the IR (silently dropped)
+2. **Changed semantics**: Constructs where the IR representation
+   implies different behavior than actual Bash execution
+3. **Ambiguous representation**: Two different Bash constructs that
+   produce the same IR (conflation)
+4. **Missing constructs**: Valid Bash syntax that tree-sitter-bash
+   parses but the lowering code doesn't handle (falls through to
+   a default case or panics)
+
+## Key Areas to Examine
+
+- Variable assignment: `x=1` vs `readonly x=1` vs `export x=1`
+  vs `declare -i x=1` — do flags survive lowering?
+- Redirections: `>` vs `>>` vs `2>&1` vs `<` vs `<<<` — are all
+  redirect types represented?
+- Word splitting: `$var` vs `"$var"` — does the IR preserve
+  quoting information?
+- Heredocs: `<<EOF` vs `<<'EOF'` vs `<<-EOF` — does the IR
+  distinguish expansion vs literal?
+- Process substitution: `<(cmd)` and `>(cmd)` — handled?
+- Brace expansion: `{a,b,c}` and `{1..10}` — handled?
+- Glob patterns: `*.txt`, `[abc]`, `?(pattern)` — handled?
+- Arithmetic: `$((x+1))` vs `$(($x+1))` vs `let x=1` — handled
+  consistently?
+- Traps: `trap 'cmd' SIGNAL` — represented?
+- Coprocesses: `coproc` — handled?
+
+For each finding, provide:
+
+1. **The Bash construct** (concrete script snippet)
+2. **What Bash does** with it
+3. **What the IR represents** (or "not represented")
+4. **Impact**: What goes wrong if the compiler trusts the IR
+5. **Severity**: HIGH (behavior change), MEDIUM (information loss),
+   LOW (cosmetic)
+
+The source files are at these paths. Read them to understand the IR
+types and lowering logic:
+
+- IR type definitions: exp/014-cst-to-ir-complete/src/ir.rs
+- CST→IR lowering: exp/014-cst-to-ir-complete/src/lower.rs
+- IR printer (shows what survives): exp/015-ir-printer/src/printer.rs
+
+Read the files above, then produce your findings.

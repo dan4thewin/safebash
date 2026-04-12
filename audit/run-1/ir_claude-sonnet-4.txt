@@ -1,0 +1,106 @@
+I'll analyze the Bash-to-IR compiler for semantic fidelity issues. Let me start by examining the IR definitions, lowering logic, and printer to understand what information is preserved or lost.
+
+Now let me examine the lowering logic to understand how tree-sitter CST nodes are converted to IR:
+
+Now let me look for specific Bash constructs to test if they're properly handled. Let me check what tree-sitter-bash actually parses by examining some sample scripts:
+
+Now let me create a comprehensive analysis of semantic fidelity issues. Let me run some tests to see what constructs are missing:
+
+Now let me test some specific Bash constructs to see what's missing or incorrectly represented:
+
+Let me use the IR printer to get a cleaner view of what's happening:
+
+Now let me run some specific smaller tests to identify individual issues:
+
+Based on my analysis of the code and testing, I've identified several critical semantic fidelity issues in the Bash-to-IR compiler. Here are my findings:
+
+## Critical Semantic Fidelity Issues
+
+### 1. **Environment Variable Assignment Lost** (HIGH SEVERITY)
+**Bash construct:** `VAR=value command args`  
+**What Bash does:** Sets `VAR=value` in the environment for just this command  
+**What IR represents:** Just `command args` - the environment assignment is completely lost  
+**Impact:** The compiler would miss critical environment setup for commands, breaking scripts that rely on per-command environment variables  
+
+### 2. **Process Substitution Treated as Literal Text** (HIGH SEVERITY)
+**Bash construct:** `<(command)` and `>(command)`  
+**What Bash does:** Creates temporary FIFO/file descriptors  
+**What IR represents:** `ExprKind::Literal("<(command)")` - just string literals  
+**Impact:** Process substitution becomes meaningless text instead of executable constructs  
+
+### 3. **Brace Expansion Not Distinguished** (HIGH SEVERITY)
+**Bash construct:** `{1..10}`, `{a,b,c}`  
+**What Bash does:** Shell expands these before command execution  
+**What IR represents:** `ExprKind::Literal("{1..10}")` - just literal strings  
+**Impact:** Brace expansions won't be handled, breaking scripts that depend on them  
+
+### 4. **Heredoc Content Completely Lost** (HIGH SEVERITY)
+**Bash construct:** 
+```bash
+cat <<EOF
+content here
+$var expansion  
+EOF
+```
+**What Bash does:** Feeds multi-line content (with variable expansion) to command  
+**What IR represents:** `RedirectOp::HereDoc` with empty target  
+**Impact:** All heredoc content is silently dropped - scripts using heredocs will fail  
+
+### 5. **Heredoc Quote Style Information Lost** (MEDIUM SEVERITY)
+**Bash construct:** `<<EOF` vs `<<'EOF'` vs `<<-EOF`  
+**What Bash does:** Different expansion and indentation behavior  
+**What IR represents:** All as `RedirectOp::HereDoc` with no distinction  
+**Impact:** Scripts expecting literal vs expanded heredocs will behave incorrectly  
+
+### 6. **Parameter Expansion Operators Incomplete** (HIGH SEVERITY)  
+**Bash construct:** `${var/old/new}` (substitution)  
+**What Bash does:** Pattern replacement within variable value  
+**What IR represents:** `${var/new}` - loses the search pattern  
+**Impact:** Complex parameter expansions are corrupted, breaking string manipulation  
+
+### 7. **Built-in Commands Lose Special Semantics** (MEDIUM SEVERITY)
+**Bash construct:** `exec`, `eval`, `source`, `builtin`, `command`  
+**What Bash does:** Special shell behaviors (exec replaces shell, eval parses/executes)  
+**What IR represents:** Just `StmtKind::Command` - treated as regular commands  
+**Impact:** Control flow and execution semantics are lost  
+
+### 8. **Missing Language Constructs** (HIGH SEVERITY)
+**Bash constructs not represented in IR:**
+- `trap` statements (signal handlers)  
+- `coproc` (coprocess creation)
+- `select` loops (menu selection)  
+- Background jobs (`&`)
+- `time` command prefix
+- `((arithmetic))` statements  
+- `let` assignments
+
+**What Bash does:** These have special parsing and execution semantics  
+**What IR represents:** Either fall through to default literals or are dropped  
+**Impact:** Major Bash features completely missing from compilation  
+
+### 9. **Array Subscript Assignment Context Lost** (MEDIUM SEVERITY)
+**Bash construct:** `arr[5]=value`  
+**What Bash does:** Array element assignment  
+**What IR represents:** Likely as variable name `arr[5]` in regular assignment  
+**Impact:** Array indexing semantics lost, incorrect variable names  
+
+### 10. **Test Command Ambiguity** (MEDIUM SEVERITY)
+**Bash construct:** `[[ ]]` vs `[ ]` vs `test`  
+**What Bash does:** Different expansion and operator support  
+**What IR represents:** All normalized to similar structures  
+**Impact:** Different test semantics conflated  
+
+### 11. **Function Definition Syntax Variants** (LOW SEVERITY)
+**Bash construct:** `function name { }` vs `name() { }`  
+**What Bash does:** Slightly different scoping rules  
+**What IR represents:** Both as `StmtKind::Function`  
+**Impact:** Minor semantic differences lost  
+
+### 12. **Glob Pattern Information** (MEDIUM SEVERITY)
+**Bash construct:** `*.txt`, `[abc]*.log`, `?(pattern)`  
+**What Bash does:** Shell expands these to matching filenames  
+**What IR represents:** `ExprKind::Literal` - just text  
+**Impact:** Glob expansion context lost, treated as literal strings  
+
+The most critical issues are the complete loss of environment assignments, heredoc content, and process substitution semantics - these represent major functional differences that would cause compiled scripts to behave completely differently from the original Bash.
+
