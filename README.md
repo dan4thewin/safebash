@@ -5,9 +5,9 @@ updates — but they cannot participate in a chain of trust. They cannot
 be signed, verified, or refused by the kernel when tampered with. This
 project changes that.
 
-This is a compiler for a safe, statically analyzable subset of Bash,
-implemented in Rust, that produces signed native artifacts whose
-integrity can be enforced at execution time.
+This is an experimental compiler for a safe, statically analyzable
+subset of Bash, implemented in Rust, that produces native artifacts
+whose integrity can be enforced at execution time.
 
 The chain of trust:
 
@@ -18,6 +18,70 @@ The chain of trust:
 
 Unsigned or tampered artifacts are refused. The script's behavior is
 visible in the source. The binary's integrity is guaranteed at runtime.
+
+---------------------------------------------------------------------
+
+## Current Status
+
+The end-to-end pipeline works. Bash scripts compile to ~16KB static
+ELF binaries with no libc dependency:
+
+```
+bash source → tree-sitter parse → 7 validator rules
+    → IR (14 stmt types, 10 expr types)
+        → SSA (versioned vars, phi nodes)
+            → Cranelift codegen → ld + libsash_rt.a
+                → static native binary
+```
+
+A demo script (`exp/026-end-to-end/demo.sh`) exercises variables,
+functions, command substitution, for-loops, conditionals, and external
+commands. The compiled binary produces byte-identical output to `bash`:
+
+```bash
+#!/bin/bash
+name="safebash"
+version="0.1.0"
+
+get_status() {
+    echo "operational"
+}
+status=$(get_status)
+
+echo "$name v$version"
+echo "status: $status"
+
+for phase in parse validate lower ssa codegen link; do
+    echo "  phase: $phase"
+done
+
+if [[ "$name" = "safebash" ]]; then
+    echo "chain of trust: verified"
+fi
+
+uname -s
+date +%Y-%m-%d
+```
+
+~520 tests across 30 experiments. 13 design decisions documented in
+`exp/JOURNAL.md`.
+
+---------------------------------------------------------------------
+
+## Quick Start
+
+```bash
+# Build the runtime
+cd sash-rt && cargo build --release && cd ..
+
+# Compile and run demo.sh
+cd exp/026-end-to-end
+cargo run -- ../../exp/026-end-to-end/demo.sh   # produces static ELF
+./demo                                           # run it
+
+# Run all tests
+cd exp && mk testall
+```
 
 ---------------------------------------------------------------------
 
@@ -54,61 +118,58 @@ does not sandbox the operations the script performs.
 
 ## Project Goals
 
-1. **Security and Signing**
+1. **Security and Signing** — *designed, not yet implemented*
 
    Compiled safe Bash artifacts:
-   - are produced as AOT-compiled native binaries
-   - are signed as part of the build pipeline
-   - are verified at load or execution time by system policy
+   - are produced as AOT-compiled native binaries ✅
+   - are signed as part of the build pipeline *(planned)*
+   - are verified at load or execution time by system policy *(planned)*
 
    The intent is to integrate with mechanisms like:
    - SELinux IPE (Integrity Policy Enforcement)
    - fs-verity or similar file integrity schemes
 
-   Exact details of the signing scheme, key management, and policy
-   integration are to be designed, but verifiable execution is a
-   first-class goal from the start.
+2. **Safe Subset of Bash** — *implemented*
 
-2. **Safe Subset of Bash**
+   14 diagnostic codes enforced across 7 validator rules in 7 rule files:
+   SB4001–SB4006, SB4008–SB4009, SB4012–SB4013, SC2006, SC2046, SC2086,
+   SC2292.
 
-   A restricted, well-specified subset that is:
-   - predictable
-   - statically analyzable
-   - portable
-   - suitable for compilation and verification
+   Two modes (Decision #8):
+   - **Strict mode (AOT default)** — reject scripts that use unsafe
+     constructs. The compiler reports what needs to change and why.
+   - **Coerce mode (JIT default)** — automatically transform unsafe
+     constructs into their safe equivalents where possible (e.g.,
+     unquoted `$var` → `"$var"`, backtick substitution → `$()`).
+     Error only for constructs with no safe counterpart.
 
-   The safe subset is informed by ShellCheck's ~500 documented rules
-   (https://www.shellcheck.net/wiki/). Constructs that ShellCheck
-   flags as dangerous or error-prone are rejected by the safe subset.
+   Notable design decisions:
+   - `source`/`.` compiled away to a safe KVP loader (Decision #1)
+   - `${!var}` indirect expansion rejected; `declare -n`/`local -n`
+     namerefs allowed (Decisions #2, #3)
+   - `bash -c 'literal'` compiled as inline subshell;
+     `bash -c "$var"` rejected (Decision #10)
+   - Aliases rejected in AOT, converted to functions in JIT
+     (Decision #11)
 
-   Two modes:
-   - **Strict mode** — reject scripts that use unsafe constructs.
-     The compiler reports what needs to change and why.
-   - **Coerce mode** — automatically transform unsafe constructs
-     into their safe equivalents where possible (e.g., unquoted
-     `$var` → `"$var"`, backtick substitution → `$()`). Error
-     only for constructs with no safe counterpart.
-
-3. **Rust Front-End**
+3. **Rust Front-End** — ✅ *done*
 
    The compiler front-end:
    - Parses Bash syntax using tree-sitter-bash
    - Validates against the safe subset
-   - Produces a structured IR
+   - Produces a structured IR (14 stmt types, 10 expr types)
    - Converts IR into SSA form
 
-4. **SSA (Static Single Assignment)**
+4. **SSA (Static Single Assignment)** — ✅ *done*
 
-   SSA ensures:
-   - every variable is assigned exactly once
-   - all variable references are explicit
-   - no shadowing or ambiguous lookup
-   - control flow merges are explicit via phi nodes
+   - Versioned variables (every assignment creates a new version)
+   - Phi nodes at control flow merge points
+   - Basic blocks with explicit terminators (4 terminator types)
+   - All bindings explicit, all data flow traceable
 
-   SSA eliminates scoping ambiguity entirely. All bindings are explicit
-   and all data flow is traceable.
+5. **Janet Correctness Oracle** — ✅ *done*
 
-5. **Janet as a Standalone Executable Correctness Oracle**
+   17 passing Bash→Janet→verify tests (experiment 017).
 
    Janet is used as an external reference interpreter — an independent
    implementation of the language semantics that exists outside the
@@ -133,52 +194,41 @@ does not sandbox the operations the script performs.
    - no macros
    - flat, imperative structure only
 
-   The Janet output is not a "program" in the traditional sense.
-   It is a serialized execution plan that Janet can run.
+6. **Cranelift Backend** — AOT ✅ *done*, JIT *not started*
 
-6. **Cranelift Backend (JIT and AOT)**
+   AOT compilation produces ~16KB static ELF binaries linked against
+   `sash-rt`, a pure Rust `#![no_std]` runtime using rustix (no libc,
+   no C, no inline asm in safebash). The linker is the system `ld`
+   (Decision #13).
 
-   Cranelift provides:
-   - fast JIT compilation for the REPL
-   - portable machine code generation for AOT
-   - a natural fit for incremental compilation
+   JIT for the REPL is planned but not yet started.
 
-   The SSA IR is lowered into Cranelift IR for:
-   - JIT execution in the REPL
-   - AOT compilation to signed native binaries
+7. **Interactive REPL** — *not started*
 
-7. **Interactive REPL**
+   Planned to use Cranelift JIT for immediate execution.
 
-   The REPL:
-   - accepts Bash-subset input
-   - parses → validates → IR → SSA → compiles → runs
-   - uses Cranelift JIT for immediate execution
-   - optionally displays the Janet IR
-   - supports incremental definitions
+8. **sash-expand** — *designed, not yet built*
 
-   The REPL is a development and debugging tool.
-   Production use relies on AOT-compiled, signed binaries.
+   A safe source-level replacement tool. Designed but implementation
+   has not begun.
 
 ---------------------------------------------------------------------
 
 ## Key Components
 
-1. **Bash Parsing**
+1. **Bash Parsing** — ✅ *done*
 
-   tree-sitter-bash provides:
-   - a complete Bash grammar
-   - lossless syntax trees
-   - Rust bindings
+   tree-sitter-bash provides a complete Bash grammar with lossless
+   syntax trees and Rust bindings.
 
-2. **SSA IR**
+2. **SSA IR** — ✅ *done*
 
-   The SSA IR sits between parsing and code generation. It must:
-   - represent control flow explicitly
-   - model pipelines, redirections, and commands
-   - map cleanly to both Janet and Cranelift
-   - eliminate scoping ambiguity through single assignment
+   - 14 statement types
+   - 10 expression types
+   - 4 terminator types (branch, jump, return, exit)
+   - Basic blocks with explicit control flow
 
-3. **Janet IR Emission**
+3. **Janet IR Emission** — ✅ *done*
 
    Example mapping:
 
@@ -194,64 +244,70 @@ does not sandbox the operations the script performs.
    Janet: (pipe "cmd1" "cmd2")
    ```
 
-4. **Cranelift Lowering**
+4. **Cranelift Lowering** — ✅ *done*
 
-   The SSA IR is lowered into Cranelift IR, enabling:
-   - JIT execution for the REPL
-   - AOT compilation to native code
-   - integration with signing and verification workflows
+   SSA IR → Cranelift IR → static ELF binary. Null-terminated counted
+   strings (Decision #12). Linked with `ld` against `libsash_rt.a`.
+
+5. **Validator** — ✅ *done*
+
+   7 rule files, 14 diagnostic codes. Covers dynamic execution,
+   unquoted expansion, backtick substitution, single-bracket tests,
+   indirect expansion, alias restriction, and unsupported constructs.
+
+6. **sash-rt** — ✅ *done*
+
+   Pure Rust `#![no_std]` runtime. System calls via rustix. No libc,
+   no C code, no inline assembly in safebash. Provides `_start`,
+   string I/O, process exec, and exit.
 
 ---------------------------------------------------------------------
 
-## Planned Architecture
+## Architecture
 
 ```
 [Bash subset source]
         |
         v
-[tree-sitter-bash AST]
+[tree-sitter-bash parse]                     ✅ done
         |
         v
-[Validator: safe subset checks]
+[Validator: 7 rules, 14 diagnostics]         ✅ done
         |
         v
-[IR]
+[IR: 14 stmt types, 10 expr types]           ✅ done
         |
         v
-[SSA Transformation]
+[SSA: versioned vars, phi nodes]              ✅ done
    |            |
-   |            +--> [Emit Janet IR → correctness oracle]
+   |            +--> [Janet IR → correctness oracle]    ✅ done
    |
-   +--> [Lower to Cranelift IR]
+   +--> [Cranelift IR lowering]               ✅ done
              |             |
-             |             +--> [JIT Execute in REPL]
+             |             +--> [JIT Execute in REPL]   planned
              |
-             +--> [AOT Compile → Signed Artifact → System Verification]
+             +--> [AOT → static ELF]         ✅ done
+                    |
+                    +--> [Sign → verify]      planned
 ```
 
 ---------------------------------------------------------------------
 
 ## Development Milestones
 
-Each layer is independently testable before the next is built.
-
-1. **Parse and Validate.** tree-sitter-bash front-end with safe subset
-   validation. Input: Bash source. Output: accept/reject with
-   diagnostics. Testable with a corpus of valid and invalid scripts.
-
-2. **IR and SSA.** Structured intermediate representation with SSA
-   transformation. Testable by inspecting IR output for known inputs.
-
-3. **Janet Oracle.** Emit Janet from SSA IR. Run Janet, capture output.
-   Property-based tests: for any safe-subset script, the Janet oracle
-   and the eventual compiled binary must produce identical output.
-
-4. **Cranelift Backend.** Lower SSA IR to Cranelift. JIT for the REPL,
-   AOT for deployment. Testable against the Janet oracle.
-
-5. **Signing and Verification.** Sign AOT artifacts. Integrate with
-   IPE / fs-verity. Testable by attempting to run unsigned or tampered
-   binaries under an enforcing policy.
+| Phase | Scope | Status |
+|-------|-------|--------|
+| 1. Parse and Validate | tree-sitter front-end, safe subset validation | ✅ done (exp 001–005) |
+| 2. Validator Framework | rule infrastructure, ShellCheck integration | ✅ done (exp 006–011) |
+| 3. IR and SSA | CST→IR lowering, SSA transformation, printer | ✅ done (exp 012–015) |
+| 4. SSA Transform | versioned variables, phi nodes, basic blocks | ✅ done (exp 016) |
+| 5. Janet Oracle | Bash→Janet→verify correctness tests | ✅ done (exp 017) |
+| 6. Subshell Elision | optimize away unnecessary subshells | ✅ done (exp 018) |
+| 7. Adversarial Audit | 5 models, 3 passes, security review | ✅ done (run-1) |
+| 8. Audit Remediation | critical bypass fixes, high-gap fixes | ✅ done (exp 019–020) |
+| 9. Cranelift Backend | hello → strings → exec → control flow → end-to-end | ✅ done (exp 021–026) |
+| 10. Binary Signing | sign AOT artifacts, IPE/fs-verity integration | planned |
+| 11. JIT + REPL | Cranelift JIT, interactive mode | planned |
 
 ---------------------------------------------------------------------
 
@@ -269,8 +325,10 @@ This project preserves the ergonomics of Bash while gaining:
 - verifiable, signed execution
 - a chain of trust from source to runtime
 
+This is an experimental compiler. It is not production-ready.
+
 ---------------------------------------------------------------------
 
 ## License
 
-TBD.
+Private — not yet licensed.
