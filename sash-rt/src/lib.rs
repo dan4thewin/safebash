@@ -469,3 +469,106 @@ pub unsafe extern "C" fn _start() -> ! {
         "svc #0",
     )
 }
+
+// ═══════════════════════════════════════════════════════════════════
+/// ${var%%pat} / ${var%pat} — returns new length (ptr unchanged)
+#[no_mangle]
+pub extern "C" fn sash_strip_suffix(
+    s: *const u8, s_len: i64,
+    pat: *const u8, pat_len: i64,
+    longest: i64,
+) -> i64 {
+    if s.is_null() || s_len <= 0 { return 0; }
+    let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
+    let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
+
+    // ${x%%/*} → pat="/*", meaning "/ then anything" → * at end
+    // ${x%%*.txt} → pat="*.txt", meaning "anything then .txt" → * at start
+    if pat_bytes.ends_with(b"*") && pat_bytes.len() > 1 {
+        // "X*" pattern — find X, remove from there to end
+        let prefix = &pat_bytes[..pat_bytes.len() - 1]; // literal before *
+        if longest != 0 {
+            // %% — find first occurrence, keep everything before
+            if let Some(pos) = s_bytes.windows(prefix.len()).position(|w| w == prefix) {
+                return pos as i64;
+            }
+        } else {
+            // % — find last occurrence, keep everything before
+            if let Some(pos) = s_bytes.windows(prefix.len()).rposition(|w| w == prefix) {
+                return pos as i64;
+            }
+        }
+    } else if pat_bytes.starts_with(b"*") && pat_bytes.len() > 1 {
+        // "*X" pattern — find X, remove from start of match to end
+        let suffix = &pat_bytes[1..]; // literal after *
+        if longest != 0 {
+            // %% — find first occurrence of suffix
+            if let Some(pos) = s_bytes.windows(suffix.len()).position(|w| w == suffix) {
+                return pos as i64;
+            }
+        } else {
+            // % — find last occurrence of suffix
+            if let Some(pos) = s_bytes.windows(suffix.len()).rposition(|w| w == suffix) {
+                return pos as i64;
+            }
+        }
+    } else if !pat_bytes.is_empty() && s_bytes.ends_with(pat_bytes) {
+        return (s_len - pat_len) as i64;
+    }
+    s_len // no match
+}
+
+/// ${var##pat} / ${var#pat} — returns offset (bytes to skip from start)
+#[no_mangle]
+pub extern "C" fn sash_strip_prefix(
+    s: *const u8, s_len: i64,
+    pat: *const u8, pat_len: i64,
+    longest: i64,
+) -> i64 {
+    if s.is_null() || s_len <= 0 { return 0; }
+    let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
+    let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
+
+    // ${x#*/} → pat="*/", meaning "anything then /" → * at start
+    // ${x#foo*} → pat="foo*", meaning "foo then anything" → * at end
+    if pat_bytes.starts_with(b"*") && pat_bytes.len() > 1 {
+        // "*X" pattern — find X, skip past it
+        let suffix = &pat_bytes[1..]; // literal after *
+        if longest != 0 {
+            // ## — find last occurrence, skip past it
+            if let Some(pos) = s_bytes.windows(suffix.len()).rposition(|w| w == suffix) {
+                return (pos + suffix.len()) as i64;
+            }
+        } else {
+            // # — find first occurrence, skip past it
+            if let Some(pos) = s_bytes.windows(suffix.len()).position(|w| w == suffix) {
+                return (pos + suffix.len()) as i64;
+            }
+        }
+    } else if pat_bytes.ends_with(b"*") && pat_bytes.len() > 1 {
+        // "X*" pattern — find X, skip past X and everything before
+        let prefix = &pat_bytes[..pat_bytes.len() - 1]; // literal before *
+        if longest != 0 {
+            // ## — find last occurrence, skip past it
+            if let Some(pos) = s_bytes.windows(prefix.len()).rposition(|w| w == prefix) {
+                return (pos + prefix.len()) as i64;
+            }
+        } else {
+            // # — find first occurrence, skip past it
+            if let Some(pos) = s_bytes.windows(prefix.len()).position(|w| w == prefix) {
+                return (pos + prefix.len()) as i64;
+            }
+        }
+    } else if !pat_bytes.is_empty() && s_bytes.starts_with(pat_bytes) {
+        return pat_len;
+    }
+    0 // no match — skip nothing
+}
+
+/// ${var:-default} — returns 0 if var is empty (use default), 1 if set
+#[no_mangle]
+pub extern "C" fn sash_default_value(
+    s_len: i64,
+) -> i64 {
+    if s_len <= 0 { 0 } else { 1 }
+}
