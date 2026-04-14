@@ -107,13 +107,21 @@ pub extern "C" fn sash_exit(status: i64) -> ! {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// sash_run — execute a command with PATH lookup
+// Composable process primitives (Design Decision #14)
+//
+// Instead of monolithic fork+exec wrappers, we expose:
+//   sash_fork()                  → pid (0 in child, >0 in parent)
+//   sash_exec(argv, envp)        → no return (execve with PATH)
+//   sash_wait(pid)               → exit status
+//   sash_redirect(fd, path, flags) → 0 ok, -1 err (open+dup2)
+//   sash_dup2(src, dst)          → 0 ok, -1 err
+//   sash_pipe(out)               → 0 ok, -1 err (writes [r,w] to out)
+//   sash_close(fd)               → 0 ok, -1 err
+//   sash_read(fd, buf, len)      → bytes read
+//
+// Codegen emits the sequence: fork, redirect in child, exec.
+// Parent's file descriptors are never touched.
 // ═══════════════════════════════════════════════════════════════
-
-#[no_mangle]
-pub extern "C" fn sash_run(argv: *const *const u8, envp: *const *const u8) -> i64 {
-    unsafe { run_command(argv, envp) }
-}
 
 /// Compute length of a null-terminated byte string.
 unsafe fn cstr_len(p: *const u8) -> usize {
@@ -127,87 +135,6 @@ unsafe fn cstr_len(p: *const u8) -> usize {
 /// Wrap a null-terminated pointer as a CStr-like byte slice (without the null).
 unsafe fn cstr_bytes(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, cstr_len(p))
-}
-
-unsafe fn run_command(argv: *const *const u8, envp: *const *const u8) -> i64 {
-    let cmd = *argv;
-    if cmd.is_null() {
-        return 127;
-    }
-
-    let cmd_bytes = cstr_bytes(cmd);
-    let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
-
-    // CStr for execve — points to the same null-terminated data.
-    let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
-
-    match rustix::runtime::kernel_fork() {
-        Ok(rustix::runtime::Fork::Child(_)) => {
-            if has_slash {
-                let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
-                rustix::runtime::exit_group(127);
-            }
-
-            let path_env = find_path(envp);
-            let mut buf = [0u8; 4096];
-
-            let mut pos = 0;
-            while pos <= path_env.len() {
-                let mut end = pos;
-                while end < path_env.len() && path_env[end] != b':' {
-                    end += 1;
-                }
-                let dir = &path_env[pos..end];
-                pos = end + 1;
-
-                if dir.is_empty() {
-                    continue;
-                }
-                let total = dir.len() + 1 + cmd_bytes.len() + 1;
-                if total > buf.len() {
-                    continue;
-                }
-
-                // Build path: dir/cmd\0
-                let mut j = 0;
-                while j < dir.len() {
-                    buf[j] = dir[j];
-                    j += 1;
-                }
-                buf[j] = b'/';
-                j += 1;
-                let mut k = 0;
-                while k < cmd_bytes.len() {
-                    buf[j + k] = cmd_bytes[k];
-                    k += 1;
-                }
-                buf[j + k] = 0;
-
-                let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
-                if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
-                    let _ = rustix::runtime::execve(path_cstr, argv, envp);
-                }
-            }
-
-            rustix::runtime::exit_group(127);
-        }
-        Ok(rustix::runtime::Fork::ParentOf(child_pid)) => {
-            match rustix::process::waitpid(
-                Some(child_pid),
-                rustix::process::WaitOptions::empty(),
-            ) {
-                Ok(Some((_pid, status))) => {
-                    if let Some(code) = status.exit_status() {
-                        return code as i64;
-                    }
-                    128
-                }
-                Ok(None) => 0,
-                Err(_) => 127,
-            }
-        }
-        Err(_) => 127,
-    }
 }
 
 unsafe fn find_path(envp: *const *const u8) -> &'static [u8] {
@@ -233,6 +160,200 @@ unsafe fn find_path(envp: *const *const u8) -> &'static [u8] {
         i += 1;
     }
     b"/usr/bin:/bin"
+}
+
+/// Fork. Returns child pid in parent, 0 in child, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_fork() -> i64 {
+    match unsafe { rustix::runtime::kernel_fork() } {
+        Ok(rustix::runtime::Fork::Child(_)) => 0,
+        Ok(rustix::runtime::Fork::ParentOf(pid)) => pid.as_raw_nonzero().get() as i64,
+        Err(_) => -1,
+    }
+}
+
+/// Exec with PATH lookup. Does not return on success.
+/// On failure, calls exit_group(127).
+#[no_mangle]
+pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> ! {
+    unsafe {
+        let cmd = *argv;
+        if cmd.is_null() {
+            rustix::runtime::exit_group(127);
+        }
+
+        let cmd_bytes = cstr_bytes(cmd);
+        let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
+        let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
+
+        if has_slash {
+            let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
+            rustix::runtime::exit_group(127);
+        }
+
+        let path_env = find_path(envp);
+        let mut buf = [0u8; 4096];
+        let mut pos = 0;
+        while pos <= path_env.len() {
+            let mut end = pos;
+            while end < path_env.len() && path_env[end] != b':' {
+                end += 1;
+            }
+            let dir = &path_env[pos..end];
+            pos = end + 1;
+            if dir.is_empty() { continue; }
+            let total = dir.len() + 1 + cmd_bytes.len() + 1;
+            if total > buf.len() { continue; }
+            let mut j = 0;
+            while j < dir.len() { buf[j] = dir[j]; j += 1; }
+            buf[j] = b'/'; j += 1;
+            let mut k = 0;
+            while k < cmd_bytes.len() { buf[j+k] = cmd_bytes[k]; k += 1; }
+            buf[j+k] = 0;
+            let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
+            if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
+                let _ = rustix::runtime::execve(path_cstr, argv, envp);
+            }
+        }
+        rustix::runtime::exit_group(127);
+    }
+}
+
+/// Wait for a child process. Returns exit status, or 127 on error.
+#[no_mangle]
+pub extern "C" fn sash_wait(pid: i64) -> i64 {
+    let pid = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
+    match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::empty()) {
+        Ok(Some((_pid, status))) => {
+            if let Some(code) = status.exit_status() {
+                return code as i64;
+            }
+            128
+        }
+        Ok(None) => 0,
+        Err(_) => 127,
+    }
+}
+
+/// Redirect fd to a file: open(path, flags, 0666) then dup2 to fd.
+/// flags: 0 = O_RDONLY, 1 = O_WRONLY|O_CREAT|O_TRUNC, 2 = O_WRONLY|O_CREAT|O_APPEND
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
+    unsafe {
+        let path_cstr = core::ffi::CStr::from_ptr(path as *const i8);
+        let oflags = match flags {
+            0 => rustix::fs::OFlags::RDONLY,
+            1 => rustix::fs::OFlags::WRONLY
+                .union(rustix::fs::OFlags::CREATE)
+                .union(rustix::fs::OFlags::TRUNC),
+            2 => rustix::fs::OFlags::WRONLY
+                .union(rustix::fs::OFlags::CREATE)
+                .union(rustix::fs::OFlags::APPEND),
+            _ => return -1,
+        };
+        let mode = rustix::fs::Mode::from_raw_mode(0o666);
+        let opened = match rustix::fs::open(path_cstr, oflags, mode) {
+            Ok(f) => f,
+            Err(_) => return -1,
+        };
+        let src = rustix::fd::AsRawFd::as_raw_fd(&opened);
+        // dup2(opened, fd)
+        core::arch::asm!(
+            "syscall",
+            in("rax") 33_i64,  // SYS_dup2
+            in("rdi") src as i64,
+            in("rsi") fd,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        // close the original opened fd (now duplicated)
+        rustix::io::close(rustix::fd::AsRawFd::as_raw_fd(&opened));
+        0
+    }
+}
+
+/// dup2(src_fd, dst_fd). Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_dup2(src_fd: i64, dst_fd: i64) -> i64 {
+    unsafe {
+        let result: i64;
+        core::arch::asm!(
+            "syscall",
+            in("rax") 33_i64,  // SYS_dup2
+            in("rdi") src_fd,
+            in("rsi") dst_fd,
+            lateout("rax") result,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        if result < 0 { -1 } else { 0 }
+    }
+}
+
+/// Create a pipe. Writes [read_fd, write_fd] as two i64s at out_ptr.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_pipe(out_ptr: *mut i64) -> i64 {
+    match rustix::pipe::pipe() {
+        Ok((r, w)) => {
+            unsafe {
+                let r_raw = rustix::fd::IntoRawFd::into_raw_fd(r) as i64;
+                let w_raw = rustix::fd::IntoRawFd::into_raw_fd(w) as i64;
+                *out_ptr = r_raw;
+                *out_ptr.add(1) = w_raw;
+            }
+            0
+        }
+        Err(_) => -1,
+    }
+}
+
+/// Close a file descriptor. Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_close(fd: i64) -> i64 {
+    unsafe {
+        let result: i64;
+        core::arch::asm!(
+            "syscall",
+            in("rax") 3_i64,   // SYS_close
+            in("rdi") fd,
+            lateout("rax") result,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        if result < 0 { -1 } else { 0 }
+    }
+}
+
+/// Read from a file descriptor. Returns bytes read, 0 on EOF, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_read(fd: i64, buf: *mut u8, len: i64) -> i64 {
+    let fd = unsafe { BorrowedFd::borrow_raw(fd as i32) };
+    let slice = unsafe { core::slice::from_raw_parts_mut(buf, len as usize) };
+    match rustix::io::read(fd, slice) {
+        Ok(n) => n as i64,
+        Err(_) => -1,
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Legacy wrappers — sash_run and sash_capture built on primitives
+// These remain for backward compatibility with experiments 021–028.
+// ═══════════════════════════════════════════════════════════════
+
+/// Execute a command (fork + exec + wait). Returns exit status.
+#[no_mangle]
+pub extern "C" fn sash_run(argv: *const *const u8, envp: *const *const u8) -> i64 {
+    let pid = sash_fork();
+    if pid == 0 {
+        // child
+        sash_exec(argv, envp); // does not return
+    } else if pid > 0 {
+        sash_wait(pid)
+    } else {
+        127
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -278,12 +399,11 @@ pub extern "C" fn sash_getenv(
 }
 
 // ═══════════════════════════════════════════════════════════════
-// sash_capture — run a command and capture its stdout
+// sash_capture — built on composable primitives
 // ═══════════════════════════════════════════════════════════════
 
 /// Fork/exec a command, capture stdout into a heap buffer.
 /// Returns pointer to buffer, writes length to *out_len.
-/// Caller must free the buffer with sash_free.
 /// Strips one trailing newline if present (shell convention).
 #[no_mangle]
 pub extern "C" fn sash_capture(
@@ -291,101 +411,36 @@ pub extern "C" fn sash_capture(
     envp: *const *const u8,
     out_len: *mut i64,
 ) -> *const u8 {
-    unsafe { capture_command(argv, envp, out_len) }
-}
-
-unsafe fn capture_command(
-    argv: *const *const u8,
-    envp: *const *const u8,
-    out_len: *mut i64,
-) -> *const u8 {
-    let (pipe_r, pipe_w) = match rustix::pipe::pipe() {
-        Ok(p) => p,
-        Err(_) => {
+    unsafe {
+        // Create pipe
+        let mut pipe_fds = [0i64; 2];
+        if sash_pipe(pipe_fds.as_mut_ptr()) < 0 {
             *out_len = 0;
             return core::ptr::null();
         }
-    };
+        let pipe_r = pipe_fds[0];
+        let pipe_w = pipe_fds[1];
 
-    match rustix::runtime::kernel_fork() {
-        Ok(rustix::runtime::Fork::Child(_)) => {
-            // Child: redirect stdout to pipe write end
-            drop(pipe_r);
-            // dup2: pipe_w → fd 1 (stdout)
-            // Use raw syscall — rustix::io::dup2 wants &mut OwnedFd
-            // which we can't get for stdout in no_std.
-            let pipe_w_raw = rustix::fd::AsRawFd::as_raw_fd(&pipe_w) as i64;
-            core::arch::asm!(
-                "syscall",
-                in("rax") 33_i64, // SYS_dup2
-                in("rdi") pipe_w_raw,
-                in("rsi") 1_i64,  // stdout
-                lateout("rcx") _,
-                lateout("r11") _,
-            );
-            drop(pipe_w);
+        let pid = sash_fork();
+        if pid == 0 {
+            // Child: redirect stdout to pipe write end, close read end
+            sash_close(pipe_r);
+            sash_dup2(pipe_w, 1); // stdout
+            sash_close(pipe_w);
+            sash_exec(argv, envp); // does not return
+        } else if pid > 0 {
+            // Parent: close write end, read from read end
+            sash_close(pipe_w);
 
-            // Reuse run_command's exec logic by execing directly
-            let cmd = *argv;
-            if cmd.is_null() {
-                rustix::runtime::exit_group(127);
-            }
-
-            let cmd_bytes = cstr_bytes(cmd);
-            let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
-            let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
-
-            if has_slash {
-                let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
-                rustix::runtime::exit_group(127);
-            }
-
-            // PATH lookup
-            let path_env = find_path(envp);
-            let mut buf = [0u8; 4096];
-            let mut pos = 0;
-            while pos <= path_env.len() {
-                let mut end = pos;
-                while end < path_env.len() && path_env[end] != b':' {
-                    end += 1;
-                }
-                let dir = &path_env[pos..end];
-                pos = end + 1;
-                if dir.is_empty() { continue; }
-                let total = dir.len() + 1 + cmd_bytes.len() + 1;
-                if total > buf.len() { continue; }
-                let mut j = 0;
-                while j < dir.len() { buf[j] = dir[j]; j += 1; }
-                buf[j] = b'/'; j += 1;
-                let mut k = 0;
-                while k < cmd_bytes.len() { buf[j+k] = cmd_bytes[k]; k += 1; }
-                buf[j+k] = 0;
-                let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
-                if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
-                    let _ = rustix::runtime::execve(path_cstr, argv, envp);
-                }
-            }
-            rustix::runtime::exit_group(127);
-        }
-        Ok(rustix::runtime::Fork::ParentOf(child_pid)) => {
-            drop(pipe_w);
             let mut result = [0u8; 65536]; // 64KB max capture
             let mut total = 0usize;
             loop {
-                let fd = BorrowedFd::borrow_raw(
-                    rustix::fd::AsRawFd::as_raw_fd(&pipe_r),
-                );
-                match rustix::io::read(fd, &mut result[total..]) {
-                    Ok(0) => break,
-                    Ok(n) => total += n,
-                    Err(_) => break,
-                }
+                let n = sash_read(pipe_r, result.as_mut_ptr().add(total), (result.len() - total) as i64);
+                if n <= 0 { break; }
+                total += n as usize;
             }
-            drop(pipe_r);
-            let _ = rustix::process::waitpid(
-                Some(child_pid),
-                rustix::process::WaitOptions::empty(),
-            );
+            sash_close(pipe_r);
+            let _ = sash_wait(pid);
 
             // Strip trailing newline (shell convention)
             if total > 0 && result[total - 1] == b'\n' {
@@ -398,8 +453,7 @@ unsafe fn capture_command(
             *buf.add(total) = 0;
             *out_len = total as i64;
             buf as *const u8
-        }
-        Err(_) => {
+        } else {
             *out_len = 0;
             core::ptr::null()
         }
@@ -410,7 +464,8 @@ unsafe fn capture_command(
 static mut HEAP: [u8; 131072] = [0u8; 131072]; // 128KB
 static mut HEAP_POS: usize = 0;
 
-unsafe fn sash_alloc(n: usize) -> *mut u8 {
+#[no_mangle]
+pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
     let pos = HEAP_POS;
     HEAP_POS += (n + 7) & !7; // align to 8
     HEAP.as_mut_ptr().add(pos)
