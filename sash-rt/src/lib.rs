@@ -728,3 +728,112 @@ pub extern "C" fn sash_arith_eval(
         _ => 0,
     }
 }
+
+// ═══════════════════════════════════════════════════════════════
+// sash_setenv — set environment variable
+// ═══════════════════════════════════════════════════════════════
+
+/// Set an environment variable by rebuilding the envp array.
+/// name_ptr/name_len: variable name
+/// val_ptr/val_len: variable value
+/// Allocates a new "NAME=VALUE" string and appends/replaces in envp.
+#[no_mangle]
+pub unsafe extern "C" fn sash_setenv(
+    name_ptr: *const u8, name_len: i64,
+    val_ptr: *const u8, val_len: i64,
+) {
+    // Build "NAME=VALUE\0" string
+    let nlen = name_len as usize;
+    let vlen = val_len as usize;
+    let entry_len = nlen + 1 + vlen; // name + '=' + value
+    let entry = sash_alloc(entry_len + 1); // +1 for null terminator
+    core::ptr::copy_nonoverlapping(name_ptr, entry, nlen);
+    *entry.add(nlen) = b'=';
+    core::ptr::copy_nonoverlapping(val_ptr, entry.add(nlen + 1), vlen);
+    *entry.add(entry_len) = 0;
+
+    let name_slice = core::slice::from_raw_parts(name_ptr, nlen);
+
+    // Count existing entries, find if name already exists
+    let envp = sash_envp;
+    if envp.is_null() { return; }
+    let mut count = 0usize;
+    let mut found: Option<usize> = None;
+    loop {
+        let e = *envp.add(count);
+        if e.is_null() { break; }
+        let elen = strlen(e);
+        let eslice = core::slice::from_raw_parts(e, elen);
+        if found.is_none() && elen > nlen && eslice[nlen] == b'=' && &eslice[..nlen] == name_slice {
+            found = Some(count);
+        }
+        count += 1;
+    }
+
+    if let Some(idx) = found {
+        // Replace in place (pointer swap, old entry leaks — acceptable for safebash)
+        let envp_mut = envp as *mut *const u8;
+        *envp_mut.add(idx) = entry;
+    } else {
+        // Append: allocate new envp array with one more slot
+        let new_envp = sash_alloc((count + 2) * 8) as *mut *const u8;
+        core::ptr::copy_nonoverlapping(envp, new_envp, count);
+        *new_envp.add(count) = entry;
+        *new_envp.add(count + 1) = core::ptr::null();
+        sash_envp = new_envp;
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_join_args — join argv[1..argc] with a separator
+// ═══════════════════════════════════════════════════════════════
+
+/// Join positional parameters (argv[1] through argv[argc-1]) with a separator.
+/// Returns pointer to joined string; writes length to *out_len.
+#[no_mangle]
+pub unsafe extern "C" fn sash_join_args(
+    argv: *const *const u8,
+    argc: i64,
+    sep_ptr: *const u8,
+    sep_len: i64,
+    out_len: *mut i64,
+) -> *mut u8 {
+    let argc = argc as usize;
+    let sep_len = sep_len as usize;
+
+    if argc <= 1 {
+        // No positional params
+        *out_len = 0;
+        return sash_alloc(1); // empty string
+    }
+
+    // First pass: compute total length
+    let mut total = 0usize;
+    for i in 1..argc {
+        let arg = *argv.add(i);
+        if !arg.is_null() {
+            total += strlen(arg);
+        }
+        if i < argc - 1 {
+            total += sep_len;
+        }
+    }
+
+    let buf = sash_alloc(total);
+    let mut pos = 0usize;
+    for i in 1..argc {
+        let arg = *argv.add(i);
+        if !arg.is_null() {
+            let len = strlen(arg);
+            core::ptr::copy_nonoverlapping(arg, buf.add(pos), len);
+            pos += len;
+        }
+        if i < argc - 1 && sep_len > 0 {
+            core::ptr::copy_nonoverlapping(sep_ptr, buf.add(pos), sep_len);
+            pos += sep_len;
+        }
+    }
+
+    *out_len = pos as i64;
+    buf
+}
