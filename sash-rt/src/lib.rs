@@ -837,3 +837,20 @@ pub unsafe extern "C" fn sash_join_args(
     *out_len = pos as i64;
     buf
 }
+
+/// dup(fd) — duplicate a file descriptor. Returns new fd, or -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_dup(fd: i64) -> i64 {
+    unsafe {
+        let result: i64;
+        core::arch::asm!(
+            "syscall",
+            in("rax") 32_i64,  // SYS_dup
+            in("rdi") fd,
+            lateout("rax") result,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        result
+    }
+}
