@@ -854,3 +854,45 @@ pub extern "C" fn sash_dup(fd: i64) -> i64 {
         result
     }
 }
+
+/// Compare two length-prefixed strings for equality.
+/// Returns 1 if equal, 0 if not.
+#[no_mangle]
+pub extern "C" fn sash_streq(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64 {
+    if l1 != l2 { return 0; }
+    unsafe {
+        for i in 0..l1 as usize {
+            if *p1.add(i) != *p2.add(i) {
+                return 0;
+            }
+        }
+    }
+    1
+}
+
+/// Associative array lookup: scan (key_ptr, key_len, val_ptr, val_len) tuples.
+/// Returns val_ptr on match, null (0) on miss. Writes val_len to out_len.
+#[no_mangle]
+pub extern "C" fn sash_assoc_lookup(
+    table: *const i64,   // pointer to array of (key_ptr, key_len, val_ptr, val_len) tuples
+    count: i64,          // number of entries
+    key_ptr: *const u8,
+    key_len: i64,
+    out_len: *mut i64,   // output: value length
+) -> *const u8 {
+    unsafe {
+        for i in 0..count as usize {
+            let base = i * 4;
+            let k_ptr = *table.add(base) as *const u8;
+            let k_len = *table.add(base + 1);
+            let v_ptr = *table.add(base + 2) as *const u8;
+            let v_len = *table.add(base + 3);
+            if sash_streq(k_ptr, k_len, key_ptr, key_len) == 1 {
+                *out_len = v_len;
+                return v_ptr;
+            }
+        }
+        *out_len = 0;
+        core::ptr::null()
+    }
+}
