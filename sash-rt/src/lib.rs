@@ -627,3 +627,104 @@ pub extern "C" fn sash_default_value(
 ) -> i64 {
     if s_len <= 0 { 0 } else { 1 }
 }
+
+/// Concatenate two strings into a new heap-allocated buffer.
+/// Returns pointer to new buffer; caller must eventually free.
+/// The new length is written to out_len.
+#[no_mangle]
+pub unsafe extern "C" fn sash_concat(
+    a_ptr: *const u8, a_len: i64,
+    b_ptr: *const u8, b_len: i64,
+    out_len: *mut i64,
+) -> *mut u8 {
+    let total = a_len as usize + b_len as usize;
+    let buf = sash_alloc(total);
+    if a_len > 0 && !a_ptr.is_null() {
+        core::ptr::copy_nonoverlapping(a_ptr, buf, a_len as usize);
+    }
+    if b_len > 0 && !b_ptr.is_null() {
+        core::ptr::copy_nonoverlapping(b_ptr, buf.add(a_len as usize), b_len as usize);
+    }
+    *out_len = total as i64;
+    buf
+}
+
+/// Parse a decimal string to i64. Returns the parsed value.
+/// If the string is empty or non-numeric, returns 0.
+#[no_mangle]
+pub unsafe extern "C" fn sash_atoi(
+    s_ptr: *const u8, s_len: i64,
+) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    let mut result: i64 = 0;
+    let mut negative = false;
+    let mut i = 0;
+    // skip leading whitespace
+    while i < bytes.len() && bytes[i] == b' ' { i += 1; }
+    // sign
+    if i < bytes.len() && bytes[i] == b'-' { negative = true; i += 1; }
+    else if i < bytes.len() && bytes[i] == b'+' { i += 1; }
+    // digits
+    while i < bytes.len() && bytes[i] >= b'0' && bytes[i] <= b'9' {
+        result = result * 10 + (bytes[i] - b'0') as i64;
+        i += 1;
+    }
+    if negative { -result } else { result }
+}
+
+/// Format an i64 as a decimal string into a heap-allocated buffer.
+/// Returns pointer to buffer; length written to out_len.
+#[no_mangle]
+pub unsafe extern "C" fn sash_itoa(
+    val: i64,
+    out_len: *mut i64,
+) -> *mut u8 {
+    // Max i64 is 19 digits + sign + null = 21
+    let mut tmp = [0u8; 21];
+    let mut n = val;
+    let negative = n < 0;
+    if negative { n = -n; }
+    let mut i = tmp.len();
+    if n == 0 {
+        i -= 1;
+        tmp[i] = b'0';
+    } else {
+        while n > 0 {
+            i -= 1;
+            tmp[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+    }
+    if negative {
+        i -= 1;
+        tmp[i] = b'-';
+    }
+    let len = tmp.len() - i;
+    let buf = sash_alloc(len);
+    core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), buf, len);
+    *out_len = len as i64;
+    buf
+}
+
+/// Evaluate a simple arithmetic expression: var OP const.
+/// The expression string is like "x - 1" or "x + 2".
+/// var_val is the current integer value of the variable.
+/// Returns the computed result.
+/// For now, supports: +, -, *, /
+#[no_mangle]
+pub extern "C" fn sash_arith_eval(
+    var_val: i64,
+    op: u8,       // b'+', b'-', b'*', b'/'
+    operand: i64,
+) -> i64 {
+    match op {
+        b'+' => var_val + operand,
+        b'-' => var_val - operand,
+        b'*' => var_val * operand,
+        b'/' => if operand != 0 { var_val / operand } else { 0 },
+        _ => 0,
+    }
+}
