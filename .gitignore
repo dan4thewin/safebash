@@ -1,2 +1,5 @@
 target/
 Cargo.lock
+suites/oils/
+suites/bash/
+suites/shellcheck/
