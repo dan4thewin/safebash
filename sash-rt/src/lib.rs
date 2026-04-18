@@ -896,3 +896,31 @@ pub extern "C" fn sash_assoc_lookup(
         core::ptr::null()
     }
 }
+
+/// Read one line from fd (up to newline or EOF).
+/// Returns (ptr, len). len=0 means EOF. Caller owns the memory.
+/// Strips trailing newline if present.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
+    let mut buf = [0u8; 4096];
+    let mut total = 0usize;
+    loop {
+        if total >= buf.len() { break; }
+        let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
+        match n {
+            Ok(0) => break,  // EOF
+            Ok(1) => {
+                if buf[total] == b'\n' { break; }  // end of line (don't include newline)
+                total += 1;
+            }
+            _ => break,  // error
+        }
+    }
+    if total == 0 {
+        // EOF — signal with null ptr
+        return (core::ptr::null_mut(), 0);
+    }
+    let ptr = unsafe { sash_alloc(total) };
+    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    (ptr, total)
+}
