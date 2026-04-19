@@ -138,3 +138,129 @@ pub fn table_hash_inner(key: &[u8]) -> u32 {
     }
     h
 }
+
+// ═══════════════════════════════════════════════════════════════
+// Fixed-point conversion (DD#36)
+// ═══════════════════════════════════════════════════════════════
+
+/// Convert decimal string to fixed-point integer.
+/// dtoi(2, "19.99") → 1999
+/// dtoi(1, "0.5") → 5
+pub fn dtoi_inner(digits: i64, bytes: &[u8]) -> i64 {
+    let digits = digits as usize;
+    // Find decimal point
+    let dot_pos = bytes.iter().position(|&b| b == b'.');
+
+    let (int_part, frac_bytes) = match dot_pos {
+        Some(pos) => (&bytes[..pos], &bytes[pos + 1..]),
+        None => (bytes, &[] as &[u8]),
+    };
+
+    // Parse integer part
+    let mut negative = false;
+    let int_start = if !int_part.is_empty() && int_part[0] == b'-' {
+        negative = true;
+        1
+    } else {
+        0
+    };
+
+    let mut int_val: i64 = 0;
+    for &b in &int_part[int_start..] {
+        if b < b'0' || b > b'9' { panic!("sash: invalid decimal number in dtoi"); }
+        int_val = int_val.checked_mul(10)
+            .and_then(|v| v.checked_add((b - b'0') as i64))
+            .expect("sash: integer overflow in dtoi");
+    }
+
+    // Parse fractional part — must not exceed `digits` places
+    if frac_bytes.len() > digits {
+        panic!("sash: fractional part exceeds specified precision in dtoi");
+    }
+
+    let mut frac_val: i64 = 0;
+    for &b in frac_bytes {
+        if b < b'0' || b > b'9' { panic!("sash: invalid decimal number in dtoi"); }
+        frac_val = frac_val * 10 + (b - b'0') as i64;
+    }
+    // Right-pad with zeros: "0.5" with digits=3 → frac_val=500
+    for _ in 0..(digits - frac_bytes.len()) {
+        frac_val *= 10;
+    }
+
+    // Scale integer part and combine
+    let mut scale: i64 = 1;
+    for _ in 0..digits {
+        scale = scale.checked_mul(10).expect("sash: scale overflow in dtoi");
+    }
+
+    let result = int_val.checked_mul(scale)
+        .and_then(|v| v.checked_add(frac_val))
+        .expect("sash: integer overflow in dtoi");
+
+    if negative { result.checked_neg().expect("sash: overflow in dtoi negation") } else { result }
+}
+
+/// Convert fixed-point integer to decimal string.
+/// itod(2, 1999) → "19.99"
+/// itod(2, 5) → "0.05"
+pub fn itod_inner(digits: i64, value: i64, buf: &mut [u8]) -> usize {
+    let digits = digits as usize;
+    let negative = value < 0;
+    let abs_val = if negative {
+        value.checked_neg().expect("sash: overflow in itod negation")
+    } else {
+        value
+    };
+
+    let mut scale: i64 = 1;
+    for _ in 0..digits {
+        scale *= 10;
+    }
+
+    let int_part = abs_val / scale;
+    let frac_part = abs_val % scale;
+
+    // Write integer part using itoa logic
+    let mut pos = 0;
+    if negative {
+        buf[pos] = b'-';
+        pos += 1;
+    }
+
+    // Convert integer part to string
+    if int_part == 0 {
+        buf[pos] = b'0';
+        pos += 1;
+    } else {
+        let start = pos;
+        let mut n = int_part;
+        while n > 0 {
+            buf[pos] = b'0' + (n % 10) as u8;
+            n /= 10;
+            pos += 1;
+        }
+        buf[start..pos].reverse();
+    }
+
+    // Decimal point
+    buf[pos] = b'.';
+    pos += 1;
+
+    // Fractional part, zero-padded to `digits` places
+    let frac_start = pos;
+    let mut f = frac_part;
+    for _ in 0..digits {
+        buf[pos] = b'0';
+        pos += 1;
+    }
+    let mut frac_pos = pos - 1;
+    while f > 0 {
+        buf[frac_pos] = b'0' + (f % 10) as u8;
+        f /= 10;
+        if frac_pos == frac_start { break; }
+        frac_pos -= 1;
+    }
+
+    pos
+}
