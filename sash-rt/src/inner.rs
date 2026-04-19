@@ -264,3 +264,14 @@ pub fn itod_inner(digits: i64, value: i64, buf: &mut [u8]) -> usize {
 
     pos
 }
+
+/// Lexicographic string comparison. Returns <0, 0, or >0.
+pub fn strcmp_inner(a: &[u8], b: &[u8]) -> i64 {
+    let min_len = if a.len() < b.len() { a.len() } else { b.len() };
+    for i in 0..min_len {
+        if a[i] != b[i] {
+            return (a[i] as i64) - (b[i] as i64);
+        }
+    }
+    (a.len() as i64) - (b.len() as i64)
+}

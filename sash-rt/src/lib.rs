@@ -736,6 +736,14 @@ pub extern "C" fn sash_streq(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> 
     if streq_inner(a, b) { 1 } else { 0 }
 }
 
+/// Lexicographic string comparison. Returns <0, 0, or >0.
+#[no_mangle]
+pub extern "C" fn sash_strcmp(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64 {
+    let a = unsafe { core::slice::from_raw_parts(p1, l1 as usize) };
+    let b = unsafe { core::slice::from_raw_parts(p2, l2 as usize) };
+    strcmp_inner(a, b)
+}
+
 /// Associative array lookup.
 #[no_mangle]
 pub extern "C" fn sash_assoc_lookup(
