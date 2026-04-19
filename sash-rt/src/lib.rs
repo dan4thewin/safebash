@@ -1068,3 +1068,4 @@ pub unsafe extern "C" fn sash_splice_argv(
     *buf.add(prefix_count + pos_count) = core::ptr::null();
     buf
 }
+
