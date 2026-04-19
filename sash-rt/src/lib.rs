@@ -441,19 +441,42 @@ pub extern "C" fn sash_capture(
 }
 
 // Simple bump allocator — must stay unsafe (DD#34)
-static mut HEAP: [u8; 131072] = [0u8; 131072];
-static mut HEAP_POS: usize = 0;
+// ── Heap — mmap'd region managed by heap_4 ────────────────────────────
+// heap4.c provides sash_malloc/sash_free/sash_realloc (first-fit + coalesce).
+// We initialize it from _start with an mmap'd anonymous region.
 
+extern "C" {
+    fn sash_heap_init(heap: *mut u8, size: usize);
+    pub fn sash_malloc(n: usize) -> *mut u8;
+}
+
+const HEAP_SIZE: usize = 1024 * 1024; // 1MB, no BSS cost
+
+/// Called from _start before main. mmap anonymous region, init heap4.
 #[no_mangle]
-pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
-    let pos = HEAP_POS;
-    HEAP_POS += (n + 7) & !7;
-    HEAP.as_mut_ptr().add(pos)
+pub unsafe extern "C" fn sash_init_heap() {
+    let ptr = rustix::mm::mmap_anonymous(
+        core::ptr::null_mut(),
+        HEAP_SIZE,
+        rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
+        rustix::mm::MapFlags::PRIVATE,
+    ).expect("sash: mmap failed for heap");
+    sash_heap_init(ptr as *mut u8, HEAP_SIZE);
 }
 
 #[no_mangle]
-pub extern "C" fn sash_free(_ptr: *const u8) {
-    // bump allocator — no-op free
+pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
+    sash_malloc(n)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_free_ptr(ptr: *mut u8) {
+    sash_free_c(ptr);
+}
+
+extern "C" {
+    #[link_name = "sash_free"]
+    fn sash_free_c(ptr: *mut u8);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -476,6 +499,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "mov [rip + sash_argv], rsi",
         "lea rax, [rsp + rdi*8 + 16]",
         "mov [rip + sash_envp], rax",
+        "call sash_init_heap",
         "call main",
         "mov rdi, rax",
         "mov eax, 60",
@@ -499,6 +523,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "add x1, x1, #16",
         "adrp x2, sash_envp",
         "str x1, [x2, :lo12:sash_envp]",
+        "bl sash_init_heap",
         "bl main",
         "mov x8, #93",
         "svc #0",
@@ -1099,4 +1124,74 @@ pub unsafe extern "C" fn sash_itod(digits: i64, value: i64, out_len: *mut i64) -
     let len = itod_inner(digits, value, &mut ITOD_BUF);
     *out_len = len as i64;
     ITOD_BUF.as_ptr()
+}
+
+// ── C-callable memory wrappers for Plan 9 regexp ───────────────────────
+// Route to heap4 via sash_alloc/sash_free_ptr.
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_cmalloc(n: usize) -> *mut u8 {
+    sash_alloc(n)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_cfree(p: *mut u8) {
+    sash_free_ptr(p);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_crealloc(p: *mut u8, n: usize) -> *mut u8 {
+    sash_realloc(p, n)
+}
+
+extern "C" {
+    fn sash_realloc(p: *mut u8, n: usize) -> *mut u8;
+}
+
+// ── Plan 9 regexp error handler ────────────────────────────────────────
+
+#[no_mangle]
+pub unsafe extern "C" fn regerror9(s: *const u8) {
+    // Write "sash: regexp error: <msg>\n" to stderr
+    let prefix = b"sash: regexp error: ";
+    sash_write(2, prefix.as_ptr(), prefix.len() as i64);
+    if !s.is_null() {
+        let len = strlen(s);
+        sash_write(2, s, len as i64);
+    }
+    sash_write(2, b"\n".as_ptr(), 1);
+}
+
+// ── Regex match wrapper ────────────────────────────────────────────────
+
+extern "C" {
+    fn regcomp9(pattern: *const u8) -> *mut u8;
+    fn regexec9(prog: *mut u8, str: *const u8, match_: *mut u8, ms: i32) -> i32;
+}
+
+/// Match a string against a regex pattern.
+/// Returns 1 if matched, 0 if not.
+/// pattern and str must be null-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn sash_regex_match(
+    str_ptr: *const u8, str_len: i64,
+    pat_ptr: *const u8, pat_len: i64,
+) -> i64 {
+    // Need null-terminated copies for Plan 9 regex API
+    let pat_buf = sash_alloc((pat_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len as usize);
+    *pat_buf.add(pat_len as usize) = 0;
+
+    let str_buf = sash_alloc((str_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(str_ptr, str_buf, str_len as usize);
+    *str_buf.add(str_len as usize) = 0;
+
+    let prog = regcomp9(pat_buf);
+    if prog.is_null() {
+        return 0;
+    }
+    // Resub is 4 pointers per entry, 10 entries = 320 bytes on 64-bit
+    let mut resub = [0u8; 320];
+    let result = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
+    if result > 0 { 1 } else { 0 }
 }
