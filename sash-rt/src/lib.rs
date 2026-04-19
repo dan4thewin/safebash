@@ -257,18 +257,19 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
             Ok(f) => f,
             Err(_) => return -1,
         };
-        let src = rustix::fd::AsRawFd::as_raw_fd(&opened);
+        let src = rustix::fd::IntoRawFd::into_raw_fd(opened) as i64;
         // dup2(opened, fd)
         core::arch::asm!(
             "syscall",
             in("rax") 33_i64,  // SYS_dup2
-            in("rdi") src as i64,
+            in("rdi") src,
             in("rsi") fd,
             lateout("rcx") _,
             lateout("r11") _,
         );
         // close the original opened fd (now duplicated)
-        rustix::io::close(rustix::fd::AsRawFd::as_raw_fd(&opened));
+        // into_raw_fd consumed the OwnedFd, so no double-close from Drop
+        sash_close(src);
         0
     }
 }
@@ -923,4 +924,147 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let ptr = unsafe { sash_alloc(total) };
     unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
     (ptr, total)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_source_kvp — read flat KEY=VALUE file, set environment vars
+// ═══════════════════════════════════════════════════════════════
+
+/// Read a file of KEY=VALUE lines. Sets each as an environment variable
+/// via setenv. Skips blank lines and # comments. Dies on malformed lines.
+/// Returns 0 on success, 1 on failure (file not found, bad format).
+#[no_mangle]
+pub unsafe extern "C" fn sash_source_kvp(path: *const u8, path_len: i64) -> i64 {
+    use rustix::fd::BorrowedFd;
+
+    // Null-terminate the path
+    let path_slice = core::slice::from_raw_parts(path, path_len as usize);
+    let mut path_buf = [0u8; 4096];
+    if path_len as usize >= path_buf.len() {
+        return 1;
+    }
+    path_buf[..path_len as usize].copy_from_slice(path_slice);
+    path_buf[path_len as usize] = 0;
+
+    // Open the file using raw syscall
+    let fd: i64;
+    core::arch::asm!(
+        "syscall",
+        in("rax") 2_i64,   // SYS_open
+        in("rdi") path_buf.as_ptr(),
+        in("rsi") 0_i64,   // O_RDONLY
+        in("rdx") 0_i64,
+        lateout("rax") fd,
+        out("rcx") _,
+        out("r11") _,
+    );
+    if fd < 0 {
+        return 1;
+    }
+
+    // Read entire file into a stack buffer
+    let mut buf = [0u8; 65536];
+    let mut total = 0usize;
+    loop {
+        let n = sash_read(fd, buf[total..].as_mut_ptr(), (buf.len() - total) as i64);
+        if n <= 0 { break; }
+        total += n as usize;
+    }
+    sash_close(fd);
+
+    // Parse KEY=VALUE lines
+    let content = &buf[..total];
+    let mut pos = 0;
+    while pos < total {
+        // Find end of line
+        let mut eol = pos;
+        while eol < total && content[eol] != b'\n' {
+            eol += 1;
+        }
+        let line = &content[pos..eol];
+        pos = eol + 1;
+
+        // Skip blank lines and comments
+        let trimmed = {
+            let mut s = 0;
+            while s < line.len() && (line[s] == b' ' || line[s] == b'\t') {
+                s += 1;
+            }
+            &line[s..]
+        };
+        if trimmed.is_empty() || trimmed[0] == b'#' {
+            continue;
+        }
+
+        // Find '='
+        let mut eq = 0;
+        while eq < trimmed.len() && trimmed[eq] != b'=' {
+            eq += 1;
+        }
+        if eq >= trimmed.len() {
+            // Malformed line — no '='
+            sash_write(2, b"sash: bad line in config: ".as_ptr(), 26);
+            sash_write(2, trimmed.as_ptr(), trimmed.len() as i64);
+            sash_write(2, b"\n".as_ptr(), 1);
+            sash_exit(1);
+        }
+
+        let key = &trimmed[..eq];
+        let val = &trimmed[eq + 1..];
+
+        // Call setenv
+        sash_setenv(key.as_ptr(), key.len() as i64, val.as_ptr(), val.len() as i64);
+    }
+
+    0
+}
+
+/// Redirect fd to a file, path given as (ptr, len) — NOT null-terminated.
+/// Copies to a stack buffer, null-terminates, then delegates to sash_redirect.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_redirect_s(fd: i64, path_ptr: *const u8, path_len: i64, flags: i64) -> i64 {
+    unsafe {
+        let len = path_len as usize;
+        if len >= 4095 { return -1; }
+        let mut buf: [u8; 4096] = [0; 4096];
+        core::ptr::copy_nonoverlapping(path_ptr, buf.as_mut_ptr(), len);
+        buf[len] = 0;
+        sash_redirect(fd, buf.as_ptr(), flags)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_splice_argv — build argv with $@ spliced in
+// ═══════════════════════════════════════════════════════════════
+
+/// Given a prefix (e.g. ["/usr/bin/git"]) and the program's argv/argc,
+/// build a new argv: prefix + argv[1..argc] + NULL.
+/// Returns pointer to the new null-terminated argv array.
+#[no_mangle]
+pub unsafe extern "C" fn sash_splice_argv(
+    prefix: *const *const u8,  // null-terminated array of fixed arg pointers
+    argv: *const *const u8,    // program's argv
+    argc: i64,                 // program's argc
+) -> *const *const u8 {
+    // Count prefix entries
+    let mut prefix_count = 0usize;
+    loop {
+        if (*prefix.add(prefix_count)).is_null() { break; }
+        prefix_count += 1;
+    }
+    // positional args = argv[1..argc]
+    let pos_count = if argc > 1 { (argc - 1) as usize } else { 0 };
+    let total = prefix_count + pos_count + 1; // +1 for null terminator
+    let buf = sash_alloc(total * 8) as *mut *const u8;
+    // Copy prefix
+    for i in 0..prefix_count {
+        *buf.add(i) = *prefix.add(i);
+    }
+    // Copy positional args
+    for i in 0..pos_count {
+        *buf.add(prefix_count + i) = *argv.add(1 + i);
+    }
+    // Null terminator
+    *buf.add(prefix_count + pos_count) = core::ptr::null();
+    buf
 }
