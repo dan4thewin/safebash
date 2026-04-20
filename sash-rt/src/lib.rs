@@ -1426,3 +1426,53 @@ pub extern "C" fn sash_heredoc_redirect(fd: i64, body_ptr: *const u8, body_len: 
     }
     drop(read_fd);
 }
+
+/// Convert first character to uppercase. Returns (ptr, len).
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_toupper_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
+    out.copy_from_slice(s);
+    if !out.is_empty() && out[0] >= b'a' && out[0] <= b'z' {
+        out[0] -= 32;
+    }
+    s_len
+}
+
+/// Convert first character to lowercase. Returns len.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_tolower_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
+    out.copy_from_slice(s);
+    if !out.is_empty() && out[0] >= b'A' && out[0] <= b'Z' {
+        out[0] += 32;
+    }
+    s_len
+}
+
+/// Convert all characters to uppercase. Returns len.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_toupper_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
+    for i in 0..s.len() {
+        out[i] = if s[i] >= b'a' && s[i] <= b'z' { s[i] - 32 } else { s[i] };
+    }
+    s_len
+}
+
+/// Convert all characters to lowercase. Returns len.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_tolower_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
+    for i in 0..s.len() {
+        out[i] = if s[i] >= b'A' && s[i] <= b'Z' { s[i] + 32 } else { s[i] };
+    }
+    s_len
+}
