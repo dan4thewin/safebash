@@ -1397,3 +1397,32 @@ pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
         CWD_BUF.as_ptr()
     }
 }
+
+/// Set up heredoc: create pipe, fork-write body to write end, dup2 read end to fd.
+/// For simplicity in a static binary (no threads), we write synchronously then close.
+/// This works for small heredocs. Large ones would need fork.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_heredoc_redirect(fd: i64, body_ptr: *const u8, body_len: i64) {
+    if body_ptr.is_null() || body_len < 0 { return; }
+    let (read_fd, write_fd) = match rustix::pipe::pipe() {
+        Ok(pair) => pair,
+        Err(_) => return,
+    };
+    // Write the body to the pipe
+    let body = unsafe { core::slice::from_raw_parts(body_ptr, body_len as usize) };
+    let _ = rustix::io::write(&write_fd, body);
+    drop(write_fd);
+    // dup2 read end to target fd via raw syscall
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 33_i64,  // __NR_dup2
+            in("rdi") rustix::fd::AsRawFd::as_raw_fd(&read_fd) as i64,
+            in("rsi") fd,
+            lateout("rax") _,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    drop(read_fd);
+}
