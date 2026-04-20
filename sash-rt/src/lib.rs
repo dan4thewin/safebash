@@ -1203,3 +1203,74 @@ pub unsafe extern "C" fn sash_regex_match(
     let result = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
     if result > 0 { 1 } else { 0 }
 }
+
+// ── File test operations ─────────────────────────────────────
+
+/// File test: returns 1 if the test passes, 0 otherwise.
+/// op: 0=exists(-e), 1=isfile(-f), 2=isdir(-d), 3=readable(-r),
+///     4=writable(-w), 5=executable(-x), 6=non-empty(-s), 7=symlink(-L)
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) -> i64 {
+    if path_ptr.is_null() || path_len <= 0 {
+        return 0;
+    }
+    let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
+    
+    // We need a null-terminated path for syscalls
+    let mut buf = [0u8; 4096];
+    if path.len() >= buf.len() { return 0; }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+
+    match op {
+        0 => {
+            // -e: exists (stat succeeds)
+            match rustix::fs::stat(path_cstr) {
+                Ok(_) => 1,
+                Err(_) => 0,
+            }
+        }
+        1 => {
+            // -f: is regular file
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::RegularFile { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        2 => {
+            // -d: is directory
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        3 => {
+            // -r: readable
+            rustix::fs::access(path_cstr, rustix::fs::Access::READ_OK).is_ok() as i64
+        }
+        4 => {
+            // -w: writable
+            rustix::fs::access(path_cstr, rustix::fs::Access::WRITE_OK).is_ok() as i64
+        }
+        5 => {
+            // -x: executable
+            rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() as i64
+        }
+        6 => {
+            // -s: non-empty file (size > 0)
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if st.st_size > 0 { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        7 => {
+            // -L: is symlink (use lstat)
+            match rustix::fs::lstat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Symlink { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        _ => 0,
+    }
+}
