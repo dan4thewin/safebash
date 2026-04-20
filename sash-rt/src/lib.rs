@@ -1528,3 +1528,4 @@ pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
     }
     1
 }
+
