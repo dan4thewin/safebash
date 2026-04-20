@@ -1290,3 +1290,32 @@ pub extern "C" fn sash_pow(base: i64, exp: i64) -> i64 {
     }
     result
 }
+
+/// Substring: ${var:offset:length}
+/// Returns (ptr, len) of the substring. Negative offset counts from end.
+/// If length is 0 (not provided), returns from offset to end.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_substring(
+    s_ptr: *const u8, s_len: i64,
+    offset: i64, length: i64, has_length: i64,
+) -> (*const u8, i64) {
+    let total = s_len as usize;
+    // Resolve offset (negative = from end)
+    let start = if offset < 0 {
+        let from_end = (-offset) as usize;
+        if from_end > total { 0 } else { total - from_end }
+    } else {
+        let o = offset as usize;
+        if o > total { total } else { o }
+    };
+    
+    let remaining = total - start;
+    let len = if has_length != 0 {
+        let l = length as usize;
+        if l > remaining { remaining } else { l }
+    } else {
+        remaining
+    };
+    
+    (unsafe { s_ptr.add(start) }, len as i64)
+}
