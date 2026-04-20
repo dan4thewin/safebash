@@ -1529,3 +1529,9 @@ pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
     1
 }
 
+
+/// Get process ID.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_getpid() -> i64 {
+    rustix::process::getpid().as_raw_nonzero().get() as i64
+}
