@@ -1319,3 +1319,37 @@ pub extern "C" fn sash_substring(
     
     (unsafe { s_ptr.add(start) }, len as i64)
 }
+
+/// Test if fd is a terminal (isatty equivalent)
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_isatty(fd: i64) -> i64 {
+    let raw_fd = fd as core::ffi::c_int;
+    let fd = unsafe { rustix::fd::BorrowedFd::borrow_raw(raw_fd) };
+    rustix::termios::isatty(fd) as i64
+}
+
+/// Compare file modification times: returns 1 if file1 is newer than file2.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_file_newer(
+    p1_ptr: *const u8, p1_len: i64,
+    p2_ptr: *const u8, p2_len: i64,
+) -> i64 {
+    let get_mtime = |ptr: *const u8, len: i64| -> Option<i64> {
+        if ptr.is_null() || len <= 0 { return None; }
+        let path = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+        let mut buf = [0u8; 4096];
+        if path.len() >= buf.len() { return None; }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        let cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+        match rustix::fs::stat(cstr) {
+            Ok(st) => Some(st.st_mtime as i64 * 1_000_000_000 + st.st_mtime_nsec as i64),
+            Err(_) => None,
+        }
+    };
+    match (get_mtime(p1_ptr, p1_len), get_mtime(p2_ptr, p2_len)) {
+        (Some(t1), Some(t2)) => if t1 > t2 { 1 } else { 0 },
+        (Some(_), None) => 1,  // file1 exists, file2 doesn't → file1 newer
+        _ => 0,
+    }
+}

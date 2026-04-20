@@ -7,7 +7,7 @@ edition = "2021"
 crate-type = ["staticlib"]
 
 [dependencies]
-rustix = { version = "1.1", default-features = false, features = ["process", "runtime", "fs", "pipe", "mm"] }
+rustix = { version = "1.1", default-features = false, features = ["process", "runtime", "fs", "pipe", "mm", "termios"] }
 
 [build-dependencies]
 cc = "1"
