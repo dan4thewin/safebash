@@ -1353,3 +1353,47 @@ pub extern "C" fn sash_file_newer(
         _ => 0,
     }
 }
+
+/// Change directory. Returns 0 on success, -1 on error.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {
+    if path_ptr.is_null() || path_len <= 0 { return -1; }
+    let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
+    let mut buf = [0u8; 4096];
+    if path.len() >= buf.len() { return -1; }
+    buf[..path.len()].copy_from_slice(path);
+    buf[path.len()] = 0;
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+    match rustix::process::chdir(path_cstr) {
+        Ok(()) => 0,
+        Err(_) => -1,
+    }
+}
+
+/// Get current working directory. Returns (ptr, len).
+/// Caller must not free — uses a static buffer.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
+    static mut CWD_BUF: [u8; 4096] = [0u8; 4096];
+    unsafe {
+        // Use raw syscall since rustix::process::getcwd wants a Vec
+        let ret: i64;
+        core::arch::asm!(
+            "syscall",
+            in("rax") 79_i64,  // __NR_getcwd
+            in("rdi") CWD_BUF.as_mut_ptr(),
+            in("rsi") 4096_i64,
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+        if ret < 0 {
+            *out_len = 0;
+            return core::ptr::null();
+        }
+        // ret includes null terminator, we want length without it
+        let len = ret - 1;
+        *out_len = len;
+        CWD_BUF.as_ptr()
+    }
+}
