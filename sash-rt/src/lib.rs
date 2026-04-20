@@ -1535,3 +1535,41 @@ pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
 pub extern "C" fn sash_getpid() -> i64 {
     rustix::process::getpid().as_raw_nonzero().get() as i64
 }
+
+// ═══════════════════════════════════════════════════════════════
+// sash_split_first_word — split first whitespace-delimited word
+// ═══════════════════════════════════════════════════════════════
+
+/// Split the first whitespace-delimited word from a string.
+/// Returns (word_ptr, word_len). Sets *rest_ptr and *rest_len to
+/// the remainder after the first run of whitespace.
+/// If no whitespace found, word = entire string, rest = empty.
+#[no_mangle]
+pub unsafe extern "C" fn sash_split_first_word(
+    ptr: *const u8,
+    len: i64,
+    rest_ptr_out: *mut *const u8,
+    rest_len_out: *mut i64,
+) -> (*const u8, i64) {
+    if ptr.is_null() || len <= 0 {
+        *rest_ptr_out = ptr;
+        *rest_len_out = 0;
+        return (ptr, 0);
+    }
+    let s = core::slice::from_raw_parts(ptr, len as usize);
+    // Skip leading whitespace
+    let start = s.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(s.len());
+    let after_start = &s[start..];
+    // Find end of word
+    let word_end = after_start.iter().position(|&b| b == b' ' || b == b'\t').unwrap_or(after_start.len());
+    let word_ptr = ptr.add(start);
+    let word_len = word_end as i64;
+    // Skip whitespace after word
+    let rest_start = start + word_end;
+    let after_word = &s[rest_start..];
+    let rest_skip = after_word.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(after_word.len());
+    let rest_offset = rest_start + rest_skip;
+    *rest_ptr_out = ptr.add(rest_offset);
+    *rest_len_out = (s.len() - rest_offset) as i64;
+    (word_ptr, word_len)
+}
