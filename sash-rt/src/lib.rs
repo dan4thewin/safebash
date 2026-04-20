@@ -1476,3 +1476,55 @@ pub extern "C" fn sash_tolower_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u
     }
     s_len
 }
+
+/// command -v: check if a command exists in PATH.
+/// Prints the path if found, returns 0 on success, 1 on failure.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
+    if name_ptr.is_null() || name_len <= 0 { return 1; }
+    let name = unsafe { core::slice::from_raw_parts(name_ptr, name_len as usize) };
+    
+    // Get PATH
+    let path_env = b"PATH\0";
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(path_env.as_ptr() as *const core::ffi::c_char) };
+    
+    // Use raw getenv via syscall... actually, use our existing sash_getenv pattern
+    // For simplicity, read /proc/self/environ or just use the C getenv pattern
+    // Actually let's do the simple thing: iterate PATH entries
+    
+    // We need the PATH value. Let's use a static buffer approach.
+    extern "C" { fn sash_getenv(name_ptr: *const u8, name_len: i64, out_len: *mut i64) -> *const u8; }
+    let mut path_len: i64 = 0;
+    let path_ptr = unsafe { sash_getenv(b"PATH".as_ptr(), 4, &mut path_len) };
+    if path_ptr.is_null() || path_len <= 0 { return 1; }
+    let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
+    
+    let mut buf = [0u8; 4096];
+    // Split PATH on ':'
+    let mut start = 0;
+    loop {
+        let end = path[start..].iter().position(|&b| b == b':').map(|p| start + p).unwrap_or(path.len());
+        let dir = &path[start..end];
+        let total = dir.len() + 1 + name.len();
+        if total < buf.len() - 1 {
+            buf[..dir.len()].copy_from_slice(dir);
+            buf[dir.len()] = b'/';
+            buf[dir.len()+1..dir.len()+1+name.len()].copy_from_slice(name);
+            buf[total] = 0;
+            let cpath = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+            // Check if file exists and is executable
+            match rustix::fs::access(cpath, rustix::fs::Access::EXEC_OK) {
+                Ok(()) => {
+                    // Print the path
+                    let _ = rustix::io::write(unsafe { rustix::fd::BorrowedFd::borrow_raw(1) }, &buf[..total]);
+                    let _ = rustix::io::write(unsafe { rustix::fd::BorrowedFd::borrow_raw(1) }, b"\n");
+                    return 0;
+                }
+                Err(_) => {}
+            }
+        }
+        if end >= path.len() { break; }
+        start = end + 1;
+    }
+    1
+}
