@@ -1,0 +1,8 @@
+[package]
+name = "sash-expand"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "sash-expand"
+path = "src/main.rs"
