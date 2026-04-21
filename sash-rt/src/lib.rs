@@ -2022,6 +2022,103 @@ pub extern "C" fn sash_glob(
     table
 }
 
+/// Glob with regex filter: list directory entries matching a regex pattern.
+/// Returns a SashTable with integer keys and matching filenames as values.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_glob_regex(
+    dir_ptr: *const u8, dir_len: usize,
+    pat_ptr: *const u8, pat_len: usize,
+) -> *mut u8 {
+    let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
+
+    // Null-terminate pattern for Plan 9 regex API
+    let pat_buf = unsafe { sash_alloc(pat_len + 1) };
+    unsafe {
+        core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len);
+        *pat_buf.add(pat_len) = 0;
+    }
+    let prog = unsafe { regcomp9(pat_buf) };
+    if prog.is_null() {
+        return unsafe { sash_table_new(16) } as *mut u8;
+    }
+
+    // Open directory
+    let mut dir_path = [0u8; 4096];
+    let dlen = dir.len().min(4095);
+    dir_path[..dlen].copy_from_slice(&dir[..dlen]);
+    dir_path[dlen] = 0;
+
+    let dir_fd: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 2i64,
+            in("rdi") dir_path.as_ptr() as i64,
+            in("rsi") 0x10000i64,
+            in("rdx") 0i64,
+            lateout("rax") dir_fd,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    if dir_fd < 0 {
+        return unsafe { sash_table_new(16) } as *mut u8;
+    }
+
+    let table = unsafe { sash_table_new(16) } as *mut u8;
+    let mut buf = [0u8; 4096];
+    let mut idx: i64 = 0;
+
+    loop {
+        let nread: i64;
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                in("rax") 217i64,
+                in("rdi") dir_fd,
+                in("rsi") buf.as_mut_ptr() as i64,
+                in("rdx") buf.len() as i64,
+                lateout("rax") nread,
+                lateout("rcx") _,
+                lateout("r11") _,
+            );
+        }
+        if nread <= 0 { break; }
+
+        let mut pos = 0usize;
+        while pos < nread as usize {
+            let reclen = u16::from_ne_bytes([buf[pos + 16], buf[pos + 17]]) as usize;
+            let name_start = pos + 19;
+            let name_end = buf[name_start..pos + reclen].iter()
+                .position(|&b| b == 0)
+                .map(|p| name_start + p)
+                .unwrap_or(pos + reclen);
+            let name = &buf[name_start..name_end];
+
+            if name != b"." && name != b".." {
+                // Null-terminate name for regex
+                let name_buf = unsafe { sash_alloc(name.len() + 1) };
+                unsafe {
+                    core::ptr::copy_nonoverlapping(name.as_ptr(), name_buf, name.len());
+                    *name_buf.add(name.len()) = 0;
+                }
+                let mut resub = [0u8; 320];
+                let matched = unsafe { regexec9(prog, name_buf, resub.as_mut_ptr(), 10) };
+                if matched > 0 {
+                    let idx_bytes = idx.to_ne_bytes();
+                    // name_buf is already heap-allocated, reuse it (just don't free it)
+                    unsafe { sash_table_set(table as *mut SashTable, idx_bytes.as_ptr(), 8, name_buf, name.len() as i64); }
+                    idx += 1;
+                }
+            }
+            pos += reclen;
+        }
+    }
+
+    sash_close(dir_fd);
+    table
+}
+
 fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
     if n == 0 {
         buf[0] = b'0';
