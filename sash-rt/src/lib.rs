@@ -924,6 +924,7 @@ pub unsafe extern "C" fn sash_splice_argv(
 // ═══════════════════════════════════════════════════════════════
 
 const TABLE_EMPTY: i32 = -1;
+const TABLE_DELETED: i32 = -2;
 
 #[repr(C)]
 struct TableEntry {
@@ -931,6 +932,7 @@ struct TableEntry {
     key_len: i64,
     val_ptr: *const u8,
     val_len: i64,
+    deleted: bool,
 }
 
 #[repr(C)]
@@ -940,6 +942,7 @@ struct SashTable {
     index_mask: u32,
     entry_count: u32,
     entry_capacity: u32,
+    live_count: u32,
 }
 
 /// Safe view of the index array for table operations.
@@ -947,12 +950,16 @@ struct SashTable {
 fn table_find_slot_inner(indices: &[i32], entries_eq: impl Fn(usize, &[u8]) -> bool, mask: u32, key: &[u8]) -> u32 {
     let h = table_hash_inner(key);
     let mut pos = h & mask;
+    let mut first_deleted: Option<u32> = None;
     loop {
         let idx = indices[pos as usize];
         if idx == TABLE_EMPTY {
-            return pos;
+            // Return first deleted slot if we passed one, otherwise this empty slot
+            return first_deleted.unwrap_or(pos);
         }
-        if entries_eq(idx as usize, key) {
+        if idx == TABLE_DELETED {
+            if first_deleted.is_none() { first_deleted = Some(pos); }
+        } else if entries_eq(idx as usize, key) {
             return pos;
         }
         pos = (pos + 1) & mask;
@@ -968,22 +975,35 @@ unsafe fn table_grow(t: *mut SashTable) {
     for slot in idx_slice.iter_mut() {
         *slot = TABLE_EMPTY;
     }
-    // Rehash existing entries
+    // Compact: copy live entries, skip deleted, rehash
+    let mut new_count = 0u32;
     for i in 0..(*t).entry_count as usize {
         let e = &*(*t).entries.add(i);
+        if e.deleted { continue; }
+        if new_count as usize != i {
+            let dst = &mut *(*t).entries.add(new_count as usize);
+            *dst = TableEntry {
+                key_ptr: e.key_ptr, key_len: e.key_len,
+                val_ptr: e.val_ptr, val_len: e.val_len,
+                deleted: false,
+            };
+        }
         let key = core::slice::from_raw_parts(e.key_ptr, e.key_len as usize);
         let h = table_hash_inner(key);
         let mut pos = h & new_mask;
         loop {
             if idx_slice[pos as usize] == TABLE_EMPTY {
-                idx_slice[pos as usize] = i as i32;
+                idx_slice[pos as usize] = new_count as i32;
                 break;
             }
             pos = (pos + 1) & new_mask;
         }
+        new_count += 1;
     }
     (*t).indices = new_indices;
     (*t).index_mask = new_mask;
+    (*t).entry_count = new_count;
+    (*t).live_count = new_count;
 }
 
 #[no_mangle]
@@ -1002,6 +1022,7 @@ pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
     (*t).index_mask = index_size - 1;
     (*t).entry_count = 0;
     (*t).entry_capacity = cap;
+    (*t).live_count = 0;
     t
 }
 
@@ -1047,8 +1068,10 @@ pub unsafe extern "C" fn sash_table_set(
         e.key_len = key_len;
         e.val_ptr = val_ptr;
         e.val_len = val_len;
+        e.deleted = false;
         *(*t).indices.add(pos as usize) = ei as i32;
         (*t).entry_count += 1;
+        (*t).live_count += 1;
     }
 }
 
@@ -1079,7 +1102,32 @@ pub unsafe extern "C" fn sash_table_get(
 
 #[no_mangle]
 pub unsafe extern "C" fn sash_table_len(t: *const SashTable) -> i64 {
-    (*t).entry_count as i64
+    (*t).live_count as i64
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_table_delete(
+    t: *mut SashTable,
+    key_ptr: *const u8,
+    key_len: i64,
+) -> i64 {
+    let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
+    let entries_ptr = (*t).entries;
+    let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
+    let pos = table_find_slot_inner(indices, |i, k| {
+        let e = &*entries_ptr.add(i);
+        !e.deleted && e.key_len == k.len() as i64 && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
+    }, (*t).index_mask, key);
+
+    let idx = *(*t).indices.add(pos as usize);
+    if idx == TABLE_EMPTY || idx == TABLE_DELETED {
+        return 1; // not found
+    }
+    let e = &mut *(*t).entries.add(idx as usize);
+    e.deleted = true;
+    *(*t).indices.add(pos as usize) = TABLE_DELETED;
+    (*t).live_count -= 1;
+    0 // success
 }
 
 #[no_mangle]
@@ -1088,13 +1136,19 @@ pub unsafe extern "C" fn sash_table_key(
     index: i64,
     out_len: *mut i64,
 ) -> *const u8 {
-    if index < 0 || index >= (*t).entry_count as i64 {
-        *out_len = 0;
-        return core::ptr::null();
+    // index is a "live index" — skip deleted entries
+    let mut live = 0i64;
+    for i in 0..(*t).entry_count as usize {
+        let e = &*(*t).entries.add(i);
+        if e.deleted { continue; }
+        if live == index {
+            *out_len = e.key_len;
+            return e.key_ptr;
+        }
+        live += 1;
     }
-    let e = &*(*t).entries.add(index as usize);
-    *out_len = e.key_len;
-    e.key_ptr
+    *out_len = 0;
+    core::ptr::null()
 }
 
 #[no_mangle]
@@ -1103,13 +1157,18 @@ pub unsafe extern "C" fn sash_table_value(
     index: i64,
     out_len: *mut i64,
 ) -> *const u8 {
-    if index < 0 || index >= (*t).entry_count as i64 {
-        *out_len = 0;
-        return core::ptr::null();
+    let mut live = 0i64;
+    for i in 0..(*t).entry_count as usize {
+        let e = &*(*t).entries.add(i);
+        if e.deleted { continue; }
+        if live == index {
+            *out_len = e.val_len;
+            return e.val_ptr;
+        }
+        live += 1;
     }
-    let e = &*(*t).entries.add(index as usize);
-    *out_len = e.val_len;
-    e.val_ptr
+    *out_len = 0;
+    core::ptr::null()
 }
 
 // ═══════════════════════════════════════════════════════════════
