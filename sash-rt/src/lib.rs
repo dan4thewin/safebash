@@ -1263,6 +1263,124 @@ pub unsafe extern "C" fn sash_regex_match(
     if result > 0 { 1 } else { 0 }
 }
 
+/// Regex substitution: s/pattern/replacement/flags
+/// flags: 'g' for global replace
+/// Returns new string (ptr, len). Caller owns the memory.
+#[no_mangle]
+pub unsafe extern "C" fn sash_regex_replace(
+    str_ptr: *const u8, str_len: i64,
+    pat_ptr: *const u8, pat_len: i64,
+    rep_ptr: *const u8, rep_len: i64,
+    global: i64,
+) -> (*mut u8, i64) {
+    let src = core::slice::from_raw_parts(str_ptr, str_len as usize);
+    let rep = core::slice::from_raw_parts(rep_ptr, rep_len as usize);
+
+    // Null-terminate pattern for Plan 9 API
+    let pat_buf = sash_alloc((pat_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len as usize);
+    *pat_buf.add(pat_len as usize) = 0;
+
+    let prog = regcomp9(pat_buf);
+    if prog.is_null() {
+        // No match possible — return copy of original
+        let out = sash_alloc(str_len as usize);
+        core::ptr::copy_nonoverlapping(str_ptr, out, str_len as usize);
+        return (out, str_len);
+    }
+
+    // Build result incrementally
+    let mut result = sash_alloc(str_len as usize + 256);
+    let mut result_len: usize = 0;
+    let mut result_cap: usize = str_len as usize + 256;
+    let mut offset: usize = 0;
+
+    loop {
+        if offset >= src.len() { break; }
+
+        // Null-terminate the remaining string
+        let remaining_len = src.len() - offset;
+        let str_buf = sash_alloc(remaining_len + 1);
+        core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), str_buf, remaining_len);
+        *str_buf.add(remaining_len) = 0;
+
+        // resub: 10 submatches, each is (start_ptr, end_ptr) = 2 pointers = 16 bytes
+        let mut resub = [0u8; 320];
+        let matched = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
+        if matched <= 0 {
+            // No match — copy remainder
+            let needed = result_len + remaining_len;
+            if needed > result_cap {
+                result_cap = needed * 2;
+                let new_buf = sash_alloc(result_cap);
+                core::ptr::copy_nonoverlapping(result, new_buf, result_len);
+                result = new_buf;
+            }
+            core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), remaining_len);
+            result_len += remaining_len;
+            break;
+        }
+
+        // Extract match start/end from resub[0] (first submatch = whole match)
+        let ptrs = resub.as_ptr() as *const *const u8;
+        let match_start = *ptrs;       // sp
+        let match_end = *ptrs.add(1);   // ep
+        let match_start_off = match_start as usize - str_buf as usize;
+        let match_end_off = match_end as usize - str_buf as usize;
+
+        // Copy pre-match text
+        let pre_len = match_start_off;
+        let needed = result_len + pre_len + rep.len();
+        if needed > result_cap {
+            result_cap = needed * 2;
+            let new_buf = sash_alloc(result_cap);
+            core::ptr::copy_nonoverlapping(result, new_buf, result_len);
+            result = new_buf;
+        }
+        core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), pre_len);
+        result_len += pre_len;
+
+        // Copy replacement
+        core::ptr::copy_nonoverlapping(rep.as_ptr(), result.add(result_len), rep.len());
+        result_len += rep.len();
+
+        offset += match_end_off;
+        // Prevent infinite loop on zero-length match
+        if match_end_off == match_start_off {
+            if offset < src.len() {
+                // Copy one byte and advance
+                if result_len + 1 > result_cap {
+                    result_cap = (result_len + 1) * 2;
+                    let new_buf = sash_alloc(result_cap);
+                    core::ptr::copy_nonoverlapping(result, new_buf, result_len);
+                    result = new_buf;
+                }
+                *result.add(result_len) = src[offset];
+                result_len += 1;
+                offset += 1;
+            } else {
+                break;
+            }
+        }
+
+        if global == 0 {
+            // Non-global: copy remainder after first match
+            let remaining = src.len() - offset;
+            if result_len + remaining > result_cap {
+                result_cap = (result_len + remaining) * 2;
+                let new_buf = sash_alloc(result_cap);
+                core::ptr::copy_nonoverlapping(result, new_buf, result_len);
+                result = new_buf;
+            }
+            core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), remaining);
+            result_len += remaining;
+            break;
+        }
+    }
+
+    (result, result_len as i64)
+}
+
 // ── File test operations ─────────────────────────────────────
 
 /// File test: returns 1 if the test passes, 0 otherwise.
