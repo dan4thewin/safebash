@@ -1612,3 +1612,28 @@ pub extern "C" fn sash_read_delim(fd: i64, delim: i64) -> (*mut u8, usize) {
     unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
     (ptr, total)
 }
+
+/// Return current epoch seconds as a decimal string (ptr, len).
+#[no_mangle]
+pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
+    let ts = rustix::time::clock_gettime(rustix::time::ClockId::Realtime);
+    let secs = ts.tv_sec as u64;
+    // itoa into stack buffer
+    let mut buf = [0u8; 20];
+    let mut n = secs;
+    let mut i = buf.len();
+    if n == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    } else {
+        while n > 0 {
+            i -= 1;
+            buf[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+    }
+    let len = buf.len() - i;
+    let ptr = unsafe { sash_alloc(len) };
+    unsafe { core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len); }
+    (ptr, len)
+}
