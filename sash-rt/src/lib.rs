@@ -1637,3 +1637,50 @@ pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
     unsafe { core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len); }
     (ptr, len)
 }
+
+
+/// Start capturing stdout: create pipe, save stdout, redirect stdout to pipe.
+/// Returns (saved_stdout_fd, pipe_read_fd).
+#[no_mangle]
+pub extern "C" fn sash_capture_start() -> (i64, i64) {
+    let saved = sash_dup(1);
+    let mut pipe_fds = [0i64; 2];
+    sash_pipe(pipe_fds.as_mut_ptr());
+    let pipe_r = pipe_fds[0];
+    let pipe_w = pipe_fds[1];
+    sash_dup2(pipe_w, 1);
+    sash_close(pipe_w);
+    (saved, pipe_r)
+}
+
+/// End capturing: restore stdout, read all captured data, return (ptr, len).
+/// Strips trailing newlines (bash convention).
+#[no_mangle]
+pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u8, usize) {
+    // Restore original stdout
+    sash_dup2(saved_stdout, 1);
+    sash_close(saved_stdout);
+
+    // Read all captured data
+    let mut buf = [0u8; 65536];
+    let mut total = 0usize;
+    loop {
+        let n = sash_read(pipe_read, unsafe { buf.as_mut_ptr().add(total) }, (buf.len() - total) as i64);
+        if n <= 0 { break; }
+        total += n as usize;
+    }
+    sash_close(pipe_read);
+
+    // Strip trailing newlines (bash convention)
+    while total > 0 && buf[total - 1] == b'\n' {
+        total -= 1;
+    }
+
+    if total == 0 {
+        return (core::ptr::null_mut(), 0);
+    }
+
+    let ptr = unsafe { sash_alloc(total) };
+    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    (ptr, total)
+}
