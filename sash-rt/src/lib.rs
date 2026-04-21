@@ -1738,3 +1738,132 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
     }
     if ret < 0 { -1 } else { 0 }
 }
+
+// ── Directory reading (glob support) ─────────────────────────
+
+/// Read directory entries matching a star-glob pattern.
+/// Pattern supports: "*.ext", "prefix*", "prefix*suffix", "*".
+/// Returns a table (indexed array) of matching filenames.
+/// dir_ptr/dir_len: directory path (e.g. ".")
+/// pat_ptr/pat_len: glob pattern (e.g. "*.sh")
+#[no_mangle]
+pub extern "C" fn sash_glob(
+    dir_ptr: *const u8, dir_len: usize,
+    pat_ptr: *const u8, pat_len: usize,
+) -> *mut u8 {
+    let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
+    let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
+
+    // Parse pattern into prefix/suffix around '*'
+    let star_pos = pat.iter().position(|&b| b == b'*');
+    let (prefix, suffix) = match star_pos {
+        Some(pos) => (&pat[..pos], &pat[pos+1..]),
+        None => (pat, &[] as &[u8]),  // no star = exact match
+    };
+
+    // Open directory
+    let mut dir_path = [0u8; 4096];
+    let dlen = dir.len().min(4095);
+    dir_path[..dlen].copy_from_slice(&dir[..dlen]);
+    dir_path[dlen] = 0;
+
+    // Use raw getdents64 syscall
+    let dir_fd: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 2i64, // __NR_open
+            in("rdi") dir_path.as_ptr() as i64,
+            in("rsi") 0x10000i64, // O_RDONLY | O_DIRECTORY
+            in("rdx") 0i64,
+            lateout("rax") dir_fd,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    if dir_fd < 0 {
+        return unsafe { sash_table_new(16) } as *mut u8;
+    }
+
+    let table = unsafe { sash_table_new(16) } as *mut u8;
+    let mut buf = [0u8; 4096];
+    let mut idx: i64 = 0;
+
+    loop {
+        let nread: i64;
+        unsafe {
+            core::arch::asm!(
+                "syscall",
+                in("rax") 217i64, // __NR_getdents64
+                in("rdi") dir_fd,
+                in("rsi") buf.as_mut_ptr() as i64,
+                in("rdx") buf.len() as i64,
+                lateout("rax") nread,
+                lateout("rcx") _,
+                lateout("r11") _,
+            );
+        }
+        if nread <= 0 { break; }
+
+        let mut pos = 0usize;
+        while pos < nread as usize {
+            // struct linux_dirent64: d_ino(8), d_off(8), d_reclen(2), d_type(1), d_name(...)
+            let reclen = u16::from_ne_bytes([buf[pos + 16], buf[pos + 17]]) as usize;
+            let name_start = pos + 19;
+            let name_end = buf[name_start..pos + reclen].iter()
+                .position(|&b| b == 0)
+                .map(|p| name_start + p)
+                .unwrap_or(pos + reclen);
+            let name = &buf[name_start..name_end];
+
+            // Skip . and ..
+            if name != b"." && name != b".." {
+                // Match: prefix + * + suffix
+                let matches = if star_pos.is_none() {
+                    name == pat
+                } else {
+                    name.len() >= prefix.len() + suffix.len()
+                        && name.starts_with(prefix)
+                        && name.ends_with(suffix)
+                };
+                if matches {
+                    // Key is raw i64 bytes (same format as codegen IndexedArray)
+                    let idx_bytes = idx.to_ne_bytes();
+                    // Copy name to heap — buf is stack-local and will be overwritten
+                    let name_copy = unsafe { sash_alloc(name.len()) };
+                    unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), name_copy, name.len()); }
+                    unsafe { sash_table_set(table as *mut SashTable, idx_bytes.as_ptr(), 8, name_copy, name.len() as i64); }
+                    idx += 1;
+                }
+            }
+            pos += reclen;
+        }
+    }
+
+    // Close directory
+    sash_close(dir_fd);
+    table
+}
+
+fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
+    if n == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let neg = n < 0;
+    if neg { n = -n; }
+    let mut pos = 19;
+    while n > 0 {
+        buf[pos] = b'0' + (n % 10) as u8;
+        n /= 10;
+        if pos == 0 { break; }
+        pos -= 1;
+    }
+    if neg { buf[pos] = b'-'; } else { pos += 1; }
+    let len = 20 - pos;
+    // Manual copy to avoid memmove
+    for j in 0..len {
+        buf[j] = buf[pos + j];
+    }
+    len
+}
