@@ -1684,3 +1684,57 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
     unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
     (ptr, total)
 }
+
+// ── Signal handling (trap) ───────────────────────────────────
+
+/// Register a signal handler.  handler_fn is a function pointer:
+///   extern "C" fn(i32) -> ()
+/// Pass 0 for SIG_DFL, 1 for SIG_IGN.
+/// Returns 0 on success, -1 on error.
+#[no_mangle]
+pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
+    use core::mem;
+
+    // sigaction struct for x86_64 Linux (kernel ABI)
+    #[repr(C)]
+    struct KernelSigaction {
+        sa_handler: u64,
+        sa_flags: u64,
+        sa_restorer: u64,
+        sa_mask: [u64; 16],  // 128 bytes = 1024 bits
+    }
+
+    let mut act: KernelSigaction = unsafe { mem::zeroed() };
+    act.sa_handler = handler as u64;
+    // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
+    act.sa_flags = 0x04000000 | 0x10000000;
+
+    // We need a restorer for x86_64. Use a minimal one.
+    extern "C" fn restorer() {
+        unsafe {
+            core::arch::asm!(
+                "mov rax, 15",  // __NR_rt_sigreturn
+                "syscall",
+                options(noreturn)
+            );
+        }
+    }
+    act.sa_restorer = restorer as u64;
+
+    // rt_sigaction syscall (13)
+    let ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 13i64,           // __NR_rt_sigaction
+            in("rdi") signum,
+            in("rsi") &act as *const _ as i64,
+            in("rdx") 0i64,           // NULL oldact
+            in("r10") 8i64,           // sigsetsize
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    if ret < 0 { -1 } else { 0 }
+}
