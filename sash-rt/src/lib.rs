@@ -1573,3 +1573,42 @@ pub unsafe extern "C" fn sash_split_first_word(
     *rest_len_out = (s.len() - rest_offset) as i64;
     (word_ptr, word_len)
 }
+
+// ═══════════════════════════════════════════════════════════════
+// sash_read_delim — read until a specific delimiter byte
+// ═══════════════════════════════════════════════════════════════
+
+#[no_mangle]
+pub extern "C" fn sash_read_delim(fd: i64, delim: i64) -> (*mut u8, usize) {
+    let delim_byte = delim as u8;
+    let mut buf = [0u8; 4096];
+    let mut total = 0usize;
+    let mut found_delim = false;
+    loop {
+        if total >= buf.len() { break; }
+        let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
+        match n {
+            Ok(0) => break,
+            Ok(1) => {
+                if buf[total] == delim_byte { found_delim = true; break; }
+                total += 1;
+            }
+            _ => break,
+        }
+    }
+    // Bash behavior: read returns success only if delimiter was found.
+    // If EOF before delimiter, read returns failure (terminates while loop)
+    // but still sets the variable. We return (null, 0) for EOF-without-delim
+    // so the while loop terminates. The variable value is lost, matching
+    // the bash while-loop pattern behavior.
+    if !found_delim {
+        return (core::ptr::null_mut(), 0);
+    }
+    if total == 0 {
+        // Empty field between delimiters — return empty string
+        return (core::ptr::null_mut(), 0);
+    }
+    let ptr = unsafe { sash_alloc(total) };
+    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    (ptr, total)
+}
