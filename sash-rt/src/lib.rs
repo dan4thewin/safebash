@@ -2141,3 +2141,58 @@ fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
     }
     len
 }
+
+/// Split a string by a single-byte delimiter and store results into an existing table.
+/// Each token becomes an entry with integer index key (0, 1, 2, ...).
+#[no_mangle]
+pub unsafe extern "C" fn sash_split_into_array(
+    ptr: *const u8, len: usize, delim: i64, table: *mut u8,
+) {
+    if ptr.is_null() || len == 0 { return; }
+    let data = core::slice::from_raw_parts(ptr, len);
+    let d = delim as u8;
+    let mut idx: i64 = 0;
+    let mut start = 0;
+    for i in 0..=len {
+        let at_delim = if i < len { data[i] == d } else { true };
+        if at_delim {
+            let token_ptr = ptr.add(start);
+            let token_len = i - start;
+            // Key = 8-byte i64 index (same format as IndexedArray)
+            let key_bytes = idx.to_ne_bytes();
+            sash_table_set(
+                table as *mut SashTable,
+                key_bytes.as_ptr(), 8_i64,
+                token_ptr, token_len as i64,
+            );
+            idx += 1;
+            start = i + 1;
+        }
+    }
+}
+
+/// Read all available data from fd into a heap-allocated buffer.
+#[no_mangle]
+pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
+    let mut buf = [0u8; 65536];
+    let mut total = 0usize;
+    loop {
+        if total >= buf.len() { break; }
+        let chunk = total + 1024.min(buf.len() - total);
+        let n = unsafe { rustix::io::read(
+            rustix::fd::BorrowedFd::borrow_raw(fd as i32),
+            &mut buf[total..chunk]
+        ) };
+        match n {
+            Ok(0) => break,
+            Ok(count) => { total += count; }
+            Err(_) => break,
+        }
+    }
+    if total == 0 {
+        return (core::ptr::null_mut(), 0);
+    }
+    let out = unsafe { sash_alloc(total) };
+    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total); }
+    (out, total)
+}
