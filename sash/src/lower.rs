@@ -302,7 +302,7 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
         "declare" | "typeset" => DeclKeyword::Declare,
         "local" => DeclKeyword::Local,
         "export" => DeclKeyword::Export,
-        "readonly" => DeclKeyword::Readonly,
+        "readonly" | "const" => DeclKeyword::Readonly,
         "int" => {
             var_type = VarType::Int;
             DeclKeyword::Declare
@@ -343,16 +343,20 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
             }
             "variable_name" => {
                 let text = child.utf8_text(source).unwrap_or("");
-                if text == "int" {
-                    var_type = VarType::Int;
-                } else {
-                    // Bare variable declaration like `array arr` or `declare x`
-                    assignments.push(Assignment {
-                        name: text.to_string(),
-                        index: None,
-                        op: AssignOp::Set,
-                        value: Expr { kind: ExprKind::Literal(String::new()), span: Span { line: 0, col: 0 } },
-                    });
+                match text {
+                    "int" => { var_type = VarType::Int; }
+                    "const" => { flags.push("-r".to_string()); }
+                    "array" => { flags.push("-a".to_string()); }
+                    "map" => { flags.push("-A".to_string()); }
+                    _ => {
+                        // Bare variable declaration like `array arr` or `declare x`
+                        assignments.push(Assignment {
+                            name: text.to_string(),
+                            index: None,
+                            op: AssignOp::Set,
+                            value: Expr { kind: ExprKind::Literal(String::new()), span: Span { line: 0, col: 0 } },
+                        });
+                    }
                 }
             }
             "variable_assignment" => {
@@ -370,13 +374,18 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
     }
 
     // Record coercion if bash syntax differs from sash-native
-    let needs_coercion = matches!(keyword_node.kind(), "declare" | "typeset" | "readonly")
-        && (!flags.is_empty() || var_type != VarType::String
-            || matches!(keyword_node.kind(), "typeset" | "readonly"));
-    // Also coerce `local -i`, `local -a`, `local -A`
-    let needs_coercion = needs_coercion
-        || (keyword == DeclKeyword::Local
-            && (var_type != VarType::String || flags.iter().any(|f| f == "-a" || f == "-A")));
+    // Sash-native keywords (const, int, array, map) and `local` need no coercion
+    // unless they have bash-style flags like -i, -a, -A, -r
+    let sash_native_keyword = matches!(keyword_node.kind(), "const" | "int" | "array" | "map");
+    let has_bash_flags = children[1..].iter().any(|c| {
+        c.kind() == "word" && c.utf8_text(source).unwrap_or("").starts_with('-')
+    });
+    let needs_coercion = !sash_native_keyword && (
+        matches!(keyword_node.kind(), "declare" | "typeset" | "readonly")
+            && (!flags.is_empty() || var_type != VarType::String
+                || matches!(keyword_node.kind(), "typeset" | "readonly"))
+        || (keyword == DeclKeyword::Local && has_bash_flags)
+    );
 
     if needs_coercion {
         let original = node.utf8_text(source).unwrap_or("").to_string();
@@ -395,6 +404,11 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
         let mut assign_start = None;
         for child in &children[1..] {
             if !matches!(child.kind(), "word" | "type_annotation") {
+                // Skip sash modifier keywords parsed as variable_name
+                let text = child.utf8_text(source).unwrap_or("");
+                if matches!(text, "int" | "const" | "array" | "map") {
+                    continue;
+                }
                 assign_start = Some(child.start_byte());
                 break;
             }

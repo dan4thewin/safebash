@@ -36,8 +36,16 @@ fn main() {
         std::process::exit(1);
     }
 
-    let input = &args[1];
-    let flags: Vec<&str> = args[2..].iter().map(|s| s.as_str()).collect();
+    // Split args into flags and positional
+    let flags: Vec<&str> = args[1..].iter().filter(|a| a.starts_with("--")).map(|s| s.as_str()).collect();
+    let positional: Vec<&str> = args[1..].iter().filter(|a| !a.starts_with("--")).map(|s| s.as_str()).collect();
+    let input = match positional.first() {
+        Some(f) => *f,
+        None => {
+            eprintln!("Usage: sash [--nolint] [--ir|--ssa|--emit-source|--annotate] [-o output] <script.sh>");
+            std::process::exit(1);
+        }
+    };
 
     // Read source
     let source = match std::fs::read_to_string(input) {
