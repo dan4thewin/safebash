@@ -7,6 +7,7 @@
 
 use tree_sitter::Node;
 use crate::ir::*;
+use crate::emit_source::record_coercion;
 
 // ── Public entry point ────────────────────────────────────────
 
@@ -72,6 +73,24 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::Declaration(lower_declaration(node, source)?)
         }
         "command" => {
+            // Coerce `let "expr"` → `(( expr ))` for source emission
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name_text = name_node.utf8_text(source).unwrap_or("");
+                if name_text == "let" {
+                    let original = node.utf8_text(source).unwrap_or("").to_string();
+                    // Collect argument text, strip quotes
+                    let mut exprs = Vec::new();
+                    for child in node.children(&mut node.walk()) {
+                        if child.is_named() && child != name_node {
+                            let t = child.utf8_text(source).unwrap_or("");
+                            let t = t.trim_matches('"').trim_matches('\'');
+                            exprs.push(t.to_string());
+                        }
+                    }
+                    let replacement = format!("(( {} ))", exprs.join(", "));
+                    record_coercion(node.start_byte(), node.end_byte(), replacement, original);
+                }
+            }
             // Check if command has redirect children (heredoc, herestring, file_redirect)
             let has_redirects = node.children(&mut node.walk()).any(|c| {
                 matches!(c.kind(), "file_redirect" | "heredoc_redirect" | "herestring_redirect")
@@ -308,10 +327,18 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
             }
             "word" => {
                 let text = child.utf8_text(source).unwrap_or("").to_string();
-                if text == "-i" {
-                    var_type = VarType::Int;
-                } else if text.starts_with('-') {
-                    flags.push(text);
+                if text.starts_with('-') {
+                    // Parse combined flags: -ri → -r + -i
+                    for ch in text[1..].chars() {
+                        match ch {
+                            'i' => var_type = VarType::Int,
+                            'a' => flags.push("-a".to_string()),
+                            'A' => flags.push("-A".to_string()),
+                            'r' => flags.push("-r".to_string()),
+                            'x' => flags.push("-x".to_string()),
+                            _ => flags.push(format!("-{}", ch)),
+                        }
+                    }
                 }
             }
             "variable_name" => {
@@ -339,6 +366,46 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
                 }
             }
             _ => {}
+        }
+    }
+
+    // Record coercion if bash syntax differs from sash-native
+    let needs_coercion = matches!(keyword_node.kind(), "declare" | "typeset" | "readonly")
+        && (!flags.is_empty() || var_type != VarType::String
+            || matches!(keyword_node.kind(), "typeset" | "readonly"));
+    // Also coerce `local -i`, `local -a`, `local -A`
+    let needs_coercion = needs_coercion
+        || (keyword == DeclKeyword::Local
+            && (var_type != VarType::String || flags.iter().any(|f| f == "-a" || f == "-A")));
+
+    if needs_coercion {
+        let original = node.utf8_text(source).unwrap_or("").to_string();
+        let mut parts = Vec::new();
+        if keyword == DeclKeyword::Local { parts.push("local"); }
+        if keyword == DeclKeyword::Readonly || flags.contains(&"-r".to_string()) {
+            parts.push("const");
+        }
+        if var_type == VarType::Int { parts.push("int"); }
+        if flags.contains(&"-A".to_string()) {
+            parts.push("map");
+        } else if flags.contains(&"-a".to_string()) {
+            parts.push("array");
+        }
+        // Append the assignment text (everything after the keyword+flags)
+        let mut assign_start = None;
+        for child in &children[1..] {
+            if !matches!(child.kind(), "word" | "type_annotation") {
+                assign_start = Some(child.start_byte());
+                break;
+            }
+        }
+        if let Some(start) = assign_start {
+            let assign_text = std::str::from_utf8(&source[start..node.end_byte()]).unwrap_or("");
+            parts.push(assign_text.trim());
+        }
+        let replacement = parts.join(" ");
+        if replacement != original {
+            record_coercion(node.start_byte(), node.end_byte(), replacement, original);
         }
     }
 

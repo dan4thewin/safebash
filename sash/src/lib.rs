@@ -7,6 +7,7 @@ pub mod ssa_printer;
 pub mod emit_janet;
 pub mod oracle;
 pub mod type_check;
+pub mod emit_source;
 pub mod codegen;
 pub mod diagnostic;
 pub mod validator;

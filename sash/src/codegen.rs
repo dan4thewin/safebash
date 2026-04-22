@@ -137,6 +137,7 @@ struct ExternFuncs {
 }
 
 pub fn compile_to_object(bash_source: &str) -> Vec<u8> {
+    crate::emit_source::clear_coercions();
     let tree = crate::parse(bash_source);
     let program = crate::lower::lower_program(tree.root_node(), bash_source.as_bytes());
     let type_map = crate::type_check::infer_types(&program);
@@ -144,7 +145,7 @@ pub fn compile_to_object(bash_source: &str) -> Vec<u8> {
 
     // Try to constant-fold elidable function calls
     let func_constants = fold_function_outputs(&ssa);
-    compile_ssa(&ssa, &func_constants)
+    compile_ssa(&ssa, &func_constants, Some(bash_source))
 }
 
 /// Try to evaluate function bodies at compile time. If a function's
@@ -193,7 +194,7 @@ fn try_fold_block(block: &BasicBlock, _program: &SsaProgram) -> Option<String> {
     Some(output)
 }
 
-pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String>) -> Vec<u8> {
+pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String>, bash_source: Option<&str>) -> Vec<u8> {
     let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
@@ -1317,7 +1318,19 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let mut ctx = cranelift_codegen::Context::for_function(func);
     module.define_function(main_func_id, &mut ctx).expect("define function");
 
-    let product = module.finish();
+    let mut product = module.finish();
+
+    // Embed sash-native source in .sash_source ELF section (DD#45)
+    if let Some(src) = bash_source {
+        let sash_source = crate::emit_source::emit_source(src.as_bytes(), false);
+        let section_id = product.object.add_section(
+            vec![],
+            b".sash_source".to_vec(),
+            object::SectionKind::Note,
+        );
+        product.object.append_section_data(section_id, sash_source.as_bytes(), 1);
+    }
+
     product.emit().expect("emit object")
 }
 

@@ -4,7 +4,35 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     if args.len() < 2 {
-        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa]");
+        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--emit-source] [--extract <binary>]");
+        std::process::exit(1);
+    }
+
+    // --extract: dump .sash_source section from a compiled binary
+    if args[1] == "--extract" {
+        if args.len() < 3 {
+            eprintln!("Usage: sash --extract <binary>");
+            std::process::exit(1);
+        }
+        let binary_path = &args[2];
+        let data = std::fs::read(binary_path).unwrap_or_else(|e| {
+            eprintln!("sash: {}: {}", binary_path, e);
+            std::process::exit(1);
+        });
+        let obj = object::read::File::parse(&*data).unwrap_or_else(|e| {
+            eprintln!("sash: {}: not a valid object file: {}", binary_path, e);
+            std::process::exit(1);
+        });
+        use object::read::{Object, ObjectSection};
+        for section in obj.sections() {
+            if section.name() == Ok(".sash_source") {
+                if let Ok(data) = section.data() {
+                    print!("{}", std::str::from_utf8(data).unwrap_or("<binary data>"));
+                    return;
+                }
+            }
+        }
+        eprintln!("sash: {}: no .sash_source section found", binary_path);
         std::process::exit(1);
     }
 
@@ -72,7 +100,17 @@ fn main() {
     }
 
     // Lower to IR
+    // Clear coercion state, then lower to IR (records coercions)
+    sash::emit_source::clear_coercions();
     let program = sash::lower::lower_program(tree.root_node(), source.as_bytes());
+
+    // --emit-source: apply coercions, print sash-native source, exit
+    if flags.contains(&"--emit-source") {
+        let annotate = flags.contains(&"--annotate");
+        let result = sash::emit_source::emit_source(source.as_bytes(), annotate);
+        print!("{}", result);
+        return;
+    }
 
     // --ir: print IR and exit
     if flags.contains(&"--ir") {
