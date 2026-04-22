@@ -932,6 +932,37 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
                     operator: Some("arrvals".to_string()),
                     operand: None,
                 })
+            } else if node.named_child_count() > 0 {
+                // Word contains expansions (e.g., ${var} in [[ =~ ]] context)
+                // Build parts like lower_string
+                let mut parts = Vec::new();
+                let content_start = node.start_byte();
+                let content_end = node.end_byte();
+                let mut last_end = content_start;
+                let mut cursor2 = node.walk();
+                for child in node.children(&mut cursor2) {
+                    if !child.is_named() { continue; }
+                    let cs = child.start_byte();
+                    if cs > last_end {
+                        let gap = std::str::from_utf8(&source[last_end..cs]).unwrap_or("");
+                        if !gap.is_empty() {
+                            parts.push(Expr { kind: ExprKind::Literal(gap.to_string()), span });
+                        }
+                    }
+                    parts.push(lower_expr(child, source));
+                    last_end = child.end_byte();
+                }
+                if last_end < content_end {
+                    let gap = std::str::from_utf8(&source[last_end..content_end]).unwrap_or("");
+                    if !gap.is_empty() {
+                        parts.push(Expr { kind: ExprKind::Literal(gap.to_string()), span });
+                    }
+                }
+                if parts.len() == 1 {
+                    parts.into_iter().next().unwrap().kind
+                } else {
+                    ExprKind::Concat(parts)
+                }
             } else {
                 ExprKind::Literal(text)
             }
@@ -1158,6 +1189,71 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
 
         "test_command" => {
             lower_test_command(node, source)
+        }
+
+        "regex" => {
+            // Regex nodes in [[ =~ ]] — tree-sitter doesn't expand ${var} inside regex.
+            // Manually parse variable references.
+            let text = node.utf8_text(source).unwrap_or("").to_string();
+            if text.contains("${") || text.contains('$') {
+                // Parse variable expansions manually
+                let mut parts = Vec::new();
+                let bytes = text.as_bytes();
+                let mut i = 0;
+                let mut literal_start = 0;
+                while i < bytes.len() {
+                    if bytes[i] == b'$' {
+                        // Capture preceding literal
+                        if i > literal_start {
+                            parts.push(Expr {
+                                kind: ExprKind::Literal(text[literal_start..i].to_string()),
+                                span: Span::from_node(node),
+                            });
+                        }
+                        if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                            // ${var} or ${var[...]}
+                            if let Some(close) = text[i..].find('}') {
+                                let var_name = &text[i + 2..i + close];
+                                parts.push(Expr {
+                                    kind: ExprKind::SimpleExpansion(var_name.to_string()),
+                                    span: Span::from_node(node),
+                                });
+                                i += close + 1;
+                                literal_start = i;
+                                continue;
+                            }
+                        } else if i + 1 < bytes.len() && (bytes[i + 1].is_ascii_alphanumeric() || bytes[i + 1] == b'_') {
+                            // $var
+                            let start = i + 1;
+                            let mut end = start;
+                            while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                                end += 1;
+                            }
+                            parts.push(Expr {
+                                kind: ExprKind::SimpleExpansion(text[start..end].to_string()),
+                                span: Span::from_node(node),
+                            });
+                            i = end;
+                            literal_start = i;
+                            continue;
+                        }
+                    }
+                    i += 1;
+                }
+                if literal_start < bytes.len() {
+                    parts.push(Expr {
+                        kind: ExprKind::Literal(text[literal_start..].to_string()),
+                        span: Span::from_node(node),
+                    });
+                }
+                if parts.len() == 1 {
+                    parts.into_iter().next().unwrap().kind
+                } else {
+                    ExprKind::Concat(parts)
+                }
+            } else {
+                ExprKind::Literal(text)
+            }
         }
 
         _ => {

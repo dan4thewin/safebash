@@ -2355,11 +2355,18 @@ fn lower_test_expr(
                     builder.inst_results(call)[0]
                 }
                 "=~" => {
+                    let is_quoted = matches!(&right.kind,
+                        crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_));
                     let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
                     let (r_ptr, r_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
-                    let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
-                    let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
-                    builder.inst_results(call)[0]
+                    if is_quoted {
+                        // Quoted regex RHS → literal string match (exact)
+                        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+                    } else {
+                        let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
+                        let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
+                        builder.inst_results(call)[0]
+                    }
                 }
                 "!=" => {
                     let is_quoted = matches!(&right.kind,
