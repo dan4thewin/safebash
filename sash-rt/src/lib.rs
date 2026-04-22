@@ -2274,3 +2274,148 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
     unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total); }
     (out, total)
 }
+
+// ── fnmatch-style pattern matching ──────────────────────────
+
+/// Match a string against a glob pattern (*, ?, [class], \escape).
+/// Returns 1 if matched, 0 if not.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_fnmatch(
+    pat_ptr: *const u8, pat_len: usize,
+    str_ptr: *const u8, str_len: usize,
+) -> i64 {
+    let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
+    let s = unsafe { core::slice::from_raw_parts(str_ptr, str_len) };
+    if fnmatch_impl(pat, s) { 1 } else { 0 }
+}
+
+fn fnmatch_impl(mut pat: &[u8], mut s: &[u8]) -> bool {
+    let mut px = 0;
+    let mut sx = 0;
+    let mut next_px = 0;
+    let mut next_sx: usize = 0;
+
+    while px < pat.len() || sx < s.len() {
+        if px < pat.len() {
+            match pat[px] {
+                b'*' => {
+                    // * matches zero or more chars — remember backtrack point
+                    next_px = px;
+                    next_sx = sx + 1;
+                    px += 1;
+                    continue;
+                }
+                b'?' => {
+                    if sx < s.len() {
+                        px += 1;
+                        sx += 1;
+                        continue;
+                    }
+                }
+                b'\\' => {
+                    px += 1;
+                    if px < pat.len() && sx < s.len() && pat[px] == s[sx] {
+                        px += 1;
+                        sx += 1;
+                        continue;
+                    }
+                }
+                b'[' => {
+                    if sx < s.len() {
+                        if let Some((matched, end)) = match_bracket(&pat[px..], s[sx]) {
+                            if matched {
+                                px += end;
+                                sx += 1;
+                                continue;
+                            }
+                        }
+                    }
+                }
+                c => {
+                    if sx < s.len() && c == s[sx] {
+                        px += 1;
+                        sx += 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        // No match — try backtracking to last *
+        if next_sx > 0 && next_sx <= s.len() {
+            px = next_px + 1;
+            sx = next_sx;
+            next_sx += 1;
+            continue;
+        }
+        return false;
+    }
+    true
+}
+
+/// Match a bracket expression [abc], [a-z], [!abc], [^abc].
+/// Returns (matched, bytes_consumed_from_pattern) or None on malformed.
+fn match_bracket(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
+    let mut i = 1; // skip '['
+    let negate = if i < pat.len() && (pat[i] == b'!' || pat[i] == b'^') {
+        i += 1;
+        true
+    } else {
+        false
+    };
+    // ] at first position is literal
+    if i < pat.len() && pat[i] == b']' {
+        i += 1;
+    }
+    let mut matched = false;
+    while i < pat.len() && pat[i] != b']' {
+        // POSIX character class [:alpha:], [:digit:], etc.
+        if pat[i] == b'[' && i + 1 < pat.len() && pat[i + 1] == b':' {
+            // Find closing :]
+            let start = i + 2;
+            let mut end = start;
+            while end + 1 < pat.len() && !(pat[end] == b':' && pat[end + 1] == b']') {
+                end += 1;
+            }
+            if end + 1 < pat.len() && pat[end] == b':' && pat[end + 1] == b']' {
+                let class = &pat[start..end];
+                let class_match = match class {
+                    b"alpha" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z'),
+                    b"digit" => ch >= b'0' && ch <= b'9',
+                    b"alnum" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') || (ch >= b'0' && ch <= b'9'),
+                    b"upper" => ch >= b'A' && ch <= b'Z',
+                    b"lower" => ch >= b'a' && ch <= b'z',
+                    b"space" => ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == 0x0b || ch == 0x0c,
+                    b"blank" => ch == b' ' || ch == b'\t',
+                    b"print" | b"graph" => ch >= 0x20 && ch <= 0x7e,
+                    b"cntrl" => ch < 0x20 || ch == 0x7f,
+                    b"punct" => (ch >= b'!' && ch <= b'/') || (ch >= b':' && ch <= b'@') || (ch >= b'[' && ch <= b'`') || (ch >= b'{' && ch <= b'~'),
+                    b"xdigit" => (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F'),
+                    b"ascii" => ch <= 0x7f,
+                    _ => false,
+                };
+                if class_match { matched = true; }
+                i = end + 2; // skip past :]
+                continue;
+            }
+        }
+        let lo = pat[i];
+        if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
+            let hi = pat[i + 2];
+            if ch >= lo && ch <= hi {
+                matched = true;
+            }
+            i += 3;
+        } else {
+            if ch == lo {
+                matched = true;
+            }
+            i += 1;
+        }
+    }
+    if i < pat.len() && pat[i] == b']' {
+        i += 1; // consume ']'
+        Some((if negate { !matched } else { matched }, i))
+    } else {
+        None // malformed — no closing ]
+    }
+}

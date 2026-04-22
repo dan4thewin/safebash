@@ -112,13 +112,29 @@ fn lower_one(
                             });
                         } else {
                             // String concatenation: var = var ++ val
-                            let old = SsaValue::Var(state.lookup(&a.name));
-                            let concat = SsaValue::Concat(vec![old, other]);
-                            let target = state.define(&a.name);
-                            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                                target,
-                                value: concat,
-                            });
+                            // Check if integer-typed: += does arithmetic addition
+                            let is_int = state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
+                            if is_int {
+                                let old = SsaValue::Var(state.lookup(&a.name));
+                                let new_val = SsaValue::ArithBinOp {
+                                    left: Box::new(old),
+                                    op: ArithOp::Add,
+                                    right: Box::new(other),
+                                };
+                                let target = state.define(&a.name);
+                                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                    target,
+                                    value: new_val,
+                                });
+                            } else {
+                                let old = SsaValue::Var(state.lookup(&a.name));
+                                let concat = SsaValue::Concat(vec![old, other]);
+                                let target = state.define(&a.name);
+                                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                    target,
+                                    value: concat,
+                                });
+                            }
                         }
                     }
                 }
@@ -216,6 +232,22 @@ fn lower_one(
             let is_array = d.flags.contains(&"-a".to_string());
             let is_assoc = d.flags.contains(&"-A".to_string());
             for a in &d.assignments {
+                // Bare `declare var` (no =value) — don't reset existing variable
+                let is_bare = matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty())
+                    && !is_array && !is_assoc;
+                if is_bare && state.lookup(&a.name).version > 0 {
+                    // Variable already defined — bare declare is a no-op
+                    // But bare export still needs to export the existing value
+                    if d.keyword == crate::ir::DeclKeyword::Export {
+                        let var_ref = state.lookup(&a.name);
+                        ssa.block_mut(block).insts.push(SsaInst::Export {
+                            target: var_ref.clone(),
+                            value: SsaValue::Var(var_ref),
+                            name: a.name.clone(),
+                        });
+                    }
+                    continue;
+                }
                 let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
                     // Bare declaration like `array arr` or `map m` — empty table
                     if is_assoc {
@@ -410,22 +442,76 @@ fn lower_one(
                 return block;
             }
 
-            if name == "unset" {
-                // unset map[key] → sash_table_delete
-                // Args may be split: ["m", "[b]"] or single "m[b]"
-                let full = c.args.iter().map(|a| expr_to_string(a)).collect::<Vec<_>>().join("");
-                if let Some(bracket) = full.find('[') {
-                    let arr_name = &full[..bracket];
-                    let key = full[bracket+1..full.len()-1].to_string(); // strip [ ]
-                    let arr_ref = state.lookup(arr_name);
-                    let key_val = SsaValue::Literal(key);
+            if name == "let" {
+                // let "expr" → evaluate arithmetic, set exit status
+                // Exit status: 0 if result != 0, 1 if result == 0
+                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                for arg in &args {
+                    // Strip surrounding quotes if present
+                    let expr_str = arg.trim_matches('"').trim_matches('\'').to_string();
+                    let expr = crate::ir::Expr {
+                        kind: ExprKind::ArithmeticExpansion(expr_str),
+                        span: Span { line: 0, col: 0 },
+                    };
+                    let val = expr_to_value(&expr, state);
+                    // We need to evaluate this and set exit status based on result
+                    // For now, emit as a command that sets test_result
+                    let target = state.define("__let_result");
+                    let target_ref = target.clone();
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target,
+                        value: val,
+                    });
+                    // Set exit status: result != 0 → exit 0, result == 0 → exit 1
                     ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__table_delete".to_string(),
-                        args: vec![SsaValue::Var(arr_ref), key_val],
+                        name: "__let_exit".to_string(),
+                        args: vec![SsaValue::Var(target_ref)],
                         redirects: vec![],
                     });
-                    return block;
                 }
+                return block;
+            }
+
+            if name == "unset" {
+                // unset map[key] → sash_table_delete
+                // unset var → assign empty string (simulates unset)
+                // unset -f func → ignore (function unset not supported)
+                // Args may be split: ["m", "[b]"] or single "m[b]"
+                let args_str: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                // Filter out flags like -v, -f, -n
+                let var_args: Vec<String> = args_str.iter().filter(|a| !a.starts_with('-')).cloned().collect();
+                // Join consecutive args to handle split "m" "[b]" → "m[b]"
+                let joined = var_args.join("");
+                // Split on whitespace-before-word boundaries that aren't inside brackets
+                let mut items: Vec<String> = Vec::new();
+                if joined.contains('[') {
+                    // Single item with bracket
+                    items.push(joined);
+                } else {
+                    // Multiple plain vars
+                    items = var_args;
+                }
+                for full in &items {
+                    if let Some(bracket) = full.find('[') {
+                        let arr_name = &full[..bracket];
+                        let key = full[bracket+1..full.len()-1].to_string();
+                        let arr_ref = state.lookup(arr_name);
+                        let key_val = SsaValue::Literal(key);
+                        ssa.block_mut(block).insts.push(SsaInst::Command {
+                            name: "__table_delete".to_string(),
+                            args: vec![SsaValue::Var(arr_ref), key_val],
+                            redirects: vec![],
+                        });
+                    } else {
+                        // Plain variable unset → assign empty string
+                        let target = state.define(full);
+                        ssa.block_mut(block).insts.push(SsaInst::Assign {
+                            target,
+                            value: SsaValue::Literal(String::new()),
+                        });
+                    }
+                }
+                return block;
             }
 
             if name == "read" {
@@ -1181,53 +1267,88 @@ fn lower_case(
 
     // Build case body blocks
     let mut case_blocks = Vec::new();
+    let mut case_exits = Vec::new();
     for (i, item) in c.items.iter().enumerate() {
         state.restore(&pre_state);
         let case_block = ssa.new_block(&format!("case.{}", i));
         let case_exit = lower_stmts(&item.body, ssa, state, case_block);
-        ssa.block_mut(case_exit).terminator = Terminator::Goto(merge_block);
+        // Don't set terminator yet — need to know next block for fall-through
         branch_states.push((case_exit, state.snapshot()));
         case_blocks.push(case_block);
+        case_exits.push(case_exit);
+    }
+
+    // Wire up terminators: fall-through (;&) goes to next body, normal (;;) goes to merge
+    for (i, item) in c.items.iter().enumerate() {
+        let target = if item.fallthrough && i + 1 < case_blocks.len() {
+            case_blocks[i + 1]
+        } else {
+            merge_block
+        };
+        ssa.block_mut(case_exits[i]).terminator = Terminator::Goto(target);
+    }
+
+    // Pre-create check blocks for dispatch chain (needed for ;;& resume wiring)
+    let mut check_blocks: Vec<BlockId> = Vec::new();
+    check_blocks.push(block); // check_blocks[0] = entry block
+    for i in 1..c.items.len() {
+        check_blocks.push(ssa.new_block(&format!("case.check.{}", i)));
+    }
+
+    // Wire up terminators: fall-through (;&) goes to next body,
+    // resume (;;&) goes to next check, normal (;;) goes to merge
+    for (i, item) in c.items.iter().enumerate() {
+        let target = if item.fallthrough && i + 1 < case_blocks.len() {
+            case_blocks[i + 1]
+        } else if item.resume && i + 1 < check_blocks.len() {
+            check_blocks[i + 1]
+        } else {
+            merge_block
+        };
+        ssa.block_mut(case_exits[i]).terminator = Terminator::Goto(target);
     }
 
     // Build dispatch chain: compare value against each pattern
     let case_value_expr = c.value.clone();
-    let mut current = block;
 
     for (i, item) in c.items.iter().enumerate() {
+        let current = check_blocks[i];
         let is_wildcard = item.patterns.iter().any(|p| {
             matches!(&p.kind, ExprKind::Literal(s) if s == "*")
         });
 
+        let next_check = if i + 1 < check_blocks.len() {
+            check_blocks[i + 1]
+        } else {
+            merge_block
+        };
+
         if is_wildcard || i == c.items.len() - 1 {
             // Wildcard or last — unconditional jump
             ssa.block_mut(current).terminator = Terminator::Goto(case_blocks[i]);
-            break;
+            continue;
         }
 
         // Emit test: value == pattern1 || value == pattern2 || ...
-        // For multiple patterns (e.g., start|restart), chain comparisons
         if item.patterns.len() == 1 {
             let test = crate::ir::TestExpr::Binary {
                 left: Box::new(case_value_expr.clone()),
-                op: "==".to_string(),
+                op: "=glob".to_string(),
                 right: Box::new(item.patterns[0].clone()),
             };
             ssa.block_mut(current).insts.push(SsaInst::Test(test));
-        } else {
-            // Multiple patterns: test each, OR the results
-            // Strategy: chain of blocks, jump to case_block on first match
-            let next_check = if i + 1 < c.items.len() {
-                ssa.new_block(&format!("case.check.{}", i + 1))
-            } else {
-                merge_block
+            ssa.block_mut(current).terminator = Terminator::Branch {
+                condition: "__test".to_string(),
+                true_block: case_blocks[i],
+                false_block: next_check,
             };
-
+        } else {
+            // Multiple patterns: chain of blocks, jump to case_block on first match
             let mut pat_current = current;
             for (pi, pat) in item.patterns.iter().enumerate() {
                 let test = crate::ir::TestExpr::Binary {
                     left: Box::new(case_value_expr.clone()),
-                    op: "==".to_string(),
+                    op: "=glob".to_string(),
                     right: Box::new(pat.clone()),
                 };
                 ssa.block_mut(pat_current).insts.push(SsaInst::Test(test));
@@ -1241,7 +1362,6 @@ fn lower_case(
                     };
                     pat_current = next_pat;
                 } else {
-                    // Last pattern — fall through to next case check on failure
                     ssa.block_mut(pat_current).terminator = Terminator::Branch {
                         condition: "__test".to_string(),
                         true_block: case_blocks[i],
@@ -1249,22 +1369,7 @@ fn lower_case(
                     };
                 }
             }
-            current = next_check;
-            continue; // already set up terminator
         }
-
-        let next_check = if i + 1 < c.items.len() {
-            ssa.new_block(&format!("case.check.{}", i + 1))
-        } else {
-            merge_block
-        };
-
-        ssa.block_mut(current).terminator = Terminator::Branch {
-            condition: "__test".to_string(),
-            true_block: case_blocks[i],
-            false_block: next_check,
-        };
-        current = next_check;
     }
 
     // Insert phi nodes at merge
@@ -1344,13 +1449,152 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
         ExprKind::ArithmeticExpansion(s) => {
             // Try to parse arithmetic expressions
             let trimmed = s.trim();
-            // Bare number: $((7)) or $((-7)) → literal
-            if let Ok(_) = trimmed.parse::<i64>() {
-                return SsaValue::Expr(trimmed.to_string());
+            // Empty expression: $(()) → 0
+            if trimmed.is_empty() {
+                return SsaValue::Expr("0".to_string());
             }
-            // Bare variable: $((y)) → var lookup
+            // Base literal: N#digits → evaluate at compile time
+            if let Some(hash_pos) = trimmed.find('#') {
+                let base_str = &trimmed[..hash_pos];
+                let digits = &trimmed[hash_pos+1..];
+                if let Ok(base) = base_str.parse::<u32>() {
+                    if base >= 2 && base <= 64 && !digits.is_empty() {
+                        let val = digits.chars().fold(0i64, |acc, c| {
+                            let d = match c {
+                                '0'..='9' => c as i64 - '0' as i64,
+                                'a'..='z' => c as i64 - 'a' as i64 + 10,
+                                'A'..='Z' => c as i64 - 'A' as i64 + 36,
+                                '@' => 62,
+                                '_' => 63,
+                                _ => 0,
+                            };
+                            acc * base as i64 + d
+                        });
+                        return SsaValue::Expr(val.to_string());
+                    }
+                }
+            }
+            // Hex literal: 0x... or 0X...
+            if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+                if let Ok(v) = i64::from_str_radix(&trimmed[2..], 16) {
+                    return SsaValue::Expr(v.to_string());
+                }
+            }
+            // Octal literal: 0... (but not just "0")
+            if trimmed.starts_with('0') && trimmed.len() > 1 && trimmed[1..].chars().all(|c| c >= '0' && c <= '7') {
+                if let Ok(v) = i64::from_str_radix(&trimmed[1..], 8) {
+                    return SsaValue::Expr(v.to_string());
+                }
+            }
+            // Bare number: $((7)) or $((-7)) or $((+1)) → literal
+            if let Ok(v) = trimmed.parse::<i64>() {
+                return SsaValue::Expr(v.to_string());
+            }
+            // Bare variable: $((y)) → force arithmetic interpretation (empty/non-numeric → 0)
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
-                return SsaValue::Var(state.lookup(trimmed));
+                return SsaValue::ArithBinOp {
+                    left: Box::new(SsaValue::Var(state.lookup(trimmed))),
+                    op: ArithOp::Add,
+                    right: Box::new(SsaValue::Expr("0".to_string())),
+                };
+            }
+            // Unary plus: $((+x)) → strip plus
+            if trimmed.starts_with('+') {
+                let inner = trimmed[1..].trim();
+                if !inner.is_empty() {
+                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    return expr_to_value(&e, state);
+                }
+            }
+            // Unary bitwise NOT: $((~expr)) → compute inline
+            if trimmed.starts_with('~') {
+                let inner = trimmed[1..].trim();
+                if !inner.is_empty() {
+                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    let inner_val = expr_to_value(&e, state);
+                    // Constant fold if possible
+                    if let SsaValue::Expr(ref s) = inner_val {
+                        if let Ok(v) = s.parse::<i64>() {
+                            return SsaValue::Expr((!v).to_string());
+                        }
+                    }
+                    // Runtime: XOR with -1
+                    return SsaValue::ArithBinOp {
+                        left: Box::new(inner_val),
+                        op: ArithOp::BitXor,
+                        right: Box::new(SsaValue::Expr((-1i64).to_string())),
+                    };
+                }
+            }
+            // Unary logical NOT: $((! expr)) → compute inline
+            if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+                let inner = trimmed[1..].trim();
+                if !inner.is_empty() {
+                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    let inner_val = expr_to_value(&e, state);
+                    if let SsaValue::Expr(ref s) = inner_val {
+                        if let Ok(v) = s.parse::<i64>() {
+                            return SsaValue::Expr(if v == 0 { "1" } else { "0" }.to_string());
+                        }
+                    }
+                    // Runtime: compare with 0
+                    return SsaValue::ArithBinOp {
+                        left: Box::new(inner_val),
+                        op: ArithOp::Eq,
+                        right: Box::new(SsaValue::Expr("0".to_string())),
+                    };
+                }
+            }
+            // Arithmetic assignment: var = expr → assign var, return value
+            if let Some(eq_pos) = trimmed.find('=') {
+                // Make sure it's not ==, !=, <=, >=
+                let before_eq = if eq_pos > 0 { trimmed.as_bytes()[eq_pos - 1] } else { 0 };
+                let after_eq = if eq_pos + 1 < trimmed.len() { trimmed.as_bytes()[eq_pos + 1] } else { 0 };
+                if after_eq != b'=' && before_eq != b'!' && before_eq != b'<' && before_eq != b'>' && before_eq != b'=' {
+                    let lhs = trimmed[..eq_pos].trim();
+                    let rhs = trimmed[eq_pos+1..].trim();
+                    // Check for compound assignment: +=, -=, *=, /=, %=
+                    let (var_name, op, rhs_str) = if !lhs.is_empty() && lhs.ends_with('+') {
+                        (&lhs[..lhs.len()-1], Some(ArithOp::Add), rhs)
+                    } else if !lhs.is_empty() && lhs.ends_with('-') {
+                        (&lhs[..lhs.len()-1], Some(ArithOp::Sub), rhs)
+                    } else if !lhs.is_empty() && lhs.ends_with('*') {
+                        (&lhs[..lhs.len()-1], Some(ArithOp::Mul), rhs)
+                    } else if !lhs.is_empty() && lhs.ends_with('/') {
+                        (&lhs[..lhs.len()-1], Some(ArithOp::Div), rhs)
+                    } else if !lhs.is_empty() && lhs.ends_with('%') {
+                        (&lhs[..lhs.len()-1], Some(ArithOp::Mod), rhs)
+                    } else {
+                        (lhs, None, rhs)
+                    };
+                    let var_name = var_name.trim();
+                    if var_name.chars().all(|c| c.is_alphanumeric() || c == '_') && !var_name.is_empty() && !rhs_str.is_empty() {
+                        let rhs_expr = Expr { kind: ExprKind::ArithmeticExpansion(rhs_str.to_string()), span: expr.span };
+                        let rhs_val = expr_to_value(&rhs_expr, state);
+                        let result_val = if let Some(op) = op {
+                            // Compound: var OP= rhs → var = var OP rhs
+                            SsaValue::ArithBinOp {
+                                left: Box::new(SsaValue::Var(state.lookup(var_name))),
+                                op,
+                                right: Box::new(rhs_val),
+                            }
+                        } else {
+                            rhs_val
+                        };
+                        // For now, we can't easily do the SSA assignment + return in an expression context.
+                        // But we can at least constant-fold the common case.
+                        if let SsaValue::Expr(ref s) = result_val {
+                            if let Ok(_) = s.parse::<i64>() {
+                                // Assignment with constant value: define the var and return the value
+                                // Note: we can't properly emit SSA assign here since we're in expr_to_value.
+                                // Just return the value — the variable won't be updated.
+                                // This handles $((x = 1)) → "1" for display purposes.
+                                return result_val;
+                            }
+                        }
+                        return result_val;
+                    }
+                }
             }
             // Unary minus on variable: $((-x)) → 0 - x
             if trimmed.starts_with('-') {

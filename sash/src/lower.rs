@@ -658,13 +658,15 @@ fn lower_case_item(node: Node, source: &[u8]) -> CaseItem {
     let mut patterns = Vec::new();
     let mut body = Vec::new();
     let mut fallthrough = false;
+    let mut resume = false;
 
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
             ")" | "|" => {}
-            ";;" => { fallthrough = false; }
-            ";&" => { fallthrough = true; }
+            ";;" => { fallthrough = false; resume = false; }
+            ";&" => { fallthrough = true; resume = false; }
+            ";;&" => { fallthrough = false; resume = true; }
             _ => {
                 if let Some(field) = child_field_name(child, node) {
                     match field {
@@ -674,6 +676,7 @@ fn lower_case_item(node: Node, source: &[u8]) -> CaseItem {
                         "termination" => {
                             let text = child.utf8_text(source).unwrap_or(";;");
                             fallthrough = text == ";&";
+                            resume = text == ";;&";
                         }
                         _ => {
                             if let Some(s) = lower_statement(child, source) {
@@ -690,7 +693,7 @@ fn lower_case_item(node: Node, source: &[u8]) -> CaseItem {
         }
     }
 
-    CaseItem { patterns, body, fallthrough }
+    CaseItem { patterns, body, fallthrough, resume }
 }
 
 // ── Function lowering ─────────────────────────────────────────
@@ -781,6 +784,7 @@ fn lower_redirected(node: Node, source: &[u8]) -> Redirected {
 fn lower_redirect(node: Node, source: &[u8]) -> Redirect {
     let mut fd = None;
     let mut op = RedirectOp::Write;
+    let mut strip_tabs = false;
     let mut target = Expr {
         kind: ExprKind::Literal(String::new()),
         span: Span::from_node(node),
@@ -799,7 +803,12 @@ fn lower_redirect(node: Node, source: &[u8]) -> Redirect {
             ">&" => op = RedirectOp::DupOutput,
             "<&" => op = RedirectOp::DupInput,
             "<>" => op = RedirectOp::ReadWrite,
-            "<<" => op = RedirectOp::HereDoc,
+            "<<" | "<<-" => {
+                op = RedirectOp::HereDoc;
+                if child.utf8_text(source).unwrap_or("") == "<<-" {
+                    strip_tabs = true;
+                }
+            }
             "<<<" => op = RedirectOp::HereString,
             "heredoc_body" => {
                 // Heredoc body — walk children for variable expansion
@@ -834,7 +843,16 @@ fn lower_redirect(node: Node, source: &[u8]) -> Redirect {
                     };
                 } else {
                     // No expansions — literal text
-                    let body_text = child.utf8_text(source).unwrap_or("").to_string();
+                    let mut body_text = child.utf8_text(source).unwrap_or("").to_string();
+                    if strip_tabs {
+                        body_text = body_text.lines()
+                            .map(|l| l.trim_start_matches('\t'))
+                            .collect::<Vec<_>>()
+                            .join("\n");
+                        if child.utf8_text(source).unwrap_or("").ends_with('\n') {
+                            body_text.push('\n');
+                        }
+                    }
                     target = Expr {
                         kind: ExprKind::Literal(body_text),
                         span: Span::from_node(child),
@@ -897,7 +915,7 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
     let span = Span::from_node(node);
     let kind = match node.kind() {
         "word" | "extglob_pattern" => {
-            let text = node.utf8_text(source).unwrap_or("").to_string();
+            let text = node.utf8_text(source).unwrap_or("").trim().to_string();
             if text.starts_with("~/") {
                 // Tilde expansion: ~/foo → $HOME/foo
                 ExprKind::Concat(vec![
@@ -990,7 +1008,7 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
 
         "string_content" => {
             let text = node.utf8_text(source).unwrap_or("").to_string();
-            ExprKind::Literal(text)
+            ExprKind::Literal(unescape_double_quoted(&text))
         }
 
         "simple_expansion" => {
@@ -1048,8 +1066,13 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
 
         "arithmetic_expansion" => {
             // Walk tree-sitter's AST instead of text-parsing
-            let expr_node = node.named_child(0);
-            if let Some(expr_node) = expr_node {
+            // For comma operator: multiple named children — use the last one
+            let count = node.named_child_count();
+            if count > 1 {
+                // Comma operator: $((a, b, c)) → evaluate all, return last
+                let last = node.named_child(count - 1).unwrap();
+                lower_arith_expr_to_exprkind(last, source)
+            } else if let Some(expr_node) = node.named_child(0) {
                 lower_arith_expr_to_exprkind(expr_node, source)
             } else {
                 // Fallback: extract text
@@ -1317,6 +1340,36 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
     }
 }
 
+/// Process bash double-quote escape sequences: \" → ", \\ → \, \$ → $, \` → `, \newline → ""
+fn unescape_double_quoted(s: &str) -> String {
+    let mut result = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'"' | b'\\' | b'$' | b'`' => {
+                    result.push(bytes[i + 1] as char);
+                    i += 2;
+                }
+                b'\n' => {
+                    // line continuation — skip both
+                    i += 2;
+                }
+                _ => {
+                    // Not a recognized escape — keep the backslash
+                    result.push('\\');
+                    i += 1;
+                }
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn lower_string(node: Node, source: &[u8]) -> ExprKind {
     let mut parts = Vec::new();
     let mut last_end;
@@ -1369,7 +1422,7 @@ fn lower_string(node: Node, source: &[u8]) -> ExprKind {
                 .unwrap_or("");
             if !gap.is_empty() {
                 parts.push(Expr {
-                    kind: ExprKind::Literal(gap.to_string()),
+                    kind: ExprKind::Literal(unescape_double_quoted(gap)),
                     span: Span { line: 0, col: 0 },
                 });
             }
@@ -1384,7 +1437,7 @@ fn lower_string(node: Node, source: &[u8]) -> ExprKind {
             .unwrap_or("");
         if !gap.is_empty() {
             parts.push(Expr {
-                kind: ExprKind::Literal(gap.to_string()),
+                kind: ExprKind::Literal(unescape_double_quoted(gap)),
                 span: Span { line: 0, col: 0 },
             });
         }
@@ -1652,8 +1705,8 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
         "binary_expression" => {
             let left_node = expr_node.child_by_field_name("left")?;
             let right_node = expr_node.child_by_field_name("right")?;
-            let left_text = left_node.utf8_text(source).ok()?.to_string();
-            let right_text = right_node.utf8_text(source).ok()?.to_string();
+            let left_text = arith_node_to_string(left_node, source);
+            let right_text = arith_node_to_string(right_node, source);
             // Find the operator — it's the unnamed child between left and right
             let mut operator = "=";
             for i in 0..expr_node.child_count() {
@@ -1679,15 +1732,27 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
                                     "!=" => "-ne",
                                     _ => unreachable!(),
                                 };
+                                let make_arith_kind = |text: &str| -> ExprKind {
+                                    let t = text.trim_matches(|c| c == '(' || c == ')').trim();
+                                    if t.chars().all(|c| c.is_ascii_digit() || c == '-') && !t.is_empty() {
+                                        ExprKind::Literal(t.to_string())
+                                    } else if t.chars().all(|c| c.is_alphanumeric() || c == '_') && !t.is_empty() {
+                                        ExprKind::SimpleExpansion(t.to_string())
+                                    } else {
+                                        ExprKind::ArithmeticExpansion(t.to_string())
+                                    }
+                                };
+                                let left_kind = make_arith_kind(&left_text);
+                                let right_kind = make_arith_kind(&right_text);
                                 let test_expr = Expr {
                                     kind: ExprKind::Test(TestExpr::Binary {
                                         left: Box::new(Expr {
-                                            kind: ExprKind::SimpleExpansion(left_text.clone()),
+                                            kind: left_kind,
                                             span,
                                         }),
                                         op: test_op.to_string(),
                                         right: Box::new(Expr {
-                                            kind: ExprKind::Literal(right_text.clone()),
+                                            kind: right_kind,
                                             span,
                                         }),
                                     }),
@@ -1740,6 +1805,13 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
                 },
 
             })
+        }
+        "parenthesized_expression" => {
+            // (( (expr) )) — recurse into the inner expression
+            if let Some(inner) = expr_node.named_child(0) {
+                return lower_single_arith_expr_kind(inner, source, span);
+            }
+            return None;
         }
         _ => {
             // Bare expression — could be a number (used as condition) or variable

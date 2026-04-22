@@ -175,7 +175,8 @@ pub struct Case {
 pub struct CaseItem {
     pub patterns: Vec<Expr>,
     pub body: Vec<Statement>,
-    pub fallthrough: bool, // ;& vs ;;
+    pub fallthrough: bool, // ;& = fall through to next body
+    pub resume: bool,      // ;;& = resume pattern matching
 }
 
 #[derive(Debug, Clone, PartialEq)]

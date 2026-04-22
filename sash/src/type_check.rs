@@ -55,6 +55,14 @@ impl TypeEnv {
     }
 
     fn declare(&mut self, name: &str, vtype: VarType) {
+        // Don't downgrade Int to String — once declared Int, it stays Int
+        if vtype == VarType::String {
+            if let Some(existing) = self.vars.get(name) {
+                if *existing == VarType::Int {
+                    return; // keep Int
+                }
+            }
+        }
         self.vars.insert(name.to_string(), vtype);
     }
 }

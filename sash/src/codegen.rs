@@ -127,6 +127,7 @@ struct ExternFuncs {
     glob_regex: cranelift_module::FuncId,
     capture_start: cranelift_module::FuncId,
     capture_end: cranelift_module::FuncId,
+    fnmatch: cranelift_module::FuncId,
     split_first_word: cranelift_module::FuncId,
     split_into_array: cranelift_module::FuncId,
     read_all: cranelift_module::FuncId,
@@ -436,6 +437,13 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let regex_match_func = module.declare_function("sash_regex_match", Linkage::Import, &regex_match_sig)
         .expect("declare sash_regex_match");
 
+    // sash_fnmatch(pat_ptr, pat_len, str_ptr, str_len) -> i64
+    let mut fnmatch_sig = module.make_signature();
+    for _ in 0..4 { fnmatch_sig.params.push(AbiParam::new(I64)); }
+    fnmatch_sig.returns.push(AbiParam::new(I64));
+    let fnmatch_func = module.declare_function("sash_fnmatch", Linkage::Import, &fnmatch_sig)
+        .expect("declare sash_fnmatch");
+
     // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
     for _ in 0..7 { regex_replace_sig.params.push(AbiParam::new(I64)); }
@@ -728,6 +736,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         join_args: join_args_func,
         assoc_lookup: assoc_lookup_func,
         regex_match: regex_match_func,
+        fnmatch: fnmatch_func,
         regex_replace: regex_replace_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
@@ -831,8 +840,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     fn intern_ir_expr(module: &mut ObjectModule, intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId, expr: &crate::ir::Expr) {
         use crate::ir::ExprKind;
         match &expr.kind {
-            ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => { intern(module, s); }
-            ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+            crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => { intern(module, s); }
+            crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
                 for p in parts { intern_ir_expr(module, intern, p); }
             }
             _ => {}
@@ -842,8 +851,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         fn intern_expr(module: &mut ObjectModule, intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId, expr: &crate::ir::Expr) {
             use crate::ir::ExprKind;
             match &expr.kind {
-                ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => { intern(module, s); }
-                ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => { for p in parts { intern_expr(module, intern, p); } }
+                crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => { intern(module, s); }
+                crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => { for p in parts { intern_expr(module, intern, p); } }
                 _ => {}
             }
         }
@@ -1382,6 +1391,36 @@ fn lower_inst(
             let one = builder.ins().iconst(I64, 1);
             let flipped = builder.ins().isub(one, cur);
             builder.def_var(test_result_var, flipped);
+            // Also flip exit status so $? reflects the negation
+            let cur_es = builder.use_var(exit_status_var);
+            let zero = builder.ins().iconst(I64, 0);
+            let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
+            let new_es = builder.ins().select(is_zero, one, zero);
+            builder.def_var(exit_status_var, new_es);
+        }
+        SsaInst::Command { name, args, .. } if name == "__let_exit" => {
+            // let builtin: exit status 0 if value != 0, 1 if value == 0
+            if let Some(SsaValue::Var(vr)) = args.first() {
+                let key = format!("{}_{}", vr.name, vr.version);
+                let int_val = if let Some(slot) = vars.get(&key) {
+                    if slot.is_int() {
+                        builder.use_var(*slot.as_int())
+                    } else {
+                        let ptr = builder.use_var(slot.str_ptr());
+                        let len = builder.use_var(slot.str_len());
+                        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                        let call = builder.ins().call(atoi_ref, &[ptr, len]);
+                        builder.inst_results(call)[0]
+                    }
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                let zero = builder.ins().iconst(I64, 0);
+                let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
+                let one = builder.ins().iconst(I64, 1);
+                let es = builder.ins().select(is_zero, one, zero);
+                builder.def_var(exit_status_var, es);
+            }
         }
         SsaInst::Command { name, .. } if name == "__subshell" => {
             // Fork: pid = sash_fork(). Store pid in test_result_var
@@ -2283,9 +2322,27 @@ fn lower_test_expr(
         TestExpr::Binary { left, op, right } => {
             match op.as_str() {
                 "=" | "==" => {
+                    // In [[ ]] context: quoted RHS → exact match, unquoted → glob match
+                    let is_quoted = matches!(&right.kind,
+                        crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_));
                     let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
                     let (r_ptr, r_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
-                    emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+                    if is_quoted {
+                        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+                    } else {
+                        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+                        let call = builder.ins().call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
+                        builder.inst_results(call)[0]
+                    }
+                }
+                "=glob" => {
+                    // Case pattern glob matching: fnmatch(pattern, string)
+                    // Note: left=value, right=pattern (swap for fnmatch which takes pat first)
+                    let (s_ptr, s_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
+                    let (p_ptr, p_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
+                    let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+                    let call = builder.ins().call(fnmatch_ref, &[p_ptr, p_len, s_ptr, s_len]);
+                    builder.inst_results(call)[0]
                 }
                 "=~" => {
                     let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
@@ -2295,11 +2352,21 @@ fn lower_test_expr(
                     builder.inst_results(call)[0]
                 }
                 "!=" => {
+                    let is_quoted = matches!(&right.kind,
+                        crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_));
                     let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
                     let (r_ptr, r_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
-                    let eq = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
-                    let one = builder.ins().iconst(I64, 1);
-                    builder.ins().isub(one, eq)
+                    if is_quoted {
+                        let eq = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
+                        let one = builder.ins().iconst(I64, 1);
+                        builder.ins().isub(one, eq)
+                    } else {
+                        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+                        let call = builder.ins().call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
+                        let matched = builder.inst_results(call)[0];
+                        let one = builder.ins().iconst(I64, 1);
+                        builder.ins().isub(one, matched)
+                    }
                 }
                 ">" | "<" => {
                     // Lexicographic string comparison
@@ -2441,7 +2508,7 @@ fn lower_expr_value(
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     use crate::ir::ExprKind;
     match &expr.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
+        crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
             if let Some(&data_id) = literals.get(s.as_str()) {
                 let gv = module.declare_data_in_func(data_id, builder.func);
                 let ptr = builder.ins().global_value(I64, gv);
@@ -2452,7 +2519,7 @@ fn lower_expr_value(
                 (zero, zero)
             }
         }
-        ExprKind::SimpleExpansion(name) => {
+        crate::ir::ExprKind::SimpleExpansion(name) => {
             // $? — exit status
             if name == "?" {
                 if let Some(esv) = exit_status_var {
@@ -2522,12 +2589,39 @@ fn lower_expr_value(
                 (zero, zero)
             }
         }
-        ExprKind::DoubleQuoted(parts) => {
-            // For single-part double-quoted strings, delegate to the inner part
+        crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => {
             if parts.len() == 1 {
                 lower_expr_value(&parts[0], builder, module, vars, literals, externs, exit_status_var)
+            } else if parts.len() >= 2 {
+                // Multi-part: concat all parts using sash_concat(a_ptr, a_len, b_ptr, b_len, out_len_ptr) -> ptr
+                let (mut acc_ptr, mut acc_len) = lower_expr_value(&parts[0], builder, module, vars, literals, externs, exit_status_var);
+                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
+                for part in &parts[1..] {
+                    let (p2, l2) = lower_expr_value(part, builder, module, vars, literals, externs, exit_status_var);
+                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                    let call = builder.ins().call(concat_ref, &[acc_ptr, acc_len, p2, l2, out_addr]);
+                    acc_ptr = builder.inst_results(call)[0];
+                    acc_len = builder.ins().stack_load(I64, out_slot, 0);
+                }
+                (acc_ptr, acc_len)
             } else {
-                // Multi-part — for now, treat as empty
+                let zero = builder.ins().iconst(I64, 0);
+                (zero, zero)
+            }
+        }
+        crate::ir::ExprKind::ParameterExpansion(pe) => {
+            if pe.operator.is_none() {
+                // ${var} with no operator — same as $var (SimpleExpansion)
+                let simple = crate::ir::Expr {
+                    kind: crate::ir::ExprKind::SimpleExpansion(pe.name.clone()),
+                    span: expr.span,
+                };
+                lower_expr_value(&simple, builder, module, vars, literals, externs, exit_status_var)
+            } else {
+                // Has operator — delegate to lower_value path via SSA
                 let zero = builder.ins().iconst(I64, 0);
                 (zero, zero)
             }
@@ -2551,10 +2645,10 @@ fn lower_expr_value_as_int(
 ) -> cranelift_codegen::ir::Value {
     use crate::ir::ExprKind;
     match &expr.kind {
-        ExprKind::Literal(s) => {
+        crate::ir::ExprKind::Literal(s) => {
             builder.ins().iconst(I64, s.parse::<i64>().unwrap_or(0))
         }
-        ExprKind::SimpleExpansion(name) => {
+        crate::ir::ExprKind::SimpleExpansion(name) => {
             // Find highest version of this variable
             let mut best_key = None;
             let mut best_ver: Option<u32> = None;
@@ -2588,7 +2682,7 @@ fn lower_expr_value_as_int(
         _ => {
             // Fallback: lower as string, atoi
             // Special case: ParameterExpansion (e.g., arrlen) — route through SSA value lowering
-            if let ExprKind::ParameterExpansion(pe) = &expr.kind {
+            if let crate::ir::ExprKind::ParameterExpansion(pe) = &expr.kind {
                 let var = {
                     // Find highest version of this variable
                     let mut best_key = None;
@@ -3800,14 +3894,14 @@ fn scan_test_for_vars(test: &TestExpr, refs: &mut std::collections::HashSet<Stri
     fn scan_expr(expr: &crate::ir::Expr, refs: &mut std::collections::HashSet<String>) {
         use crate::ir::ExprKind;
         match &expr.kind {
-            ExprKind::SimpleExpansion(name) => {
+            crate::ir::ExprKind::SimpleExpansion(name) => {
                 if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
                     refs.insert(name.clone());
                 } else if name.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
                     refs.insert(name.clone());
                 }
             }
-            ExprKind::DoubleQuoted(parts) => { for p in parts { scan_expr(p, refs); } }
+            crate::ir::ExprKind::DoubleQuoted(parts) => { for p in parts { scan_expr(p, refs); } }
             _ => {}
         }
     }
@@ -3943,9 +4037,9 @@ fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
     use crate::ir::ExprKind;
     use crate::ssa::{SsaValue, VarRef};
     match &expr.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
-        ExprKind::SimpleExpansion(v) => SsaValue::Var(VarRef::new(v, 0)),
-        ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+        crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
+        crate::ir::ExprKind::SimpleExpansion(v) => SsaValue::Var(VarRef::new(v, 0)),
+        crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
             let vals: Vec<SsaValue> = parts.iter().map(|p| ir_expr_to_ssa_value(p)).collect();
             SsaValue::Concat(vals)
         }
@@ -3957,8 +4051,8 @@ fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
 fn scan_redirect_for_vars(expr: &crate::ir::Expr, refs: &mut std::collections::HashSet<String>) {
     use crate::ir::ExprKind;
     match &expr.kind {
-        ExprKind::SimpleExpansion(v) => { refs.insert(v.clone()); }
-        ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+        crate::ir::ExprKind::SimpleExpansion(v) => { refs.insert(v.clone()); }
+        crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
             for p in parts { scan_redirect_for_vars(p, refs); }
         }
         _ => {}
@@ -3978,7 +4072,7 @@ fn lower_ir_redirect_expr(
     use crate::ir::ExprKind;
     use cranelift_codegen::ir::types::I64;
     match &expr.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
+        crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
             if let Some(&data_id) = literals.get(s.as_str()) {
                 let gv = module.declare_data_in_func(data_id, builder.func);
                 let ptr = builder.ins().global_value(I64, gv);
@@ -3989,7 +4083,7 @@ fn lower_ir_redirect_expr(
                 (z, z)
             }
         }
-        ExprKind::SimpleExpansion(var) => {
+        crate::ir::ExprKind::SimpleExpansion(var) => {
             // Find the var in vars — match on base name, pick highest version
             let mut best: Option<(&str, u32, &VarSlot)> = None;
             for (k, sv) in vars {
@@ -4010,7 +4104,7 @@ fn lower_ir_redirect_expr(
             let z = builder.ins().iconst(I64, 0);
             (z, z)
         }
-        ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+        crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
             assert!(!parts.is_empty());
             let (mut acc_ptr, mut acc_len) = lower_ir_redirect_expr(&parts[0], builder, module, vars, literals, externs);
             for part in &parts[1..] {
