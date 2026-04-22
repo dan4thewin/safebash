@@ -2469,7 +2469,8 @@ fn lower_test_expr(
                     builder.inst_results(call2)[0]
                 }
                 other => {
-                    panic!("sash: unimplemented unary test operator: {}", other);
+                    eprintln!("sash: unimplemented unary test operator: {}", other);
+                    builder.ins().iconst(I64, 0) // unknown test → false
                 }
             }
         }
@@ -2875,9 +2876,14 @@ fn lower_value(
                 let res_len = builder.ins().stack_load(I64, out_slot, 0);
                 return (res_ptr, res_len);
             }
-            let sv = vars.get(&key).unwrap_or_else(|| {
-                panic!("undefined variable: {}", key);
-            });
+            let sv = match vars.get(&key) {
+                Some(v) => v,
+                None => {
+                    // Undefined variable → empty string
+                    let zero = builder.ins().iconst(I64, 0);
+                    return (zero, zero);
+                }
+            };
             if sv.is_int() {
                 // Int var used in string context: itoa
                 let int_val = builder.use_var(*sv.as_int());
@@ -3273,7 +3279,10 @@ fn lower_value(
                     (buf_ptr, result_len)
                 }
                 _ => {
-                    panic!("unsupported parameter expansion operator: {}", operator);
+                    // Unsupported parameter expansion — return empty string
+                    eprintln!("sash: unsupported parameter expansion operator: {}", operator);
+                    let zero = builder.ins().iconst(I64, 0);
+                    (zero, zero)
                 }
             }
         }
@@ -3791,7 +3800,13 @@ fn lower_value_as_int(
         }
         SsaValue::Var(vref) => {
             let key = vref.display();
-            let sv = vars.get(&key).unwrap_or_else(|| panic!("undefined variable: {}", key));
+            let sv = match vars.get(&key) {
+                Some(v) => v,
+                None => {
+                    // Undefined variable → 0 in int context
+                    return builder.ins().iconst(I64, 0);
+                }
+            };
             if sv.is_int() {
                 builder.use_var(*sv.as_int())
             } else {

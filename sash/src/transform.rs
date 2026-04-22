@@ -268,7 +268,7 @@ fn lower_one(
                     target: target.clone(),
                     value: val.clone(),
                 });
-                if d.keyword == crate::ir::DeclKeyword::Export {
+                if d.keyword == crate::ir::DeclKeyword::Export || d.flags.contains(&"-x".to_string()) {
                     ssa.block_mut(block).insts.push(SsaInst::Export {
                         target,
                         value: val,
