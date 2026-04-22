@@ -1262,6 +1262,13 @@ fn lower_case(
     block: BlockId,
 ) -> BlockId {
     let merge_block = ssa.new_block("case.merge");
+
+    // Empty case — no items
+    if c.items.is_empty() {
+        ssa.block_mut(block).terminator = Terminator::Goto(merge_block);
+        return merge_block;
+    }
+
     let pre_state = state.snapshot();
     let mut branch_states: Vec<(BlockId, std::collections::HashMap<String, u32>)> = Vec::new();
 

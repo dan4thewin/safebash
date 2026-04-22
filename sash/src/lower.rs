@@ -1614,6 +1614,35 @@ fn lower_string(node: Node, source: &[u8]) -> ExprKind {
     }
 }
 
+/// Convert a bash glob pattern to a Plan 9 regex pattern.
+/// Safe subset limits globs to * only; ? is also converted.
+/// Character classes (e.g. [abc]) are rejected — caller should error.
+/// Regex metacharacters in the pattern are escaped.
+fn glob_to_regex(glob: &str) -> String {
+    let mut re = String::with_capacity(glob.len() * 2);
+    let mut chars = glob.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '*' => re.push_str(".*"),
+            '?' => re.push('.'),
+            '\\' => {
+                // Escaped char — pass through literally (escaped in regex too)
+                if let Some(next) = chars.next() {
+                    re.push('\\');
+                    re.push(next);
+                }
+            }
+            // Escape regex metacharacters
+            '.' | '+' | '(' | ')' | '|' | '^' | '$' => {
+                re.push('\\');
+                re.push(c);
+            }
+            _ => re.push(c),
+        }
+    }
+    re
+}
+
 fn expr_to_literal_string(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),
@@ -1733,15 +1762,22 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                 if operator.is_some() {
                     let op_str = operator.as_deref().unwrap_or("");
                     if (op_str == "/" || op_str == "//" || op_str == "/#" || op_str == "/%") && operand.is_none() && child.kind() == "regex" {
-                        // First part after /: this is the pattern (regex node)
-                        operand = Some(Box::new(lower_expr(child, source)));
+                        // First part after /: this is the pattern — convert glob→regex now
+                        let pat_glob = expr_to_literal_string(&lower_expr(child, source));
+                        let mut pat_regex = glob_to_regex(&pat_glob);
+                        if op_str == "/#" { pat_regex = format!("^{}", pat_regex); }
+                        if op_str == "/%" { pat_regex = format!("{}$", pat_regex); }
+                        operand = Some(Box::new(Expr {
+                            kind: ExprKind::Literal(pat_regex),
+                            span: Span::from_node(child),
+                        }));
                     } else if (op_str == "/" || op_str == "//" || op_str == "/#" || op_str == "/%") && operand.is_some() {
                         // Second part after /: this is the replacement
-                        // Combine pattern\0replacement as operand
+                        // Pattern already converted to regex above
                         let pat_expr = operand.take().unwrap();
-                        let pat_text = expr_to_literal_string(&pat_expr);
+                        let pat_regex = expr_to_literal_string(&pat_expr);
                         let rep_text = expr_to_literal_string(&lower_expr(child, source));
-                        let combined = format!("{}\0{}", pat_text, rep_text);
+                        let combined = format!("{}\0{}", pat_regex, rep_text);
                         operand = Some(Box::new(Expr {
                             kind: ExprKind::Literal(combined),
                             span: Span::from_node(child),
@@ -1946,19 +1982,44 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
             })
         }
         "unary_expression" => {
-            // ++x or --x
             let var_node = expr_node.named_child(0)?;
             let var_name = var_node.utf8_text(source).ok()?.to_string();
             let op_text = expr_node.utf8_text(source).ok()?;
-            let arith_op = if op_text.starts_with("++") { "+" } else { "-" };
-            StmtKind::Assignment(Assignment { index: None, op: AssignOp::Set,
-                name: var_name.clone(),
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(format!("{} {} 1", var_name, arith_op)),
-                    span,
-                },
-
-            })
+            if op_text.starts_with("++") || op_text.starts_with("--") {
+                // ++x or --x
+                let arith_op = if op_text.starts_with("++") { "+" } else { "-" };
+                StmtKind::Assignment(Assignment { index: None, op: AssignOp::Set,
+                    name: var_name.clone(),
+                    value: Expr {
+                        kind: ExprKind::ArithmeticExpansion(format!("{} {} 1", var_name, arith_op)),
+                        span,
+                    },
+                })
+            } else if op_text.starts_with('-') || op_text.starts_with('+') || op_text.starts_with('!') || op_text.starts_with('~') {
+                // Unary -, +, !, ~ used as condition: (( -1 )), (( !x ))
+                let text = op_text.trim().to_string();
+                let test_var = ExprKind::ArithmeticExpansion(text);
+                StmtKind::Command(Command {
+                    name: Expr { kind: ExprKind::Literal("[[".to_string()), span },
+                    args: vec![Expr {
+                        kind: ExprKind::Test(TestExpr::Binary {
+                            left: Box::new(Expr { kind: test_var, span }),
+                            op: "-ne".to_string(),
+                            right: Box::new(Expr { kind: ExprKind::Literal("0".to_string()), span }),
+                        }),
+                        span,
+                    }],
+                })
+            } else {
+                let arith_op = if op_text.starts_with("++") { "+" } else { "-" };
+                StmtKind::Assignment(Assignment { index: None, op: AssignOp::Set,
+                    name: var_name.clone(),
+                    value: Expr {
+                        kind: ExprKind::ArithmeticExpansion(format!("{} {} 1", var_name, arith_op)),
+                        span,
+                    },
+                })
+            }
         }
         "parenthesized_expression" => {
             // (( (expr) )) — recurse into the inner expression
@@ -1971,8 +2032,8 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
             // Bare expression — could be a number (used as condition) or variable
             let text = expr_node.utf8_text(source).ok()?.trim().to_string();
             // Desugar (( expr )) to [[ expr -ne 0 ]] for use as a test
-            let test_var = if text.chars().all(|c| c.is_ascii_digit()) {
-                // Literal number: (( 0 )) → false, (( 5 )) → true
+            let test_var = if text.chars().all(|c| c.is_ascii_digit()) || (text.starts_with('-') && text[1..].chars().all(|c| c.is_ascii_digit())) {
+                // Literal number: (( 0 )) → false, (( 5 )) → true, (( -1 )) → true
                 ExprKind::Literal(text)
             } else {
                 // Variable: (( x )) → [[ $x -ne 0 ]]
