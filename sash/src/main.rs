@@ -37,8 +37,21 @@ fn main() {
     }
 
     // Split args into flags and positional
-    let flags: Vec<&str> = args[1..].iter().filter(|a| a.starts_with("--")).map(|s| s.as_str()).collect();
-    let positional: Vec<&str> = args[1..].iter().filter(|a| !a.starts_with("--")).map(|s| s.as_str()).collect();
+    let mut flags: Vec<&str> = Vec::new();
+    let mut positional: Vec<&str> = Vec::new();
+    let mut output_path: Option<&str> = None;
+    let mut i = 1;
+    while i < args.len() {
+        match args[i].as_str() {
+            "-o" => {
+                i += 1;
+                if i < args.len() { output_path = Some(&args[i]); }
+            }
+            s if s.starts_with("--") => flags.push(s),
+            s => positional.push(s),
+        }
+        i += 1;
+    }
     let input = match positional.first() {
         Some(f) => *f,
         None => {
@@ -143,8 +156,8 @@ fn main() {
     }
 
     // Default: compile to native binary
-    let output = if let Some(pos) = flags.iter().position(|&f| f == "-o") {
-        args[pos + 3].clone()  // skip binary name + input
+    let output = if let Some(p) = output_path {
+        p.to_string()
     } else {
         input
             .strip_suffix(".sh")
