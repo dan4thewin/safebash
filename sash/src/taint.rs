@@ -83,7 +83,12 @@ impl TaintTracker {
 
     /// Special variables that are always clean.
     fn is_special_var(&self, name: &str) -> bool {
-        matches!(name, "0" | "#" | "?" | "$" | "LINENO")
+        matches!(name, "0" | "#" | "?" | "$" | "LINENO" | "PIPESTATUS"
+            | "BASHPID" | "BASH_SUBSHELL" | "SHLVL" | "PPID" | "UID" | "EUID"
+            | "GROUPS" | "HOSTNAME" | "HOSTTYPE" | "MACHTYPE" | "OSTYPE"
+            | "SHELLOPTS" | "BASHOPTS" | "BASH_VERSION" | "BASH_VERSINFO"
+            | "SECONDS" | "RANDOM" | "SRANDOM" | "EPOCHSECONDS" | "EPOCHREALTIME"
+            | "IFS" | "OLDPWD" | "_")
     }
 
     /// Run taint analysis on the full program.
@@ -130,6 +135,40 @@ impl TaintTracker {
                 }
             }
             "while_statement" | "until_statement" | "for_statement" => {
+                // For `for var in words...`, mark the loop variable.
+                // If all words are literals, it's clean. If any word
+                // contains expansions of tainted vars, the loop var is tainted.
+                if node.kind() == "for_statement" {
+                    if let Some(var_node) = node.child_by_field_name("variable") {
+                        let var_name = var_node.utf8_text(source).unwrap_or("");
+                        // Check if the word list is all literals
+                        let mut has_tainted_source = false;
+                        let mut has_expansion = false;
+                        for child in node.children(&mut node.walk()) {
+                            if child.kind() == "word" || child.kind() == "string"
+                                || child.kind() == "concatenation"
+                                || child.kind() == "simple_expansion"
+                                || child.kind() == "expansion" {
+                                // Check if this word references tainted vars
+                                if self.expr_has_tainted_read(child, source) {
+                                    has_tainted_source = true;
+                                }
+                                if child.kind() == "simple_expansion" || child.kind() == "expansion" {
+                                    has_expansion = true;
+                                }
+                            }
+                            if child.kind() == "command_substitution" {
+                                has_tainted_source = true;
+                                has_expansion = true;
+                            }
+                        }
+                        if has_tainted_source {
+                            self.mark_tainted(var_name);
+                        } else {
+                            self.mark_clean(var_name);
+                        }
+                    }
+                }
                 for child in node.children(&mut node.walk()) {
                     match child.kind() {
                         "test_command" => {
@@ -392,9 +431,18 @@ impl TaintTracker {
 
     /// Extract variable name from an expansion node (${var...}).
     fn extract_expansion_var(&self, node: Node, source: &[u8]) -> String {
+        // Look for variable_name directly, or inside subscript
         for child in node.children(&mut node.walk()) {
             if child.kind() == "variable_name" {
                 return child.utf8_text(source).unwrap_or("").to_string();
+            }
+            if child.kind() == "subscript" {
+                // ${arr[0]} — the var name is inside the subscript node
+                for sc in child.children(&mut child.walk()) {
+                    if sc.kind() == "variable_name" {
+                        return sc.utf8_text(source).unwrap_or("").to_string();
+                    }
+                }
             }
         }
         String::new()
@@ -412,5 +460,28 @@ impl TaintTracker {
             }
         }
         String::new()
+    }
+
+    /// Check if an expression contains reads of tainted variables (no diagnostics).
+    fn expr_has_tainted_read(&self, node: Node, source: &[u8]) -> bool {
+        match node.kind() {
+            "simple_expansion" => {
+                let var_name = self.extract_var_name(node, source);
+                self.is_tainted(&var_name)
+            }
+            "expansion" => {
+                let var_name = self.extract_expansion_var(node, source);
+                self.is_tainted(&var_name)
+            }
+            "command_substitution" => true, // external command output is tainted
+            _ => {
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_has_tainted_read(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
     }
 }

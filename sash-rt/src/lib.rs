@@ -1442,9 +1442,87 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
             }
         }
         7 => {
-            // -L: is symlink (use lstat)
+            // -L / -h: is symlink (use lstat)
             match rustix::fs::lstat(path_cstr) {
                 Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Symlink { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        8 => {
+            // -c: is character device
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::CharacterDevice { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        9 => {
+            // -p: is named pipe (fifo)
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Fifo { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        10 => {
+            // -k: sticky bit set
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if st.st_mode & 0o1000 != 0 { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        11 => {
+            // -b: block device
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::BlockDevice { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        12 => {
+            // -g: setgid bit
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if st.st_mode & 0o2000 != 0 { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        13 => {
+            // -u: setuid bit
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if st.st_mode & 0o4000 != 0 { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        14 => {
+            // -G: owned by effective gid
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => {
+                    let egid = rustix::process::getegid().as_raw();
+                    if st.st_gid == egid { 1 } else { 0 }
+                },
+                Err(_) => 0,
+            }
+        }
+        15 => {
+            // -O: owned by effective uid
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => {
+                    let euid = rustix::process::geteuid().as_raw();
+                    if st.st_uid == euid { 1 } else { 0 }
+                },
+                Err(_) => 0,
+            }
+        }
+        16 => {
+            // -S: is socket
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Socket { 1 } else { 0 },
+                Err(_) => 0,
+            }
+        }
+        17 => {
+            // -N: modified since last read (mtime > atime)
+            match rustix::fs::stat(path_cstr) {
+                Ok(st) => {
+                    if st.st_mtime > st.st_atime || (st.st_mtime == st.st_atime && st.st_mtime_nsec > st.st_atime_nsec) { 1 } else { 0 }
+                },
                 Err(_) => 0,
             }
         }

@@ -2364,16 +2364,26 @@ fn lower_test_expr(
                     let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
                     builder.ins().uextend(I64, cmp)
                 }
-                "-e" | "-f" | "-d" | "-r" | "-w" | "-x" | "-s" | "-L" => {
+                "-e" | "-f" | "-d" | "-r" | "-w" | "-x" | "-s" | "-L" | "-a" | "-c" | "-p" | "-k" | "-h" | "-b" | "-g" | "-u" | "-G" | "-O" | "-S" | "-N" => {
                     let op_code = match op.as_str() {
-                        "-e" => 0i64,
+                        "-e" | "-a" => 0i64, // -a is same as -e
                         "-f" => 1,
                         "-d" => 2,
                         "-r" => 3,
                         "-w" => 4,
                         "-x" => 5,
                         "-s" => 6,
-                        "-L" => 7,
+                        "-L" | "-h" => 7, // -h is same as -L
+                        "-c" => 8,
+                        "-p" => 9,
+                        "-k" => 10,
+                        "-b" => 11,
+                        "-g" => 12,
+                        "-u" => 13,
+                        "-G" => 14,
+                        "-O" => 15,
+                        "-S" => 16,
+                        "-N" => 17,
                         _ => unreachable!(),
                     };
                     let op_val = builder.ins().iconst(I64, op_code);

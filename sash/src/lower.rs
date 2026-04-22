@@ -1258,7 +1258,28 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
                         kind: ExprKind::Literal("?".to_string()),
                         span: Span::from_node(node),
                     });
-                TestExpr::Binary { left: Box::new(left), op, right: Box::new(right) }
+                // Handle && and || as And/Or, not binary operators
+                if op == "&&" {
+                    let left_te = lower_test_expr(left_node.unwrap(), source);
+                    let right_te = node.child_by_field_name("right")
+                        .map(|n| lower_test_expr(n, source))
+                        .unwrap_or_else(|| TestExpr::Unary {
+                            op: "?".to_string(),
+                            operand: Box::new(Expr { kind: ExprKind::Literal("?".to_string()), span: Span::from_node(node) }),
+                        });
+                    TestExpr::And(Box::new(left_te), Box::new(right_te))
+                } else if op == "||" {
+                    let left_te = lower_test_expr(left_node.unwrap(), source);
+                    let right_te = node.child_by_field_name("right")
+                        .map(|n| lower_test_expr(n, source))
+                        .unwrap_or_else(|| TestExpr::Unary {
+                            op: "?".to_string(),
+                            operand: Box::new(Expr { kind: ExprKind::Literal("?".to_string()), span: Span::from_node(node) }),
+                        });
+                    TestExpr::Or(Box::new(left_te), Box::new(right_te))
+                } else {
+                    TestExpr::Binary { left: Box::new(left), op, right: Box::new(right) }
+                }
             }
         }
         "negation_expression" => {
