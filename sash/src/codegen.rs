@@ -128,6 +128,7 @@ struct ExternFuncs {
     capture_start: cranelift_module::FuncId,
     capture_end: cranelift_module::FuncId,
     fnmatch: cranelift_module::FuncId,
+    glob_replace: cranelift_module::FuncId,
     split_first_word: cranelift_module::FuncId,
     split_into_array: cranelift_module::FuncId,
     read_all: cranelift_module::FuncId,
@@ -444,6 +445,14 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let fnmatch_func = module.declare_function("sash_fnmatch", Linkage::Import, &fnmatch_sig)
         .expect("declare sash_fnmatch");
 
+    // sash_glob_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, mode) -> (ptr, len)
+    let mut glob_replace_sig = module.make_signature();
+    for _ in 0..7 { glob_replace_sig.params.push(AbiParam::new(I64)); }
+    glob_replace_sig.returns.push(AbiParam::new(I64));
+    glob_replace_sig.returns.push(AbiParam::new(I64));
+    let glob_replace_func = module.declare_function("sash_glob_replace", Linkage::Import, &glob_replace_sig)
+        .expect("declare sash_glob_replace");
+
     // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
     for _ in 0..7 { regex_replace_sig.params.push(AbiParam::new(I64)); }
@@ -737,6 +746,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         assoc_lookup: assoc_lookup_func,
         regex_match: regex_match_func,
         fnmatch: fnmatch_func,
+        glob_replace: glob_replace_func,
         regex_replace: regex_replace_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
@@ -814,6 +824,12 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                     // operand is "pattern\0replacement\0global"
                     for part in operand.split('\0') {
                         if !part.is_empty() { intern(module, part); }
+                    }
+                }
+                if operator == "/" || operator == "//" || operator == "/#" || operator == "/%" {
+                    // operand is "pattern\0replacement"
+                    for part in operand.split('\0') {
+                        intern(module, part);
                     }
                 }
             }
@@ -3294,6 +3310,38 @@ fn lower_value(
                     let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
                     let result_len = builder.inst_results(call)[0];
                     (buf_ptr, result_len)
+                }
+                "/" | "//" | "/#" | "/%" => {
+                    // ${var/pat/rep}, ${var//pat/rep}, ${var/#pat/rep}, ${var/%pat/rep}
+                    // operand is "pattern\0replacement"
+                    let parts: Vec<&str> = operand.splitn(2, '\0').collect();
+                    let pattern = parts.get(0).unwrap_or(&"");
+                    let replacement = parts.get(1).unwrap_or(&"");
+
+                    let pat_id = literals.get(*pattern).unwrap_or_else(|| panic!("missing literal: {}", pattern));
+                    let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
+                    let pat_ptr = builder.ins().global_value(I64, pat_gv);
+                    let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
+
+                    let rep_id = literals.get(*replacement).unwrap_or_else(|| panic!("missing literal: {}", replacement));
+                    let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
+                    let rep_ptr = builder.ins().global_value(I64, rep_gv);
+                    let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
+
+                    let mode = match operator.as_str() {
+                        "/" => 0i64,   // first
+                        "//" => 1i64,  // global
+                        "/#" => 2i64,  // prefix
+                        "/%" => 3i64,  // suffix
+                        _ => 0i64,
+                    };
+                    let mode_val = builder.ins().iconst(I64, mode);
+
+                    let func_ref = module.declare_func_in_func(externs.glob_replace, builder.func);
+                    let call = builder.ins().call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, mode_val]);
+                    let result_ptr = builder.inst_results(call)[0];
+                    let result_len = builder.inst_results(call)[1];
+                    (result_ptr, result_len)
                 }
                 _ => {
                     // Unsupported parameter expansion — return empty string

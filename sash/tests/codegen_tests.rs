@@ -2869,3 +2869,4 @@ fn argc_zero_args() {
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out.trim(), "0");
 }
+

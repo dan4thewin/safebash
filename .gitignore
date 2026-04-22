@@ -3,3 +3,13 @@ Cargo.lock
 suites/oils/
 suites/bash/
 suites/shellcheck/
+*.txt
+test-*
+valid-*
+dangling-*
+link
+out.*
+stderr.*
+stdout.*
+file.*
+*.bin

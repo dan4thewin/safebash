@@ -932,7 +932,21 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
                     operator: Some("arrvals".to_string()),
                     operand: None,
                 })
-            } else if node.named_child_count() > 0 {
+            } else if node.named_child_count() > 0 && {
+                // Only enter expansion path if children are actual expansions
+                let mut has_expansion = false;
+                let mut cursor_check = node.walk();
+                for child in node.named_children(&mut cursor_check) {
+                    match child.kind() {
+                        "simple_expansion" | "expansion" | "command_substitution" => {
+                            has_expansion = true;
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+                has_expansion
+            } {
                 // Word contains expansions (e.g., ${var} in [[ =~ ]] context)
                 // Build parts like lower_string
                 let mut parts = Vec::new();
@@ -1195,7 +1209,11 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
             // Regex nodes in [[ =~ ]] — tree-sitter doesn't expand ${var} inside regex.
             // Manually parse variable references.
             let text = node.utf8_text(source).unwrap_or("").to_string();
-            if text.contains("${") || text.contains('$') {
+            if text.contains("${") || (text.contains('$') && {
+                // Only treat $ as expansion if followed by alpha/_ or {
+                let b = text.as_bytes();
+                b.iter().enumerate().any(|(i, &c)| c == b'$' && i + 1 < b.len() && (b[i+1] == b'{' || b[i+1].is_ascii_alphabetic() || b[i+1] == b'_'))
+            }) {
                 // Parse variable expansions manually
                 let mut parts = Vec::new();
                 let bytes = text.as_bytes();
@@ -1596,6 +1614,18 @@ fn lower_string(node: Node, source: &[u8]) -> ExprKind {
     }
 }
 
+fn expr_to_literal_string(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Literal(s) => s.clone(),
+        ExprKind::SingleQuoted(s) => s.clone(),
+        _ => {
+            // For non-literal expressions, return the debug representation
+            // This is a fallback — most operands in ${var/pat/rep} are literals
+            format!("{:?}", expr.kind)
+        }
+    }
+}
+
 fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
     let mut name = String::new();
     let mut operator = None;
@@ -1610,13 +1640,22 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
     let mut has_named_op = false;
 
     // Pre-scan for substring pattern
+    let mut negate_next = false;
     for child in node.children(&mut node.walk()) {
         match child.kind() {
             ":" if !name.is_empty() && !has_named_op => {
                 colon_count += 1;
             }
+            "-" if colon_count > 0 && !has_named_op => {
+                negate_next = true;
+            }
             "number" if colon_count > 0 && !has_named_op => {
-                substring_parts.push(child.utf8_text(source).unwrap_or("0").to_string());
+                let mut val = child.utf8_text(source).unwrap_or("0").to_string();
+                if negate_next {
+                    val = format!("-{}", val);
+                    negate_next = false;
+                }
+                substring_parts.push(val);
             }
             _ if child.kind().starts_with(':') && child.kind().len() > 1 => {
                 has_named_op = true; // :- :+ := :? — not substring
@@ -1659,17 +1698,19 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                 // ${!arr[@]} — indirect expansion / all keys
                 operator = Some("!".to_string());
             }
-            _ if child.kind().starts_with(':')
+            _ if operator.is_none() && (child.kind().starts_with(':')
                 || child.kind() == "%"
                 || child.kind() == "%%"
                 || child.kind() == "#"
                 || child.kind() == "##"
                 || child.kind() == "/"
                 || child.kind() == "//"
+                || child.kind() == "/#"
+                || child.kind() == "/%"
                 || child.kind() == "^"
                 || child.kind() == "^^"
                 || child.kind() == ","
-                || child.kind() == ",," =>
+                || child.kind() == ",,") =>
             {
                 operator = Some(child.kind().to_string());
             }
@@ -1690,7 +1731,24 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
             | "simple_expansion" | "expansion"
             | "command_substitution" | "concatenation" => {
                 if operator.is_some() {
-                    operand = Some(Box::new(lower_expr(child, source)));
+                    let op_str = operator.as_deref().unwrap_or("");
+                    if (op_str == "/" || op_str == "//" || op_str == "/#" || op_str == "/%") && operand.is_none() && child.kind() == "regex" {
+                        // First part after /: this is the pattern (regex node)
+                        operand = Some(Box::new(lower_expr(child, source)));
+                    } else if (op_str == "/" || op_str == "//" || op_str == "/#" || op_str == "/%") && operand.is_some() {
+                        // Second part after /: this is the replacement
+                        // Combine pattern\0replacement as operand
+                        let pat_expr = operand.take().unwrap();
+                        let pat_text = expr_to_literal_string(&pat_expr);
+                        let rep_text = expr_to_literal_string(&lower_expr(child, source));
+                        let combined = format!("{}\0{}", pat_text, rep_text);
+                        operand = Some(Box::new(Expr {
+                            kind: ExprKind::Literal(combined),
+                            span: Span::from_node(child),
+                        }));
+                    } else {
+                        operand = Some(Box::new(lower_expr(child, source)));
+                    }
                 }
             }
             _ => {}
