@@ -1790,33 +1790,43 @@ fn lower_inst(
         }
         SsaInst::Command { name, args, redirects, .. } if name == "command" => {
             let restore = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
-            // command -v NAME — check if command exists
-            if args.len() >= 2 {
-                if let SsaValue::Literal(flag) = &args[0] {
-                    if flag == "-v" {
-                        let (name_ptr, name_len) = lower_value(&args[1], builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
-                        let cmdv_ref = module.declare_func_in_func(externs.command_v, builder.func);
-                        let call = builder.ins().call(cmdv_ref, &[name_ptr, name_len]);
-                        let result = builder.inst_results(call)[0];
-                        builder.def_var(exit_status_var, result);
-                        let zero = builder.ins().iconst(I64, 0);
-                        let found = builder.ins().icmp(IntCC::Equal, result, zero);
-                        let tr = builder.ins().uextend(I64, found);
-                        builder.def_var(test_result_var, tr);
-                    } else {
-                        // command NAME args — bypass function, run external command directly
-                        let real_name = flag.clone();
-                        let real_args = args[1..].to_vec();
-                        lower_exec(&real_name, &real_args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
+            // Skip flags: -p, -v, -V, --
+            let mut cmd_start = 0;
+            let mut is_v = false;
+            for (i, arg) in args.iter().enumerate() {
+                if let SsaValue::Literal(s) = arg {
+                    match s.as_str() {
+                        "-v" => { is_v = true; cmd_start = i + 1; }
+                        "-p" | "-V" | "--" => { cmd_start = i + 1; }
+                        _ => { cmd_start = i; break; }
                     }
                 } else {
-                    // command $var args — first arg is dynamic, treat as command name
+                    cmd_start = i;
+                    break;
+                }
+            }
+            if is_v && cmd_start < args.len() {
+                // command -v NAME — check if command exists
+                let (name_ptr, name_len) = lower_value(&args[cmd_start], builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
+                let cmdv_ref = module.declare_func_in_func(externs.command_v, builder.func);
+                let call = builder.ins().call(cmdv_ref, &[name_ptr, name_len]);
+                let result = builder.inst_results(call)[0];
+                builder.def_var(exit_status_var, result);
+                let zero = builder.ins().iconst(I64, 0);
+                let found = builder.ins().icmp(IntCC::Equal, result, zero);
+                let tr = builder.ins().uextend(I64, found);
+                builder.def_var(test_result_var, tr);
+            } else if cmd_start < args.len() {
+                if let SsaValue::Literal(real_name) = &args[cmd_start] {
+                    let real_args = args[cmd_start + 1..].to_vec();
+                    lower_exec(real_name, &real_args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
+                } else {
                     let all_args = args.clone();
-                    let real_name_str = match &all_args[0] {
+                    let real_name_str = match &all_args[cmd_start] {
                         SsaValue::Literal(s) => s.clone(),
-                        _ => "command".to_string(), // fallback
+                        _ => "command".to_string(),
                     };
-                    let real_args = all_args[1..].to_vec();
+                    let real_args = all_args[cmd_start + 1..].to_vec();
                     lower_exec(&real_name_str, &real_args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
                 }
             }
