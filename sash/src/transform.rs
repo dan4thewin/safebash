@@ -1,0 +1,2063 @@
+/// IR → SSA transformation.
+///
+/// Converts the safebash IR into SSA form:
+///   1. Build basic blocks from IR statements
+///   2. Version variable assignments
+///   3. Insert phi nodes at if/else and loop merge points
+
+use crate::ir::*;
+use crate::ssa::*;
+use std::collections::HashMap;
+
+/// Transform an IR Program into SSA form.
+pub fn ir_to_ssa(program: &Program) -> SsaProgram {
+    ir_to_ssa_typed(program, HashMap::new())
+}
+
+/// Transform an IR Program into SSA form with type information.
+pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) -> SsaProgram {
+    let mut ssa = SsaProgram::new();
+    let mut state = VersionState::with_types(type_map);
+
+    // First pass: collect function names so CommandSubstitution
+    // can detect elidable function calls.
+    let mut known_functions: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for stmt in &program.statements {
+        if let StmtKind::Function(f) = &stmt.kind {
+            known_functions.insert(f.name.clone());
+        }
+    }
+    state.known_functions = known_functions;
+
+    let entry = ssa.new_block("entry");
+    ssa.entry = entry;
+
+    let exit = lower_stmts(&program.statements, &mut ssa, &mut state, entry);
+
+    // If an EXIT trap was registered, inline its body before every Return
+    if let Some(trap_stmts) = state.exit_trap.take() {
+        // Collect all blocks that have Return terminators
+        let return_blocks: Vec<usize> = ssa.blocks.iter()
+            .filter(|(_, b)| b.terminator == Terminator::Return)
+            .map(|(&id, _)| id)
+            .collect();
+        for block_id in return_blocks {
+            // Insert trap body before the Return
+            let trap_exit = lower_stmts(&trap_stmts, &mut ssa, &mut state, block_id);
+            if trap_exit != block_id {
+                // Trap body created new blocks — redirect the last one to Return
+                ssa.block_mut(trap_exit).terminator = Terminator::Return;
+            }
+        }
+    }
+
+    // Ensure exit block terminates with Return
+    ssa.block_mut(exit).terminator = Terminator::Return;
+
+    ssa
+}
+
+/// Lower a sequence of statements into SSA, starting from `block`.
+/// Returns the block ID where execution continues after the sequence.
+fn lower_stmts(
+    stmts: &[Statement],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    for stmt in stmts {
+        block = lower_one(stmt, ssa, state, block);
+    }
+    block
+}
+
+/// Lower a single statement into SSA.
+fn lower_one(
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    match &stmt.kind {
+        StmtKind::Assignment(a) => {
+            if let Some(ref idx) = a.index {
+                // Subscript assignment: arr[i]=val or map[key]=val
+                let val = expr_to_value(&a.value, state);
+                let idx_val = expr_to_value(idx, state);
+                let is_int = !state.assoc_arrays.contains(&a.name);
+                ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
+                    array: a.name.clone(),
+                    index: idx_val,
+                    value: val,
+                    is_integer_key: is_int,
+                });
+            } else if a.op == crate::ir::AssignOp::Append {
+                let val = expr_to_value(&a.value, state);
+                match val {
+                    SsaValue::IndexedArray(elems) => {
+                        // arr+=(val1 val2 ...) — array append
+                        for elem in elems {
+                            ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
+                                array: a.name.clone(),
+                                value: elem,
+                            });
+                        }
+                    }
+                    other => {
+                        // Check if this is an array variable
+                        if state.assoc_arrays.contains(&a.name) {
+                            ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
+                                array: a.name.clone(),
+                                value: other,
+                            });
+                        } else {
+                            // String concatenation: var = var ++ val
+                            let old = SsaValue::Var(state.lookup(&a.name));
+                            let concat = SsaValue::Concat(vec![old, other]);
+                            let target = state.define(&a.name);
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target,
+                                value: concat,
+                            });
+                        }
+                    }
+                }
+            } else {
+                let val = expr_to_value(&a.value, state);
+                // Check if the value is a FuncCall that needs capture
+                if let SsaValue::FuncCall(fname) = &val {
+                    // Non-constant function call: emit CaptureStart, inline body, CaptureEnd
+                    if let Some(body) = state.function_bodies.get(fname).cloned() {
+                        let locals = collect_local_vars(&body);
+                        // CaptureStart
+                        ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
+                        // Save/set positional params (same as direct call)
+                        let saved: Vec<(String, VarRef)> = (1..=9)
+                            .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+                            .collect();
+                        let saved_argc = state.lookup("#");
+                        let saved_locals: Vec<(String, VarRef)> = locals.iter()
+                            .map(|lname| {
+                                let save_name = format!("__save_{}_{}", fname, lname);
+                                let src = state.lookup(lname);
+                                let save_ref = state.define(&save_name);
+                                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                    target: save_ref.clone(),
+                                    value: SsaValue::Var(src),
+                                });
+                                (lname.clone(), save_ref)
+                            })
+                            .collect();
+                        // We need to get the args from the original CommandSubstitution
+                        // The args were lost when expr_to_value returned FuncCall(name)
+                        // Re-extract them from the expression
+                        let func_args = match &a.value.kind {
+                            ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
+                                let inner = match &stmts[0].kind {
+                                    StmtKind::Redirected(r) => &r.body.kind,
+                                    other => other,
+                                };
+                                if let StmtKind::Command(c) = inner {
+                                    c.args.clone()
+                                } else { vec![] }
+                            }
+                            _ => vec![],
+                        };
+                        let argc_val = SsaValue::Literal(func_args.len().to_string());
+                        let argc_var = state.define("#");
+                        ssa.block_mut(block).insts.push(SsaInst::Assign { target: argc_var, value: argc_val });
+                        for (i, arg) in func_args.iter().enumerate() {
+                            let v = expr_to_value(arg, state);
+                            let param_var = state.define(&(i + 1).to_string());
+                            ssa.block_mut(block).insts.push(SsaInst::Assign { target: param_var, value: v });
+                        }
+                        // Inline function body
+                        let call_block = ssa.new_block(&format!("cap_{}", fname));
+                        ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+                        let restore_block = ssa.new_block(&format!("capret_{}", fname));
+                        let saved_return_target = state.return_target;
+                        state.return_target = Some(restore_block);
+                        let exit_block = lower_stmts(&body, ssa, state, call_block);
+                        state.return_target = saved_return_target;
+                        ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+                        // CaptureEnd — assign captured output to target
+                        let target = state.define(&a.name);
+                        ssa.block_mut(restore_block).insts.push(SsaInst::CaptureEnd { target });
+                        // Restore params
+                        for (param_name, saved_ref) in &saved {
+                            let rv = state.define(param_name);
+                            ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                                target: rv, value: SsaValue::Var(saved_ref.clone()),
+                            });
+                        }
+                        let ra = state.define("#");
+                        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                            target: ra, value: SsaValue::Var(saved_argc),
+                        });
+                        for (local_name, saved_ref) in &saved_locals {
+                            let rv = state.define(local_name);
+                            ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                                target: rv, value: SsaValue::Var(saved_ref.clone()),
+                            });
+                        }
+                        return restore_block;
+                    }
+                }
+                let target = state.define(&a.name);
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target,
+                    value: val,
+                });
+            }
+            block
+        }
+
+        StmtKind::Declaration(d) => {
+            let is_array = d.flags.contains(&"-a".to_string());
+            let is_assoc = d.flags.contains(&"-A".to_string());
+            for a in &d.assignments {
+                let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
+                    // Bare declaration like `array arr` or `map m` — empty table
+                    if is_assoc {
+                        state.assoc_arrays.insert(a.name.clone());
+                        SsaValue::AssocArray(vec![])
+                    } else {
+                        SsaValue::IndexedArray(vec![])
+                    }
+                } else {
+                    let val = expr_to_value(&a.value, state);
+                    if matches!(&val, SsaValue::AssocArray(_)) {
+                        state.assoc_arrays.insert(a.name.clone());
+                    }
+                    val
+                };
+                let target = state.define(&a.name);
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: target.clone(),
+                    value: val.clone(),
+                });
+                if d.keyword == crate::ir::DeclKeyword::Export {
+                    ssa.block_mut(block).insts.push(SsaInst::Export {
+                        target,
+                        value: val,
+                        name: a.name.clone(),
+                    });
+                }
+                if d.keyword == crate::ir::DeclKeyword::Readonly {
+                    state.readonly_vars.insert(a.name.clone());
+                }
+            }
+            block
+        }
+
+        StmtKind::Command(c) => {
+            let name = expr_to_string(&c.name);
+
+            // If the command is [[ ]], preserve the TestExpr for codegen
+            if name == "[[" {
+                for arg in &c.args {
+                    if let ExprKind::Test(test_expr) = &arg.kind {
+                        ssa.block_mut(block).insts.push(SsaInst::Test(test_expr.clone()));
+                        return block;
+                    }
+                }
+            }
+
+            // var =~ s/pattern/replacement/flags — regex mutation
+            if c.args.len() == 1 {
+                let arg_s = expr_to_string(&c.args[0]);
+                if arg_s.starts_with("s/") {
+                    // Parse s/pattern/replacement/flags
+                    let parts: Vec<&str> = arg_s[2..].splitn(3, '/').collect();
+                    if parts.len() >= 2 {
+                        let pattern = parts[0].to_string();
+                        let replacement = parts[1].to_string();
+                        let flags = if parts.len() > 2 { parts[2] } else { "" };
+                        let global = if flags.contains('g') { "1" } else { "0" };
+                        let var_ref = state.lookup(&name);
+                        let new_ref = state.define(&name);
+                        ssa.block_mut(block).insts.push(SsaInst::Assign {
+                            target: new_ref,
+                            value: SsaValue::ParamExpansion {
+                                var: var_ref,
+                                operator: "regex_replace".to_string(),
+                                operand: format!("{}\x00{}\x00{}", pattern, replacement, global),
+                            },
+                        });
+                        return block;
+                    }
+                }
+            }
+
+            // break → Goto(exit_block), continue → Goto(header_block)
+            if name == "break" {
+                let n = c.args.first()
+                    .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+                    .unwrap_or(1);
+                let depth = state.loop_stack.len();
+                if depth >= n && n > 0 {
+                    let (_header, exit) = state.loop_stack[depth - n];
+                    ssa.block_mut(block).terminator = Terminator::Goto(exit);
+                    let dead = ssa.new_block("after_break");
+                    return dead;
+                }
+                return block;
+            }
+            if name == "continue" {
+                let n = c.args.first()
+                    .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+                    .unwrap_or(1);
+                let depth = state.loop_stack.len();
+                if depth >= n && n > 0 {
+                    let (header, _exit) = state.loop_stack[depth - n];
+                    ssa.block_mut(block).terminator = Terminator::Goto(header);
+                    let dead = ssa.new_block("after_continue");
+                    return dead;
+                }
+                return block;
+            }
+            if name == "return" {
+                // return N — set $? to N (default 0), jump to function exit
+                let exit_code = if let Some(arg) = c.args.first() {
+                    expr_to_string(arg)
+                } else {
+                    "0".to_string()
+                };
+                // Set exit status variable
+                let es_var = state.define("?");
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: es_var,
+                    value: SsaValue::Literal(exit_code),
+                });
+                if let Some(target) = state.return_target {
+                    ssa.block_mut(block).terminator = Terminator::Goto(target);
+                } else {
+                    // Top-level return acts like exit
+                    ssa.block_mut(block).terminator = Terminator::Return;
+                }
+                let dead = ssa.new_block("after_return");
+                return dead;
+            }
+
+            // `mapfile -t arr` / `readarray -t arr` → Mapfile instruction
+            if name == "mapfile" || name == "readarray" {
+                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+                if let Some(arr_name) = var_names.first() {
+                    ssa.block_mut(block).insts.push(SsaInst::Mapfile {
+                        array: arr_name.to_string(),
+                        fd: 0,
+                    });
+                    return block;
+                }
+            }
+
+            // `read -r var` → ReadLine instruction (sets test_result for while-read)
+            if name == "trap" {
+                // trap 'body' SIGNAL
+                // For EXIT: record body, emit before all Return terminators
+                // For signals: compile body inline, register with sash_trap
+                if c.args.len() >= 2 {
+                    let body_str = expr_to_string(&c.args[0]);
+                    let signal = expr_to_string(&c.args[1]);
+                    if signal == "EXIT" || signal == "0" {
+                        // Parse the trap body as bash source and store for later
+                        // Strip surrounding quotes if present
+                        let body_clean = if (body_str.starts_with('\'') && body_str.ends_with('\''))
+                            || (body_str.starts_with('"') && body_str.ends_with('"')) {
+                            &body_str[1..body_str.len()-1]
+                        } else {
+                            &body_str
+                        };
+                        let mut parser = tree_sitter::Parser::new();
+                        parser.set_language(&tree_sitter_bash::LANGUAGE.into()).unwrap();
+                        let tree = parser.parse(body_clean.as_bytes(), None).unwrap();
+                        let trap_stmts = crate::lower::lower_body(tree.root_node(), body_clean.as_bytes());
+                        state.exit_trap = Some(trap_stmts);
+                        return block;
+                    } else if body_str.is_empty() || body_str == "-" {
+                        // trap '' SIG or trap - SIG → ignore/reset
+                        let signum = match signal.as_str() {
+                            "INT" | "SIGINT" | "2" => 2,
+                            "TERM" | "SIGTERM" | "15" => 15,
+                            "HUP" | "SIGHUP" | "1" => 1,
+                            "PIPE" | "SIGPIPE" | "13" => 13,
+                            "USR1" | "SIGUSR1" | "10" => 10,
+                            "USR2" | "SIGUSR2" | "12" => 12,
+                            _ => 0,
+                        };
+                        if signum > 0 {
+                            let handler = if body_str.is_empty() { 1i64 } else { 0i64 }; // SIG_IGN=1, SIG_DFL=0
+                            ssa.block_mut(block).insts.push(SsaInst::Command {
+                                name: "__trap_signal".to_string(),
+                                args: vec![
+                                    SsaValue::Literal(signum.to_string()),
+                                    SsaValue::Literal(handler.to_string()),
+                                ],
+                                redirects: vec![],
+                            });
+                        }
+                        return block;
+                    }
+                }
+                // Unsupported trap form — emit as regular command
+                let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                ssa.block_mut(block).insts.push(SsaInst::Command {
+                    name: name.clone(),
+                    args,
+                    redirects: vec![],
+                });
+                return block;
+            }
+
+            if name == "unset" {
+                // unset map[key] → sash_table_delete
+                // Args may be split: ["m", "[b]"] or single "m[b]"
+                let full = c.args.iter().map(|a| expr_to_string(a)).collect::<Vec<_>>().join("");
+                if let Some(bracket) = full.find('[') {
+                    let arr_name = &full[..bracket];
+                    let key = full[bracket+1..full.len()-1].to_string(); // strip [ ]
+                    let arr_ref = state.lookup(arr_name);
+                    let key_val = SsaValue::Literal(key);
+                    ssa.block_mut(block).insts.push(SsaInst::Command {
+                        name: "__table_delete".to_string(),
+                        args: vec![SsaValue::Var(arr_ref), key_val],
+                        redirects: vec![],
+                    });
+                    return block;
+                }
+            }
+
+            if name == "read" {
+                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                // Parse flags: -r (raw), -t (strip trailing), -d DELIM (delimiter), -a ARR (array)
+                let mut delim: Option<u8> = None;
+                let mut array_name: Option<String> = None;
+                let mut skip_next = false;
+                let mut var_names: Vec<&String> = Vec::new();
+                for (i, a) in args.iter().enumerate() {
+                    if skip_next { skip_next = false; continue; }
+                    if a == "-r" || a == "-t" { continue; }
+                    if a == "-d" || a.starts_with("-d") {
+                        if a.len() > 2 {
+                            delim = Some(a.as_bytes()[2]);
+                        } else if i + 1 < args.len() {
+                            delim = Some(args[i + 1].as_bytes()[0]);
+                            skip_next = true;
+                        }
+                        continue;
+                    }
+                    if a == "-a" {
+                        if i + 1 < args.len() {
+                            array_name = Some(args[i + 1].clone());
+                            skip_next = true;
+                        }
+                        continue;
+                    }
+                    if a.starts_with('-') { continue; }
+                    var_names.push(a);
+                }
+                // read -a arr: split line into array
+                if let Some(arr) = array_name {
+                    ssa.block_mut(block).insts.push(SsaInst::ReadArray {
+                        array: arr,
+                        fd: 0,
+                        delim,
+                    });
+                    return block;
+                }
+                if var_names.len() == 1 {
+                    let target = state.define(var_names[0]);
+                    ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+                        target,
+                        fd: 0,
+                        delim,
+                    });
+                    return block;
+                } else if var_names.len() > 1 {
+                    let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
+                    ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
+                        targets,
+                        fd: 0,
+                        delim,
+                    });
+                    return block;
+                }
+            }
+
+            // Check if this is a known function call → inline expansion
+            if let Some(body) = state.function_bodies.get(&name).cloned() {
+                // Collect local variable names from function body
+                let locals = collect_local_vars(&body);
+
+                // Save caller's positional params
+                let saved: Vec<(String, VarRef)> = (1..=9)
+                    .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+                    .collect();
+                let saved_argc = state.lookup("#");
+
+                // Save caller's versions of local variables to temp names
+                // (different base name so they get separate CL Variables)
+                let saved_locals: Vec<(String, VarRef)> = locals.iter()
+                    .map(|lname| {
+                        let save_name = format!("__save_{}_{}", name, lname);
+                        let src = state.lookup(lname);
+                        let save_ref = state.define(&save_name);
+                        ssa.block_mut(block).insts.push(SsaInst::Assign {
+                            target: save_ref.clone(),
+                            value: SsaValue::Var(src),
+                        });
+                        (lname.clone(), save_ref)
+                    })
+                    .collect();
+
+                // Set positional params from call args
+                let argc_val = SsaValue::Literal(c.args.len().to_string());
+                let argc_var = state.define("#");
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: argc_var,
+                    value: argc_val,
+                });
+                for (i, arg) in c.args.iter().enumerate() {
+                    let val = expr_to_value(arg, state);
+                    let param_var = state.define(&(i + 1).to_string());
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target: param_var,
+                        value: val,
+                    });
+                }
+
+                // Inline the function body
+                let call_block = ssa.new_block(&format!("call_{}", name));
+                ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+
+                // Set return target so `return` jumps to restore block
+                let restore_block = ssa.new_block(&format!("ret_{}", name));
+                let saved_return_target = state.return_target;
+                state.return_target = Some(restore_block);
+                let exit_block = lower_stmts(&body, ssa, state, call_block);
+                state.return_target = saved_return_target;
+
+                // Normal fall-through also goes to restore block
+                ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+                for (param_name, saved_ref) in &saved {
+                    let restore_var = state.define(param_name);
+                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                        target: restore_var,
+                        value: SsaValue::Var(saved_ref.clone()),
+                    });
+                }
+                let restore_argc = state.define("#");
+                ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                    target: restore_argc,
+                    value: SsaValue::Var(saved_argc),
+                });
+                for (local_name, saved_ref) in &saved_locals {
+                    let restore_var = state.define(local_name);
+                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                        target: restore_var,
+                        value: SsaValue::Var(saved_ref.clone()),
+                    });
+                }
+
+                return restore_block;
+            }
+
+            let args: Vec<SsaValue> = c.args.iter()
+                .map(|a| expr_to_value(a, state))
+                .collect();
+            ssa.block_mut(block).insts.push(SsaInst::Command {
+                name,
+                args,
+                redirects: Vec::new(),
+            });
+            block
+        }
+
+        StmtKind::If(i) => {
+            let flattened = flatten_elif(i);
+            lower_if(&flattened, ssa, state, block)
+        }
+
+        StmtKind::While(w) => {
+            if w.until {
+                // Desugar: until cond → while ! cond
+                // lower_while will emit a Test instruction; we wrap it with Not
+                // by lowering normally then patching the last Test in the header
+                let mut desugared = w.clone();
+                desugared.until = false;
+                let exit = lower_while(&desugared, ssa, state, block);
+                // Find the header block (first block after current) and negate its Test
+                // The header is the Goto target from current block
+                if let Terminator::Goto(header_id) = &ssa.block(block).terminator {
+                    let header_id = *header_id;
+                    let insts = &mut ssa.block_mut(header_id).insts;
+                    for inst in insts.iter_mut() {
+                        if let SsaInst::Test(ref mut test) = inst {
+                            *test = TestExpr::Not(Box::new(test.clone()));
+                        }
+                    }
+                }
+                exit
+            } else {
+                lower_while(w, ssa, state, block)
+            }
+        }
+
+        StmtKind::For(f) => {
+            lower_for(f, ssa, state, block)
+        }
+
+        StmtKind::Pipeline(p) => {
+            if p.commands.len() > 1 {
+                // Check if last stage is a while-read loop or mapfile
+                let last = &p.commands[p.commands.len() - 1];
+                let is_while_read = matches!(&last.kind, StmtKind::While(_));
+                let is_mapfile = match &last.kind {
+                    StmtKind::Command(c) => {
+                        let n = expr_to_string(&c.name);
+                        let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                        n == "mapfile" || n == "readarray" || (n == "read" && args.iter().any(|a| a == "-a"))
+                    }
+                    _ => false,
+                };
+
+                if is_while_read || is_mapfile {
+                    // pipe-while-read pattern: cmd1 | ... | while read -r var
+                    // Emit producer stages as a pipeline that returns pipe fd
+                    let mut stages = vec![];
+                    for cmd in &p.commands[..p.commands.len() - 1] {
+                        if let StmtKind::Command(c) = &cmd.kind {
+                            let name = expr_to_string(&c.name);
+                            let args: Vec<SsaValue> = c.args.iter()
+                                .map(|a| expr_to_value(a, state))
+                                .collect();
+                            stages.push((name, args, vec![]));
+                        } else if let StmtKind::Redirected(r) = &cmd.kind {
+                            if let StmtKind::Command(c) = &r.body.kind {
+                                let name = expr_to_string(&c.name);
+                                let args: Vec<SsaValue> = c.args.iter()
+                                    .map(|a| expr_to_value(a, state))
+                                    .collect();
+                                stages.push((name, args, r.redirects.clone()));
+                            }
+                        }
+                    }
+                    // Emit PipeIntoWhile: pipeline stages + while body
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true });
+                    if is_mapfile {
+                        // Lower the mapfile command, then patch fd to -1
+                        block = lower_one(last, ssa, state, block);
+                        for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
+                            for inst in &mut ssa.block_mut(bid).insts {
+                                if let SsaInst::Mapfile { fd, .. } = inst {
+                                    if *fd == 0 { *fd = -1; }
+                                }
+                                if let SsaInst::ReadArray { fd, .. } = inst {
+                                    if *fd == 0 { *fd = -1; }
+                                }
+                            }
+                        }
+                    } else {
+                        // Now lower the while-read with fd = -1 (sentinel: use pipe fd)
+                        block = lower_pipe_while_read(last, ssa, state, block);
+                    }
+                } else {
+                    // Regular pipeline: cmd1 | cmd2 | ...
+                    let mut stages = vec![];
+                    for cmd in &p.commands {
+                        if let StmtKind::Command(c) = &cmd.kind {
+                            let name = expr_to_string(&c.name);
+                            let args: Vec<SsaValue> = c.args.iter()
+                                .map(|a| expr_to_value(a, state))
+                                .collect();
+                            stages.push((name, args, vec![]));
+                        } else if let StmtKind::Redirected(r) = &cmd.kind {
+                            if let StmtKind::Command(c) = &r.body.kind {
+                                let name = expr_to_string(&c.name);
+                                let args: Vec<SsaValue> = c.args.iter()
+                                    .map(|a| expr_to_value(a, state))
+                                    .collect();
+                                stages.push((name, args, r.redirects.clone()));
+                            }
+                        }
+                    }
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: false });
+                }
+            } else {
+                for cmd in &p.commands {
+                    block = lower_one(cmd, ssa, state, block);
+                }
+            }
+            if p.negated {
+                ssa.block_mut(block).insts.push(SsaInst::Command {
+                    name: "__negate_test_result".to_string(),
+                    args: vec![],
+                    redirects: vec![],
+                });
+            }
+            block
+        }
+
+        StmtKind::List(l) => {
+            match l.op {
+                ListOp::And => {
+                    // left && right: run left, skip right if left failed
+                    block = lower_one(&l.left, ssa, state, block);
+                    let right_block = ssa.new_block("and.right");
+                    let merge_block = ssa.new_block("and.merge");
+                    ssa.block_mut(block).terminator = Terminator::Branch {
+                        condition: block.to_string(),
+                        true_block: right_block,
+                        false_block: merge_block,
+                    };
+                    let right_end = lower_one(&l.right, ssa, state, right_block);
+                    ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
+                    merge_block
+                }
+                ListOp::Or => {
+                    // left || right: run left, skip right if left succeeded
+                    block = lower_one(&l.left, ssa, state, block);
+                    let right_block = ssa.new_block("or.right");
+                    let merge_block = ssa.new_block("or.merge");
+                    ssa.block_mut(block).terminator = Terminator::Branch {
+                        condition: block.to_string(),
+                        true_block: merge_block,   // success → skip right
+                        false_block: right_block,   // failure → run right
+                    };
+                    let right_end = lower_one(&l.right, ssa, state, right_block);
+                    ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
+                    merge_block
+                }
+                ListOp::Background => {
+                    // cmd & — fork, child runs cmd, parent continues
+                    let child_block = ssa.new_block("bg.child");
+                    let parent_block = ssa.new_block("bg.parent");
+
+                    // Fork
+                    ssa.block_mut(block).insts.push(SsaInst::Command {
+                        name: "__subshell".to_string(),
+                        args: vec![],
+                        redirects: vec![],
+                    });
+                    ssa.block_mut(block).terminator = Terminator::Branch {
+                        condition: "__fork_pid".to_string(),
+                        true_block: parent_block,  // parent continues
+                        false_block: child_block,   // child runs command
+                    };
+
+                    // Store fork pid in $! variable
+                    let bg_target = state.define("!");
+                    ssa.block_mut(parent_block).insts.push(SsaInst::Command {
+                        name: "__store_bg_pid".to_string(),
+                        args: vec![SsaValue::Var(bg_target)],
+                        redirects: vec![],
+                    });
+
+                    // Child: run the command then _exit
+                    let child_end = lower_one(&l.left, ssa, state, child_block);
+                    ssa.block_mut(child_end).terminator = Terminator::Return;
+
+                    parent_block
+                }
+            }
+        }
+
+        StmtKind::Function(f) => {
+            // Store function body for inline expansion at call sites.
+            state.function_bodies.insert(f.name.clone(), f.body.clone());
+            let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
+            let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
+            ssa.block_mut(fn_exit).terminator = Terminator::Return;
+            block
+        }
+
+        StmtKind::Redirected(r) => {
+            // If the body is a command, attach redirects to the SsaInst::Command
+            let result_block = lower_one(&r.body, ssa, state, block);
+            // Find the last instruction we just pushed and attach redirects
+            if !r.redirects.is_empty() {
+                let blk = ssa.block_mut(block);
+                if let Some(inst) = blk.insts.last_mut() {
+                    match inst {
+                        SsaInst::Command { redirects, .. } => {
+                            *redirects = r.redirects.clone();
+                        }
+                        SsaInst::Pipeline { stages, .. } => {
+                            // Attach redirects to the last stage
+                            if let Some(last) = stages.last_mut() {
+                                last.2 = r.redirects.clone();
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            result_block
+        }
+
+        StmtKind::Subshell(s) => {
+            // Subshell: fork child, run body in child, wait in parent.
+            // Child gets its own memory space — modifications don't propagate.
+            let child_block = ssa.new_block("subshell");
+            let after_block = ssa.new_block("subshell_done");
+
+            // Emit fork — codegen stores pid in test_result_var
+            ssa.block_mut(block).insts.push(SsaInst::Command {
+                name: "__subshell".to_string(),
+                args: vec![],
+                redirects: vec![],
+            });
+            // Branch: parent (pid>0) → after, child (pid==0) → body
+            ssa.block_mut(block).terminator = Terminator::Branch {
+                condition: "__fork_pid".to_string(),
+                true_block: after_block,
+                false_block: child_block,
+            };
+
+            // Parent: wait for child at start of after_block
+            ssa.block_mut(after_block).insts.push(SsaInst::Command {
+                name: "__subshell_wait".to_string(),
+                args: vec![],
+                redirects: vec![],
+            });
+
+            // Snapshot SSA state — child modifications don't affect parent
+            let snap = state.snapshot();
+
+            // Child: run body then _exit(0)
+            let body_exit = lower_stmts(&s.body, ssa, state, child_block);
+            ssa.block_mut(body_exit).terminator = Terminator::Return;
+
+            // Restore parent's SSA versions
+            state.restore(&snap);
+
+            after_block
+        }
+
+        StmtKind::Group(g) => {
+            lower_stmts(&g.body, ssa, state, block)
+        }
+
+        StmtKind::Case(c) => {
+            lower_case(c, ssa, state, block)
+        }
+
+        StmtKind::Comment(_) => block,
+    }
+}
+
+// ── If lowering ───────────────────────────────────────────────
+
+/// Desugar elif chains into nested if/else.
+/// `if A then X elif B then Y else Z fi` becomes
+/// `if A then X else { if B then Y else Z fi } fi`
+fn flatten_elif(i: &If) -> If {
+    if i.elif_clauses.is_empty() {
+        return i.clone();
+    }
+    // Build from the tail: start with the else body (or None)
+    let mut else_body = i.else_body.clone();
+    for elif in i.elif_clauses.iter().rev() {
+        let nested = If {
+            condition: elif.condition.clone(),
+            then_body: elif.body.clone(),
+            elif_clauses: vec![],
+            else_body,
+        };
+        else_body = Some(vec![Statement {
+            kind: StmtKind::If(nested),
+            span: Span::default(),
+        }]);
+    }
+    If {
+        condition: i.condition.clone(),
+        then_body: i.then_body.clone(),
+        elif_clauses: vec![],
+        else_body,
+    }
+}
+
+fn lower_if(
+    i: &If,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    // Lower condition into current block
+    let cond_block = lower_stmts(&i.condition, ssa, state, block);
+    let cond_str = "condition".to_string(); // placeholder
+
+    let then_block = ssa.new_block("if.then");
+    let merge_block = ssa.new_block("if.merge");
+
+    // Snapshot state before branches
+    let pre_state = state.snapshot();
+
+    // Lower then branch
+    let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
+    ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
+    let then_state = state.snapshot();
+
+    if let Some(else_body) = &i.else_body {
+        let else_block = ssa.new_block("if.else");
+
+        // Restore to pre-branch state for else
+        state.restore(&pre_state);
+        let else_exit = lower_stmts(else_body, ssa, state, else_block);
+        ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
+        let else_state = state.snapshot();
+
+        // Set branch terminator
+        ssa.block_mut(cond_block).terminator = Terminator::Branch {
+            condition: cond_str,
+            true_block: then_block,
+            false_block: else_block,
+        };
+
+        // Insert phi nodes at merge point for variables modified in either branch
+        insert_phis_two_branch(
+            state, ssa, merge_block,
+            then_exit, &then_state,
+            else_exit, &else_state,
+        );
+    } else {
+        // No else — branch to then or skip to merge
+        ssa.block_mut(cond_block).terminator = Terminator::Branch {
+            condition: cond_str,
+            true_block: then_block,
+            false_block: merge_block,
+        };
+
+        // Phi nodes: then-branch version vs pre-branch version
+        insert_phis_two_branch(
+            state, ssa, merge_block,
+            then_exit, &then_state,
+            cond_block, &pre_state,
+        );
+    }
+
+    // Handle elif clauses by chaining — each elif is a nested if
+    // For simplicity in this implementation, elif clauses were already
+    // flattened into the IR's if/elif structure. We handle the first
+    // else and leave elif for future refinement.
+
+    merge_block
+}
+
+// ── While lowering ────────────────────────────────────────────
+
+fn lower_while(
+    w: &While,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let header = ssa.new_block("while.header");
+    let body_block = ssa.new_block("while.body");
+    let exit_block = ssa.new_block("while.exit");
+
+    // Wire entry → header
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+
+    // Snapshot state before loop
+    let pre_state = state.snapshot();
+
+    // === Two-pass loop lowering ===
+    // Pass 1: Lower body to discover which variables are modified
+    let _state_at_header = state.snapshot();
+    let body_exit_1 = lower_stmts(&w.body, ssa, state, body_block);
+    let body_state_1 = state.snapshot();
+
+    // Insert phi nodes at header for loop-carried variables
+    // This creates new versions (e.g., x_3) for modified variables
+    insert_phis_two_branch(
+        state, ssa, header,
+        block, &pre_state,
+        body_exit_1, &body_state_1,
+    );
+
+    // Pass 2: Re-lower condition and body using phi-merged versions
+    // Clear the body block's instructions (we're re-lowering)
+    ssa.block_mut(body_block).insts.clear();
+    ssa.block_mut(header).insts.clear();
+
+    // Lower condition in header using post-phi state
+    let cond_exit = lower_stmts(&w.condition, ssa, state, header);
+
+    // Set loop terminator
+    ssa.block_mut(cond_exit).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    // Push loop context for break/continue
+    state.loop_stack.push((header, exit_block));
+
+    // Re-lower body with phi-merged versions
+    let body_exit = lower_stmts(&w.body, ssa, state, body_block);
+    ssa.block_mut(body_exit).terminator = Terminator::Goto(header);
+
+    // Pop loop context
+    state.loop_stack.pop();
+
+    // Update phi sources to use the correct versions from pass 2
+    let body_state_2 = state.snapshot();
+    let header_phis = &mut ssa.block_mut(header).phis;
+    for phi in header_phis.iter_mut() {
+        let var_name = &phi.target.name;
+        // Update the body source (index 1) with the new version
+        if let Some(ver) = body_state_2.get(var_name) {
+            phi.sources[1].1 = VarRef::new(var_name, *ver);
+        }
+    }
+
+    exit_block
+}
+
+// ── For lowering ──────────────────────────────────────────────
+
+fn lower_for(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    // Check if this is a dynamic for loop (e.g., `for x in "$@"`)
+    let is_dynamic = f.words.iter().any(|w| !matches!(&w.kind, ExprKind::Literal(_)));
+
+    if is_dynamic && f.words.len() == 1 {
+        // Check for "$@" — may be SimpleExpansion("@") or DoubleQuoted([SimpleExpansion("@")])
+        let is_dollar_at = match &f.words[0].kind {
+            ExprKind::SimpleExpansion(v) if v == "@" => true,
+            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
+                matches!(&parts[0].kind, ExprKind::SimpleExpansion(v) if v == "@")
+            }
+            _ => false,
+        };
+        if is_dollar_at {
+            return lower_for_dollar_at(f, ssa, state, block);
+        }
+
+        // Check for "${arr[@]}" or "${!arr[@]}" — array iteration
+        let arr_info = match &f.words[0].kind {
+            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => Some((pe.name.clone(), false)),
+            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => Some((pe.name.clone(), true)),
+            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
+                match &parts[0].kind {
+                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => Some((pe.name.clone(), false)),
+                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => Some((pe.name.clone(), true)),
+                    _ => None,
+                }
+            }
+            // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
+            ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
+                let inner = match &stmts[0].kind {
+                    StmtKind::Redirected(r) => &r.body.kind,
+                    other => other,
+                };
+                if let StmtKind::Command(c) = inner {
+                    if let ExprKind::Literal(cmd_name) = &c.name.kind {
+                        if cmd_name == "keys" {
+                            c.args.first().map(|a| (expr_to_string(a), true))
+                        } else {
+                            None
+                        }
+                    } else { None }
+                } else { None }
+            }
+            _ => None,
+        };
+        if let Some((name, use_keys)) = arr_info {
+            return lower_for_array(f, &name, use_keys, ssa, state, block);
+        }
+
+        // Check for $(cmd) — command substitution in for-loop
+        // DD#28/DD#40: silently transform to pipe-while-read
+        // `for x in $(cmd args)` → `cmd args | while read -r x; do body; done`
+        let is_cmd_subst = matches!(&f.words[0].kind, ExprKind::CommandSubstitution(_));
+        if is_cmd_subst {
+            if let ExprKind::CommandSubstitution(stmts) = &f.words[0].kind {
+                // Build pipeline stages from the command substitution
+                let mut stages = vec![];
+                for stmt in stmts {
+                    let cmd_stmt = match &stmt.kind {
+                        StmtKind::Redirected(r) => &r.body,
+                        _ => stmt,
+                    };
+                    if let StmtKind::Command(c) = &cmd_stmt.kind {
+                        let name = expr_to_string(&c.name);
+                        let args: Vec<SsaValue> = c.args.iter()
+                            .map(|a| expr_to_value(a, state))
+                            .collect();
+                        let redirs = match &stmt.kind {
+                            StmtKind::Redirected(r) => r.redirects.clone(),
+                            _ => vec![],
+                        };
+                        stages.push((name, args, redirs));
+                    }
+                }
+                // Emit pipeline with pipe capture
+                ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true });
+
+                // Build a while-read loop over the pipe
+                let loop_var = &f.variable;
+                let header = ssa.new_block("for_cmd.hdr");
+                let body_block = ssa.new_block("for_cmd.body");
+                let exit = ssa.new_block("for_cmd.exit");
+
+                ssa.block_mut(block).terminator = Terminator::Goto(header);
+
+                // Header: read -r var from pipe (fd = -1 sentinel)
+                let target = state.define(loop_var);
+                ssa.block_mut(header).insts.push(SsaInst::ReadLine {
+                    target,
+                    fd: -1,
+                    delim: None,
+                });
+                ssa.block_mut(header).terminator = Terminator::Branch {
+                    condition: "__test_result".to_string(),
+                    true_block: body_block,
+                    false_block: exit,
+                };
+
+                // Body: lower the for-loop body statements
+                state.loop_stack.push((header, exit));
+                let body_end = lower_stmts(&f.body, ssa, state, body_block);
+                state.loop_stack.pop();
+                ssa.block_mut(body_end).terminator = Terminator::Goto(header);
+
+                return exit;
+            }
+        }
+    }
+
+    // Static word list — unroll
+    let exit_block = ssa.new_block("for.exit");
+    let mut current = block;
+
+    // Pre-create iteration blocks so continue can jump to the next one
+    let iter_blocks: Vec<BlockId> = f.words.iter()
+        .map(|_| ssa.new_block("for.iter"))
+        .collect();
+
+    for (i, word) in f.words.iter().enumerate() {
+        let iter_block = iter_blocks[i];
+        ssa.block_mut(current).terminator = Terminator::Goto(iter_block);
+        current = iter_block;
+
+        // continue → next iteration (or exit if last)
+        let continue_target = if i + 1 < iter_blocks.len() { iter_blocks[i + 1] } else { exit_block };
+        state.loop_stack.push((continue_target, exit_block));
+
+        let val = expr_to_value(word, state);
+        let loop_var = state.define(&f.variable);
+        ssa.block_mut(current).insts.push(SsaInst::Assign {
+            target: loop_var,
+            value: val,
+        });
+        current = lower_stmts(&f.body, ssa, state, current);
+
+        state.loop_stack.pop();
+    }
+
+    ssa.block_mut(current).terminator = Terminator::Goto(exit_block);
+    exit_block
+}
+
+// ── Case lowering ─────────────────────────────────────────────
+
+fn lower_case(
+    c: &Case,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let merge_block = ssa.new_block("case.merge");
+    let pre_state = state.snapshot();
+    let mut branch_states: Vec<(BlockId, std::collections::HashMap<String, u32>)> = Vec::new();
+
+    // Build case body blocks
+    let mut case_blocks = Vec::new();
+    for (i, item) in c.items.iter().enumerate() {
+        state.restore(&pre_state);
+        let case_block = ssa.new_block(&format!("case.{}", i));
+        let case_exit = lower_stmts(&item.body, ssa, state, case_block);
+        ssa.block_mut(case_exit).terminator = Terminator::Goto(merge_block);
+        branch_states.push((case_exit, state.snapshot()));
+        case_blocks.push(case_block);
+    }
+
+    // Build dispatch chain: compare value against each pattern
+    let case_value_expr = c.value.clone();
+    let mut current = block;
+
+    for (i, item) in c.items.iter().enumerate() {
+        let is_wildcard = item.patterns.iter().any(|p| {
+            matches!(&p.kind, ExprKind::Literal(s) if s == "*")
+        });
+
+        if is_wildcard || i == c.items.len() - 1 {
+            // Wildcard or last — unconditional jump
+            ssa.block_mut(current).terminator = Terminator::Goto(case_blocks[i]);
+            break;
+        }
+
+        // Emit test: value == pattern1 || value == pattern2 || ...
+        // For multiple patterns (e.g., start|restart), chain comparisons
+        if item.patterns.len() == 1 {
+            let test = crate::ir::TestExpr::Binary {
+                left: Box::new(case_value_expr.clone()),
+                op: "==".to_string(),
+                right: Box::new(item.patterns[0].clone()),
+            };
+            ssa.block_mut(current).insts.push(SsaInst::Test(test));
+        } else {
+            // Multiple patterns: test each, OR the results
+            // Strategy: chain of blocks, jump to case_block on first match
+            let next_check = if i + 1 < c.items.len() {
+                ssa.new_block(&format!("case.check.{}", i + 1))
+            } else {
+                merge_block
+            };
+
+            let mut pat_current = current;
+            for (pi, pat) in item.patterns.iter().enumerate() {
+                let test = crate::ir::TestExpr::Binary {
+                    left: Box::new(case_value_expr.clone()),
+                    op: "==".to_string(),
+                    right: Box::new(pat.clone()),
+                };
+                ssa.block_mut(pat_current).insts.push(SsaInst::Test(test));
+
+                if pi + 1 < item.patterns.len() {
+                    let next_pat = ssa.new_block(&format!("case.{}.pat.{}", i, pi + 1));
+                    ssa.block_mut(pat_current).terminator = Terminator::Branch {
+                        condition: "__test".to_string(),
+                        true_block: case_blocks[i],
+                        false_block: next_pat,
+                    };
+                    pat_current = next_pat;
+                } else {
+                    // Last pattern — fall through to next case check on failure
+                    ssa.block_mut(pat_current).terminator = Terminator::Branch {
+                        condition: "__test".to_string(),
+                        true_block: case_blocks[i],
+                        false_block: next_check,
+                    };
+                }
+            }
+            current = next_check;
+            continue; // already set up terminator
+        }
+
+        let next_check = if i + 1 < c.items.len() {
+            ssa.new_block(&format!("case.check.{}", i + 1))
+        } else {
+            merge_block
+        };
+
+        ssa.block_mut(current).terminator = Terminator::Branch {
+            condition: "__test".to_string(),
+            true_block: case_blocks[i],
+            false_block: next_check,
+        };
+        current = next_check;
+    }
+
+    // Insert phi nodes at merge
+    if branch_states.len() >= 2 {
+        let all_vars: std::collections::HashSet<String> = branch_states.iter()
+            .flat_map(|(_, s)| s.keys().cloned())
+            .collect();
+
+        for var in &all_vars {
+            let pre_ver = pre_state.get(var).copied().unwrap_or(0);
+            let versions: Vec<(BlockId, u32)> = branch_states.iter()
+                .map(|(bid, s)| (*bid, s.get(var).copied().unwrap_or(0)))
+                .collect();
+
+            if versions.iter().any(|(_, v)| *v != pre_ver) {
+                let target = state.define(var);
+                let sources: Vec<(BlockId, VarRef)> = versions.iter()
+                    .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))
+                    .collect();
+                ssa.block_mut(merge_block).phis.push(PhiNode {
+                    target,
+                    sources,
+                });
+            }
+        }
+    }
+
+    merge_block
+}
+
+// ── Phi insertion helper ──────────────────────────────────────
+
+/// Insert phi nodes at a merge block for variables that differ
+/// between two predecessor branches.
+fn insert_phis_two_branch(
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    merge: BlockId,
+    block_a: BlockId,
+    state_a: &std::collections::HashMap<String, u32>,
+    block_b: BlockId,
+    state_b: &std::collections::HashMap<String, u32>,
+) {
+    let all_vars: std::collections::HashSet<&String> = state_a.keys()
+        .chain(state_b.keys())
+        .collect();
+
+    for var in all_vars {
+        let ver_a = state_a.get(var).copied().unwrap_or(0);
+        let ver_b = state_b.get(var).copied().unwrap_or(0);
+        if ver_a != ver_b {
+            let target = state.define(var);
+            ssa.block_mut(merge).phis.push(PhiNode {
+                target,
+                sources: vec![
+                    (block_a, VarRef::new(var, ver_a)),
+                    (block_b, VarRef::new(var, ver_b)),
+                ],
+            });
+        }
+    }
+}
+
+// ── Expression → SSA value ────────────────────────────────────
+
+fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
+    match &expr.kind {
+        ExprKind::Literal(s) => SsaValue::Literal(s.clone()),
+        ExprKind::SimpleExpansion(var) => {
+            // Coerce magic variables to builtins (DD#40)
+            if var == "EPOCHSECONDS" {
+                return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("epochseconds".to_string())], redirects: vec![] };
+            }
+            SsaValue::Var(state.lookup(var))
+        }
+        ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
+        ExprKind::ArithmeticExpansion(s) => {
+            // Try to parse arithmetic expressions
+            let trimmed = s.trim();
+            // Bare number: $((7)) or $((-7)) → literal
+            if let Ok(_) = trimmed.parse::<i64>() {
+                return SsaValue::Expr(trimmed.to_string());
+            }
+            // Bare variable: $((y)) → var lookup
+            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
+                return SsaValue::Var(state.lookup(trimmed));
+            }
+            // Unary minus on variable: $((-x)) → 0 - x
+            if trimmed.starts_with('-') {
+                let inner = trimmed[1..].trim();
+                if inner.chars().all(|c| c.is_alphanumeric() || c == '_') && !inner.is_empty() {
+                    return SsaValue::ArithBinOp {
+                        left: Box::new(SsaValue::Expr("0".to_string())),
+                        op: ArithOp::Sub,
+                        right: Box::new(SsaValue::Var(state.lookup(inner))),
+                    };
+                }
+            }
+            // Ternary: cond ? true_val : false_val
+            if let Some(q_pos) = trimmed.find('?') {
+                let after_q = &trimmed[q_pos+1..];
+                if let Some(c_pos) = after_q.find(':') {
+                    let cond_str = trimmed[..q_pos].trim();
+                    let true_str = after_q[..c_pos].trim();
+                    let false_str = after_q[c_pos+1..].trim();
+                    // Recursively evaluate each part
+                    let cond_expr = Expr { kind: ExprKind::ArithmeticExpansion(cond_str.to_string()), span: expr.span };
+                    let true_expr = Expr { kind: ExprKind::ArithmeticExpansion(true_str.to_string()), span: expr.span };
+                    let false_expr = Expr { kind: ExprKind::ArithmeticExpansion(false_str.to_string()), span: expr.span };
+                    return SsaValue::Ternary {
+                        cond: Box::new(expr_to_value(&cond_expr, state)),
+                        true_val: Box::new(expr_to_value(&true_expr, state)),
+                        false_val: Box::new(expr_to_value(&false_expr, state)),
+                    };
+                }
+            }
+            // Parse "lhs OP rhs" — handles both "i + 1" and "i+1" and "$i+1"
+            let (lhs, op_parsed, rhs) = parse_arith_binop(trimmed);
+            if let Some(op) = op_parsed {
+                let lhs = lhs.trim_start_matches('$');
+                let rhs = rhs.trim_start_matches('$');
+
+                // Helper: convert an arithmetic sub-expression string to SsaValue
+                let to_val = |s: &str| -> SsaValue {
+                    let e = Expr { kind: ExprKind::ArithmeticExpansion(s.to_string()), span: expr.span };
+                    expr_to_value(&e, state)
+                };
+
+                let l_const = lhs.parse::<i64>();
+                let r_const = rhs.parse::<i64>();
+
+                // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
+                let l_is_simple = lhs.chars().all(|c| c.is_alphanumeric() || c == '_');
+                let r_is_simple = rhs.chars().all(|c| c.is_alphanumeric() || c == '_');
+
+                match (l_const, r_const) {
+                    (Ok(l), Ok(r)) => {
+                            // Constant fold
+                            let result = match op {
+                                ArithOp::Add => l + r,
+                                ArithOp::Sub => l - r,
+                                ArithOp::Mul => l * r,
+                                ArithOp::Div => if r != 0 { l / r } else { 0 },
+                                ArithOp::Mod => if r != 0 { l % r } else { 0 },
+                                ArithOp::Eq => if l == r { 1 } else { 0 },
+                                ArithOp::Ne => if l != r { 1 } else { 0 },
+                                ArithOp::Lt => if l < r { 1 } else { 0 },
+                                ArithOp::Le => if l <= r { 1 } else { 0 },
+                                ArithOp::Gt => if l > r { 1 } else { 0 },
+                                ArithOp::Ge => if l >= r { 1 } else { 0 },
+                                ArithOp::And => if l != 0 && r != 0 { 1 } else { 0 },
+                                ArithOp::Or => if l != 0 || r != 0 { 1 } else { 0 },
+                                ArithOp::Not => 0, // shouldn't appear as binary
+                                ArithOp::Shl => l << r,
+                                ArithOp::Shr => l >> r,
+                                ArithOp::BitAnd => l & r,
+                                ArithOp::BitOr => l | r,
+                                ArithOp::BitXor => l ^ r,
+                                ArithOp::Pow => l.pow(r as u32),
+                            };
+                            return SsaValue::Expr(result.to_string());
+                        }
+                        (Err(_), Ok(operand)) => {
+                        if l_is_simple {
+                            return SsaValue::ArithExpr {
+                                var: state.lookup(lhs),
+                                op,
+                                operand,
+                            };
+                        } else {
+                            return SsaValue::ArithBinOp {
+                                left: Box::new(to_val(lhs)),
+                                op,
+                                right: Box::new(SsaValue::Expr(operand.to_string())),
+                            };
+                        }
+                    }
+                    (Ok(l_val), Err(_)) => {
+                        if r_is_simple {
+                            match op {
+                                ArithOp::Add | ArithOp::Mul
+                                | ArithOp::Eq | ArithOp::Ne
+                                | ArithOp::And | ArithOp::Or => {
+                                    return SsaValue::ArithExpr {
+                                        var: state.lookup(rhs),
+                                        op,
+                                        operand: l_val,
+                                    };
+                                }
+                                _ => {
+                                    return SsaValue::ArithBinOp {
+                                        left: Box::new(SsaValue::Expr(l_val.to_string())),
+                                        op,
+                                        right: Box::new(SsaValue::Var(state.lookup(rhs))),
+                                    };
+                                }
+                            }
+                        } else {
+                            return SsaValue::ArithBinOp {
+                                left: Box::new(SsaValue::Expr(l_val.to_string())),
+                                op,
+                                right: Box::new(to_val(rhs)),
+                            };
+                        }
+                    }
+                    (Err(_), Err(_)) => {
+                        let left = if l_is_simple {
+                            SsaValue::Var(state.lookup(lhs))
+                        } else {
+                            to_val(lhs)
+                        };
+                        let right = if r_is_simple {
+                            SsaValue::Var(state.lookup(rhs))
+                        } else {
+                            to_val(rhs)
+                        };
+                        return SsaValue::ArithBinOp {
+                            left: Box::new(left),
+                            op,
+                            right: Box::new(right),
+                        };
+                    }
+                }
+            }
+            // Fallback: treat as literal string
+            SsaValue::Expr(format!("$(({}))", s))
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            let var = state.lookup(&pe.name);
+            if let Some(ref op) = pe.operator {
+                let operand = pe.operand.as_ref()
+                    .map(|e| expr_to_string(e))
+                    .unwrap_or_default();
+                SsaValue::ParamExpansion {
+                    var,
+                    operator: op.clone(),
+                    operand,
+                }
+            } else {
+                SsaValue::Var(var)
+            }
+        }
+        ExprKind::DoubleQuoted(parts) => {
+            // Unwrap single-element DoubleQuoted to its inner value.
+            if parts.len() == 1 {
+                return expr_to_value(&parts[0], state);
+            }
+            // Multi-part: check if all literal
+            let mut all_literal = true;
+            let mut lit_concat = String::new();
+            for part in parts {
+                match &part.kind {
+                    ExprKind::Literal(lit) => lit_concat.push_str(lit),
+                    _ => { all_literal = false; break; }
+                }
+            }
+            if all_literal {
+                SsaValue::Literal(lit_concat)
+            } else {
+                // Build a Concat of resolved parts
+                let mut concat_parts = Vec::new();
+                for part in parts {
+                    concat_parts.push(expr_to_value(part, state));
+                }
+                SsaValue::Concat(concat_parts)
+            }
+        }
+        ExprKind::AssocArray(pairs) => {
+            let vals: Vec<(String, SsaValue)> = pairs.iter()
+                .map(|(k, v)| (k.clone(), expr_to_value(v, state)))
+                .collect();
+            SsaValue::AssocArray(vals)
+        }
+        ExprKind::Subscript { name, index } => {
+            let is_integer = !state.assoc_arrays.contains(name);
+            SsaValue::Subscript {
+                array: name.clone(),
+                index: Box::new(expr_to_value(index, state)),
+                is_integer_key: is_integer,
+            }
+        }
+        ExprKind::Concat(parts) => {
+            let vals: Vec<SsaValue> = parts.iter().map(|p| expr_to_value(p, state)).collect();
+            if vals.len() == 1 {
+                return vals.into_iter().next().unwrap();
+            }
+            SsaValue::Concat(vals)
+        }
+        ExprKind::Array(elems) => {
+            let vals: Vec<SsaValue> = elems.iter()
+                .map(|e| expr_to_value(e, state))
+                .collect();
+            // Check for regex filter pattern: (* =~ 'regex')
+            // vals would be ["*", "=~", "pattern"]
+            if vals.len() == 3 {
+                if let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) = (&vals[0], &vals[1], &vals[2]) {
+                    if star == "*" && op == "=~" {
+                        return SsaValue::ParamExpansion {
+                            var: VarRef::new(".", 0),
+                            operator: "glob_regex".to_string(),
+                            operand: pat.clone(),
+                        };
+                    }
+                }
+            }
+            // Check if any element is a glob pattern (contains *)
+            let has_glob = vals.iter().any(|v| {
+                if let SsaValue::Literal(s) = v { s.contains('*') } else { false }
+            });
+            if has_glob && vals.len() == 1 {
+                // Single glob pattern: arr=(*.sh) → sash_glob(".", "*.sh")
+                SsaValue::ParamExpansion {
+                    var: VarRef::new(".", 0),
+                    operator: "glob".to_string(),
+                    operand: if let SsaValue::Literal(s) = &vals[0] { s.clone() } else { String::new() },
+                }
+            } else {
+                SsaValue::IndexedArray(vals)
+            }
+        }
+        _ => {
+            // Handle CommandSubstitution → FuncCall if it's a known function,
+            // or CmdSubst for runtime capture
+            if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
+                if stmts.len() == 1 {
+                    // Unwrap Redirected to get the inner Command
+                    let inner = match &stmts[0].kind {
+                        StmtKind::Redirected(r) => &r.body.kind,
+                        other => other,
+                    };
+                    if let StmtKind::Command(c) = inner {
+                        if let ExprKind::Literal(name) = &c.name.kind {
+                            if state.known_functions.contains(name.as_str()) {
+                                return SsaValue::FuncCall(name.clone());
+                            }
+                            // Sash-native builtins: len, keys (DD#41)
+                            if name == "len" {
+                                if let Some(arg) = c.args.first() {
+                                    let arg_str = expr_to_string(arg);
+                                    if arg_str.starts_with('$') {
+                                        // len $var → string length
+                                        let v = state.lookup(&arg_str[1..]);
+                                        return SsaValue::ParamExpansion {
+                                            var: v,
+                                            operator: "strlen".to_string(),
+                                            operand: String::new(),
+                                        };
+                                    } else {
+                                        // len arr → array length
+                                        let v = state.lookup(&arg_str);
+                                        return SsaValue::ParamExpansion {
+                                            var: v,
+                                            operator: "arrlen".to_string(),
+                                            operand: String::new(),
+                                        };
+                                    }
+                                }
+                            }
+                            if name == "keys" {
+                                if let Some(arg) = c.args.first() {
+                                    let arg_str = expr_to_string(arg);
+                                    let v = state.lookup(&arg_str);
+                                    return SsaValue::ParamExpansion {
+                                        var: v,
+                                        operator: "arrkeys".to_string(),
+                                        operand: String::new(),
+                                    };
+                                }
+                            }
+                            if name == "join" {
+                                // join @arr → space-separated
+                                // join sep @arr → sep-separated
+                                let (sep, arr_expr) = if c.args.len() >= 2 {
+                                    // Strip quotes from separator
+                                    let sep_raw = match &c.args[0].kind {
+                                        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
+                                        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
+                                            match &parts[0].kind {
+                                                ExprKind::Literal(s) => s.clone(),
+                                                _ => expr_to_string(&c.args[0]),
+                                            }
+                                        }
+                                        _ => expr_to_string(&c.args[0]),
+                                    };
+                                    (sep_raw, &c.args[1])
+                                } else if c.args.len() == 1 {
+                                    (" ".to_string(), &c.args[0])
+                                } else {
+                                    panic!("join requires at least one argument");
+                                };
+                                // The array arg should be @arr → ParameterExpansion(arrvals)
+                                let arr_name = match &arr_expr.kind {
+                                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => pe.name.clone(),
+                                    _ => expr_to_string(arr_expr),
+                                };
+                                let v = state.lookup(&arr_name);
+                                return SsaValue::ParamExpansion {
+                                    var: v,
+                                    operator: "arrjoin".to_string(),
+                                    operand: sep,
+                                };
+                            }
+                        }
+                        // Not an elidable function — emit CmdSubst with argv
+                        let mut argv = Vec::new();
+                        argv.push(expr_to_value(&c.name, state));
+                        for arg in &c.args {
+                            argv.push(expr_to_value(arg, state));
+                        }
+                        // Capture redirects from Redirected wrapper
+                        let redirects = match &stmts[0].kind {
+                            StmtKind::Redirected(r) => r.redirects.clone(),
+                            _ => vec![],
+                        };
+                        return SsaValue::CmdSubst { argv, redirects };
+                    }
+                }
+            }
+            SsaValue::Expr(expr_to_string(expr))
+        }
+    }
+}
+
+/// Convert an expression to a simple string representation.
+fn expr_to_string(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Literal(s) => s.clone(),
+        ExprKind::SimpleExpansion(var) => format!("${}", var),
+        ExprKind::SingleQuoted(s) => format!("'{}'", s),
+        ExprKind::DoubleQuoted(parts) => {
+            let mut s = String::from("\"");
+            for p in parts {
+                s.push_str(&expr_to_string(p));
+            }
+            s.push('"');
+            s
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            let mut s = format!("${{{}", pe.name);
+            if let Some(op) = &pe.operator {
+                s.push_str(op);
+            }
+            s.push('}');
+            s
+        }
+        ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
+        ExprKind::ArithmeticExpansion(e) => format!("$(({}))", e),
+        ExprKind::Concat(parts) => parts.iter().map(|p| expr_to_string(p)).collect(),
+        ExprKind::Array(elems) => {
+            let inner: Vec<String> = elems.iter().map(|e| expr_to_string(e)).collect();
+            format!("({})", inner.join(" "))
+        }
+        ExprKind::AssocArray(pairs) => {
+            let inner: Vec<String> = pairs.iter()
+                .map(|(k, v)| format!("[{}]={}", k, expr_to_string(v)))
+                .collect();
+            format!("({})", inner.join(" "))
+        }
+        ExprKind::Subscript { name, index } => {
+            format!("${{{}[{}]}}", name, expr_to_string(index))
+        }
+        ExprKind::Test(_) => "[[ ... ]]".to_string(),
+    }
+}
+
+/// Collect variable names declared with `local` in a statement list.
+fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
+    let mut locals = Vec::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Declaration(d) if d.keyword == DeclKeyword::Local => {
+                for a in &d.assignments {
+                    if !locals.contains(&a.name) {
+                        locals.push(a.name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    locals
+}
+
+/// Desugar `for x in "$@"` into a while loop over positional params:
+///   __fi = 0
+///   while __fi < $#:
+///     x = argv[__fi + 1]
+///     body
+///     __fi = __fi + 1
+/// Lower `for x in "${arr[@]}"` — iterate over table entries by index.
+/// Same two-pass SSA pattern as lower_for_dollar_at.
+fn lower_for_array(
+    f: &For,
+    array_name: &str,
+    use_keys: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let header = ssa.new_block("for_arr.header");
+    let body_block = ssa.new_block("for_arr.body");
+    let exit_block = ssa.new_block("for_arr.exit");
+
+    // __ai = 0
+    let idx_var = state.define("__ai");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: idx_var,
+        value: SsaValue::Literal("0".to_string()),
+    });
+
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+    let pre_state = state.snapshot();
+
+    // Condition: __ai < sash_table_len(arr)
+    // We use arrlen as a ParamExpansion that codegen already handles
+    let cond_test = crate::ir::TestExpr::Binary {
+        left: Box::new(Expr { kind: ExprKind::SimpleExpansion("__ai".to_string()), span: Span::default() }),
+        op: "-lt".to_string(),
+        right: Box::new(Expr {
+            kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
+                name: array_name.to_string(),
+                operator: Some("arrlen".to_string()),
+                operand: None,
+            }),
+            span: Span::default(),
+        }),
+    };
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test.clone()));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    // x = table_value(arr, __ai)
+    let idx_ref = state.lookup("__ai");
+    let loop_var = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var,
+        value: if use_keys {
+            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref.clone() }
+        } else {
+            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref.clone() }
+        },
+    });
+
+    let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
+
+    // __ai = __ai + 1
+    let idx_cur = state.lookup("__ai");
+    let idx_next = state.define("__ai");
+    ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
+        target: idx_next,
+        value: SsaValue::ArithExpr { var: idx_cur, op: ArithOp::Add, operand: 1 },
+    });
+    let body_state_1 = state.snapshot();
+
+    insert_phis_two_branch(
+        state, ssa, header,
+        block, &pre_state,
+        body_exit_1, &body_state_1,
+    );
+
+    // --- Pass 2 ---
+    ssa.block_mut(header).insts.clear();
+    ssa.block_mut(body_block).insts.clear();
+
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    let idx_ref_2 = state.lookup("__ai");
+    let loop_var_2 = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var_2,
+        value: if use_keys {
+            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref_2.clone() }
+        } else {
+            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref_2.clone() }
+        },
+    });
+
+    let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
+
+    let idx_cur_2 = state.lookup("__ai");
+    let idx_next_2 = state.define("__ai");
+    ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
+        target: idx_next_2,
+        value: SsaValue::ArithExpr { var: idx_cur_2, op: ArithOp::Add, operand: 1 },
+    });
+
+    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
+
+    let body_state_2 = state.snapshot();
+    for phi in ssa.block_mut(header).phis.iter_mut() {
+        let var_name = &phi.target.name;
+        if let Some(ver) = body_state_2.get(var_name) {
+            phi.sources[1].1 = VarRef::new(var_name, *ver);
+        }
+    }
+
+    exit_block
+}
+
+fn lower_for_dollar_at(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let header = ssa.new_block("for_at.header");
+    let body_block = ssa.new_block("for_at.body");
+    let exit_block = ssa.new_block("for_at.exit");
+
+    // Initialize index: __fi = 0
+    let idx_var = state.define("__fi");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: idx_var,
+        value: SsaValue::Literal("0".to_string()),
+    });
+
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+
+    let pre_state = state.snapshot();
+
+    // --- Pass 1: discover modified variables ---
+    // Emit condition: __fi < $#
+    let _argc_ref = state.lookup("#");
+    let cond_test = crate::ir::TestExpr::Binary {
+        left: Box::new(Expr { kind: ExprKind::SimpleExpansion("__fi".to_string()), span: Span::default() }),
+        op: "-lt".to_string(),
+        right: Box::new(Expr { kind: ExprKind::SimpleExpansion("#".to_string()), span: Span::default() }),
+    };
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test.clone()));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    // Assign loop variable: x = argv[__fi]
+    let idx_ref = state.lookup("__fi");
+    let loop_var = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var,
+        value: SsaValue::ArgvIndex(idx_ref.clone()),
+    });
+
+    // Lower body
+    let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
+
+    // Increment index: __fi = __fi + 1
+    let idx_cur = state.lookup("__fi");
+    let idx_next = state.define("__fi");
+    ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
+        target: idx_next,
+        value: SsaValue::ArithExpr { var: idx_cur, op: ArithOp::Add, operand: 1 },
+    });
+    let body_state_1 = state.snapshot();
+
+    // Insert phis at header
+    insert_phis_two_branch(
+        state, ssa, header,
+        block, &pre_state,
+        body_exit_1, &body_state_1,
+    );
+
+    // --- Pass 2: re-lower with phi-merged versions ---
+    ssa.block_mut(header).insts.clear();
+    ssa.block_mut(body_block).insts.clear();
+
+    // Re-emit condition
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    // Re-assign loop variable from argv
+    let idx_ref_2 = state.lookup("__fi");
+    let loop_var_2 = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var_2,
+        value: SsaValue::ArgvIndex(idx_ref_2.clone()),
+    });
+
+    // Re-lower body
+    let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
+
+    // Re-increment
+    let idx_cur_2 = state.lookup("__fi");
+    let idx_next_2 = state.define("__fi");
+    ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
+        target: idx_next_2,
+        value: SsaValue::ArithExpr { var: idx_cur_2, op: ArithOp::Add, operand: 1 },
+    });
+
+    ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
+
+    // Update phi sources
+    let body_state_2 = state.snapshot();
+    for phi in ssa.block_mut(header).phis.iter_mut() {
+        let var_name = &phi.target.name;
+        if let Some(ver) = body_state_2.get(var_name) {
+            phi.sources[1].1 = VarRef::new(var_name, *ver);
+        }
+    }
+
+    exit_block
+}
+
+// ── Pipe-while-read lowering ──────────────────────────────────
+
+/// Lower `cmd | while read -r var; do body; done`
+/// The Pipeline instruction with capture_read_fd=true precedes this.
+/// This lowers the while-read loop with fd=-1 (sentinel for pipe fd).
+fn lower_pipe_while_read(
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    if let StmtKind::While(w) = &stmt.kind {
+        // The while condition should be `read -r var` — extract the var name
+        // and reuse the standard while lowering, but patch ReadLine fd to -1
+        let exit = lower_while(w, ssa, state, block);
+
+        // Patch all ReadLine instructions in the loop to use fd=-1 (pipe fd sentinel)
+        // Walk all blocks from header (block+1) to exit
+        for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
+            for inst in &mut ssa.block_mut(bid).insts {
+                match inst {
+                    SsaInst::ReadLine { fd, .. } if *fd == 0 => { *fd = -1; }
+                    SsaInst::ReadLineMulti { fd, .. } if *fd == 0 => { *fd = -1; }
+                    _ => {}
+                }
+            }
+        }
+
+        exit
+    } else {
+        // Shouldn't happen — caller verified this is a While
+        lower_one(stmt, ssa, state, block)
+    }
+}
+
+/// Parse an arithmetic binary expression like "i+1", "i + 1", "$i+1", "a*b"
+/// Returns (lhs, op, rhs) or ("", None, "") if not parseable.
+fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
+    let bytes = s.as_bytes();
+    let start = if bytes.first() == Some(&b'-') { 1 } else { 0 };
+    // Check two-char operators first: ==, !=, <=, >=, ||, &&
+    // Skip operators inside parentheses
+    let mut depth = 0i32;
+    for i in start..bytes.len().saturating_sub(1) {
+        if bytes[i] == b'(' { depth += 1; continue; }
+        if bytes[i] == b')' { depth -= 1; continue; }
+        if depth > 0 { continue; }
+        let two = &s[i..i+2];
+        if let Some(op) = ArithOp::from_str(two) {
+            let lhs = s[..i].trim();
+            let rhs = s[i+2..].trim();
+            if !lhs.is_empty() && !rhs.is_empty() {
+                return (lhs, Some(op), rhs);
+            }
+        }
+    }
+    // Single-char operators: +, -, *, /, %, <, >
+    depth = 0;
+    for (i, &b) in bytes[start..].iter().enumerate() {
+        let pos = i + start;
+        if b == b'(' { depth += 1; continue; }
+        if b == b')' { depth -= 1; continue; }
+        if depth > 0 { continue; }
+        let op_str = &s[pos..pos+1];
+        if let Some(op) = ArithOp::from_str(op_str) {
+            let lhs = s[..pos].trim();
+            let rhs = s[pos+1..].trim();
+            if !lhs.is_empty() && !rhs.is_empty() {
+                return (lhs, Some(op), rhs);
+            }
+        }
+    }
+    // Check if the whole thing is parenthesized: (expr)
+    let trimmed = s.trim();
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        // Strip outer parens and recurse
+        let inner = &trimmed[1..trimmed.len()-1];
+        return parse_arith_binop(inner);
+    }
+    (s, None, "")
+}

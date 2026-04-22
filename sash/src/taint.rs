@@ -1,0 +1,416 @@
+use std::collections::HashMap;
+use tree_sitter::Node;
+use crate::diagnostic::Diagnostic;
+
+/// Taint status of a variable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TaintStatus {
+    /// Originated from external source, not yet validated.
+    Tainted,
+    /// Validated via `bless` — safe to use.
+    Blessed,
+    /// Originated from a literal, arithmetic, or other internal source.
+    Clean,
+}
+
+/// Flow-sensitive taint tracker.
+///
+/// Walks the program sequentially, tracking which variables are tainted,
+/// blessed, or clean. Emits diagnostics when tainted variables are read
+/// outside of a `bless` expression.
+///
+/// Taint sources:
+/// - Positional params ($1–$N, $@) at program entry
+/// - `read` targets
+/// - `$(external cmd)` assignment targets
+/// - Undeclared variables (environment — getenv)
+///
+/// Clean sources:
+/// - Literals, arithmetic from clean operands
+/// - $0, $#, $?, $$ — compiler-constrained
+/// - Variables assigned from clean expressions
+pub struct TaintTracker {
+    vars: HashMap<String, TaintStatus>,
+    /// Track which variables have been declared/assigned in the script.
+    declared: std::collections::HashSet<String>,
+    /// Are we inside a bless expression? If so, which variable?
+    bless_context: Option<String>,
+}
+
+impl TaintTracker {
+    pub fn new() -> Self {
+        Self {
+            vars: HashMap::new(),
+            declared: std::collections::HashSet::new(),
+            bless_context: None,
+        }
+    }
+
+    /// Mark a variable as tainted.
+    pub fn mark_tainted(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Tainted);
+    }
+
+    /// Mark a variable as blessed (validated).
+    pub fn mark_blessed(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Blessed);
+    }
+
+    /// Mark a variable as clean (internal origin).
+    pub fn mark_clean(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Clean);
+        self.declared.insert(name.to_string());
+    }
+
+    /// Record that a variable was declared/assigned in the script.
+    pub fn mark_declared(&mut self, name: &str) {
+        self.declared.insert(name.to_string());
+    }
+
+    /// Check if a variable is tainted.
+    pub fn is_tainted(&self, name: &str) -> bool {
+        match self.vars.get(name) {
+            Some(TaintStatus::Tainted) => true,
+            None => !self.is_special_var(name) && !self.declared.contains(name),
+            _ => false,
+        }
+    }
+
+    /// Check if we're inside a bless context for this variable.
+    pub fn in_bless_for(&self, name: &str) -> bool {
+        self.bless_context.as_deref() == Some(name)
+    }
+
+    /// Special variables that are always clean.
+    fn is_special_var(&self, name: &str) -> bool {
+        matches!(name, "0" | "#" | "?" | "$" | "LINENO")
+    }
+
+    /// Run taint analysis on the full program.
+    /// Returns diagnostics for tainted variable reads.
+    pub fn analyze(&mut self, root: Node, source: &[u8]) -> Vec<Diagnostic> {
+        let mut diags = Vec::new();
+        self.walk_program(root, source, &mut diags);
+        diags
+    }
+
+    fn walk_program(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "program" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            _ => self.walk_statement(node, source, diags),
+        }
+    }
+
+    fn walk_statement(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "variable_assignment" => {
+                self.handle_assignment(node, source, diags);
+            }
+            "declaration_command" => {
+                self.handle_declaration(node, source, diags);
+            }
+            "command" => {
+                self.handle_command(node, source, diags);
+            }
+            "if_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    match child.kind() {
+                        "test_command" => {
+                            self.check_expr_reads(child, source, diags);
+                        }
+                        "command" => {
+                            self.handle_command(child, source, diags);
+                        }
+                        _ => self.walk_statement(child, source, diags),
+                    }
+                }
+            }
+            "while_statement" | "until_statement" | "for_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    match child.kind() {
+                        "test_command" => {
+                            self.check_expr_reads(child, source, diags);
+                        }
+                        "command" => {
+                            self.handle_command(child, source, diags);
+                        }
+                        _ => self.walk_statement(child, source, diags),
+                    }
+                }
+            }
+            "function_definition" => {
+                // Don't analyze function bodies for now — taint of
+                // params depends on call site (future work)
+                self.handle_function_def(node, source);
+            }
+            "compound_statement" | "do_group" | "subshell" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            "pipeline" | "list" | "redirected_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            "case_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "word" || child.kind() == "simple_expansion" || child.kind() == "expansion" || child.kind() == "string" || child.kind() == "concatenation" {
+                        // The case value expression — check for tainted reads
+                        self.check_expr_reads(child, source, diags);
+                    } else {
+                        self.walk_statement(child, source, diags);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_assignment(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // variable_assignment: name=value
+        let name = node.child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok())
+            .unwrap_or("");
+        self.mark_declared(name);
+
+        // Check if RHS contains tainted expressions.
+        // Assignment is a WRITE context — reading tainted data into a var
+        // is allowed. The var inherits the taint status. No diagnostic here.
+        if let Some(value) = node.child_by_field_name("value") {
+            if self.expr_is_tainted(value, source) {
+                self.mark_tainted(name);
+            } else {
+                self.mark_clean(name);
+            }
+        } else {
+            self.mark_clean(name);
+        }
+    }
+
+    fn handle_declaration(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // declaration_command: declare/int/array/map/readonly name[=value]
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_assignment" {
+                self.handle_assignment(child, source, diags);
+            } else if child.kind() == "variable_name" || child.kind() == "word" {
+                let name = child.utf8_text(source).unwrap_or("");
+                self.mark_declared(name);
+                self.mark_clean(name);
+            }
+        }
+    }
+
+    fn handle_command(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        let name_node = node.child_by_field_name("name");
+        let cmd_name = name_node
+            .and_then(|n| n.child(0))
+            .and_then(|n| n.utf8_text(source).ok())
+            .unwrap_or("");
+
+        match cmd_name {
+            "bless" => {
+                self.handle_bless(node, source, diags);
+            }
+            "read" | "readarray" | "mapfile" => {
+                self.handle_read(node, source);
+            }
+            _ => {
+                // Check all arguments for tainted reads
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() != "command_name" {
+                        self.check_expr_reads(child, source, diags);
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_bless(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // bless VAR EXPR
+        // First non-command-name arg is the variable name.
+        // Remaining args form the test expression.
+        let mut args = Vec::new();
+        for child in node.children(&mut node.walk()) {
+            if child.kind() != "command_name" {
+                args.push(child);
+            }
+        }
+
+        if args.is_empty() {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4010",
+                "bless requires a variable name and test expression".to_string(),
+            ));
+            return;
+        }
+
+        let var_name = args[0].utf8_text(source).unwrap_or("");
+
+        if !self.is_tainted(var_name) && self.vars.contains_key(var_name) {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4011",
+                format!("bless: variable '{}' is already clean — bless is unnecessary", var_name),
+            ));
+            return;
+        }
+
+        // Enter bless context — reads of var_name are allowed inside
+        let old_ctx = self.bless_context.take();
+        self.bless_context = Some(var_name.to_string());
+
+        // Walk the test expression (everything after the var name)
+        for arg in &args[1..] {
+            self.check_expr_reads(*arg, source, diags);
+        }
+
+        self.bless_context = old_ctx;
+
+        // Mark the variable as blessed
+        self.mark_blessed(var_name);
+    }
+
+    fn handle_read(&mut self, node: Node, source: &[u8]) {
+        // read -r var / read -d: -a arr — targets become tainted
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "word" {
+                let text = child.utf8_text(source).unwrap_or("");
+                // Skip flags
+                if !text.starts_with('-') {
+                    self.mark_declared(text);
+                    self.mark_tainted(text);
+                }
+            }
+        }
+    }
+
+    fn handle_function_def(&mut self, node: Node, source: &[u8]) {
+        // Record function name as declared
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let name = name_node.utf8_text(source).unwrap_or("");
+            self.mark_declared(name);
+        }
+    }
+
+    /// Check if an expression evaluates tainted data.
+    /// Used for RHS of assignments to determine if the target becomes tainted.
+    fn expr_is_tainted(&self, node: Node, source: &[u8]) -> bool {
+        match node.kind() {
+            "simple_expansion" => {
+                // $var
+                let var_name = self.extract_var_name(node, source);
+                self.is_tainted(&var_name)
+            }
+            "expansion" => {
+                // ${var...}
+                let var_name = self.extract_expansion_var(node, source);
+                self.is_tainted(&var_name)
+            }
+            "command_substitution" => {
+                // $(cmd) — always tainted (external command output)
+                // Unless it's a known-safe builtin like len, keys, etc.
+                let inner_cmd = self.get_cmd_subst_name(node, source);
+                !matches!(inner_cmd.as_str(),
+                    "len" | "keys" | "join" | "epochseconds" | "getenv" | "argv")
+                // Note: getenv/argv produce tainted values, but the
+                // taint is on the *result*, not the cmd subst itself.
+                // Actually getenv and argv DO produce tainted results.
+                || matches!(inner_cmd.as_str(), "getenv" | "argv")
+            }
+            "string" => {
+                // "..." — check all interpolated expansions
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_is_tainted(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+            "concatenation" => {
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_is_tainted(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Check all variable reads in an expression, emitting diagnostics
+    /// for tainted reads outside of bless context.
+    fn check_expr_reads(&self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "simple_expansion" => {
+                let var_name = self.extract_var_name(node, source);
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4020",
+                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+            }
+            "expansion" => {
+                let var_name = self.extract_expansion_var(node, source);
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4020",
+                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+            }
+            _ => {
+                // Recurse into children
+                for child in node.children(&mut node.walk()) {
+                    self.check_expr_reads(child, source, diags);
+                }
+            }
+        }
+    }
+
+    /// Extract variable name from a simple_expansion node ($var).
+    fn extract_var_name(&self, node: Node, source: &[u8]) -> String {
+        // simple_expansion: $ variable_name
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" || child.kind() == "special_variable_name" {
+                return child.utf8_text(source).unwrap_or("").to_string();
+            }
+        }
+        // Might be $1, $2 etc.
+        let text = node.utf8_text(source).unwrap_or("");
+        text.trim_start_matches('$').to_string()
+    }
+
+    /// Extract variable name from an expansion node (${var...}).
+    fn extract_expansion_var(&self, node: Node, source: &[u8]) -> String {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" {
+                return child.utf8_text(source).unwrap_or("").to_string();
+            }
+        }
+        String::new()
+    }
+
+    /// Get the command name inside a command_substitution $(cmd ...).
+    fn get_cmd_subst_name(&self, node: Node, source: &[u8]) -> String {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "command" {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    if let Some(word) = name_node.child(0) {
+                        return word.utf8_text(source).unwrap_or("").to_string();
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+}

@@ -1,0 +1,16 @@
+[package]
+name = "sash"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+cranelift-codegen = "0.130"
+cranelift-frontend = "0.130"
+cranelift-module = "0.130"
+cranelift-native = "0.130"
+cranelift-object = "0.130"
+object = "0.36"
+target-lexicon = "0.13"
+tree-sitter = "0.25"
+tree-sitter-bash = { path = "/home/dangood/src/tree-sitter-bash-safebash" }
+rustix = { version = "1.1", features = ["process", "runtime", "stdio", "fs"] }
