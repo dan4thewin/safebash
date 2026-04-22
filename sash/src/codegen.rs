@@ -2005,8 +2005,16 @@ fn lower_inst(
             let ptr = builder.inst_results(call)[0];
             let len = builder.inst_results(call)[1];
             let sv = &vars[&target.display()];
-            builder.def_var(sv.str_ptr(), ptr);
-            builder.def_var(sv.str_len(), len);
+            if sv.is_int() {
+                // Int var: atoi the captured string
+                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
+                let int_val = builder.inst_results(atoi_call)[0];
+                builder.def_var(*sv.as_int(), int_val);
+            } else {
+                builder.def_var(sv.str_ptr(), ptr);
+                builder.def_var(sv.str_len(), len);
+            }
         }
         SsaInst::Export { target, value, name } => {
             // First assign the value (same as Assign)
