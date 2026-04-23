@@ -1915,7 +1915,17 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                             span: Span::from_node(child),
                         }));
                     } else {
-                        operand = Some(Box::new(lower_expr(child, source)));
+                        // Accumulate operand — multiple children after operator
+                        if let Some(prev) = operand.take() {
+                            let prev_str = expr_to_literal_string(&prev);
+                            let cur_str = expr_to_literal_string(&lower_expr(child, source));
+                            operand = Some(Box::new(Expr {
+                                kind: ExprKind::Literal(format!("{}{}", prev_str, cur_str)),
+                                span: Span::from_node(child),
+                            }));
+                        } else {
+                            operand = Some(Box::new(lower_expr(child, source)));
+                        }
                     }
                 }
             }

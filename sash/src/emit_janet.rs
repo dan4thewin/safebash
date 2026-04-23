@@ -34,6 +34,8 @@ pub fn emit_janet(program: &Program) -> String {
         ctx.declare("_args");
     }
 
+    ctx.declare("__last_exit");
+    writeln!(out, "(var __last_exit 0)").unwrap();
     for stmt in &program.statements {
         emit_stmt(&mut out, &mut ctx, stmt, 0);
     }
@@ -88,6 +90,10 @@ fn _expr_uses_args(expr: &Expr) -> bool {
         ExprKind::Concat(parts) => parts.iter().any(|p| _expr_uses_args(p)),
         ExprKind::ParameterExpansion(pe) => {
             pe.name == "#" || pe.name == "@" || pe.name.parse::<u32>().is_ok()
+        }
+        ExprKind::ArithmeticExpansion(s) => {
+            // Check if the arithmetic string references $1, $2, etc.
+            s.contains('$')
         }
         ExprKind::Test(test) => _test_uses_args(test),
         _ => false,
@@ -226,9 +232,11 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     }
                 }
                 "true" => {
+                    writeln!(out, "(set __last_exit 0)").unwrap();
                     writeln!(out, "true").unwrap();
                 }
                 "false" => {
+                    writeln!(out, "(set __last_exit 1)").unwrap();
                     writeln!(out, "false").unwrap();
                 }
                 "exit" => {
@@ -253,6 +261,69 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     if let Some(arg) = c.args.first() {
                         write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
                         writeln!(out).unwrap();
+                    }
+                }
+                "break" => {
+                    writeln!(out, "(break)").unwrap();
+                }
+                "continue" => {
+                    // Janet's (each) doesn't support continue; use (break) as approximation
+                    // TODO: restructure loop body with when/unless for real continue
+                    writeln!(out, "(break)").unwrap();
+                }
+                "return" => {
+                    if let Some(code) = c.args.first() {
+                        let val = emit_expr_inline(code, ctx);
+                        writeln!(out, "(return {})", val).unwrap();
+                    } else {
+                        writeln!(out, "(return)").unwrap();
+                    }
+                }
+                "printf" => {
+                    let args: Vec<String> = c.args.iter()
+                        .map(|a| emit_expr_inline(a, ctx))
+                        .collect();
+                    if args.len() >= 2 {
+                        writeln!(out, "(prin (string/format {} {}))", args[0], args[1..].join(" ")).unwrap();
+                    } else if args.len() == 1 {
+                        writeln!(out, "(prin {})", args[0]).unwrap();
+                    }
+                }
+                "cat" => {
+                    if c.args.is_empty() {
+                        writeln!(out, "(prin (file/read stdin :all))").unwrap();
+                    } else {
+                        let mut cmd_parts = vec!["\"cat\"".to_string()];
+                        for arg in &c.args {
+                            cmd_parts.push(emit_expr_inline(arg, ctx));
+                        }
+                        writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
+                    }
+                }
+                "read" => {
+                    let var_name = c.args.iter()
+                        .map(|a| expr_to_literal(a))
+                        .find(|a| !a.starts_with('-'))
+                        .unwrap_or_else(|| "REPLY".to_string());
+                    if !ctx.is_declared(&var_name) {
+                        ctx.declare(&var_name);
+                        writeln!(out, "(var {} (string/trimr (or (file/read stdin :line) \"\")))", var_name).unwrap();
+                    } else {
+                        writeln!(out, "(set {} (string/trimr (or (file/read stdin :line) \"\")))", var_name).unwrap();
+                    }
+                }
+                "bless" => {
+                    if c.args.len() >= 1 {
+                        let var_name = expr_to_literal(&c.args[0]);
+                        writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
+                    }
+                }
+                "unset" => {
+                    for arg in &c.args {
+                        let name = expr_to_literal(arg);
+                        if ctx.is_declared(&name) {
+                            writeln!(out, "(set {} nil)", name).unwrap();
+                        }
                     }
                 }
                 _ => {
@@ -464,7 +535,11 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                 ctx.int_funcs.insert(f.name.clone());
             }
             indent(out, depth);
-            writeln!(out, "(defn {} []", f.name).unwrap();
+            if needs_args_preamble(&f.body) {
+                writeln!(out, "(defn {} [& _args]", f.name).unwrap();
+            } else {
+                writeln!(out, "(defn {} []", f.name).unwrap();
+            }
             for s in &f.body {
                 emit_stmt(out, ctx, s, depth + 1);
             }
@@ -473,16 +548,115 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         }
 
         StmtKind::Redirected(r) => {
-            // Redirections are runtime I/O — emit the body,
-            // note the redirect as a comment
-            emit_stmt(out, ctx, &r.body, depth);
+            // Check for heredoc/herestring content
+            let has_heredoc = r.redirects.iter().any(|rd|
+                matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString));
+            if has_heredoc {
+                // Find the heredoc body
+                let body_text = r.redirects.iter()
+                    .filter(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
+                    .map(|rd| expr_to_literal(&rd.target))
+                    .collect::<Vec<_>>()
+                    .join("");
+                // Check if body is "cat" with no args (heredoc-as-string pattern)
+                let is_cat = matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "cat" && c.args.is_empty());
+                if is_cat {
+                    // cat <<EOF → just print the body
+                    indent(out, depth);
+                    // Escape for Janet string literal
+                    let escaped = body_text.trim_end_matches('\n')
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n");
+                    writeln!(out, "(print \"{}\")", escaped).unwrap();
+                } else if matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read") {
+                    // read <<< "string" — herestring
+                    if let StmtKind::Command(c) = &r.body.kind {
+                        let var_name = c.args.iter()
+                            .map(|a| expr_to_literal(a))
+                            .find(|a| !a.starts_with('-'))
+                            .unwrap_or_else(|| "REPLY".to_string());
+                        let val = body_text.trim_end_matches('\n');
+                        if !ctx.is_declared(&var_name) {
+                            ctx.declare(&var_name);
+                            indent(out, depth);
+                            writeln!(out, "(var {} \"{}\")", var_name, val).unwrap();
+                        } else {
+                            indent(out, depth);
+                            writeln!(out, "(set {} \"{}\")", var_name, val).unwrap();
+                        }
+                    }
+                } else {
+                    // Other command with heredoc — pipe body text to stdin
+                    indent(out, depth);
+                    let escaped = body_text.replace('\\', "\\\\").replace('"', "\\\"");
+                    writeln!(out, "(do").unwrap();
+                    indent(out, depth + 1);
+                    writeln!(out, "(def _heredoc_body \"{}\")", escaped.trim_end_matches('\n')).unwrap();
+                    // Write body to a temp pipe and redirect
+                    let cmd_name = match &r.body.kind {
+                        StmtKind::Command(c) => expr_to_literal(&c.name),
+                        _ => "?".to_string(),
+                    };
+                    let args = match &r.body.kind {
+                        StmtKind::Command(c) => c.args.iter()
+                            .map(|a| emit_expr_inline(a, ctx))
+                            .collect::<Vec<_>>(),
+                        _ => vec![],
+                    };
+                    let mut parts = vec![format!("\"{}\"", cmd_name)];
+                    parts.extend(args);
+                    indent(out, depth + 1);
+                    writeln!(out, "(def p (os/spawn [{}] :p {{:in :pipe}}))", parts.join(" ")).unwrap();
+                    indent(out, depth + 1);
+                    writeln!(out, "(:write (p :in) _heredoc_body)").unwrap();
+                    indent(out, depth + 1);
+                    writeln!(out, "(:close (p :in))").unwrap();
+                    indent(out, depth + 1);
+                    writeln!(out, "(os/proc-wait p)").unwrap();
+                    indent(out, depth);
+                    writeln!(out, ")").unwrap();
+                }
+            } else {
+                // Non-heredoc redirects — emit body, note redirect as comment
+                for rd in &r.redirects {
+                    indent(out, depth);
+                    writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();
+                }
+                emit_stmt(out, ctx, &r.body, depth);
+            }
         }
 
         StmtKind::List(l) => {
-            // && and || — emit sequentially
-            // (real short-circuit would need try/catch)
-            emit_stmt(out, ctx, &l.left, depth);
-            emit_stmt(out, ctx, &l.right, depth);
+            match l.op {
+                crate::ir::ListOp::And => {
+                    indent(out, depth);
+                    writeln!(out, "(when (do").unwrap();
+                    emit_stmt(out, ctx, &l.left, depth + 1);
+                    indent(out, depth);
+                    writeln!(out, ")").unwrap();
+                    emit_stmt(out, ctx, &l.right, depth + 1);
+                    indent(out, depth);
+                    writeln!(out, ")").unwrap();
+                }
+                crate::ir::ListOp::Or => {
+                    indent(out, depth);
+                    writeln!(out, "(when (not (do").unwrap();
+                    emit_stmt(out, ctx, &l.left, depth + 1);
+                    indent(out, depth);
+                    writeln!(out, "))").unwrap();
+                    emit_stmt(out, ctx, &l.right, depth + 1);
+                    indent(out, depth);
+                    writeln!(out, ")").unwrap();
+                }
+                crate::ir::ListOp::Background => {
+                    indent(out, depth);
+                    writeln!(out, "(ev/spawn (fn []").unwrap();
+                    emit_stmt(out, ctx, &l.left, depth + 1);
+                    indent(out, depth);
+                    writeln!(out, "))").unwrap();
+                }
+            }
         }
 
         StmtKind::Subshell(s) => {
@@ -648,6 +822,8 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
             } else if let Ok(n) = var.parse::<u32>() {
                 let idx = n.saturating_sub(1) as usize;
                 format!("(or (get _args {}) \"\")", idx)
+            } else if var == "?" {
+                "(string __last_exit)".to_string()
             } else {
                 format!("(or (os/getenv \"{}\") \"\")", var)
             }
@@ -768,6 +944,66 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                                 var_ref, operand)
                         }
                     }
+                    "^^" => {
+                        format!("(string/ascii-upper {})", var_ref)
+                    }
+                    ",," => {
+                        format!("(string/ascii-lower {})", var_ref)
+                    }
+                    "^" => {
+                        // Capitalize first char
+                        format!("(string (string/ascii-upper (string/slice {} 0 1)) (string/slice {} 1))", var_ref, var_ref)
+                    }
+                    "," => {
+                        // Lowercase first char
+                        format!("(string (string/ascii-lower (string/slice {} 0 1)) (string/slice {} 1))", var_ref, var_ref)
+                    }
+                    "strlen" => {
+                        format!("(string (length {}))", var_ref)
+                    }
+                    "arrlen" => {
+                        format!("(string (length {}))", var_ref)
+                    }
+                    "substring" => {
+                        let operand = pe.operand.as_ref()
+                            .map(|o| expr_to_literal(o))
+                            .unwrap_or_default();
+                        if let Some((off, len)) = operand.split_once(':') {
+                            let off_n: i64 = off.parse().unwrap_or(0);
+                            let len_n: i64 = len.parse().unwrap_or(-1);
+                            if len_n < 0 {
+                                // Negative length: trim from end
+                                format!("(string/slice {} {} (+ (length {}) {}))", var_ref, off_n, var_ref, len_n)
+                            } else {
+                                format!("(string/slice {} {} {})", var_ref, off_n, off_n + len_n)
+                            }
+                        } else {
+                            let off_n: i64 = operand.parse().unwrap_or(0);
+                            format!("(string/slice {} {})", var_ref, off_n)
+                        }
+                    }
+                    "/" => {
+                        // First match replace
+                        let operand = pe.operand.as_ref()
+                            .map(|o| expr_to_literal(o))
+                            .unwrap_or_default();
+                        if let Some((pat, rep)) = operand.split_once('\0') {
+                            format!("(string/replace \"{}\" \"{}\" {})", pat, rep, var_ref)
+                        } else {
+                            var_ref
+                        }
+                    }
+                    "//" => {
+                        // Global replace
+                        let operand = pe.operand.as_ref()
+                            .map(|o| expr_to_literal(o))
+                            .unwrap_or_default();
+                        if let Some((pat, rep)) = operand.split_once('\0') {
+                            format!("(string/replace-all \"{}\" \"{}\" {})", pat, rep, var_ref)
+                        } else {
+                            var_ref
+                        }
+                    }
                     _ => var_ref,
                 }
             } else {
@@ -821,7 +1057,14 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
             format!("@{{{}}}", es.join(" "))
         }
         ExprKind::Subscript { name, index } => {
-            format!("(get {} {})", name, emit_expr_inline(index, ctx))
+            let idx = emit_expr_inline(index, ctx);
+            // Use numeric index for arrays
+            let idx_str = idx.trim_matches('"');
+            if idx_str.chars().all(|c| c.is_ascii_digit()) {
+                format!("(get {} {})", name, idx_str)
+            } else {
+                format!("(get {} {})", name, idx)
+            }
         }
         ExprKind::Test(test) => {
             let wrapper = Expr {
@@ -835,18 +1078,35 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
 
 /// Convert simple bash arithmetic to Janet.
 fn bash_arith_to_janet(s: &str) -> String {
-    // Simple cases: "n + 1", "n - 1", "x * 2"
     let s = s.trim();
+    // Assignment: x = expr
+    if let Some((left, rest)) = s.split_once('=') {
+        if !left.ends_with('!') && !left.ends_with('<') && !left.ends_with('>') {
+            let var = left.trim();
+            let val = bash_arith_to_janet(rest.trim());
+            return format!("(set {} {})", var, val);
+        }
+    }
+    // Binary operators — check multi-char first
+    if let Some((left, rest)) = s.split_once('%') {
+        return format!("mod {} {}", bash_arith_operand(left), bash_arith_operand(rest));
+    }
     if let Some((left, rest)) = s.split_once('+') {
         format!("+ {} {}", bash_arith_operand(left), bash_arith_operand(rest))
     } else if let Some((left, rest)) = s.split_once('-') {
-        format!("- {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+        let left = left.trim();
+        let rest = rest.trim();
+        if left.is_empty() {
+            // Unary minus
+            format!("(- 0 {})", bash_arith_operand(rest))
+        } else {
+            format!("- {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+        }
     } else if let Some((left, rest)) = s.split_once('*') {
         format!("* {} {}", bash_arith_operand(left), bash_arith_operand(rest))
     } else if let Some((left, rest)) = s.split_once('/') {
         format!("div {} {}", bash_arith_operand(left), bash_arith_operand(rest))
     } else {
-        // Single value
         bash_arith_operand(s)
     }
 }
@@ -855,8 +1115,15 @@ fn bash_arith_operand(s: &str) -> String {
     let s = s.trim();
     if s.chars().all(|c| c.is_ascii_digit()) {
         s.to_string()
+    } else if s.starts_with('$') {
+        let name = &s[1..];
+        if let Ok(n) = name.parse::<u32>() {
+            let idx = n.saturating_sub(1) as usize;
+            format!("(scan-number (or (get _args {}) \"0\"))", idx)
+        } else {
+            format!("(scan-number {})", name)
+        }
     } else {
-        // Variable name
         format!("(scan-number {})", s)
     }
 }
