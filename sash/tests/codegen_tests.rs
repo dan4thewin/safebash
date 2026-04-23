@@ -2750,7 +2750,7 @@ echo $x
 fn glob_regex_filter() {
     // Test arr=(* =~ 'regex') — readdir with regex filter
     let src = r#"
-cd /home/dangood/src/safebash/exp/044-pipe-while-read/src
+cd /home/dangood/src/safebash/sash/src
 array files=(* =~ '\.rs$')
 echo $(len files)
 "#;
