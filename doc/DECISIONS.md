@@ -268,7 +268,7 @@ hazard (e.g., word splitting).
 
 | DD | Status |
 |---|---|
-| 1-9 (early decisions) | ✅ mostly, DD#3 namerefs 📐, DD#8 JIT coerce 📐 |
+| 1-9 (early decisions) | ✅ mostly, DD#3 namerefs 📐 (trivial — compile-time substitution in lowerer), DD#8 JIT coerce 📐 |
 | 10-11 (bash -c, aliases) | ✅ |
 | 12 (counted strings) | ✅ |
 | 13 (ld linker) | ✅ |
