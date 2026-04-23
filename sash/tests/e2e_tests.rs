@@ -602,3 +602,318 @@ fn neg_export_declare_x() {
     let stderr = compile_expect_fail("decl_x", script);
     assert!(stderr.contains("SB5001"), "expected SB5001 for declare -x, got: {}", stderr);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// FUNCTION ARGUMENT TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_func_args_arithmetic() {
+    let script = r#"#!/bin/bash
+add() {
+    echo $(( $1 + $2 ))
+}
+add 3 4
+"#;
+    assert_eq!(compile_and_run("func_arith", script), "7\n");
+}
+
+#[test]
+fn pos_func_args_string() {
+    let script = r#"#!/bin/bash
+greet() {
+    echo "hello $1"
+}
+greet world
+"#;
+    assert_eq!(compile_and_run("func_str", script), "hello world\n");
+}
+
+#[test]
+fn pos_func_multiple_calls() {
+    let script = r#"#!/bin/bash
+double() {
+    echo $(( $1 * 2 ))
+}
+double 5
+double 7
+double 0
+"#;
+    assert_eq!(compile_and_run("func_multi", script), "10\n14\n0\n");
+}
+
+#[test]
+fn pos_func_two_functions() {
+    let script = r#"#!/bin/bash
+square() {
+    echo $(( $1 * $1 ))
+}
+negate() {
+    echo $(( 0 - $1 ))
+}
+square 4
+negate 7
+"#;
+    assert_eq!(compile_and_run("func_two", script), "16\n-7\n");
+}
+
+#[test]
+fn pos_func_argc() {
+    let script = r#"#!/bin/bash
+count() {
+    echo $#
+}
+count a b c
+"#;
+    assert_eq!(compile_and_run("func_argc", script), "3\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// NESTED CONTROL FLOW TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_if_in_while() {
+    let script = r#"#!/bin/bash
+i=0
+while [[ $i -lt 6 ]]; do
+    if [[ $i == "0" ]] || [[ $i == "2" ]] || [[ $i == "4" ]]; then
+        echo "even $i"
+    fi
+    (( i = i + 1 ))
+done
+"#;
+    assert_eq!(compile_and_run("if_while", script), "even 0\neven 2\neven 4\n");
+}
+
+#[test]
+fn pos_for_in_if() {
+    let script = r#"#!/bin/bash
+x=yes
+if [[ $x == "yes" ]]; then
+    for n in 1 2 3; do
+        echo $n
+    done
+fi
+"#;
+    assert_eq!(compile_and_run("for_if", script), "1\n2\n3\n");
+}
+
+#[test]
+fn pos_case_in_for() {
+    let script = r#"#!/bin/bash
+for x in apple banana cherry; do
+    case $x in
+        apple) echo fruit1 ;;
+        banana) echo fruit2 ;;
+        *) echo other ;;
+    esac
+done
+"#;
+    assert_eq!(compile_and_run("case_for", script), "fruit1\nfruit2\nother\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HEREDOC TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_heredoc_with_vars() {
+    let script = "#!/bin/bash\nname=world\ncat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
+    assert_eq!(compile_and_run("hd_vars", script), "hello world\ngoodbye world\n");
+}
+
+#[test]
+fn pos_heredoc_literal() {
+    let script = "#!/bin/bash\ncat <<'EOF'\nhello $name\nEOF";
+    assert_eq!(compile_and_run("hd_literal", script), "hello $name\n");
+}
+
+#[test]
+fn pos_heredoc_tab_strip() {
+    let script = "#!/bin/bash\ncat <<-EOF\n\t\thello\n\t\tworld\nEOF";
+    assert_eq!(compile_and_run("hd_tabs", script), "hello\nworld\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ARRAY TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_array_basic() {
+    let script = "#!/bin/bash\narr=(one two three)\necho ${arr[0]}\necho ${arr[1]}\necho ${arr[2]}";
+    assert_eq!(compile_and_run("arr_basic", script), "one\ntwo\nthree\n");
+}
+
+#[test]
+fn pos_array_length() {
+    let script = "#!/bin/bash\narr=(a b c d e)\necho ${#arr[@]}";
+    assert_eq!(compile_and_run("arr_len", script), "5\n");
+}
+
+#[test]
+fn pos_array_assign_element() {
+    let script = "#!/bin/bash\narr=(x y z)\narr[1]=Y\necho ${arr[0]} ${arr[1]} ${arr[2]}";
+    assert_eq!(compile_and_run("arr_assign", script), "x Y z\n");
+}
+
+#[test]
+fn pos_array_for_loop() {
+    let script = r#"#!/bin/bash
+arr=(alpha beta gamma)
+for x in "${arr[@]}"; do
+    echo $x
+done
+"#;
+    assert_eq!(compile_and_run("arr_for", script), "alpha\nbeta\ngamma\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BLESS / TAINT FLOW TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_bless_clears_taint() {
+    let script = r#"#!/bin/bash
+x=$(echo "42")
+bless x [[ $x =~ ^[0-9]+$ ]]
+echo $x
+"#;
+    assert_eq!(compile_and_run("bless_ok", script), "42\n");
+}
+
+#[test]
+fn pos_bless_with_default() {
+    let script = r#"#!/bin/bash
+x=$(echo "hello")
+bless x [[ -n $x ]]
+echo $x
+"#;
+    assert_eq!(compile_and_run("bless_default", script), "hello\n");
+}
+
+#[test]
+fn neg_cmdsub_tainted() {
+    let script = "#!/bin/bash\nx=$(cat /etc/hostname)\necho $x";
+    let stderr = compile_expect_fail("cmdsub_taint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020 for tainted cmdsub, got: {}", stderr);
+}
+
+#[test]
+fn neg_tainted_after_reassign() {
+    // Even if a var was blessed, reassignment from cmdsub re-taints it
+    let script = r#"#!/bin/bash
+x=$(cat /etc/hostname)
+bless x [[ -n $x ]]
+x=$(cat /etc/hostname)
+echo $x
+"#;
+    let stderr = compile_expect_fail("retaint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020 after re-taint, got: {}", stderr);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// COMMAND SUBSTITUTION TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_cmdsub_blessed() {
+    let script = r#"#!/bin/bash
+x=$(echo "hello world")
+bless x [[ -n $x ]]
+echo $x
+"#;
+    assert_eq!(compile_and_run("cmdsub_bless", script), "hello world\n");
+}
+
+#[test]
+fn pos_cmdsub_in_arithmetic() {
+    // Command substitution result used in arithmetic after bless
+    let script = r#"#!/bin/bash
+n=$(echo 5)
+bless n [[ $n =~ ^[0-9]+$ ]]
+echo $(( n + 10 ))
+"#;
+    assert_eq!(compile_and_run("cmdsub_arith", script), "15\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// ADDITIONAL COERCION AND EDGE CASE TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+#[ignore] // herestring read not fully wired
+fn pos_herestring() {
+    let script = "#!/bin/bash\nread x <<< \"hello\"\nbless x [[ -n $x ]]\necho $x";
+    assert_eq!(compile_and_run("herestring", script), "hello\n");
+}
+
+#[test]
+fn pos_test_file_exists() {
+    let script = "#!/bin/bash\n[[ -f /etc/passwd ]] && echo exists || echo missing";
+    assert_eq!(compile_and_run("file_test", script), "exists\n");
+}
+
+#[test]
+fn pos_test_string_eq() {
+    let script = "#!/bin/bash\na=hello\nb=hello\n[[ $a == $b ]] && echo same || echo diff";
+    assert_eq!(compile_and_run("str_eq", script), "same\n");
+}
+
+#[test]
+fn pos_test_string_neq() {
+    let script = "#!/bin/bash\na=hello\nb=world\n[[ $a != $b ]] && echo diff || echo same";
+    assert_eq!(compile_and_run("str_neq", script), "diff\n");
+}
+
+#[test]
+fn pos_pipeline_negation() {
+    let script = "#!/bin/bash\n! false && echo negated";
+    assert_eq!(compile_and_run("pipe_neg", script), "negated\n");
+}
+
+#[test]
+fn pos_c_style_for() {
+    let script = "#!/bin/bash\nfor (( i=0; i<3; i++ )); do echo $i; done";
+    assert_eq!(compile_and_run("cfor", script), "0\n1\n2\n");
+}
+
+#[test]
+fn pos_until_loop() {
+    let script = r#"#!/bin/bash
+i=0
+until [[ $i -ge 3 ]]; do
+    echo $i
+    (( i = i + 1 ))
+done
+"#;
+    assert_eq!(compile_and_run("until", script), "0\n1\n2\n");
+}
+
+#[test]
+fn pos_break_loop() {
+    let script = r#"#!/bin/bash
+for x in 1 2 3 4 5; do
+    [[ $x == "3" ]] && break
+    echo $x
+done
+"#;
+    assert_eq!(compile_and_run("break", script), "1\n2\n");
+}
+
+#[test]
+fn pos_continue_loop() {
+    let script = r#"#!/bin/bash
+for x in 1 2 3 4 5; do
+    [[ $x == "3" ]] && continue
+    echo $x
+done
+"#;
+    assert_eq!(compile_and_run("continue", script), "1\n2\n4\n5\n");
+}
+
+#[test]
+fn pos_alternate_value() {
+    let script = "#!/bin/bash\nx=set\necho ${x:+alternate}\ny=\"\"\necho ${y:+alternate}";
+    assert_eq!(compile_and_run("alt_val", script), "alternate\n\n");
+}
