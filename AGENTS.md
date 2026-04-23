@@ -6,50 +6,83 @@ safebash is a compiler for a safe subset of Bash that produces
 static native binaries. DG created the project and directs the
 effort. The AI implements: writing Rust, designing IRs, writing
 docs. Neither works alone — DG makes design decisions; the AI has
-the stamina for incremental experiments.
+the stamina for incremental implementation.
 
 The compiler works end-to-end: bash source → parse → validate →
-IR → SSA → Cranelift codegen → link → 16KB static ELF. Output is
-byte-identical to Bash.
+lower → type check → transform → fold → codegen → link → static ELF.
+Output is byte-identical to Bash. Also supports a `--janet` backend
+and `--emit-source`/`--annotate`/`--extract` modes.
 
-Read the journal prologue (`exp/JOURNAL.md`, first 40 lines) before
+Read the journal prologue (`doc/JOURNAL.md`, first 40 lines) before
 your first session. It sets the tone for everything.
 
 ## Current state
 
-- **30 experiments** (001–026, plus 022a/023a/023b variants)
-- **~520 tests** across all experiments
-- **13 design decisions** documented in JOURNAL.md
-- **1 adversarial audit** completed (5 models, 3 passes, remediation done)
+- **sash/** — the compiler (Rust, Cranelift backend)
 - **sash-rt/** — pure Rust `#![no_std]` runtime crate (rustix, no libc)
-- **Pipeline:** tree-sitter → validator (7 rules) → IR → SSA → Cranelift → ld
+- **sash-expand/** — expansion utilities
+- **sash-rt-tests/** — runtime test harness
+- **doc/** — JOURNAL, GUIDE, SUBSET, TODO, TIMELINE
+- **audit/** — adversarial audit findings and remediation
+- **contrib/** — contributed scripts/tools
+- **suites/** — test suites
+- **exp/** — git submodule → safebash-exp (30 historical experiments, not needed for build)
+- **457 tests** (247 codegen, 114 e2e, 37 janet, 59 oracle)
+- **45 design decisions** documented in `doc/JOURNAL.md`
+- **1 adversarial audit** completed (5 models, 3 passes, remediation done)
+- **Tree-sitter fork** at `~/src/tree-sitter-bash-safebash` with custom grammar
+  (int, const, array, map, bless, fn, `${var:s/re/str/}`)
 
-Key files:
-- `exp/GUIDE.md` — Architecture overview
-- `exp/JOURNAL.md` — Detailed experiment journal + design decisions
-- `exp/SUBSET.md` — Safe subset specification
-- `exp/TODO.md` — Backlog
-- `exp/TIMELINE.md` — Chronological milestones
+### Pipeline
+
+tree-sitter CST → validate (rules + taint) → lower (CST→IR, coercions)
+→ type check → transform (IR→SSA) → fold → codegen (Cranelift) → link → static ELF
+
+### Key source files (`sash/src/`)
+
+- `main.rs`, `lib.rs` — entry points
+- `lower.rs` — CST → IR lowering with coercions
+- `ir.rs` — IR definitions
+- `type_check.rs` — type checking pass
+- `transform.rs` — IR → SSA transformation
+- `ssa.rs`, `ssa_printer.rs` — SSA representation and printing
+- `codegen.rs` — Cranelift code generation
+- `taint.rs` — taint analysis
+- `validator.rs`, `rule.rs` — validation framework
+- `rules/` — `mod.rs`, `dynamic_execution.rs`, `indirect_expansion.rs`,
+  `export_rejected.rs`, `heredoc_cmdsub.rs`
+- `diagnostic.rs` — error reporting
+- `emit_janet.rs` — Janet backend
+- `emit_source.rs`, `printer.rs` — source emission modes
+- `known_externals.rs` — allowlisted external commands
+
+### Key docs
+
+- `doc/GUIDE.md` — Architecture overview
+- `doc/JOURNAL.md` — Detailed journal + design decisions (through DD#45)
+- `doc/SUBSET.md` — Safe subset specification
+- `doc/TODO.md` — Backlog
+- `doc/TIMELINE.md` — Chronological milestones
 - `audit/run-1/AUDIT_TRIAGE.md` — Adversarial audit findings
 
-## The experiment model
+## Build and test
 
-Work proceeds as numbered experiments in `exp/`. Each experiment:
-- Lives in its own directory (`exp/NNN-short-name/`)
-- Has an `mkfile` with a `test` target (Plan 9 `mk`, not `make`)
-- Produces a working artifact that demonstrates one concept
-- Is documented in `exp/JOURNAL.md`
+Build system uses Plan 9 `mk` (not `make`). Top-level `mkfile` has
+`build`, `test`, and `clean` targets.
 
-Don't skip ahead. Don't combine experiments unless the scope is
-clearly related. Each one should pass before the next begins.
+Tests live in `sash/tests/`:
+- `codegen_tests.rs` (247) — codegen correctness
+- `e2e_tests.rs` (114) — end-to-end compilation and execution
+- `oracle_tests.rs` (59) — compare output against Bash
+- `janet_tests.rs` (37) — Janet backend
 
 ## Completion checklist
 
 Every task ends with:
-1. All tests pass (`cd exp && mk testall`)
-2. Update `exp/JOURNAL.md` (goals, actions, reasoning)
-3. Update `exp/GUIDE.md` if new architecture introduced
-4. Add deferred work to `exp/TODO.md`
+1. All tests pass (`mk test`)
+2. Update `doc/JOURNAL.md` (goals, actions, reasoning)
+3. Update `doc/GUIDE.md` if new architecture introduced
+4. Add deferred work to `doc/TODO.md`
 5. Update this file if SOP changed
 6. `git commit` with descriptive message
 7. `git push`

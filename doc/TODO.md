@@ -1,12 +1,53 @@
 # safebash — TODO
 
+*Updated 2026-04-23. 457 tests passing (247 codegen, 114 e2e, 37 janet, 59 oracle).*
+*45 design decisions documented in JOURNAL.md.*
+
+---
+
+## Remaining Backlog
+
+### Safety
+
+- Taint inheritance through bare function calls
+- Adversarial review run-2 (schedule after significant new code)
+
+### Compilation
+
+- Arithmetic assignment side effects — `$((x=1))` evaluates but doesn't persist in SSA
+- Recursive arithmetic evaluation — `z="x+y"; $((z))`
+- Arithmetic modulo at runtime (constant-folded works)
+- Case exit status propagation from matched arm
+- Compound command redirects — `for...done > file`, `for...done | cmd`
+- Per-command env vars — `myvar=val myfunc`
+- Heredoc with `$(cmd)` — lowerer doesn't expand command substitutions in heredoc bodies (variable expansion works)
+- IFS-based array joining — `"${arr[*]}"` with IFS separator
+- `${arr[@]/pat/rep}` per-element replacement
+
+### Language Features
+
+- Pike regex shorthand classes (`\d \w \s`)
+- Honest trace (DD#32) — `SASH_TRACE=1` runtime value tracing, designed not built
+
+### Testing
+
+- Brush test suite: 173 PASS, 78 FAIL_OUTPUT, 43 FAIL_COMPILE (baseline from April 22, needs re-run)
+- Oils test suite: needs systematic runner
+
+### Tooling
+
+- `--emit-source` doesn't yet show `${var/pat/rep}` → `${var:s/re/str/}` coercion
+- Bless in `--emit-source` for `${var/pat/rep}` → `${var:s/re/str/}` conversion
+
+### Documentation
+
+- SELF 2026 talk prep
+
+---
+
 ## Completed
 
-- **Phase 1** — Toolchain bootstrap (001–005)
-- **Phase 2** — Safe subset validation (006–011), 7 rules
-- **Phase 3** — IR construction + printer (012–015), 14 stmt types, 10 expr types
-- **Phase 4** — SSA transformation (016)
-- **Phase 5** — Janet oracle (017)
+- **Phases 1–5** — Toolchain bootstrap, safe subset validation (7 rules), IR construction + printer (14 stmt / 10 expr types), SSA transformation, Janet oracle
 - **018** — Subshell elision analysis
 - **019–020** — Adversarial audit remediation
 - **021–026** — Cranelift AOT compilation, 16 KB static binaries
@@ -23,7 +64,7 @@
 - **043** — Unified sash_table for indexed+assoc arrays, int/map/array keywords (DD#33,35)
 - **044** — Pipe-while-read (DD#28 target form)
 - **045** — Validator rebuild + taint quarantine + bless (DD#40, DD#24, DD#42-44)
-- sash-rt pure Rust runtime (rustix, no libc, 84 runtime tests)
+- sash-rt pure Rust runtime (rustix, no libc)
 - sash-expand standalone KVP config loader (DD#1)
 - DD#34 safe inner functions, DD#26 overflow traps
 - DD#36 fixed-point dtoi/itod
@@ -34,20 +75,31 @@
 - DD#42 env vars + positional params as builtins (getenv/argv)
 - DD#43 revised bless semantics — assign then validate
 - DD#44 taint quarantine — full enforcement at all use sites
-- 44 design decisions documented in JOURNAL.md
-- ~297 tests (230 codegen + 59 oracle + 68 validator/taint)
-
-### Features implemented (session 2026-04-19 – 2026-04-21)
-
+- Source emitter (`--emit-source`, `--annotate`, `--extract`) + `.sash_source` ELF section
+- Declaration coercions (`declare -i`→int, `-a`→array, `-A`→map, `-r`→const, `let`→`(( ))`)
+- `const` keyword + stacked modifiers (`local const int x=5`)
+- Combined declaration flags (`-ri`, `-ia`)
+- Export rejection (SB5001) + heredoc cmdsub rejection (SB5002)
+- `${var:s/re/str/flags}` tree-sitter grammar + end-to-end compilation
+- known_externals auto-bless (26 env vars, 25 commands)
+- Function argument passing (`$1`/`$2` in arithmetic)
+- Herestring read
+- Janet backend parity (37 tests)
+- Negative substring length
+- Empty `case/esac`
+- Glob→regex coercion for `${var/pat/rep}`
+- Case `;&` and `;;&` terminators
+- Heredoc `<<-` tab stripping
+- Regex match `[[ =~ ]]` with variable expansion
+- Pipeline negation `!`
+- Fnmatch for `case`/`[[ == ]]`
 - `[[ ! expr ]]` negation (negated unary + negated binary)
 - `for x in "${arr[@]}"` array iteration via table index loop
 - `${!arr[@]}` key iteration
 - `readonly` compile-time enforcement
 - `read -r a b c` multi-variable word splitting
-- `read -d DELIM` custom delimiter
-- `read -d: -a arr` split into array by delimiter
-- Sash-native array syntax: `@arr`, `$arr[i]`, `len`, `keys`, `join`
-- `for x in $(cmd)` silently coerced to pipe-while-read
+- `read -d DELIM` custom delimiter + `read -d: -a arr`
+- `for x in $(cmd)` coerced to pipe-while-read
 - `command NAME args` bypass function, run external
 - `$(cmd 2>/dev/null)` CmdSubst carries redirects into child
 - `$(<file)` file slurp desugared to cat
@@ -62,62 +114,8 @@
 - Star glob: `arr=(*.sh)` via sash_readdir
 - `arr=(* =~ 'regex')` — readdir with regex filter
 - `var =~ s/pattern/replacement/flags` regex mutation
-- `unset map[key]` — Python-style tombstones in sash_table
+- `unset map[key]` — tombstones in sash_table
 - Nested arithmetic parens `$(( (a+b)*c ))` via AST walking
-- Validator rebuilt: 4 subset rules, coercion rules removed
-- Taint tracking: flow-sensitive, 68 tests
-- `bless VAR EXPR` syntax
-
-### Near-term: kusto compilation target — ✅ COMPLETE
-
-### Near-term: unittest compilation target (LSG-linux-yocto)
-
-- **Preprocessor**: inline `source`/`.` targets at compile time
-- **`local fn` declarations** (DD#18): lexically scoped function shadowing
-- `local -n` / `declare -n` namerefs — allowed per DD#3, needs codegen
-- ~~`exec fd>&fd`~~ ✅ standalone redirects
-- Glob patterns in `[[ ]]` — `[[ $x = */OS_A ]]` (pattern match)
-- ~~`(( arithmetic ))` as statement~~ ✅ (exp 041)
-- Shell options (`set -eu`, `shopt`) — compile-time feature gating
-- ~~`$EPOCHSECONDS`~~ ✅
-- TAP protocol output (`echo "ok $n" / "not ok $n"`)
-
-### Near-term: soc-os-update-flash.sh compilation target
-
-- ~~`${var:offset:length}` substring~~ ✅
-- ~~`while read -r var` from pipe~~ ✅
-- ~~`read -d` / `mapfile`~~ ✅
-- ~~Pipeline + `while read` + `lastpipe`~~ ✅
-- ~~`command -v cmd`~~ ✅ / ~~`command cmd args`~~ ✅
-- ~~Runtime glob expansion~~ ✅ (star glob + regex filter)
-- ~~`${#array[*]}` array length~~ ✅
-- `printf -v var` — coerce to `var=$(printf ...)` (low priority)
-- `getopts` — coerce to `while/case/shift` (low priority)
-- `local -` — scoped shell options
-- `$EPOCHREALTIME` — microsecond timestamp
-- `define_dumpimage` — runtime fn redefinition (needs `local fn` or `if/else`)
-- `eval 'func() { ... }'` — dynamic fn creation (needs refactoring)
-
-### Integration work
-
-- **Wire getenv/argv builtins into codegen** — validator expects them (DD#42)
-- **Connect validator (045) with compiler (044)** — validation before compilation
-- **Shellcheck integration** — `sash` runs shellcheck by default (DD#40)
-- **Unified `sash` crate** — consolidate experiments into Cargo workspace
-
-### Testing
-
-- Oils spec test harness — ingest, filter to safe subset, run against compiler
-- Codegen regression test for integer overflow (DD#26)
-- Bash source test suite — after `source`/`.` is implemented
-- Adversarial audit run-2 (after significant new code)
-
-### Long-term
-
-- Binary signing pipeline
-- IPE / fs-verity integration
-- Cranelift JIT for REPL
-- aarch64 target testing
 
 ## Out of scope
 
