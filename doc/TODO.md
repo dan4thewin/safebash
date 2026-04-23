@@ -12,26 +12,26 @@
 - Taint inheritance through bare function calls
 - Adversarial review run-2 (schedule after significant new code)
 
-### Compilation
+### Compilation — High Priority
 
-- Arithmetic assignment side effects — `$((x=1))` evaluates but doesn't persist in SSA
-- Recursive arithmetic evaluation — `z="x+y"; $((z))`
-- Arithmetic modulo at runtime (constant-folded works)
-- Case exit status propagation from matched arm
+- Per-command env vars for externals — `FOO=bar cmd` (externals only, not functions). This is the mechanism that replaces `export` (SB5001).
+- Case exit status propagation from matched arm — real bug
 - Compound command redirects — `for...done > file`, `for...done | cmd`
-- Per-command env vars — `myvar=val myfunc`
 - Heredoc with `$(cmd)` — lowerer doesn't expand command substitutions in heredoc bodies (variable expansion works)
-- IFS-based array joining — `"${arr[*]}"` with IFS separator
-- `${arr[@]/pat/rep}` per-element replacement
+
+### Compilation — Normal
+
+- Arithmetic modulo at runtime (constant-folded works)
+- Namerefs — `local -n ref=target` / `declare -n` (DD#3). Compile-time substitution in lowerer during inlining. Argument must be bare identifier, not computed string.
 
 ### Language Features
 
 - Honest trace (DD#32) — `SASH_TRACE=1` runtime value tracing, designed not built
+- `join` builtin (DD#41) — `join @arr`, `join sep @arr`. Replaces `"${arr[*]}"` IFS joining.
+- `@arr` iteration syntax (DD#41) — shorthand for `"${arr[@]}"`
 - `getenv`/`argv` builtins (DD#42) — `$(getenv HOME)` / `$(argv 1)` as explicit boundary
 - `-` error suppression (DD#21) — `- cd /tmp` as sugar for `cd /tmp || true`
 - `local fn` for mocking (DD#18 candidate) — lexically scoped function shadowing
-
-- `@arr` iteration syntax (DD#41) — shorthand for `"${arr[@]}"`
 - Fixed-point arithmetic (DD#36) — `dtoi`/`itod` scale functions
 - Arithmetic overflow traps (DD#25) — runtime trap on integer overflow
 - Pike regex shorthand classes (`\d \w \s`)
@@ -43,12 +43,21 @@
 
 ### Tooling
 
-- `--emit-source` doesn't yet show `${var/pat/rep}` → `${var:s/re/str/}` coercion
-- Bless in `--emit-source` for `${var/pat/rep}` → `${var:s/re/str/}` conversion
+- `--emit-source` coercion for `${var/pat/rep}` → `${var:s/re/str/}` (grammar wired, lowerer needs coercion recording)
+- `--emit-source` coercion for `"${arr[*]}"` → `$(join @arr)` (after join is implemented)
 
 ### Documentation
 
 - SELF 2026 talk prep
+
+---
+
+## Removed from Backlog (with rationale)
+
+- `$((x=1))` side effects — DD#31 says mutation and value production are disjoint. Use `(( x=1 )); echo $x`.
+- Recursive arithmetic `z="x+y"; $((z))` — string-as-code is implicit eval. Write the expression directly.
+- `${arr[@]/pat/rep}` per-element replacement — YAGNI. Use `for i in "${!arr[@]}"; do arr[$i]=${arr[$i]:s/pat/rep/}; done`.
+- DD#19 SSA phi function dispatch — YAGNI. Use `const int` flag + branch, or dispatch wrapper function.
 
 ---
 
@@ -78,7 +87,7 @@
 - DD#37 reject process substitution, coerce to pipe-while-read
 - DD#38-39 feature matrix review, glob → star-only + regex mutation
 - DD#40 shellcheck as default lint gate, validator → 4 subset rules
-- DD#41 sash-native array syntax (@arr, $arr[i], len, keys, join)
+- DD#41 sash-native array syntax (@arr, $arr[i], len, keys, join) — declaration only, @arr/join not yet wired
 - DD#42 env vars + positional params as builtins (getenv/argv)
 - DD#43 revised bless semantics — assign then validate
 - DD#44 taint quarantine — full enforcement at all use sites
@@ -132,3 +141,7 @@
 - `<(...)` / `>(...)` process substitution (DD#37)
 - `declare -f` / `unset -f` (replaced by `local fn`)
 - Dynamic `source`/`.` (replaced by preprocessor)
+- `$((x=1))` as expression — DD#31, use `(( x=1 )); echo $x`
+- Recursive arithmetic `$((z))` where z is a string expression — implicit eval
+- `${arr[@]/pat/rep}` per-element replacement — use loop with `${var:s/re/str/}`
+- DD#19 SSA phi function dispatch — use const int flag + branch
