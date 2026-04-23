@@ -4306,3 +4306,50 @@ the safe subset.
 
 DG directed: "I've been using bash since it was new and never needed
 ${var-default}."
+
+### DD#21 amendment: pipeline coercion semantics (2026-04-23)
+
+**Context:** DD#21 defines `-` prefix for error suppression. DD#20
+defines pipefail as always on. This amendment clarifies how bash
+pipelines are coerced to sash when the original script did or did
+not use `set -o pipefail`.
+
+**Sash-native rule:** Every pipeline segment's exit status must be
+handled — checked (`if`, `&&`, `||`), explicitly ignored (`-`), or
+propagated. `- cmd1 | - cmd2` is the explicit per-segment form.
+No whole-pipeline suppression; think about each segment.
+
+**Coercion from bash:**
+
+*Script has `set -o pipefail`:* The author explicitly cared about
+pipeline failures. Coerce as-is — no `-` inserted. The compiler
+flags unchecked segments. Author decides.
+
+*Script does NOT have `set -o pipefail`:* The author was operating
+under bash's default — only the last segment's exit matters. The
+coercer inserts `-` on every non-terminal pipeline segment:
+
+```bash
+# Original bash (no pipefail):
+cat file | grep pattern | sort | head -5
+
+# Coerced to sash:
+- cat file | - grep pattern | - sort | head -5
+```
+
+This preserves the original semantics mechanically. The last segment
+is checked (as it was in bash), earlier segments are suppressed (as
+they were in bash). `--annotate` shows the original.
+
+**Rationale:**
+- Conservative about semantics — preserve what the bash script did
+- Visible about assumptions — `-` markers make the implicit explicit
+- The programmer can review and tighten, e.g., decide that `grep`
+  failing should be an error even though the original never checked
+
+**Terminal grep edge case:** `cat file | grep pattern` without
+pipefail — bash continues regardless of grep's exit. The coercer
+leaves the terminal segment unchecked; the compiler flags it. The
+programmer wraps in `if` or adds `-`.
+
+DG directed: "- cmd1 | - cmd2 makes me think about each segment."
