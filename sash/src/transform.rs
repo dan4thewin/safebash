@@ -1497,6 +1497,17 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if let Ok(v) = trimmed.parse::<i64>() {
                 return SsaValue::Expr(v.to_string());
             }
+            // $-prefixed variable: $(($x)) or $(($1)) → variable lookup
+            if trimmed.starts_with('$') {
+                let varname = trimmed.trim_start_matches('$');
+                if varname.chars().all(|c| c.is_alphanumeric() || c == '_') && !varname.is_empty() {
+                    return SsaValue::ArithBinOp {
+                        left: Box::new(SsaValue::Var(state.lookup(varname))),
+                        op: ArithOp::Add,
+                        right: Box::new(SsaValue::Expr("0".to_string())),
+                    };
+                }
+            }
             // Bare variable: $((y)) → force arithmetic interpretation (empty/non-numeric → 0)
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
                 return SsaValue::ArithBinOp {
@@ -1635,6 +1646,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // Parse "lhs OP rhs" — handles both "i + 1" and "i+1" and "$i+1"
             let (lhs, op_parsed, rhs) = parse_arith_binop(trimmed);
             if let Some(op) = op_parsed {
+                let lhs_was_var = lhs.starts_with('$');
+                let rhs_was_var = rhs.starts_with('$');
                 let lhs = lhs.trim_start_matches('$');
                 let rhs = rhs.trim_start_matches('$');
 
@@ -1644,8 +1657,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                     expr_to_value(&e, state)
                 };
 
-                let l_const = lhs.parse::<i64>();
-                let r_const = rhs.parse::<i64>();
+                let l_const = if lhs_was_var { Err(std::num::IntErrorKind::InvalidDigit) } else { lhs.parse::<i64>().map_err(|e| e.kind().clone()) };
+                let r_const = if rhs_was_var { Err(std::num::IntErrorKind::InvalidDigit) } else { rhs.parse::<i64>().map_err(|e| e.kind().clone()) };
 
                 // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
                 let l_is_simple = lhs.chars().all(|c| c.is_alphanumeric() || c == '_');

@@ -2395,9 +2395,14 @@ fn lower_arith_expr_to_exprkind(node: Node, source: &[u8]) -> ExprKind {
             let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
             ExprKind::ArithmeticExpansion(text)
         }
-        "number" | "variable_name" | "word" | "simple_expansion" => {
+        "number" | "variable_name" | "word" => {
             let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
             let text = text.trim_start_matches('$').to_string();
+            ExprKind::ArithmeticExpansion(text)
+        }
+        "simple_expansion" => {
+            // Keep $ prefix so transform knows this is a variable, not a literal
+            let text = node.utf8_text(source).unwrap_or("$0").trim().to_string();
             ExprKind::ArithmeticExpansion(text)
         }
         _ => {
@@ -2450,8 +2455,10 @@ fn arith_node_to_string(node: Node, source: &[u8]) -> String {
         "number" => node.utf8_text(source).unwrap_or("0").to_string(),
         "variable_name" | "word" => node.utf8_text(source).unwrap_or("0").trim_start_matches('$').to_string(),
         "simple_expansion" => {
-            // $var → var
-            node.utf8_text(source).unwrap_or("0").trim_start_matches('$').to_string()
+            // $var → keep $ so transform distinguishes from numeric literals
+            // e.g. $1 stays "$1" (variable), bare 1 is literal number
+            let text = node.utf8_text(source).unwrap_or("$0");
+            if text.starts_with('$') { text.to_string() } else { format!("${}", text) }
         }
         _ => node.utf8_text(source).unwrap_or("0").trim().to_string(),
     }
