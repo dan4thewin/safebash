@@ -13,6 +13,7 @@ pub mod diagnostic;
 pub mod validator;
 pub mod rule;
 pub mod rules;
+pub mod known_externals;
 
 pub fn parse(source: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
