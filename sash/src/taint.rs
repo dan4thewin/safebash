@@ -35,6 +35,17 @@ pub struct TaintTracker {
     declared: std::collections::HashSet<String>,
     /// Are we inside a bless expression? If so, which variable?
     bless_context: Option<String>,
+    /// Auto-blessed variables: name → (pattern, description, source line)
+    auto_blessed: Vec<AutoBless>,
+}
+
+/// Record of a variable auto-blessed via known_externals.
+#[derive(Clone, Debug)]
+pub struct AutoBless {
+    pub var_name: String,
+    pub pattern: String,
+    pub description: String,
+    pub line: usize,
 }
 
 impl TaintTracker {
@@ -43,6 +54,7 @@ impl TaintTracker {
             vars: HashMap::new(),
             declared: std::collections::HashSet::new(),
             bless_context: None,
+            auto_blessed: Vec::new(),
         }
     }
 
@@ -97,6 +109,11 @@ impl TaintTracker {
         let mut diags = Vec::new();
         self.walk_program(root, source, &mut diags);
         diags
+    }
+
+    /// Return auto-blessed variables and their patterns (for --emit-source).
+    pub fn auto_blessed(&self) -> &[AutoBless] {
+        &self.auto_blessed
     }
 
     fn walk_program(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
@@ -222,7 +239,16 @@ impl TaintTracker {
         // is allowed. The var inherits the taint status. No diagnostic here.
         if let Some(value) = node.child_by_field_name("value") {
             if self.expr_is_tainted(value, source) {
-                self.mark_tainted(name);
+                // Before marking tainted, check if the RHS is a known-safe command.
+                if let Some(auto) = self.check_known_external(value, source, name) {
+                    // Known command/env var — auto-bless with the known pattern.
+                    let mut ab = auto;
+                    ab.line = node.start_position().row + 1;
+                    self.auto_blessed.push(ab);
+                    self.mark_blessed(name);
+                } else {
+                    self.mark_tainted(name);
+                }
             } else {
                 self.mark_clean(name);
             }
@@ -460,6 +486,68 @@ impl TaintTracker {
             }
         }
         String::new()
+    }
+
+    /// Get command arguments inside a command_substitution $(cmd arg1 arg2 ...).
+    fn get_cmd_subst_args(&self, node: Node, source: &[u8]) -> Vec<String> {
+        let mut args = Vec::new();
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "command" {
+                let mut skip_name = true;
+                for arg in child.children(&mut child.walk()) {
+                    if arg.kind() == "command_name" {
+                        skip_name = false;
+                        continue;
+                    }
+                    if skip_name { continue; }
+                    if arg.kind() == "word" || arg.kind() == "string"
+                        || arg.kind() == "raw_string" || arg.kind() == "string_content" {
+                        if let Ok(text) = arg.utf8_text(source) {
+                            args.push(text.trim_matches('"').trim_matches('\'').to_string());
+                        }
+                    }
+                }
+            }
+        }
+        args
+    }
+
+    /// Check if a value node is a known-safe external (getenv of known var,
+    /// or command substitution of known command). Returns AutoBless info if so.
+    fn check_known_external(&self, node: Node, source: &[u8], var_name: &str) -> Option<AutoBless> {
+        use crate::known_externals::{lookup_env_var, lookup_command};
+
+        match node.kind() {
+            "command_substitution" => {
+                let cmd_name = self.get_cmd_subst_name(node, source);
+                let args = self.get_cmd_subst_args(node, source);
+
+                // $(getenv HOME) → check known env vars
+                if cmd_name == "getenv" && !args.is_empty() {
+                    if let Some(known) = lookup_env_var(&args[0]) {
+                        return Some(AutoBless {
+                            var_name: var_name.to_string(),
+                            pattern: known.pattern.to_string(),
+                            description: known.description.to_string(),
+                            line: 0,
+                        });
+                    }
+                }
+
+                // $(hostname), $(date +%Y-%m-%d), etc. → check known commands
+                if let Some(known) = lookup_command(&cmd_name, &args) {
+                    return Some(AutoBless {
+                        var_name: var_name.to_string(),
+                        pattern: known.pattern.to_string(),
+                        description: known.description.to_string(),
+                        line: 0,
+                    });
+                }
+
+                None
+            }
+            _ => None,
+        }
     }
 
     /// Check if an expression contains reads of tainted variables (no diagnostics).

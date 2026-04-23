@@ -288,8 +288,8 @@ fn janet_continue_not_external() {
 
 #[test]
 fn janet_bless_emitted() {
-    // Use command substitution to taint x, then bless it
-    let janet = to_janet("bless", "#!/bin/bash\nx=$(cat /etc/hostname)\nbless x [[ -n $x ]]\necho $x");
+    // Use unknown command to taint x, then bless it
+    let janet = to_janet("bless", "#!/bin/bash\nx=$(curl http://example.com)\nbless x [[ -n $x ]]\necho $x");
     assert!(janet.contains("# bless x"), "expected bless comment: {}", janet);
 }
 

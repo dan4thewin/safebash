@@ -97,15 +97,18 @@ fn main() {
     }
 
     // Subset gate + taint tracking — always run (sash safety guarantees are structural)
+    let auto_blessed;
     {
         let rules = sash::rules::all_rules();
         let mut diags = sash::validator::validate(tree.root_node(), source.as_bytes(), &rules);
 
         let mut tracker = sash::taint::TaintTracker::new();
         diags.extend(tracker.analyze(tree.root_node(), source.as_bytes()));
+        auto_blessed = tracker.auto_blessed().to_vec();
 
         diags.sort_by_key(|d| (d.line, d.col));
 
+        let is_emit_source = flags.contains(&"--emit-source");
         let mut has_error = false;
         for d in &diags {
             let prefix = match d.severity {
@@ -115,7 +118,7 @@ fn main() {
             };
             eprintln!("{}:{}:{}: {} [{}] {}", input, d.line, d.col, prefix, d.code, d.message);
         }
-        if has_error {
+        if has_error && !is_emit_source {
             std::process::exit(1);
         }
     }
@@ -128,7 +131,11 @@ fn main() {
     // --emit-source: apply coercions, print sash-native source, exit
     if flags.contains(&"--emit-source") {
         let annotate = flags.contains(&"--annotate");
-        let result = sash::emit_source::emit_source(source.as_bytes(), annotate);
+        let mut result = sash::emit_source::emit_source(source.as_bytes(), annotate);
+        // Insert auto-bless lines for known externals
+        if !auto_blessed.is_empty() {
+            result = sash::emit_source::inject_auto_bless(&result, &auto_blessed, annotate);
+        }
         print!("{}", result);
         return;
     }
