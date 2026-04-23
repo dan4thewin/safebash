@@ -30,7 +30,7 @@
 - `getenv`/`argv` builtins (DD#42) — `$(getenv HOME)` / `$(argv 1)` as explicit boundary
 - `-` error suppression (DD#21) — `- cd /tmp` as sugar for `cd /tmp || true`
 - `local fn` for mocking (DD#18 candidate) — lexically scoped function shadowing
-- SSA phi function dispatch (DD#19 candidate) — conditional function definition
+
 - `@arr` iteration syntax (DD#41) — shorthand for `"${arr[@]}"`
 - Fixed-point arithmetic (DD#36) — `dtoi`/`itod` scale functions
 - Arithmetic overflow traps (DD#25) — runtime trap on integer overflow

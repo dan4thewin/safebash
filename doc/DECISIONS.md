@@ -276,7 +276,7 @@ hazard (e.g., word splitting).
 | 15 (Janet oracle) | ✅ |
 | 16-17 (int type, call syntax) | ✅ |
 | 18 (local fn) | ❓ |
-| 19 (SSA phi functions) | ❓ |
+| 19 (SSA phi functions) | ❌ YAGNI — use const int flag + branch |
 | 20 (shell options) | ✅ |
 | 21 (- error suppression) | 📐 |
 | 22 (no word splitting) | ✅ |
