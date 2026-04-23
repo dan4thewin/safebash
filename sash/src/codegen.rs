@@ -64,6 +64,7 @@ impl VarSlot {
     }
 }
 
+#[allow(dead_code)]
 struct ExternFuncs {
     write: cranelift_module::FuncId,
     exit: cranelift_module::FuncId,
@@ -845,7 +846,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         }
     }
     fn intern_ir_expr(module: &mut ObjectModule, intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId, expr: &crate::ir::Expr) {
-        use crate::ir::ExprKind;
+        
         match &expr.kind {
             crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => { intern(module, s); }
             crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
@@ -856,7 +857,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     }
     fn intern_test_expr(module: &mut ObjectModule, intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId, test: &TestExpr) {
         fn intern_expr(module: &mut ObjectModule, intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId, expr: &crate::ir::Expr) {
-            use crate::ir::ExprKind;
+            
             match &expr.kind {
                 crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => { intern(module, s); }
                 crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => { for p in parts { intern_expr(module, intern, p); } }
@@ -2562,7 +2563,7 @@ fn lower_expr_value(
 #[allow(unused_variables)]
         exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    use crate::ir::ExprKind;
+    
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
             if let Some(&data_id) = literals.get(s.as_str()) {
@@ -2699,7 +2700,7 @@ fn lower_expr_value_as_int(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> cranelift_codegen::ir::Value {
-    use crate::ir::ExprKind;
+    
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) => {
             builder.ins().iconst(I64, s.parse::<i64>().unwrap_or(0))
@@ -3988,7 +3989,7 @@ fn emit_strlen(
 
 fn scan_test_for_vars(test: &TestExpr, refs: &mut std::collections::HashSet<String>) {
     fn scan_expr(expr: &crate::ir::Expr, refs: &mut std::collections::HashSet<String>) {
-        use crate::ir::ExprKind;
+        
         match &expr.kind {
             crate::ir::ExprKind::SimpleExpansion(name) => {
                 if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
@@ -4130,7 +4131,7 @@ fn emit_restore(
 /// Convert an IR Expr to an SsaValue for use in lower_value.
 /// Used for redirect targets that contain runtime expressions (tilde expansion, etc).
 fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
-    use crate::ir::ExprKind;
+    
     use crate::ssa::{SsaValue, VarRef};
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
@@ -4145,7 +4146,7 @@ fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
 
 /// Scan an IR Expr (redirect target) for variable references.
 fn scan_redirect_for_vars(expr: &crate::ir::Expr, refs: &mut std::collections::HashSet<String>) {
-    use crate::ir::ExprKind;
+    
     match &expr.kind {
         crate::ir::ExprKind::SimpleExpansion(v) => { refs.insert(v.clone()); }
         crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
@@ -4165,7 +4166,7 @@ fn lower_ir_redirect_expr(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    use crate::ir::ExprKind;
+    
     use cranelift_codegen::ir::types::I64;
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {

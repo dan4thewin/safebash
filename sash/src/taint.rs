@@ -160,7 +160,7 @@ impl TaintTracker {
                         let var_name = var_node.utf8_text(source).unwrap_or("");
                         // Check if the word list is all literals
                         let mut has_tainted_source = false;
-                        let mut has_expansion = false;
+                        let mut _has_expansion = false;
                         for child in node.children(&mut node.walk()) {
                             if child.kind() == "word" || child.kind() == "string"
                                 || child.kind() == "concatenation"
@@ -171,12 +171,12 @@ impl TaintTracker {
                                     has_tainted_source = true;
                                 }
                                 if child.kind() == "simple_expansion" || child.kind() == "expansion" {
-                                    has_expansion = true;
+                                    _has_expansion = true;
                                 }
                             }
                             if child.kind() == "command_substitution" {
                                 has_tainted_source = true;
-                                has_expansion = true;
+                                _has_expansion = true;
                             }
                         }
                         if has_tainted_source {
@@ -227,7 +227,7 @@ impl TaintTracker {
         }
     }
 
-    fn handle_assignment(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+    fn handle_assignment(&mut self, node: Node, source: &[u8], _diags: &mut Vec<Diagnostic>) {
         // variable_assignment: name=value
         let name = node.child_by_field_name("name")
             .and_then(|n| n.utf8_text(source).ok())
