@@ -11,6 +11,10 @@
 
 - Taint inheritance through bare function calls
 - Adversarial review run-2 (schedule after significant new code)
+- Validator rule: `alias` rejected (DD#11) — textual substitution, suggest function
+- Validator rule: `set`/`shopt` table-driven (DD#20) — strip consistent options (`set -e`, `shopt -s lastpipe`, etc.), reject contradictory ones (`set +e`, `shopt -s dotglob`, etc.)
+- Validator rule: `PATH=` assignment rejected (DD#23) — PATH is compile-time only
+- Validator rule: `bash -c` — inline the argument code (DD#10), not a rejection
 
 ### Compilation — High Priority
 
@@ -144,4 +148,5 @@
 - `$((x=1))` as expression — DD#31, use `(( x=1 )); echo $x`
 - Recursive arithmetic `$((z))` where z is a string expression — implicit eval
 - `${arr[@]/pat/rep}` per-element replacement — use loop with `${var:s/re/str/}`
-- DD#19 SSA phi function dispatch — use const int flag + branch
+- DD#8 JIT coerce mode — far-future
+- DD#10 `bash -c` inlining — lowerer recognizes and inlines, not a rejection
