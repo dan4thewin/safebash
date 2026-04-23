@@ -912,6 +912,11 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 SsaInst::ArrayAppend { value, .. } => {
                     intern_value(&mut module, &mut intern, value);
                 }
+                SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
+                    for r in redirects {
+                        intern_ir_expr(&mut module, &mut intern, &r.target);
+                    }
+                }
                 _ => {}
             }
         }
@@ -2034,7 +2039,9 @@ fn lower_inst(
             let result = lower_test_expr(test_expr, builder, module, vars, literals, externs, Some(exit_status_var));
             builder.def_var(test_result_var, result);
         }
-        SsaInst::ReadLine { target, fd, delim } => {
+        SsaInst::ReadLine { target, fd, delim, redirects } => {
+            // Set up redirects (e.g. herestring <<< "text")
+            let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             // fd=-1 is sentinel for "use captured pipe fd"
             let fd_val = if *fd == -1 {
                 builder.use_var(pipe_read_fd_var)
@@ -2059,8 +2066,11 @@ fn lower_inst(
             let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
             let result = builder.ins().uextend(I64, got_data);
             builder.def_var(test_result_var, result);
+            // Restore redirects
+            emit_restore(saved, builder, module, externs);
         }
-        SsaInst::ReadLineMulti { targets, fd, delim } => {
+        SsaInst::ReadLineMulti { targets, fd, delim, redirects } => {
+            let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             let fd_val = if *fd == -1 {
                 builder.use_var(pipe_read_fd_var)
             } else {
@@ -2109,6 +2119,7 @@ fn lower_inst(
                     cur_len = builder.ins().stack_load(I64, rest_len_slot, 0);
                 }
             }
+            emit_restore(saved, builder, module, externs);
         }
         SsaInst::Pipeline { stages, capture_read_fd } => {
             for (_i, (_n, _, _r)) in stages.iter().enumerate() {

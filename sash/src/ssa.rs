@@ -81,6 +81,7 @@ pub enum SsaInst {
         target: VarRef,
         fd: i64,  // 0 = stdin
         delim: Option<u8>,  // None = newline (default), Some(byte) = custom delimiter
+        redirects: Vec<crate::ir::Redirect>,
     },
     /// read -r var1 var2 ... varN: read line, split on whitespace into N vars
     /// Last var gets the remainder.
@@ -88,6 +89,7 @@ pub enum SsaInst {
         targets: Vec<VarRef>,
         fd: i64,
         delim: Option<u8>,
+        redirects: Vec<crate::ir::Redirect>,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {

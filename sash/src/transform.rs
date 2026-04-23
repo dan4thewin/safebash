@@ -558,6 +558,7 @@ fn lower_one(
                         target,
                         fd: 0,
                         delim,
+                        redirects: vec![],
                     });
                     return block;
                 } else if var_names.len() > 1 {
@@ -566,6 +567,7 @@ fn lower_one(
                         targets,
                         fd: 0,
                         delim,
+                        redirects: vec![],
                     });
                     return block;
                 }
@@ -863,20 +865,33 @@ fn lower_one(
             // If the body is a command, attach redirects to the SsaInst::Command
             let result_block = lower_one(&r.body, ssa, state, block);
             // Find the last instruction we just pushed and attach redirects
+            // Check both the original block and the result block (read returns early)
             if !r.redirects.is_empty() {
-                let blk = ssa.block_mut(block);
-                if let Some(inst) = blk.insts.last_mut() {
-                    match inst {
-                        SsaInst::Command { redirects, .. } => {
-                            *redirects = r.redirects.clone();
-                        }
-                        SsaInst::Pipeline { stages, .. } => {
-                            // Attach redirects to the last stage
-                            if let Some(last) = stages.last_mut() {
-                                last.2 = r.redirects.clone();
+                let blocks_to_check = if result_block == block {
+                    vec![block]
+                } else {
+                    vec![block, result_block]
+                };
+                for blk_id in blocks_to_check {
+                    let blk = ssa.block_mut(blk_id);
+                    if let Some(inst) = blk.insts.last_mut() {
+                        match inst {
+                            SsaInst::Command { redirects, .. } => {
+                                *redirects = r.redirects.clone();
                             }
+                            SsaInst::Pipeline { stages, .. } => {
+                                if let Some(last) = stages.last_mut() {
+                                    last.2 = r.redirects.clone();
+                                }
+                            }
+                            SsaInst::ReadLine { redirects, .. } => {
+                                *redirects = r.redirects.clone();
+                            }
+                            SsaInst::ReadLineMulti { redirects, .. } => {
+                                *redirects = r.redirects.clone();
+                            }
+                            _ => {}
                         }
-                        _ => {}
                     }
                 }
             }
@@ -1202,6 +1217,7 @@ fn lower_for(
                     target,
                     fd: -1,
                     delim: None,
+                    redirects: vec![],
                 });
                 ssa.block_mut(header).terminator = Terminator::Branch {
                     condition: "__test_result".to_string(),

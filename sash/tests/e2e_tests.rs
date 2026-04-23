@@ -50,7 +50,7 @@ fn compile_and_run(name: &str, script: &str) -> String {
 fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}_fail", name);
-    let out = sash_cmd(&["-o", &bin, &src]);
+    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
     assert!(!out.status.success(), "expected compile failure for {}", name);
     String::from_utf8_lossy(&out.stderr).to_string()
 }
@@ -842,7 +842,6 @@ echo $(( n + 10 ))
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-#[ignore] // herestring read not fully wired
 fn pos_herestring() {
     let script = "#!/bin/bash\nread x <<< \"hello\"\nbless x [[ -n $x ]]\necho $x";
     assert_eq!(compile_and_run("herestring", script), "hello\n");
@@ -916,4 +915,55 @@ done
 fn pos_alternate_value() {
     let script = "#!/bin/bash\nx=set\necho ${x:+alternate}\ny=\"\"\necho ${y:+alternate}";
     assert_eq!(compile_and_run("alt_val", script), "alternate\n\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HEREDOC COMMAND SUBSTITUTION REJECTION (SB5002)
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn neg_heredoc_cmdsub() {
+    let script = "#!/bin/bash\ncat <<EOF\nhello $(hostname)\nEOF";
+    let stderr = compile_expect_fail("hd_cmdsub", script);
+    assert!(stderr.contains("SB5002"), "expected SB5002 for $(cmd) in heredoc, got: {}", stderr);
+}
+
+#[test]
+fn pos_heredoc_blessed_var() {
+    // The safe pattern: extract $(cmd) to var, bless, then use in heredoc
+    let script = "#!/bin/bash\nh=$(cat /etc/hostname)\nbless h [[ -n $h ]]\ncat <<EOF\nhello $h\nEOF";
+    // Can't predict hostname, just verify it compiles and runs
+    let output = compile_and_run("hd_blessed", script);
+    assert!(output.starts_with("hello "), "expected 'hello <hostname>', got: {}", output);
+}
+
+// ═══════════════════════════════════════════════════════════════
+// HERESTRING TESTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_herestring_read_multi() {
+    let script = "#!/bin/bash\nread a b <<< \"hello world\"\nbless a [[ -n $a ]]\nbless b [[ -n $b ]]\necho $a\necho $b";
+    assert_eq!(compile_and_run("hs_multi", script), "hello\nworld\n");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// BLESS EDGE CASES
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn pos_bless_regex_validation() {
+    let script = r#"#!/bin/bash
+n=$(cat /etc/hostname)
+bless n [[ $n =~ ^[a-zA-Z0-9._-]+$ ]]
+echo $n
+"#;
+    let output = compile_and_run("bless_regex", script);
+    assert!(!output.is_empty(), "expected hostname output");
+}
+
+#[test]
+fn pos_bless_numeric_check() {
+    let script = "#!/bin/bash\nx=$(echo 42)\nbless x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
+    assert_eq!(compile_and_run("bless_num", script), "50\n");
 }

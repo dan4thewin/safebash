@@ -47,10 +47,10 @@ pub fn print_ssa(program: &SsaProgram) -> String {
                 SsaInst::Test(test_expr) => {
                     out.push_str(&format!("  test {:?}\n", test_expr));
                 }
-                SsaInst::ReadLine { target, fd, delim } => {
+                SsaInst::ReadLine { target, fd, delim, .. } => {
                     out.push_str(&format!("  {} = read_line(fd={})\n", target.display(), fd));
                 }
-                SsaInst::ReadLineMulti { targets, fd, delim } => {
+                SsaInst::ReadLineMulti { targets, fd, delim, .. } => {
                     let names: Vec<String> = targets.iter().map(|t| t.display()).collect();
                     out.push_str(&format!("  {} = read_line_multi(fd={})\n", names.join(", "), fd));
                 }
