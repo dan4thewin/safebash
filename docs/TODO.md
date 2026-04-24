@@ -20,7 +20,7 @@
 ### Compilation — High Priority
 
 - Per-command env vars for externals — `FOO=bar cmd` (externals only, not functions). This is the mechanism that replaces `export` (SB5001).
-- Case exit status propagation from matched arm — real bug
+- ~~Case exit status propagation from matched arm~~ — fixed (c36769d)
 - Compound command redirects — `for...done > file`, `for...done | cmd`
 - Heredoc with `$(cmd)` — lowerer doesn't expand command substitutions in heredoc bodies (variable expansion works)
 
