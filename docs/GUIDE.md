@@ -85,7 +85,7 @@ safebash/
 │       └── oracle_tests.rs   — 59 oracle validation tests
 ├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
 │   └── src/lib.rs         — ~2500 lines
-├── doc/                   — Design docs (GUIDE, JOURNAL, SUBSET, TODO, TIMELINE)
+├── docs/                   — Design docs (GUIDE, JOURNAL, SUBSET, TODO, TIMELINE)
 ├── audit/                 — Adversarial review results
 │   └── run-1/             — 5 models, 3 passes, remediation done
 ├── contrib/               — Vendored: plan9port-regexp, freertos-heap4
@@ -371,7 +371,7 @@ Build and run: `mk test` (Plan 9 mk, not make).
 
 ## Key Design Decisions
 
-45 design decisions documented in `doc/JOURNAL.md`. The most
+45 design decisions documented in `docs/JOURNAL.md`. The most
 architecturally significant:
 
 | # | Decision | Impact |

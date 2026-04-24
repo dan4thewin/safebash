@@ -13,8 +13,9 @@
 - Adversarial review run-2 (schedule after significant new code)
 - Validator rule: `alias` rejected (DD#11) — textual substitution, suggest function
 - Validator rule: `set`/`shopt` table-driven (DD#20) — strip consistent options (`set -e`, `shopt -s lastpipe`, etc.), reject contradictory ones (`set +e`, `shopt -s dotglob`, etc.)
-- Validator rule: `PATH=` assignment rejected (DD#23) — PATH is compile-time only
-- Validator rule: `bash -c` — inline the argument code (DD#10), not a rejection
+- Validator rule: `PATH=` assignment rejected (DD#23) — PATH is compile-time only. `env PATH=/dir cmd` is the escape hatch (requires `env` keyword).
+- Compile-time PATH resolution (DD#23 mode 2) — `--resolve` embeds absolute paths, `--sysroot` for cross-compilation. Not yet implemented.
+- Validator rule: `bash -c "literal"` rejected — remove wrapper, write code directly. `bash -c "$var"` rejected as SB4001 (dynamic execution)
 
 ### Compilation — High Priority
 
@@ -149,4 +150,4 @@
 - Recursive arithmetic `$((z))` where z is a string expression — implicit eval
 - `${arr[@]/pat/rep}` per-element replacement — use loop with `${var:s/re/str/}`
 - DD#8 JIT coerce mode — far-future
-- DD#10 `bash -c` inlining — lowerer recognizes and inlines, not a rejection
+- DD#10 `bash -c` inlining — YAGNI. Literal form: reject, tell user to remove wrapper. Dynamic form: SB4001.

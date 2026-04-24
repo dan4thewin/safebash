@@ -135,7 +135,7 @@ mk testall    # run everything
 ```
 sash/          compiler
 sash-rt/       runtime library (#![no_std], rustix, no libc)
-doc/           JOURNAL.md, GUIDE.md, SUBSET.md, TODO.md, TIMELINE.md
+docs/           JOURNAL.md, GUIDE.md, SUBSET.md, TODO.md, TIMELINE.md
 audit/         adversarial review results (5 models, 3 passes)
 contrib/       vendored deps (plan9port-regexp, freertos-heap4)
 suites/        brush/oils test runners and results
