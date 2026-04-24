@@ -1346,8 +1346,8 @@ fn lower_case(
             merge_block
         };
 
-        if is_wildcard || i == c.items.len() - 1 {
-            // Wildcard or last — unconditional jump
+        if is_wildcard {
+            // Wildcard — unconditional jump, always matches
             ssa.block_mut(current).terminator = Terminator::Goto(case_blocks[i]);
             continue;
         }
@@ -1395,19 +1395,78 @@ fn lower_case(
         }
     }
 
-    // Insert phi nodes at merge
-    if branch_states.len() >= 2 {
-        let all_vars: std::collections::HashSet<String> = branch_states.iter()
+    // Determine if a no-match path exists (can reach merge without entering
+    // any arm).  A wildcard arm always matches, so no-match is impossible if
+    // any arm is a wildcard.  Otherwise the false branch of the last check
+    // falls through to merge.
+    let has_wildcard = c.items.iter().any(|item| {
+        item.patterns.iter().any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
+    });
+
+    // Build a no-match state: pre_state with "?" forced to 0
+    // (POSIX: "if no pattern is matched, the exit status is zero")
+    let no_match_path: Option<(BlockId, std::collections::HashMap<String, u32>)> = if !has_wildcard {
+        let mut no_match_state = pre_state.clone();
+        // Define "?" = 0 on the no-match path via a dedicated block
+        let no_match_block = ssa.new_block("case.nomatch");
+        state.restore(&pre_state);
+        let zero_ref = state.define("?");
+        let no_match_snapshot = state.snapshot();
+        ssa.block_mut(no_match_block).insts.push(SsaInst::Assign {
+            target: zero_ref.clone(),
+            value: SsaValue::Literal("0".to_string()),
+        });
+        ssa.block_mut(no_match_block).terminator = Terminator::Goto(merge_block);
+
+        // Re-wire: anywhere the dispatch chain jumps to merge_block for
+        // no-match, redirect to no_match_block instead
+        for bid in &check_blocks {
+            let block = ssa.block_mut(*bid);
+            match &mut block.terminator {
+                Terminator::Branch { false_block, .. } if *false_block == merge_block => {
+                    *false_block = no_match_block;
+                }
+                _ => {}
+            }
+        }
+        // Also check pattern sub-blocks — they may branch false to merge
+        let all_block_ids: Vec<usize> = ssa.blocks.keys().cloned().collect();
+        for bid in all_block_ids {
+            if check_blocks.contains(&bid) || bid == merge_block || bid == no_match_block {
+                continue;
+            }
+            let block = ssa.block_mut(bid);
+            match &mut block.terminator {
+                Terminator::Branch { false_block, .. } if *false_block == merge_block => {
+                    *false_block = no_match_block;
+                }
+                _ => {}
+            }
+        }
+
+        Some((no_match_block, no_match_snapshot))
+    } else {
+        None
+    };
+
+    // Insert phi nodes at merge across all paths (arms + optional no-match)
+    let mut all_paths = branch_states.clone();
+    if let Some(ref nm) = no_match_path {
+        all_paths.push(nm.clone());
+    }
+
+    if all_paths.len() >= 2 {
+        let all_vars: std::collections::HashSet<String> = all_paths.iter()
             .flat_map(|(_, s)| s.keys().cloned())
             .collect();
 
         for var in &all_vars {
-            let pre_ver = pre_state.get(var).copied().unwrap_or(0);
-            let versions: Vec<(BlockId, u32)> = branch_states.iter()
+            let versions: Vec<(BlockId, u32)> = all_paths.iter()
                 .map(|(bid, s)| (*bid, s.get(var).copied().unwrap_or(0)))
                 .collect();
 
-            if versions.iter().any(|(_, v)| *v != pre_ver) {
+            let first_ver = versions[0].1;
+            if versions.iter().any(|(_, v)| *v != first_ver) {
                 let target = state.define(var);
                 let sources: Vec<(BlockId, VarRef)> = versions.iter()
                     .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))
@@ -1418,6 +1477,10 @@ fn lower_case(
                 });
             }
         }
+    } else if all_paths.len() == 1 {
+        // Single path (e.g. wildcard-only case) — adopt its state
+        let (_, ref path_state) = all_paths[0];
+        state.restore(path_state);
     }
 
     merge_block
