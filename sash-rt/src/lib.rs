@@ -211,7 +211,7 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
             buf[dir.len()] = b'/';
             buf[dir.len() + 1..dir.len() + 1 + cmd_bytes.len()].copy_from_slice(cmd_bytes);
             buf[dir.len() + 1 + cmd_bytes.len()] = 0;
-            let _path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
+            let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
             if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
                 let _ = rustix::runtime::execve(path_cstr, argv, envp);
             }
@@ -240,7 +240,7 @@ pub extern "C" fn sash_wait(pid: i64) -> i64 {
 #[no_mangle]
 pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
     unsafe {
-        let _path_cstr = core::ffi::CStr::from_ptr(path as *const i8);
+        let path_cstr = core::ffi::CStr::from_ptr(path as *const i8);
         let oflags = match flags {
             0 => rustix::fs::OFlags::RDONLY,
             1 => rustix::fs::OFlags::WRONLY
@@ -1401,7 +1401,7 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
     if path.len() >= buf.len() { return 0; }
     buf[..path.len()].copy_from_slice(path);
     buf[path.len()] = 0;
-    let _path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
 
     match op {
         0 => {
@@ -1627,7 +1627,7 @@ pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {
     if path.len() >= buf.len() { return -1; }
     buf[..path.len()].copy_from_slice(path);
     buf[path.len()] = 0;
-    let _path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
     match rustix::process::chdir(path_cstr) {
         Ok(()) => 0,
         Err(_) => -1,
@@ -1750,7 +1750,7 @@ pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
     
     // Get PATH
     let path_env = b"PATH\0";
-    let _path_cstr = unsafe { core::ffi::CStr::from_ptr(path_env.as_ptr() as *const core::ffi::c_char) };
+    let path_cstr = unsafe { core::ffi::CStr::from_ptr(path_env.as_ptr() as *const core::ffi::c_char) };
     
     // Use raw getenv via syscall... actually, use our existing sash_getenv pattern
     // For simplicity, read /proc/self/environ or just use the C getenv pattern
