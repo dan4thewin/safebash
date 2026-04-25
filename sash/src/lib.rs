@@ -2,6 +2,7 @@ pub mod ir;
 pub mod lower;
 pub mod printer;
 pub mod ssa;
+pub mod ssa_taint;
 pub mod transform;
 pub mod ssa_printer;
 pub mod emit_janet;

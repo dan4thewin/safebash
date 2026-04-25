@@ -77,8 +77,8 @@ pub fn print_ssa(program: &SsaProgram) -> String {
                 SsaInst::ArrayAppend { array, value } => {
                     out.push_str(&format!("  {} += ({})\n", array, print_value(value)));
                 }
-                SsaInst::Bless { var, test } => {
-                    out.push_str(&format!("  bless {} [[ {:?} ]]\n", var.display(), test));
+                SsaInst::Bless { target, source, test } => {
+                    out.push_str(&format!("  {} = bless {} [[ {:?} ]]\n", target.display(), source.display(), test));
                 }
             }
         }

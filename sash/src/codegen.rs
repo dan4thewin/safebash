@@ -1287,7 +1287,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
             for inst in &ssa_block.insts {
                 if block_terminated { break; }
                 block_terminated = lower_inst(inst, &mut builder, &mut module,
-                           &vars, &literals, &externs, space_id, nl_id,
+                           &mut vars, &literals, &externs, space_id, nl_id,
                            test_result_var, exit_status_var, pipe_read_fd_var,
                            capture_saved_var, capture_pipe_var, func_constants);
             }
@@ -1353,7 +1353,7 @@ fn lower_inst(
     inst: &SsaInst,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
+    vars: &mut HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
@@ -2279,8 +2279,9 @@ fn lower_inst(
                 builder.ins().call(wait_ref, &[pid]);
             }
         }
-        SsaInst::Bless { var: _var, test } => {
-            // Runtime bless enforcement: evaluate test, abort if false.
+        SsaInst::Bless { source, target, test } => {
+            // Runtime bless enforcement: evaluate test on source, abort if false.
+            // On pass, copy source value to target (new clean SSA version).
             let result = lower_test_expr(test, builder, module, vars, literals, externs, Some(exit_status_var));
             let pass_block = builder.create_block();
             let fail_block = builder.create_block();
@@ -2306,6 +2307,29 @@ fn lower_inst(
 
             builder.switch_to_block(pass_block);
             builder.seal_block(pass_block);
+
+            // Copy source value to target — target is the new clean SSA version
+            let src_key = format!("{}_{}", source.name, source.version);
+            if let Some(slot) = vars.get(src_key.as_str()).cloned() {
+                let tgt_key = format!("{}_{}", target.name, target.version);
+                match slot {
+                    VarSlot::Str { ptr, len } => {
+                        let p = builder.use_var(ptr);
+                        let l = builder.use_var(len);
+                        let tp = builder.declare_var(I64);
+                        let tl = builder.declare_var(I64);
+                        builder.def_var(tp, p);
+                        builder.def_var(tl, l);
+                        vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
+                    }
+                    VarSlot::Int(v) => {
+                        let val = builder.use_var(v);
+                        let tv = builder.declare_var(I64);
+                        builder.def_var(tv, val);
+                        vars.insert(tgt_key, VarSlot::Int(tv));
+                    }
+                }
+            }
         }
     }
     false // block not terminated

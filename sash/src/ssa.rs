@@ -129,7 +129,8 @@ pub enum SsaInst {
     /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
     Bless {
-        var: VarRef,
+        target: VarRef,
+        source: VarRef,
         test: crate::ir::TestExpr,
     },
 }

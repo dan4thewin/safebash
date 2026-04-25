@@ -4793,3 +4793,39 @@ are currently tainted. This is lightweight inter-procedural analysis
 names per function.
 
 DG directed architecture and design. AI implemented.
+
+### Design Decision #51: SSA Taint Verification Pass
+
+**Context:** The CST taint analyzer is the primary enforcement gate.
+After the audit run-2 remediation, it catches all known bypass
+patterns. But it operates on syntax, not on the representation that
+gets compiled. Any future bug in the CST pass could let tainted data
+reach codegen undetected.
+
+**Decision:** Add `ssa_taint.rs` — a second taint pass that runs on
+the SSA representation after transformation, before codegen. It
+classifies each VarRef version as tainted or clean based on how it
+was defined:
+- `getenv`, `argv`, `read` (non-herestring), external cmdsub → tainted
+- `getenv` of known env var (auto-bless) → clean
+- Known-safe external commands → clean
+- User-defined function capture → clean
+- Literal, bless target → clean
+- Phi → clean unless a classified incoming is tainted
+- Arithmetic/concat/param-expansion → tainted if any operand is
+
+If any tainted VarRef reaches a use site (command arg, pipeline arg,
+subscript, export), the pass emits an ICE ("CST taint pass missed
+this") and compilation fails. This is the airbag — it should never
+fire. If it does, that's a bug in the CST pass.
+
+**Implementation:**
+- `Bless` changed from `{var, test}` to `{target, source, test}` —
+  produces a new SSA version. `source` is tainted, `target` is clean.
+  Codegen copies the value on the pass path.
+- `verify_ssa_taint()` called in `main.rs` before `compile_to_object`.
+- 264 lines, no design decisions — purely mechanical verification.
+- Special variables (`?`, `!`, `$`, `#`, etc.) and positionals at
+  version 0 pre-seeded as clean.
+
+DG directed architecture and design. AI implemented.

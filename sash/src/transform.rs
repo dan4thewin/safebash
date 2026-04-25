@@ -303,9 +303,11 @@ fn lower_one(
                     // Look for a TestExpr in the remaining args
                     for arg in &c.args[1..] {
                         if let ExprKind::Test(test_expr) = &arg.kind {
-                            let var_ref = state.lookup(&var_name);
+                            let source_ref = state.lookup(&var_name);
+                            let target_ref = state.define(&var_name);
                             ssa.block_mut(block).insts.push(SsaInst::Bless {
-                                var: var_ref,
+                                target: target_ref,
+                                source: source_ref,
                                 test: test_expr.clone(),
                             });
                             return block;

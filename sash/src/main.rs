@@ -174,6 +174,20 @@ fn main() {
     };
 
     let obj_path = format!("{}.o", output);
+
+    // Build SSA for the taint verification pass
+    let tree2 = sash::parse(&source);
+    let program2 = sash::lower::lower_program(tree2.root_node(), source.as_bytes());
+    let type_map2 = sash::type_check::infer_types(&program2);
+    let (ssa2, _) = sash::transform::ir_to_ssa_typed(&program2, type_map2);
+    let taint_ices = sash::ssa_taint::verify_ssa_taint(&ssa2);
+    if !taint_ices.is_empty() {
+        for ice in &taint_ices {
+            eprintln!("{}: {}", input, ice);
+        }
+        std::process::exit(1);
+    }
+
     let obj_bytes = match sash::codegen::compile_to_object(&source) {
         Ok(bytes) => bytes,
         Err(diags) => {
