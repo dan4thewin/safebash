@@ -2,6 +2,8 @@ pub mod dynamic_execution;
 pub mod export_rejected;
 pub mod heredoc_cmdsub;
 pub mod indirect_expansion;
+pub mod nameref_rejected;
+pub mod process_substitution;
 
 use crate::rule::Rule;
 
@@ -11,5 +13,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(export_rejected::ExportRejected),
         Box::new(heredoc_cmdsub::HeredocCmdSub),
         Box::new(indirect_expansion::IndirectExpansion),
+        Box::new(nameref_rejected::NamerefRejected),
+        Box::new(process_substitution::ProcessSubstitution),
     ]
 }

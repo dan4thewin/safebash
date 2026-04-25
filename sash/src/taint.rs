@@ -35,6 +35,8 @@ pub struct TaintTracker {
     declared: std::collections::HashSet<String>,
     /// Track which functions have been defined in the script.
     functions: std::collections::HashSet<String>,
+    /// Track free variable reads per function (globals read in body).
+    function_free_reads: HashMap<String, Vec<String>>,
     /// Are we inside a bless expression? If so, which variable?
     bless_context: Option<String>,
     /// Auto-blessed variables: name → (pattern, description, source line)
@@ -56,6 +58,7 @@ impl TaintTracker {
             vars: HashMap::new(),
             declared: std::collections::HashSet::new(),
             functions: std::collections::HashSet::new(),
+            function_free_reads: HashMap::new(),
             bless_context: None,
             auto_blessed: Vec::new(),
         }
@@ -225,6 +228,20 @@ impl TaintTracker {
                     if child.kind() == "word" || child.kind() == "simple_expansion" || child.kind() == "expansion" || child.kind() == "string" || child.kind() == "concatenation" {
                         // The case value expression — check for tainted reads
                         self.check_expr_reads(child, source, diags);
+                    } else if child.kind() == "case_item" {
+                        // T11: check patterns AND body
+                        for item_child in child.children(&mut child.walk()) {
+                            match item_child.kind() {
+                                // Pattern expressions
+                                "word" | "simple_expansion" | "expansion"
+                                | "string" | "concatenation" => {
+                                    self.check_expr_reads(item_child, source, diags);
+                                }
+                                _ => {
+                                    self.walk_statement(item_child, source, diags);
+                                }
+                            }
+                        }
                     } else {
                         self.walk_statement(child, source, diags);
                     }
@@ -292,6 +309,18 @@ impl TaintTracker {
                 self.handle_read(node, source);
             }
             _ => {
+                // T6: if calling a known function, check free-read globals
+                if let Some(free_reads) = self.function_free_reads.get(cmd_name).cloned() {
+                    for var in &free_reads {
+                        if self.is_tainted(var) {
+                            diags.push(Diagnostic::error(
+                                node,
+                                "SB4020",
+                                format!("function '{}' reads global '{}' which is tainted — validate with `bless {} [[ ... ]]`", cmd_name, var, var),
+                            ));
+                        }
+                    }
+                }
                 // Check all arguments for tainted reads
                 for child in node.children(&mut node.walk()) {
                     if child.kind() != "command_name" {
@@ -303,9 +332,7 @@ impl TaintTracker {
     }
 
     fn handle_bless(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
-        // bless VAR EXPR
-        // First non-command-name arg is the variable name.
-        // Remaining args form the test expression.
+        // bless VAR [[ test_expr ]]
         let mut args = Vec::new();
         for child in node.children(&mut node.walk()) {
             if child.kind() != "command_name" {
@@ -333,6 +360,41 @@ impl TaintTracker {
             return;
         }
 
+        // T3: Require valid [[ ... ]] test expression
+        if args.len() < 2 {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4013",
+                "bless requires a test expression: bless VAR [[ test ]]".to_string(),
+            ));
+            return;
+        }
+
+        let first_arg_text = args[1].utf8_text(source).unwrap_or("");
+        if first_arg_text != "[[" {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4013",
+                format!("bless: expected [[ test expression, got '{}'", first_arg_text),
+            ));
+            return;
+        }
+
+        // T2: Require test expression to reference the blessed variable
+        let test_text = args[1..].iter()
+            .map(|a| a.utf8_text(source).unwrap_or(""))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let var_ref = format!("${}", var_name);
+        if !test_text.contains(&var_ref) {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4012",
+                format!("bless: test expression does not reference ${}  — tautological bless", var_name),
+            ));
+            return;
+        }
+
         // Enter bless context — reads of var_name are allowed inside
         let old_ctx = self.bless_context.take();
         self.bless_context = Some(var_name.to_string());
@@ -351,20 +413,8 @@ impl TaintTracker {
     fn handle_read(&mut self, node: Node, source: &[u8]) {
         // read -r var / read -d: -a arr — targets become tainted
         // Exception: read from herestring (<<<) or heredoc (<<) of clean data → clean
-        let has_clean_redirect = node.parent().map(|p| {
-            if p.kind() == "redirected_statement" {
-                p.children(&mut p.walk()).any(|c| {
-                    c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
-                })
-            } else {
-                false
-            }
-        }).unwrap_or(false);
-        // Also check if the command itself has a herestring redirect
-        let has_herestring = node.children(&mut node.walk()).any(|c| {
-            c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
-        });
-        let is_clean_source = has_clean_redirect || has_herestring;
+        // Check for herestring/heredoc redirect, and whether its content is clean
+        let is_clean_source = self.has_clean_heredoc_or_herestring(node, source);
         for child in node.children(&mut node.walk()) {
             if child.kind() == "word" {
                 let text = child.utf8_text(source).unwrap_or("");
@@ -381,33 +431,68 @@ impl TaintTracker {
         }
     }
 
+    /// Check if a read command has a herestring/heredoc redirect with clean content.
+    /// Returns true only if the redirect exists AND its content has no tainted expansions.
+    fn has_clean_heredoc_or_herestring(&self, node: Node, source: &[u8]) -> bool {
+        // Check parent (redirected_statement) and self for herestring/heredoc
+        let redirect_nodes: Vec<Node> = {
+            let mut nodes = Vec::new();
+            if let Some(p) = node.parent() {
+                if p.kind() == "redirected_statement" {
+                    for c in p.children(&mut p.walk()) {
+                        if c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect" {
+                            nodes.push(c);
+                        }
+                    }
+                }
+            }
+            for c in node.children(&mut node.walk()) {
+                if c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect" {
+                    nodes.push(c);
+                }
+            }
+            nodes
+        };
+
+        if redirect_nodes.is_empty() {
+            return false;
+        }
+
+        // Check that redirect content has no tainted expansions
+        for redir in &redirect_nodes {
+            if self.subtree_has_tainted_expansion(*redir, source) {
+                return false;
+            }
+        }
+        true
+    }
+
+    /// Recursively check if any node in the subtree is a tainted expansion.
+    fn subtree_has_tainted_expansion(&self, node: Node, source: &[u8]) -> bool {
+        if self.expr_is_tainted(node, source) {
+            return true;
+        }
+        for child in node.children(&mut node.walk()) {
+            if self.subtree_has_tainted_expansion(child, source) {
+                return true;
+            }
+        }
+        false
+    }
+
     fn handle_function_def(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
         // Record function name as declared and as a known function
-        if let Some(name_node) = node.child_by_field_name("name") {
+        let func_name = if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(source).unwrap_or("");
             self.mark_declared(name);
             self.functions.insert(name.to_string());
-        }
+            name.to_string()
+        } else {
+            String::new()
+        };
 
-        // DD#24: external data is quarantined at the boundary, regardless
-        // of whether the boundary is crossed at the top level or inside a
-        // function body. Walk the body with the same analyzer so that
-        // getenv/argv/read/$(external) produce the same diagnostics they
-        // would at the top level.
-        //
-        // Inside a function body, positional parameters ($1..$N, $@, $*)
-        // refer to the function's call-site arguments — NOT the program's
-        // argv. The call site is itself a boundary: handle_command rejects
-        // any tainted argument expression at the call. Therefore inside
-        // the body these positionals are clean by construction.
-        //
-        // This is intra-procedural analysis only — no signatures, no
-        // propagation across call boundaries. DD#24's quarantine model
-        // says: external data is rejected at the boundary it crosses;
-        // a sash call site is such a boundary.
-        //
-        // We snapshot and restore variable state so taint state from
-        // inside the body does not leak to siblings.
+        // Snapshot state, walk body with clean positionals, then collect
+        // which globals the body reads (free variable reads).
         let saved_vars = self.vars.clone();
         let saved_declared = self.declared.clone();
         for p in &["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"] {
@@ -416,8 +501,53 @@ impl TaintTracker {
         if let Some(body) = node.child_by_field_name("body") {
             self.walk_statement(body, source, diags);
         }
+
+        // T6: collect free variable reads — any variable the body reads
+        // that was NOT declared locally inside the function.
+        if !func_name.is_empty() {
+            let mut free_reads = Vec::new();
+            // Walk the body again to find variable reads (we use the
+            // declared set from the body walk to distinguish locals)
+            self.collect_free_reads(node, source, &saved_declared, &mut free_reads);
+            if !free_reads.is_empty() {
+                self.function_free_reads.insert(func_name, free_reads);
+            }
+        }
+
         self.vars = saved_vars;
         self.declared = saved_declared;
+    }
+
+    /// Collect variable names read in a subtree that are not in `locals`.
+    fn collect_free_reads(&self, node: Node, source: &[u8],
+                          outer_declared: &std::collections::HashSet<String>,
+                          reads: &mut Vec<String>) {
+        match node.kind() {
+            "simple_expansion" => {
+                let var_name = self.extract_var_name(node, source);
+                // Skip positionals and special vars
+                if !var_name.is_empty()
+                    && !matches!(var_name.as_str(), "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"@"|"*"|"#"|"?"|"0")
+                    && outer_declared.contains(&var_name)
+                    && !reads.contains(&var_name)
+                {
+                    reads.push(var_name);
+                }
+            }
+            "expansion" => {
+                let var_name = self.extract_expansion_var(node, source);
+                if !var_name.is_empty()
+                    && outer_declared.contains(&var_name)
+                    && !reads.contains(&var_name)
+                {
+                    reads.push(var_name);
+                }
+            }
+            _ => {}
+        }
+        for child in node.children(&mut node.walk()) {
+            self.collect_free_reads(child, source, outer_declared, reads);
+        }
     }
 
     /// Check if an expression evaluates tainted data.
@@ -430,9 +560,14 @@ impl TaintTracker {
                 self.is_tainted(&var_name)
             }
             "expansion" => {
-                // ${var...}
+                // ${var...} — check primary var AND operand subtrees
                 let var_name = self.extract_expansion_var(node, source);
-                self.is_tainted(&var_name)
+                if self.is_tainted(&var_name) { return true; }
+                // Check operands (e.g. ${safe:-$tainted})
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_is_tainted(child, source) { return true; }
+                }
+                false
             }
             "command_substitution" => {
                 // $(cmd) — tainted if external command output
@@ -467,6 +602,10 @@ impl TaintTracker {
                 }
                 false
             }
+            "arithmetic_expansion" => {
+                // $(( expr )) — tainted if any variable inside is tainted
+                self.arith_subtree_has_tainted_var(node, source)
+            }
             _ => false,
         }
     }
@@ -494,18 +633,24 @@ impl TaintTracker {
                         format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
                     ));
                 }
-                // Also recurse into subscript index expressions
+                // T5: recurse into ALL children (subscript, operands like :-$x, :+$x)
                 for child in node.children(&mut node.walk()) {
-                    if child.kind() == "subscript" {
-                        for sc in child.children(&mut child.walk()) {
-                            self.check_expr_reads(sc, source, diags);
-                        }
-                    }
+                    self.check_expr_reads(child, source, diags);
                 }
             }
             "arithmetic_expansion" => {
                 // $(( expr )) — check all variable references inside
                 self.check_arith_reads(node, source, diags);
+            }
+            "command_substitution" => {
+                // T10: $(getenv X) used directly — flag if tainted source
+                if self.expr_is_tainted(node, source) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4020",
+                        "use of tainted command substitution — assign to a variable and validate with `bless`".to_string(),
+                    ));
+                }
             }
             _ => {
                 // Recurse into children
@@ -534,6 +679,19 @@ impl TaintTracker {
                 self.check_arith_reads(child, source, diags);
             }
         }
+    }
+
+    /// Check if an arithmetic subtree references any tainted variable (for expr_is_tainted).
+    fn arith_subtree_has_tainted_var(&self, node: Node, source: &[u8]) -> bool {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" {
+                let var_name = child.utf8_text(source).unwrap_or("");
+                if self.is_tainted(var_name) { return true; }
+            } else if self.arith_subtree_has_tainted_var(child, source) {
+                return true;
+            }
+        }
+        false
     }
 
     /// Extract variable name from a simple_expansion node ($var).

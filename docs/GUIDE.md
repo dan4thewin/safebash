@@ -364,7 +364,7 @@ right?" but "which behavior does safebash want, and why?"
 | `e2e_tests.rs` | 116 | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
 | `janet_tests.rs` | 37 | Compile to Janet, run both bash and Janet, compare output |
 | `oracle_tests.rs` | 59 | Additional validation tests |
-| `taint_spec_tests.rs` | 27 | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
+| `taint_spec_tests.rs` | 43 | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
 
 Build and run: `mk test` (Plan 9 mk, not make).
 

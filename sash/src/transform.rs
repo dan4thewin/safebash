@@ -2152,15 +2152,29 @@ fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
 /// Returns 0 if none found.
 fn collect_max_positional(stmts: &[Statement]) -> usize {
     let mut max = 0usize;
+    let mut shifts = 0usize;
     for stmt in stmts {
-        scan_expr_positionals_stmt(stmt, &mut max);
+        scan_expr_positionals_stmt(stmt, &mut max, &mut shifts);
     }
-    max
+    // After `shift` N times, a read of $1 actually needs argc >= 1+N
+    max + shifts
 }
 
-fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize) {
+fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut usize) {
     match &stmt.kind {
         StmtKind::Command(c) => {
+            // Detect `shift` command
+            let name_text = match &c.name.kind {
+                ExprKind::Literal(s) => s.as_str(),
+                _ => "",
+            };
+            if name_text == "shift" {
+                // shift with no args shifts by 1; shift N shifts by N
+                let n = c.args.first()
+                    .and_then(|a| if let ExprKind::Literal(s) = &a.kind { s.parse::<usize>().ok() } else { None })
+                    .unwrap_or(1);
+                *shifts += n;
+            }
             scan_expr_positionals_expr(&c.name, max);
             for a in &c.args { scan_expr_positionals_expr(a, max); }
         }
@@ -2171,40 +2185,40 @@ fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize) {
             for a in &d.assignments { scan_expr_positionals_expr(&a.value, max); }
         }
         StmtKind::Pipeline(p) => {
-            for s in &p.commands { scan_expr_positionals_stmt(s, max); }
+            for s in &p.commands { scan_expr_positionals_stmt(s, max, shifts); }
         }
         StmtKind::If(i) => {
-            for s in &i.condition { scan_expr_positionals_stmt(s, max); }
-            for s in &i.then_body { scan_expr_positionals_stmt(s, max); }
-            if let Some(ref eb) = i.else_body { for s in eb { scan_expr_positionals_stmt(s, max); } }
+            for s in &i.condition { scan_expr_positionals_stmt(s, max, shifts); }
+            for s in &i.then_body { scan_expr_positionals_stmt(s, max, shifts); }
+            if let Some(ref eb) = i.else_body { for s in eb { scan_expr_positionals_stmt(s, max, shifts); } }
         }
         StmtKind::While(w) => {
-            for s in &w.condition { scan_expr_positionals_stmt(s, max); }
-            for s in &w.body { scan_expr_positionals_stmt(s, max); }
+            for s in &w.condition { scan_expr_positionals_stmt(s, max, shifts); }
+            for s in &w.body { scan_expr_positionals_stmt(s, max, shifts); }
         }
         StmtKind::For(f) => {
             for w in &f.words { scan_expr_positionals_expr(w, max); }
-            for s in &f.body { scan_expr_positionals_stmt(s, max); }
+            for s in &f.body { scan_expr_positionals_stmt(s, max, shifts); }
         }
         StmtKind::Case(c) => {
             scan_expr_positionals_expr(&c.value, max);
             for item in &c.items {
-                for s in &item.body { scan_expr_positionals_stmt(s, max); }
+                for s in &item.body { scan_expr_positionals_stmt(s, max, shifts); }
             }
         }
         StmtKind::Function(_) => {} // don't recurse into nested functions
         StmtKind::Redirected(r) => {
-            scan_expr_positionals_stmt(&r.body, max);
+            scan_expr_positionals_stmt(&r.body, max, shifts);
         }
         StmtKind::List(l) => {
-            scan_expr_positionals_stmt(&l.left, max);
-            scan_expr_positionals_stmt(&l.right, max);
+            scan_expr_positionals_stmt(&l.left, max, shifts);
+            scan_expr_positionals_stmt(&l.right, max, shifts);
         }
         StmtKind::Subshell(s) => {
-            for st in &s.body { scan_expr_positionals_stmt(st, max); }
+            for st in &s.body { scan_expr_positionals_stmt(st, max, shifts); }
         }
         StmtKind::Group(g) => {
-            for st in &g.body { scan_expr_positionals_stmt(st, max); }
+            for st in &g.body { scan_expr_positionals_stmt(st, max, shifts); }
         }
         StmtKind::Comment(_) => {}
     }
@@ -2235,7 +2249,8 @@ fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
             }
         }
         ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts { scan_expr_positionals_stmt(s, max); }
+            let mut sub_shifts = 0;
+            for s in stmts { scan_expr_positionals_stmt(s, max, &mut sub_shifts); }
         }
         ExprKind::Test(t) => {
             scan_test_positionals(t, max);

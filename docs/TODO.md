@@ -1,7 +1,7 @@
 # safebash — TODO
 
-*Updated 2026-04-24. 486 tests passing (247 codegen, 116 e2e, 37 janet, 59 oracle, 27 taint spec).*
-*48 design decisions documented in JOURNAL.md.*
+*Updated 2026-04-25. 502 tests passing (247 codegen, 116 e2e, 37 janet, 59 oracle, 43 taint spec).*
+*50 design decisions documented in JOURNAL.md.*
 *2026-04-24: repo-wide gap survey expanded the backlog (codegen panics,
 pipeline `-` coercer, fuzzing, oils harness, doc drift).*
 
