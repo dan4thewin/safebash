@@ -1,0 +1,278 @@
+● Search (grep)
+  │ "fn (handle_assignment|handle_read|handle_bless|check_expr_reads|expr_is_tai
+  │ nted|check_arith_reads)" (sash/src)
+  └ 6 lines found
+
+● Search (grep)
+  │ "SB4020|taint|bless|getenv|here|string|heredoc|case|shift|positional"
+  │ (sash/tests)
+  └ 5 files found
+
+● Read taint.rs
+  │ sash/src/taint.rs
+  └ 669 lines read
+
+● Read taint_spec_tests.rs
+  │ sash/tests/taint_spec_tests.rs
+  └ 414 lines read
+
+● Search (grep)
+  │ "bless|TestExpr|command_substitution|shift|positional|case pattern|process
+  │ substitution|nameref|indirect" (sash/src)
+  └ 248 lines found
+
+● Read mod.rs
+  │ sash/src/rules/mod.rs
+  └ 15 lines read
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L280:340 (61 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L1420:1605 (186 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L420:500 (81 lines read)
+
+● Search (grep)
+  │ "declare -n|nameref|process substitution|process_substitution|herestring_red
+  │ irect|heredoc_redirect|case_item|shift" (sash/src/rules,
+  │ sash/src/validator.rs, sash/src/lower.rs)
+  └ 6 lines found
+
+● Read heredoc_cmdsub.rs
+  │ sash/src/rules/heredoc_cmdsub.rs
+  └ 57 lines read
+
+● Read indirect_expansion.rs
+  │ sash/src/rules/indirect_expansion.rs
+  └ 28 lines read
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L60:130 (71 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L740:900 (160 lines read)
+
+● Search (grep)
+  │ "nameref|declare -n|process_substitution|process substitution|<(\(|\<\()"
+  │ (sash/src, sash/tests)
+  └ 17 lines found
+
+● Read validator.rs
+  │ sash/src/validator.rs
+  └ 25 lines read
+
+● Search (grep)
+  │ "SB5|unsupported|not allowed|declare|process|substitution|nameref|-n"
+  │ (sash/src/validator.rs, sash/src/rule.rs, sash/src/rules)
+  └ 16 lines found
+
+● Search (grep)
+  │ "process substitution|nameref|declare -n|\<\(|\$\{!" in *.{md,rs,sh}
+  └ 158 lines found
+
+● Search (grep)
+  │ "SB4025|SB4003|declare -n|nameref|process substitution|<\(|>\(" (sash/tests)
+  └ No matches found
+
+● Search (grep)
+  │ "collect_max_positional|shift" (sash/tests)
+  └ 22 lines found
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L620:710 (91 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L2140:2285 (145 lines read)
+
+● Read diagnostic.rs
+  │ sash/src/diagnostic.rs
+  └ 52 lines read
+
+● Search (grep)
+  │ "SB40[0-9]{2}|SB50[0-9]{2}" (sash/src/taint.rs, sash/src/rules, sash/src)
+  └ 37 lines found
+
+● Search (grep)
+  │ "SB4010|SB4011|SB4020" (sash/tests)
+  └ 26 lines found
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L520:650 (131 lines read)
+
+● Read codegen_tests.rs
+  │ sash/tests/codegen_tests.rs
+  └ L2088:2135 (48 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L780:890 (111 lines read)
+
+● Read codegen_tests.rs
+  │ sash/tests/codegen_tests.rs
+  └ L160:250 (91 lines read)
+
+● Search (grep)
+  │ "x=\$\(getenv|leak\(|bless x \[\[ 1 == 1 \]\]|\$\(\(x \+
+  │ 1\)\)|\$\{safe:-\$x\}|read y <<<|case .*\$x|\$\(getenv UNTRUSTED\)"
+  │ (sash/tests/taint_spec_tests.rs, sash/tests/e2e_tests.rs)
+  └ 24 lines found
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L120:180 (61 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L390:440 (50 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L720:770 (51 lines read)
+
+● Read ir.rs
+  │ sash/src/ir.rs
+  └ L240:340 (75 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L1860:2065 (206 lines read)
+
+● Search (grep)
+  │ "ExprKind::ParameterExpansion|ParamOp|operand" (sash/src)
+  └ 173 lines found
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L856:980 (125 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L980:1060 (81 lines read)
+
+● Search (grep)
+  │ "run_bash_native|--nolint|sash_cmd" (sash/tests/codegen_tests.rs)
+  └ 242 lines found
+
+● Search (grep)
+  │ "SB4003|indirect expansion|\$\{!" (sash/tests/e2e_tests.rs,
+  │ sash/tests/oracle_tests.rs, sash/tests/taint_spec_tests.rs)
+  └ No matches found
+
+● Read codegen_tests.rs
+  │ sash/tests/codegen_tests.rs
+  └ L1:80 (80 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L230:420 (191 lines read)
+
+✗ Locate built sash binary (shell)
+  │ cd /home/dangood/src/safebash && ls target/debug/sash sash/target/debug/sash
+  │ 2>/dev/null | cat
+  └ Permission denied and could not request permission from user
+
+● Read dynamic_execution.rs
+  │ sash/src/rules/dynamic_execution.rs
+  └ 51 lines read
+
+● Read main.rs
+  │ sash/src/main.rs
+  └ L80:170 (91 lines read)
+
+● Search (grep)
+  │ "#[ ]*test|collect_max_positional|function '" (sash/src/transform.rs)
+  └ 3 lines found
+
+● Read SUBSET.md
+  │ docs/SUBSET.md
+  └ L1:80 (80 lines read)
+
+● Search (grep)
+  │ "nameref|declare -n|process substitution|DD#37|rejected|allowed"
+  │ (docs/SUBSET.md, docs/DECISIONS.md)
+  └ 13 lines found
+
+**Outcome:** Here is a concrete remediation plan per finding, with exact code/test changes, priority, and act/dismiss decisions.
+
+**Important contradiction to flag first:** `sash/src/rules/mod.rs` currently registers only `dynamic_execution`, `export_rejected`, `heredoc_cmdsub`, and `indirect_expansion`. I do **not** see nameref or process-substitution rules registered, so T8/T12 should be treated as open hardening work unless that exists out-of-tree.
+
+1. **T1 (herestring/heredoc false-clean)** — **Needs:** both — **Priority:** fix-now — **Decision:** act  
+   **Code:** In `sash/src/taint.rs::handle_read`, replace redirect-presence heuristic with content taint check. Add helper (same file) that inspects `herestring_redirect`/`heredoc_redirect` children and calls `expr_has_tainted_read` on redirect payload before marking target vars clean.  
+   **Tests (in `sash/tests/taint_spec_tests.rs`):**  
+   - `taint_read_herestring_tainted_expansion_rejected`: input `x=$(getenv UNTRUSTED); read y <<< "$x"; echo "$y"`; assert `stderr.contains("SB4020")`.  
+   - `taint_read_heredoc_tainted_expansion_rejected`: input heredoc with `$x`; assert `SB4020`.  
+   - `clean_read_heredoc_literal_stays_clean`: literal heredoc into `read`; assert stdout expected literal.
+
+2. **T2 (tautological bless)** — **Needs:** both — **Priority:** fix-now — **Decision:** act  
+   **Code:** In `sash/src/taint.rs::handle_bless`, require the bless test to reference the blessed variable. Add helper `test_expr_mentions_var(...)` scanning `simple_expansion`, `expansion`, and arithmetic `variable_name` reads; if absent, emit new diagnostic (e.g. `SB4012`) and do not call `mark_blessed`.  
+   **Tests:**  
+   - `bless_tautology_literal_rejected`: `x=$(getenv MALICIOUS); bless x [[ 1 == 1 ]]; echo "$x"`; assert `SB4012`.  
+   - `bless_literal_only_unary_rejected`: `bless x [[ -n "literal" ]]`; assert `SB4012`.
+
+3. **T3 (invalid bless expression still blesses)** — **Needs:** both — **Priority:** fix-now — **Decision:** act  
+   **Code:** In `sash/src/taint.rs::handle_bless`, parse/validate that args after var form a real `[[ ... ]]` test (same parse strategy as `lower_command`), otherwise emit `SB4010`/new `SB4013` and return without blessing.  
+   **Defense-in-depth:** In `sash/src/transform.rs` bless branch (around fallback currently emitting plain command), emit diagnostic instead of silently lowering invalid bless as normal command.  
+   **Tests:**  
+   - `bless_non_test_expression_rejected`: `x=$(getenv SECRET); bless x nope; echo "$x"`; assert `SB4010` or `SB4013`.  
+   - `bless_missing_brackets_rejected`: `bless x -n "$x"`; assert same.
+
+4. **T4 (arith expansion taint laundering in assignment)** — **Needs:** both — **Priority:** fix-now — **Decision:** act  
+   **Code:** In `sash/src/taint.rs::expr_is_tainted`, add `arithmetic_expansion` branch and helper to scan descendant `variable_name` nodes; return tainted if any referenced var is tainted.  
+   **Test:** `taint_arith_assignment_propagates`: `x=$(getenv NUM); y=$((x + 1)); echo "$y"`; assert `SB4020`.
+
+5. **T5 (parameter expansion operand bypass)** — **Needs:** both — **Priority:** fix-now — **Decision:** act  
+   **Code:** In `sash/src/taint.rs`, for `expansion` in both `expr_is_tainted` and `check_expr_reads`, recurse into operand subtree (not just primary var and subscript) so `${safe:-$tainted}` is treated as tainted/read.  
+   **Tests:**  
+   - `taint_param_operand_direct_read_rejected`: `safe=""; x=$(getenv SECRET); echo "${safe:-$x}"`; assert `SB4020`.  
+   - `taint_param_operand_assignment_propagates`: `y="${safe:-$x}"; echo "$y"`; assert `SB4020`.
+
+6. **T6 (function global re-taint at call site)** — **Needs:** both — **Priority:** strengthen — **Decision:** act  
+   **Code:** Extend `TaintTracker` (`sash/src/taint.rs`) with per-function free-read summary (e.g. `function_free_reads`). Populate in `handle_function_def`; enforce in `handle_command` when function is called by checking current taint state of captured globals and emitting `SB4020` on call node.  
+   **Tests:**  
+   - `taint_function_global_retaint_rejected`: `x="clean"; leak(){ echo "$x"; }; x=$(getenv SECRET); leak`; assert `SB4020`.  
+   - `clean_function_global_read_ok`: same without taint reassignment; assert normal output.
+
+7. **T7 (indirect expansion `${!var}`)** — **Needs:** test change — **Priority:** defer — **Decision:** dismiss bypass claim, act on regression lock  
+   **Rationale:** Already blocked by `sash/src/rules/indirect_expansion.rs`.  
+   **Test:** add `neg_indirect_expansion_rejected` in `sash/tests/e2e_tests.rs` with `echo "${!x}"`; assert `stderr.contains("SB4003")`.
+
+8. **T8 (`declare -n` nameref)** — **Needs:** both — **Priority:** strengthen — **Decision:** act  
+   **Code:** Add `sash/src/rules/nameref_rejected.rs` with `Rule::check` on `declaration_command` rejecting `declare/local/typeset -n` (including combined flags), emit new code (e.g. `SB5003`), and register in `sash/src/rules/mod.rs`.  
+   **Tests:**  
+   - `neg_declare_n_rejected`: `declare -n ref=target`; assert `SB5003`.  
+   - `neg_local_n_rejected`: inside function `local -n ref=target`; assert `SB5003`.
+
+9. **T9 (DD#46 shift then positional read)** — **Needs:** both — **Priority:** strengthen — **Decision:** act  
+   **Code:** In `sash/src/transform.rs`, replace `collect_max_positional` usage with shift-aware required-argc analysis (track cumulative `shift` effects while scanning statements). Update call-site check near current `max_positional > call_argc` logic to compare required argc after shifts.  
+   **Tests (taint spec or e2e compile-fail):**  
+   - `dd46_shift_then_positional_rejected`: `f(){ shift; echo "$1"; } f one`; assert compile error text about insufficient args.  
+   - `dd46_shift_then_positional_ok_with_two_args`: same function called with `one two`; assert output `two\n`.
+
+10. **T10 (direct `$(getenv X)` read)** — **Needs:** both — **Priority:** strengthen — **Decision:** act  
+    **Code:** In `sash/src/taint.rs::check_expr_reads`, add explicit `command_substitution` arm: if `expr_is_tainted(node, source)` then emit `SB4020`.  
+    **Test:** `taint_direct_getenv_cmdsub_rejected`: `echo "$(getenv UNTRUSTED)"`; assert `SB4020`.
+
+11. **T11 (case pattern taint not checked)** — **Needs:** both — **Priority:** strengthen — **Decision:** act  
+    **Code:** In `sash/src/taint.rs::walk_statement` for `case_statement`, traverse `case_item` pattern/value nodes and call `check_expr_reads` on those expressions (not just case selector).  
+    **Test:** `taint_case_pattern_read_rejected`: `x=$(getenv SECRET); case "foo" in "$x") echo hit;; *) echo miss;; esac`; assert `SB4020`.
+
+12. **T12 (process substitution `<(cmd)`)** — **Needs:** both — **Priority:** defer — **Decision:** act (hardening)  
+    **Code:** Add `sash/src/rules/process_substitution.rs` rejecting process-substitution node kind (emit e.g. `SB4025`), register in `sash/src/rules/mod.rs`.  
+    **Test:** `neg_process_substitution_rejected` in `sash/tests/e2e_tests.rs`: `cat <(echo hi)`; assert `SB4025` (or at minimum compile failure with process-substitution diagnostic).
+
+
+
+
+Changes   +0 -0
+Requests  1 Premium (4m 24s)
+Tokens    ↑ 1.6m • ↓ 16.8k • 1.5m (cached) • 12.0k (reasoning)

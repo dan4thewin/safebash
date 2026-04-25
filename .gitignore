@@ -4,6 +4,7 @@ suites/oils/
 suites/bash/
 suites/shellcheck/
 *.txt
+!audit/**/*.txt
 test-*
 valid-*
 dangling-*

@@ -1,0 +1,420 @@
+● Read taint.rs
+  │ sash/src/taint.rs
+  └ 669 lines read
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L380:560 (181 lines read)
+
+● Search (glob)
+  │ "**/*taint*test*.rs" in sash/tests
+  └ 1 file found
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L250:380 (131 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L560:780 (221 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L2080:2400 (321 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L2200:2360 (161 lines read)
+
+● Read taint_spec_tests.rs
+  │ sash/tests/taint_spec_tests.rs
+  └ 414 lines read
+
+● Search (grep)
+  │ "SB4020|bless|taint|outofrange|argv|\$@|declare
+  │ -n|nameref|herestring|heredoc|indirect|\$\{|eval|printf|case|for .*\[@\]"
+  │ (sash/tests)
+  └ 382 lines found
+
+● Search (grep)
+  │ "handle_bless|check_expr_reads|expr_is_tainted|collect_max_positional|SB4010
+  │ |SB4011|SB4020|known_external|handle_read|for_statement|case_statement" in
+  │ *.rs (sash/src)
+  └ 34 lines found
+
+I’ve confirmed the core snippets in-repo; next I’m checking validator/lowering edges to avoid false positives before listing concrete bypass scripts.
+
+● Read validator.rs
+  │ sash/src/validator.rs
+  └ 25 lines read
+
+● Read rule.rs
+  │ sash/src/rule.rs
+  └ 26 lines read
+
+● Search (grep)
+  │ "declare -n|nameref|process_substitution|<<<|heredoc|simple_expansion|expans
+  │ ion|subscript|special_variable_name|\$\{|\$@|\$\*|\$#|argv|getenv|bless|test
+  │ _command|\[\[" (sash/src/lower.rs, sash/src/ir.rs, sash/src/type_check.rs)
+  └ 97 lines found
+
+● Read indirect_expansion.rs
+  │ sash/src/rules/indirect_expansion.rs
+  └ 28 lines read
+
+● Read dynamic_execution.rs
+  │ sash/src/rules/dynamic_execution.rs
+  └ 51 lines read
+
+● Read mod.rs
+  │ sash/src/rules/mod.rs
+  └ 15 lines read
+
+● Read export_rejected.rs
+  │ sash/src/rules/export_rejected.rs
+  └ 54 lines read
+
+● Read heredoc_cmdsub.rs
+  │ sash/src/rules/heredoc_cmdsub.rs
+  └ 57 lines read
+
+● Read ir.rs
+  │ sash/src/ir.rs
+  └ L220:360 (95 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L70:220 (151 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L840:1040 (201 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L1180:1425 (246 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L1420:1625 (206 lines read)
+
+● Read lower.rs
+  │ sash/src/lower.rs
+  └ L1790:2055 (266 lines read)
+
+● Search (grep)
+  │ "declare\s+-n|nameref|-n\s+|local -n|typeset -n|process_substitution|brace_e
+  │ xpansion|command_name.*simple_expansion|SB4004|deferred" (sash/src,
+  │ sash/tests)
+  └ 28 lines found
+
+● Read ssa.rs
+  │ sash/src/ssa.rs
+  └ L1:260 (260 lines read)
+
+● Read lib.rs
+  │ sash/src/lib.rs
+  └ 25 lines read
+
+● Read main.rs
+  │ sash/src/main.rs
+  └ L80:170 (91 lines read)
+
+● Search (grep)
+  │ "state\.diagnostics|SB4004|deferred|function '.*reads|collect_max_positional
+  │ |lookup\("@"\)|lookup\("\*"\)|ArgvIndex|arrvals|arrkeys|Bless" (sash/src)
+  └ 52 lines found
+
+● Read main.rs
+  │ sash/src/main.rs
+  └ L170:270 (39 lines read)
+
+● Read main.rs
+  └ sash/src/main.rs
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L1:120 (120 lines read)
+
+● Search (grep)
+  │ "pub fn
+  │ compile_to_object|ir_to_ssa|diagnostics|Vec<String>|Err\(|SB4004|deferred"
+  │ (sash/src/codegen.rs)
+  └ 3 lines found
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L1:170 (170 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L170:320 (150 lines read)
+
+● Search (grep)
+  │ "\bshift\b|\$\{|SimpleExpansion\("@"|SimpleExpansion\("\*"|argv|splice_argv|
+  │ read_line|HereString|herestring|process_substitution|declare\s+-n|nameref|lo
+  │ cal\s+-n|typeset\s+-n|TestExpr::Unary \{ op: "\?"" (sash/src)
+  └ 218 lines found
+
+✗ Check sash binary presence and repo state (shell)
+  │ set -euo pipefail && cd /home/dangood/src/safebash && git --no-pager status
+  │ --short && ls -l target/debug/sash 2>/dev/null || true
+  └ Permission denied and could not request permission from user
+
+✗ Run PoC bless without test (shell)
+  │ set -euo pipefail && cd /home/dangood/src/safebash && cat >
+  │ /tmp/poc_bless_no_test.sh <<'EOF'
+  │ #!/bin/bash
+  │ x=$(getenv UNTRUSTED)
+  │ bless x…
+  └ Permission denied and could not request permission from user
+
+✗ Run PoC tainted herestring read bypass (shell)
+  │ set -euo pipefail && cd /home/dangood/src/safebash && cat >
+  │ /tmp/poc_herestring_taint.sh <<'EOF'
+  │ #!/bin/bash
+  │ x=$(getenv UNTRUSTED)
+  │ read y <<< "$x"…
+  └ Permission denied and could not request permission from user
+
+✗ Run PoC bless validates wrong variable (shell)
+  │ set -euo pipefail && cd /home/dangood/src/safebash && cat >
+  │ /tmp/poc_wrong_var.sh <<'EOF'
+  │ #!/bin/bash
+  │ x=$(getenv UNTRUSTED)
+  │ y=safe…
+  └ Permission denied and could not request permission from user
+
+● Read diagnostic.rs
+  │ sash/src/diagnostic.rs
+  └ 52 lines read
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L1080:1225 (146 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L1718:1825 (108 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L2028:2130 (103 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L3400:3545 (146 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L4060:4150 (90 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L3745:3815 (71 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L1525:1635 (111 lines read)
+
+● Search (grep)
+  │ "fn lower_test_expr|match op|unsupported
+  │ test|\"\?\"|TestExpr::Unary|TestExpr::Binary|regex_match|file_test"
+  │ (sash/src/codegen.rs)
+  └ 44 lines found
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L1160:1265 (106 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L2388:2495 (108 lines read)
+
+● Read codegen.rs
+  │ sash/src/codegen.rs
+  └ L2440:2735 (296 lines read)
+
+● Search (grep)
+  │ "lookup_command|KnownCommand|hostname|cat|date|whoami|getenv|pattern"
+  │ (sash/src/known_externals.rs)
+  └ 107 lines found
+
+● Search (grep)
+  │ "function_bodies|known_functions|collect_local_vars|local|state\.lookup\(&na
+  │ me\)|CommandSubstitution\(stmts\)|FuncCall|if
+  │ self\.functions.contains|handle_function_def" (sash/src/transform.rs,
+  │ sash/src/taint.rs)
+  └ 37 lines found
+
+● Read taint.rs
+  │ sash/src/taint.rs
+  └ L380:470 (91 lines read)
+
+● Read known_externals.rs
+  │ sash/src/known_externals.rs
+  └ 335 lines read
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L1940:2105 (166 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L120:250 (131 lines read)
+
+● Read transform.rs
+  │ sash/src/transform.rs
+  └ L880:940 (61 lines read)
+
+● Search (grep)
+  │ "SB4020|taint|bless|auto_bless|known_externals|function
+  │ body|snapshot|restore|global|local variable|state.lookup\("10"\)|read
+  │ \$10|SimpleExpansion\("10"" (docs, sash/src, sash/tests)
+  └ 9 lines found
+
+● Read GAPS-2026-04-24.md
+  │ docs/GAPS-2026-04-24.md
+  └ 158 lines read
+
+● Search (grep)
+  │ "taint bypass|bless|herestring|function.*global|inter-procedural|positional|
+  │ out-of-range|SB4020" (docs)
+  └ 183 lines found
+
+● Search (glob)
+  │ "docs/*GAPS*"
+  └ 1 file found
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L640:730 (91 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L790:870 (80 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L930:990 (61 lines read)
+
+● Read e2e_tests.rs
+  │ sash/tests/e2e_tests.rs
+  └ L1040:1090 (46 lines read)
+
+● Search (grep)
+  │ "bless .*\[\[|bless [A-Za-z0-9_]+$|wrong
+  │ var|tautolog|herestring.*taint|\$\{x:-\$y\}|function.*global|read .*<<<
+  │ .*\$|out[- ]of[- ]range|\$10|\$\{10\}|declare -n|nameref|process
+  │ substitution" (sash/tests)
+  └ 25 lines found
+
+● Read codegen_tests.rs
+  │ sash/tests/codegen_tests.rs
+  └ L690:740 (51 lines read)
+
+● Read SUBSET.md
+  │ docs/SUBSET.md
+  └ L190:280 (91 lines read)
+
+● Read GUIDE.md
+  │ docs/GUIDE.md
+  └ L160:210 (50 lines read)
+
+● Read JOURNAL.md
+  │ docs/JOURNAL.md
+  └ L3588:3642 (55 lines read)
+
+**Found 8 concrete bypass/correctness gaps** that can let tainted data flow or evade DD#46 checks without SB4020/out-of-range diagnostics.
+
+1. **Function/global taint bypass (definition-time snapshot only)**  
+   ```bash
+   #!/bin/bash
+   x="clean"
+   leak() { echo "$x"; }
+   x=$(getenv SECRET)
+   leak
+   ```
+   **Why uncaught:** `handle_function_def` analyzes function bodies once, then restores state. Later re-taint of globals is not rechecked at call sites; calls with no tainted args pass.  
+   **Severity:** **CRITICAL**
+
+2. **Here-string false-clean (`read`)**  
+   ```bash
+   #!/bin/bash
+   x=$(getenv SECRET)
+   read y <<< $x
+   echo "$y"
+   ```
+   **Why uncaught:** `handle_read` marks `read` targets clean whenever `<<<`/`<<` exists, without checking redirect content taint; redirect expression is not taint-checked in this path.  
+   **Severity:** **CRITICAL**
+
+3. **Heredoc false-clean (`read`)**  
+   ```bash
+   #!/bin/bash
+   x=$(getenv SECRET)
+   read y <<EOF
+   $x
+   EOF
+   echo "$y"
+   ```
+   **Why uncaught:** Same root cause as above; heredoc presence is treated as clean source even when body expands tainted vars.  
+   **Severity:** **CRITICAL**
+
+4. **`bless` can bless without a real test (runtime enforcement skipped)**  
+   ```bash
+   #!/bin/bash
+   x=$(getenv SECRET)
+   bless x nope
+   echo "$x"
+   ```
+   **Why uncaught:** `handle_bless` blesses as long as a var name exists. In lowering/SSA, if no parsed `TestExpr` is found, it becomes a normal command, not `SsaInst::Bless`; no bless validation path is emitted.  
+   **Severity:** **CRITICAL**
+
+5. **Blessing wrong variable / tautology**  
+   ```bash
+   #!/bin/bash
+   x=$(getenv SECRET)
+   ok=1
+   bless x [[ -n $ok ]]
+   echo "$x"
+   ```
+   **Why uncaught:** No check that bless test actually constrains blessed var. Any truthy clean expression blesses `x`.  
+   **Severity:** **HIGH**
+
+6. **Parameter-expansion operand taint bypass**  
+   ```bash
+   #!/bin/bash
+   safe=""
+   x=$(getenv SECRET)
+   echo "${safe:-$x}"
+   ```
+   **Why uncaught:** `check_expr_reads`/`expr_is_tainted` for `expansion` checks primary var/subscript but not operator operand trees (like `:-$x`).  
+   **Severity:** **HIGH**
+
+7. **Arithmetic-assignment laundering**  
+   ```bash
+   #!/bin/bash
+   x=$(getenv SECRET)
+   n=$((x + 0))
+   echo "$n"
+   ```
+   **Why uncaught:** `expr_is_tainted` does not treat `arithmetic_expansion` as tainted when assigning, so `n` becomes clean.  
+   **Severity:** **HIGH**
+
+8. **DD#46 compile-time bypass via `shift` then positional read**  
+   ```bash
+   #!/bin/bash
+   f() { shift; echo "$1"; }
+   f one
+   ```
+   **Why uncaught:** `collect_max_positional` compares max `$K` to call argc statically; it does not model `shift` effects. So out-of-range-after-shift reads are not rejected at compile time.  
+   **Severity:** **MEDIUM**
+
+---
+
+**Missing test coverage (not present in taint/e2e specs):** no negative tests for findings 1, 2, 3, 4, 5, 6, 7, or 8 above (especially global re-taint through functions, tainted heredoc/here-string `read`, invalid/tautological bless forms, and `shift`-driven DD#46 bypass).
+
+
+Changes   +0 -0
+Requests  1 Premium (4m 27s)
+Tokens    ↑ 1.9m • ↓ 17.6k • 1.6m (cached) • 12.5k (reasoning)

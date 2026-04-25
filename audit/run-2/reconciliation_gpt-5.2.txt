@@ -1,0 +1,118 @@
+## Reconciled remediation plan (Audit Run 2 taint model)
+
+### First, resolve the key contradiction (affects T7/T8/T12)
+- **Disagreement:** Plan A suspects some reject-rules (nameref, process substitution) are **not even registered**; Plan B assumes they’re **already rejected**.
+- **Resolution:** Treat as **unknown until verified in-tree**. Add a *verification step* up front: confirm the node kinds exist in the grammar and whether rules are registered in `sash/src/rules/mod.rs`. If missing, implement + register + test. This preserves Plan B’s “don’t duplicate mitigations” while honoring Plan A’s “don’t assume it’s covered”.
+
+---
+
+## Per-finding decisions
+
+### T1 — Herestring/heredoc “false clean” via `read`
+- **Prefer:** **Synthesize A+B** (they agree on root cause and fix).
+- **Concrete change:** In `sash/src/taint.rs::handle_read`, stop using redirect-presence as a cleanliness signal. Instead, inspect herestring/heredoc payload and call `expr_has_tainted_read(...)` (or equivalent) on the *content*; only mark the `read` target clean if the content has **no tainted reads**.
+- **Tests:** Add negative tests for tainted expansions inside `<<<` and heredoc body; add positive tests for literal/clean content.
+
+### T2 — “Tautological bless” (bless without actually testing the var)
+- **Prefer:** **Synthesize A+B** (same fix; B adds good test variants).
+- **Concrete change:** In `handle_bless`, require the test expression to **reference the blessed variable**. Add `expr_references_var(node, var_name)` that walks expansions/variable reads in the test AST.
+- **Diagnostics:** Introduce a dedicated error (Plan A/B suggest `SB4012`) for “test does not reference blessed var”.
+- **Tests:** Reject `[[ 1 == 1 ]]`, `[[ -n "literal" ]]`, and “tests wrong variable”; accept a real validation referencing `$x`.
+
+### T3 — Invalid bless expression still blesses (or degrades into normal command)
+- **Prefer:** **Plan A + keep B’s explicit diagnostic**.
+- **Concrete change (primary):** In `handle_bless`, validate that the trailing args form a real `[[ ... ]]`/`test_command` structure; if not, **emit diagnostic and do not bless**.
+- **Defense-in-depth (Plan A):** In lowering/transform (`sash/src/transform.rs`), ensure malformed `bless` can’t silently become a plain command; emit a diagnostic instead.
+- **Diagnostics:** Add `SB4013` (or similar) for “bless expected test”.
+- **Tests:** Reject `bless x nope`, `bless x -n "$x"` (missing `[[`), etc.
+
+### T4 — Arithmetic expansion taint laundering in assignment
+- **Prefer:** **Synthesize A+B**.
+- **Concrete change:** In `expr_is_tainted`, add an `arithmetic_expansion` case that marks tainted if it references any tainted variable (scan `variable_name` descendants).
+- **Tests:** `x=$(getenv NUM); y=$((x+1))` should taint `y` / trigger `SB4020` on read; positive tests for clean arithmetic and arithmetic after a valid bless.
+
+### T5 — Parameter expansion operand bypass (e.g. `${safe:-$tainted}`)
+- **Prefer:** **Synthesize A+B** (B is more explicit about recursing in both read-check and taint-prop).
+- **Concrete change:** For `expansion` nodes:
+  - In `check_expr_reads`, **recurse into all children**, not just the primary var/subscript.
+  - In `expr_is_tainted`, treat the expansion tainted if **any operand subtree** is tainted.
+- **Tests:** Negative tests for `:-` and `:+` operands containing tainted reads; positive test for clean operand.
+
+### T6 — Function global re-taint at call site
+- **Disagreement:** Plan A says **fix now** with inter-procedural summary; Plan B says **document limitation + defer**.
+- **Resolution (rationale):** Prefer **Plan A’s fix**, because this is a classic “validate at definition, use at call” soundness gap in a taint model. Documentation doesn’t remove the bypass.
+- **Concrete change:** Extend taint tracking with a per-function summary of “free variable reads” (globals captured). At each function call, if any captured global is tainted, emit `SB4020` at the call (or re-walk the body under current taint state, if feasible).
+- **Tests:** `x clean; f(){ echo "$x"; }; x=$(getenv SECRET); f` must be rejected.
+
+### T7 — Indirect expansion `${!var}`
+- **Prefer:** **Plan A** (dismiss bypass claim but add regression lock).
+- **Concrete change:** None if already rejected by `rules/indirect_expansion.rs`, but **add/keep an e2e regression test** asserting the diagnostic (e.g. `SB4003`/existing code).
+- **Rationale:** Even if covered, tests prevent accidental rule deregistration.
+
+### T8 — `declare -n` / nameref
+- **Disagreement:** Plan A says missing rule; Plan B says already rejected.
+- **Resolution:** **Verify, then implement if absent.**
+- **Concrete change (if not already rejected):** Add `rules/nameref_rejected.rs` rejecting `declare/local/typeset -n` (including combined flags), register in `rules/mod.rs`, add new diagnostic code (Plan A suggests `SB5003`-style).
+- **Tests:** e2e negative tests for `declare -n` and `local -n` (inside function).
+
+### T9 — DD#46 shift then positional read
+- **Disagreement:** Plan A says implement shift-aware analysis; Plan B says document limitation.
+- **Resolution (rationale):** Prefer **Plan A**, because it’s a correctness/soundness issue: `shift` changes positional indexing; static validation that ignores it is wrong.
+- **Concrete change:** Update positional-argument validation to account for cumulative `shift` effects before positional reads. Replace pure `max_positional` logic with shift-aware “required argc at each read” tracking.
+- **Tests:** `f(){ shift; echo "$1"; }; f one` rejected; `f one two` accepted and prints `two`.
+
+### T10 — Direct `$(getenv X)` read in expression
+- **Prefer:** **Synthesize A+B**, but keep it minimal/sound.
+- **Concrete change:** In `check_expr_reads`, add `command_substitution` handling: if command substitution is a taint source (e.g. `getenv`, `argv`, possibly externals per project rules), emit `SB4020` unless it is first assigned and blessed. Avoid inventing a new purity allowlist unless the project already has one (keep Plan B’s idea only if it matches existing “known safe” command model).
+- **Tests:** `echo "$(getenv HOME)"` rejected; add at least one positive test that matches existing semantics (e.g., user-defined function command substitution if that is considered safe in this codebase).
+
+### T11 — Case pattern taint not checked
+- **Prefer:** **Plan A** (direct and correct), incorporate B’s traversal detail.
+- **Concrete change:** In `walk_statement`/case handling, validate taint reads in **case item patterns** (not only the selector). Call `check_expr_reads` on pattern expressions.
+- **Tests:** Tainted var used in pattern should trigger `SB4020`; positive test: blessed selector with literal patterns.
+
+### T12 — Process substitution `<(cmd)`
+- **Disagreement:** Plan A says add rule; Plan B says likely already rejected—verify.
+- **Resolution:** **Verify, then implement if absent.**
+- **Concrete change (if accepted today):** Add `rules/process_substitution.rs` rejecting process substitution node kind; register; diagnostic (Plan A suggests `SB4025`-style).
+- **Tests:** e2e negative test `cat <(echo hi)` asserting the diagnostic.
+
+---
+
+## Final ordered action list (concrete changes)
+
+1. **Verify rule coverage & grammar kinds**
+   - Check `sash/src/rules/mod.rs` registrations and whether grammar emits node kinds for nameref/process substitution; record which diagnostics currently fire for T7/T8/T12.
+
+2. **Implement core taint soundness fixes (must-fix)**
+   - T1: `handle_read` inspects heredoc/herestring *content* for tainted reads before cleaning target.
+   - T2: `handle_bless` requires test references blessed var; add `SB4012`.
+   - T3: `handle_bless` rejects non-test bless; add `SB4013`; add transform/lower “no silent fallback” diagnostic.
+   - T4: `expr_is_tainted` supports `arithmetic_expansion` scanning for tainted vars.
+   - T5: recurse into parameter expansion operand subtrees in both taint-prop + read-check.
+
+3. **Close inter-procedural/call-site gaps**
+   - T6: add function free-read summaries and call-site enforcement (emit `SB4020` when captured global tainted).
+
+4. **Fix positional/shift validation**
+   - T9: make positional-arg validation shift-aware (required argc after shifts).
+
+5. **Harden direct taint sources in expressions**
+   - T10: add `command_substitution` read-checks for taint sources consistent with existing model (don’t add ad-hoc allowlists unless already present).
+
+6. **Expand taint read validation surfaces**
+   - T11: validate taint reads in `case` patterns.
+
+7. **Rules + tests for “subset exclusions”**
+   - T7: add/keep regression test for `${!var}` rejection.
+   - T8: if nameref not already rejected, implement rule + register + tests.
+   - T12: if process substitution not already rejected, implement rule + register + tests.
+
+8. **Test placement & documentation**
+   - Add tests in the project’s existing taint/e2e harness (whichever already hosts similar diagnostics).
+   - Update `docs/JOURNAL.md` (what changed, why soundness improved) and `docs/TODO.md` only for any consciously deferred follow-ups (ideally none for T6/T9 under this plan).
+
+
+Changes   +0 -0
+Requests  1 Premium (51s)
+Tokens    ↑ 26.5k • ↓ 3.1k • 17.8k (cached) • 880 (reasoning)

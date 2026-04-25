@@ -1,0 +1,1934 @@
+Audit the following Rust source and test files as an adversarial
+security reviewer for a Bash-to-native compiler called safebash (sash).
+
+This compiler enforces a "taint model" — variables sourced from
+external input (getenv, argv, read from stdin/pipe) are "tainted"
+and cannot be used until validated via `bless VAR [[ test_expr ]]`.
+The compiler also rejects out-of-range positional parameter reads
+at compile time (DD#46/DD#48).
+
+Your job is to find bypasses — Bash scripts that achieve dangerous
+effects (use tainted data, bypass bless validation, leak positional
+params) while passing the compiler without diagnostics.
+
+Specifically look for:
+
+1. TAINT BYPASSES: Bash constructs that read tainted variables
+   without triggering SB4020. Think about: indirect expansion,
+   eval, arithmetic contexts, array operations, printf format
+   strings, here-documents with expansions, process substitution,
+   nameref variables, declare -n, subshell variable scoping,
+   case pattern matching, for-loop words, test expressions
+   outside bless, array[@] iteration.
+
+2. BLESS VALIDATION GAPS: Ways to make bless succeed at runtime
+   when it shouldn't, or skip bless entirely. Think about:
+   empty test expressions, tautological tests, bless on wrong
+   variable, TOCTOU between bless and actual use, re-assignment
+   after bless in same scope.
+
+3. DD#46 POSITIONAL BYPASSES: Ways to read out-of-range positional
+   parameters without triggering compile errors. Think about:
+   indirect references, shift, positional params in subshells or
+   nested functions, $@ expansion tricks, variadic functions.
+
+4. HERESTRING/HEREDOC FALSE CLEAN: Cases where `read x <<< "..."` 
+   is marked clean but the herestring contains tainted expansions.
+
+5. CODEGEN CORRECTNESS: Cases where the generated binary behaves
+   differently from bash around bless failure, exit codes.
+
+6. MISSING TEST COVERAGE: Scripts that could expose real bugs.
+
+For each finding, state:
+- What the bypass/bug is
+- A concrete Bash script that demonstrates it
+- Why the compiler doesn't catch it
+- Severity: CRITICAL / HIGH / MEDIUM / LOW
+
+Do NOT comment on style, formatting, naming, or anything that doesn't
+affect security or correctness.
+
+=== TAINT ANALYSIS (taint.rs) ===
+use std::collections::HashMap;
+use tree_sitter::Node;
+use crate::diagnostic::Diagnostic;
+
+/// Taint status of a variable.
+#[derive(Debug, Clone, PartialEq)]
+pub enum TaintStatus {
+    /// Originated from external source, not yet validated.
+    Tainted,
+    /// Validated via `bless` — safe to use.
+    Blessed,
+    /// Originated from a literal, arithmetic, or other internal source.
+    Clean,
+}
+
+/// Flow-sensitive taint tracker.
+///
+/// Walks the program sequentially, tracking which variables are tainted,
+/// blessed, or clean. Emits diagnostics when tainted variables are read
+/// outside of a `bless` expression.
+///
+/// Taint sources:
+/// - Positional params ($1–$N, $@) at program entry
+/// - `read` targets
+/// - `$(external cmd)` assignment targets
+/// - Undeclared variables (environment — getenv)
+///
+/// Clean sources:
+/// - Literals, arithmetic from clean operands
+/// - $0, $#, $?, $$ — compiler-constrained
+/// - Variables assigned from clean expressions
+pub struct TaintTracker {
+    vars: HashMap<String, TaintStatus>,
+    /// Track which variables have been declared/assigned in the script.
+    declared: std::collections::HashSet<String>,
+    /// Track which functions have been defined in the script.
+    functions: std::collections::HashSet<String>,
+    /// Are we inside a bless expression? If so, which variable?
+    bless_context: Option<String>,
+    /// Auto-blessed variables: name → (pattern, description, source line)
+    auto_blessed: Vec<AutoBless>,
+}
+
+/// Record of a variable auto-blessed via known_externals.
+#[derive(Clone, Debug)]
+pub struct AutoBless {
+    pub var_name: String,
+    pub pattern: String,
+    pub description: String,
+    pub line: usize,
+}
+
+impl TaintTracker {
+    pub fn new() -> Self {
+        Self {
+            vars: HashMap::new(),
+            declared: std::collections::HashSet::new(),
+            functions: std::collections::HashSet::new(),
+            bless_context: None,
+            auto_blessed: Vec::new(),
+        }
+    }
+
+    /// Mark a variable as tainted.
+    pub fn mark_tainted(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Tainted);
+    }
+
+    /// Mark a variable as blessed (validated).
+    pub fn mark_blessed(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Blessed);
+    }
+
+    /// Mark a variable as clean (internal origin).
+    pub fn mark_clean(&mut self, name: &str) {
+        self.vars.insert(name.to_string(), TaintStatus::Clean);
+        self.declared.insert(name.to_string());
+    }
+
+    /// Record that a variable was declared/assigned in the script.
+    pub fn mark_declared(&mut self, name: &str) {
+        self.declared.insert(name.to_string());
+    }
+
+    /// Check if a variable is tainted.
+    pub fn is_tainted(&self, name: &str) -> bool {
+        match self.vars.get(name) {
+            Some(TaintStatus::Tainted) => true,
+            None => !self.is_special_var(name) && !self.declared.contains(name),
+            _ => false,
+        }
+    }
+
+    /// Check if we're inside a bless context for this variable.
+    pub fn in_bless_for(&self, name: &str) -> bool {
+        self.bless_context.as_deref() == Some(name)
+    }
+
+    /// Special variables that are always clean.
+    fn is_special_var(&self, name: &str) -> bool {
+        matches!(name, "0" | "#" | "?" | "$" | "LINENO" | "PIPESTATUS"
+            | "BASHPID" | "BASH_SUBSHELL" | "SHLVL" | "PPID" | "UID" | "EUID"
+            | "GROUPS" | "HOSTNAME" | "HOSTTYPE" | "MACHTYPE" | "OSTYPE"
+            | "SHELLOPTS" | "BASHOPTS" | "BASH_VERSION" | "BASH_VERSINFO"
+            | "SECONDS" | "RANDOM" | "SRANDOM" | "EPOCHSECONDS" | "EPOCHREALTIME"
+            | "IFS" | "OLDPWD" | "_")
+    }
+
+    /// Run taint analysis on the full program.
+    /// Returns diagnostics for tainted variable reads.
+    pub fn analyze(&mut self, root: Node, source: &[u8]) -> Vec<Diagnostic> {
+        let mut diags = Vec::new();
+        self.walk_program(root, source, &mut diags);
+        diags
+    }
+
+    /// Return auto-blessed variables and their patterns (for --emit-source).
+    pub fn auto_blessed(&self) -> &[AutoBless] {
+        &self.auto_blessed
+    }
+
+    fn walk_program(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "program" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            _ => self.walk_statement(node, source, diags),
+        }
+    }
+
+    fn walk_statement(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "variable_assignment" => {
+                self.handle_assignment(node, source, diags);
+            }
+            "declaration_command" => {
+                self.handle_declaration(node, source, diags);
+            }
+            "command" => {
+                self.handle_command(node, source, diags);
+            }
+            "if_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    match child.kind() {
+                        "test_command" => {
+                            self.check_expr_reads(child, source, diags);
+                        }
+                        "command" => {
+                            self.handle_command(child, source, diags);
+                        }
+                        _ => self.walk_statement(child, source, diags),
+                    }
+                }
+            }
+            "while_statement" | "until_statement" | "for_statement" => {
+                // For `for var in words...`, mark the loop variable.
+                // If all words are literals, it's clean. If any word
+                // contains expansions of tainted vars, the loop var is tainted.
+                if node.kind() == "for_statement" {
+                    if let Some(var_node) = node.child_by_field_name("variable") {
+                        let var_name = var_node.utf8_text(source).unwrap_or("");
+                        // Check if the word list is all literals
+                        let mut has_tainted_source = false;
+                        let mut _has_expansion = false;
+                        for child in node.children(&mut node.walk()) {
+                            if child.kind() == "word" || child.kind() == "string"
+                                || child.kind() == "concatenation"
+                                || child.kind() == "simple_expansion"
+                                || child.kind() == "expansion" {
+                                // Check if this word references tainted vars
+                                if self.expr_has_tainted_read(child, source) {
+                                    has_tainted_source = true;
+                                }
+                                if child.kind() == "simple_expansion" || child.kind() == "expansion" {
+                                    _has_expansion = true;
+                                }
+                            }
+                            if child.kind() == "command_substitution" {
+                                has_tainted_source = true;
+                                _has_expansion = true;
+                            }
+                        }
+                        if has_tainted_source {
+                            self.mark_tainted(var_name);
+                        } else {
+                            self.mark_clean(var_name);
+                        }
+                    }
+                }
+                for child in node.children(&mut node.walk()) {
+                    match child.kind() {
+                        "test_command" => {
+                            self.check_expr_reads(child, source, diags);
+                        }
+                        "command" => {
+                            self.handle_command(child, source, diags);
+                        }
+                        _ => self.walk_statement(child, source, diags),
+                    }
+                }
+            }
+            "function_definition" => {
+                self.handle_function_def(node, source, diags);
+            }
+            "compound_statement" | "do_group" | "subshell" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            "arithmetic_command" => {
+                // (( expr )) — check all variable references for taint
+                for child in node.children(&mut node.walk()) {
+                    self.check_arith_reads(child, source, diags);
+                }
+            }
+            "pipeline" | "list" | "redirected_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    self.walk_statement(child, source, diags);
+                }
+            }
+            "case_statement" => {
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "word" || child.kind() == "simple_expansion" || child.kind() == "expansion" || child.kind() == "string" || child.kind() == "concatenation" {
+                        // The case value expression — check for tainted reads
+                        self.check_expr_reads(child, source, diags);
+                    } else {
+                        self.walk_statement(child, source, diags);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn handle_assignment(&mut self, node: Node, source: &[u8], _diags: &mut Vec<Diagnostic>) {
+        // variable_assignment: name=value
+        let name = node.child_by_field_name("name")
+            .and_then(|n| n.utf8_text(source).ok())
+            .unwrap_or("");
+        self.mark_declared(name);
+
+        // Check if RHS contains tainted expressions.
+        // Assignment is a WRITE context — reading tainted data into a var
+        // is allowed. The var inherits the taint status. No diagnostic here.
+        if let Some(value) = node.child_by_field_name("value") {
+            if self.expr_is_tainted(value, source) {
+                // Before marking tainted, check if the RHS is a known-safe command.
+                if let Some(auto) = self.check_known_external(value, source, name) {
+                    // Known command/env var — auto-bless with the known pattern.
+                    let mut ab = auto;
+                    ab.line = node.start_position().row + 1;
+                    self.auto_blessed.push(ab);
+                    self.mark_blessed(name);
+                } else {
+                    self.mark_tainted(name);
+                }
+            } else {
+                self.mark_clean(name);
+            }
+        } else {
+            self.mark_clean(name);
+        }
+    }
+
+    fn handle_declaration(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // declaration_command: declare/int/array/map/readonly name[=value]
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_assignment" {
+                self.handle_assignment(child, source, diags);
+            } else if child.kind() == "variable_name" || child.kind() == "word" {
+                let name = child.utf8_text(source).unwrap_or("");
+                self.mark_declared(name);
+                self.mark_clean(name);
+            }
+        }
+    }
+
+    fn handle_command(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        let name_node = node.child_by_field_name("name");
+        let cmd_name = name_node
+            .and_then(|n| n.child(0))
+            .and_then(|n| n.utf8_text(source).ok())
+            .unwrap_or("");
+
+        match cmd_name {
+            "bless" => {
+                self.handle_bless(node, source, diags);
+            }
+            "read" | "readarray" | "mapfile" => {
+                self.handle_read(node, source);
+            }
+            _ => {
+                // Check all arguments for tainted reads
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() != "command_name" {
+                        self.check_expr_reads(child, source, diags);
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_bless(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // bless VAR EXPR
+        // First non-command-name arg is the variable name.
+        // Remaining args form the test expression.
+        let mut args = Vec::new();
+        for child in node.children(&mut node.walk()) {
+            if child.kind() != "command_name" {
+                args.push(child);
+            }
+        }
+
+        if args.is_empty() {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4010",
+                "bless requires a variable name and test expression".to_string(),
+            ));
+            return;
+        }
+
+        let var_name = args[0].utf8_text(source).unwrap_or("");
+
+        if !self.is_tainted(var_name) && self.vars.contains_key(var_name) {
+            diags.push(Diagnostic::error(
+                node,
+                "SB4011",
+                format!("bless: variable '{}' is already clean — bless is unnecessary", var_name),
+            ));
+            return;
+        }
+
+        // Enter bless context — reads of var_name are allowed inside
+        let old_ctx = self.bless_context.take();
+        self.bless_context = Some(var_name.to_string());
+
+        // Walk the test expression (everything after the var name)
+        for arg in &args[1..] {
+            self.check_expr_reads(*arg, source, diags);
+        }
+
+        self.bless_context = old_ctx;
+
+        // Mark the variable as blessed
+        self.mark_blessed(var_name);
+    }
+
+    fn handle_read(&mut self, node: Node, source: &[u8]) {
+        // read -r var / read -d: -a arr — targets become tainted
+        // Exception: read from herestring (<<<) or heredoc (<<) of clean data → clean
+        let has_clean_redirect = node.parent().map(|p| {
+            if p.kind() == "redirected_statement" {
+                p.children(&mut p.walk()).any(|c| {
+                    c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
+                })
+            } else {
+                false
+            }
+        }).unwrap_or(false);
+        // Also check if the command itself has a herestring redirect
+        let has_herestring = node.children(&mut node.walk()).any(|c| {
+            c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
+        });
+        let is_clean_source = has_clean_redirect || has_herestring;
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "word" {
+                let text = child.utf8_text(source).unwrap_or("");
+                // Skip flags
+                if !text.starts_with('-') {
+                    self.mark_declared(text);
+                    if is_clean_source {
+                        self.mark_clean(text);
+                    } else {
+                        self.mark_tainted(text);
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_function_def(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // Record function name as declared and as a known function
+        if let Some(name_node) = node.child_by_field_name("name") {
+            let name = name_node.utf8_text(source).unwrap_or("");
+            self.mark_declared(name);
+            self.functions.insert(name.to_string());
+        }
+
+        // DD#24: external data is quarantined at the boundary, regardless
+        // of whether the boundary is crossed at the top level or inside a
+        // function body. Walk the body with the same analyzer so that
+        // getenv/argv/read/$(external) produce the same diagnostics they
+        // would at the top level.
+        //
+        // Inside a function body, positional parameters ($1..$N, $@, $*)
+        // refer to the function's call-site arguments — NOT the program's
+        // argv. The call site is itself a boundary: handle_command rejects
+        // any tainted argument expression at the call. Therefore inside
+        // the body these positionals are clean by construction.
+        //
+        // This is intra-procedural analysis only — no signatures, no
+        // propagation across call boundaries. DD#24's quarantine model
+        // says: external data is rejected at the boundary it crosses;
+        // a sash call site is such a boundary.
+        //
+        // We snapshot and restore variable state so taint state from
+        // inside the body does not leak to siblings.
+        let saved_vars = self.vars.clone();
+        let saved_declared = self.declared.clone();
+        for p in &["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"] {
+            self.mark_clean(p);
+        }
+        if let Some(body) = node.child_by_field_name("body") {
+            self.walk_statement(body, source, diags);
+        }
+        self.vars = saved_vars;
+        self.declared = saved_declared;
+    }
+
+    /// Check if an expression evaluates tainted data.
+    /// Used for RHS of assignments to determine if the target becomes tainted.
+    fn expr_is_tainted(&self, node: Node, source: &[u8]) -> bool {
+        match node.kind() {
+            "simple_expansion" => {
+                // $var
+                let var_name = self.extract_var_name(node, source);
+                self.is_tainted(&var_name)
+            }
+            "expansion" => {
+                // ${var...}
+                let var_name = self.extract_expansion_var(node, source);
+                self.is_tainted(&var_name)
+            }
+            "command_substitution" => {
+                // $(cmd) — tainted if external command output
+                // Clean if: known-safe builtin, or user-defined function
+                let inner_cmd = self.get_cmd_subst_name(node, source);
+                if matches!(inner_cmd.as_str(),
+                    "len" | "keys" | "join" | "epochseconds") {
+                    return false; // known safe builtins, clean output
+                }
+                if matches!(inner_cmd.as_str(), "getenv" | "argv") {
+                    return true; // explicitly tainted sources
+                }
+                if self.functions.contains(&inner_cmd) {
+                    return false; // user-defined function — clean by DD#24
+                }
+                true // unknown external command — tainted
+            }
+            "string" => {
+                // "..." — check all interpolated expansions
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_is_tainted(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+            "concatenation" => {
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_is_tainted(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Check all variable reads in an expression, emitting diagnostics
+    /// for tainted reads outside of bless context.
+    fn check_expr_reads(&self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        match node.kind() {
+            "simple_expansion" => {
+                let var_name = self.extract_var_name(node, source);
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4020",
+                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+            }
+            "expansion" => {
+                let var_name = self.extract_expansion_var(node, source);
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4020",
+                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+                // Also recurse into subscript index expressions
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "subscript" {
+                        for sc in child.children(&mut child.walk()) {
+                            self.check_expr_reads(sc, source, diags);
+                        }
+                    }
+                }
+            }
+            "arithmetic_expansion" => {
+                // $(( expr )) — check all variable references inside
+                self.check_arith_reads(node, source, diags);
+            }
+            _ => {
+                // Recurse into children
+                for child in node.children(&mut node.walk()) {
+                    self.check_expr_reads(child, source, diags);
+                }
+            }
+        }
+    }
+
+    /// Check variable reads inside arithmetic contexts.
+    /// In arithmetic, variables are referenced by bare name (no $), so
+    /// we look for `variable_name` nodes directly.
+    fn check_arith_reads(&self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" {
+                let var_name = child.utf8_text(source).unwrap_or("").to_string();
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        child,
+                        "SB4020",
+                        format!("use of tainted variable '{}' in arithmetic — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+            } else {
+                self.check_arith_reads(child, source, diags);
+            }
+        }
+    }
+
+    /// Extract variable name from a simple_expansion node ($var).
+    fn extract_var_name(&self, node: Node, source: &[u8]) -> String {
+        // simple_expansion: $ variable_name
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" || child.kind() == "special_variable_name" {
+                return child.utf8_text(source).unwrap_or("").to_string();
+            }
+        }
+        // Might be $1, $2 etc.
+        let text = node.utf8_text(source).unwrap_or("");
+        text.trim_start_matches('$').to_string()
+    }
+
+    /// Extract variable name from an expansion node (${var...}).
+    fn extract_expansion_var(&self, node: Node, source: &[u8]) -> String {
+        // Look for variable_name directly, or inside subscript
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" {
+                return child.utf8_text(source).unwrap_or("").to_string();
+            }
+            if child.kind() == "subscript" {
+                // ${arr[0]} — the var name is inside the subscript node
+                for sc in child.children(&mut child.walk()) {
+                    if sc.kind() == "variable_name" {
+                        return sc.utf8_text(source).unwrap_or("").to_string();
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// Get the command name inside a command_substitution $(cmd ...).
+    fn get_cmd_subst_name(&self, node: Node, source: &[u8]) -> String {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "command" {
+                if let Some(name_node) = child.child_by_field_name("name") {
+                    if let Some(word) = name_node.child(0) {
+                        return word.utf8_text(source).unwrap_or("").to_string();
+                    }
+                }
+            }
+        }
+        String::new()
+    }
+
+    /// Get command arguments inside a command_substitution $(cmd arg1 arg2 ...).
+    fn get_cmd_subst_args(&self, node: Node, source: &[u8]) -> Vec<String> {
+        let mut args = Vec::new();
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "command" {
+                let mut skip_name = true;
+                for arg in child.children(&mut child.walk()) {
+                    if arg.kind() == "command_name" {
+                        skip_name = false;
+                        continue;
+                    }
+                    if skip_name { continue; }
+                    if arg.kind() == "word" || arg.kind() == "string"
+                        || arg.kind() == "raw_string" || arg.kind() == "string_content" {
+                        if let Ok(text) = arg.utf8_text(source) {
+                            args.push(text.trim_matches('"').trim_matches('\'').to_string());
+                        }
+                    }
+                }
+            }
+        }
+        args
+    }
+
+    /// Check if a value node is a known-safe external (getenv of known var,
+    /// or command substitution of known command). Returns AutoBless info if so.
+    fn check_known_external(&self, node: Node, source: &[u8], var_name: &str) -> Option<AutoBless> {
+        use crate::known_externals::{lookup_env_var, lookup_command};
+
+        match node.kind() {
+            "command_substitution" => {
+                let cmd_name = self.get_cmd_subst_name(node, source);
+                let args = self.get_cmd_subst_args(node, source);
+
+                // $(getenv HOME) → check known env vars
+                if cmd_name == "getenv" && !args.is_empty() {
+                    if let Some(known) = lookup_env_var(&args[0]) {
+                        return Some(AutoBless {
+                            var_name: var_name.to_string(),
+                            pattern: known.pattern.to_string(),
+                            description: known.description.to_string(),
+                            line: 0,
+                        });
+                    }
+                }
+
+                // $(hostname), $(date +%Y-%m-%d), etc. → check known commands
+                if let Some(known) = lookup_command(&cmd_name, &args) {
+                    return Some(AutoBless {
+                        var_name: var_name.to_string(),
+                        pattern: known.pattern.to_string(),
+                        description: known.description.to_string(),
+                        line: 0,
+                    });
+                }
+
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Check if an expression contains reads of tainted variables (no diagnostics).
+    fn expr_has_tainted_read(&self, node: Node, source: &[u8]) -> bool {
+        match node.kind() {
+            "simple_expansion" => {
+                let var_name = self.extract_var_name(node, source);
+                self.is_tainted(&var_name)
+            }
+            "expansion" => {
+                let var_name = self.extract_expansion_var(node, source);
+                self.is_tainted(&var_name)
+            }
+            "command_substitution" => true, // external command output is tainted
+            _ => {
+                for child in node.children(&mut node.walk()) {
+                    if self.expr_has_tainted_read(child, source) {
+                        return true;
+                    }
+                }
+                false
+            }
+        }
+    }
+}
+
+=== LOWERING — bless re-parse (lower.rs lines 431-500) ===
+fn lower_command(node: Node, source: &[u8]) -> Option<Command> {
+    let name_node = node.child_by_field_name("name")?;
+    let name = lower_expr(name_node, source);
+
+    // bless VAR [[ test_expr ]] — reconstruct the test expression
+    // tree-sitter parses this as a plain command with word arguments,
+    // so we re-parse the [[ ... ]] portion to get a proper TestExpr.
+    if let ExprKind::Literal(ref n) = name.kind {
+        if n == "bless" {
+            let mut args_raw: Vec<Node> = Vec::new();
+            for child in node.children(&mut node.walk()) {
+                if child.is_named() && child != name_node {
+                    args_raw.push(child);
+                }
+            }
+            // First arg is variable name, rest should be [[ ... ]]
+            if !args_raw.is_empty() {
+                let var_expr = lower_expr(args_raw[0], source);
+                // Reconstruct the test portion from source bytes
+                if args_raw.len() >= 2 {
+                    let test_start = args_raw[1].start_byte();
+                    let test_end = args_raw.last().unwrap().end_byte();
+                    let test_text = &source[test_start..test_end];
+                    let test_str = std::str::from_utf8(test_text).unwrap_or("");
+                    // Re-parse as a standalone test command
+                    let wrapper = format!("{}\n", test_str);
+                    let mut parser = tree_sitter::Parser::new();
+                    parser.set_language(&tree_sitter_bash::LANGUAGE.into()).ok();
+                    if let Some(tree) = parser.parse(wrapper.as_bytes(), None) {
+                        let root = tree.root_node();
+                        // Look for test_command in the parsed tree
+                        for child in root.children(&mut root.walk()) {
+                            if child.kind() == "test_command" {
+                                let test_kind = lower_test_command(child, wrapper.as_bytes());
+                                if let ExprKind::Test(test_expr) = test_kind {
+                                    return Some(Command {
+                                        name,
+                                        args: vec![
+                                            var_expr,
+                                            Expr { kind: ExprKind::Test(test_expr), span: Span::from_node(node) },
+                                        ],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback: return as plain command
+                let mut args = vec![var_expr];
+                for a in &args_raw[1..] {
+                    args.push(lower_expr(*a, source));
+                }
+                return Some(Command { name, args });
+            }
+        }
+    }
+
+    // Detect `var =~ s/pattern/replacement/flags` regex mutation
+    let mut has_regex_op = false;
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "=~" {
+            has_regex_op = true;
+            break;
+        }
+    }
+    if has_regex_op {
+        // Collect all named children after =~ as the regex expression
+        let mut after_op = false;
+        let mut regex_parts = Vec::new();
+        for child in node.children(&mut node.walk()) {
+
+=== TRANSFORM — bless + positional (transform.rs lines 294-340, 612-720, 2130-2370) ===
+
+        StmtKind::Command(c) => {
+            let name = expr_to_string(&c.name);
+
+            // bless VAR [[ test_expr ]] — runtime validation
+            if name == "bless" {
+                // First arg is variable name, remaining args should contain [[ test_expr ]]
+                if c.args.len() >= 2 {
+                    let var_name = expr_to_string(&c.args[0]);
+                    // Look for a TestExpr in the remaining args
+                    for arg in &c.args[1..] {
+                        if let ExprKind::Test(test_expr) = &arg.kind {
+                            let var_ref = state.lookup(&var_name);
+                            ssa.block_mut(block).insts.push(SsaInst::Bless {
+                                var: var_ref,
+                                test: test_expr.clone(),
+                            });
+                            return block;
+                        }
+                    }
+                }
+                // If we couldn't find a TestExpr, emit as regular command (will be caught by taint checker)
+                let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                ssa.block_mut(block).insts.push(SsaInst::Command {
+                    name: name.clone(),
+                    args,
+                    redirects: vec![],
+                });
+                return block;
+            }
+
+            // If the command is [[ ]], preserve the TestExpr for codegen
+            if name == "[[" {
+                for arg in &c.args {
+                    if let ExprKind::Test(test_expr) = &arg.kind {
+                        ssa.block_mut(block).insts.push(SsaInst::Test(test_expr.clone()));
+                        return block;
+                    }
+                }
+            }
+
+            // var =~ s/pattern/replacement/flags — regex mutation
+            if c.args.len() == 1 {
+                let arg_s = expr_to_string(&c.args[0]);
+                if arg_s.starts_with("s/") {
+                    // Parse s/pattern/replacement/flags
+                    let parts: Vec<&str> = arg_s[2..].splitn(3, '/').collect();
+---
+
+            // Check if this is a known function call → inline expansion
+            if let Some(body) = state.function_bodies.get(&name).cloned() {
+                // Collect local variable names from function body
+                let locals = collect_local_vars(&body);
+
+                // Save caller's positional params
+                let saved: Vec<(String, VarRef)> = (1..=9)
+                    .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+                    .collect();
+                let saved_argc = state.lookup("#");
+
+                // Save caller's versions of local variables to temp names
+                // (different base name so they get separate CL Variables)
+                let saved_locals: Vec<(String, VarRef)> = locals.iter()
+                    .map(|lname| {
+                        let save_name = format!("__save_{}_{}", name, lname);
+                        let src = state.lookup(lname);
+                        let save_ref = state.define(&save_name);
+                        ssa.block_mut(block).insts.push(SsaInst::Assign {
+                            target: save_ref.clone(),
+                            value: SsaValue::Var(src),
+                        });
+                        (lname.clone(), save_ref)
+                    })
+                    .collect();
+
+                // Set positional params from call args
+                let argc_val = SsaValue::Literal(c.args.len().to_string());
+                let argc_var = state.define("#");
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: argc_var,
+                    value: argc_val,
+                });
+                for (i, arg) in c.args.iter().enumerate() {
+                    let val = expr_to_value(arg, state);
+                    let param_var = state.define(&(i + 1).to_string());
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target: param_var,
+                        value: val,
+                    });
+                }
+                // DD#46: clear unbound positional slots so caller's $K
+                // doesn't leak through when the callee reads $K+1..$9.
+                // Also: detect out-of-range positional reads in the body
+                // and emit a diagnostic if the function reads $K where K > argc.
+                let max_positional = collect_max_positional(&body);
+                let call_argc = c.args.len();
+                if max_positional > call_argc {
+                    state.diagnostics.push(format!(
+                        "error: function '{}' reads ${}  but called with only {} argument{}",
+                        name, max_positional, call_argc,
+                        if call_argc == 1 { "" } else { "s" }
+                    ));
+                }
+                for i in (c.args.len() + 1)..=9 {
+                    let param_var = state.define(&i.to_string());
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target: param_var,
+                        value: SsaValue::Literal(String::new()),
+                    });
+                }
+
+                // Inline the function body
+                let call_block = ssa.new_block(&format!("call_{}", name));
+                ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+
+                // Set return target so `return` jumps to restore block
+                let restore_block = ssa.new_block(&format!("ret_{}", name));
+                let saved_return_target = state.return_target;
+                state.return_target = Some(restore_block);
+                let exit_block = lower_stmts(&body, ssa, state, call_block);
+                state.return_target = saved_return_target;
+
+                // Normal fall-through also goes to restore block
+                ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+                for (param_name, saved_ref) in &saved {
+                    let restore_var = state.define(param_name);
+                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                        target: restore_var,
+                        value: SsaValue::Var(saved_ref.clone()),
+                    });
+                }
+                let restore_argc = state.define("#");
+                ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                    target: restore_argc,
+                    value: SsaValue::Var(saved_argc),
+                });
+                for (local_name, saved_ref) in &saved_locals {
+                    let restore_var = state.define(local_name);
+                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+                        target: restore_var,
+                        value: SsaValue::Var(saved_ref.clone()),
+                    });
+                }
+
+                return restore_block;
+            }
+
+            let args: Vec<SsaValue> = c.args.iter()
+                .map(|a| expr_to_value(a, state))
+                .collect();
+            ssa.block_mut(block).insts.push(SsaInst::Command {
+                name,
+                args,
+                redirects: Vec::new(),
+            });
+            block
+---
+    }
+}
+
+/// Collect variable names declared with `local` in a statement list.
+fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
+    let mut locals = Vec::new();
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Declaration(d) if d.keyword == DeclKeyword::Local => {
+                for a in &d.assignments {
+                    if !locals.contains(&a.name) {
+                        locals.push(a.name.clone());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    locals
+}
+
+/// Scan function body for the highest positional parameter referenced ($1..$9).
+/// Returns 0 if none found.
+fn collect_max_positional(stmts: &[Statement]) -> usize {
+    let mut max = 0usize;
+    for stmt in stmts {
+        scan_expr_positionals_stmt(stmt, &mut max);
+    }
+    max
+}
+
+fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            scan_expr_positionals_expr(&c.name, max);
+            for a in &c.args { scan_expr_positionals_expr(a, max); }
+        }
+        StmtKind::Assignment(a) => {
+            scan_expr_positionals_expr(&a.value, max);
+        }
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments { scan_expr_positionals_expr(&a.value, max); }
+        }
+        StmtKind::Pipeline(p) => {
+            for s in &p.commands { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::If(i) => {
+            for s in &i.condition { scan_expr_positionals_stmt(s, max); }
+            for s in &i.then_body { scan_expr_positionals_stmt(s, max); }
+            if let Some(ref eb) = i.else_body { for s in eb { scan_expr_positionals_stmt(s, max); } }
+        }
+        StmtKind::While(w) => {
+            for s in &w.condition { scan_expr_positionals_stmt(s, max); }
+            for s in &w.body { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::For(f) => {
+            for w in &f.words { scan_expr_positionals_expr(w, max); }
+            for s in &f.body { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::Case(c) => {
+            scan_expr_positionals_expr(&c.value, max);
+            for item in &c.items {
+                for s in &item.body { scan_expr_positionals_stmt(s, max); }
+            }
+        }
+        StmtKind::Function(_) => {} // don't recurse into nested functions
+        StmtKind::Redirected(r) => {
+            scan_expr_positionals_stmt(&r.body, max);
+        }
+        StmtKind::List(l) => {
+            scan_expr_positionals_stmt(&l.left, max);
+            scan_expr_positionals_stmt(&l.right, max);
+        }
+        StmtKind::Subshell(s) => {
+            for st in &s.body { scan_expr_positionals_stmt(st, max); }
+        }
+        StmtKind::Group(g) => {
+            for st in &g.body { scan_expr_positionals_stmt(st, max); }
+        }
+        StmtKind::Comment(_) => {}
+    }
+}
+
+fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) => {
+            if let Ok(n) = name.parse::<usize>() {
+                if n >= 1 && n <= 9 && n > *max { *max = n; }
+            }
+        }
+        ExprKind::DoubleQuoted(parts) => {
+            for p in parts { scan_expr_positionals_expr(p, max); }
+        }
+        ExprKind::Concat(parts) => {
+            for p in parts { scan_expr_positionals_expr(p, max); }
+        }
+        ExprKind::Array(elems) => {
+            for e in elems { scan_expr_positionals_expr(e, max); }
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            if let Ok(n) = pe.name.parse::<usize>() {
+                if n >= 1 && n <= 9 && n > *max { *max = n; }
+            }
+            if let Some(ref op) = pe.operand {
+                scan_expr_positionals_expr(op, max);
+            }
+        }
+        ExprKind::CommandSubstitution(stmts) => {
+            for s in stmts { scan_expr_positionals_stmt(s, max); }
+        }
+        ExprKind::Test(t) => {
+            scan_test_positionals(t, max);
+        }
+        ExprKind::Subscript { index, .. } => {
+            scan_expr_positionals_expr(index, max);
+        }
+        _ => {}
+    }
+}
+
+fn scan_test_positionals(test: &TestExpr, max: &mut usize) {
+    match test {
+        TestExpr::Unary { operand, .. } => scan_expr_positionals_expr(operand, max),
+        TestExpr::Binary { left, right, .. } => {
+            scan_expr_positionals_expr(left, max);
+            scan_expr_positionals_expr(right, max);
+        }
+        TestExpr::Not(inner) => scan_test_positionals(inner, max),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            scan_test_positionals(a, max);
+            scan_test_positionals(b, max);
+        }
+        TestExpr::Paren(inner) => scan_test_positionals(inner, max),
+    }
+}
+
+/// Desugar `for x in "$@"` into a while loop over positional params:
+///   __fi = 0
+///   while __fi < $#:
+///     x = argv[__fi + 1]
+///     body
+///     __fi = __fi + 1
+/// Lower `for x in "${arr[@]}"` — iterate over table entries by index.
+/// Same two-pass SSA pattern as lower_for_dollar_at.
+fn lower_for_array(
+    f: &For,
+    array_name: &str,
+    use_keys: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let header = ssa.new_block("for_arr.header");
+    let body_block = ssa.new_block("for_arr.body");
+    let exit_block = ssa.new_block("for_arr.exit");
+
+    // __ai = 0
+    let idx_var = state.define("__ai");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: idx_var,
+        value: SsaValue::Literal("0".to_string()),
+    });
+
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+    let pre_state = state.snapshot();
+
+    // Condition: __ai < sash_table_len(arr)
+    // We use arrlen as a ParamExpansion that codegen already handles
+    let cond_test = crate::ir::TestExpr::Binary {
+        left: Box::new(Expr { kind: ExprKind::SimpleExpansion("__ai".to_string()), span: Span::default() }),
+        op: "-lt".to_string(),
+        right: Box::new(Expr {
+            kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
+                name: array_name.to_string(),
+                operator: Some("arrlen".to_string()),
+                operand: None,
+            }),
+            span: Span::default(),
+        }),
+    };
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test.clone()));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    // x = table_value(arr, __ai)
+    let idx_ref = state.lookup("__ai");
+    let loop_var = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var,
+        value: if use_keys {
+            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref.clone() }
+        } else {
+            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref.clone() }
+        },
+    });
+
+    let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
+
+    // __ai = __ai + 1
+    let idx_cur = state.lookup("__ai");
+    let idx_next = state.define("__ai");
+    ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
+        target: idx_next,
+        value: SsaValue::ArithExpr { var: idx_cur, op: ArithOp::Add, operand: 1 },
+    });
+    let body_state_1 = state.snapshot();
+
+    insert_phis_two_branch(
+        state, ssa, header,
+        block, &pre_state,
+        body_exit_1, &body_state_1,
+    );
+
+    // --- Pass 2 ---
+    ssa.block_mut(header).insts.clear();
+    ssa.block_mut(body_block).insts.clear();
+
+    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test));
+    ssa.block_mut(header).terminator = Terminator::Loop {
+        condition: "condition".to_string(),
+        body_block,
+        exit_block,
+    };
+
+    let idx_ref_2 = state.lookup("__ai");
+    let loop_var_2 = state.define(&f.variable);
+    ssa.block_mut(body_block).insts.push(SsaInst::Assign {
+        target: loop_var_2,
+        value: if use_keys {
+            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref_2.clone() }
+        } else {
+            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref_2.clone() }
+        },
+    });
+
+    let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);
+
+    let idx_cur_2 = state.lookup("__ai");
+
+=== SSA DEFS (ssa.rs — SsaInst, SsaValue, VersionState) ===
+/// An SSA instruction — a versioned wrapper around an IR operation.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SsaInst {
+    /// x_n = value
+    Assign {
+        target: VarRef,
+        value: SsaValue,
+    },
+    /// A command (no variable defined)
+    Command {
+        name: String,
+        args: Vec<SsaValue>,
+        redirects: Vec<crate::ir::Redirect>,
+    },
+    /// Test expression from [[ ]]. Preserved through SSA so codegen
+    /// can emit inline comparisons instead of shelling out.
+    Test(crate::ir::TestExpr),
+    /// export VAR=value — assign + push to environment
+    Export {
+        target: VarRef,
+        value: SsaValue,
+        name: String,  // original bash variable name (for setenv)
+    },
+    /// phi node
+    Phi(PhiNode),
+    /// read -r line: reads one line from fd, assigns to target, sets __read_eof
+    ReadLine {
+        target: VarRef,
+        fd: i64,  // 0 = stdin
+        delim: Option<u8>,  // None = newline (default), Some(byte) = custom delimiter
+        redirects: Vec<crate::ir::Redirect>,
+    },
+    /// read -r var1 var2 ... varN: read line, split on whitespace into N vars
+    /// Last var gets the remainder.
+    ReadLineMulti {
+        targets: Vec<VarRef>,
+        fd: i64,
+        delim: Option<u8>,
+        redirects: Vec<crate::ir::Redirect>,
+    },
+    /// arr[i]=val or map[key]=val — subscript assignment
+    SubscriptAssign {
+        array: String,
+        index: SsaValue,
+        value: SsaValue,
+        is_integer_key: bool,
+    },
+    /// arr+=(val) — append to indexed array
+    ArrayAppend {
+        array: String,
+        value: SsaValue,
+    },
+    /// mapfile -t arr — read all lines from fd into indexed array
+    Mapfile {
+        array: String,
+        fd: i64,
+    },
+    /// Read a line, split by delimiter, store into indexed array
+    ReadArray {
+        array: String,
+        fd: i64,
+        delim: Option<u8>,
+    },
+    /// Start capturing stdout (for $(func) capture)
+    CaptureStart,
+    /// End capturing, assign captured output to target
+    CaptureEnd {
+        target: VarRef,
+    },
+    /// Multi-stage pipeline: cmd1 | cmd2 | ...
+    Pipeline {
+        stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
+        /// If true, the last pipe read fd is saved for a subsequent while-read loop
+        capture_read_fd: bool,
+    },
+    /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
+    /// If the test fails, abort with nonzero exit.
+    Bless {
+        var: VarRef,
+        test: crate::ir::TestExpr,
+    },
+}
+
+/// Arithmetic operators for $(( )) and (( )) contexts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithOp {
+    Add, Sub, Mul, Div, Mod,
+    Eq, Ne, Lt, Le, Gt, Ge,
+    And, Or, Not,
+    Shl, Shr, BitAnd, BitOr, BitXor,
+    Pow,
+}
+
+impl ArithOp {
+    pub fn from_str(s: &str) -> Option<ArithOp> {
+        match s {
+            "+" => Some(ArithOp::Add),
+            "-" => Some(ArithOp::Sub),
+            "*" => Some(ArithOp::Mul),
+            "/" => Some(ArithOp::Div),
+            "%" => Some(ArithOp::Mod),
+            "==" => Some(ArithOp::Eq),
+            "!=" => Some(ArithOp::Ne),
+            "<" => Some(ArithOp::Lt),
+            "<=" => Some(ArithOp::Le),
+            ">" => Some(ArithOp::Gt),
+            ">=" => Some(ArithOp::Ge),
+---
+            ArithOp::Pow => "**",
+        }
+    }
+}
+
+/// A value in SSA — either a literal or a variable reference.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SsaValue {
+    Literal(String),
+    Var(VarRef),
+    /// Complex expression (not yet decomposed — placeholder for
+    /// quoted strings, parameter expansions, etc.)
+    Expr(String),
+    /// Call an elidable function, capture its output as a string.
+    FuncCall(String),
+    /// Runtime command substitution: fork/exec, capture stdout.
+    /// Carries the command name and arguments as expressions.
+    CmdSubst { argv: Vec<SsaValue>, redirects: Vec<crate::ir::Redirect> },
+    /// Concatenation of multiple values (from double-quoted strings
+    /// with mixed literal and variable parts).
+    Concat(Vec<SsaValue>),
+    /// Arithmetic expansion: $((expr))
+    /// Stores the variable name, operator, and integer operand.
+    ArithExpr {
+        var: VarRef,
+        op: ArithOp,
+        operand: i64,
+    },
+    /// General arithmetic binary op: $((a + b)) where both sides can be vars or expressions
+    ArithBinOp {
+        left: Box<SsaValue>,
+        op: ArithOp,
+        right: Box<SsaValue>,
+    },
+    /// Parameter expansion with operator: ${var%%pat}, ${var#pat},
+    /// ${var:-default}, ${var:=default}, ${var:+alt}, etc.
+    ParamExpansion {
+        var: VarRef,
+        operator: String,
+        operand: String,
+    },
+    /// Associative array literal: [(k1,v1), (k2,v2), ...]
+    AssocArray(Vec<(String, SsaValue)>),
+    /// Associative array subscript: ${MAP[$KEY]}
+    Subscript {
+        array: String,
+        index: Box<SsaValue>,
+        is_integer_key: bool,   // true = indexed array (key is raw i64 bytes)
+    },
+    /// Positional parameter by index: argv[i+1] (for dynamic for loops)
+    ArgvIndex(VarRef),
+    /// Indexed array literal: (val0, val1, val2, ...)
+    /// Creates a hash table with integer keys "0", "1", "2", ...
+    IndexedArray(Vec<SsaValue>),
+    /// Ternary: cond ? true_val : false_val
+    Ternary {
+        cond: Box<SsaValue>,
+        true_val: Box<SsaValue>,
+        false_val: Box<SsaValue>,
+    },
+    /// Table element by positional index: sash_table_value(table, i)
+    /// Used for `for x in "${arr[@]}"` iteration.
+    TableValue {
+        array: String,
+        index: VarRef,
+    },
+    /// Table key by positional index: sash_table_key(table, i)
+    /// Used for `for k in "${!arr[@]}"` iteration.
+    TableKey {
+        array: String,
+        index: VarRef,
+    },
+}
+
+/// A basic block: a straight-line sequence of instructions with
+/// a terminator that transfers control.
+#[derive(Debug, Clone)]
+pub struct BasicBlock {
+    pub id: BlockId,
+    pub label: String,
+    pub phis: Vec<PhiNode>,
+    pub insts: Vec<SsaInst>,
+    pub terminator: Terminator,
+}
+
+/// How a basic block ends.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Terminator {
+    /// Fall through to the next block.
+    Goto(BlockId),
+    /// Conditional branch: if condition then goto true_block else goto false_block.
+---
+pub struct VersionState {
+    /// Current version for each variable name (reset on restore).
+    current: HashMap<String, u32>,
+    /// High-water mark — the next version to assign (never rolls back).
+    counter: HashMap<String, u32>,
+    /// Functions known at this point in the program.
+    pub known_functions: std::collections::HashSet<String>,
+    /// Function IR bodies for inline expansion at call sites.
+    pub function_bodies: HashMap<String, Vec<crate::ir::Statement>>,
+    /// Variable type map from type inference.
+    pub type_map: HashMap<String, crate::ir::VarType>,
+    /// Variables known to be associative arrays (vs indexed).
+    pub assoc_arrays: std::collections::HashSet<String>,
+    /// Variables declared readonly — error on reassignment.
+    pub readonly_vars: std::collections::HashSet<String>,
+    /// Loop context stack: (header_block, exit_block) for break/continue.
+    pub loop_stack: Vec<(usize, usize)>,
+    /// Return target block for `return` in inlined functions.
+    pub return_target: Option<usize>,
+    /// EXIT trap body statements (if set via `trap 'body' EXIT`).
+    pub exit_trap: Option<Vec<crate::ir::Statement>>,
+    /// Diagnostics collected during SSA transformation.
+    pub diagnostics: Vec<String>,
+}
+
+impl VersionState {
+    pub fn new() -> Self {
+        Self {
+            current: HashMap::new(),
+            counter: HashMap::new(),
+            known_functions: std::collections::HashSet::new(),
+            function_bodies: HashMap::new(),
+            type_map: HashMap::new(),
+            assoc_arrays: std::collections::HashSet::new(),
+            readonly_vars: std::collections::HashSet::new(),
+            loop_stack: Vec::new(),
+            return_target: None,
+            exit_trap: None, diagnostics: Vec::new(),
+        }
+    }
+
+    pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
+        Self {
+            current: HashMap::new(),
+            counter: HashMap::new(),
+            known_functions: std::collections::HashSet::new(),
+            function_bodies: HashMap::new(),
+            type_map,
+            assoc_arrays: std::collections::HashSet::new(),
+            readonly_vars: std::collections::HashSet::new(),
+            loop_stack: Vec::new(),
+            return_target: None,
+            exit_trap: None, diagnostics: Vec::new(),
+        }
+    }
+
+    /// Define a new version of a variable.
+
+=== CODEGEN — bless emit (codegen.rs lines 1280-1340) ===
+925:                SsaInst::Bless { test, .. } => {
+2282:        SsaInst::Bless { var: _var, test } => {
+
+            // Phi nodes are no-ops in Cranelift codegen: all SSA versions
+            // of the same bash variable share the same Cranelift Variable,
+            // so Cranelift's SSA builder handles the merge automatically.
+
+            // Emit instructions
+            let mut block_terminated = false;
+            for inst in &ssa_block.insts {
+                if block_terminated { break; }
+                block_terminated = lower_inst(inst, &mut builder, &mut module,
+                           &vars, &literals, &externs, space_id, nl_id,
+                           test_result_var, exit_status_var, pipe_read_fd_var,
+                           capture_saved_var, capture_pipe_var, func_constants);
+            }
+
+            // Emit terminator (unless block was already terminated by exit)
+            if !block_terminated {
+            match &ssa_block.terminator {
+                Terminator::Return => {
+                    let zero = builder.ins().iconst(I64, 0);
+                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref, &[zero]);
+                    builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                }
+                Terminator::Goto(target) => {
+                    let target_cl = cl_blocks[target];
+                    builder.ins().jump(target_cl, &[]);
+                }
+                Terminator::Branch { true_block, false_block, .. } => {
+                    let cond = builder.use_var(test_result_var);
+                    let true_cl = cl_blocks[true_block];
+                    let false_cl = cl_blocks[false_block];
+                    builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
+                }
+                Terminator::Loop { body_block, exit_block, .. } => {
+                    let cond = builder.use_var(test_result_var);
+                    let body_cl = cl_blocks[body_block];
+                    let exit_cl = cl_blocks[exit_block];
+                    builder.ins().brif(cond, body_cl, &[], exit_cl, &[]);
+                }
+            }
+            } // if !block_terminated
+        }
+
+        // Seal all blocks not yet sealed (handles complex CFGs where
+        // predecessors are emitted out of order).
+        builder.seal_all_blocks();
+        builder.finalize();
+    }
+
+    verify_function(&func, isa.as_ref()).expect("verify function");
+
+    let mut ctx = cranelift_codegen::Context::for_function(func);
+    module.define_function(main_func_id, &mut ctx).expect("define function");
+
+    let mut product = module.finish();
+
+    // Embed sash-native source in .sash_source ELF section (DD#45)
+    if let Some(src) = bash_source {
+        let sash_source = crate::emit_source::emit_source(src.as_bytes(), false);
+        let section_id = product.object.add_section(
+
+=== TAINT SPEC TESTS ===
+// Taint model spec tests — DD#24 amendment 2 + DD#46
+//
+// TDD: tests written against the spec. Some pass today (CST analyzer),
+// some require the SSA taint pass or bless runtime enforcement.
+// Each test is tagged:
+//   [NOW]  — expected to pass with current implementation
+//   [SSA]  — requires SSA taint pass
+//   [RT]   — requires bless runtime enforcement
+//   [DD46] — requires DD#46 (top-level positional rejection/coercion)
+
+use std::process::Command;
+
+fn sash_bin() -> String {
+    let mut path = std::env::current_exe().unwrap();
+    path.pop();
+    path.pop();
+    path.push("sash");
+    path.to_string_lossy().to_string()
+}
+
+fn write_tmp(name: &str, content: &str) -> String {
+    let path = format!("/tmp/sash_taint_{}", name);
+    std::fs::write(&path, content).expect("write tmp");
+    path
+}
+
+/// Compile, expect failure, return stderr
+fn compile_expect_fail(name: &str, script: &str) -> String {
+    let src = write_tmp(&format!("{}.sh", name), script);
+    let bin = format!("/tmp/sash_taint_{}", name);
+    let out = Command::new(sash_bin())
+        .args(["--nolint", "-o", &bin, &src])
+        .output()
+        .expect("failed to run sash");
+    assert!(!out.status.success(), "expected compile failure for {}", name);
+    String::from_utf8_lossy(&out.stderr).to_string()
+}
+
+/// Compile and run, return stdout
+fn compile_and_run(name: &str, script: &str) -> String {
+    let src = write_tmp(&format!("{}.sh", name), script);
+    let bin = format!("/tmp/sash_taint_{}", name);
+    let out = Command::new(sash_bin())
+        .args(["--nolint", "-o", &bin, &src])
+        .output()
+        .expect("failed to run sash");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    let run = Command::new(&bin).output().expect("run failed");
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
+/// Compile and run with env vars, return exit code
+fn compile_and_exit_code(name: &str, script: &str, env: &[(&str, &str)]) -> i32 {
+    let src = write_tmp(&format!("{}.sh", name), script);
+    let bin = format!("/tmp/sash_taint_{}", name);
+    let out = Command::new(sash_bin())
+        .args(["--nolint", "-o", &bin, &src])
+        .output()
+        .expect("failed to run sash");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    let mut cmd = Command::new(&bin);
+    for (k, v) in env { cmd.env(k, v); }
+    let run = cmd.output().expect("run failed");
+    run.status.code().unwrap_or(-1)
+}
+
+/// Compile and run with env vars, return stdout
+fn compile_and_run_with_env(name: &str, script: &str, env: &[(&str, &str)]) -> String {
+    let src = write_tmp(&format!("{}.sh", name), script);
+    let bin = format!("/tmp/sash_taint_{}", name);
+    let out = Command::new(sash_bin())
+        .args(["--nolint", "-o", &bin, &src])
+        .output()
+        .expect("failed to run sash");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    let mut cmd = Command::new(&bin);
+    for (k, v) in env { cmd.env(k, v); }
+    let run = cmd.output().expect("run failed");
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
+// ===================================================================
+// Rejection tests — tainted reads without bless → SB4020
+// ===================================================================
+
+#[test] // [NOW]
+fn taint_copy_is_read() {
+    // b=$a where a is tainted — copying is reading
+    let script = r#"#!/bin/bash
+x=$(getenv UNTRUSTED)
+b=$x
+echo "$b"
+"#;
+    let stderr = compile_expect_fail("copy_read", script);
+    assert!(stderr.contains("SB4020"), "copying tainted var should be SB4020, got: {}", stderr);
+}
+
+#[test] // [NOW]
+fn taint_cmd_arg() {
+    // Using tainted var as command argument
+    let script = r#"#!/bin/bash
+x=$(getenv UNTRUSTED)
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("cmd_arg", script);
+    assert!(stderr.contains("SB4020"), "tainted var as cmd arg should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_as_array_index() {
+    // Tainted value used as array index
+    let script = r#"#!/bin/bash
+array items=(a b c)
+x=$(getenv IDX)
+echo "${items[$x]}"
+"#;
+    let stderr = compile_expect_fail("arr_index", script);
+    assert!(stderr.contains("SB4020"), "tainted index should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_in_arithmetic() {
+    // Tainted value in arithmetic expression
+    let script = r#"#!/bin/bash
+x=$(getenv NUM)
+(( x + 1 ))
+"#;
+    let stderr = compile_expect_fail("arith", script);
+    assert!(stderr.contains("SB4020"), "tainted var in arithmetic should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_arith_expansion() {
+    // Tainted value in $(( )) expansion
+    let script = r#"#!/bin/bash
+x=$(getenv NUM)
+echo $(( x * 2 ))
+"#;
+    let stderr = compile_expect_fail("arith_exp", script);
+    assert!(stderr.contains("SB4020"), "tainted var in $(()) should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_func_argument() {
+    // Passing tainted var as function argument is a read
+    let script = r#"#!/bin/bash
+greet() { echo "hello $1"; }
+x=$(getenv NAME)
+greet "$x"
+"#;
+    let stderr = compile_expect_fail("func_arg", script);
+    assert!(stderr.contains("SB4020"), "passing tainted var to function should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_default_expansion() {
+    // ${x:-default} is a read of x
+    let script = r#"#!/bin/bash
+x=$(getenv VAL)
+echo "${x:-fallback}"
+"#;
+    let stderr = compile_expect_fail("default_exp", script);
+    assert!(stderr.contains("SB4020"), "default expansion of tainted var should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_length() {
+    // ${#x} is a read of x
+    let script = r#"#!/bin/bash
+x=$(getenv VAL)
+echo "${#x}"
+"#;
+    let stderr = compile_expect_fail("length", script);
+    assert!(stderr.contains("SB4020"), "length of tainted var should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_prefix_strip() {
+    // ${x#pat} is a read
+    let script = r#"#!/bin/bash
+x=$(getenv PATH_VAL)
+echo "${x#/usr}"
+"#;
+    let stderr = compile_expect_fail("prefix_strip", script);
+    assert!(stderr.contains("SB4020"), "prefix strip of tainted var should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_suffix_strip() {
+    // ${x%%.*} is a read
+    let script = r#"#!/bin/bash
+x=$(getenv FILENAME)
+echo "${x%%.*}"
+"#;
+    let stderr = compile_expect_fail("suffix_strip", script);
+    assert!(stderr.contains("SB4020"), "suffix strip of tainted var should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_mapfile_element() {
+    // mapfile produces tainted elements; reading one is rejected
+    let script = r#"#!/bin/bash
+mapfile -t lines < /dev/stdin
+echo "${lines[0]}"
+"#;
+    let stderr = compile_expect_fail("mapfile", script);
+    assert!(stderr.contains("SB4020"), "mapfile element read should be SB4020, got: {}", stderr);
+}
+
+#[test] // [SSA]
+fn taint_retaint_after_bless() {
+    // Re-assignment from tainted source after bless re-taints
+    let script = r#"#!/bin/bash
+x=$(getenv A)
+bless x [[ -n $x ]]
+x=$(getenv B)
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("retaint", script);
+    assert!(stderr.contains("SB4020"), "re-tainted var should be SB4020, got: {}", stderr);
+}
+
+// ===================================================================
+// DD#46 — top-level positional params
+// ===================================================================
+
+#[test] // [DD46]
+fn taint_toplevel_dollar1_rejected() {
+    // Top-level $1 in sash-native mode is a compile error
+    let script = r#"#!/bin/bash
+echo $1
+"#;
+    let stderr = compile_expect_fail("toplevel_1", script);
+    // Could be SB4020 (tainted) or a dedicated "use argv" diagnostic
+    assert!(stderr.contains("SB4020") || stderr.contains("argv"),
+        "top-level $1 should be rejected, got: {}", stderr);
+}
+
+#[test] // [DD46]
+fn taint_toplevel_at_rejected() {
+    // Top-level $@ in sash-native mode is a compile error
+    let script = r#"#!/bin/bash
+for x in "$@"; do echo "$x"; done
+"#;
+    let stderr = compile_expect_fail("toplevel_at", script);
+    assert!(stderr.contains("SB4020") || stderr.contains("argv"),
+        "top-level $@ should be rejected, got: {}", stderr);
+}
+
+#[test] // [DD46]
+fn taint_outofrange_positional() {
+    // Function takes 1 arg but reads $2 → compile error
+    let script = r#"#!/bin/bash
+foo() { echo "$1"; echo "$2"; }
+foo "only-one"
+"#;
+    let stderr = compile_expect_fail("outofrange", script);
+    assert!(!stderr.is_empty(), "out-of-range positional $2 should be rejected, got: {}", stderr);
+}
+
+// ===================================================================
+// Clean tests — should compile and run
+// ===================================================================
+
+#[test] // [NOW]
+fn clean_bless_then_use() {
+    let script = r#"#!/bin/bash
+x=$(getenv MY_CUSTOM_VAR)
+bless x [[ -n $x ]]
+echo "$x"
+"#;
+    // Just check it compiles and runs
+    compile_and_run("bless_use", script);
+}
+
+#[test] // [NOW]
+fn clean_user_func_capture() {
+    // $(user_func) is clean — user functions can't introduce taint
+    let script = r#"#!/bin/bash
+greet() { echo "hello"; }
+x=$(greet)
+echo "$x"
+"#;
+    assert_eq!(compile_and_run("func_capture", script), "hello\n");
+}
+
+#[test] // [NOW]
+fn clean_herestring_literal() {
+    // read from herestring of clean data → clean
+    let script = r#"#!/bin/bash
+read x <<< "safe"
+echo "$x"
+"#;
+    assert_eq!(compile_and_run("herestring", script), "safe\n");
+}
+
+#[test] // [NOW]
+fn clean_heredoc_no_cmdsub() {
+    // read from heredoc with no cmdsub → clean
+    let script = r#"#!/bin/bash
+cat <<EOF
+hello world
+EOF
+"#;
+    assert_eq!(compile_and_run("heredoc_clean", script), "hello world\n");
+}
+
+#[test] // [NOW]
+fn clean_auto_bless_known_external() {
+    // Known external auto-blesses
+    let script = r#"#!/bin/bash
+h=$(hostname)
+echo "$h"
+"#;
+    compile_and_run("auto_bless", script);
+}
+
+#[test] // [NOW]
+fn clean_tainted_inside_bless_expr() {
+    // The one legal read: inside bless test expression
+    let script = r#"#!/bin/bash
+x=$(getenv MY_CUSTOM_VAR)
+bless x [[ -n $x ]]
+echo ok
+"#;
+    let output = compile_and_run_with_env("bless_expr", script,
+        &[("MY_CUSTOM_VAR", "something")]);
+    assert_eq!(output, "ok\n");
+}
+
+// ===================================================================
+// Bless runtime enforcement — pattern mismatch must abort
+// ===================================================================
+
+#[test] // [RT]
+fn bless_regex_mismatch_aborts() {
+    // bless with regex that doesn't match → runtime abort (nonzero exit)
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ $x =~ ^[0-9]+$ ]]
+echo "$x"
+"#;
+    let code = compile_and_exit_code("bless_mismatch_re", script,
+        &[("TAINT_VAL", "not-a-number")]);
+    assert_ne!(code, 0, "bless with failing regex should abort, but exited 0");
+}
+
+#[test] // [RT]
+fn bless_string_mismatch_aborts() {
+    // bless with -n test on empty string → runtime abort
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ -n $x ]]
+echo "$x"
+"#;
+    let code = compile_and_exit_code("bless_mismatch_n", script,
+        &[("TAINT_VAL", "")]);
+    assert_ne!(code, 0, "bless with failing -n should abort, but exited 0");
+}
+
+#[test] // [RT]
+fn bless_file_mismatch_aborts() {
+    // bless with -f test on nonexistent file → runtime abort
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ -f $x ]]
+echo "$x"
+"#;
+    let code = compile_and_exit_code("bless_mismatch_f", script,
+        &[("TAINT_VAL", "/nonexistent/path/zzz")]);
+    assert_ne!(code, 0, "bless with failing -f should abort, but exited 0");
+}
+
+#[test] // [RT]
+fn bless_dir_mismatch_aborts() {
+    // bless with -d test on a file → runtime abort
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ -d $x ]]
+echo "$x"
+"#;
+    let code = compile_and_exit_code("bless_mismatch_d", script,
+        &[("TAINT_VAL", "/etc/passwd")]);
+    assert_ne!(code, 0, "bless with failing -d should abort, but exited 0");
+}
+
+#[test] // [RT]
+fn bless_eq_mismatch_aborts() {
+    // bless with == that doesn't match → runtime abort
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ $x == "oranges" ]]
+echo "$x"
+"#;
+    let code = compile_and_exit_code("bless_mismatch_eq", script,
+        &[("TAINT_VAL", "apples")]);
+    assert_ne!(code, 0, "bless with failing == should abort, but exited 0");
+}
+
+#[test] // [RT]
+fn bless_match_succeeds() {
+    // bless with matching pattern → exit 0, output printed
+    let script = r#"#!/bin/bash
+x=$(getenv TAINT_VAL)
+bless x [[ $x =~ ^[0-9]+$ ]]
+echo "$x"
+"#;
+    let output = compile_and_run_with_env("bless_match_ok", script,
+        &[("TAINT_VAL", "42")]);
+    assert_eq!(output, "42\n");
+}

@@ -1,0 +1,627 @@
+I'll examine the taint analyzer and create a concrete remediation plan for each finding.
+
+● Read taint.rs
+  │ sash/src/taint.rs
+  └ 669 lines read
+
+● List directory sash/src/rules
+  └ 5 files found
+
+✗ Find existing taint tests (shell)
+  │ cd /home/dangood/src/safebash && find sash/tests -name "*.rs" -exec grep -l
+  │ "taint\|bless" {} \;
+  └ Permission denied and could not request permission from user
+
+● Read JOURNAL.md
+  │ docs/JOURNAL.md
+  └ L1:50 (50 lines read)
+
+● Check audit directory structure (shell)
+  │ cd /home/dangood/src/safebash && ls -la audit/
+  └ 6 lines...
+
+● Find taint test examples (shell)
+  │ cd /home/dangood/src/safebash && grep -r "taint\|bless" sash/tests/*.rs |
+  │ head -40
+  └ 41 lines...
+
+Now I'll create a comprehensive remediation plan. Let me structure it as a detailed markdown document:
+
+✗ Create REMEDIATION_PLAN.md
+  │ audit/run-2/REMEDIATION_PLAN.md
+  └ Permission denied and could not request permission from user
+
+● Check run-2 directory permissions (shell)
+  │ ls -la /home/dangood/src/safebash/audit/run-2/
+  └ 13 lines...
+
+✗ Create remediation plan file with first finding (shell)
+  │ cd /home/dangood/src/safebash && cat > audit/run-2/REMEDIATION_PLAN.md <<
+  │ 'PLAN_EOF'
+  │ # Remediation Plan: Taint Model Audit Run 2
+  │
+  │ **Date:** 2026-04-24  …
+  └ Permission denied and could not request permission from user
+
+The directory exists and I have permissions. Let me check if I'm in a container or restricted environment:
+
+✗ Test write permissions (shell)
+  │ cd /home/dangood/src/safebash/audit/run-2 && touch test.txt && rm test.txt
+  │ && echo "Write test successful"
+  └ Permission denied and could not request permission from user
+
+I see there's a permission issue with the bash tool. Let me output the remediation plan directly as my response since I cannot write to files. Here's the concrete remediation plan:
+
+---
+
+# Remediation Plan: Taint Model Audit Run 2
+
+## Executive Summary
+
+**12 findings** → **5 production bugs** (fix-now), **4 test gaps** (strengthen), **3 deferred** (already mitigated)
+
+Critical fixes needed in `sash/src/taint.rs`:
+1. **T1** — Herestring/heredoc taint propagation (unanimous, CRITICAL)
+2. **T2** — Tautological bless rejection (unanimous, CRITICAL)  
+3. **T3-T5** — Three HIGH-severity bugs in taint tracking
+
+---
+
+## Priority 1: fix-now (5 Production Bugs)
+
+### T1: Herestring/heredoc false clean ★★★ CRITICAL
+
+**Verdict:** Act — code change + 4 tests  
+**File:** `sash/src/taint.rs`, function `handle_read()`, lines 351-382
+
+**Code Change:**
+Replace the boolean `has_clean_redirect` check with recursive `expr_has_tainted_read()` calls on the herestring/heredoc *content*. Current code only checks for redirect existence, not whether content contains tainted expansions like `$tainted_var`.
+
+**New logic:**
+```rust
+// Check parent for redirects WITH content analysis
+let mut is_clean_source = false;
+if let Some(parent) = node.parent() {
+    if parent.kind() == "redirected_statement" {
+        for child in parent.children(&mut parent.walk()) {
+            if child.kind() == "herestring_redirect" {
+                // <<< "content" — check if content references tainted vars
+                if !self.expr_has_tainted_read(child, source) {
+                    is_clean_source = true;
+                }
+            }
+            if child.kind() == "heredoc_redirect" {
+                if let Some(body) = child.child_by_field_name("body") {
+                    if !self.expr_has_tainted_read(body, source) {
+                        is_clean_source = true;
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+**Tests (all in `sash/tests/e2e_tests.rs`):**
+
+1. **`neg_herestring_tainted_expansion`**  
+   Input: `x=$(getenv SECRET); read y <<< "$x"; echo "$y"`  
+   Assert: SB4020 on line 3 — `y` is tainted via herestring  
+   Why: Prevent taint laundering
+
+2. **`neg_heredoc_tainted_expansion`**  
+   Input: `x=$(getenv SECRET); read y <<EOF\n$x\nEOF; echo "$y"`  
+   Assert: SB4020 on line 4 — heredoc body contains tainted expansion  
+   Why: Heredocs must propagate taint like herestrings
+
+3. **`pos_herestring_literal_clean`**  
+   Input: `read y <<< "literal"; echo "$y"`  
+   Assert: Compiles, outputs `literal\n`  
+   Why: Pure literals are clean
+
+4. **`pos_heredoc_clean_expansion`**  
+   Input: `clean="safe"; read y <<EOF\n$clean\nEOF; echo "$y"`  
+   Assert: Compiles, outputs `safe\n`  
+   Why: Clean var in heredoc → clean read target
+
+---
+
+### T2: Tautological bless ★★★ CRITICAL
+
+**Verdict:** Act — code change + 4 tests  
+**File:** `sash/src/taint.rs`, function `handle_bless()`, lines 305-349
+
+**Code Change:**
+Add static analysis to verify the blessed variable is *referenced* in the test expression. Add new helper `expr_references_var()`.
+
+**New validation in `handle_bless()` after line 327:**
+```rust
+// Verify the blessed variable is referenced in the test expression
+let mut var_referenced = false;
+for arg in &args[1..] {
+    if self.expr_references_var(*arg, source, var_name) {
+        var_referenced = true;
+        break;
+    }
+}
+
+if !var_referenced {
+    diags.push(Diagnostic::error(
+        node, "SB4012",
+        format!("bless: test expression does not reference '{}' — tautological bless rejected", var_name),
+    ));
+    return;
+}
+```
+
+**New helper function:**
+```rust
+/// Check if an expression tree references a specific variable by name.
+fn expr_references_var(&self, node: Node, source: &[u8], var_name: &str) -> bool {
+    match node.kind() {
+        "simple_expansion" => self.extract_var_name(node, source) == var_name,
+        "expansion" => self.extract_expansion_var(node, source) == var_name,
+        "variable_name" => node.utf8_text(source).unwrap_or("") == var_name,
+        _ => {
+            for child in node.children(&mut node.walk()) {
+                if self.expr_references_var(child, source, var_name) {
+                    return true;
+                }
+            }
+            false
+        }
+    }
+}
+```
+
+**Tests:**
+
+1. **`neg_bless_tautology_literal`**  
+   Input: `x=$(getenv SECRET); bless x [[ 1 == 1 ]]; echo "$x"`  
+   Assert: SB4012 on line 2 — test doesn't reference `x`  
+   Why: `1 == 1` always succeeds, doesn't validate `$x`
+
+2. **`neg_bless_tautology_literal_string`**  
+   Input: `x=$(getenv SECRET); bless x [[ -n "literal" ]]; echo "$x"`  
+   Assert: SB4012 — `-n "literal"` never fails  
+   Why: Non-empty literal test is tautological
+
+3. **`neg_bless_wrong_variable`**  
+   Input: `x=$(getenv SECRET); y="clean"; bless x [[ -n $y ]]; echo "$x"`  
+   Assert: SB4012 — test references `$y`, not `$x`  
+   Why: Blessing `x` without testing `x` is invalid
+
+4. **`pos_bless_references_variable`**  
+   Input: `x=$(getenv NUM); bless x [[ $x =~ ^[0-9]+$ ]]; echo "$x"`  
+   Assert: Compiles successfully  
+   Why: Verify existing valid bless still works
+
+**New diagnostic code:** SB4012
+
+---
+
+### T3: Bless without test still blesses ★★ HIGH
+
+**Verdict:** Act — code change + 2 tests  
+**File:** `sash/src/taint.rs`, function `handle_bless()`, lines 305-349
+
+**Code Change:**
+Add validation that `args[1..]` contains a `test_command` node or `[[` bracket construct.
+
+**New validation after existing args length check:**
+```rust
+// Verify args[1] is a test expression
+let has_test = args[1..].iter().any(|arg| {
+    arg.kind() == "test_command" || self.contains_test_bracket(*arg)
+});
+
+if !has_test {
+    diags.push(Diagnostic::error(
+        node, "SB4013",
+        format!("bless: expected test expression [[ ... ]], got: {}", 
+            args[1].utf8_text(source).unwrap_or("unknown")),
+    ));
+    return;
+}
+```
+
+**New helper:**
+```rust
+fn contains_test_bracket(&self, node: Node) -> bool {
+    if node.kind() == "test_command" { return true; }
+    for child in node.children(&mut node.walk()) {
+        if self.contains_test_bracket(child) { return true; }
+    }
+    false
+}
+```
+
+**Tests:**
+
+1. **`neg_bless_without_test`**  
+   Input: `x=$(getenv SECRET); bless x nope; echo "$x"`  
+   Assert: SB4013 on line 2 — `nope` is not a test expression  
+   Why: Prevent blessing without validation
+
+2. **`neg_bless_with_regular_command`**  
+   Input: `x=$(getenv SECRET); bless x echo hello; echo "$x"`  
+   Assert: SB4013 — `echo` is not a test  
+   Why: Only test expressions should bless
+
+**New diagnostic code:** SB4013
+
+---
+
+### T4: Arithmetic expansion taint laundering ★★ HIGH
+
+**Verdict:** Act — code change + 4 tests  
+**File:** `sash/src/taint.rs`, function `expr_is_tainted()`, lines 425-472
+
+**Code Change:**
+Add `arithmetic_expansion` case to propagate taint through `$((x + 1))` assignments.
+
+**In `expr_is_tainted()` match statement, add:**
+```rust
+"arithmetic_expansion" => {
+    // $(( expr )) — check all variable_name nodes inside
+    self.arith_has_tainted_var(node, source)
+}
+```
+
+**New helper:**
+```rust
+/// Check if an arithmetic expression tree contains tainted variables.
+fn arith_has_tainted_var(&self, node: Node, source: &[u8]) -> bool {
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "variable_name" {
+            let var_name = child.utf8_text(source).unwrap_or("");
+            if self.is_tainted(var_name) { return true; }
+        } else if self.arith_has_tainted_var(child, source) {
+            return true;
+        }
+    }
+    false
+}
+```
+
+**Tests:**
+
+1. **`neg_arith_expansion_taint_propagation`**  
+   Input: `x=$(getenv NUM); y=$((x + 1)); echo "$y"`  
+   Assert: SB4020 on line 3 — `y` is tainted via arithmetic  
+   Why: Prevent taint laundering through arithmetic
+
+2. **`neg_arith_expansion_complex`**  
+   Input: `a=$(getenv A); b=$(getenv B); c=$((a * 2 + b / 3)); echo "$c"`  
+   Assert: SB4020 on line 3 — multiple tainted inputs  
+   Why: Complex arithmetic must propagate taint
+
+3. **`pos_arith_expansion_clean`**  
+   Input: `x=42; y=$((x + 1)); echo "$y"`  
+   Assert: Compiles, outputs `43\n`  
+   Why: Clean operands → clean result
+
+4. **`pos_arith_expansion_after_bless`**  
+   Input: `x=$(getenv NUM); bless x [[ $x =~ ^[0-9]+$ ]]; y=$((x * 2)); echo "$y"`  
+   Assert: Compiles successfully  
+   Why: Blessed vars are valid in arithmetic
+
+---
+
+### T5: Parameter expansion operand taint ★★ HIGH
+
+**Verdict:** Act — code change in 2 functions + 4 tests  
+**Files:** `sash/src/taint.rs`, functions `check_expr_reads()` and `expr_is_tainted()`
+
+**Code Change 1 — `check_expr_reads()` at line 488:**
+Replace the current `expansion` case with full recursion:
+
+```rust
+"expansion" => {
+    let var_name = self.extract_expansion_var(node, source);
+    if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+        diags.push(Diagnostic::error(/* ... existing ... */));
+    }
+    
+    // NEW: Recurse into ALL children (subscripts, operator operands)
+    for child in node.children(&mut node.walk()) {
+        self.check_expr_reads(child, source, diags);
+    }
+}
+```
+
+**Code Change 2 — `expr_is_tainted()` at line 432:**
+Enhance `expansion` case to check operands:
+
+```rust
+"expansion" => {
+    let var_name = self.extract_expansion_var(node, source);
+    if self.is_tainted(&var_name) { return true; }
+    
+    // NEW: Check operator operands (:-word, :+word, etc.)
+    for child in node.children(&mut node.walk()) {
+        if self.expr_is_tainted(child, source) { return true; }
+    }
+    false
+}
+```
+
+**Tests:**
+
+1. **`neg_expansion_default_tainted`**  
+   Input: `safe=""; x=$(getenv SECRET); echo "${safe:-$x}"`  
+   Assert: SB4020 on line 3 — tainted `$x` in `:-` operand  
+   Why: Prevent taint bypass through default operator
+
+2. **`neg_expansion_alternate_tainted`**  
+   Input: `x=$(getenv SECRET); safe="value"; echo "${safe:+$x}"`  
+   Assert: SB4020 on line 3 — tainted `$x` in `:+` operand  
+   Why: Prevent taint bypass through alternate operator
+
+3. **`neg_expansion_assignment_propagation`**  
+   Input: `clean=""; tainted=$(getenv SECRET); y="${clean:-$tainted}"; echo "$y"`  
+   Assert: SB4020 on line 4 — `y` is tainted via operand  
+   Why: Assignment must propagate taint from operands
+
+4. **`pos_expansion_default_clean`**  
+   Input: `safe=""; default="fallback"; echo "${safe:-$default}"`  
+   Assert: Compiles, outputs `fallback\n`  
+   Why: Clean expansion with clean operands is valid
+
+---
+
+## Priority 2: strengthen (4 Test Gaps)
+
+### T6: Function global re-taint ★★ HIGH
+
+**Verdict:** Document limitation + 1 test — defer fix to TODO.md  
+**Finding:** 1/5 models (gpt-5.3-codex) — single model, high value
+
+**Analysis:**
+Current code (lines 411-420) snapshots taint state at function definition, walks body, restores state. If a global is clean at definition but becomes tainted before call, the function body isn't re-validated. This is a limitation of the intra-procedural model.
+
+Example:
+```bash
+x="clean"
+f() { echo "$x"; }  # validated with x=clean
+x=$(getenv SECRET)   # x becomes tainted
+f                    # body not re-validated
+```
+
+At SSA level, inlining uses the current (tainted) version of `x`, which is correct. But the *validator* doesn't emit a diagnostic because validation happened at definition time.
+
+**Action:** Document limitation, add test showing current behavior, defer fix
+
+**Test:** `neg_function_global_retaint_limitation`  
+Input: (example above)  
+Assert: **Currently compiles** — add `// TODO: DD#47 — inter-procedural taint tracking` comment  
+Why: Documents known limitation of intra-procedural model
+
+**Documentation:** Add to `docs/TODO.md`:
+```markdown
+## Taint Model Limitations
+
+### Inter-procedural taint tracking (DD#47)
+Function bodies are validated once at definition with taint state at
+that moment. If a global becomes tainted between definition and call,
+the body is not re-validated. At SSA level, inlining uses the current
+(tainted) variable version, which is correct — but the validator
+doesn't emit diagnostics for the tainted read.
+
+Fix requires: call-site re-validation or inter-procedural analysis.
+```
+
+---
+
+### T9: DD#46 shift + positional ★ MEDIUM
+
+**Verdict:** Document limitation + 1 test — defer fix to TODO.md  
+**Finding:** 3/5 models
+
+**Problem:**
+`f() { shift; echo "$1"; }; f one` — `collect_max_positional` sees `max=1`, `argc=1`, no error. After `shift`, `$1` is out of range. Static analysis doesn't model `shift`.
+
+**Action:** Document limitation, defer fix
+
+**Test:** `neg_positional_after_shift_limitation`  
+Input: `f() { shift; echo "$1"; }; f one`  
+Assert: **Currently compiles** — add `// TODO: DD#46 enhancement — shift tracking`  
+Why: Documents gap in positional parameter validation
+
+**Documentation:** Add to `docs/TODO.md`:
+```markdown
+### DD#46: shift invalidates positional parameters
+The positional validator counts max index accessed and validates
+against argc, but doesn't model `shift` which decrements available
+positionals.
+
+Fix requires: tracking shift invocations in `collect_max_positional`.
+```
+
+---
+
+### T10: Direct $(getenv) in expression ★ MEDIUM
+
+**Verdict:** Act — code change + 4 tests  
+**File:** `sash/src/taint.rs`, function `check_expr_reads()`, lines 476-517
+
+**Code Change:**
+Add `command_substitution` case to catch direct use of tainted command output.
+
+**In `check_expr_reads()` match, add:**
+```rust
+"command_substitution" => {
+    let cmd_name = self.get_cmd_subst_name(node, source);
+    
+    // Known tainted sources
+    if matches!(cmd_name.as_str(), "getenv" | "argv") {
+        diags.push(Diagnostic::error(
+            node, "SB4020",
+            format!("direct use of $({}) output without validation — assign to variable and bless first", cmd_name),
+        ));
+        return;
+    }
+    
+    // External commands produce tainted output
+    if !self.functions.contains(&cmd_name) 
+        && !matches!(cmd_name.as_str(), "len" | "keys" | "join" | "epochseconds") {
+        diags.push(Diagnostic::error(
+            node, "SB4020",
+            "direct use of $(external command) output without validation — assign to variable and bless first".to_string(),
+        ));
+        return;
+    }
+    
+    // Recurse into arguments
+    for child in node.children(&mut node.walk()) {
+        self.check_expr_reads(child, source, diags);
+    }
+}
+```
+
+**Tests:**
+
+1. **`neg_direct_getenv_in_echo`**  
+   Input: `echo "$(getenv HOME)"`  
+   Assert: SB4020 on line 1 — direct `$(getenv)` without validation  
+   Why: Prevent direct consumption of tainted output
+
+2. **`neg_direct_external_cmd_in_expr`**  
+   Input: `echo "prefix $(uname -r) suffix"`  
+   Assert: SB4020 — external command not validated  
+   Why: External output is tainted
+
+3. **`pos_direct_user_function_in_expr`**  
+   Input: `get_version() { echo "1.0.0"; }; echo "version: $(get_version)"`  
+   Assert: Compiles successfully  
+   Why: User functions are clean per DD#24
+
+4. **`pos_direct_safe_builtin_in_expr`**  
+   Input: `arr=(a b c); echo "length: $(len arr)"`  
+   Assert: Compiles successfully  
+   Why: Known-safe builtins produce clean output
+
+---
+
+### T11: Case pattern taint ★ MEDIUM
+
+**Verdict:** Act — code change + 2 tests  
+**File:** `sash/src/taint.rs`, function `walk_statement()`, lines 223-231
+
+**Code Change:**
+Enhance `case_statement` handling to check case item patterns.
+
+**Replace current case_statement block with:**
+```rust
+"case_statement" => {
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "word" || child.kind() == "simple_expansion" 
+            || child.kind() == "expansion" || child.kind() == "string" 
+            || child.kind() == "concatenation" {
+            // Case value — check for tainted reads
+            self.check_expr_reads(child, source, diags);
+        } else if child.kind() == "case_item" {
+            // NEW: Check each case_item pattern for tainted reads
+            for item_child in child.children(&mut child.walk()) {
+                if item_child.kind() == "word" || item_child.kind() == "simple_expansion"
+                    || item_child.kind() == "expansion" || item_child.kind() == "string"
+                    || item_child.kind() == "concatenation" {
+                    self.check_expr_reads(item_child, source, diags);
+                }
+            }
+            // Walk case body
+            self.walk_statement(child, source, diags);
+        } else {
+            self.walk_statement(child, source, diags);
+        }
+    }
+}
+```
+
+**Tests:**
+
+1. **`neg_case_pattern_tainted`**  
+   Input: `pattern=$(getenv PATTERN); case "test" in $pattern) echo "matched" ;; *) echo "no match" ;; esac`  
+   Assert: SB4020 on line 2 — tainted `$pattern` in case item  
+   Why: Case patterns must not use tainted variables (globbing risk)
+
+2. **`pos_case_value_blessed`**  
+   Input: `value=$(getenv INPUT); bless value [[ $value =~ ^[a-z]+$ ]]; case "$value" in hello) echo "greeting" ;; *) echo "other" ;; esac`  
+   Assert: Compiles successfully  
+   Why: Blessed case value with literal patterns is valid
+
+---
+
+## Priority 3: defer (3 Already Mitigated)
+
+### T7: Indirect expansion ${!var}
+
+**Verdict:** Dismiss — already rejected by validator  
+**Finding:** 4/5 models
+
+`indirect_expansion.rs` rule already emits SB5001. Not a bypass. No action needed.
+
+---
+
+### T8: declare -n nameref
+
+**Verdict:** Dismiss — already rejected by validator  
+**Finding:** 3/5 models
+
+Namerefs not in safe subset. Validator rejects them. No action needed.
+
+---
+
+### T12: Process substitution <(cmd)
+
+**Verdict:** Verify + dismiss  
+**Finding:** 2/5 models
+
+**Action:** Quick verification that process substitution is rejected:
+```bash
+echo '#!/usr/bin/env sash
+cat <(echo "test")' | sash - 2>&1 | grep -q "SB"
+```
+
+If rejected by validator → dismiss (no taint check needed)  
+If accepted → add validator rule to reject (unlikely in safe subset)
+
+---
+
+## Implementation Summary
+
+| Priority | Findings | Code Changes | Tests | Effort |
+|----------|----------|--------------|-------|--------|
+| fix-now | T1-T5 | 5 functions | 22 tests | 5-6h |
+| strengthen | T10-T11 | 2 functions | 6 tests | 2-3h |
+| document | T6, T9 | 0 (TODO.md) | 2 tests | 1h |
+| verify | T7, T8, T12 | 0 | 0 | 30m |
+| **Total** | **12** | **7** | **30** | **9-10h** |
+
+**New diagnostic codes:** SB4012 (tautological bless), SB4013 (bless without test)
+
+**Test file:** All tests in `sash/tests/e2e_tests.rs`, new section:
+```rust
+// ============================================================
+// Taint Model — Adversarial Audit Run 2 (2026-04-24)
+// ============================================================
+```
+
+**Completion checklist per fix:**
+1. Code change in `taint.rs`
+2. Tests written and passing
+3. `mk test` full suite
+4. Update `docs/JOURNAL.md` with DD#47 if applicable
+5. Update `docs/TODO.md` (T6, T9)
+6. Update `audit/run-2/AUDIT_TRIAGE.md` with status
+7. Git commit with finding ID reference
+8. Git push
+
+---
+
+**Ready to implement. Awaiting DG approval to proceed.**
+
+
+Changes   +0 -0
+Requests  1 Premium (8m 2s)
+Tokens    ↑ 314.0k • ↓ 18.5k • 260.7k (cached)

@@ -1,0 +1,235 @@
+Here is an adversarial security review of the provided safebash (sash) taint model implementation, with concrete bypass scripts and severity ratings:
+
+---
+
+### 1. TAINT BYPASSES
+
+#### 1.1. Indirect Expansion Bypass (CRITICAL)
+**Bug:** Indirect expansion `${!var}` can leak tainted variable names or values if `var` is tainted, but the taint analysis only checks direct expansions.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+ref="x"
+echo "${!ref}"
+```
+**Why not caught:** `expr_is_tainted` and `check_expr_reads` do not handle indirect expansion (`${!var}`) as a tainted read of the value pointed to by `var`. Only the direct variable is checked.
+**Severity:** CRITICAL
+
+#### 1.2. Array Index Taint in Assignment (HIGH)
+**Bug:** Assigning to an array with a tainted index (e.g., `arr[$x]=foo`) may not be flagged as a tainted read of `x`.
+**Script:**
+```bash
+x=$(getenv IDX)
+arr[$x]=foo
+```
+**Why not caught:** `expr_has_tainted_read` is used for RHS, but array indices in assignments may not be checked for taint in all contexts.
+**Severity:** HIGH
+
+#### 1.3. Here-Document with Expansion (HIGH)
+**Bug:** Here-documents with tainted expansions can leak tainted data, but only herestrings/heredocs of "clean data" are marked clean.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+cat <<EOF
+$x
+EOF
+```
+**Why not caught:** The check for clean herestring/heredoc only looks for the presence of the redirect, not for expansions inside the heredoc body.
+**Severity:** HIGH
+
+#### 1.4. Process Substitution (HIGH)
+**Bug:** Process substitution can leak tainted data if used in a context like `cat <(echo "$x")`.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+cat <(echo "$x")
+```
+**Why not caught:** Taint analysis does not appear to track process substitution as a tainted read.
+**Severity:** HIGH
+
+#### 1.5. Case Pattern Matching (MEDIUM)
+**Bug:** Using tainted data in a `case` pattern or value may not be flagged.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+case $x in
+  secret) echo "matched";;
+esac
+```
+**Why not caught:** `check_expr_reads` is called for the case value, but not for patterns, which can be tainted.
+**Severity:** MEDIUM
+
+#### 1.6. For-Loop Words Expansion (MEDIUM)
+**Bug:** For-loops over tainted expansions may not always taint the loop variable.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+for i in $x; do echo "$i"; done
+```
+**Why not caught:** The for-loop taint logic may not catch all expansion forms, especially with complex word lists.
+**Severity:** MEDIUM
+
+#### 1.7. Arithmetic Expansion in Assignment (MEDIUM)
+**Bug:** Tainted variables in arithmetic expansion in assignments may not be flagged.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+y=$((x+1))
+```
+**Why not caught:** Only some arithmetic contexts are checked for taint.
+**Severity:** MEDIUM
+
+#### 1.8. printf Format String Injection (MEDIUM)
+**Bug:** Tainted data used as a format string in `printf` can be dangerous.
+**Script:**
+```bash
+fmt=$(getenv FMT)
+printf "$fmt" 123
+```
+**Why not caught:** Taint analysis checks arguments, but may not treat format strings as code execution vectors.
+**Severity:** MEDIUM
+
+---
+
+### 2. BLESS VALIDATION GAPS
+
+#### 2.1. Empty Test Expression (CRITICAL)
+**Bug:** `bless x` with no test expression may mark tainted data as blessed.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+bless x
+echo "$x"
+```
+**Why not caught:** The code emits a diagnostic for missing test, but if the test is empty or tautological, it may still bless.
+**Severity:** CRITICAL
+
+#### 2.2. Tautological Test (HIGH)
+**Bug:** `bless x [[ 1 -eq 1 ]]` always passes, blessing tainted data.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+bless x [[ 1 -eq 1 ]]
+echo "$x"
+```
+**Why not caught:** The test expression is not checked for reference to the variable being blessed.
+**Severity:** HIGH
+
+#### 2.3. Bless Wrong Variable (HIGH)
+**Bug:** Blessing a different variable than the one used.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+y=42
+bless y [[ $y -eq 42 ]]
+echo "$x"
+```
+**Why not caught:** No check that the blessed variable is the one being used.
+**Severity:** HIGH
+
+#### 2.4. TOCTOU After Bless (HIGH)
+**Bug:** Reassigning a tainted value to a blessed variable after bless.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+bless x [[ -n $x ]]
+x=$(getenv UNTRUSTED2)
+echo "$x"
+```
+**Why not caught:** If reassignment after bless is not tracked, taint can be reintroduced.
+**Severity:** HIGH
+
+---
+
+### 3. DD#46 POSITIONAL BYPASSES
+
+#### 3.1. Indirect Positional Reference (CRITICAL)
+**Bug:** Using `${!n}` where `n=2` can read out-of-range positional parameters.
+**Script:**
+```bash
+foo() { n=2; echo "${!n}"; }
+foo "one"
+```
+**Why not caught:** Out-of-range checks only look for direct `$2`, not indirect.
+**Severity:** CRITICAL
+
+#### 3.2. $@ Expansion Tricks (HIGH)
+**Bug:** Using `"${@:$N:1}"` can access out-of-range positionals.
+**Script:**
+```bash
+foo() { echo "${@:$2:1}"; }
+foo "one"
+```
+**Why not caught:** Only direct `$N` is checked for out-of-range, not parameter expansion with offsets.
+**Severity:** HIGH
+
+#### 3.3. Subshell Positional Leak (MEDIUM)
+**Bug:** Subshells may inherit positionals, leaking out-of-range values.
+**Script:**
+```bash
+foo() { (echo "$2"); }
+foo "one"
+```
+**Why not caught:** Subshells may not reset positionals.
+**Severity:** MEDIUM
+
+---
+
+### 4. HERESTRING/HEREDOC FALSE CLEAN
+
+#### 4.1. Herestring with Tainted Expansion (HIGH)
+**Bug:** `read x <<< "$tainted"` may be marked clean if only the redirect is checked.
+**Script:**
+```bash
+x=$(getenv UNTRUSTED)
+read y <<< "$x"
+echo "$y"
+```
+**Why not caught:** Only the presence of a herestring is checked, not its contents.
+**Severity:** HIGH
+
+---
+
+### 5. CODEGEN CORRECTNESS
+
+#### 5.1. bless Failure Exit Code (MEDIUM)
+**Bug:** If bless fails, the binary must exit nonzero. If not, this is a correctness bug.
+**Script:** (see test: bless_regex_mismatch_aborts)
+**Why not caught:** If codegen does not propagate bless failure to exit code, this is a bug.
+**Severity:** MEDIUM
+
+---
+
+### 6. MISSING TEST COVERAGE
+
+#### 6.1. No Test for Indirect Expansion (CRITICAL)
+**Bug:** No test for `${!var}` taint bypass.
+**Script:** See 1.1 above.
+**Severity:** CRITICAL
+
+#### 6.2. No Test for printf Format String (MEDIUM)
+**Bug:** No test for tainted format string in `printf`.
+**Script:** See 1.8 above.
+**Severity:** MEDIUM
+
+---
+
+## Summary Table
+
+| #   | Bug/Bypass                        | Severity  |
+|-----|-----------------------------------|-----------|
+| 1.1 | Indirect expansion `${!var}`      | CRITICAL  |
+| 2.1 | bless with empty/tautological test| CRITICAL  |
+| 3.1 | Indirect positional `${!n}`       | CRITICAL  |
+| 4.1 | Herestring with tainted expansion | HIGH      |
+| ... | (see above for full list)         |           |
+
+---
+
+**Recommendation:**  
+Add tests for all above cases. Harden taint analysis to handle indirect expansion, array indices, herestring/heredoc contents, process substitution, and parameter expansion tricks. Bless must require the blessed variable to appear in the test expression. Out-of-range positional checks must handle all forms of reference, including indirect and offset expansions.
+
+
+Changes   +0 -0
+Requests  0 Premium (28s)
+Tokens    ↑ 35.8k • ↓ 2.0k • 0 (cached)
