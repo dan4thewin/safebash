@@ -121,6 +121,8 @@ struct ExternFuncs {
     tolower_first: cranelift_module::FuncId,
     toupper_all: cranelift_module::FuncId,
     tolower_all: cranelift_module::FuncId,
+    shell_quote: cranelift_module::FuncId,
+    expand_escapes: cranelift_module::FuncId,
     command_v: cranelift_module::FuncId,
     getpid: cranelift_module::FuncId,
     epochseconds: cranelift_module::FuncId,
@@ -647,6 +649,9 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let tolower_first_func = module.declare_function("sash_tolower_first", Linkage::Import, &case_sig).expect("declare");
     let toupper_all_func = module.declare_function("sash_toupper_all", Linkage::Import, &case_sig).expect("declare");
     let tolower_all_func = module.declare_function("sash_tolower_all", Linkage::Import, &case_sig).expect("declare");
+    // sash_shell_quote and sash_expand_escapes have same sig as case functions
+    let shell_quote_func = module.declare_function("sash_shell_quote", Linkage::Import, &case_sig).expect("declare");
+    let expand_escapes_func = module.declare_function("sash_expand_escapes", Linkage::Import, &case_sig).expect("declare");
 
     // sash_command_v(name_ptr, name_len) -> i64 (0=found, 1=not found)
     let mut cmdv_sig = module.make_signature();
@@ -779,6 +784,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         tolower_first: tolower_first_func,
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
+        shell_quote: shell_quote_func,
+        expand_escapes: expand_escapes_func,
         command_v: command_v_func,
         getpid: getpid_func,
         epochseconds: epochseconds_func,
@@ -3413,20 +3420,42 @@ fn lower_value(
                     let results = builder.inst_results(call);
                     (results[0], results[1])
                 }
-                "^" | "^^" | "," | ",," => {
+                "^" | "^^" | "," | ",," | "@U" | "@u" | "@L" => {
                     // Case conversion: allocate buffer, call runtime, return (ptr, len)
                     let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
                         StackSlotKind::ExplicitSlot, 4096, 3,
                     ));
                     let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
                     let func_id = match operator.as_str() {
-                        "^" => externs.toupper_first,
-                        "^^" => externs.toupper_all,
+                        "^" | "@u" => externs.toupper_first,
+                        "^^" | "@U" => externs.toupper_all,
                         "," => externs.tolower_first,
-                        ",," => externs.tolower_all,
+                        ",," | "@L" => externs.tolower_all,
                         _ => unreachable!(),
                     };
                     let func_ref = module.declare_func_in_func(func_id, builder.func);
+                    let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
+                    let result_len = builder.inst_results(call)[0];
+                    (buf_ptr, result_len)
+                }
+                "@Q" | "@K" | "@k" => {
+                    // Shell quoting: ${var@Q}
+                    let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot, 8192, 3,
+                    ));
+                    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
+                    let func_ref = module.declare_func_in_func(externs.shell_quote, builder.func);
+                    let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
+                    let result_len = builder.inst_results(call)[0];
+                    (buf_ptr, result_len)
+                }
+                "@E" => {
+                    // Expand escapes: ${var@E}
+                    let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot, 4096, 3,
+                    ));
+                    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
+                    let func_ref = module.declare_func_in_func(externs.expand_escapes, builder.func);
                     let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
                     let result_len = builder.inst_results(call)[0];
                     (buf_ptr, result_len)

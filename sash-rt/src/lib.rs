@@ -2457,3 +2457,83 @@ fn match_bracket(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
     }
 }
 
+
+/// Shell-quote a string (${var@Q}): wraps in single quotes, escaping embedded quotes.
+/// Returns length written to out_ptr.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_shell_quote(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len < 0 {
+        // Empty string → ''
+        unsafe {
+            *out_ptr = b'\'';
+            *out_ptr.add(1) = b'\'';
+        }
+        return 2;
+    }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let mut i = 0usize;
+    unsafe { *out_ptr.add(i) = b'\''; }
+    i += 1;
+    for &b in s {
+        if b == b'\'' {
+            // End quote, escaped quote, start quote: '\''
+            unsafe {
+                *out_ptr.add(i) = b'\'';
+                *out_ptr.add(i + 1) = b'\\';
+                *out_ptr.add(i + 2) = b'\'';
+                *out_ptr.add(i + 3) = b'\'';
+            }
+            i += 4;
+        } else {
+            unsafe { *out_ptr.add(i) = b; }
+            i += 1;
+        }
+    }
+    unsafe { *out_ptr.add(i) = b'\''; }
+    i += 1;
+    i as i64
+}
+
+/// Expand escape sequences in a string (${var@E}): \n → newline, \t → tab, etc.
+/// Returns length written to out_ptr.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_expand_escapes(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
+    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
+    let mut i = 0usize;
+    let mut o = 0usize;
+    while i < s.len() {
+        if s[i] == b'\\' && i + 1 < s.len() {
+            let c = match s[i + 1] {
+                b'n' => b'\n',
+                b't' => b'\t',
+                b'r' => b'\r',
+                b'a' => 0x07,
+                b'b' => 0x08,
+                b'e' | b'E' => 0x1b,
+                b'f' => 0x0c,
+                b'v' => 0x0b,
+                b'\\' => b'\\',
+                b'\'' => b'\'',
+                b'"' => b'"',
+                other => {
+                    // Unknown escape — pass through literally
+                    unsafe { *out_ptr.add(o) = b'\\'; }
+                    o += 1;
+                    unsafe { *out_ptr.add(o) = other; }
+                    o += 1;
+                    i += 2;
+                    continue;
+                }
+            };
+            unsafe { *out_ptr.add(o) = c; }
+            o += 1;
+            i += 2;
+        } else {
+            unsafe { *out_ptr.add(o) = s[i]; }
+            o += 1;
+            i += 1;
+        }
+    }
+    o as i64
+}

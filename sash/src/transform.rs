@@ -366,8 +366,9 @@ fn lower_one(
                     .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
                     .unwrap_or(1);
                 let depth = state.loop_stack.len();
-                if depth >= n && n > 0 {
-                    let (_header, exit) = state.loop_stack[depth - n];
+                if n > 0 && depth > 0 {
+                    let level = n.min(depth); // clamp to available depth
+                    let (_header, exit) = state.loop_stack[depth - level];
                     ssa.block_mut(block).terminator = Terminator::Goto(exit);
                     let dead = ssa.new_block("after_break");
                     return dead;
@@ -379,8 +380,9 @@ fn lower_one(
                     .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
                     .unwrap_or(1);
                 let depth = state.loop_stack.len();
-                if depth >= n && n > 0 {
-                    let (header, _exit) = state.loop_stack[depth - n];
+                if n > 0 && depth > 0 {
+                    let level = n.min(depth); // clamp to available depth
+                    let (header, _exit) = state.loop_stack[depth - level];
                     ssa.block_mut(block).terminator = Terminator::Goto(header);
                     let dead = ssa.new_block("after_continue");
                     return dead;
