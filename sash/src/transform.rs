@@ -1993,9 +1993,13 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // Handle CommandSubstitution → FuncCall if it's a known function,
             // or CmdSubst for runtime capture
             if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
-                if stmts.len() == 1 {
+                // Filter out comments — they're not real statements
+                let real_stmts: Vec<&Statement> = stmts.iter()
+                    .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
+                    .collect();
+                if real_stmts.len() == 1 {
                     // Unwrap Redirected to get the inner Command
-                    let inner = match &stmts[0].kind {
+                    let inner = match &real_stmts[0].kind {
                         StmtKind::Redirected(r) => &r.body.kind,
                         other => other,
                     };
@@ -2079,7 +2083,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                             argv.push(expr_to_value(arg, state));
                         }
                         // Capture redirects from Redirected wrapper
-                        let redirects = match &stmts[0].kind {
+                        let redirects = match &real_stmts[0].kind {
                             StmtKind::Redirected(r) => r.redirects.clone(),
                             _ => vec![],
                         };

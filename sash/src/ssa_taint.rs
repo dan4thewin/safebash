@@ -220,6 +220,16 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
                     // Known-safe builtins
                     "len" | "keys" | "join" | "epochseconds" => Taint::Clean,
                     _ => {
+                        // Known-safe bash builtins — if all args are clean, result is clean
+                        if matches!(cmd.as_str(),
+                            "echo" | "printf" | "true" | "false" | "test" | "["
+                            | "pwd" | "basename" | "dirname" | "type" | "command"
+                            | "seq" | "wc" | "tr" | "cat" | "head" | "tail"
+                            | "sort" | "uniq" | "cut" | "rev" | "tee") {
+                            let args_clean = argv[1..].iter()
+                                .all(|a| value_is_tainted(a, taint, user_functions) != Taint::Tainted);
+                            if args_clean { return Taint::Clean; }
+                        }
                         // User-defined functions are clean by DD#24
                         if user_functions.contains(cmd.as_str()) {
                             return Taint::Clean;
