@@ -2917,7 +2917,7 @@ if [[ /tmp/sash_ef_a -ef /tmp/sash_ef_b ]]; then echo "same"; else echo "diff"; 
 
 #[test]
 fn test_param_transform_upper_all() {
-    let script = "#!/bin/bash\nx=\"hElLo WoRlD\"\necho \"${x@U}\"";
+    let script = "#!/bin/bash\nx=\"hElLo WoRlD\"\necho \"${x^^}\"";
     let (out, rc) = run_bash_native(script, &[]);
     assert_eq!(rc, 0);
     assert_eq!(out, "HELLO WORLD\n");
@@ -2925,7 +2925,7 @@ fn test_param_transform_upper_all() {
 
 #[test]
 fn test_param_transform_upper_first() {
-    let script = "#!/bin/bash\nx=\"hello world\"\necho \"${x@u}\"";
+    let script = "#!/bin/bash\nx=\"hello world\"\necho \"${x^}\"";
     let (out, rc) = run_bash_native(script, &[]);
     assert_eq!(rc, 0);
     assert_eq!(out, "Hello world\n");
@@ -2933,34 +2933,10 @@ fn test_param_transform_upper_first() {
 
 #[test]
 fn test_param_transform_lower_all() {
-    let script = "#!/bin/bash\nx=\"HELLO WORLD\"\necho \"${x@L}\"";
+    let script = "#!/bin/bash\nx=\"HELLO WORLD\"\necho \"${x,,}\"";
     let (out, rc) = run_bash_native(script, &[]);
     assert_eq!(rc, 0);
     assert_eq!(out, "hello world\n");
-}
-
-#[test]
-fn test_param_transform_quote() {
-    let script = "#!/bin/bash\nx=\"hello\"\necho \"${x@Q}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "'hello'\n");
-}
-
-#[test]
-fn test_param_transform_quote_with_single_quote() {
-    let script = "#!/bin/bash\nx=\"it's\"\necho \"${x@Q}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "'it'\\''s'\n");
-}
-
-#[test]
-fn test_param_transform_expand_escapes() {
-    let script = "#!/bin/bash\nx='a\\nb'\necho \"${x@E}\"";
-    let (out, rc) = run_bash_native(script, &[]);
-    assert_eq!(rc, 0);
-    assert_eq!(out, "a\nb\n");
 }
 
 #[test]

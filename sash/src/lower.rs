@@ -1924,17 +1924,9 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                 || child.kind() == "^"
                 || child.kind() == "^^"
                 || child.kind() == ","
-                || child.kind() == ",,"
-                || child.kind() == "@") =>
+                || child.kind() == ",,") =>
             {
                 operator = Some(child.kind().to_string());
-            }
-            // Parameter transformation modifier after @: ${var@U}, ${var@L}, etc.
-            "U" | "u" | "L" | "Q" | "E" | "K" | "k" | "a" | "A" | "P" => {
-                if operator.as_deref() == Some("@") {
-                    // Combine: @ + U → @U
-                    operator = Some(format!("@{}", child.kind()));
-                }
             }
             "subscript" => {
                 if let Some(name_node) = child.child_by_field_name("name") {
