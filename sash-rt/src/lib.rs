@@ -1618,6 +1618,32 @@ pub extern "C" fn sash_file_newer(
     }
 }
 
+/// Compare files by device and inode: returns 1 if same device+inode.
+/// Implements [[ file1 -ef file2 ]].
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_file_same_dev(
+    p1_ptr: *const u8, p1_len: i64,
+    p2_ptr: *const u8, p2_len: i64,
+) -> i64 {
+    let get_dev_ino = |ptr: *const u8, len: i64| -> Option<(u64, u64)> {
+        if ptr.is_null() || len <= 0 { return None; }
+        let path = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
+        let mut buf = [0u8; 4096];
+        if path.len() >= buf.len() { return None; }
+        buf[..path.len()].copy_from_slice(path);
+        buf[path.len()] = 0;
+        let cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+        match rustix::fs::stat(cstr) {
+            Ok(st) => Some((st.st_dev, st.st_ino)),
+            Err(_) => None,
+        }
+    };
+    match (get_dev_ino(p1_ptr, p1_len), get_dev_ino(p2_ptr, p2_len)) {
+        (Some((d1, i1)), Some((d2, i2))) => if d1 == d2 && i1 == i2 { 1 } else { 0 },
+        _ => 0,
+    }
+}
+
 /// Change directory. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {

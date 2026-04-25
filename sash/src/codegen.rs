@@ -38,25 +38,25 @@ impl VarSlot {
     fn as_str(&self) -> (&Variable, &Variable) {
         match self {
             VarSlot::Str { ptr, len } => (ptr, len),
-            VarSlot::Int(_) => panic!("expected string var, got int"),
+            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
         }
     }
     fn str_ptr(&self) -> Variable {
         match self {
             VarSlot::Str { ptr, .. } => *ptr,
-            VarSlot::Int(_) => panic!("expected string var, got int"),
+            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
         }
     }
     fn str_len(&self) -> Variable {
         match self {
             VarSlot::Str { ptr: _, len } => *len,
-            VarSlot::Int(_) => panic!("expected string var, got int"),
+            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
         }
     }
     fn as_int(&self) -> &Variable {
         match self {
             VarSlot::Int(v) => v,
-            VarSlot::Str { .. } => panic!("expected int var, got string"),
+            VarSlot::Str { .. } => panic!("ICE: expected int var, got string"),
         }
     }
     fn is_int(&self) -> bool {
@@ -113,6 +113,7 @@ struct ExternFuncs {
     substring: cranelift_module::FuncId,
     isatty: cranelift_module::FuncId,
     file_newer: cranelift_module::FuncId,
+    file_same_dev: cranelift_module::FuncId,
     chdir: cranelift_module::FuncId,
     getcwd: cranelift_module::FuncId,
     heredoc_redirect: cranelift_module::FuncId,
@@ -603,6 +604,16 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let file_newer_func = module.declare_function("sash_file_newer", Linkage::Import, &file_newer_sig)
         .expect("declare sash_file_newer");
 
+    // sash_file_same_dev(p1_ptr, p1_len, p2_ptr, p2_len) -> i64
+    let mut file_same_dev_sig = module.make_signature();
+    file_same_dev_sig.params.push(AbiParam::new(I64));
+    file_same_dev_sig.params.push(AbiParam::new(I64));
+    file_same_dev_sig.params.push(AbiParam::new(I64));
+    file_same_dev_sig.params.push(AbiParam::new(I64));
+    file_same_dev_sig.returns.push(AbiParam::new(I64));
+    let file_same_dev_func = module.declare_function("sash_file_same_dev", Linkage::Import, &file_same_dev_sig)
+        .expect("declare sash_file_same_dev");
+
     // sash_chdir(path_ptr, path_len) -> i64
     let mut chdir_sig = module.make_signature();
     chdir_sig.params.push(AbiParam::new(I64));
@@ -760,6 +771,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         substring: substring_func,
         isatty: isatty_func,
         file_newer: file_newer_func,
+        file_same_dev: file_same_dev_func,
         chdir: chdir_func,
         getcwd: getcwd_func,
         heredoc_redirect: heredoc_func,
@@ -1876,7 +1888,7 @@ fn lower_inst(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -1902,7 +1914,7 @@ fn lower_inst(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -1928,7 +1940,7 @@ fn lower_inst(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -1979,7 +1991,7 @@ fn lower_inst(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -2521,8 +2533,25 @@ fn lower_test_expr(
                     let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
                     builder.inst_results(call)[0]
                 }
+                "-ot" => {
+                    // file1 -ot file2: file1 is older than file2 (reverse of -nt)
+                    let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
+                    let (r_ptr, r_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
+                    let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
+                    // Swap args: file2 -nt file1
+                    let call = builder.ins().call(fn_ref, &[r_ptr, r_len, l_ptr, l_len]);
+                    builder.inst_results(call)[0]
+                }
+                "-ef" => {
+                    // file1 -ef file2: same device and inode
+                    let (l_ptr, l_len) = lower_expr_value(left, builder, module, vars, literals, externs, exit_status_var);
+                    let (r_ptr, r_len) = lower_expr_value(right, builder, module, vars, literals, externs, exit_status_var);
+                    let fn_ref = module.declare_func_in_func(externs.file_same_dev, builder.func);
+                    let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
+                    builder.inst_results(call)[0]
+                }
                 other => {
-                    panic!("sash: unimplemented test operator: {}", other);
+                    panic!("ICE: unimplemented test operator: {}", other);
                 }
             }
         }
@@ -2576,7 +2605,6 @@ fn lower_test_expr(
                 }
                 "-t" => {
                     // -t fd: test if fd is a terminal
-                    // The operand (ptr, len) is the fd number as a string — convert to int
                     let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
                     let call = builder.ins().call(atoi_ref, &[ptr, len]);
                     let fd_val = builder.inst_results(call)[0];
@@ -2584,9 +2612,15 @@ fn lower_test_expr(
                     let call2 = builder.ins().call(isatty_ref, &[fd_val]);
                     builder.inst_results(call2)[0]
                 }
+                "-v" => {
+                    // Variable is set: in sash, all vars are initialized,
+                    // so -v is equivalent to -n (non-empty string).
+                    let zero = builder.ins().iconst(I64, 0);
+                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
+                    builder.ins().uextend(I64, cmp)
+                }
                 other => {
-                    eprintln!("sash: unimplemented unary test operator: {}", other);
-                    builder.ins().iconst(I64, 0) // unknown test → false
+                    panic!("ICE: unimplemented unary test operator: {}", other);
                 }
             }
         }
@@ -3022,7 +3056,7 @@ fn lower_value(
             if let Some(constant) = func_constants.get(name.as_str()) {
                 // Constant-folded: the function output is a known string
                 let data_id = literals.get(constant.as_str()).unwrap_or_else(|| {
-                    panic!("constant-folded string not interned: {:?}", constant);
+                    panic!("ICE: constant-folded string not interned: {:?}", constant);
                 });
                 let gv = module.declare_data_in_func(*data_id, builder.func);
                 let ptr = builder.ins().global_value(I64, gv);
@@ -3030,7 +3064,7 @@ fn lower_value(
                 (ptr, len)
             } else {
                 // Non-constant function — not yet supported
-                panic!("non-constant elidable function call not yet supported: {}", name);
+                panic!("ICE: non-constant elidable function call not yet supported: {}", name);
             }
         }
         SsaValue::Concat(parts) => {
@@ -3055,12 +3089,12 @@ fn lower_value(
             // glob: arr=(*.sh) → sash_glob(".", pattern)
             if operator == "glob" {
                 let dir_str = ".";
-                let dir_id = literals.get(dir_str).unwrap_or_else(|| panic!("missing literal: {}", dir_str));
+                let dir_id = literals.get(dir_str).unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
                 let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
                 let dir_ptr = builder.ins().global_value(I64, dir_gv);
                 let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
                 let pat = operand.as_str();
-                let pat_id = literals.get(pat).unwrap_or_else(|| panic!("missing literal: {}", pat));
+                let pat_id = literals.get(pat).unwrap_or_else(|| panic!("ICE: missing literal: {}", pat));
                 let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
                 let pat_ptr = builder.ins().global_value(I64, pat_gv);
                 let pat_len = builder.ins().iconst(I64, pat.len() as i64);
@@ -3072,12 +3106,12 @@ fn lower_value(
             }
             if operator == "glob_regex" {
                 let dir_str = ".";
-                let dir_id = literals.get(dir_str).unwrap_or_else(|| panic!("missing literal: {}", dir_str));
+                let dir_id = literals.get(dir_str).unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
                 let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
                 let dir_ptr = builder.ins().global_value(I64, dir_gv);
                 let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
                 let pat = operand.as_str();
-                let pat_id = literals.get(pat).unwrap_or_else(|| panic!("missing literal: {}", pat));
+                let pat_id = literals.get(pat).unwrap_or_else(|| panic!("ICE: missing literal: {}", pat));
                 let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
                 let pat_ptr = builder.ins().global_value(I64, pat_gv);
                 let pat_len = builder.ins().iconst(I64, pat.len() as i64);
@@ -3098,7 +3132,10 @@ fn lower_value(
                 let zero = builder.ins().iconst(I64, 0);
                 (null, zero)
             } else {
-                panic!("undefined variable in param expansion: {}", key);
+                // Undefined variable — treat as empty string (bash behavior)
+                let null = builder.ins().iconst(I64, 0);
+                let zero = builder.ins().iconst(I64, 0);
+                (null, zero)
             };
 
             // "strlen" doesn't use an operand
@@ -3138,12 +3175,12 @@ fn lower_value(
                 let global_s = parts.get(2).unwrap_or(&"0");
                 let global_i: i64 = if *global_s == "1" { 1 } else { 0 };
 
-                let pat_id = literals.get(*pattern).unwrap_or_else(|| panic!("missing literal: {}", pattern));
+                let pat_id = literals.get(*pattern).unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
                 let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
                 let pat_ptr = builder.ins().global_value(I64, pat_gv);
                 let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
 
-                let rep_id = literals.get(*replacement).unwrap_or_else(|| panic!("missing literal: {}", replacement));
+                let rep_id = literals.get(*replacement).unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
                 let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
                 let rep_ptr = builder.ins().global_value(I64, rep_gv);
                 let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
@@ -3183,7 +3220,7 @@ fn lower_value(
                 let sep_str = if operator == "arrjoin" { operand.as_str() } else { " " };
                 let sep_len_val = sep_str.len() as i64;
                 let sep_data_id = literals.get(sep_str).unwrap_or_else(|| {
-                    panic!("join separator not interned: {:?}", sep_str);
+                    panic!("ICE: join separator not interned: {:?}", sep_str);
                 });
                 let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
                 let sep_ptr = builder.ins().global_value(I64, sep_gv);
@@ -3313,7 +3350,7 @@ fn lower_value(
 
             // Intern the operand pattern
             let pat_data_id = literals.get(operand.as_str()).unwrap_or_else(|| {
-                panic!("param expansion operand not interned: {:?}", operand);
+                panic!("ICE: param expansion operand not interned: {:?}", operand);
             });
             let pat_gv = module.declare_data_in_func(*pat_data_id, builder.func);
             let pat_ptr = builder.ins().global_value(I64, pat_gv);
@@ -3401,12 +3438,12 @@ fn lower_value(
                     let pattern = parts.get(0).unwrap_or(&"");
                     let replacement = parts.get(1).unwrap_or(&"");
 
-                    let pat_id = literals.get(*pattern).unwrap_or_else(|| panic!("missing literal: {}", pattern));
+                    let pat_id = literals.get(*pattern).unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
                     let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
                     let pat_ptr = builder.ins().global_value(I64, pat_gv);
                     let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
 
-                    let rep_id = literals.get(*replacement).unwrap_or_else(|| panic!("missing literal: {}", replacement));
+                    let rep_id = literals.get(*replacement).unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
                     let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
                     let rep_ptr = builder.ins().global_value(I64, rep_gv);
                     let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
@@ -3421,10 +3458,7 @@ fn lower_value(
                     (result_ptr, result_len)
                 }
                 _ => {
-                    // Unsupported parameter expansion — return empty string
-                    eprintln!("sash: unsupported parameter expansion operator: {}", operator);
-                    let zero = builder.ins().iconst(I64, 0);
-                    (zero, zero)
+                    panic!("ICE: unsupported parameter expansion operator: {}", operator);
                 }
             }
         }
@@ -3555,7 +3589,7 @@ fn lower_value(
                         builder.switch_to_block(fail_block);
                         builder.seal_block(fail_block);
                         let empty_data = literals.get("").unwrap_or_else(|| {
-                            panic!("empty string not interned");
+                            panic!("ICE: empty string not interned");
                         });
                         let empty_gv = module.declare_data_in_func(*empty_data, builder.func);
                         let empty_ptr = builder.ins().global_value(I64, empty_gv);
@@ -3733,7 +3767,7 @@ fn lower_value(
             let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
             for (key, val_ssa) in pairs.iter() {
                 let key_data = literals.get(key.as_str()).unwrap_or_else(|| {
-                    panic!("assoc array key not interned: {}", key);
+                    panic!("ICE: assoc array key not interned: {}", key);
                 });
                 let key_gv = module.declare_data_in_func(*key_data, builder.func);
                 let key_ptr = builder.ins().global_value(I64, key_gv);
@@ -3750,7 +3784,7 @@ fn lower_value(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -3781,7 +3815,7 @@ fn lower_value(
         }
         SsaValue::ArgvIndex(idx_ref) => {
             // Load argv[atoi(idx) + 1]: dynamic positional param access
-            let sv = vars.get(&idx_ref.display()).unwrap_or_else(|| panic!("undefined index var: {}", idx_ref.display()));
+            let sv = vars.get(&idx_ref.display()).unwrap_or_else(|| panic!("ICE: undefined index var: {}", idx_ref.display()));
             let idx_ptr = builder.use_var(sv.str_ptr());
             let idx_len = builder.use_var(sv.str_len());
             let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
@@ -3807,12 +3841,12 @@ fn lower_value(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
             // Convert index var to i64
-            let idx_sv = vars.get(&index.display()).unwrap_or_else(|| panic!("undefined index var: {}", index.display()));
+            let idx_sv = vars.get(&index.display()).unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
             let idx_ptr = builder.use_var(idx_sv.str_ptr());
             let idx_len = builder.use_var(idx_sv.str_len());
             let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
@@ -3835,11 +3869,11 @@ fn lower_value(
             let sv = vars.get(&array_key).unwrap_or_else(|| {
                 vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
                     .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("undefined array: {}", array))
+                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
 
-            let idx_sv = vars.get(&index.display()).unwrap_or_else(|| panic!("undefined index var: {}", index.display()));
+            let idx_sv = vars.get(&index.display()).unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
             let idx_ptr = builder.use_var(idx_sv.str_ptr());
             let idx_len = builder.use_var(idx_sv.str_len());
             let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
@@ -3910,7 +3944,7 @@ fn emit_arith_op(op: ArithOp, lhs: cranelift_codegen::ir::Value, rhs: cranelift_
         ArithOp::Ge => { let c = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, lhs, rhs); builder.ins().uextend(I64, c) }
         ArithOp::And => { let l = builder.ins().icmp_imm(IntCC::NotEqual, lhs, 0); let r = builder.ins().icmp_imm(IntCC::NotEqual, rhs, 0); let b = builder.ins().band(l, r); builder.ins().uextend(I64, b) }
         ArithOp::Or => { let l = builder.ins().icmp_imm(IntCC::NotEqual, lhs, 0); let r = builder.ins().icmp_imm(IntCC::NotEqual, rhs, 0); let b = builder.ins().bor(l, r); builder.ins().uextend(I64, b) }
-        ArithOp::Not => panic!("unary ! in binary context"),
+        ArithOp::Not => panic!("ICE: unary ! in binary arithmetic context"),
         ArithOp::Shl => builder.ins().ishl(lhs, rhs),
         ArithOp::Shr => builder.ins().sshr(lhs, rhs),
         ArithOp::BitAnd => builder.ins().band(lhs, rhs),

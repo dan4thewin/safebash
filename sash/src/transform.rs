@@ -2055,7 +2055,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                                 } else if c.args.len() == 1 {
                                     (" ".to_string(), &c.args[0])
                                 } else {
-                                    panic!("join requires at least one argument");
+                                    panic!("ICE: join requires at least one argument");
                                 };
                                 // The array arg should be @arr → ParameterExpansion(arrvals)
                                 let arr_name = match &arr_expr.kind {

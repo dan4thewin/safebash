@@ -2870,3 +2870,43 @@ fn argc_zero_args() {
     assert_eq!(out.trim(), "0");
 }
 
+
+// ═══════════════════════════════════════════════════════════════
+// File test operators: -ot, -ef
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn test_file_older_than() {
+    let script = r#"#!/bin/bash
+touch /tmp/sash_f1
+sleep 0.01
+touch /tmp/sash_f2
+if [[ /tmp/sash_f1 -ot /tmp/sash_f2 ]]; then echo "older"; else echo "not"; fi
+"#;
+    let (out, rc) = run_bash_native(script, &[]);
+    assert_eq!(rc, 0);
+    assert_eq!(out, "older\n");
+}
+
+#[test]
+fn test_file_same_device() {
+    let script = r#"#!/bin/bash
+touch /tmp/sash_ef_test
+if [[ /tmp/sash_ef_test -ef /tmp/sash_ef_test ]]; then echo "same"; else echo "diff"; fi
+"#;
+    let (out, rc) = run_bash_native(script, &[]);
+    assert_eq!(rc, 0);
+    assert_eq!(out, "same\n");
+}
+
+#[test]
+fn test_file_ef_different() {
+    let script = r#"#!/bin/bash
+touch /tmp/sash_ef_a
+touch /tmp/sash_ef_b
+if [[ /tmp/sash_ef_a -ef /tmp/sash_ef_b ]]; then echo "same"; else echo "diff"; fi
+"#;
+    let (out, rc) = run_bash_native(script, &[]);
+    assert_eq!(rc, 0);
+    assert_eq!(out, "diff\n");
+}

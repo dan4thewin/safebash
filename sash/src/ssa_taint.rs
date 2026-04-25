@@ -35,6 +35,11 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
         taint.insert(format!("{}_0", sv), Taint::Clean);
     }
 
+    // Known env vars at version 0 are auto-blessed (clean)
+    for kev in crate::known_externals::KNOWN_ENV_VARS {
+        taint.insert(format!("{}_0", kev.name), Taint::Clean);
+    }
+
     // Positional params at version 0 are clean — either program argv
     // (which the CST pass gates) or function args (clean by DD#24)
     for i in 1..=9 {
