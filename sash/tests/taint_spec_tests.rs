@@ -412,3 +412,204 @@ echo "$x"
         &[("TAINT_VAL", "42")]);
     assert_eq!(output, "42\n");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// AUDIT RUN-2 — TDD tests for findings T1–T12
+// All expected to FAIL until remediation is implemented.
+// ═══════════════════════════════════════════════════════════════
+
+// --- T1: herestring/heredoc with tainted expansion should NOT be clean ---
+
+#[test]
+fn t1_herestring_tainted_expansion_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv UNTRUSTED)
+read y <<< "$x"
+echo "$y"
+"#;
+    let stderr = compile_expect_fail("t1_hs_taint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+#[test]
+fn t1_heredoc_tainted_expansion_rejected() {
+    let script = "#!/bin/bash\nx=$(getenv UNTRUSTED)\nread y <<EOF\n$x\nEOF\necho \"$y\"\n";
+    let stderr = compile_expect_fail("t1_heredoc_taint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T2: tautological bless (test doesn't reference blessed var) ---
+
+#[test]
+fn t2_bless_tautology_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv MALICIOUS)
+bless x [[ 1 == 1 ]]
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("t2_tautology", script);
+    assert!(stderr.contains("SB4012") || stderr.contains("does not reference"),
+        "expected tautology diagnostic, got: {}", stderr);
+}
+
+#[test]
+fn t2_bless_wrong_var_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv MALICIOUS)
+y="safe"
+bless x [[ -n $y ]]
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("t2_wrong_var", script);
+    assert!(stderr.contains("SB4012") || stderr.contains("does not reference"),
+        "expected tautology diagnostic, got: {}", stderr);
+}
+
+// --- T3: bless without valid test expression ---
+
+#[test]
+fn t3_bless_no_test_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv SECRET)
+bless x nope
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("t3_no_test", script);
+    assert!(stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
+        "expected invalid bless diagnostic, got: {}", stderr);
+}
+
+#[test]
+fn t3_bless_missing_brackets_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv SECRET)
+bless x -n "$x"
+echo "$x"
+"#;
+    let stderr = compile_expect_fail("t3_no_brackets", script);
+    assert!(stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
+        "expected invalid bless diagnostic, got: {}", stderr);
+}
+
+// --- T4: arithmetic assignment taint laundering ---
+
+#[test]
+fn t4_arith_assignment_propagates_taint() {
+    let script = r#"#!/bin/bash
+x=$(getenv NUM)
+y=$((x + 1))
+echo "$y"
+"#;
+    let stderr = compile_expect_fail("t4_arith_launder", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T5: parameter expansion operand taint ---
+
+#[test]
+fn t5_param_default_tainted_rejected() {
+    let script = r#"#!/bin/bash
+safe=""
+x=$(getenv SECRET)
+echo "${safe:-$x}"
+"#;
+    let stderr = compile_expect_fail("t5_default_taint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+#[test]
+fn t5_param_alternate_tainted_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv SECRET)
+safe="value"
+echo "${safe:+$x}"
+"#;
+    let stderr = compile_expect_fail("t5_alternate_taint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T6: function global re-taint at call site ---
+
+#[test]
+fn t6_function_global_retaint_rejected() {
+    let script = r#"#!/bin/bash
+x="clean"
+leak() { echo "$x"; }
+x=$(getenv SECRET)
+leak
+"#;
+    let stderr = compile_expect_fail("t6_global_retaint", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T9: shift then positional read ---
+
+#[test]
+fn t9_shift_then_positional_rejected() {
+    let script = r#"#!/bin/bash
+f() { shift; echo "$1"; }
+f one
+"#;
+    let stderr = compile_expect_fail("t9_shift_pos", script);
+    assert!(stderr.contains("reads $") || stderr.contains("out-of-range") || stderr.contains("shift"),
+        "expected positional diagnostic, got: {}", stderr);
+}
+
+// --- T10: direct $(getenv) in expression ---
+
+#[test]
+fn t10_direct_getenv_cmdsub_rejected() {
+    let script = r#"#!/bin/bash
+echo "$(getenv UNTRUSTED)"
+"#;
+    let stderr = compile_expect_fail("t10_direct_getenv", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T11: case pattern taint ---
+
+#[test]
+fn t11_case_pattern_tainted_rejected() {
+    let script = r#"#!/bin/bash
+x=$(getenv PATTERN)
+case "test" in
+  $x) echo "matched" ;;
+  *) echo "no match" ;;
+esac
+"#;
+    let stderr = compile_expect_fail("t11_case_pattern", script);
+    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+}
+
+// --- T7/T8/T12: regression locks for validator rules ---
+
+#[test]
+fn t7_indirect_expansion_rejected() {
+    let script = r#"#!/bin/bash
+x="hello"
+ref="x"
+echo "${!ref}"
+"#;
+    let stderr = compile_expect_fail("t7_indirect", script);
+    assert!(stderr.contains("SB") , "expected validator diagnostic, got: {}", stderr);
+}
+
+#[test]
+fn t8_nameref_rejected() {
+    let script = r#"#!/bin/bash
+x="hello"
+declare -n ref=x
+echo "$ref"
+"#;
+    let stderr = compile_expect_fail("t8_nameref", script);
+    assert!(stderr.contains("SB"), "expected validator diagnostic, got: {}", stderr);
+}
+
+#[test]
+fn t12_process_substitution_rejected() {
+    let script = r#"#!/bin/bash
+cat <(echo "test")
+"#;
+    let stderr = compile_expect_fail("t12_procsub", script);
+    assert!(stderr.contains("SB"), "expected validator diagnostic, got: {}", stderr);
+}
