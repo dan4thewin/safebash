@@ -408,6 +408,18 @@ fn neg_tainted_argv() {
 }
 
 #[test]
+fn neg_tainted_env_inside_function_body() {
+    // DD#24: external data is quarantined at the boundary, regardless
+    // of whether it appears at the top level or inside a function body.
+    // getenv inside a function body must still produce a tainted value
+    // and reject downstream unblessed use.
+    let script = "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
+    let stderr = compile_expect_fail("taint_in_fn_body", script);
+    assert!(stderr.contains("SB4020"),
+        "expected SB4020 for tainted getenv inside function body, got: {}", stderr);
+}
+
+#[test]
 fn neg_eval_rejected() {
     let script = "#!/bin/bash\neval echo hello";
     let stderr = compile_expect_fail("eval", script);
@@ -668,6 +680,25 @@ count a b c
     assert_eq!(compile_and_run("func_argc", script), "3\n");
 }
 
+// DD#46: unbound positional inside a function must NOT leak from
+// program argv (or caller's positional slots). Reading $K where K > $#
+// returns empty per bash semantics.
+#[test]
+fn pos_func_unbound_positional_is_empty() {
+    // DD#46: reading $2 in a function called with 1 arg is now a compile error
+    let script = r#"#!/bin/bash
+foo() { echo "got: $2"; }
+foo onearg
+"#;
+    let src = write_tmp("func_unbound_pos.sh", script);
+    let bin = "/tmp/sash_e2e_func_unbound_pos".to_string();
+    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    assert!(!out.status.success(), "expected compile failure for out-of-range $2");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("reads $2") || stderr.contains("out-of-range"),
+        "expected out-of-range positional diagnostic, got: {}", stderr);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // NESTED CONTROL FLOW TESTS
 // ═══════════════════════════════════════════════════════════════
@@ -843,7 +874,7 @@ echo $(( n + 10 ))
 
 #[test]
 fn pos_herestring() {
-    let script = "#!/bin/bash\nread x <<< \"hello\"\nbless x [[ -n $x ]]\necho $x";
+    let script = "#!/bin/bash\nread x <<< \"hello\"\necho $x";
     assert_eq!(compile_and_run("herestring", script), "hello\n");
 }
 
@@ -942,7 +973,7 @@ fn pos_heredoc_blessed_var() {
 
 #[test]
 fn pos_herestring_read_multi() {
-    let script = "#!/bin/bash\nread a b <<< \"hello world\"\nbless a [[ -n $a ]]\nbless b [[ -n $b ]]\necho $a\necho $b";
+    let script = "#!/bin/bash\nread a b <<< \"hello world\"\necho $a\necho $b";
     assert_eq!(compile_and_run("hs_multi", script), "hello\nworld\n");
 }
 

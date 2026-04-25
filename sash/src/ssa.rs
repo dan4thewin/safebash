@@ -126,6 +126,12 @@ pub enum SsaInst {
         /// If true, the last pipe read fd is saved for a subsequent while-read loop
         capture_read_fd: bool,
     },
+    /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
+    /// If the test fails, abort with nonzero exit.
+    Bless {
+        var: VarRef,
+        test: crate::ir::TestExpr,
+    },
 }
 
 /// Arithmetic operators for $(( )) and (( )) contexts.
@@ -406,6 +412,8 @@ pub struct VersionState {
     pub return_target: Option<usize>,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
+    /// Diagnostics collected during SSA transformation.
+    pub diagnostics: Vec<String>,
 }
 
 impl VersionState {
@@ -420,7 +428,7 @@ impl VersionState {
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None,
+            exit_trap: None, diagnostics: Vec::new(),
         }
     }
 
@@ -435,7 +443,7 @@ impl VersionState {
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None,
+            exit_trap: None, diagnostics: Vec::new(),
         }
     }
 

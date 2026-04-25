@@ -137,16 +137,20 @@ struct ExternFuncs {
     argv: cranelift_module::DataId,
 }
 
-pub fn compile_to_object(bash_source: &str) -> Vec<u8> {
+pub fn compile_to_object(bash_source: &str) -> Result<Vec<u8>, Vec<String>> {
     crate::emit_source::clear_coercions();
     let tree = crate::parse(bash_source);
     let program = crate::lower::lower_program(tree.root_node(), bash_source.as_bytes());
     let type_map = crate::type_check::infer_types(&program);
-    let ssa = crate::transform::ir_to_ssa_typed(&program, type_map);
+    let (ssa, diags) = crate::transform::ir_to_ssa_typed(&program, type_map);
+
+    if !diags.is_empty() {
+        return Err(diags);
+    }
 
     // Try to constant-fold elidable function calls
     let func_constants = fold_function_outputs(&ssa);
-    compile_ssa(&ssa, &func_constants, Some(bash_source))
+    Ok(compile_ssa(&ssa, &func_constants, Some(bash_source)))
 }
 
 /// Try to evaluate function bodies at compile time. If a function's
@@ -917,6 +921,10 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                     for r in redirects {
                         intern_ir_expr(&mut module, &mut intern, &r.target);
                     }
+                }
+                SsaInst::Bless { test, .. } => {
+                    intern_test_expr(&mut module, &mut intern, test);
+                    intern(&mut module, "bless: validation failed\n");
                 }
                 _ => {}
             }
@@ -2270,6 +2278,34 @@ fn lower_inst(
                 let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
                 builder.ins().call(wait_ref, &[pid]);
             }
+        }
+        SsaInst::Bless { var: _var, test } => {
+            // Runtime bless enforcement: evaluate test, abort if false.
+            let result = lower_test_expr(test, builder, module, vars, literals, externs, Some(exit_status_var));
+            let pass_block = builder.create_block();
+            let fail_block = builder.create_block();
+            let zero = builder.ins().iconst(I64, 0);
+            let is_pass = builder.ins().icmp(IntCC::NotEqual, result, zero);
+            builder.ins().brif(is_pass, pass_block, &[], fail_block, &[]);
+
+            builder.switch_to_block(fail_block);
+            builder.seal_block(fail_block);
+            // Write "bless: validation failed\n" to stderr, then exit(1)
+            let msg = "bless: validation failed\n";
+            let msg_id = literals[msg];
+            let msg_gv = module.declare_data_in_func(msg_id, builder.func);
+            let msg_ptr = builder.ins().global_value(I64, msg_gv);
+            let msg_len = builder.ins().iconst(I64, msg.len() as i64);
+            let fd_2 = builder.ins().iconst(I64, 2); // stderr
+            let write_ref = module.declare_func_in_func(externs.write, builder.func);
+            builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
+            let one = builder.ins().iconst(I64, 1);
+            let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+            builder.ins().call(exit_ref, &[one]);
+            builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+            builder.switch_to_block(pass_block);
+            builder.seal_block(pass_block);
         }
     }
     false // block not terminated

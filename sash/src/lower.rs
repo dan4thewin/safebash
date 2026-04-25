@@ -432,6 +432,59 @@ fn lower_command(node: Node, source: &[u8]) -> Option<Command> {
     let name_node = node.child_by_field_name("name")?;
     let name = lower_expr(name_node, source);
 
+    // bless VAR [[ test_expr ]] — reconstruct the test expression
+    // tree-sitter parses this as a plain command with word arguments,
+    // so we re-parse the [[ ... ]] portion to get a proper TestExpr.
+    if let ExprKind::Literal(ref n) = name.kind {
+        if n == "bless" {
+            let mut args_raw: Vec<Node> = Vec::new();
+            for child in node.children(&mut node.walk()) {
+                if child.is_named() && child != name_node {
+                    args_raw.push(child);
+                }
+            }
+            // First arg is variable name, rest should be [[ ... ]]
+            if !args_raw.is_empty() {
+                let var_expr = lower_expr(args_raw[0], source);
+                // Reconstruct the test portion from source bytes
+                if args_raw.len() >= 2 {
+                    let test_start = args_raw[1].start_byte();
+                    let test_end = args_raw.last().unwrap().end_byte();
+                    let test_text = &source[test_start..test_end];
+                    let test_str = std::str::from_utf8(test_text).unwrap_or("");
+                    // Re-parse as a standalone test command
+                    let wrapper = format!("{}\n", test_str);
+                    let mut parser = tree_sitter::Parser::new();
+                    parser.set_language(&tree_sitter_bash::LANGUAGE.into()).ok();
+                    if let Some(tree) = parser.parse(wrapper.as_bytes(), None) {
+                        let root = tree.root_node();
+                        // Look for test_command in the parsed tree
+                        for child in root.children(&mut root.walk()) {
+                            if child.kind() == "test_command" {
+                                let test_kind = lower_test_command(child, wrapper.as_bytes());
+                                if let ExprKind::Test(test_expr) = test_kind {
+                                    return Some(Command {
+                                        name,
+                                        args: vec![
+                                            var_expr,
+                                            Expr { kind: ExprKind::Test(test_expr), span: Span::from_node(node) },
+                                        ],
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+                // Fallback: return as plain command
+                let mut args = vec![var_expr];
+                for a in &args_raw[1..] {
+                    args.push(lower_expr(*a, source));
+                }
+                return Some(Command { name, args });
+            }
+        }
+    }
+
     // Detect `var =~ s/pattern/replacement/flags` regex mutation
     let mut has_regex_op = false;
     for child in node.children(&mut node.walk()) {

@@ -4353,3 +4353,346 @@ leaves the terminal segment unchecked; the compiler flags it. The
 programmer wraps in `if` or adds `-`.
 
 DG directed: "- cmd1 | - cmd2 makes me think about each segment."
+
+## Bug fix: taint analyzer skipped function bodies (2026-04-24)
+
+**Discovered during a TODO.md gap survey.** While steelmanning YAGNI on
+"taint inheritance through function calls," DG asked the obvious
+verification question: *if `getenv` is called inside a function body,
+is the result tainted?*
+
+Empirical answer: **no, it was not.** The analyzer compiled this without
+diagnostic:
+
+```bash
+foo() {
+    local x
+    x=$(getenv USER_INPUT)
+    echo "$x"
+    cmd "$x"
+}
+foo
+```
+
+This is a validator bypass — exactly the class of finding the overdue
+adversarial-audit run-2 is meant to catch. We found it without running
+an audit because DG asked the right question.
+
+### Root cause
+
+`walk_statement` matched `function_definition` and called
+`handle_function_def`, which only recorded the function name and never
+descended into the body. The four DD#24 taint sources
+(`getenv`/`argv`/`read`/`$(external)`) were therefore unanalyzed
+anywhere inside any function body.
+
+A misleading comment I had added the same day asserted that "parameters
+are clean by construction" — true for the call-site-rejection of
+tainted *arguments*, but it concealed the real gap, which was that the
+body wasn't walked at all. New taint *created inside* the body was
+invisible.
+
+### Fix
+
+`handle_function_def` now walks the body with `walk_statement`, after
+seeding clean status for the function-local positionals (`$1..$9`,
+`$@`, `$*`). Variable state is snapshotted before the walk and restored
+after, so taint from inside the body does not leak to siblings.
+
+This is intra-procedural analysis only. No signatures. No propagation
+across call boundaries. DD#24's quarantine model is preserved: external
+data is rejected at the boundary it crosses, and a sash function call
+site is itself a boundary (handled by the existing argument check in
+`handle_command`).
+
+### Why function-local positionals are clean
+
+Inside `foo()`, `$1` refers to `foo`'s first call-site argument, not
+the program's argv. The call site is a boundary: `handle_command`
+rejects any tainted argument expression at the call. Therefore inside
+the body, `$1..$N`/`$@`/`$*` are clean by construction. (This is the
+correct version of the claim the prior comment got wrong.)
+
+### Tests
+
+Added `neg_tainted_env_inside_function_body` to `e2e_tests.rs`. It
+fails before the fix and passes after. Existing function-argument
+tests (`pos_func_args_arithmetic`, etc.) continue to pass because the
+positional-clean seeding matches the call-site-quarantine semantics.
+
+Full suite: 458 pass, 1 ignored (was 457 + 1).
+
+### Lessons
+
+1. **DG's verification question caught a bug my steelman assumed away.**
+   I argued "the call-site check is airtight" without testing whether
+   the call-site check was the only check that mattered. It wasn't.
+   The body-walk was missing entirely.
+2. **A confidently wrong comment is worse than no comment.** I had just
+   written "parameters are clean by construction" as DD#24
+   reinforcement. It locked in the wrong story. Reverted.
+3. **Bug policy worked.** Stopped, fixed, didn't route around. The
+   feature TODO entry now reads "incidentally enforced by the
+   call-site check" — true *and* sufficient, because the body is now
+   walked.
+
+## Design Decision #24, amendment 2 (2026-04-24): no propagation, only classification
+
+The original DD#24 framed taint as flow-sensitive: "reassignment
+re-taints," tainted values flowing through assignments until blessed.
+Working through the SSA-replatform spec exposed that this framing was
+wrong — and the wrongness explains every bug we've found in `taint.rs`.
+
+### The corrected rule
+
+A value is tainted iff its **defining instruction** is one of the
+boundary sources. There is no propagation. Tainted values cannot be
+copied (`b=$a` is a read of `$a` and is rejected), concatenated,
+indexed with, or used in arithmetic. The only legal operation on a
+tainted value is to validate it via `bless`.
+
+### The complete source list
+
+- `$(getenv VAR)`
+- `$(argv N)` / `$1..$9` / `$@` / `$*`
+- `read` / `mapfile` from any inherited or opened fd, or any pipe
+  (heredoc / here-string-of-clean produce clean values)
+- `$(cmd)` for external `cmd`
+
+User-defined sash functions cannot introduce taint. A function whose
+body touches a tainted source without blessing fails to compile, so
+`$(user_func ...)` capture is always clean (or compilation has
+already failed). No signatures, no inference.
+
+### What "read" means
+
+Every non-bless use is a read: command args, RHS of assignment,
+arithmetic, subscript indices, `join` over an array containing any
+tainted element, function-argument passing. All rejected.
+
+### Containers
+
+Arrays/maps are containers of independent variables. Each element
+carries its own taint. `join @arr` is rejected if any element is
+tainted, exactly as if the elements were separate scalars.
+
+### Why this is simpler
+
+- No flow analysis. Per-definition classification + per-use rejection.
+- No "taint propagation through assignment" — copying is reading.
+- No inter-procedural reasoning — functions can't introduce taint, so
+  call boundaries are not interesting.
+- No scope-shadowing complications — at the SSA layer the question
+  "is `x` tainted?" is "is the SSA defining instruction of this
+  version of `x` a source instruction?" Yes/no, no map state.
+
+### Why CST-layer enforcement keeps breaking
+
+The CST analyzer has been trying to model "flow-sensitive taint with
+reassignment re-taint" — the original (wrong) DD#24 framing. That
+required tracking per-name state across statements, modeling scope,
+walking function bodies, handling locals. Every layer of that was a
+bug surface. The corrected rule needs none of it: just look at each
+definition and classify, then reject reads.
+
+### Implementation plan
+
+Move taint enforcement to a pass over SSA. Per `SsaInst::Assign`,
+classify the target's taint by the defining `SsaValue` shape (source
+patterns → tainted, everything else → clean). Per use site
+(`Command`, `Pipeline`, RHS of any other assign), if any operand is a
+tainted `VarRef`, emit SB4020 unless the use is the test expression
+of a `bless`. `bless` produces a new clean SSA version of its target.
+
+The CST analyzer keeps only purely-syntactic checks: bless argument
+shape (must be a name + test), heredoc-with-cmdsub rejection (SB5002),
+eval rejection (SB4001), indirect expansion rejection.
+
+### Lesson
+
+DG's instinct to ask "is `getenv` inside a function tainted?" was the
+right question. The answer exposed not one bug but a wrong mental
+model that had been embedded in `taint.rs` from the start.
+"Flow-sensitive with reassignment re-taint" sounded conservative and
+felt right. It wasn't conservative — it was an attempt to mimic
+Perl's taint mode in a CST analyzer, which is exactly what DD#24's
+prose said we wouldn't do. The amendment makes the prose match the
+intended semantics.
+
+## Design Decision #46: Positional parameters are function-local only
+
+### Bug that surfaced this
+
+Empirical test (2026-04-24) of:
+```bash
+foo() { echo "got: $2"; }
+foo onearg
+```
+compiled with sash and run with program args `first second third`:
+- bash output: `got: ` (empty)
+- sash compiled output: `got: second`
+
+Program argv leaked through unbound positional slots inside the
+function. Root cause: `transform.rs` inliner only redefines `$1..$N`
+for the args supplied at the call site; `$N+1..$9` retain whatever
+SSA version was reaching from the caller, which at top level is
+version 0 loaded from `sash_argv`. Both a bash-divergence bug and a
+structural enabler of taint bypasses under DD#24 amendment 2.
+
+### The decision
+
+**Sash-native mode**: `$1..$N`, `$@`, `$*`, `$#` are *only* valid
+inside a function body. Their meaning is "argument bound by the
+nearest enclosing call site." At top level, references to these
+names are a compile error with guidance to use `argv N` /
+`argv` (the explicit boundary builtin per DD#42).
+
+**Bash mode** (compiling unconverted bash scripts): top-level
+`$1..$N` are coerced to `$(argv N)`, top-level `$@` / `$*` to
+`$(argv)`, top-level `$#` to argc-1 via the appropriate builtin.
+The coercion is visible via `--emit-source`, like other bash→sash
+transforms.
+
+**Both modes**: inside a function body, reading `$K` where `K`
+exceeds the call's actual arg count (`$#`) is a compile error,
+not silent empty. Bash returns empty for unbound positionals; sash
+treats it as a programmer mistake and rejects at compile time.
+This requires the inliner to know the per-call argc statically,
+which it already does (the call-site `c.args.len()`).
+
+### Why
+
+DD#24 amendment 2 enumerates four taint sources, one of which is
+"program positional params." Having `$1..$N` *also* mean "function
+arg" inside a body creates two meanings for one syntax, with the
+disambiguation depending on lexical context. Removing the top-level
+meaning makes:
+
+- Taint classification syntactic: `argv` and `getenv` are the only
+  ways to introduce program-level external data; positional-param
+  syntax in any position means "function arg," whose taint is the
+  taint of the call expression (typically clean).
+- The leak structurally impossible: at top level there is nothing to
+  leak from; inside a function the inliner's bindings fully define
+  the slots and out-of-range reads are rejected.
+- `$(argv N)` becomes the canonical, documented way to read program
+  argv, matching the documented DD#42 idiom.
+- Bash compatibility preserved via coercion, not via shared meaning.
+
+### Implementation plan
+
+1. Add a validator rule (CST layer) for sash-native mode: top-level
+   reference to `$1..$9`, `$@`, `$*`, `$#` → diagnostic with
+   suggested `argv N` / `argv` / `len argv` replacement.
+2. Add a coercion (CST→IR or lower.rs) for bash mode: rewrite
+   top-level positional refs to the corresponding `argv` calls.
+3. In the inliner (`transform.rs:579-617` and the capture path
+   `:147-220`): after defining `$1..$N` from call args, emit a
+   diagnostic-bearing marker for slots `$N+1..$9` so any read of
+   them in the body emits an "out-of-range positional parameter"
+   error. (Or: track per-function the call-site argc, and have the
+   use-site SSA reference check against it.)
+4. Tests: add the leak test from above as a regression; add tests
+   for top-level `$1` rejection in sash-native mode and coercion in
+   bash mode; add tests for out-of-range reads in both modes.
+
+### Lesson
+
+The earlier fix to walk function bodies in the CST taint analyzer
+was correct as far as it went, but the right architecture was
+upstream: don't have positional-param syntax mean two things.
+DG's question — "if a function takes one arg but reads $2, does
+it get argv 2?" — exposed both a concrete bug and a design
+clarification that reduces taint-pass surface area.
+
+---
+
+## Session 2026-04-24 — Bless Runtime Enforcement, CST Taint Fixes, DD#46
+
+**Goal:** Close the gaps identified in GAPS-2026-04-24.md around bless
+runtime enforcement, CST taint over-tainting, arithmetic/subscript
+taint checking, and DD#46 out-of-range positional detection.
+
+**Approach:** TDD — wrote 27 taint spec tests first (13 passed
+immediately, 14 failed), then implemented until all pass.
+
+### Actions
+
+1. **Bless runtime enforcement (codegen)**
+   - Added `SsaInst::Bless { var, test }` to SSA instruction set.
+   - `lower.rs`: re-parses `bless x [[ cond ]]` via tree-sitter to
+     extract a proper `TestExpr` (tree-sitter sees bless as a plain
+     command with word arguments — the `[[ ]]` isn't a test_command).
+   - `transform.rs`: recognises bless command, emits `SsaInst::Bless`.
+   - `codegen.rs`: emits `lower_test_expr` → branch → stderr message
+     "bless: validation failed\n" → `sash_exit(1)` → trap on fail path.
+   - Pre-interns the failure message string alongside test expr literals.
+
+2. **CST taint over-tainting fixes (taint.rs)**
+   - `read` from herestring (`<<<`) or heredoc (`<<`) now produces
+     clean variables instead of unconditionally tainting.
+   - `$(user_func)` command substitution now recognised as clean
+     (user-defined functions can't introduce external taint by DD#24).
+     Added `functions: HashSet<String>` to TaintTracker.
+   - `arithmetic_command` (`(( expr ))`) — new walk_statement case
+     for the safebash grammar's `arithmetic_command` node type.
+     Checks all `variable_name` nodes inside for taint.
+   - `arithmetic_expansion` (`$(( expr ))`) — check_expr_reads now
+     recurses into arithmetic expansion nodes via `check_arith_reads`.
+   - Array subscript `${arr[$x]}` — check_expr_reads now recurses
+     into subscript index expressions inside `expansion` nodes.
+
+3. **DD#46 out-of-range positional detection (transform.rs)**
+   - `collect_max_positional()` scans function body IR for the
+     highest positional parameter reference ($1..$9).
+   - `scan_expr_positionals_stmt/expr` — recursive IR walkers.
+   - At each function call site in `lower_one`, compares
+     `max_positional` against `c.args.len()`. If body reads $K
+     where K > argc, emits a diagnostic.
+   - `VersionState.diagnostics: Vec<String>` — new field to
+     collect transform-phase diagnostics.
+   - `ir_to_ssa`/`ir_to_ssa_typed` now return `(SsaProgram, Vec<String>)`.
+   - `compile_to_object` returns `Result<Vec<u8>, Vec<String>>`.
+   - `main.rs` handles the Result, printing diagnostics to stderr.
+
+4. **Test updates**
+   - `taint_spec_tests.rs`: 27 new tests covering all taint/bless
+     scenarios from GAPS doc + bless expression mismatch aborts.
+   - `e2e_tests.rs`: removed unnecessary `bless` from herestring
+     tests (now clean by construction); updated
+     `pos_func_unbound_positional_is_empty` to expect rejection.
+   - `codegen_tests.rs`: updated for `Result` API.
+
+### Design Decision #47: Bless Runtime Enforcement
+
+**Context:** The `bless` keyword was parsed and validated at the CST
+level (taint.rs) but had no runtime effect — the compiled binary
+silently accepted values that failed the test expression.
+
+**Decision:** `bless` is now a first-class SSA instruction with
+codegen support. The test expression is evaluated at runtime; on
+failure, the binary writes "bless: validation failed\n" to stderr
+and exits with code 1. This matches the SUBSET.md specification
+that bless "narrows the value at the point of the test."
+
+**Alternatives considered:**
+- Trap signal instead of exit: too harsh, prevents cleanup.
+- Return nonzero $?: too subtle, caller might ignore.
+- stderr + exit(1) is the right balance of visibility and safety.
+
+### Design Decision #48: Out-of-Range Positional Detection
+
+**Context:** DD#46 cleared unbound positional slots to empty strings
+but the comment noted "(Future: emit a diagnostic instead)".
+
+**Decision:** At function call sites, scan the function body IR for
+the highest $N reference. If the call provides fewer arguments than
+the function reads, emit a compile-time error. This catches bugs
+like `foo() { echo "$2"; }; foo "one"` at compile time.
+
+**Limitation:** This is a conservative static analysis — it won't
+catch dynamic patterns like `shift` followed by `$1`, or positional
+references inside eval'd strings. Those patterns are already
+rejected by the safe subset.
+
+DG directed the architecture. AI implemented.

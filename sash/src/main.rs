@@ -156,7 +156,7 @@ fn main() {
 
     // --ssa: print SSA and exit
     if flags.contains(&"--ssa") {
-        let ssa = sash::transform::ir_to_ssa(&program);
+        let (ssa, _diags) = sash::transform::ir_to_ssa(&program);
         let ssa_text = sash::ssa_printer::print_ssa(&ssa);
         print!("{}", ssa_text);
         return;
@@ -174,7 +174,15 @@ fn main() {
     };
 
     let obj_path = format!("{}.o", output);
-    let obj_bytes = sash::codegen::compile_to_object(&source);
+    let obj_bytes = match sash::codegen::compile_to_object(&source) {
+        Ok(bytes) => bytes,
+        Err(diags) => {
+            for d in &diags {
+                eprintln!("{}: {}", input, d);
+            }
+            std::process::exit(1);
+        }
+    };
     std::fs::write(&obj_path, &obj_bytes).expect("write .o");
 
     // Find sash-rt

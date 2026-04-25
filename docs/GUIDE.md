@@ -80,7 +80,7 @@ safebash/
 │   │   └── known_externals.rs — Auto-bless patterns
 │   └── tests/
 │       ├── codegen_tests.rs  — 247 codegen correctness tests
-│       ├── e2e_tests.rs      — 114 end-to-end tests
+│       ├── e2e_tests.rs      — 116 end-to-end tests
 │       ├── janet_tests.rs    — 37 Janet round-trip tests
 │       └── oracle_tests.rs   — 59 oracle validation tests
 ├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
@@ -361,9 +361,10 @@ right?" but "which behavior does safebash want, and why?"
 | File | Count | What it tests |
 |------|-------|---------------|
 | `codegen_tests.rs` | 247 | Compile bash snippets to native, run, check output |
-| `e2e_tests.rs` | 114 | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
+| `e2e_tests.rs` | 116 | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
 | `janet_tests.rs` | 37 | Compile to Janet, run both bash and Janet, compare output |
 | `oracle_tests.rs` | 59 | Additional validation tests |
+| `taint_spec_tests.rs` | 27 | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
 
 Build and run: `mk test` (Plan 9 mk, not make).
 

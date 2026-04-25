@@ -10,12 +10,12 @@ use crate::ssa::*;
 use std::collections::HashMap;
 
 /// Transform an IR Program into SSA form.
-pub fn ir_to_ssa(program: &Program) -> SsaProgram {
+pub fn ir_to_ssa(program: &Program) -> (SsaProgram, Vec<String>) {
     ir_to_ssa_typed(program, HashMap::new())
 }
 
 /// Transform an IR Program into SSA form with type information.
-pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) -> SsaProgram {
+pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
     let mut state = VersionState::with_types(type_map);
 
@@ -54,7 +54,8 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
     // Ensure exit block terminates with Return
     ssa.block_mut(exit).terminator = Terminator::Return;
 
-    ssa
+    let diags = state.diagnostics.clone();
+    (ssa, diags)
 }
 
 /// Lower a sequence of statements into SSA, starting from `block`.
@@ -187,6 +188,15 @@ fn lower_one(
                             let param_var = state.define(&(i + 1).to_string());
                             ssa.block_mut(block).insts.push(SsaInst::Assign { target: param_var, value: v });
                         }
+                        // DD#46: clear unbound positional slots so caller's
+                        // $K doesn't leak through inside the inlined body.
+                        for i in (func_args.len() + 1)..=9 {
+                            let param_var = state.define(&i.to_string());
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target: param_var,
+                                value: SsaValue::Literal(String::new()),
+                            });
+                        }
                         // Inline function body
                         let call_block = ssa.new_block(&format!("cap_{}", fname));
                         ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -284,6 +294,33 @@ fn lower_one(
 
         StmtKind::Command(c) => {
             let name = expr_to_string(&c.name);
+
+            // bless VAR [[ test_expr ]] — runtime validation
+            if name == "bless" {
+                // First arg is variable name, remaining args should contain [[ test_expr ]]
+                if c.args.len() >= 2 {
+                    let var_name = expr_to_string(&c.args[0]);
+                    // Look for a TestExpr in the remaining args
+                    for arg in &c.args[1..] {
+                        if let ExprKind::Test(test_expr) = &arg.kind {
+                            let var_ref = state.lookup(&var_name);
+                            ssa.block_mut(block).insts.push(SsaInst::Bless {
+                                var: var_ref,
+                                test: test_expr.clone(),
+                            });
+                            return block;
+                        }
+                    }
+                }
+                // If we couldn't find a TestExpr, emit as regular command (will be caught by taint checker)
+                let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                ssa.block_mut(block).insts.push(SsaInst::Command {
+                    name: name.clone(),
+                    args,
+                    redirects: vec![],
+                });
+                return block;
+            }
 
             // If the command is [[ ]], preserve the TestExpr for codegen
             if name == "[[" {
@@ -612,6 +649,26 @@ fn lower_one(
                     ssa.block_mut(block).insts.push(SsaInst::Assign {
                         target: param_var,
                         value: val,
+                    });
+                }
+                // DD#46: clear unbound positional slots so caller's $K
+                // doesn't leak through when the callee reads $K+1..$9.
+                // Also: detect out-of-range positional reads in the body
+                // and emit a diagnostic if the function reads $K where K > argc.
+                let max_positional = collect_max_positional(&body);
+                let call_argc = c.args.len();
+                if max_positional > call_argc {
+                    state.diagnostics.push(format!(
+                        "error: function '{}' reads ${}  but called with only {} argument{}",
+                        name, max_positional, call_argc,
+                        if call_argc == 1 { "" } else { "s" }
+                    ));
+                }
+                for i in (c.args.len() + 1)..=9 {
+                    let param_var = state.define(&i.to_string());
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target: param_var,
+                        value: SsaValue::Literal(String::new()),
                     });
                 }
 
@@ -2089,6 +2146,121 @@ fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
         }
     }
     locals
+}
+
+/// Scan function body for the highest positional parameter referenced ($1..$9).
+/// Returns 0 if none found.
+fn collect_max_positional(stmts: &[Statement]) -> usize {
+    let mut max = 0usize;
+    for stmt in stmts {
+        scan_expr_positionals_stmt(stmt, &mut max);
+    }
+    max
+}
+
+fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            scan_expr_positionals_expr(&c.name, max);
+            for a in &c.args { scan_expr_positionals_expr(a, max); }
+        }
+        StmtKind::Assignment(a) => {
+            scan_expr_positionals_expr(&a.value, max);
+        }
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments { scan_expr_positionals_expr(&a.value, max); }
+        }
+        StmtKind::Pipeline(p) => {
+            for s in &p.commands { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::If(i) => {
+            for s in &i.condition { scan_expr_positionals_stmt(s, max); }
+            for s in &i.then_body { scan_expr_positionals_stmt(s, max); }
+            if let Some(ref eb) = i.else_body { for s in eb { scan_expr_positionals_stmt(s, max); } }
+        }
+        StmtKind::While(w) => {
+            for s in &w.condition { scan_expr_positionals_stmt(s, max); }
+            for s in &w.body { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::For(f) => {
+            for w in &f.words { scan_expr_positionals_expr(w, max); }
+            for s in &f.body { scan_expr_positionals_stmt(s, max); }
+        }
+        StmtKind::Case(c) => {
+            scan_expr_positionals_expr(&c.value, max);
+            for item in &c.items {
+                for s in &item.body { scan_expr_positionals_stmt(s, max); }
+            }
+        }
+        StmtKind::Function(_) => {} // don't recurse into nested functions
+        StmtKind::Redirected(r) => {
+            scan_expr_positionals_stmt(&r.body, max);
+        }
+        StmtKind::List(l) => {
+            scan_expr_positionals_stmt(&l.left, max);
+            scan_expr_positionals_stmt(&l.right, max);
+        }
+        StmtKind::Subshell(s) => {
+            for st in &s.body { scan_expr_positionals_stmt(st, max); }
+        }
+        StmtKind::Group(g) => {
+            for st in &g.body { scan_expr_positionals_stmt(st, max); }
+        }
+        StmtKind::Comment(_) => {}
+    }
+}
+
+fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) => {
+            if let Ok(n) = name.parse::<usize>() {
+                if n >= 1 && n <= 9 && n > *max { *max = n; }
+            }
+        }
+        ExprKind::DoubleQuoted(parts) => {
+            for p in parts { scan_expr_positionals_expr(p, max); }
+        }
+        ExprKind::Concat(parts) => {
+            for p in parts { scan_expr_positionals_expr(p, max); }
+        }
+        ExprKind::Array(elems) => {
+            for e in elems { scan_expr_positionals_expr(e, max); }
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            if let Ok(n) = pe.name.parse::<usize>() {
+                if n >= 1 && n <= 9 && n > *max { *max = n; }
+            }
+            if let Some(ref op) = pe.operand {
+                scan_expr_positionals_expr(op, max);
+            }
+        }
+        ExprKind::CommandSubstitution(stmts) => {
+            for s in stmts { scan_expr_positionals_stmt(s, max); }
+        }
+        ExprKind::Test(t) => {
+            scan_test_positionals(t, max);
+        }
+        ExprKind::Subscript { index, .. } => {
+            scan_expr_positionals_expr(index, max);
+        }
+        _ => {}
+    }
+}
+
+fn scan_test_positionals(test: &TestExpr, max: &mut usize) {
+    match test {
+        TestExpr::Unary { operand, .. } => scan_expr_positionals_expr(operand, max),
+        TestExpr::Binary { left, right, .. } => {
+            scan_expr_positionals_expr(left, max);
+            scan_expr_positionals_expr(right, max);
+        }
+        TestExpr::Not(inner) => scan_test_positionals(inner, max),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            scan_test_positionals(a, max);
+            scan_test_positionals(b, max);
+        }
+        TestExpr::Paren(inner) => scan_test_positionals(inner, max),
+    }
 }
 
 /// Desugar `for x in "$@"` into a while loop over positional params:

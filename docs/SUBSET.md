@@ -194,32 +194,73 @@ but shellcheck may warn.
 
 ## Taint Model (DD#24)
 
-### Taint Sources
+A value is tainted iff it originated, *directly*, from an external
+source. Taint is a property of a definition, not a flow. There is no
+propagation: tainted values cannot be copied, concatenated, indexed
+with, or otherwise read except inside a `bless` test expression. The
+only legal operation on a tainted value is to validate it.
 
-All external input is tainted:
-- `$(cmd)` — command output
-- `$(getenv VAR)` — environment variables
-- `$(argv N)` — positional parameters
-- `read var` — user input
+### Taint Sources (the only ones)
+
+A variable is tainted iff its defining instruction is one of:
+
+- `x=$(getenv VAR)` — environment variable read
+- `x=$(argv N)` / `x=$(argv)` — program positional params (DD#46)
+- `read x [...]` from any inherited or opened fd, or any pipe
+- `mapfile -t x` / `readarray` from any inherited or opened fd, or any pipe
+- `$(cmd)` where `cmd` is an external command
+
+Note: `$1..$9`, `$@`, `$*`, `$#` are **function-local only** in
+sash-native mode (DD#46) — they refer to the nearest enclosing call's
+arguments, never to program argv. Top-level use is a compile error;
+bash-mode input is coerced to `$(argv N)` etc. Reading `$K` where `K`
+exceeds the call's actual `$#` is a compile error in both modes.
+
+`read` / `mapfile` from a heredoc or a here-string of clean data
+produce clean values.
+
+User-defined sash functions are **trusted**: they cannot introduce
+taint. A function that internally touches a tainted source must bless
+it before use, just like top-level code; if it doesn't, the function
+itself fails to compile. Therefore `$(user_func ...)` capture is
+clean.
+
+### Reads (rejected unless inside `bless`)
+
+Every operation other than direct assignment-from-source counts as a
+read of the tainted value, and is rejected:
+
+- `$x`, `${x}`, `${x:op}`, `${x[i]}` in any expression
+- `b=$a` — RHS read of tainted `a`
+- `cmd "$x"` — command argument
+- `arr[$x]=v` — index expression
+- `(( x ))` / `$(( x ))` — arithmetic operand
+- `join @arr` when any element of `arr` is tainted
+- Passing as a function argument (the call binds the parameter, which is a read)
+
+The only permitted read is inside the test expression of `bless x [[ ... ]]`.
 
 ### Blessing
 
-Tainted variables cannot be used until blessed:
-
 ```bash
-bless var [[ condition ]]
+bless x [[ condition ]]
 ```
+
+If the test passes, `x` becomes clean from this point forward
+(SSA: a new clean version of `x` reaching downstream uses). A later
+re-assignment to `x` from a tainted source re-taints it.
+
+### Containers
+
+Arrays and maps are containers of variables. Each element carries its
+own taint, by the same rules as a scalar. `arr+=("$(getenv X)")`
+stores a tainted element; subsequent reads of that element (including
+`join`, iteration, subscript) are rejected unless blessed.
 
 ### Known Externals (Auto-Blessed)
 
 - **26 environment variables:** HOME, USER, PATH, etc.
 - **25 commands:** hostname, date, whoami, etc.
-
-### Taint Rules
-
-- `(( ))` arithmetic context is a taint read — tainted var in
-  `(( ))` is a compile error
-- Taint is flow-sensitive — reassignment re-taints
 
 ---
 

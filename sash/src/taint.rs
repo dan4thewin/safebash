@@ -33,6 +33,8 @@ pub struct TaintTracker {
     vars: HashMap<String, TaintStatus>,
     /// Track which variables have been declared/assigned in the script.
     declared: std::collections::HashSet<String>,
+    /// Track which functions have been defined in the script.
+    functions: std::collections::HashSet<String>,
     /// Are we inside a bless expression? If so, which variable?
     bless_context: Option<String>,
     /// Auto-blessed variables: name → (pattern, description, source line)
@@ -53,6 +55,7 @@ impl TaintTracker {
         Self {
             vars: HashMap::new(),
             declared: std::collections::HashSet::new(),
+            functions: std::collections::HashSet::new(),
             bless_context: None,
             auto_blessed: Vec::new(),
         }
@@ -199,13 +202,17 @@ impl TaintTracker {
                 }
             }
             "function_definition" => {
-                // Don't analyze function bodies for now — taint of
-                // params depends on call site (future work)
-                self.handle_function_def(node, source);
+                self.handle_function_def(node, source, diags);
             }
             "compound_statement" | "do_group" | "subshell" => {
                 for child in node.children(&mut node.walk()) {
                     self.walk_statement(child, source, diags);
+                }
+            }
+            "arithmetic_command" => {
+                // (( expr )) — check all variable references for taint
+                for child in node.children(&mut node.walk()) {
+                    self.check_arith_reads(child, source, diags);
                 }
             }
             "pipeline" | "list" | "redirected_statement" => {
@@ -343,24 +350,74 @@ impl TaintTracker {
 
     fn handle_read(&mut self, node: Node, source: &[u8]) {
         // read -r var / read -d: -a arr — targets become tainted
+        // Exception: read from herestring (<<<) or heredoc (<<) of clean data → clean
+        let has_clean_redirect = node.parent().map(|p| {
+            if p.kind() == "redirected_statement" {
+                p.children(&mut p.walk()).any(|c| {
+                    c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
+                })
+            } else {
+                false
+            }
+        }).unwrap_or(false);
+        // Also check if the command itself has a herestring redirect
+        let has_herestring = node.children(&mut node.walk()).any(|c| {
+            c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect"
+        });
+        let is_clean_source = has_clean_redirect || has_herestring;
         for child in node.children(&mut node.walk()) {
             if child.kind() == "word" {
                 let text = child.utf8_text(source).unwrap_or("");
                 // Skip flags
                 if !text.starts_with('-') {
                     self.mark_declared(text);
-                    self.mark_tainted(text);
+                    if is_clean_source {
+                        self.mark_clean(text);
+                    } else {
+                        self.mark_tainted(text);
+                    }
                 }
             }
         }
     }
 
-    fn handle_function_def(&mut self, node: Node, source: &[u8]) {
-        // Record function name as declared
+    fn handle_function_def(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        // Record function name as declared and as a known function
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = name_node.utf8_text(source).unwrap_or("");
             self.mark_declared(name);
+            self.functions.insert(name.to_string());
         }
+
+        // DD#24: external data is quarantined at the boundary, regardless
+        // of whether the boundary is crossed at the top level or inside a
+        // function body. Walk the body with the same analyzer so that
+        // getenv/argv/read/$(external) produce the same diagnostics they
+        // would at the top level.
+        //
+        // Inside a function body, positional parameters ($1..$N, $@, $*)
+        // refer to the function's call-site arguments — NOT the program's
+        // argv. The call site is itself a boundary: handle_command rejects
+        // any tainted argument expression at the call. Therefore inside
+        // the body these positionals are clean by construction.
+        //
+        // This is intra-procedural analysis only — no signatures, no
+        // propagation across call boundaries. DD#24's quarantine model
+        // says: external data is rejected at the boundary it crosses;
+        // a sash call site is such a boundary.
+        //
+        // We snapshot and restore variable state so taint state from
+        // inside the body does not leak to siblings.
+        let saved_vars = self.vars.clone();
+        let saved_declared = self.declared.clone();
+        for p in &["1", "2", "3", "4", "5", "6", "7", "8", "9", "@", "*"] {
+            self.mark_clean(p);
+        }
+        if let Some(body) = node.child_by_field_name("body") {
+            self.walk_statement(body, source, diags);
+        }
+        self.vars = saved_vars;
+        self.declared = saved_declared;
     }
 
     /// Check if an expression evaluates tainted data.
@@ -378,15 +435,20 @@ impl TaintTracker {
                 self.is_tainted(&var_name)
             }
             "command_substitution" => {
-                // $(cmd) — always tainted (external command output)
-                // Unless it's a known-safe builtin like len, keys, etc.
+                // $(cmd) — tainted if external command output
+                // Clean if: known-safe builtin, or user-defined function
                 let inner_cmd = self.get_cmd_subst_name(node, source);
-                !matches!(inner_cmd.as_str(),
-                    "len" | "keys" | "join" | "epochseconds" | "getenv" | "argv")
-                // Note: getenv/argv produce tainted values, but the
-                // taint is on the *result*, not the cmd subst itself.
-                // Actually getenv and argv DO produce tainted results.
-                || matches!(inner_cmd.as_str(), "getenv" | "argv")
+                if matches!(inner_cmd.as_str(),
+                    "len" | "keys" | "join" | "epochseconds") {
+                    return false; // known safe builtins, clean output
+                }
+                if matches!(inner_cmd.as_str(), "getenv" | "argv") {
+                    return true; // explicitly tainted sources
+                }
+                if self.functions.contains(&inner_cmd) {
+                    return false; // user-defined function — clean by DD#24
+                }
+                true // unknown external command — tainted
             }
             "string" => {
                 // "..." — check all interpolated expansions
@@ -432,12 +494,44 @@ impl TaintTracker {
                         format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
                     ));
                 }
+                // Also recurse into subscript index expressions
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "subscript" {
+                        for sc in child.children(&mut child.walk()) {
+                            self.check_expr_reads(sc, source, diags);
+                        }
+                    }
+                }
+            }
+            "arithmetic_expansion" => {
+                // $(( expr )) — check all variable references inside
+                self.check_arith_reads(node, source, diags);
             }
             _ => {
                 // Recurse into children
                 for child in node.children(&mut node.walk()) {
                     self.check_expr_reads(child, source, diags);
                 }
+            }
+        }
+    }
+
+    /// Check variable reads inside arithmetic contexts.
+    /// In arithmetic, variables are referenced by bare name (no $), so
+    /// we look for `variable_name` nodes directly.
+    fn check_arith_reads(&self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "variable_name" {
+                let var_name = child.utf8_text(source).unwrap_or("").to_string();
+                if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
+                    diags.push(Diagnostic::error(
+                        child,
+                        "SB4020",
+                        format!("use of tainted variable '{}' in arithmetic — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                    ));
+                }
+            } else {
+                self.check_arith_reads(child, source, diags);
             }
         }
     }
