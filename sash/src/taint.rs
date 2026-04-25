@@ -106,7 +106,11 @@ impl TaintTracker {
             | "GROUPS" | "HOSTNAME" | "HOSTTYPE" | "MACHTYPE" | "OSTYPE"
             | "SHELLOPTS" | "BASHOPTS" | "BASH_VERSION" | "BASH_VERSINFO"
             | "SECONDS" | "RANDOM" | "SRANDOM" | "EPOCHSECONDS" | "EPOCHREALTIME"
-            | "IFS" | "OLDPWD" | "_")
+            | "IFS" | "OLDPWD" | "_"
+            | "HOME" | "PWD" | "PATH" | "USER" | "LOGNAME" | "SHELL"
+            | "TMPDIR" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TERM" | "DISPLAY"
+            | "XDG_RUNTIME_DIR" | "XDG_DATA_HOME" | "XDG_CONFIG_HOME"
+            | "XDG_CACHE_HOME" | "XDG_STATE_HOME")
     }
 
     /// Run taint analysis on the full program.
@@ -307,6 +311,22 @@ impl TaintTracker {
             }
             "read" | "readarray" | "mapfile" => {
                 self.handle_read(node, source);
+            }
+            "let" => {
+                // let x=10 → x becomes clean (literal arithmetic assignment)
+                // Extract variable names from "var=expr" arguments
+                for child in node.children(&mut node.walk()) {
+                    if child.kind() == "word" {
+                        let text = child.utf8_text(source).unwrap_or("");
+                        if let Some(eq_pos) = text.find('=') {
+                            let var_name = &text[..eq_pos];
+                            if !var_name.is_empty() {
+                                self.mark_declared(var_name);
+                                self.mark_clean(var_name);
+                            }
+                        }
+                    }
+                }
             }
             _ => {
                 // T6: if calling a known function, check free-read globals
@@ -583,6 +603,17 @@ impl TaintTracker {
                 if self.functions.contains(&inner_cmd) {
                     return false; // user-defined function — clean by DD#24
                 }
+                // Bash builtins that produce deterministic output from
+                // their arguments — if all args are clean, result is clean.
+                if matches!(inner_cmd.as_str(),
+                    "echo" | "printf" | "true" | "false" | "test" | "["
+                    | "pwd" | "basename" | "dirname" | "type" | "command"
+                    | "seq" | "wc" | "tr" | "cat" | "head" | "tail"
+                    | "sort" | "uniq" | "cut" | "rev" | "tee") {
+                    // Check all args are clean
+                    let args_clean = self.cmdsub_args_clean(node, source);
+                    return !args_clean;
+                }
                 true // unknown external command — tainted
             }
             "string" => {
@@ -668,6 +699,8 @@ impl TaintTracker {
         for child in node.children(&mut node.walk()) {
             if child.kind() == "variable_name" {
                 let var_name = child.utf8_text(source).unwrap_or("").to_string();
+                // tree-sitter mis-parses numeric literals as variable_name in arithmetic
+                if var_name.chars().all(|c| c.is_ascii_digit()) { continue; }
                 if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
                     diags.push(Diagnostic::error(
                         child,
@@ -686,6 +719,7 @@ impl TaintTracker {
         for child in node.children(&mut node.walk()) {
             if child.kind() == "variable_name" {
                 let var_name = child.utf8_text(source).unwrap_or("");
+                if var_name.chars().all(|c| c.is_ascii_digit()) { continue; }
                 if self.is_tainted(var_name) { return true; }
             } else if self.arith_subtree_has_tainted_var(child, source) {
                 return true;
@@ -823,5 +857,20 @@ impl TaintTracker {
                 false
             }
         }
+    }
+
+    /// Check if all argument expressions inside a command_substitution are clean.
+    fn cmdsub_args_clean(&self, node: Node, source: &[u8]) -> bool {
+        for child in node.children(&mut node.walk()) {
+            if child.kind() == "command" {
+                let mut past_name = false;
+                for arg in child.children(&mut child.walk()) {
+                    if arg.kind() == "command_name" { past_name = true; continue; }
+                    if !past_name { continue; }
+                    if self.expr_is_tainted(arg, source) { return false; }
+                }
+            }
+        }
+        true
     }
 }

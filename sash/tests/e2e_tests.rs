@@ -46,6 +46,19 @@ fn compile_and_run(name: &str, script: &str) -> String {
     String::from_utf8_lossy(&run.stdout).to_string()
 }
 
+/// Compile a script and run the binary with environment variables set.
+fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String {
+    let src = write_tmp(&format!("{}.sh", name), script);
+    let bin = format!("/tmp/sash_e2e_{}", name);
+    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    let mut cmd = Command::new(&bin);
+    for (k, v) in env { cmd.env(k, v); }
+    let run = cmd.output().expect("run failed");
+    String::from_utf8_lossy(&run.stdout).to_string()
+}
+
 /// Compile a script, expect failure, return stderr
 fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
@@ -395,7 +408,7 @@ fn neg_export_rejected() {
 
 #[test]
 fn neg_tainted_env_var() {
-    let script = "#!/bin/bash\necho $HOME";
+    let script = "#!/bin/bash\nx=$(getenv CUSTOM_VAR)\necho $x";
     let stderr = compile_expect_fail("taint_env", script);
     assert!(stderr.contains("SB4020"), "expected SB4020 taint error, got: {}", stderr);
 }
@@ -806,21 +819,21 @@ done
 #[test]
 fn pos_bless_clears_taint() {
     let script = r#"#!/bin/bash
-x=$(echo "42")
+x=$(getenv MY_VAL)
 bless x [[ $x =~ ^[0-9]+$ ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run("bless_ok", script), "42\n");
+    assert_eq!(compile_and_run_env("bless_ok", script, &[("MY_VAL", "42")]), "42\n");
 }
 
 #[test]
 fn pos_bless_with_default() {
     let script = r#"#!/bin/bash
-x=$(echo "hello")
+x=$(getenv MY_VAL)
 bless x [[ -n $x ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run("bless_default", script), "hello\n");
+    assert_eq!(compile_and_run_env("bless_default", script, &[("MY_VAL", "hello")]), "hello\n");
 }
 
 #[test]
@@ -850,22 +863,22 @@ echo $x
 #[test]
 fn pos_cmdsub_blessed() {
     let script = r#"#!/bin/bash
-x=$(echo "hello world")
+x=$(getenv MY_VAL)
 bless x [[ -n $x ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run("cmdsub_bless", script), "hello world\n");
+    assert_eq!(compile_and_run_env("cmdsub_bless", script, &[("MY_VAL", "hello world")]), "hello world\n");
 }
 
 #[test]
 fn pos_cmdsub_in_arithmetic() {
     // Command substitution result used in arithmetic after bless
     let script = r#"#!/bin/bash
-n=$(echo 5)
+n=$(getenv MY_VAL)
 bless n [[ $n =~ ^[0-9]+$ ]]
 echo $(( n + 10 ))
 "#;
-    assert_eq!(compile_and_run("cmdsub_arith", script), "15\n");
+    assert_eq!(compile_and_run_env("cmdsub_arith", script, &[("MY_VAL", "5")]), "15\n");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -994,8 +1007,8 @@ echo $n
 
 #[test]
 fn pos_bless_numeric_check() {
-    let script = "#!/bin/bash\nx=$(echo 42)\nbless x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
-    assert_eq!(compile_and_run("bless_num", script), "50\n");
+    let script = "#!/bin/bash\nx=$(getenv MY_VAL)\nbless x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
+    assert_eq!(compile_and_run_env("bless_num", script, &[("MY_VAL", "42")]), "50\n");
 }
 
 // ═══════════════════════════════════════════════════════════════

@@ -38,6 +38,10 @@ won over migration.
 
 ## Compilation — High Priority
 
+- **Pipe-free user-function capture** — `$(myfunc)` currently redirects
+  stdout through a pipe even though the function body is inlined.
+  Should accumulate into a buffer directly, eliminating the pipe/read
+  overhead.  External commands still need fork+pipe.
 - **Per-command env vars for externals** — `FOO=bar cmd`. Documented
   replacement for rejected `export` (SB5001); without it that rejection
   has no escape hatch.
