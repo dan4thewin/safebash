@@ -1773,10 +1773,29 @@ pub extern "C" fn sash_tolower_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u
 pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
     if name_ptr.is_null() || name_len <= 0 { return 1; }
     let name = unsafe { core::slice::from_raw_parts(name_ptr, name_len as usize) };
-    
-    // Get PATH
-    let path_env = b"PATH\0";
-    let path_cstr = unsafe { core::ffi::CStr::from_ptr(path_env.as_ptr() as *const core::ffi::c_char) };
+
+    // Builtins: bash reports just the name, not a PATH lookup
+    const BUILTINS: &[&[u8]] = &[
+        b"echo", b"printf", b"cd", b"pwd", b"test", b"[", b"true", b"false",
+        b"read", b"declare", b"local", b"unset", b"shift", b"return", b"exit",
+        b"type", b"source", b".", b"eval", b"exec", b"export", b"readonly",
+        b"set", b"trap", b"wait", b"break", b"continue", b"let", b"mapfile",
+        b"readarray", b"command", b"builtin", b"getopts", b"hash", b"help",
+        b"jobs", b"kill", b"logout", b"popd", b"pushd", b"dirs", b"shopt",
+        b"enable", b"complete", b"compgen", b"compopt", b"alias", b"unalias",
+        b"bind", b"caller", b"coproc", b"disown", b"fc", b"fg", b"bg",
+        b"history", b"suspend", b"times", b"ulimit", b"umask",
+    ];
+    for &builtin in BUILTINS {
+        if name == builtin {
+            let fd1 = unsafe { rustix::fd::BorrowedFd::borrow_raw(1) };
+            let _ = rustix::io::write(fd1, name);
+            let _ = rustix::io::write(fd1, b"\n");
+            return 0;
+        }
+    }
+
+    // External command: search PATH
     
     // Use raw getenv via syscall... actually, use our existing sash_getenv pattern
     // For simplicity, read /proc/self/environ or just use the C getenv pattern
