@@ -2394,10 +2394,20 @@ fn lower_inst(
                 let pipe_r = builder.ins().stack_load(I64, last_slot, 0);
                 builder.def_var(pipe_read_fd_var, pipe_r);
             }
-            // Wait for all children
+            // Wait for all children, capture last child's exit status
             for i in 0..n {
                 let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
-                builder.ins().call(wait_ref, &[pid]);
+                let call = builder.ins().call(wait_ref, &[pid]);
+                let status = builder.inst_results(call)[0];
+                // $? = exit status of the last (rightmost) command
+                if i == n - 1 {
+                    builder.def_var(exit_status_var, status);
+                    // test_result: 1 if exit==0, 0 otherwise
+                    let zero = builder.ins().iconst(I64, 0);
+                    let ok = builder.ins().icmp(IntCC::Equal, status, zero);
+                    let tr = builder.ins().uextend(I64, ok);
+                    builder.def_var(test_result_var, tr);
+                }
             }
         }
         SsaInst::Bless { source, target, test } => {
@@ -2722,11 +2732,75 @@ fn lower_test_expr(
                     builder.inst_results(call2)[0]
                 }
                 "-v" => {
-                    // Variable is set: in sash, all vars are initialized,
-                    // so -v is equivalent to -n (non-empty string).
-                    let zero = builder.ins().iconst(I64, 0);
-                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
-                    builder.ins().uextend(I64, cmp)
+                    // Variable existence check: look up the variable by name
+                    // The operand is a Literal containing the variable name
+                    let var_name = match &operand.kind {
+                        crate::ir::ExprKind::Literal(s) => s.clone(),
+                        crate::ir::ExprKind::SimpleExpansion(s) => s.clone(),
+                        _ => String::new(),
+                    };
+                    if var_name.is_empty() {
+                        // Can't determine var name — treat as unset
+                        builder.ins().iconst(I64, 0)
+                    } else {
+                        // Look up all versioned names for this variable
+                        // If any version exists and has non-zero length, it's "set"
+                        let mut found = false;
+                        for key in vars.keys() {
+                            if let Some(base) = key.rsplit('_').last() {
+                                // key format is "name_version"
+                                let base_name = if let Some(idx) = key.rfind('_') {
+                                    let suffix = &key[idx+1..];
+                                    if suffix.chars().all(|c| c.is_ascii_digit()) {
+                                        &key[..idx]
+                                    } else {
+                                        key.as_str()
+                                    }
+                                } else {
+                                    key.as_str()
+                                };
+                                let _ = base;
+                                if base_name == var_name {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                        }
+                        if found {
+                            // Variable exists — check if current value is non-empty
+                            // Find the highest version
+                            let mut best_key = String::new();
+                            let mut best_ver: i64 = -1;
+                            for key in vars.keys() {
+                                if let Some(idx) = key.rfind('_') {
+                                    let base = &key[..idx];
+                                    let suffix = &key[idx+1..];
+                                    if base == var_name {
+                                        if let Ok(v) = suffix.parse::<i64>() {
+                                            if v > best_ver {
+                                                best_ver = v;
+                                                best_key = key.clone();
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            if !best_key.is_empty() {
+                                if let Some(sv) = vars.get(&best_key) {
+                                    let v_len = builder.use_var(sv.str_len());
+                                    let zero = builder.ins().iconst(I64, 0);
+                                    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
+                                    builder.ins().uextend(I64, cmp)
+                                } else {
+                                    builder.ins().iconst(I64, 0)
+                                }
+                            } else {
+                                builder.ins().iconst(I64, 0)
+                            }
+                        } else {
+                            builder.ins().iconst(I64, 0)
+                        }
+                    }
                 }
                 other => {
                     panic!("ICE: unimplemented unary test operator: {}", other);

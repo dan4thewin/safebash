@@ -2477,7 +2477,8 @@ fn match_bracket(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
 }
 
 
-/// Shell-quote a string (${var@Q}): wraps in single quotes, escaping embedded quotes.
+/// Shell-quote a string: wraps in single quotes, escaping embedded quotes.
+/// Dead code — kept for potential future printf %q implementation.
 /// Returns length written to out_ptr.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_shell_quote(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
@@ -2513,7 +2514,8 @@ pub extern "C" fn sash_shell_quote(s_ptr: *const u8, s_len: i64, out_ptr: *mut u
     i as i64
 }
 
-/// Expand escape sequences in a string (${var@E}): \n → newline, \t → tab, etc.
+/// Expand escape sequences in a string: \n → newline, \t → tab, etc.
+/// Dead code — kept for potential future use.
 /// Returns length written to out_ptr.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_expand_escapes(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {

@@ -3042,3 +3042,31 @@ x="hello world"
 echo "${x:(-5)}""#, &[]);
     assert_eq!(out, "world\n");
 }
+
+#[test]
+fn test_v_set() {
+    let (out, _) = run_bash_native(r#"x="hello"; [[ -v x ]] && echo "set" || echo "unset""#, &[]);
+    assert_eq!(out, "set\n");
+}
+
+#[test]
+fn test_v_unset() {
+    let (out, _) = run_bash_native(r#"[[ -v y ]] && echo "set" || echo "unset""#, &[]);
+    assert_eq!(out, "unset\n");
+}
+
+#[test]
+fn test_pipeline_exit_status() {
+    let (out, _) = run_bash_native(r#"true | false; echo $?"#, &[]);
+    assert_eq!(out, "1\n");
+}
+
+#[test]
+fn test_nested_return() {
+    let (out, _) = run_bash_native(r#"
+inner() { echo "inner"; return 42; }
+outer() { inner; echo "after: $?"; return 7; }
+outer
+echo "final: $?""#, &[]);
+    assert_eq!(out, "inner\nafter: 42\nfinal: 7\n");
+}
