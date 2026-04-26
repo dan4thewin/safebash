@@ -12,7 +12,7 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::types::{I8, I64};
-use cranelift_codegen::ir::{
+use cranelift_codegen::ir::{instructions::BlockArg,
     AbiParam, Function, InstBuilder, MemFlags, Signature, StackSlotData,
     StackSlotKind, TrapCode, UserFuncName,
 };
@@ -3568,7 +3568,7 @@ fn lower_value(
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(&SsaValue::Var(var.clone()), builder, module, vars, literals, func_constants, externs);
             let rhs = builder.ins().iconst(I64, *operand);
-            let result = emit_arith_op(*op, int_val, rhs, builder, module, externs);
+            let result = emit_arith_op(*op, int_val, rhs, builder, module, externs, exit_status_var);
             // Convert back to string via itoa
             let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot, 8, 3,
@@ -3583,7 +3583,7 @@ fn lower_value(
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lower_value_as_int(left, builder, module, vars, literals, func_constants, externs);
             let r = lower_value_as_int(right, builder, module, vars, literals, func_constants, externs);
-            let result = emit_arith_op(*op, l, r, builder, module, externs);
+            let result = emit_arith_op(*op, l, r, builder, module, externs, None);
             let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot, 8, 3,
             ));
@@ -4031,14 +4031,57 @@ fn lower_value(
 }
 
 /// Emit Cranelift instructions for an ArithOp on two i64 values.
-fn emit_arith_op(op: ArithOp, lhs: cranelift_codegen::ir::Value, rhs: cranelift_codegen::ir::Value, builder: &mut FunctionBuilder, module: &mut ObjectModule, externs: &ExternFuncs) -> cranelift_codegen::ir::Value {
+fn emit_arith_op(op: ArithOp, lhs: cranelift_codegen::ir::Value, rhs: cranelift_codegen::ir::Value, builder: &mut FunctionBuilder, module: &mut ObjectModule, externs: &ExternFuncs, exit_status_var: Option<Variable>) -> cranelift_codegen::ir::Value {
     use cranelift_codegen::ir::condcodes::IntCC;
     match op {
         ArithOp::Add => builder.ins().iadd(lhs, rhs),
         ArithOp::Sub => builder.ins().isub(lhs, rhs),
         ArithOp::Mul => builder.ins().imul(lhs, rhs),
-        ArithOp::Div => builder.ins().sdiv(lhs, rhs),
-        ArithOp::Mod => builder.ins().srem(lhs, rhs),
+        ArithOp::Div | ArithOp::Mod => {
+            // Division by zero: bash prints error, sets $?=1, result is 0
+            let zero = builder.ins().iconst(I64, 0);
+            let is_zero = builder.ins().icmp(IntCC::Equal, rhs, zero);
+            let safe_block = builder.create_block();
+            let zero_block = builder.create_block();
+            let merge_block = builder.create_block();
+            builder.append_block_param(merge_block, I64);
+            builder.ins().brif(is_zero, zero_block, &[], safe_block, &[]);
+
+            // Zero block: write error to stderr, set $?=1, result=0
+            builder.switch_to_block(zero_block);
+            builder.seal_block(zero_block);
+            // Write "division by 0" to stderr
+            let err_msg = b"bash: division by 0 (error token is \"0\")\n";
+            let err_data = module.declare_anonymous_data(true, false).unwrap();
+            let mut desc = DataDescription::new();
+            desc.define(err_msg.to_vec().into_boxed_slice());
+            module.define_data(err_data, &desc).unwrap();
+            let err_gv = module.declare_data_in_func(err_data, builder.func);
+            let err_ptr = builder.ins().global_value(I64, err_gv);
+            let err_len = builder.ins().iconst(I64, err_msg.len() as i64);
+            let stderr_fd = builder.ins().iconst(I64, 2);
+            let write_ref = module.declare_func_in_func(externs.write, builder.func);
+            builder.ins().call(write_ref, &[stderr_fd, err_ptr, err_len]);
+            if let Some(es_var) = exit_status_var {
+                let one = builder.ins().iconst(I64, 1);
+                builder.def_var(es_var, one);
+            }
+            builder.ins().jump(merge_block, &[BlockArg::Value(zero)]);
+
+            // Safe block: do the division
+            builder.switch_to_block(safe_block);
+            builder.seal_block(safe_block);
+            let result = if matches!(op, ArithOp::Div) {
+                builder.ins().sdiv(lhs, rhs)
+            } else {
+                builder.ins().srem(lhs, rhs)
+            };
+            builder.ins().jump(merge_block, &[BlockArg::Value(result)]);
+
+            builder.switch_to_block(merge_block);
+            builder.seal_block(merge_block);
+            builder.block_params(merge_block)[0]
+        }
         ArithOp::Eq => { let c = builder.ins().icmp(IntCC::Equal, lhs, rhs); builder.ins().uextend(I64, c) }
         ArithOp::Ne => { let c = builder.ins().icmp(IntCC::NotEqual, lhs, rhs); builder.ins().uextend(I64, c) }
         ArithOp::Lt => { let c = builder.ins().icmp(IntCC::SignedLessThan, lhs, rhs); builder.ins().uextend(I64, c) }
@@ -4100,12 +4143,12 @@ fn lower_value_as_int(
         SsaValue::ArithExpr { var, op, operand } => {
             let var_val = lower_value_as_int(&SsaValue::Var(var.clone()), builder, module, vars, literals, func_constants, externs);
             let rhs = builder.ins().iconst(I64, *operand);
-            emit_arith_op(*op, var_val, rhs, builder, module, externs)
+            emit_arith_op(*op, var_val, rhs, builder, module, externs, None)
         }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lower_value_as_int(left, builder, module, vars, literals, func_constants, externs);
             let r = lower_value_as_int(right, builder, module, vars, literals, func_constants, externs);
-            emit_arith_op(*op, l, r, builder, module, externs)
+            emit_arith_op(*op, l, r, builder, module, externs, None)
         }
         SsaValue::Ternary { cond, true_val, false_val } => {
             let cond_int = lower_value_as_int(cond, builder, module, vars, literals, func_constants, externs);
