@@ -401,6 +401,7 @@ pub struct VersionState {
     pub known_functions: std::collections::HashSet<String>,
     /// Function IR bodies for inline expansion at call sites.
     pub function_bodies: HashMap<String, Vec<crate::ir::Statement>>,
+    pub function_redirects: HashMap<String, Vec<crate::ir::Redirect>>,
     /// Variable type map from type inference.
     pub type_map: HashMap<String, crate::ir::VarType>,
     /// Variables known to be associative arrays (vs indexed).
@@ -424,6 +425,7 @@ impl VersionState {
             counter: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
+            function_redirects: HashMap::new(),
             type_map: HashMap::new(),
             assoc_arrays: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
@@ -439,6 +441,7 @@ impl VersionState {
             counter: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
+            function_redirects: HashMap::new(),
             type_map,
             assoc_arrays: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),

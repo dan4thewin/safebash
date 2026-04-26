@@ -700,12 +700,31 @@ fn lower_one(
                 let call_block = ssa.new_block(&format!("call_{}", name));
                 ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
+                // Apply function-level redirects if defined with `f() { ... } > file`
+                let func_redirs = state.function_redirects.get(&name).cloned().unwrap_or_default();
+                if !func_redirs.is_empty() {
+                    ssa.block_mut(call_block).insts.push(SsaInst::Command {
+                        name: "__redirect_push".to_string(),
+                        args: vec![],
+                        redirects: func_redirs.clone(),
+                    });
+                }
+
                 // Set return target so `return` jumps to restore block
                 let restore_block = ssa.new_block(&format!("ret_{}", name));
                 let saved_return_target = state.return_target;
                 state.return_target = Some(restore_block);
                 let exit_block = lower_stmts(&body, ssa, state, call_block);
                 state.return_target = saved_return_target;
+
+                // Pop function-level redirects before leaving
+                if !func_redirs.is_empty() {
+                    ssa.block_mut(exit_block).insts.push(SsaInst::Command {
+                        name: "__redirect_pop".to_string(),
+                        args: vec![],
+                        redirects: vec![],
+                    });
+                }
 
                 // Normal fall-through also goes to restore block
                 ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
@@ -943,13 +962,23 @@ fn lower_one(
         }
 
         StmtKind::Redirected(r) => {
-            // For compound commands (for/while/if/case/group), the redirect
+            // For compound commands (for/while/if/case/group/function), the redirect
             // applies to the entire body — emit push/pop around it.
             let is_compound = matches!(r.body.kind,
                 StmtKind::While(_) | StmtKind::If(_) | StmtKind::For(_)
                 | StmtKind::Case(_) | StmtKind::Group(_) | StmtKind::Subshell(_)
                 | StmtKind::Function { .. }
             );
+
+            // Special case: redirected function definition — store redirects
+            // for application at call sites
+            if let StmtKind::Function(ref f) = r.body.kind {
+                if !r.redirects.is_empty() {
+                    state.function_redirects.insert(f.name.clone(), r.redirects.clone());
+                }
+                // Still lower the function def normally
+                return lower_one(&r.body, ssa, state, block);
+            }
 
             if is_compound && !r.redirects.is_empty() {
                 // Emit __redirect_push with redirect metadata

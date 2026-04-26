@@ -137,7 +137,23 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::Case(lower_case(node, source))
         }
         "function_definition" => {
-            StmtKind::Function(lower_function(node, source))
+            // Check if function has redirects attached (e.g., f() { ... } > file)
+            let mut redirects = Vec::new();
+            for child in node.children(&mut node.walk()) {
+                if child.kind() == "file_redirect" || child.kind() == "heredoc_redirect"
+                    || child.kind() == "herestring_redirect" {
+                    redirects.push(lower_redirect(child, source));
+                }
+            }
+            let func = StmtKind::Function(lower_function(node, source));
+            if redirects.is_empty() {
+                func
+            } else {
+                StmtKind::Redirected(Redirected {
+                    body: Box::new(Statement { kind: func, span: Span::from_node(node) }),
+                    redirects,
+                })
+            }
         }
         "redirected_statement" => {
             StmtKind::Redirected(lower_redirected(node, source))
@@ -1871,6 +1887,13 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                 }
                 substring_parts.push(val);
             }
+            "parenthesized_expression" if colon_count > 0 && !has_named_op => {
+                // ${var:(-5)} — negative offset in parens
+                let inner = child.utf8_text(source).unwrap_or("0");
+                // Strip parens, extract number
+                let inner = inner.trim_start_matches('(').trim_end_matches(')').trim();
+                substring_parts.push(inner.to_string());
+            }
             _ if child.kind().starts_with(':') && child.kind().len() > 1 => {
                 has_named_op = true; // :- :+ := :? — not substring
             }
@@ -1989,12 +2012,25 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
     if is_subscript {
         if let Some(ref op) = operator {
             if op == "strlen" {
-                // ${#arr[@]} — array length
-                return ExprKind::ParameterExpansion(ParameterExpansion {
-                    name,
-                    operator: Some("arrlen".to_string()),
-                    operand: None,
+                // ${#arr[@]} or ${#arr[*]} — array length
+                // ${#arr[N]} — string length of element N
+                let is_all = subscript_index.as_ref().map_or(false, |idx| {
+                    matches!(&idx.kind, ExprKind::Literal(s) if s == "@" || s == "*")
                 });
+                if is_all || subscript_index.is_none() {
+                    return ExprKind::ParameterExpansion(ParameterExpansion {
+                        name,
+                        operator: Some("arrlen".to_string()),
+                        operand: None,
+                    });
+                } else {
+                    // ${#arr[N]} — get element N, then strlen
+                    return ExprKind::ParameterExpansion(ParameterExpansion {
+                        name,
+                        operator: Some("strlen_elem".to_string()),
+                        operand: subscript_index.map(Box::new),
+                    });
+                }
             }
         }
         if let Some(idx) = subscript_index {

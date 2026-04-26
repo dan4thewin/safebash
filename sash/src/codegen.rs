@@ -3276,6 +3276,34 @@ fn lower_value(
                 let result_len = builder.ins().stack_load(I64, out_slot, 0);
                 return (result_ptr, result_len);
             }
+
+            // ${#arr[N]} — string length of element N
+            if operator == "strlen_elem" {
+                // Get element by integer index from the table
+                let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
+                let idx_val = if !operand.is_empty() {
+                    builder.ins().iconst(I64, operand.parse::<i64>().unwrap_or(0))
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+                let call = builder.ins().call(tv_ref, &[s_ptr, idx_val, out_len_addr]);
+                let _elem_ptr = builder.inst_results(call)[0];
+                let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
+                // itoa the length
+                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+                let call2 = builder.ins().call(itoa_ref, &[elem_len, out_addr]);
+                let result_ptr = builder.inst_results(call2)[0];
+                let result_len = builder.ins().stack_load(I64, out_slot, 0);
+                return (result_ptr, result_len);
+            }
             if operator == "regex_replace" {
                 // operand format: "pattern\0replacement\0global"
                 let parts: Vec<&str> = operand.split('\0').collect();

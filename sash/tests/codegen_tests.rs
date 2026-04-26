@@ -3012,3 +3012,33 @@ fn test_unset_variable() {
     let (out, _) = run_bash_native(r#"x="hello"; unset x; echo "${x:-gone}""#, &[]);
     assert_eq!(out, "gone\n");
 }
+
+#[test]
+fn test_func_redirect() {
+    let (out, _) = run_bash_native(r#"
+f() {
+  echo "hello"
+  echo "world"
+} > /tmp/sash_test_funcrd.txt
+f
+cat /tmp/sash_test_funcrd.txt
+rm -f /tmp/sash_test_funcrd.txt"#, &[]);
+    assert_eq!(out, "hello\nworld\n");
+}
+
+#[test]
+fn test_strlen_array_elem() {
+    let (out, _) = run_bash_native(r#"
+declare -a arr=(hello world)
+echo "${#arr[0]}"
+echo "${#arr[1]}""#, &[]);
+    assert_eq!(out, "5\n5\n");
+}
+
+#[test]
+fn test_substr_negative_offset() {
+    let (out, _) = run_bash_native(r#"
+x="hello world"
+echo "${x:(-5)}""#, &[]);
+    assert_eq!(out, "world\n");
+}
