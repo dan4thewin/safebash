@@ -3,6 +3,7 @@ pub mod export_rejected;
 pub mod heredoc_cmdsub;
 pub mod indirect_expansion;
 pub mod nameref_rejected;
+pub mod param_transform;
 pub mod parse_error;
 pub mod process_substitution;
 
@@ -16,6 +17,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(indirect_expansion::IndirectExpansion),
         Box::new(nameref_rejected::NamerefRejected),
         Box::new(parse_error::ParseError),
+        Box::new(param_transform::ParamTransform),
         Box::new(process_substitution::ProcessSubstitution),
     ]
 }
