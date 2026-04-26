@@ -943,40 +943,62 @@ fn lower_one(
         }
 
         StmtKind::Redirected(r) => {
-            // If the body is a command, attach redirects to the SsaInst::Command
-            let result_block = lower_one(&r.body, ssa, state, block);
-            // Find the last instruction we just pushed and attach redirects
-            // Check both the original block and the result block (read returns early)
-            if !r.redirects.is_empty() {
-                let blocks_to_check = if result_block == block {
-                    vec![block]
-                } else {
-                    vec![block, result_block]
-                };
-                for blk_id in blocks_to_check {
-                    let blk = ssa.block_mut(blk_id);
-                    if let Some(inst) = blk.insts.last_mut() {
-                        match inst {
-                            SsaInst::Command { redirects, .. } => {
-                                *redirects = r.redirects.clone();
-                            }
-                            SsaInst::Pipeline { stages, .. } => {
-                                if let Some(last) = stages.last_mut() {
-                                    last.2 = r.redirects.clone();
+            // For compound commands (for/while/if/case/group), the redirect
+            // applies to the entire body — emit push/pop around it.
+            let is_compound = matches!(r.body.kind,
+                StmtKind::While(_) | StmtKind::If(_) | StmtKind::For(_)
+                | StmtKind::Case(_) | StmtKind::Group(_) | StmtKind::Subshell(_)
+                | StmtKind::Function { .. }
+            );
+
+            if is_compound && !r.redirects.is_empty() {
+                // Emit __redirect_push with redirect metadata
+                ssa.block_mut(block).insts.push(SsaInst::Command {
+                    name: "__redirect_push".to_string(),
+                    args: vec![],
+                    redirects: r.redirects.clone(),
+                });
+                let result_block = lower_one(&r.body, ssa, state, block);
+                ssa.block_mut(result_block).insts.push(SsaInst::Command {
+                    name: "__redirect_pop".to_string(),
+                    args: vec![],
+                    redirects: r.redirects.clone(),
+                });
+                result_block
+            } else {
+                // Simple command — attach redirects to the instruction
+                let result_block = lower_one(&r.body, ssa, state, block);
+                if !r.redirects.is_empty() {
+                    let blocks_to_check = if result_block == block {
+                        vec![block]
+                    } else {
+                        vec![block, result_block]
+                    };
+                    for blk_id in blocks_to_check {
+                        let blk = ssa.block_mut(blk_id);
+                        if let Some(inst) = blk.insts.last_mut() {
+                            match inst {
+                                SsaInst::Command { redirects, .. } => {
+                                    *redirects = r.redirects.clone();
                                 }
+                                SsaInst::Pipeline { stages, .. } => {
+                                    if let Some(last) = stages.last_mut() {
+                                        last.2 = r.redirects.clone();
+                                    }
+                                }
+                                SsaInst::ReadLine { redirects, .. } => {
+                                    *redirects = r.redirects.clone();
+                                }
+                                SsaInst::ReadLineMulti { redirects, .. } => {
+                                    *redirects = r.redirects.clone();
+                                }
+                                _ => {}
                             }
-                            SsaInst::ReadLine { redirects, .. } => {
-                                *redirects = r.redirects.clone();
-                            }
-                            SsaInst::ReadLineMulti { redirects, .. } => {
-                                *redirects = r.redirects.clone();
-                            }
-                            _ => {}
                         }
                     }
                 }
+                result_block
             }
-            result_block
         }
 
         StmtKind::Subshell(s) => {

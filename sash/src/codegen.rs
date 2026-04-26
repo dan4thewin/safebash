@@ -1275,6 +1275,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
 
         // Emit code for each SSA block
         let block_ids: Vec<BlockId> = program.blocks.keys().copied().collect();
+        let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
         for (idx, &ssa_id) in block_ids.iter().enumerate() {
             if !reachable.contains(&ssa_id) { continue; }
             let cl_block = cl_blocks[&ssa_id];
@@ -1301,7 +1302,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 block_terminated = lower_inst(inst, &mut builder, &mut module,
                            &mut vars, &literals, &externs, space_id, nl_id,
                            test_result_var, exit_status_var, pipe_read_fd_var,
-                           capture_saved_var, capture_pipe_var, func_constants);
+                           capture_saved_var, capture_pipe_var, func_constants,
+                           &mut redirect_stack);
             }
 
             // Emit terminator (unless block was already terminated by exit)
@@ -1376,6 +1378,7 @@ fn lower_inst(
     capture_saved_var: Variable,
     capture_pipe_var: Variable,
     func_constants: &HashMap<String, String>,
+    redirect_stack: &mut Vec<Vec<SavedFd>>,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -1482,6 +1485,17 @@ fn lower_inst(
             let call = builder.ins().call(wait_ref, &[pid]);
             let status = builder.inst_results(call)[0];
             builder.def_var(exit_status_var, status);
+        }
+        SsaInst::Command { name, redirects, .. } if name == "__redirect_push" => {
+            // Compound-command redirect: save fds, apply redirects
+            let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
+            redirect_stack.push(saved);
+        }
+        SsaInst::Command { name, .. } if name == "__redirect_pop" => {
+            // Compound-command redirect: restore saved fds
+            if let Some(saved) = redirect_stack.pop() {
+                emit_restore(saved, builder, module, externs);
+            }
         }
         SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
             // Store fork pid (test_result_var) into $! variable

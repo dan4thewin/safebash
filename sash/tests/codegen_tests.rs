@@ -2955,3 +2955,42 @@ done
     assert_eq!(rc, 0);
     assert_eq!(out, "f=a g=1\nf=b g=1\nf=c g=1\n");
 }
+
+// ═══════════════════════════════════════════════════════════════
+// COMPOUND COMMAND REDIRECTS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn test_for_redirect_to_file() {
+    let script = "#!/bin/bash\nfor i in a b c; do\n  echo $i\ndone > /tmp/sash_test_for_redir.txt\ncat /tmp/sash_test_for_redir.txt\nrm /tmp/sash_test_for_redir.txt";
+    let (out, _) = run_bash_native(script, &[]);
+    assert_eq!(out, "a\nb\nc\n");
+}
+
+#[test]
+fn test_while_redirect_to_file() {
+    let script = "#!/bin/bash\ni=0\nwhile [[ $i -lt 3 ]]; do\n  echo \"line $i\"\n  i=$((i + 1))\ndone > /tmp/sash_test_while_redir.txt\ncat /tmp/sash_test_while_redir.txt\nrm /tmp/sash_test_while_redir.txt";
+    let (out, _) = run_bash_native(script, &[]);
+    assert_eq!(out, "line 0\nline 1\nline 2\n");
+}
+
+#[test]
+fn test_if_redirect_to_file() {
+    let script = "#!/bin/bash\nx=5\nif [[ $x -gt 3 ]]; then\n  echo \"big\"\nelse\n  echo \"small\"\nfi > /tmp/sash_test_if_redir.txt\ncat /tmp/sash_test_if_redir.txt\nrm /tmp/sash_test_if_redir.txt";
+    let (out, _) = run_bash_native(script, &[]);
+    assert_eq!(out, "big\n");
+}
+
+#[test]
+fn test_group_redirect_to_file() {
+    let script = "#!/bin/bash\n{\n  echo \"first\"\n  echo \"second\"\n} > /tmp/sash_test_group_redir.txt\ncat /tmp/sash_test_group_redir.txt\nrm /tmp/sash_test_group_redir.txt";
+    let (out, _) = run_bash_native(script, &[]);
+    assert_eq!(out, "first\nsecond\n");
+}
+
+#[test]
+fn test_compound_redirect_stderr() {
+    let script = "#!/bin/bash\n{\n  echo \"out\"\n  echo \"err\" >&2\n} 2>/tmp/sash_test_stderr.txt\ncat /tmp/sash_test_stderr.txt\nrm /tmp/sash_test_stderr.txt";
+    let (out, _) = run_bash_native(script, &[]);
+    assert_eq!(out, "out\nerr\n");
+}
