@@ -2994,3 +2994,21 @@ fn test_compound_redirect_stderr() {
     let (out, _) = run_bash_native(script, &[]);
     assert_eq!(out, "out\nerr\n");
 }
+
+#[test]
+fn test_random_different() {
+    let (out, _) = run_bash_native(r#"echo $RANDOM; echo $RANDOM"#, &[]);
+    let lines: Vec<&str> = out.trim().split('\n').collect();
+    assert_eq!(lines.len(), 2);
+    let a: u32 = lines[0].parse().unwrap();
+    let b: u32 = lines[1].parse().unwrap();
+    assert!(a <= 32767, "RANDOM out of range: {}", a);
+    assert!(b <= 32767, "RANDOM out of range: {}", b);
+    assert_ne!(a, b, "Two consecutive $RANDOM should differ");
+}
+
+#[test]
+fn test_unset_variable() {
+    let (out, _) = run_bash_native(r#"x="hello"; unset x; echo "${x:-gone}""#, &[]);
+    assert_eq!(out, "gone\n");
+}

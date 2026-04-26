@@ -124,6 +124,7 @@ struct ExternFuncs {
     command_v: cranelift_module::FuncId,
     getpid: cranelift_module::FuncId,
     epochseconds: cranelift_module::FuncId,
+    random: cranelift_module::FuncId,
     trap: cranelift_module::FuncId,
     glob: cranelift_module::FuncId,
     glob_regex: cranelift_module::FuncId,
@@ -666,6 +667,10 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     epoch_sig.returns.push(AbiParam::new(I64));
     let epochseconds_func = module.declare_function("sash_epochseconds", Linkage::Import, &epoch_sig).expect("declare");
 
+    let mut random_sig = module.make_signature();
+    random_sig.returns.push(AbiParam::new(I64));
+    random_sig.returns.push(AbiParam::new(I64));
+    let random_func = module.declare_function("sash_random", Linkage::Import, &random_sig).expect("declare");
 
 
     // sash_glob(dir_ptr, dir_len, pat_ptr, pat_len) -> table_ptr
@@ -782,6 +787,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         command_v: command_v_func,
         getpid: getpid_func,
         epochseconds: epochseconds_func,
+        random: random_func,
         trap: trap_func,
         glob: glob_func,
         glob_regex: glob_regex_func,
@@ -3600,6 +3606,13 @@ fn lower_value(
                 match name.as_str() {
                     "epochseconds" => {
                         let func_ref = module.declare_func_in_func(externs.epochseconds, builder.func);
+                        let call = builder.ins().call(func_ref, &[]);
+                        let ptr = builder.inst_results(call)[0];
+                        let len = builder.inst_results(call)[1];
+                        return (ptr, len);
+                    }
+                    "random" => {
+                        let func_ref = module.declare_func_in_func(externs.random, builder.func);
                         let call = builder.ins().call(func_ref, &[]);
                         let ptr = builder.inst_results(call)[0];
                         let len = builder.inst_results(call)[1];

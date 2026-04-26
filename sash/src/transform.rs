@@ -564,7 +564,7 @@ fn lower_one(
                             redirects: vec![],
                         });
                     } else {
-                        // Plain variable unset → assign empty string
+                        // Plain variable unset → assign empty string (or empty table for arrays)
                         let target = state.define(full);
                         ssa.block_mut(block).insts.push(SsaInst::Assign {
                             target,
@@ -1631,6 +1631,9 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // Coerce magic variables to builtins (DD#40)
             if var == "EPOCHSECONDS" {
                 return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("epochseconds".to_string())], redirects: vec![] };
+            }
+            if var == "RANDOM" {
+                return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("random".to_string())], redirects: vec![] };
             }
             SsaValue::Var(state.lookup(var))
         }

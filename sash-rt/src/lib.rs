@@ -2556,3 +2556,43 @@ pub extern "C" fn sash_expand_escapes(s_ptr: *const u8, s_len: i64, out_ptr: *mu
     }
     o as i64
 }
+
+/// $RANDOM — return a pseudo-random number 0-32767 as a string.
+/// Uses getrandom syscall for seed, simple LCG for speed.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_random() -> (*mut u8, usize) {
+    use core::sync::atomic::{AtomicU32, Ordering};
+    static SEED: AtomicU32 = AtomicU32::new(0);
+
+    let mut s = SEED.load(Ordering::Relaxed);
+    if s == 0 {
+        // Initialize from getrandom
+        let mut buf = [0u8; 4];
+        let _ = rustix::rand::getrandom(&mut buf, rustix::rand::GetRandomFlags::empty());
+        s = u32::from_ne_bytes(buf);
+        if s == 0 { s = 1; }
+    }
+    // LCG step
+    s = s.wrapping_mul(1103515245).wrapping_add(12345);
+    SEED.store(s, Ordering::Relaxed);
+    let val = (s >> 16) & 0x7FFF;
+
+    // itoa
+    let mut tmp = [0u8; 6];
+    let mut n = val;
+    let mut i = tmp.len();
+    if n == 0 {
+        i -= 1;
+        tmp[i] = b'0';
+    } else {
+        while n > 0 {
+            i -= 1;
+            tmp[i] = b'0' + (n % 10) as u8;
+            n /= 10;
+        }
+    }
+    let len = tmp.len() - i;
+    let ptr = unsafe { sash_alloc(len) };
+    unsafe { core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), ptr, len); }
+    (ptr, len)
+}
