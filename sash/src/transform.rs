@@ -490,6 +490,26 @@ fn lower_one(
                 for arg in &args {
                     // Strip surrounding quotes if present
                     let expr_str = arg.trim_matches('"').trim_matches('\'').to_string();
+
+                    // If it's an assignment (e.g. "x=10"), define the variable
+                    if let Some(eq_pos) = expr_str.find('=') {
+                        let var_name = &expr_str[..eq_pos];
+                        let val_str = &expr_str[eq_pos + 1..];
+                        if !var_name.is_empty() && var_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                            let val_expr = crate::ir::Expr {
+                                kind: ExprKind::ArithmeticExpansion(val_str.to_string()),
+                                span: Span { line: 0, col: 0 },
+                            };
+                            let val = expr_to_value(&val_expr, state);
+                            let target = state.define(var_name);
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target,
+                                value: val,
+                            });
+                            continue;
+                        }
+                    }
+
                     let expr = crate::ir::Expr {
                         kind: ExprKind::ArithmeticExpansion(expr_str),
                         span: Span { line: 0, col: 0 },

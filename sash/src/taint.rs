@@ -454,17 +454,21 @@ impl TaintTracker {
     /// Check if a read command has a herestring/heredoc redirect with clean content.
     /// Returns true only if the redirect exists AND its content has no tainted expansions.
     fn has_clean_heredoc_or_herestring(&self, node: Node, source: &[u8]) -> bool {
-        // Check parent (redirected_statement) and self for herestring/heredoc
+        // Check parent chain (redirected_statement may wrap while/for, not just read)
         let redirect_nodes: Vec<Node> = {
             let mut nodes = Vec::new();
-            if let Some(p) = node.parent() {
+            // Walk up to find the nearest redirected_statement
+            let mut cursor = node.parent();
+            while let Some(p) = cursor {
                 if p.kind() == "redirected_statement" {
                     for c in p.children(&mut p.walk()) {
                         if c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect" {
                             nodes.push(c);
                         }
                     }
+                    break;
                 }
+                cursor = p.parent();
             }
             for c in node.children(&mut node.walk()) {
                 if c.kind() == "herestring_redirect" || c.kind() == "heredoc_redirect" {
