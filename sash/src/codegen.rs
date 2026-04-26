@@ -1643,7 +1643,48 @@ fn lower_inst(
             }
         }
         SsaInst::Command { name, args, .. } if name == "cd" => {
-            if let Some(arg) = args.first() {
+            // Determine target: explicit arg, "-" (OLDPWD), or no arg (HOME)
+            let is_dash = matches!(args.first(), Some(SsaValue::Literal(s)) if s == "-");
+
+            if is_dash {
+                // cd - → cd to $OLDPWD, then print new dir
+                if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
+                    let old_ptr = builder.use_var(oldpwd_slot.str_ptr());
+                    let old_len = builder.use_var(oldpwd_slot.str_len());
+                    let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
+                    let call = builder.ins().call(chdir_ref, &[old_ptr, old_len]);
+                    let result = builder.inst_results(call)[0];
+                    let zero = builder.ins().iconst(I64, 0);
+                    let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
+                    let es = builder.ins().uextend(I64, failed);
+                    builder.def_var(exit_status_var, es);
+                    // Update OLDPWD = current PWD, then PWD = getcwd()
+                    if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
+                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
+                        let cur_len = builder.use_var(pwd_slot.str_len());
+                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
+                        builder.def_var(oldpwd_slot.str_len(), cur_len);
+                        let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot, 8, 3,
+                        ));
+                        let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
+                        let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
+                        let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
+                        let new_ptr = builder.inst_results(call2)[0];
+                        let new_len = builder.ins().stack_load(I64, len_slot2, 0);
+                        builder.def_var(pwd_slot.str_ptr(), new_ptr);
+                        builder.def_var(pwd_slot.str_len(), new_len);
+                        // Print new dir (bash cd - behavior)
+                        let write_ref = module.declare_func_in_func(externs.write, builder.func);
+                        let stdout_fd = builder.ins().iconst(I64, 1);
+                        builder.ins().call(write_ref, &[stdout_fd, new_ptr, new_len]);
+                        let nl_gv = module.declare_data_in_func(nl_id, builder.func);
+                        let nl_ptr2 = builder.ins().global_value(I64, nl_gv);
+                        let one = builder.ins().iconst(I64, 1);
+                        builder.ins().call(write_ref, &[stdout_fd, nl_ptr2, one]);
+                    }
+                }
+            } else if let Some(arg) = args.first() {
                 let (ptr, len) = lower_value(arg, builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
                 let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
                 let call = builder.ins().call(chdir_ref, &[ptr, len]);
@@ -1653,11 +1694,59 @@ fn lower_inst(
                 let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
                 let es = builder.ins().uextend(I64, failed);
                 builder.def_var(exit_status_var, es);
+
+                // Update $PWD and $OLDPWD after successful cd
+                // Save current PWD as OLDPWD, then getcwd for new PWD
+                if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
+                    if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
+                        // OLDPWD = current PWD
+                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
+                        let cur_len = builder.use_var(pwd_slot.str_len());
+                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
+                        builder.def_var(oldpwd_slot.str_len(), cur_len);
+                    }
+                    // PWD = getcwd()
+                    let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot, 8, 3,
+                    ));
+                    let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
+                    let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
+                    let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
+                    let new_ptr = builder.inst_results(call2)[0];
+                    let new_len = builder.ins().stack_load(I64, len_slot2, 0);
+                    builder.def_var(pwd_slot.str_ptr(), new_ptr);
+                    builder.def_var(pwd_slot.str_len(), new_len);
+                }
             } else {
                 // cd with no args — cd to $HOME
-                // For now, just set $? = 0
+                if let Some(home_slot) = vars.get("HOME_0") {
+                    let ptr = builder.use_var(home_slot.str_ptr());
+                    let len = builder.use_var(home_slot.str_len());
+                    let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
+                    builder.ins().call(chdir_ref, &[ptr, len]);
+                }
                 let zero = builder.ins().iconst(I64, 0);
                 builder.def_var(exit_status_var, zero);
+
+                // Update PWD after cd to HOME
+                if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
+                    if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
+                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
+                        let cur_len = builder.use_var(pwd_slot.str_len());
+                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
+                        builder.def_var(oldpwd_slot.str_len(), cur_len);
+                    }
+                    let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
+                        StackSlotKind::ExplicitSlot, 8, 3,
+                    ));
+                    let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
+                    let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
+                    let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
+                    let new_ptr = builder.inst_results(call2)[0];
+                    let new_len = builder.ins().stack_load(I64, len_slot2, 0);
+                    builder.def_var(pwd_slot.str_ptr(), new_ptr);
+                    builder.def_var(pwd_slot.str_len(), new_len);
+                }
             }
         }
         SsaInst::Command { name, args, .. } if name == "pwd" => {
