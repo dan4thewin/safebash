@@ -245,6 +245,9 @@ Defined in `ir.rs`.
 Assignment, Declaration, Command, Pipeline, List (&&/||), If, While,
 For, Case, Function, Redirected, Subshell, Group, ArithmeticCommand.
 
+Subshell exists in the IR for bash-mode input but is coerced during
+lowering into sash primitives (DD#38).
+
 ### Expression types (ExprKind)
 
 Literal, SimpleExpansion, DoubleQuoted, SingleQuoted,

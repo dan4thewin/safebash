@@ -77,13 +77,24 @@ Patterns are internally coerced to regex via glob→regex conversion.
 
 Flags: `g` (global).
 
-### Arithmetic
+### Arithmetic (DD#31)
 
-| Construct | Description |
-|-----------|-------------|
-| `$(( expr ))` | Arithmetic expansion |
-| `(( expr ))` | Arithmetic command |
-| `let "expr"` | Coerced to `(( expr ))` |
+Three disjoint contexts, each with a single purpose:
+
+| Context | Purpose | Accepts | Rejects |
+|---------|---------|---------|---------|
+| `(( ))` statement | Mutation | `=`, `+=`, `-=`, `++`, `--` | Comparisons |
+| `if (( ))` condition | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` | Mutations |
+| `$(( ))` expression | Pure evaluation | Arithmetic on clean operands | Mutations |
+
+`$(( ))` is a read context — mutation inside it (`$((x=10))`) is a
+compile error. `(( x > 0 ))` as bare statement is a compile error.
+`if (( x++ ))` is a compile error.
+
+**Bash-mode coercion:**
+- `$((x=10))` → `((x=10))`
+- `$((x=10, x<y))` → `((x=10)); $((x<y))`
+- `let "expr"` → `(( expr ))`
 
 ### Declarations
 
@@ -154,10 +165,22 @@ Positional params: `$1`–`$9`, `$#`, `$@`, `$*`.
 | `<<-EOF` | Tab-stripping |
 | `<<<str` | Herestring |
 
-### Lists and Subshells
+### Lists
 
 - `cmd && cmd`, `cmd || cmd`, `cmd; cmd`
-- `( cmd )` — subshells (limited, prefer explicit)
+
+### Subshells (bash-mode coercion)
+
+`( cmd )` is not valid sash-native syntax. In bash mode, subshells
+are mechanically coerced to sash primitives:
+
+- Variable isolation → synthetic function with `local` declarations
+- Directory isolation → save/restore cwd around body
+- Process isolation → `func &` (explicit fork, DD#38)
+
+The subshell syntax is the bash declaration of "these effects are
+temporary." The compiler decomposes it into the appropriate sash
+primitive for each effect.
 
 ### Builtins
 

@@ -1,6 +1,13 @@
 title: DD#42 — getenv and argv as builtins
-status: designed
+status: implemented
 
-`$(getenv HOME)` replaces `$HOME`. `$(argv 1)` replaces `$1` at script level.
-Tainted results. Return status handles missing values.
-Codegen supports them but not exposed as standalone commands yet.
+`$(getenv VAR)` reads an environment variable. `$(argv N)` reads
+positional parameter N. `$(argc)` returns the count of positional
+params (equivalent to `$#`).
+
+These are the explicit-origin forms for external data. Environment
+variables accessed via getenv are tainted (auto-blessed if in
+known_externals). Positional params via argv are tainted.
+
+Codegen fully supports all three forms. Return status handles
+missing values (out-of-range argv returns empty string, sets `$?` to 1).
