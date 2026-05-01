@@ -1,0 +1,21 @@
+version = 4
+
+[markdown]
+bare_frontmatter = true
+refs_extension = ""
+
+[markdown.formatting]
+
+[library]
+virtual_directories = true
+frontmatter_document_title = "title"
+path = "notes"
+
+[completion]
+
+[templates.default]
+key_template = "{{slug}}"
+document_template = """
+# {{title}}
+
+{{content}}"""

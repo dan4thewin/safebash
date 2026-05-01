@@ -1,0 +1,10 @@
+title: Heredoc with command substitution
+status: ready
+depends: []
+gates:
+  - tests
+  - commit
+
+Lowerer doesn't expand command substitutions in heredoc bodies
+(variable expansion works). SB5002 catches the dangerous case but
+the safe coerced path isn't built — extract to var, bless, reference.

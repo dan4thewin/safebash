@@ -1,0 +1,20 @@
+### Project Hints
+These are hints for working in the safebash project directory.
+
+## Project State
+
+Project state lives in an iwe knowledge graph at `notes/`.
+At session start, run `iwe retrieve -k safebash -d 2` to load current status, plans, and pinned items.
+Update notes via iwe or direct file edits to `notes/` — do NOT use the todo extension for this project.
+At session end, update `notes/status.md` with progress.
+
+Read `docs/DECISIONS.md` or `notes/decisions/` for design decision quick-reference.
+Read `notes/pinned.md` for blocked items and constraints that must not be violated.
+The full journal is in `notes/journal/` (47 files, `cat notes/journal/*` reconstructs the whole).
+
+## Key constraint
+
+**`docs/DECISIONS.md`** and **`notes/decisions/`** are the authoritative source
+for what's intentional vs. what's a gap. Read before changing any behavior
+that might be deliberate. DD#31 (arithmetic side effects) is the most
+commonly misidentified "bug."
