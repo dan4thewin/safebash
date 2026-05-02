@@ -10,10 +10,18 @@ decision on approach. See tasks/regex-counted-repetition.md.
 `-v` for a variable set to empty string returns false (differs from
 bash where `-v x` is true after `x=""`). Noted, not fixed.
 
-## DD#31 is intentional
+## DD#31 arithmetic contexts
 
-`$((x=10))` does NOT update `x`. Mutations and comparisons in `(( ))`
-are disjoint. Do not "fix" this.
+`$((x=10))` is a compile error — mutation in a read context is
+invalid sash. `(( ))` is for mutations, `if (( ))` is for comparisons,
+`$(( ))` is for pure evaluation. See DD#31. Do not "fix" this.
+
+## Subshell implementation vs design
+
+The IR, transform, and codegen still implement subshells via fork/wait.
+DD#38 says bash-mode subshells should be decomposed into sash primitives
+(local, save/restore cwd). The fork-based implementation works but
+doesn't match the design. See tasks/subshell-decomposition.md.
 
 ## Cranelift version
 

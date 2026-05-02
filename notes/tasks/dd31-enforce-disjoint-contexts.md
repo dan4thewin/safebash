@@ -3,20 +3,23 @@ status: ready
 depends: dd31-reject-mutation-in-expr
 severity: correctness
 
-lower_arithmetic_command handles both statement and condition forms
-but does not enforce DD#31's disjointness:
+Two issues in lower_arithmetic_command:
 
-- `(( x > 0 ))` as bare statement → should be compile error
-  (currently silently desugars to [[ test ]])
-- `if (( x++ ))` as condition → should be compile error
-  (currently silently emits assignment)
+1. **Disjointness not enforced.** `(( x > 0 ))` as bare statement
+   should be a compile error (comparison in mutation context).
+   `if (( x++ ))` as condition should be a compile error (mutation
+   in comparison context). Currently both are silently accepted.
 
-Need to thread context (statement vs condition) into the lowerer
-and emit diagnostics when the wrong kind appears. Assign SB codes.
+2. **Wrong type system.** Comparisons in `(( ))` are desugared to
+   `[[ $x -gt 0 ]]` — a string test command. This violates DD#30
+   (strict type separation). Integer comparisons must stay in
+   arithmetic IR and lower to `icmp` in codegen. `[[ ]]` is for
+   string operations.
 
-In bash-mode, coerce:
-- `(( x > 0 ))` as statement → `if (( x > 0 )); then :; fi` or
-  reject (this is likely dead code in bash too)
-- `if (( x++ ))` as condition → `((x++)); if (( x != 0 ))` 
-  (extract mutation, test result — but this changes semantics;
-  may be better to just reject)
+Fix: thread context (statement vs condition) into the lowerer.
+In condition context, comparisons produce integer boolean results
+directly via arithmetic IR. In statement context, comparisons are
+compile errors. In both contexts, the wrong kind is rejected with
+an SB diagnostic code.
+
+In bash-mode, coerce or reject (see dd31-reject-mutation-in-expr).

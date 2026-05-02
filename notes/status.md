@@ -12,28 +12,30 @@ title: status
 
 ## Session 2026-05-01
 
-Major session: iwe migration + 3-model DD audit.
+Major session: iwe migration + 3-model DD audit + design clarifications.
 
 ### Done
 - Migrated all project docs to iwe knowledge graph (notes/)
 - Removed HANDOFF.md, docs/DECISIONS.md, docs/JOURNAL.md, docs/TODO.md
 - 3-model adversarial audit of 52 design decisions (Opus 4.6, GPT 5.4, Gemini 2.5 Pro)
-- 49 audit tasks created, 6 resolved during triage
+- 49 audit tasks created, 9 resolved during triage
 - DD#24 consolidated as canonical taint/bless document (absorbed DD#43, 44, 47, 49)
-- DD#15 oracle rationale expanded from journal
-- DD#31 rewritten: reject-or-coerce, no silent semantic change
+- DD#15 oracle rationale expanded from journal — no content lost
+- DD#31 rewritten: reject-or-coerce, no silent semantic change. SUBSET.md updated.
+- DD#33 corrected: both key types implemented (raw i64 for indexed, string for maps)
 - DD#38 subshell coercion documented (decompose to sash primitives)
 - DD#42 status corrected to implemented
-- SUBSET.md: arithmetic three-context table, subshell coercion section
-- GUIDE.md: IR Subshell note, DD#38 coercion reference
+- DD#26 allocator description fixed (first-fit free-list, not bump)
+- System prompt: added "Questions are not imperatives" section
+- Pinned notes updated for DD#31 and subshell design/implementation gap
 
 ### New implementation tasks
 - Subshell decomposition in lowerer (notes/tasks/subshell-decomposition.md)
+- Sash-native subshell rejection (notes/tasks/subshell-native-rejection.md)
 - if-bless conditional form (notes/tasks/if-bless-conditional.md)
 - DD#31 mutation rejection in $(( )) (notes/tasks/dd31-reject-mutation-in-expr.md)
-- DD#31 disjoint context enforcement (notes/tasks/dd31-enforce-disjoint-contexts.md)
+- DD#31 disjoint context enforcement + type fix (notes/tasks/dd31-enforce-disjoint-contexts.md)
 - Janet parity quality gate (notes/tasks/janet-parity-gate.md)
-- Sash-native subshell rejection (notes/tasks/subshell-native-rejection.md)
 
 ### Remaining audit tasks
-43 audit tasks at status: ready in notes/audit-tasks/
+40 audit tasks at status: ready in notes/audit-tasks/
