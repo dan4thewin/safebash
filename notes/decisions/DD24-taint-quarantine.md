@@ -78,6 +78,11 @@ version). A later re-assignment from a tainted source re-taints it.
 `known_externals.rs` provides auto-bless patterns for 26 environment
 variables and 25 commands with conservative regex patterns.
 
+## See also
+
+- DD#42 — getenv/argv as explicit-origin builtins
+- DD#53 — Env var isolation (sash vars and env vars are separate namespaces)
+
 ## Containers
 
 Arrays and maps: each element carries its own taint by the same

@@ -93,3 +93,5 @@
 [046-session-audit-run2](journal/046-session-audit-run2)
 
 [047-session-codegen-brush](journal/047-session-codegen-brush)
+
+[048-session-env-isolation](journal/048-session-env-isolation)

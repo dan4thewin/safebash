@@ -1,5 +1,5 @@
 title: DD#21 — missing pipeline coercion amendment
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: accuracy
 

@@ -1,5 +1,5 @@
 title: DD#23 — no validator rule for PATH= assignment
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

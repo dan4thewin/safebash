@@ -1,5 +1,5 @@
 title: DD#17 — "universal call syntax" overstated
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

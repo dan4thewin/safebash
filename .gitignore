@@ -30,3 +30,4 @@ zz-*-xx
 OSCFLAGS
 _tmp/
 .indexnudge.db
+.codeindex.db

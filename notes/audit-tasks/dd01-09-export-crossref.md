@@ -1,5 +1,5 @@
 title: DD#01-09 item 4 — export rejection cross-reference missing
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: accuracy
 

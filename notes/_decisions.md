@@ -68,22 +68,16 @@
 
 [DD42-getenv-argv](decisions/DD42-getenv-argv)
 
-[DD43-bless-semantics](decisions/DD43-bless-semantics)
-
-[DD44-full-taint](decisions/DD44-full-taint)
-
 [DD45-source-emitter](decisions/DD45-source-emitter)
 
 [DD46-positional-local](decisions/DD46-positional-local)
 
-[DD47-bless-runtime](decisions/DD47-bless-runtime)
-
 [DD48-positional-range](decisions/DD48-positional-range)
-
-[DD49-tautological-bless](decisions/DD49-tautological-bless)
 
 [DD50-func-free-reads](decisions/DD50-func-free-reads)
 
 [DD51-ssa-taint-backstop](decisions/DD51-ssa-taint-backstop)
 
 [DD52-reject-param-transform](decisions/DD52-reject-param-transform)
+
+[DD53-env-isolation](decisions/DD53-env-isolation)

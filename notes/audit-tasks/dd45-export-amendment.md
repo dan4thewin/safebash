@@ -1,5 +1,5 @@
 title: DD#45 — missing export-as-error amendment
-status: ready
+status: resolved
 source: claude-opus-4.6, gpt-5.4
 severity: accuracy
 

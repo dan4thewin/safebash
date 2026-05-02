@@ -1,5 +1,5 @@
 title: DD#20 — missing glob option amendments from DD#39
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: accuracy
 

@@ -11,3 +11,8 @@ known_externals). Positional params via argv are tainted.
 
 Codegen fully supports all three forms. Return status handles
 missing values (out-of-range argv returns empty string, sets `$?` to 1).
+
+## See also
+
+- DD#24 — Taint quarantine and bless (getenv results are tainted)
+- DD#53 — Env var isolation (getenv is the only way to read env vars)

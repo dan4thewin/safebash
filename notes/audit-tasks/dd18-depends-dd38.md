@@ -1,5 +1,5 @@
 title: DD#18 depends on DD#38 — no function mocking path exists
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

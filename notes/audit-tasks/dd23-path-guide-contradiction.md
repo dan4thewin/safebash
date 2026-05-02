@@ -1,5 +1,5 @@
 title: DD#23 vs GUIDE.md — PATH lookup and sash_setenv contradiction
-status: ready
+status: resolved
 source: gpt-5.4
 severity: contradiction
 

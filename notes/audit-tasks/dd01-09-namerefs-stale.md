@@ -1,5 +1,5 @@
 title: DD#01-09 namerefs — note says designed, should say rejected (SB5003)
-status: ready
+status: resolved
 source: claude-opus-4.6, gpt-5.4
 severity: accuracy
 

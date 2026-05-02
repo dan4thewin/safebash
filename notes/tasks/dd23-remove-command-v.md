@@ -1,0 +1,14 @@
+title: Remove command -v runtime implementation
+status: ready
+severity: cleanup
+depends: []
+gates:
+  - tests
+  - commit
+
+`sash-rt/src/lib.rs` (~line 1770) implements `command -v` with
+runtime PATH search. DD#23 says `command` does not exist in
+sash-native — it's a coercion target only (bash `command -v foo`
+→ sash `[[ -x /resolved/path ]]`).
+
+Remove the `command -v` / `sash_command_v` runtime implementation.
