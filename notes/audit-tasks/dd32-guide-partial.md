@@ -1,5 +1,5 @@
 title: DD#32 — GUIDE.md doesn't distinguish implemented vs unbuilt halves
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

@@ -1,5 +1,5 @@
 title: GUIDE.md — sash_exec PATH lookup vs DD#23 compile-time PATH
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

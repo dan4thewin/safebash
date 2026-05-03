@@ -77,6 +77,12 @@ Patterns are internally coerced to regex via glob→regex conversion.
 
 Flags: `g` (global).
 
+**Regex engine:** Plan 9 regexp (POSIX ERE subset). Supports `.`, `*`,
+`+`, `?`, `|`, `()`, `[]`, `[^]`, `^`, `$`. Does **not** support
+`{n,m}` counted repetition, `\d`/`\w` shortcuts, or lookahead/lookbehind.
+Literal patterns are validated at compile time; unsupported syntax is a
+compile error.
+
 ### Arithmetic (DD#31)
 
 Three disjoint contexts, each with a single purpose:
@@ -87,6 +93,12 @@ Three disjoint contexts, each with a single purpose:
 | `if (( ))` condition | Comparison | `==`, `!=`, `<`, `>`, `<=`, `>=` | Mutations |
 | `$(( ))` expression | Pure evaluation | Arithmetic on clean operands | Mutations |
 
+**Arithmetic semantics:** All arithmetic is signed 64-bit integer (`i64`).
+Division by zero prints an error and sets `$?=1` (matching bash).
+Overflow on add/sub/mul wraps silently today; DD#25 designs runtime
+traps but they are not yet implemented. String-to-integer conversion
+of non-numeric strings yields 0 (matching bash).
+
 `$(( ))` is a read context — mutation inside it (`$((x=10))`) is a
 compile error. `(( x > 0 ))` as bare statement is a compile error.
 `if (( x++ ))` is a compile error.
@@ -95,6 +107,10 @@ compile error. `(( x > 0 ))` as bare statement is a compile error.
 - `$((x=10))` → `((x=10))`
 - `$((x=10, x<y))` → `((x=10)); $((x<y))`
 - `let "expr"` → `(( expr ))`
+- `[[ $x -gt 5 ]]` → `(( x > 5 ))` (numeric comparisons belong in `(( ))`)
+
+`[[ ]]` is string/file/boolean only. `(( ))` is arithmetic only.
+No operator set overlap.
 
 ### Declarations
 
@@ -110,13 +126,12 @@ Stacked declarations supported: `local const int x=5`.
 
 ### Tests
 
-`[[ ]]` only — `[ ]` is rejected (coerced to `[[ ]]`).
+`[[ ]]` only — `[ ]` coerced to `[[ ]]` (DD#29).
 
 | Operator | Type |
 |----------|------|
 | `-n`, `-z` | String null tests |
 | `-f`, `-d`, `-e`, `-r`, `-w`, `-x`, `-s`, `-L` | File tests |
-| `-eq`, `-ne`, `-lt`, `-le`, `-gt`, `-ge` | Numeric comparison |
 | `==`, `!=`, `<`, `>` | String comparison |
 | `=~` | Regex match |
 | Unquoted RHS in `==` | Glob matching |
@@ -142,7 +157,7 @@ Positional params: `$1`–`$9`, `$#`, `$@`, `$*`.
 
 ### Command Substitution
 
-`$(cmd)` only — backticks rejected (coerced to `$(cmd)`).
+`$(cmd)` only — backticks coerced to `$(cmd)` (DD#29).
 
 ### Pipelines
 
@@ -185,7 +200,8 @@ primitive for each effect.
 ### Builtins
 
 `echo`, `printf`, `read`, `test`, `true`, `false`, `exit`, `shift`,
-`trap`, `cd`, `unset` (assigns empty), `command` (flags `-p -v --`
+`trap`, `cd`, `unset` (array/map element removal and clearing),
+`command` (flags `-p -v --`
 handled).
 
 ### Background
@@ -194,7 +210,7 @@ handled).
 
 ### Globs
 
-`*` only for file matching — `?` and `[...]` restricted (DD#39).
+`*` only for file matching — `?` and `[...]` rejected (DD#39).
 
 ---
 
@@ -207,6 +223,7 @@ handled).
 | SB5001 | `export` / `declare -x` | Use `FOO=bar cmd` instead |
 | SB5002 | `$(cmd)` inside heredoc bodies | Extract to variable, bless, then reference |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |
+| SB4015 | `${var@...}` transforms | Use `${var^^}` / `${var,,}` instead |
 | — | `[ ]` single bracket | Coerced to `[[ ]]` |
 | — | `` `cmd` `` backticks | Coerced to `$(cmd)` |
 

@@ -3,7 +3,7 @@ status: ready
 depends: dd31-reject-mutation-in-expr
 severity: correctness
 
-Two issues in lower_arithmetic_command:
+Issues in lower_arithmetic_command:
 
 1. **Disjointness not enforced.** `(( x > 0 ))` as bare statement
    should be a compile error (comparison in mutation context).
@@ -15,6 +15,22 @@ Two issues in lower_arithmetic_command:
    (strict type separation). Integer comparisons must stay in
    arithmetic IR and lower to `icmp` in codegen. `[[ ]]` is for
    string operations.
+
+3. **Prefix ++/-- rejection.** `(( ++x ))` and `(( --x ))` should be
+   compile errors. Only postfix forms allowed (Go rule). Currently
+   lower.rs handles both prefix and postfix identically (~line 2219).
+
+4. **Postfix ++/-- as expression rejection.** `(( x = y++ ))` should
+   be a compile error. `++`/`--` are statement-only, never produce a
+   value. Currently the lowerer would accept this.
+
+5. **Comma operator desugaring.** `(( a, b ))` should desugar to
+   `(( a )); (( b ))`. In condition position (`if`/`while`), non-final
+   expressions must be mutations, final must be comparison. Not
+   currently implemented.
+
+6. **Bare boolean at statement level.** `(( x > 0 ))` as standalone
+   statement is dead code — compile error.
 
 Fix: thread context (statement vs condition) into the lowerer.
 In condition context, comparisons produce integer boolean results

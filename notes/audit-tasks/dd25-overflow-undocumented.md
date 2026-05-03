@@ -1,5 +1,5 @@
 title: DD#25 — overflow traps designed but spec presents arithmetic without caveats
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

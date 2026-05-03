@@ -9,12 +9,11 @@ find work, and the workflow pattern for the current task.
 ## Project State
 
 Project state lives in an iwe knowledge graph at `notes/`.
-At session start, run `iwe retrieve -k safebash -d 2` to load current status, plans, and pinned items.
+At session start, run `iwe retrieve -k safebash -d 2` to load current status, plans, and tasks.
 Update notes via iwe or direct file edits to `notes/` — do NOT use the todo extension for this project.
 At session end, update `notes/status.md` with progress.
 
 Read `notes/decisions/` for design decision quick-reference.
-Read `notes/pinned.md` for blocked items and constraints that must not be violated.
 The full journal is in `notes/journal/` (49 files, `cat notes/journal/*` reconstructs the whole).
 
 ## Key constraint

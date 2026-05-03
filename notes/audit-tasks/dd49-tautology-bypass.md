@@ -1,5 +1,5 @@
 title: DD#49 — syntactic bless check bypassable with tautology
-status: ready
+status: resolved
 source: gemini-pro
 severity: gap
 

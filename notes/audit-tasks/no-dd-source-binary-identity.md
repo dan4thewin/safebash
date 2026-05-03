@@ -1,5 +1,5 @@
 title: No decision on source/binary identity in chain of trust
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

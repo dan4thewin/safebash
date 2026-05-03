@@ -1,5 +1,5 @@
 title: No decision on error handling model beyond - cmd
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

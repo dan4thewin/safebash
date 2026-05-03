@@ -1,5 +1,5 @@
 title: DD#39 — regex engine limits not in SUBSET.md
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

@@ -1,5 +1,5 @@
 title: DD#52 — not in SUBSET.md rejected constructs table
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

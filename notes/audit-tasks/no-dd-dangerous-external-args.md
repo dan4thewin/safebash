@@ -1,5 +1,5 @@
 title: No decision on dangerous external program arguments
-status: ready
+status: resolved
 source: gemini-pro, gpt-5.4
 severity: gap
 

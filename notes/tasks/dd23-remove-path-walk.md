@@ -18,3 +18,6 @@ Note: this will break any tests that pass bare command names to
 sash_exec. Those tests need to be updated to use absolute paths,
 which means the compiler path resolution pass must land first (or
 tests must hardcode paths temporarily).
+
+Post-implementation: update GUIDE.md runtime section (~line 319) to
+remove "PATH lookup" from sash_exec description.

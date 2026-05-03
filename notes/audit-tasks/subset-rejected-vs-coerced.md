@@ -1,5 +1,5 @@
 title: SUBSET.md — "rejected (coerced to...)" language is incoherent
-status: ready
+status: resolved
 source: gpt-5.4
 severity: contradiction
 

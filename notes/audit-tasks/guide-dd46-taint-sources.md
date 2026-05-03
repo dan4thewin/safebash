@@ -1,5 +1,5 @@
 title: GUIDE.md — DD#46 not reflected in taint source list
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

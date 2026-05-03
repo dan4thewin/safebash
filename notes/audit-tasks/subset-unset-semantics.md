@@ -1,5 +1,5 @@
 title: SUBSET.md — unset semantics non-obvious
-status: ready
+status: resolved
 source: gemini-pro
 severity: gap
 

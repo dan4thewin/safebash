@@ -1,5 +1,5 @@
 title: No decision on signal/trap interaction with taint model
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

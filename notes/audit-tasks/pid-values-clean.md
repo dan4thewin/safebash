@@ -1,5 +1,5 @@
 title: $$ and $! marked clean — potentially attacker-influenced
-status: ready
+status: resolved
 source: gemini-pro
 severity: gap
 

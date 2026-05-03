@@ -1,5 +1,5 @@
 title: DD#39 — missing expression form simplification and non-colon amendments
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: accuracy
 

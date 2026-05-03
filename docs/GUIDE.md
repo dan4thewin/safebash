@@ -79,10 +79,10 @@ safebash/
 │   │   ├── printer.rs     — Source printer
 │   │   └── known_externals.rs — Auto-bless patterns
 │   └── tests/
-│       ├── codegen_tests.rs  — 247 codegen correctness tests
-│       ├── e2e_tests.rs      — 116 end-to-end tests
-│       ├── janet_tests.rs    — 37 Janet round-trip tests
-│       └── oracle_tests.rs   — 59 oracle validation tests
+│       ├── codegen_tests.rs  — codegen correctness
+│       ├── e2e_tests.rs      — end-to-end compilation and execution
+│       ├── janet_tests.rs    — Janet round-trip
+│       └── oracle_tests.rs   — oracle validation
 ├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
 │   └── src/lib.rs         — ~2500 lines
 ├── docs/                   — Design docs (GUIDE, JOURNAL, SUBSET, TODO, TIMELINE)
@@ -116,7 +116,7 @@ sash extensions (int, const, array, map, bless, fn,
        │
   [3]  │  Taint
        ▼
- taint.rs → flow-sensitive taint tracking (SB4020)
+ taint.rs → per-definition taint classification (SB4020)
        │
   [4]  │  Lower
        ▼
@@ -174,9 +174,11 @@ Flow-sensitive taint analysis (DD#24, DD#42–44). Walks the program
 sequentially, tracking each variable as `Tainted`, `Blessed`, or
 `Clean`.
 
-**Taint sources:** positional params (`$1`–`$N`, `$@`), `read`
-targets, `$(external cmd)`, environment variables via `$(getenv NAME)`,
-`$(argv N)`.
+**Taint sources:** `$(argv N)` (program arguments), `read`
+targets, `$(external cmd)`, environment variables via `$(getenv NAME)`.
+Function-local `$1`–`$N`/`$@` are always clean — passing a tainted
+value as a function argument is a read, which is a compile error.
+Top-level `$1`–`$N` are compile errors (DD#46: use `$(argv N)`).
 
 **Clean sources:** literals, arithmetic from clean operands, `$0`,
 `$#`, `$?`, `$$`, variables assigned from clean expressions.
@@ -359,15 +361,16 @@ right?" but "which behavior does safebash want, and why?"
 
 ## Tests
 
-457 tests total across four test files in `sash/tests/`:
+Test files in `sash/tests/`:
 
-| File | Count | What it tests |
-|------|-------|---------------|
-| `codegen_tests.rs` | 247 | Compile bash snippets to native, run, check output |
-| `e2e_tests.rs` | 116 | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
-| `janet_tests.rs` | 37 | Compile to Janet, run both bash and Janet, compare output |
-| `oracle_tests.rs` | 59 | Additional validation tests |
-| `taint_spec_tests.rs` | 43 | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
+| File | What it tests |
+|------|---------------|
+| `codegen_tests.rs` | Compile bash snippets to native, run, check output |
+| `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
+| `janet_tests.rs` | Compile to Janet, run both bash and Janet, compare output |
+| `oracle_tests.rs` | Additional validation tests |
+| `taint_spec_tests.rs` | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
+| `brush_compat_tests.rs` | Brush shell compatibility |
 
 Build and run: `mk test` (Plan 9 mk, not make).
 
@@ -375,7 +378,7 @@ Build and run: `mk test` (Plan 9 mk, not make).
 
 ## Key Design Decisions
 
-45 design decisions documented in `docs/JOURNAL.md`. The most
+Design decisions documented in `notes/decisions/`. The most
 architecturally significant:
 
 | # | Decision | Impact |

@@ -1,5 +1,5 @@
 title: DD#50 vs SUBSET.md — "no propagation" claim tension
-status: ready
+status: resolved
 source: gemini-pro
 severity: contradiction
 

@@ -1,5 +1,5 @@
 title: DD#40 — shellcheck skip with --nolint has no guardrails
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

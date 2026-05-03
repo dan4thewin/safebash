@@ -1,5 +1,5 @@
 title: No decision on shell builtins that mutate process state
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

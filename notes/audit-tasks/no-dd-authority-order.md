@@ -1,5 +1,5 @@
 title: No decision on authority order (DDs vs spec vs guide vs Janet)
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

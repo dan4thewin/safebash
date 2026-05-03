@@ -1,16 +1,21 @@
 # sash — Safe Bash Compiler
 
-sash compiles a safe subset of Bash into static native binaries.
-Scripts that pass the compiler are predictable, analyzable, and
-tamper-evident. Scripts that don't pass get clear diagnostics
-explaining what to fix and why.
+sash defines and compiles a safe subset of Bash into static native
+binaries. The subset removes constructs that make shell scripts
+difficult to analyze — eval, indirect expansion, implicit
+environment mutation, word splitting — and adds a taint model that
+tracks external input from entry to use.
+
+The compiler is also a specification. What sash accepts defines the
+safe subset. What it rejects gets a diagnostic with a code,
+an explanation, and a suggested fix.
 
 ```
 bash source → tree-sitter parse → validate + taint → lower → type check
-    → SSA → constant fold → Cranelift codegen → ld → static binary (~16KB)
+    → SSA → constant fold → Cranelift codegen → ld → static binary
 ```
 
-No libc. No C code. No inline assembly. Output is byte-identical to Bash.
+Output binaries are static ELF linked against sash-rt. No libc.
 
 ---
 

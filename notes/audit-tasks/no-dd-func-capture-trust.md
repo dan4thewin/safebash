@@ -1,5 +1,5 @@
 title: No decision on user-function capture trust boundary
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

@@ -1,5 +1,5 @@
 title: DD#24 — mechanism change (propagation → classification) not captured
-status: ready
+status: resolved
 source: claude-opus-4.6, gpt-5.4
 severity: accuracy
 

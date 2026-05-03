@@ -1,5 +1,5 @@
 title: DD#30 vs SUBSET.md — numeric comparisons in [[ ]]
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: contradiction
 

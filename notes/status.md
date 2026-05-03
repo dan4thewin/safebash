@@ -8,28 +8,82 @@ title: status
 
 1. Read this file first
 2. Run `iwe retrieve -k safebash -d 2` for full graph context
-3. Read `notes/pinned.md` for constraints/blockers
+3. Read `notes/decisions/` for design constraints
 
-## Current priority: DD audit task triage
+## Current priority: Implementation tasks
 
-40 audit tasks remain at `status: ready` in `notes/audit-tasks/`.
-Pattern for each:
+All audit tasks resolved. Focus shifts to implementation.
+See `notes/tasks/` for the backlog. Key priorities:
 
-1. Read the next audit task file
-2. **Discuss with DG** — even trivial ones get a sentence explaining why
-3. Check the relevant DD note, journal, and implementation
-4. If the DD note needs updating, update it (snapshot only, no narrative)
-5. If implementation is misaligned, create or update tasks in `notes/tasks/`
-6. Mark the audit task `status: resolved`
-
-Do not batch-resolve without discussion. DG wants to be in the loop
-for every finding.
+- **BUG: EXIT trap wrong scope** (bug-exit-trap-wrong-scope)
+- **DD#55 error model** (4 tasks: implicit checks, `-` prefix,
+  `$?` scoping, non-void functions)
+- **DD#56 signal/trap model** (4 tasks: signum keyword, flag traps,
+  exiting traps, EXIT block rework)
+- **DD#31 arithmetic refinement** (disjoint contexts, mutation
+  rejection, operand type checking)
+- **Taint clean list review** (review-taint-clean-list)
 
 ## Current state
 
 - **590 tests** passing (268 codegen, 131 e2e, 37 janet, 59 oracle, 52 brush, 43 taint spec)
 - End-to-end compilation working: bash source → static ELF binary
 - Janet and --emit-source backends working
+- All audit tasks resolved (0 remaining)
+
+## Session 2026-05-02 (continued)
+
+DD audit triage complete. All audit tasks resolved.
+
+### New design decisions
+- **DD#55**: Error handling model — implicit exit checks, `-` suppression,
+  `$?` scoping, void/non-void functions, background process rules
+- **DD#56**: Signal/trap model — flag-setting traps, `signum` keyword,
+  `trap :` (flag) vs `trap exit` (exiting), EXIT block dispatch
+
+### DD amendments
+- **DD#31**: Postfix ++/-- only (Go rule), comma operator desugaring,
+  bare boolean at statement level → error
+- **DD#24**: Strengthened bless anti-tautology ($VAR LHS only)
+- **DD#30**: `x=5` is string, no ambiguity. Documented.
+- **DD#39**: Plan 9 regex engine limitations, compile-time validation,
+  runtime precompilation of literal patterns
+
+### Bug found
+- EXIT trap inlined before every Return (fires on function returns,
+  misses `exit` builtin). Filed bug-exit-trap-wrong-scope.
+
+### Docs
+- README first section rewritten (compiler as specification, facts
+  without implying perfection)
+- GUIDE.md: removed stale counts, fixed taint source descriptions
+- SUBSET.md: arithmetic semantics, regex engine limits, glob
+  "restricted"→"rejected", coercion language fix, unset refinement
+- Deleted pinned.md (stale, contradicted decisions)
+
+### New tasks (~15)
+- dd55-implicit-exit-checks, dd55-suppress-prefix,
+  dd55-dollar-question-scoping, dd55-nonvoid-functions
+- dd56-signum-keyword, dd56-flag-traps, dd56-exiting-traps,
+  dd56-exit-block-rework
+- bug-exit-trap-wrong-scope
+- dd25-overflow-recovery-model
+- dd32-runtime-trace
+- dd39-compile-time-regex-validation, dd39-precompile-literal-regex
+- review-taint-clean-list, refine-unset-semantics
+- dd46-reject-toplevel-positionals (existed, confirmed)
+- dd49-antitautology (strengthened)
+
+### Audit tasks resolved (~25)
+All remaining audit tasks from the 3-model adversarial review.
+See journal/050-session-error-model.md for full list.
+
+### Policy decisions
+- Magic variables: `$$`/`$!`/`$?` for punctuation specials. Keywords
+  for syscall-backed: epochseconds, getpid, getppid, getcwd, signum,
+  argv, getenv. RANDOM dropped (bad LCG, use /dev/urandom).
+- `[[ -v ]]` confirmed removed from design (was stale in pinned.md)
+- No DD needed for every accepted construct (exec, builtins, etc.)
 
 ## Session 2026-05-02
 

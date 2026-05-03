@@ -1,5 +1,5 @@
 title: Pinned limitations should be in SUBSET.md or decisions
-status: ready
+status: resolved
 source: gpt-5.4
 severity: gap
 

@@ -1,5 +1,5 @@
 title: DD#27 — interactions with DD#38 and DD#50 not documented
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

@@ -1,5 +1,5 @@
 title: GUIDE.md — stale test counts and DD count
-status: ready
+status: resolved
 source: gpt-5.4
 severity: accuracy
 

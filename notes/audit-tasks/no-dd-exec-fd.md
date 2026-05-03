@@ -1,5 +1,5 @@
 title: No decision on exec without arguments (fd manipulation)
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: gap
 

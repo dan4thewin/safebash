@@ -55,6 +55,9 @@ bless port [[ $port =~ ^[0-9]+$ ]]
 
 `bless VAR [[ test ]]` — VAR explicitly named, must appear in test
 expression (DD#49: SB4012 rejects tests not containing `$VAR`).
+Additionally, `$VAR` must appear on the LHS of the test operator, not
+the RHS — `bless x [[ "$x" == "$x" ]]` is rejected because the var
+appears on the RHS (tautological, no real validation).
 
 The test expression is a `[[ ]]` test — string comparisons, regex
 match, file tests only. No external commands. No arithmetic. The

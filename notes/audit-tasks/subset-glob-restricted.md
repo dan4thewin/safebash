@@ -1,5 +1,5 @@
 title: SUBSET.md — glob "restricted" is ambiguous
-status: ready
+status: resolved
 source: gemini-pro
 severity: accuracy
 

@@ -1,5 +1,5 @@
 title: DD#30 — missing bare numeric assignment amendment
-status: ready
+status: resolved
 source: claude-opus-4.6
 severity: accuracy
 
