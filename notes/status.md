@@ -10,10 +10,20 @@ title: status
 2. Run `iwe retrieve -k safebash -d 2` for full graph context
 3. Read `notes/decisions/` for design constraints
 
-## Current priority: Implementation tasks
+## Current priority: Acceptance tests
 
-All audit tasks resolved. Focus shifts to implementation.
-See `notes/tasks/` for the backlog. Key priorities:
+Write spec tests against clauses in spec.db. Prerequisite: nail
+down SB error codes for each diagnostic so tests can assert on them.
+
+Infrastructure: spec/common.sh harness, `sash -c` implemented,
+spec.db has 192 clauses across 45 DDs. Test scripts go in `spec/`,
+one file per clause, output TSV for database loading.
+
+## Previous priorities (done)
+
+All audit tasks resolved. ~15 implementation tasks created.
+See `notes/tasks/` for the backlog. Key priorities when we shift
+to implementation:
 
 - **BUG: EXIT trap wrong scope** (bug-exit-trap-wrong-scope)
 - **DD#55 error model** (4 tasks: implicit checks, `-` prefix,
