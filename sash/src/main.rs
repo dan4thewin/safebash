@@ -40,12 +40,17 @@ fn main() {
     let mut flags: Vec<&str> = Vec::new();
     let mut positional: Vec<&str> = Vec::new();
     let mut output_path: Option<&str> = None;
+    let mut inline_source: Option<&str> = None;
     let mut i = 1;
     while i < args.len() {
         match args[i].as_str() {
             "-o" => {
                 i += 1;
                 if i < args.len() { output_path = Some(&args[i]); }
+            }
+            "-c" => {
+                i += 1;
+                if i < args.len() { inline_source = Some(&args[i]); }
             }
             s if s.starts_with("--") => flags.push(s),
             s => positional.push(s),
@@ -54,18 +59,23 @@ fn main() {
     }
     let input = match positional.first() {
         Some(f) => *f,
+        None if inline_source.is_some() => "-c",
         None => {
-            eprintln!("Usage: sash [--nolint] [--ir|--ssa|--emit-source|--annotate] [-o output] <script.sh>");
+            eprintln!("Usage: sash [--nolint] [--ir|--ssa|--emit-source|--annotate] [-c 'script'] [-o output] <script.sh>");
             std::process::exit(1);
         }
     };
 
     // Read source
-    let source = match std::fs::read_to_string(input) {
-        Ok(s) => s,
-        Err(e) => {
-            eprintln!("sash: {}: {}", input, e);
-            std::process::exit(1);
+    let source = if let Some(src) = inline_source {
+        src.to_string()
+    } else {
+        match std::fs::read_to_string(input) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("sash: {}: {}", input, e);
+                std::process::exit(1);
+            }
         }
     };
 
@@ -73,7 +83,7 @@ fn main() {
     let tree = sash::parse(&source);
 
     // --nolint skips shellcheck only; subset gate + taint always run
-    let nolint = flags.contains(&"--nolint");
+    let nolint = flags.contains(&"--nolint") || inline_source.is_some();
     if !nolint {
         // Shellcheck pre-flight (DD#40 — lint by default, --nolint to skip)
         match Command::new("shellcheck")
@@ -165,6 +175,8 @@ fn main() {
     // Default: compile to native binary
     let output = if let Some(p) = output_path {
         p.to_string()
+    } else if inline_source.is_some() {
+        "a.out".to_string()
     } else {
         input
             .strip_suffix(".sh")

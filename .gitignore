@@ -31,3 +31,5 @@ OSCFLAGS
 _tmp/
 .indexnudge.db
 .codeindex.db
+a.out
+spec/.trace/
