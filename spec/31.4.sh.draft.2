@@ -11,14 +11,15 @@ echo "1..$plan" >&3
 set +e
 # assignment in if (( )) is rejected
 run_sash 'if (( x = 5 )); then echo yes; fi'
-[[ rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4a
+[[ $rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4a
 
 # += in if (( )) is rejected
 run_sash 'int x=1; if (( x += 1 )); then echo yes; fi'
-[[ rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4b
+[[ $rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4b
 
 # x++ in if (( )) is rejected
 run_sash 'int x=1; if (( x++ )); then echo yes; fi'
-[[ rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4c
+[[ $rc = 1 && -z $out && $err = SB1234* ]]; chk 31.4c
 
+set -e
 tally
