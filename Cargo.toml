@@ -1,0 +1,3 @@
+[workspace]
+members = ["sash", "sash-convert", "sash-rt", "sash-rt-tests", "sash-expand"]
+resolver = "2"
