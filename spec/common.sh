@@ -4,7 +4,7 @@ setup() {
     find "${trace%/*}" -maxdepth 0 -mtime +1 -exec rm -r {} + 2>&- || :
     mkdir -p "${trace%/*}"
     exec 3>&1 >> "$trace" 2>&1
-    [[ $SPEC_TSV ]] && exec 4>> "$SPEC_TSV"
+    [[ ${SPEC_TSV:-} ]] && exec 4>> "$SPEC_TSV"
     PS4='+$LINENO: '
     set -x
     date
@@ -36,7 +36,8 @@ run_sash() {
 
 run_convert() {
     rc=-1 out="" err=""
-    echo "$1" | sash-convert > out 2> err
+    printf '%s\n' "$1" > .input.sh
+    sash-convert .input.sh > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)
@@ -44,7 +45,8 @@ run_convert() {
 
 run_convert_annotate() {
     rc=-1 out="" err=""
-    echo "$1" | sash-convert --annotate > out 2> err
+    printf '%s\n' "$1" > .input.sh
+    sash-convert --annotate .input.sh > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)
@@ -62,7 +64,7 @@ chk() {
         (( fail++ ))
     fi
     echo "$msg $index" >&3
-    [[ $SPEC_TSV ]] || return
+    [[ ${SPEC_TSV:-} ]] || return
     printf '%s\t%s\t' "$id" "$msg" >&4
     date -u -Iseconds | sed 's/+.*/Z/' >&4
 }
