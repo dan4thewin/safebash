@@ -346,6 +346,22 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
 
 fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
     let text = node_text(node, source);
+
+    // Check for [[ $var -op N ]] numeric comparisons → (( var op N ))
+    if text.starts_with("[[ ") && text.ends_with(" ]]") {
+        let inner = text[3..text.len() - 3].trim();
+        if let Some(replacement) = try_numeric_comparison(inner) {
+            patches.push(Patch {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement,
+                prefix_line: None,
+                original: Some(text.to_string()),
+            });
+            return;
+        }
+    }
+
     // Only convert [ ... ] to [[ ... ]], not already [[ ... ]]
     if text.starts_with("[ ") && text.ends_with(" ]") && !text.starts_with("[[ ") {
         let inner = &text[2..text.len() - 2];
@@ -360,6 +376,46 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
             prefix_line: None,
             original: Some(text.to_string()),
         });
+    }
+}
+
+/// Try to convert a numeric comparison like `$x -gt 5` to `(( x > 5 ))`.
+/// Returns None if the inner expression isn't a simple numeric comparison.
+fn try_numeric_comparison(inner: &str) -> Option<String> {
+    let parts: Vec<&str> = inner.split_whitespace().collect();
+    if parts.len() != 3 {
+        return None;
+    }
+    let op = match parts[1] {
+        "-eq" => "==",
+        "-ne" => "!=",
+        "-lt" => "<",
+        "-le" => "<=",
+        "-gt" => ">",
+        "-ge" => ">=",
+        _ => return None,
+    };
+    // Don't convert if either side is quoted — quoted vars suggest string context
+    if parts[0].contains('"') || parts[2].contains('"') {
+        return None;
+    }
+    // Strip $ prefix from variable references for arithmetic context
+    let lhs = strip_dollar(parts[0]);
+    let rhs = strip_dollar(parts[2]);
+    Some(format!("(( {} {} {} ))", lhs, op, rhs))
+}
+
+/// Strip leading $ from a variable reference (for arithmetic context).
+/// $var → var, ${var} → var, literals pass through unchanged.
+fn strip_dollar(s: &str) -> &str {
+    if let Some(rest) = s.strip_prefix('$') {
+        if let Some(inner) = rest.strip_prefix('{') {
+            inner.strip_suffix('}').unwrap_or(rest)
+        } else {
+            rest
+        }
+    } else {
+        s
     }
 }
 
