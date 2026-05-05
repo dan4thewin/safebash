@@ -85,6 +85,10 @@ fn walk_node(
             prefix_lines.push((line, "# MANUAL: process substitution <()/>() not supported in sash".into()));
         }
         "command_substitution" => {
+            if has_ancestor_kind(node, "heredoc_body") {
+                let line = node.start_position().row;
+                prefix_lines.push((line, "# MANUAL: command substitution $(…) inside heredoc — extract before heredoc or rewrite".into()));
+            }
             convert_backtick_substitution(node, source, patches);
         }
         _ => {}
@@ -605,6 +609,17 @@ fn apply_patches(
 
 fn node_text<'a>(node: Node, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
+}
+
+fn has_ancestor_kind(node: Node, kind: &str) -> bool {
+    let mut current = node.parent();
+    while let Some(p) = current {
+        if p.kind() == kind {
+            return true;
+        }
+        current = p.parent();
+    }
+    false
 }
 
 fn has_descendant_kind(node: Node, kind: &str) -> bool {
