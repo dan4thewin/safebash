@@ -33,10 +33,20 @@ tally() {
 
 run_sash() {
     rc=-1 out="" err=""
-    sash -c "$1" > out 2> err
+    sash -c "$1" -o ./test_bin 2> err.raw
     rc=$?
-    out=$(<out)
-    err=$(<err)
+    if [[ $rc = 0 ]]; then
+        # Compilation succeeded — run the binary
+        out=$(./test_bin 2>/dev/null)
+        rc=$?
+        rm -f ./test_bin
+        err=""
+    else
+        out=""
+        # Keep only diagnostic lines (error/warning from compiler)
+        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:' err.raw | grep -v 'static binary' || true)
+    fi
+    rm -f err.raw
 }
 
 run_convert() {
