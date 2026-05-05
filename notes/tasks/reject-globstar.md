@@ -2,7 +2,7 @@ title: Reject globstar ** pattern (DD#20)
 status: ready
 severity: correctness
 depends: []
-gates:
+gates: [20.5]
   - tests
   - commit
 

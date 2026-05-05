@@ -4,7 +4,7 @@ severity: design
 depends:
   - mapfile-map-mode
   - remove-export-ssa-dead-code
-gates:
+gates: [54.1a, 54.1b]
   - tests
   - commit
 

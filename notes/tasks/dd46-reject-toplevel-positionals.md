@@ -1,7 +1,7 @@
 title: DD#46 — reject top-level positional params in sash-native
 status: ready
 depends: []
-gates:
+gates: [46.1, 46.2, 46.4]
   - tests
   - commit
 

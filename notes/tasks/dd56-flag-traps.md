@@ -3,7 +3,7 @@ status: ready
 depends:
   - dd56-signum-keyword
 severity: feature
-gates:
+gates: [56.1, 56.6a, 56.6b, 56.8, 56.9]
   - tests
   - commit
 

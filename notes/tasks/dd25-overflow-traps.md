@@ -1,7 +1,7 @@
 title: DD#25 — implement arithmetic overflow traps
 status: ready
 depends: []
-gates: []
+gates: [25.1]
 
 Replace wrapping `iadd`/`isub`/`imul` in `emit_arith_op` with
 overflow-checked sequences. On overflow: print error to stderr,

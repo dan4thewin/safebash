@@ -2,7 +2,7 @@ title: Remove command -v runtime implementation
 status: ready
 severity: cleanup
 depends: []
-gates:
+gates: [23.3]
   - tests
   - commit
 

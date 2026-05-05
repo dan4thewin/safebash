@@ -1,7 +1,7 @@
 title: DD#49 — bless test anti-tautology check
 status: ready
 depends: []
-gates:
+gates: [24.10, 24.11, 24.16]
   - tests
   - commit
 

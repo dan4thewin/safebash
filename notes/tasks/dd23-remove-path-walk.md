@@ -2,7 +2,7 @@ title: Remove PATH walk from sash_exec
 status: ready
 severity: security
 depends: []
-gates:
+gates: [23.5]
   - tests
   - commit
 

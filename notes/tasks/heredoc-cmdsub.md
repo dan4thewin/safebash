@@ -1,7 +1,7 @@
 title: Heredoc with command substitution
 status: ready
 depends: []
-gates:
+gates: [5.1]
   - tests
   - commit
 

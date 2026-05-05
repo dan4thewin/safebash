@@ -3,7 +3,7 @@ status: ready
 depends:
   - dd55-suppress-prefix
 severity: correctness
-gates:
+gates: [55.5, 55.6]
   - tests
   - commit
 

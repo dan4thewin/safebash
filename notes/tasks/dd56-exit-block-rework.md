@@ -4,7 +4,7 @@ depends:
   - bug-exit-trap-wrong-scope
   - dd56-signum-keyword
 severity: feature
-gates:
+gates: [56.4]
   - tests
   - commit
 

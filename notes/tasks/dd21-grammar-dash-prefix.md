@@ -2,7 +2,7 @@ title: Verify tree-sitter grammar supports - prefix syntax
 status: ready
 severity: design
 depends: []
-gates:
+gates: [21.1]
   - commit
 
 DD#21 introduces `- cmd` as error suppression syntax. Check whether

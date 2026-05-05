@@ -1,6 +1,7 @@
 title: DD#31 — reject mutations in $(( )) expression context
 status: ready
 severity: correctness
+gates: [31.5, 31.6, 31.8, 31.9]
 
 transform.rs (~line 1780) handles `$((x=10))` by emitting an SSA
 assignment and returning the value. DD#31 says `$(( ))` is a read

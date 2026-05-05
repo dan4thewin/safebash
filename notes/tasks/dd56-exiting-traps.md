@@ -4,7 +4,7 @@ depends:
   - dd56-flag-traps
   - bug-exit-trap-wrong-scope
 severity: feature
-gates:
+gates: [56.2, 56.4, 56.5, 56.10]
   - tests
   - commit
 

@@ -2,7 +2,7 @@ title: Review taint clean list and magic variable policy
 status: ready
 depends: []
 severity: design
-gates:
+gates: [24.1, 24.2, 24.3, 24.4, 24.5, 24.6, 24.7, 24.8, 24.14, 24.15, 42.2]
   - tests
   - commit
 

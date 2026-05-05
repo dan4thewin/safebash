@@ -2,7 +2,7 @@ title: Remove implicit env-var fallback in codegen
 status: ready
 severity: security
 depends: []
-gates:
+gates: [53.1, 53.2, 53.3]
   - tests
   - commit
 
