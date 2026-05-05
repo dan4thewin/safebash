@@ -51,10 +51,10 @@ run_convert '#!/bin/bash
 if [ "$x" -gt 0 ]; then echo yes; fi'
 [[ $rc = 0 && $out == *'[['* && $out == *']]'* && $out != *'[ "'* && -z $err ]]; chk 57.6a
 
-# 57.6b [[ ]] unchanged
+# 57.6b complex numeric comparison gets MANUAL annotation
 run_convert '#!/bin/bash
 if [[ "$x" -gt 0 ]]; then echo yes; fi'
-[[ $rc = 0 && $out == *'[[ "$x" -gt 0 ]]'* && -z $err ]]; chk 57.6b
+[[ $rc = 0 && $out == *'MANUAL'* && $out == *'-gt'* && -z $err ]]; chk 57.6b
 
 # 57.7a ${var-x} → ${var:-x}
 run_convert '#!/bin/bash

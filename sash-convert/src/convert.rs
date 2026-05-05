@@ -62,7 +62,7 @@ fn walk_node(
             convert_unset_command(node, source, patches);
         }
         "test_command" => {
-            convert_test_command(node, source, patches);
+            convert_test_command(node, source, patches, prefix_lines);
         }
         "subshell" => {
             // Subshell: mark as MANUAL for now (mechanical conversion is complex)
@@ -367,21 +367,37 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
     result
 }
 
-fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
     let text = node_text(node, source);
 
-    // Check for [[ $var -op N ]] numeric comparisons → (( var op N ))
-    if text.starts_with("[[ ") && text.ends_with(" ]]") {
-        let inner = text[3..text.len() - 3].trim();
-        if let Some(replacement) = try_numeric_comparison(inner) {
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement,
-                prefix_line: None,
-                original: Some(text.to_string()),
-            });
-            return;
+    // Check for numeric comparisons — in either [ ] or [[ ]] form
+    let (is_double, is_single) = (
+        text.starts_with("[[ ") && text.ends_with(" ]]"),
+        text.starts_with("[ ") && text.ends_with(" ]") && !text.starts_with("[[ ")
+    );
+    if is_double || is_single {
+        let (start_trim, end_trim) = if is_double { (3, 3) } else { (2, 2) };
+        let inner = text[start_trim..text.len() - end_trim].trim();
+        match try_numeric_comparison(inner) {
+            NumericResult::Converted(replacement) => {
+                patches.push(Patch {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    replacement,
+                    prefix_line: None,
+                    original: Some(text.to_string()),
+                });
+                return;
+            }
+            NumericResult::TooComplex => {
+                let line = node.start_position().row;
+                prefix_lines.push((line, format!(
+                    "# MANUAL: numeric comparison needs conversion to (( )) — operands too complex for auto-convert"
+                )));
+                // Still convert [ ] → [[ ]] below if single bracket
+                if is_double { return; }
+            }
+            NumericResult::NotNumeric => {}
         }
     }
 
@@ -402,12 +418,18 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
     }
 }
 
+enum NumericResult {
+    Converted(String),
+    TooComplex,
+    NotNumeric,
+}
+
 /// Try to convert a numeric comparison like `$x -gt 5` to `(( x > 5 ))`.
-/// Returns None if the inner expression isn't a simple numeric comparison.
-fn try_numeric_comparison(inner: &str) -> Option<String> {
+/// Only converts when operands are bare $var or integer literals.
+fn try_numeric_comparison(inner: &str) -> NumericResult {
     let parts: Vec<&str> = inner.split_whitespace().collect();
     if parts.len() != 3 {
-        return None;
+        return NumericResult::NotNumeric;
     }
     let op = match parts[1] {
         "-eq" => "==",
@@ -416,16 +438,30 @@ fn try_numeric_comparison(inner: &str) -> Option<String> {
         "-le" => "<=",
         "-gt" => ">",
         "-ge" => ">=",
-        _ => return None,
+        _ => return NumericResult::NotNumeric,
     };
-    // Don't convert if either side is quoted — quoted vars suggest string context
-    if parts[0].contains('"') || parts[2].contains('"') {
-        return None;
+    // Check if operands are simple: bare $var, ${var}, or integer literal
+    let lhs_simple = is_simple_arith_operand(parts[0]);
+    let rhs_simple = is_simple_arith_operand(parts[2]);
+    if !lhs_simple || !rhs_simple {
+        return NumericResult::TooComplex;
     }
-    // Strip $ prefix from variable references for arithmetic context
     let lhs = strip_dollar(parts[0]);
     let rhs = strip_dollar(parts[2]);
-    Some(format!("(( {} {} {} ))", lhs, op, rhs))
+    NumericResult::Converted(format!("(( {} {} {} ))", lhs, op, rhs))
+}
+
+/// A simple arithmetic operand is: $var, ${var}, or an integer literal (optional leading -)
+fn is_simple_arith_operand(s: &str) -> bool {
+    if let Some(rest) = s.strip_prefix('$') {
+        // $var or ${var}
+        let inner = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest);
+        inner.chars().all(|c| c.is_alphanumeric() || c == '_')
+    } else {
+        // integer literal
+        let s = s.strip_prefix('-').unwrap_or(s);
+        !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+    }
 }
 
 /// Strip leading $ from a variable reference (for arithmetic context).
