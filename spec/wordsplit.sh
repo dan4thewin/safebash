@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=22
+plan=26
 echo "1..$plan" >&3
 
 set +e
@@ -99,4 +99,23 @@ run_sash 'int x=5; if [[ $x -gt 0 ]]; then echo yes; fi'
 # 30.6b -eq in [[ ]] is compile error
 run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 30.6b
+
+
+# --- DD#22 mapfile -m ---
+
+# 22.8 mapfile -m reads KEY=VALUE into map
+run_sash 'map m; printf "name=Alice\nage=30\n" | mapfile -m m; echo ${m[name]} ${m[age]}'
+[[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
+
+# 22.9 mapfile -m skips blanks and comments
+run_sash 'map m; printf "a=1\n\n# comment\nb=2\n" | mapfile -m m; echo ${m[a]} ${m[b]}'
+[[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
+
+# 22.10 mapfile -m splits on first = only
+run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; echo ${m[key]}'
+[[ $rc = 0 && $out = "val=ue" && -z $err ]]; chk 22.10
+
+# 22.11 mapfile -m result is tainted
+run_sash 'map m; printf "k=v\n" | mapfile -m m; echo ${m[k]}'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 22.11
 

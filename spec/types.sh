@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=22
+plan=29
 echo "1..$plan" >&3
 
 set +e
@@ -99,3 +99,36 @@ run_sash 'map m=([k]=v); echo ${m[k]}'
 
 set -e
 tally
+
+# --- DD#30 unset semantics ---
+
+# 30.8 unset var (scalar) → compile error
+run_sash 'x=hello; unset x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 30.8
+
+# 30.9 unset arr[N] removes element
+run_sash 'array a=(one two three); unset a[1]; echo ${a[0]} ${a[2]}'
+[[ $rc = 0 && $out = "one three" && -z $err ]]; chk 30.9
+
+# 30.10 unset map[key] removes key
+run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 30.10
+
+# 30.11 unset arr clears collection
+run_sash 'array a=(one two three); unset a; echo ${#a[@]}'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.11
+
+# --- DD#33 array per-element ops ---
+
+# 33.5 ${arr[@]/pat/rep} substitution per element
+run_sash 'array a=(foo bar baz); echo ${a[@]/ba/BA}'
+[[ $rc = 0 && $out = "foo BAr BAz" && -z $err ]]; chk 33.5
+
+# 33.6 ${arr[@]#prefix} strip prefix per element
+run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
+[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.6
+
+# 33.7 ${arr[@]%%suffix} strip suffix per element
+run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
+[[ $rc = 0 && $out = "file doc note.md" && -z $err ]]; chk 33.7
+

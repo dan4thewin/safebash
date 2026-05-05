@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup convert
-plan=55
+plan=56
 echo "1..$plan" >&3
 
 set +e
@@ -341,4 +341,13 @@ if [[ $x -le 10 ]]; then echo yes; fi'
 run_convert '#!/bin/bash
 if [[ $x -eq 0 ]]; then echo yes; fi'
 [[ $rc = 0 && $out == *'(( x == 0 ))'* && -z $err ]]; chk 30.5c
+
+
+# --- DD#30 unset scalar conversion ---
+
+# 30.7 convert unset var (scalar) to var=""
+run_convert '#!/bin/bash
+x=hello
+unset x'
+[[ $rc = 0 && $out == *'x=""'* && -z $err ]]; chk 30.7
 

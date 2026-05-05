@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=10
+plan=13
 echo "1..$plan" >&3
 
 set +e
@@ -51,3 +51,22 @@ run_sash 'source ./file.sh'
 
 set -e
 tally
+
+# --- DD#14 compound redirects ---
+
+# 14.4 for...done > file
+run_sash 'for x in a b c; do echo $x; done > /tmp/sash_test_redir
+/bin/cat /tmp/sash_test_redir
+/bin/rm /tmp/sash_test_redir'
+[[ $rc = 0 && $out == *"a"* && $out == *"b"* && $out == *"c"* && -z $err ]]; chk 14.4
+
+# 14.5 while...done | cmd
+run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done | /usr/bin/wc -l'
+[[ $rc = 0 && $out == *"3"* && -z $err ]]; chk 14.5
+
+# 14.6 if...fi > file
+run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2
+/bin/cat /tmp/sash_test_redir2
+/bin/rm /tmp/sash_test_redir2'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 14.6
+

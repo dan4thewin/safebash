@@ -1,10 +1,8 @@
 title: Array per-element operations
 status: ready
-depends: []
-gates:
-  - tests
-  - commit
+severity: feature
+gates: [33.5, 33.6, 33.7]
+---
 
-`${arr[@]/pat/rep}`, `${arr[@]#prefix}` — codegen handles
-`${var/pat/rep}` for scalars but doesn't loop over array elements.
-13 Brush test cases depend on this.
+${arr[@]/pat/rep}, ${arr[@]#prefix}, ${arr[@]%%suffix} — apply
+operation to each element. 13 Brush test cases depend on this.
