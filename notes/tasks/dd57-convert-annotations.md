@@ -1,5 +1,5 @@
 title: sash-convert — MANUAL and CHECK annotations
-status: ready
+status: done
 severity: feature
 gates: [57.23, 57.25, 57.31, 57.33]
 ---

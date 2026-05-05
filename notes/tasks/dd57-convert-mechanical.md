@@ -1,5 +1,5 @@
 title: sash-convert — remaining mechanical conversions
-status: ready
+status: done
 severity: feature
 gates: [57.5, 57.6, 57.10, 57.13, 57.14a, 57.14b]
 ---

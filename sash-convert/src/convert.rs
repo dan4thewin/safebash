@@ -300,31 +300,71 @@ fn convert_command(
             prefix_lines.push((line, "# MANUAL: coproc — not supported in sash".into()));
         }
 
-        // Mechanical: trap "" SIG → trap : SIG (empty-string traps become no-op)
+        // Mechanical: trap → signal N DISPOSITION
         "trap" => {
             let mut cursor = node.walk();
             let args: Vec<Node> = node.children(&mut cursor)
                 .filter(|c| c.is_named() && *c != name_node)
                 .collect();
-            // Look for trap with a first argument that is an empty string literal
             if let Some(first_arg) = args.first() {
                 let arg_text = node_text(*first_arg, source);
                 if arg_text == "\"\"" || arg_text == "''" {
-                    // Collect signal names (remaining args)
+                    // trap "" SIG → signal N IGN
                     let sigs: Vec<&str> = args[1..].iter()
                         .map(|a| node_text(*a, source))
                         .collect();
-                    if !sigs.is_empty() {
-                        let original = node_text(node, source).to_string();
-                        let replacement = format!("trap : {}", sigs.join(" "));
+                    let original = node_text(node, source).to_string();
+                    let lines: Vec<String> = sigs.iter()
+                        .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} IGN", n)))
+                        .collect();
+                    if !lines.is_empty() {
                         patches.push(Patch {
                             start: node.start_byte(),
                             end: node.end_byte(),
-                            replacement,
+                            replacement: lines.join("\n"),
                             prefix_line: None,
                             original: Some(original),
                         });
                     }
+                } else if arg_text == "-" {
+                    // trap - SIG → signal N DFL
+                    let sigs: Vec<&str> = args[1..].iter()
+                        .map(|a| node_text(*a, source))
+                        .collect();
+                    let original = node_text(node, source).to_string();
+                    let lines: Vec<String> = sigs.iter()
+                        .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} DFL", n)))
+                        .collect();
+                    if !lines.is_empty() {
+                        patches.push(Patch {
+                            start: node.start_byte(),
+                            end: node.end_byte(),
+                            replacement: lines.join("\n"),
+                            prefix_line: None,
+                            original: Some(original),
+                        });
+                    }
+                } else if arg_text == ":" {
+                    // trap : SIG → signal N FLAG
+                    let sigs: Vec<&str> = args[1..].iter()
+                        .map(|a| node_text(*a, source))
+                        .collect();
+                    let original = node_text(node, source).to_string();
+                    let lines: Vec<String> = sigs.iter()
+                        .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} FLAG", n)))
+                        .collect();
+                    if !lines.is_empty() {
+                        patches.push(Patch {
+                            start: node.start_byte(),
+                            end: node.end_byte(),
+                            replacement: lines.join("\n"),
+                            prefix_line: None,
+                            original: Some(original),
+                        });
+                    }
+                } else {
+                    // trap 'handler' SIG → MANUAL
+                    prefix_lines.push((line, "# MANUAL: trap with handler body — restructure as END { ... } block".into()));
                 }
             }
         }
@@ -816,6 +856,23 @@ fn apply_patches(
 
 fn node_text<'a>(node: Node, source: &'a [u8]) -> &'a str {
     node.utf8_text(source).unwrap_or("")
+}
+
+fn sig_to_num(name: &str) -> Option<u8> {
+    let s = name.strip_prefix("SIG").unwrap_or(name);
+    match s {
+        "HUP" => Some(1),
+        "INT" => Some(2),
+        "QUIT" => Some(3),
+        "ABRT" => Some(6),
+        "KILL" => Some(9),
+        "USR1" => Some(10),
+        "USR2" => Some(12),
+        "PIPE" => Some(13),
+        "ALRM" => Some(14),
+        "TERM" => Some(15),
+        _ => s.parse().ok(),
+    }
 }
 
 fn has_ancestor_kind(node: Node, kind: &str) -> bool {

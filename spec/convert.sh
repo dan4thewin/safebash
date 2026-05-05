@@ -125,10 +125,10 @@ x=hello
 echo $x'
 [[ $rc = 0 && $out == *'# CHECK:'*'SC2086'* && -z $err ]]; chk 57.31a
 
-# 57.31b SC2248 also triggers CHECK hint
+# 57.31b SC2248 also triggers CHECK hint (optional check, stricter quoting)
 run_convert '#!/bin/bash
 x=hello
-y=$x'
+cmd $x'
 [[ $rc = 0 && $out == *'# CHECK:'* && -z $err ]]; chk 57.31b
 
 # 57.32 shellcheck-unclean input still converts successfully
