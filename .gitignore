@@ -33,3 +33,4 @@ _tmp/
 .codeindex.db
 a.out
 spec/.trace/
+.agent-runs/
