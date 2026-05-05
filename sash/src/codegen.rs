@@ -1252,24 +1252,16 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                     builder.def_var(sv.str_ptr(), str_ptr);
                     builder.def_var(sv.str_len(), str_len);
                 } else {
-                    // Environment variable: $HOME, $PATH, etc.
-                    let name_str = intern(&mut module, var_name);
-                    let name_gv = module.declare_data_in_func(name_str, builder.func);
-                    let name_ptr = builder.ins().global_value(I64, name_gv);
-                    let name_len = builder.ins().iconst(I64, var_name.len() as i64);
-
-                    // Stack slot for out_len
-                    let out_len_slot = builder.create_sized_stack_slot(
-                        StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
-                    );
-                    let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-
-                    let getenv_ref = module.declare_func_in_func(externs.getenv, builder.func);
-                    let call = builder.ins().call(getenv_ref, &[name_ptr, name_len, out_len_addr]);
-                    let val_ptr = builder.inst_results(call)[0];
-                    let val_len = builder.ins().stack_load(I64, out_len_slot, 0);
-                    builder.def_var(sv.str_ptr(), val_ptr);
-                    builder.def_var(sv.str_len(), val_len);
+                    // Undeclared variable — initialize to empty string (DD#53)
+                    // Use getenv() builtin explicitly to access environment.
+                    // Intern the name so source-kvp re-read can find it.
+                    intern(&mut module, var_name);
+                    let empty_id = intern(&mut module, "");
+                    let empty_gv = module.declare_data_in_func(empty_id, builder.func);
+                    let empty_ptr = builder.ins().global_value(I64, empty_gv);
+                    let empty_len = builder.ins().iconst(I64, 0);
+                    builder.def_var(sv.str_ptr(), empty_ptr);
+                    builder.def_var(sv.str_len(), empty_len);
                 }
 
                 vars.insert(key, sv);

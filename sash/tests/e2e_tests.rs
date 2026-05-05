@@ -1149,8 +1149,8 @@ fn brush_let_clean() {
 
 #[test]
 fn brush_home_clean() {
-    // $HOME is a known env var — should be auto-clean
-    let script = "#!/bin/bash\necho $HOME";
+    // $HOME requires getenv — no implicit env access (DD#53)
+    let script = "#!/bin/bash\nx=$(getenv HOME)\necho $x";
     let sash_out = compile_and_run("brush_home_clean", script);
     let bash_out = bash_output("echo $HOME");
     assert_eq!(sash_out, bash_out);
@@ -1158,17 +1158,18 @@ fn brush_home_clean() {
 
 #[test]
 fn brush_pwd_clean() {
-    // $PWD is a known env var — should be auto-clean
-    let script = "#!/bin/bash\necho $PWD";
+    // $PWD requires getenv — no implicit env access (DD#53)
+    let script = "#!/bin/bash\nx=$(getenv PWD)\necho $x";
     let sash_out = compile_and_run("brush_pwd_clean", script);
     assert!(!sash_out.is_empty(), "PWD should produce output");
 }
 
 #[test]
 fn brush_path_check() {
-    // $PATH is known — if/then with -z test
+    // $PATH requires getenv — no implicit env access (DD#53)
     let script = r#"#!/bin/bash
-if [[ -z "$PATH" ]]; then
+x=$(getenv PATH)
+if [[ -z "$x" ]]; then
   echo "PATH is not set or is empty"
 else
   echo "PATH is set and non-empty"
