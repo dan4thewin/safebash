@@ -1,86 +1,117 @@
 #!/bin/bash
-# spec/signals.sh — signal handling tests (DD#56)
-set -eu
+# DD#56 — signals and END block
 . common.sh
+plan=18
 setup signals
-plan=15
-echo "1..$plan" >&3
 
 set +e
 
-# 56.1 trap : SIG sets flag without check points
-run_sash 'trap : SIGINT; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.1
+# --- END block ---
 
-# 56.2 trap exit SIG sets flag and inserts check points
-run_sash 'trap exit SIGTERM; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.2
+# 56.1 END block executes at exit
+run_sash 'END { echo bye }
+echo hello'
+[[ $rc = 0 && $out == *"hello"* && $out == *"bye"* && -z $err ]]; chk 56.1
 
-# 56.3 $(signum) returns signal number
-run_sash 'trap : SIGINT; echo $(signum)'
-[[ $rc = 0 && $out = "0" && -z $err ]]; chk 56.3
+# 56.2a reaching end of END terminates
+run_sash 'END { echo done }
+echo main'
+[[ $rc = 0 && $out == *"done"* && -z $err ]]; chk 56.2a
 
-# 56.4 EXIT block: every path ends with exit
-run_sash 'trap exit SIGTERM
+# 56.2b return in END terminates (no re-entry)
+run_sash 'END { return; echo unreachable }
+echo main'
+[[ $rc = 0 && $out != *"unreachable"* && -z $err ]]; chk 56.2b
+
+# 56.3 exit N in END overrides exit status
+run_sash 'END { exit 42 }
+/bin/false'
+[[ $rc = 42 && -z $err ]]; chk 56.3
+
+# 56.4 without exit N, preserves triggering status
+run_sash 'END { echo cleanup }
+/bin/false'
+[[ $rc != 0 && $out == *"cleanup"* && -z $err ]]; chk 56.4
+
+# --- signal builtin ---
+
+# 56.5 signal IGN masks signal
+run_sash 'signal INT IGN
+/bin/kill -INT $$
+echo survived'
+[[ $rc = 0 && $out = "survived" && -z $err ]]; chk 56.5
+
+# 56.6 signal DFL restores default
+run_sash 'signal INT IGN
+signal INT DFL
 echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.4
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.6
 
-# 56.5 supported signals limited set
-run_sash 'trap : SIGKILL'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 56.5
+# 56.7 signal FLAG records without check points
+run_sash 'signal USR1 FLAG
+/bin/kill -USR1 $$
+echo $(signum)'
+[[ $rc = 0 && $out = "10" && -z $err ]]; chk 56.7
 
-# 56.6 both SIGTERM and TERM accepted
-run_sash 'trap : TERM; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.6a
+# 56.8 signal EXIT triggers END block
+run_sash 'END { echo shutting_down }
+signal TERM EXIT
+/bin/kill -TERM $$
+echo should_not_reach'
+[[ $rc != 0 && $out == *"shutting_down"* && $out != *"should_not_reach"* && -z $err ]]; chk 56.8
 
-run_sash 'trap : SIGTERM; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.6b
+# 56.9 check points at external commands
+run_sash 'END { echo caught }
+signal INT EXIT
+/bin/kill -INT $$
+/bin/echo after_kill'
+[[ $rc != 0 && $out == *"caught"* && $out != *"after_kill"* && -z $err ]]; chk 56.9
 
-# 56.8 trap - SIG removes trap
-run_sash 'trap : SIGINT; trap - SIGINT; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.8
+# 56.10 FLAG has zero overhead (no early exit)
+run_sash 'signal INT FLAG
+/bin/kill -INT $$
+echo still_here'
+[[ $rc = 0 && $out = "still_here" && -z $err ]]; chk 56.10
 
-# 56.9 flag-only traps add zero overhead
-run_sash 'trap : SIGINT; echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.9
+# 56.11 $(signum) returns signal number
+run_sash 'signal USR2 FLAG
+/bin/kill -USR2 $$
+int s=$(signum)
+echo $s'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 56.11
 
-# 56.10 check points before external commands and function calls
-run_sash 'trap exit SIGTERM; /bin/echo hello'
-[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 56.10
+# 56.12a SIGHUP accepted
+run_sash 'signal HUP IGN
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.12a
+
+# 56.12b SIGPIPE accepted
+run_sash 'signal PIPE IGN
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.12b
+
+# 56.13a both forms accepted
+run_sash 'signal SIGTERM IGN
+signal TERM IGN
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.13
+
+# 56.14 signal is a builtin (not resolved as external)
+run_sash 'signal INT IGN
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.14
+
+# --- converter ---
+
+# 57.14a trap "" SIG → signal SIG IGN
+run_convert '#!/bin/bash
+trap "" SIGINT'
+[[ $rc = 0 && $out == *'signal INT IGN'* && -z $err ]]; chk 57.14a
+
+# 57.14b trap - SIG → signal SIG DFL
+run_convert '#!/bin/bash
+trap - SIGTERM'
+[[ $rc = 0 && $out == *'signal TERM DFL'* && -z $err ]]; chk 57.14b
 
 set -e
 tally
-
-# --- DD#56 EXIT block (56.4, 56.11, 56.12, 56.13) ---
-
-# 56.11 EXIT trap executes exactly once
-run_sash 'int count=0
-trap exit EXIT
-(( count++ ))
-echo $count
-exit 0'
-[[ $rc = 0 && $out = "1" && -z $err ]]; chk 56.11
-
-# 56.4a reaching end of EXIT block terminates
-run_sash 'trap exit EXIT
-echo trap_ran'
-# program should exit after trap runs, not loop
-[[ $rc = 0 && $out = "trap_ran" && -z $err ]]; chk 56.4a
-
-# 56.4b return in EXIT block terminates (not re-enter)
-run_sash 'trap exit EXIT
-return
-echo should_not_reach'
-[[ $rc = 0 && $out != *"should_not_reach"* && -z $err ]]; chk 56.4b
-
-# 56.12 exit N overrides exit status
-run_sash '/bin/false
-trap exit EXIT
-exit 42'
-[[ $rc = 42 && -z $err ]]; chk 56.12
-
-# 56.13 without exit N, preserves triggering status
-run_sash 'trap exit EXIT
-/bin/false'
-[[ $rc != 0 && -z $err ]]; chk 56.13
-

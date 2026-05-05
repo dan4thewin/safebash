@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup convert
-plan=58
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -166,10 +166,7 @@ echo ${1} ${@} ${#}'
 
 # --- DD#57: Trap conversion ---
 
-# 57.14 trap "" SIG → trap : SIG
-run_convert '#!/bin/bash
-trap "" SIGINT'
-[[ $rc = 0 && $out == *'trap : SIGINT'* && $out != *'trap ""'* && -z $err ]]; chk 57.14
+# 57.14 moved to spec/signals.sh (57.14a, 57.14b)
 
 # --- DD#57: MANUAL annotations ---
 
