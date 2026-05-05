@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=20
+plan=22
 echo "1..$plan" >&3
 
 set +e
@@ -89,3 +89,14 @@ run_sash 'x="a b c"; echo $x'
 
 set -e
 tally
+
+# --- DD#30 numeric operators not valid sash-native ---
+
+# 30.6a -gt in [[ ]] is compile error
+run_sash 'int x=5; if [[ $x -gt 0 ]]; then echo yes; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 30.6a
+
+# 30.6b -eq in [[ ]] is compile error
+run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 30.6b
+

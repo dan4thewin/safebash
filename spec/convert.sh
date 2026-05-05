@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup convert
-plan=52
+plan=55
 echo "1..$plan" >&3
 
 set +e
@@ -326,3 +326,19 @@ rc=$?; out=$(<out); err=$(<err)
 
 set -e
 tally
+
+# --- DD#30 numeric comparison conversion ---
+
+# 30.5 convert [[ $x -gt N ]] to (( x > N ))
+run_convert '#!/bin/bash
+if [[ $x -gt 5 ]]; then echo yes; fi'
+[[ $rc = 0 && $out == *'(( x > 5 ))'* && -z $err ]]; chk 30.5a
+
+run_convert '#!/bin/bash
+if [[ $x -le 10 ]]; then echo yes; fi'
+[[ $rc = 0 && $out == *'(( x <= 10 ))'* && -z $err ]]; chk 30.5b
+
+run_convert '#!/bin/bash
+if [[ $x -eq 0 ]]; then echo yes; fi'
+[[ $rc = 0 && $out == *'(( x == 0 ))'* && -z $err ]]; chk 30.5c
+

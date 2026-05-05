@@ -1,7 +1,6 @@
 title: DD#30 — reject numeric comparisons in [[ ]], coerce to (( ))
 status: ready
 depends: []
-gates:
   - tests
   - commit
 
