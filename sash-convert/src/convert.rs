@@ -70,6 +70,9 @@ fn walk_node(
             )));
             let _ = text; // pass through unchanged
         }
+        "simple_expansion" => {
+            convert_simple_expansion(node, source, patches);
+        }
         "expansion" => {
             convert_expansion(node, source, patches, prefix_lines);
         }
@@ -316,6 +319,47 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
 }
 
 // ── Expansion conversions ─────────────────────────────────────
+
+fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+    // Convert positional parameters: $1 → $(argv 1), $@ → $(argv @), $# → $(argc), $0 → $(argv 0)
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        match child.kind() {
+            "variable_name" => {
+                let name = node_text(child, source);
+                // Check if it's a numeric positional parameter
+                if name.chars().all(|c| c.is_ascii_digit()) {
+                    let replacement = format!("$(argv {})", name);
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        replacement,
+                        prefix_line: None,
+                        original: None,
+                    });
+                }
+            }
+            "special_variable_name" => {
+                let name = node_text(child, source);
+                let replacement = match &*name {
+                    "@" | "*" => Some("$(argv @)".to_string()),
+                    "#" => Some("$(argc)".to_string()),
+                    _ => None,
+                };
+                if let Some(replacement) = replacement {
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        replacement,
+                        prefix_line: None,
+                        original: None,
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+}
 
 fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
     let text = node_text(node, source);
