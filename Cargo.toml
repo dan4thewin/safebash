@@ -1,3 +1,4 @@
 [workspace]
-members = ["sash", "sash-convert", "sash-rt", "sash-rt-tests", "sash-expand"]
+members = ["sash", "sash-convert", "sash-rt-tests", "sash-expand"]
+exclude = ["sash-rt"]
 resolver = "2"

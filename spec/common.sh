@@ -55,16 +55,16 @@ run_convert_annotate() {
 chk() {
     # shellcheck disable=SC2319 # assign $? - false positive
     local -i last_rc=$? expect=${2:-0}
-    local id=$1 msg
+    local id=$1 msg status
     (( index++ ))
     if (( last_rc == expect )); then
-        msg="ok"
+        msg="ok" status="passing"
     else
-        msg="not ok"
+        msg="not ok" status="failing"
         (( fail++ ))
     fi
     echo "$msg $index" >&3
     [[ ${SPEC_TSV:-} ]] || return
-    printf '%s\t%s\t' "$id" "$msg" >&4
+    printf '%s\t%s\t' "$id" "$status" >&4
     date -u -Iseconds | sed 's/+.*/Z/' >&4
 }
