@@ -3059,8 +3059,10 @@ fn test_v_unset() {
 
 #[test]
 fn test_pipeline_exit_status() {
-    let (out, _) = run_bash_native(r#"true | false; echo $?"#, &[]);
-    assert_eq!(out, "1\n");
+    // DD#55: pipefail + implicit exit check — `true | false` aborts, echo never runs
+    let (out, status) = run_bash_native(r#"true | false; echo $?"#, &[]);
+    assert_eq!(out, "");
+    assert_eq!(status, 1);
 }
 
 #[test]

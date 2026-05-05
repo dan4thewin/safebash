@@ -53,16 +53,14 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         }
     }
 
-    // DD#55: Mark commands in condition position as unchecked.
-    // A command is in condition position if it's the last Command in a block
-    // whose terminator is a Branch (the command's exit status drives the branch).
+    // DD#55: Mark commands/pipelines in condition position as unchecked.
     for block in ssa.blocks.values_mut() {
         if matches!(block.terminator, Terminator::Branch { .. }) {
-            // Find the last Command instruction and mark it unchecked
             for inst in block.insts.iter_mut().rev() {
-                if let SsaInst::Command { checked, .. } = inst {
-                    *checked = false;
-                    break;
+                match inst {
+                    SsaInst::Command { checked, .. } => { *checked = false; break; }
+                    SsaInst::Pipeline { checked, .. } => { *checked = false; break; }
+                    _ => {}
                 }
             }
         }
@@ -858,7 +856,7 @@ fn lower_one(
                         }
                     }
                     // Emit PipeIntoWhile: pipeline stages + while body
-                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true });
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
                     if is_mapfile {
                         // Lower the mapfile command, then patch fd to -1
                         block = lower_one(last, ssa, state, block);
@@ -896,7 +894,7 @@ fn lower_one(
                             }
                         }
                     }
-                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: false });
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: false, checked: true });
                 }
             } else {
                 for cmd in &p.commands {
@@ -1365,7 +1363,7 @@ fn lower_for(
                     }
                 }
                 // Emit pipeline with pipe capture
-                ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true });
+                ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
 
                 // Build a while-read loop over the pipe
                 let loop_var = &f.variable;

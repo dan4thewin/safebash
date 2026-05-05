@@ -2263,7 +2263,7 @@ fn lower_inst(
             }
             emit_restore(saved, builder, module, externs);
         }
-        SsaInst::Pipeline { stages, capture_read_fd } => {
+        SsaInst::Pipeline { stages, capture_read_fd, checked } => {
             for (_i, (_n, _, _r)) in stages.iter().enumerate() {
             }
             // N-stage pipeline: fork N children, wire pipes between them
@@ -2407,19 +2407,48 @@ fn lower_inst(
                 builder.def_var(pipe_read_fd_var, pipe_r);
             }
             // Wait for all children, capture last child's exit status
+            // DD#55.10: pipefail — track worst (first nonzero) exit status
+            let worst_var = builder.declare_var(I64);
+            let init_zero = builder.ins().iconst(I64, 0);
+            builder.def_var(worst_var, init_zero);
+
             for i in 0..n {
                 let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
                 let call = builder.ins().call(wait_ref, &[pid]);
                 let status = builder.inst_results(call)[0];
-                // $? = exit status of the last (rightmost) command
-                if i == n - 1 {
-                    builder.def_var(exit_status_var, status);
-                    // test_result: 1 if exit==0, 0 otherwise
-                    let zero = builder.ins().iconst(I64, 0);
-                    let ok = builder.ins().icmp(IntCC::Equal, status, zero);
-                    let tr = builder.ins().uextend(I64, ok);
-                    builder.def_var(test_result_var, tr);
-                }
+                // Update worst: if worst==0 && status!=0, worst=status
+                let cur_worst = builder.use_var(worst_var);
+                let zero = builder.ins().iconst(I64, 0);
+                let worst_is_zero = builder.ins().icmp(IntCC::Equal, cur_worst, zero);
+                let status_nonzero = builder.ins().icmp(IntCC::NotEqual, status, zero);
+                let should_update = builder.ins().band(worst_is_zero, status_nonzero);
+                let new_worst = builder.ins().select(should_update, status, cur_worst);
+                builder.def_var(worst_var, new_worst);
+            }
+            // exit_status = worst (pipefail semantics)
+            let final_worst = builder.use_var(worst_var);
+            builder.def_var(exit_status_var, final_worst);
+            // test_result: 1 if exit==0, 0 otherwise
+            let zero2 = builder.ins().iconst(I64, 0);
+            let ok = builder.ins().icmp(IntCC::Equal, final_worst, zero2);
+            let tr = builder.ins().uextend(I64, ok);
+            builder.def_var(test_result_var, tr);
+
+            // DD#55: implicit exit check for pipelines
+            if *checked {
+                let abort_block = builder.create_block();
+                let cont_block = builder.create_block();
+                let failed = builder.ins().icmp(IntCC::NotEqual, final_worst, zero2);
+                builder.ins().brif(failed, abort_block, &[], cont_block, &[]);
+
+                builder.switch_to_block(abort_block);
+                builder.seal_block(abort_block);
+                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                builder.ins().call(exit_ref, &[final_worst]);
+                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+                builder.switch_to_block(cont_block);
+                builder.seal_block(cont_block);
             }
         }
         SsaInst::Bless { source, target, test } => {

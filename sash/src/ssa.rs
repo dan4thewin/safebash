@@ -128,6 +128,8 @@ pub enum SsaInst {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
         /// If true, the last pipe read fd is saved for a subsequent while-read loop
         capture_read_fd: bool,
+        /// DD#55: if true, nonzero aggregate status aborts
+        checked: bool,
     },
     /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
