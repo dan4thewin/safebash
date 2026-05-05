@@ -581,7 +581,9 @@ fn inject_bless_hints(
 
 fn add_sc2086_hints(findings: &[ScFinding], prefix_lines: &mut Vec<(usize, String)>) {
     for f in findings {
-        if f.code == 2086 {
+        // SC2086: double quote to prevent globbing/word splitting
+        // SC2248: prefer double quoting (optional check, supersedes SC2086 for simple cases)
+        if f.code == 2086 || f.code == 2248 {
             prefix_lines.push((f.line.saturating_sub(1), format!(
                 "# CHECK: unquoted variable (SC2086) — word splitting won't occur in sash. Was splitting intended?"
             )));
