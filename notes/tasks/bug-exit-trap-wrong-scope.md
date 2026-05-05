@@ -1,6 +1,7 @@
 title: BUG — EXIT trap fires on function returns, not before exit
 status: ready
 severity: bug
+gates: [56.4a, 56.4b, 56.11, 56.12, 56.13]
 depends: []
 gates:
   - tests
