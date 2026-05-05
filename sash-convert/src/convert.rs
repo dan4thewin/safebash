@@ -73,6 +73,10 @@ fn walk_node(
         "expansion" => {
             convert_expansion(node, source, patches, prefix_lines);
         }
+        "for_statement" if node.child(0).map_or(false, |c| c.kind() == "select") => {
+            let line = node.start_position().row;
+            prefix_lines.push((line, "# MANUAL: select — not supported in sash, rewrite as while+read menu".into()));
+        }
         "process_substitution" => {
             let line = node.start_position().row;
             prefix_lines.push((line, "# MANUAL: process substitution <()/>() not supported in sash".into()));
