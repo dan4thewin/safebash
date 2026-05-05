@@ -58,6 +58,9 @@ fn walk_node(
         "command" => {
             convert_command(node, source, patches, prefix_lines, annotate);
         }
+        "unset_command" => {
+            convert_unset_command(node, source, patches);
+        }
         "test_command" => {
             convert_test_command(node, source, patches);
         }
@@ -213,6 +216,26 @@ fn convert_declaration(node: Node, source: &[u8], patches: &mut Vec<Patch>, pref
 }
 
 // ── Command conversions ───────────────────────────────────────
+
+fn convert_unset_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+    // unset var → var=""
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "variable_name" {
+            let var_name = node_text(child, source);
+            let original = node_text(node, source).to_string();
+            let replacement = format!("{}=\"\"", var_name);
+            patches.push(Patch {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement,
+                prefix_line: None,
+                original: Some(original),
+            });
+            break;
+        }
+    }
+}
 
 fn convert_command(
     node: Node,

@@ -324,8 +324,6 @@ sash .converted.sash -o .binary 2>>err
 rc=$?; out=$(<out); err=$(<err)
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 57.41
 
-set -e
-tally
 
 # --- DD#30 numeric comparison conversion ---
 
@@ -351,3 +349,6 @@ x=hello
 unset x'
 [[ $rc = 0 && $out == *'x=""'* && -z $err ]]; chk 30.7
 
+
+set -e
+tally
