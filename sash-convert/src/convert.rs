@@ -264,6 +264,35 @@ fn convert_command(
             prefix_lines.push((line, "# MANUAL: coproc — not supported in sash".into()));
         }
 
+        // Mechanical: trap "" SIG → trap : SIG (empty-string traps become no-op)
+        "trap" => {
+            let mut cursor = node.walk();
+            let args: Vec<Node> = node.children(&mut cursor)
+                .filter(|c| c.is_named() && *c != name_node)
+                .collect();
+            // Look for trap with a first argument that is an empty string literal
+            if let Some(first_arg) = args.first() {
+                let arg_text = node_text(*first_arg, source);
+                if arg_text == "\"\"" || arg_text == "''" {
+                    // Collect signal names (remaining args)
+                    let sigs: Vec<&str> = args[1..].iter()
+                        .map(|a| node_text(*a, source))
+                        .collect();
+                    if !sigs.is_empty() {
+                        let original = node_text(node, source).to_string();
+                        let replacement = format!("trap : {}", sigs.join(" "));
+                        patches.push(Patch {
+                            start: node.start_byte(),
+                            end: node.end_byte(),
+                            replacement,
+                            prefix_line: None,
+                            original: Some(original),
+                        });
+                    }
+                }
+            }
+        }
+
         _ => {}
     }
 }
