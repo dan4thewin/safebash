@@ -34,11 +34,13 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
 
     let exit = lower_stmts(&program.statements, &mut ssa, &mut state, entry);
 
-    // If an EXIT trap was registered, inline its body before every Return
+    // If an EXIT trap was registered, inline its body before main program exit points only
+    // (not function returns — those are trampoline gotos per DD#27)
     if let Some(trap_stmts) = state.exit_trap.take() {
-        // Collect all blocks that have Return terminators
+        // The main exit block and any explicit exit-builtin blocks
+        // Functions have labels starting with "fn_" — skip those
         let return_blocks: Vec<usize> = ssa.blocks.iter()
-            .filter(|(_, b)| b.terminator == Terminator::Return)
+            .filter(|(_, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_"))
             .map(|(&id, _)| id)
             .collect();
         for block_id in return_blocks {
