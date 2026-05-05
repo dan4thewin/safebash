@@ -26,6 +26,15 @@ impl Rule for GlobRestricted {
             return vec![];
         }
 
+        // Check for ** globstar (but not single *)
+        if text.contains("**") && !text.starts_with("${") {
+            return vec![Diagnostic::error(
+                node,
+                "SB5006",
+                format!("** globstar is not supported in sash — only * is allowed: {}", text),
+            )];
+        }
+
         // Check for ? glob (but not in ${var?...} or ${var:?...})
         if text.contains('?') && !text.starts_with("${") {
             return vec![Diagnostic::error(
