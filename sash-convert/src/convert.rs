@@ -524,6 +524,41 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
 fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
     let text = node_text(node, source);
 
+    // ${1}, ${2}, etc. → $(argv N); ${@} → $(argv @); ${#} → $(argc)
+    if text.starts_with("${") && text.ends_with('}') {
+        let inner = &text[2..text.len()-1];
+        if inner.chars().all(|c| c.is_ascii_digit()) {
+            patches.push(Patch {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement: format!("$(argv {})", inner),
+                prefix_line: None,
+                original: None,
+            });
+            return;
+        }
+        if inner == "@" || inner == "*" {
+            patches.push(Patch {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement: "$(argv @)".to_string(),
+                prefix_line: None,
+                original: None,
+            });
+            return;
+        }
+        if inner == "#" {
+            patches.push(Patch {
+                start: node.start_byte(),
+                end: node.end_byte(),
+                replacement: "$(argc)".to_string(),
+                prefix_line: None,
+                original: None,
+            });
+            return;
+        }
+    }
+
     // ${var-x} → ${var:-x}  (but not ${var:-x} which already has the colon)
     // The expansion node text includes ${ and }
     // Look for pattern: ${NAME-default} where there's no : before the -
