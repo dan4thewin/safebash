@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup convert
-plan=57
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -123,7 +123,13 @@ run_convert '#!/bin/bash
 run_convert '#!/bin/bash
 x=hello
 echo $x'
-[[ $rc = 0 && $out == *'# CHECK:'*'SC2086'* && -z $err ]]; chk 57.31
+[[ $rc = 0 && $out == *'# CHECK:'*'SC2086'* && -z $err ]]; chk 57.31a
+
+# 57.31b SC2248 also triggers CHECK hint
+run_convert '#!/bin/bash
+x=hello
+y=$x'
+[[ $rc = 0 && $out == *'# CHECK:'* && -z $err ]]; chk 57.31b
 
 # 57.32 shellcheck-unclean input still converts successfully
 run_convert '#!/bin/bash
