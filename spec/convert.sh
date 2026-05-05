@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup convert
-plan=56
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -152,6 +152,11 @@ diff -q .converted.sash .extracted.sash > /dev/null 2>&1
 run_convert '#!/bin/bash
 echo $1'
 [[ $rc = 0 && $out == *'$(argv 1)'* && -z $err ]]; chk 57.13
+
+# 57.13b ${1} → $(argv 1), ${@} → $(argv @), ${#} → $(argc)
+run_convert '#!/bin/bash
+echo ${1} ${@} ${#}'
+[[ $rc = 0 && $out == *'$(argv 1)'* && $out == *'$(argv @)'* && $out == *'$(argc)'* && -z $err ]]; chk 57.13b
 
 # --- DD#57: Trap conversion ---
 
