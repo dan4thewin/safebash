@@ -151,7 +151,7 @@ diff -q .converted.sash .extracted.sash > /dev/null 2>&1
 # 57.13 $1 → $(argv 1)
 run_convert '#!/bin/bash
 echo $1'
-[[ $rc = 0 && $out == *'$(argv 1)'* && -z $err ]]; chk 57.13
+[[ $rc = 0 && $out == *'$(argv 1)'* && -z $err ]]; chk 57.13a
 
 # 57.13b ${1} → $(argv 1), ${@} → $(argv @), ${#} → $(argc)
 run_convert '#!/bin/bash
