@@ -84,6 +84,9 @@ fn walk_node(
             let line = node.start_position().row;
             prefix_lines.push((line, "# MANUAL: process substitution <()/>() not supported in sash".into()));
         }
+        "command_substitution" => {
+            convert_backtick_substitution(node, source, patches);
+        }
         _ => {}
     }
 
@@ -577,6 +580,18 @@ fn has_descendant_kind(node: Node, kind: &str) -> bool {
         }
     }
     false
+}
+
+fn convert_backtick_substitution(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+    // Only convert backtick-style command substitutions, not $() ones
+    let text = node_text(node, source);
+    if text.starts_with('`') && text.ends_with('`') {
+        let start = node.start_byte();
+        let end = node.end_byte();
+        // Replace opening backtick with $(
+        patches.push(Patch { start, end: start + 1, replacement: "$(".to_string(), prefix_line: None, original: None });
+        patches.push(Patch { start: end - 1, end, replacement: ")".to_string(), prefix_line: None, original: None });
+    }
 }
 
 fn extract_command_name(node: Node, source: &[u8]) -> Option<String> {
