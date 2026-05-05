@@ -1,7 +1,7 @@
 title: sash compiler — strip bash concerns
 status: ready
 severity: feature
-gates: spec/compiler.sh 57.44 57.45 57.46
+gates: [57.44, 57.45, 57.46]
 ---
 
 Phase 2 of DD#57 split experiment.

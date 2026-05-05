@@ -1,7 +1,7 @@
 title: sash-convert — remaining mechanical conversions
 status: ready
 severity: feature
-gates: spec/convert.sh 57.5 57.6 57.10 57.13 57.14
+gates: [57.5, 57.6, 57.10, 57.13, 57.14]
 ---
 
 Phase 1 of DD#57 split experiment.
