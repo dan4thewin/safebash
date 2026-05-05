@@ -91,6 +91,9 @@ fn walk_node(
             }
             convert_backtick_substitution(node, source, patches);
         }
+        "variable_assignment" => {
+            convert_arith_side_effect(node, source, patches, prefix_lines);
+        }
         _ => {}
     }
 
@@ -442,6 +445,58 @@ fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix
             prefix_lines.push((line, "# MANUAL: ${var@X} parameter transformation not supported in sash — use ${var^^}/${var,,} for case".into()));
         }
     }
+}
+
+// ── Arithmetic side-effect extraction (DD#57) ─────────────────
+
+/// If a variable_assignment has an arithmetic_expansion whose inner expression
+/// contains an assignment (e.g. `y=$((x=10))`), extract the side-effect as a
+/// separate `(( x=10 ))` statement on the preceding line and leave the variable
+/// assigned to the result.
+fn convert_arith_side_effect(
+    node: Node,
+    source: &[u8],
+    _patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "arithmetic_expansion" {
+            // Get the inner text between $(( and ))
+            let full = node_text(child, source);
+            if let Some(inner) = full.strip_prefix("$((").and_then(|s| s.strip_suffix("))")) {
+                let inner = inner.trim();
+                // Check if it contains an assignment (= but not == or != or <= or >=)
+                if contains_arith_assignment(inner) {
+                    let line = node.start_position().row;
+                    prefix_lines.push((line, format!("(( {} ))", inner)));
+                }
+            }
+        }
+    }
+}
+
+/// Check if an arithmetic expression contains an assignment operator.
+/// Must distinguish `=` from `==`, `!=`, `<=`, `>=`.
+fn contains_arith_assignment(expr: &str) -> bool {
+    let bytes = expr.as_bytes();
+    for i in 0..bytes.len() {
+        if bytes[i] == b'=' {
+            // Check it's not ==, !=, <=, >=
+            let prev = if i > 0 { bytes[i - 1] } else { 0 };
+            let next = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
+            if next == b'=' { continue; } // == 
+            if prev == b'!' || prev == b'<' || prev == b'>' { continue; } // !=, <=, >=
+            // Also skip +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+            if prev == b'+' || prev == b'-' || prev == b'*' || prev == b'/' ||
+               prev == b'%' || prev == b'&' || prev == b'|' || prev == b'^' {
+                // These are compound assignments — still side effects, include them
+                return true;
+            }
+            return true;
+        }
+    }
+    false
 }
 
 // ── Bless injection ───────────────────────────────────────────
