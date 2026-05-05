@@ -305,11 +305,46 @@ fn convert_command(
 
 // ── Test command conversion: [ ] → [[ ]] ─────────────────────
 
+/// Strip unnecessary double-quotes around `$var` / `${var}` in test expressions.
+/// In `[[ ]]`, word splitting doesn't apply, so quoting simple variable
+/// references is unnecessary.  This produces idiomatic `[[ $var ... ]]`.
+fn strip_unnecessary_quotes(inner: &str) -> String {
+    let mut result = String::with_capacity(inner.len());
+    let chars: Vec<char> = inner.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '"' {
+            // Look ahead: is this "...$var..." or just "$var"?
+            if let Some(close) = chars[i + 1..].iter().position(|&c| c == '"') {
+                let close = i + 1 + close;
+                let quoted: String = chars[i + 1..close].iter().collect();
+                // Only strip if the entire quoted content is a single $var or ${var}
+                let is_simple_var = quoted.starts_with('$')
+                    && quoted[1..].chars().all(|c| c.is_alphanumeric() || c == '_' || c == '{' || c == '}');
+                if is_simple_var {
+                    result.push_str(&quoted);
+                    i = close + 1;
+                    continue;
+                }
+            }
+            result.push(chars[i]);
+            i += 1;
+        } else {
+            result.push(chars[i]);
+            i += 1;
+        }
+    }
+    result
+}
+
 fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
     let text = node_text(node, source);
     // Only convert [ ... ] to [[ ... ]], not already [[ ... ]]
     if text.starts_with("[ ") && text.ends_with(" ]") && !text.starts_with("[[ ") {
         let inner = &text[2..text.len() - 2];
+        // In [[ ]], quoting around simple $var is unnecessary — strip it
+        // to produce idiomatic [[ ]] syntax.
+        let inner = strip_unnecessary_quotes(inner);
         let replacement = format!("[[ {} ]]", inner);
         patches.push(Patch {
             start: node.start_byte(),
