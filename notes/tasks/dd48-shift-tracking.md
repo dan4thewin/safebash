@@ -1,7 +1,7 @@
 title: Positional arity checking with shift tracking
 status: ready
 severity: correctness
-gates: [48.2]
+gates: [48.1, 48.2]
 ---
 
 DD#48: compiler tracks cumulative shift count when detecting
