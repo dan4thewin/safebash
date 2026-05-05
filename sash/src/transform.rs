@@ -53,6 +53,21 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         }
     }
 
+    // DD#55: Mark commands in condition position as unchecked.
+    // A command is in condition position if it's the last Command in a block
+    // whose terminator is a Branch (the command's exit status drives the branch).
+    for block in ssa.blocks.values_mut() {
+        if matches!(block.terminator, Terminator::Branch { .. }) {
+            // Find the last Command instruction and mark it unchecked
+            for inst in block.insts.iter_mut().rev() {
+                if let SsaInst::Command { checked, .. } = inst {
+                    *checked = false;
+                    break;
+                }
+            }
+        }
+    }
+
     // Ensure exit block terminates with Return
     ssa.block_mut(exit).terminator = Terminator::Return;
 
@@ -322,6 +337,7 @@ fn lower_one(
                     name: name.clone(),
                     args,
                     redirects: vec![],
+                    checked: true,
                 });
                 return block;
             }
@@ -450,7 +466,7 @@ fn lower_one(
                         let trap_stmts = crate::lower::lower_body(tree.root_node(), body_clean.as_bytes());
                         state.exit_trap = Some(trap_stmts);
                         return block;
-                    } else if body_str.is_empty() || body_str == "-" {
+                    } else if body_str.is_empty() || body_str == "''" || body_str == "\"\"" || body_str == "-" {
                         // trap '' SIG or trap - SIG → ignore/reset
                         let signum = match signal.as_str() {
                             "INT" | "SIGINT" | "2" => 2,
@@ -462,7 +478,7 @@ fn lower_one(
                             _ => 0,
                         };
                         if signum > 0 {
-                            let handler = if body_str.is_empty() { 1i64 } else { 0i64 }; // SIG_IGN=1, SIG_DFL=0
+                            let handler = if body_str == "-" { 0i64 } else { 1i64 }; // SIG_DFL=0, SIG_IGN=1
                             ssa.block_mut(block).insts.push(SsaInst::Command {
                                 name: "__trap_signal".to_string(),
                                 args: vec![
@@ -470,6 +486,7 @@ fn lower_one(
                                     SsaValue::Literal(handler.to_string()),
                                 ],
                                 redirects: vec![],
+                    checked: true,
                             });
                         }
                         return block;
@@ -481,6 +498,7 @@ fn lower_one(
                     name: name.clone(),
                     args,
                     redirects: vec![],
+                    checked: true,
                 });
                 return block;
             }
@@ -530,6 +548,7 @@ fn lower_one(
                         name: "__let_exit".to_string(),
                         args: vec![SsaValue::Var(target_ref)],
                         redirects: vec![],
+                    checked: true,
                     });
                 }
                 return block;
@@ -564,6 +583,7 @@ fn lower_one(
                             name: "__table_delete".to_string(),
                             args: vec![SsaValue::Var(arr_ref), key_val],
                             redirects: vec![],
+                    checked: true,
                         });
                     } else {
                         // Plain variable unset → assign empty string (or empty table for arrays)
@@ -709,6 +729,7 @@ fn lower_one(
                         name: "__redirect_push".to_string(),
                         args: vec![],
                         redirects: func_redirs.clone(),
+                    checked: true,
                     });
                 }
 
@@ -725,6 +746,7 @@ fn lower_one(
                         name: "__redirect_pop".to_string(),
                         args: vec![],
                         redirects: vec![],
+                    checked: true,
                     });
                 }
 
@@ -761,6 +783,7 @@ fn lower_one(
                 name,
                 args,
                 redirects: Vec::new(),
+                    checked: true,
             });
             block
         }
@@ -885,6 +908,7 @@ fn lower_one(
                     name: "__negate_test_result".to_string(),
                     args: vec![],
                     redirects: vec![],
+                    checked: true,
                 });
             }
             block
@@ -930,6 +954,7 @@ fn lower_one(
                         name: "__subshell".to_string(),
                         args: vec![],
                         redirects: vec![],
+                    checked: true,
                     });
                     ssa.block_mut(block).terminator = Terminator::Branch {
                         condition: "__fork_pid".to_string(),
@@ -943,6 +968,7 @@ fn lower_one(
                         name: "__store_bg_pid".to_string(),
                         args: vec![SsaValue::Var(bg_target)],
                         redirects: vec![],
+                    checked: true,
                     });
 
                     // Child: run the command then _exit
@@ -988,12 +1014,14 @@ fn lower_one(
                     name: "__redirect_push".to_string(),
                     args: vec![],
                     redirects: r.redirects.clone(),
+                    checked: true,
                 });
                 let result_block = lower_one(&r.body, ssa, state, block);
                 ssa.block_mut(result_block).insts.push(SsaInst::Command {
                     name: "__redirect_pop".to_string(),
                     args: vec![],
                     redirects: r.redirects.clone(),
+                    checked: true,
                 });
                 result_block
             } else {
@@ -1043,6 +1071,7 @@ fn lower_one(
                 name: "__subshell".to_string(),
                 args: vec![],
                 redirects: vec![],
+                    checked: true,
             });
             // Branch: parent (pid>0) → after, child (pid==0) → body
             ssa.block_mut(block).terminator = Terminator::Branch {
@@ -1056,6 +1085,7 @@ fn lower_one(
                 name: "__subshell_wait".to_string(),
                 args: vec![],
                 redirects: vec![],
+                    checked: true,
             });
 
             // Snapshot SSA state — child modifications don't affect parent

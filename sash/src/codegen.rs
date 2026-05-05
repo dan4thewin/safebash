@@ -1308,9 +1308,9 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
             if !block_terminated {
             match &ssa_block.terminator {
                 Terminator::Return => {
-                    let zero = builder.ins().iconst(I64, 0);
+                    let status = builder.use_var(exit_status_var);
                     let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                    builder.ins().call(exit_ref, &[zero]);
+                    builder.ins().call(exit_ref, &[status]);
                     builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
                 }
                 Terminator::Goto(target) => {
@@ -1978,10 +1978,30 @@ fn lower_inst(
             }
             emit_restore(restore, builder, module, externs);
         }
-        SsaInst::Command { name, args, redirects, .. } => {
+        SsaInst::Command { name, args, redirects, checked, .. } => {
             let restore = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             lower_exec(name, args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
             emit_restore(restore, builder, module, externs);
+
+            // DD#55: implicit exit check — abort if nonzero
+            if *checked {
+                let status = builder.use_var(exit_status_var);
+                let zero = builder.ins().iconst(I64, 0);
+                let failed = builder.ins().icmp(IntCC::NotEqual, status, zero);
+
+                let abort_block = builder.create_block();
+                let cont_block = builder.create_block();
+                builder.ins().brif(failed, abort_block, &[], cont_block, &[]);
+
+                builder.switch_to_block(abort_block);
+                builder.seal_block(abort_block);
+                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                builder.ins().call(exit_ref, &[status]);
+                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+                builder.switch_to_block(cont_block);
+                builder.seal_block(cont_block);
+            }
         }
         SsaInst::Phi(_) => {}
         SsaInst::SubscriptAssign { array, index, value, is_integer_key } => {

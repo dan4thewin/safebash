@@ -1239,13 +1239,15 @@ echo "$?"
 
 #[test]
 fn exit_status_command() {
-    let (output, _) = run_bash_native(r#"
+    // DD#55: /bin/false aborts, so only the first echo $? (after /bin/true) runs
+    let (output, status) = run_bash_native(r#"
 /bin/true
 echo "$?"
 /bin/false
 echo "$?"
 "#, &[]);
-    assert_eq!(output, "0\n1\n");
+    assert_eq!(output, "0\n");
+    assert_eq!(status, 1); // aborted by /bin/false
 }
 
 #[test]

@@ -64,6 +64,9 @@ pub enum SsaInst {
         name: String,
         args: Vec<SsaValue>,
         redirects: Vec<crate::ir::Redirect>,
+        /// If true, nonzero exit status aborts the program (DD#55).
+        /// False for commands in condition position (if/while/&&/||).
+        checked: bool,
     },
     /// Test expression from [[ ]]. Preserved through SSA so codegen
     /// can emit inline comparisons instead of shelling out.
