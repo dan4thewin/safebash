@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=19
+plan=21
 echo "1..$plan" >&3
 
 set +e
@@ -80,3 +80,14 @@ run_sash 'int x=5; (( x > 0 ))'
 
 set -e
 tally
+
+# --- DD#25 overflow ---
+
+# 25.2 overflow aborts, not suppressible
+run_sash '- int x=9223372036854775807; (( x += 1 )); echo $x'
+[[ $rc != 0 && $out != *"9223372036854775807"* && -z $err ]]; chk 25.2
+
+# 25.3 overflow message identifies the operation
+run_sash 'int x=9223372036854775807; (( x += 1 ))'
+[[ $rc != 0 && -n $err && $err == *"overflow"* ]]; chk 25.3
+
