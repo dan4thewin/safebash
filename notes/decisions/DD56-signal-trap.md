@@ -10,17 +10,27 @@ it via `$(signum)` (keyword, like `argv`/`getenv`). Default value is 0
 
 ## signal builtin
 
-`signal` is a sash builtin (not an external command). Four dispositions:
+`signal` is a sash builtin. Takes a signal **number** (int) and a disposition.
 
 | Form | Behavior |
 |------|----------|
-| `signal SIG IGN` | OS masks signal (SIG_IGN). Invisible, zero cost. |
-| `signal SIG DFL` | Restore kernel default disposition. |
-| `signal SIG FLAG` | Set `signum`, program resumes. Programmer polls. Zero overhead. |
-| `signal SIG EXIT` | Flag + compiler inserts check points. At next check, jump to END. |
+| `signal N IGN` | OS masks signal (SIG_IGN). Invisible, zero cost. |
+| `signal N DFL` | Restore kernel default disposition. |
+| `signal N FLAG` | Set `signum`, program resumes. Programmer polls. Zero overhead. |
+| `signal N EXIT` | Flag + compiler inserts check points. At next check, jump to END. |
 
-Leading `SIG` prefix is optional: `signal SIGTERM EXIT` and `signal TERM EXIT`
-are equivalent.
+The compiler does not know signal names. Users may use GPP macros for
+readability:
+
+```bash
+#define INT 2
+#define TERM 15
+signal INT EXIT
+signal TERM EXIT
+```
+
+Sash ships an optional `signals.h` with standard POSIX mappings.
+The converter emits numeric literals directly.
 
 ## END block
 
@@ -120,8 +130,8 @@ get implicit exit checks. A failed command aborts END and calls
 
 | Bash | Sash-native |
 |------|-------------|
-| `trap "" SIG` | `signal SIG IGN` |
-| `trap - SIG` | `signal SIG DFL` |
-| `trap : SIG` | `signal SIG FLAG` |
+| `trap "" SIG` | `signal N IGN` |
+| `trap - SIG` | `signal N DFL` |
+| `trap : SIG` | `signal N FLAG` |
 | `trap handler SIG` | MANUAL (arbitrary handler bodies not supported) |
 | `trap handler EXIT` | MANUAL: restructure as `END { ... }` |

@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=18
+plan=17
 setup signals
 
 set +e
@@ -36,82 +36,76 @@ run_sash 'END { echo cleanup }
 # --- signal builtin ---
 
 # 56.5 signal IGN masks signal
-run_sash 'signal INT IGN
+run_sash 'signal 2 IGN
 /bin/kill -INT $$
 echo survived'
 [[ $rc = 0 && $out = "survived" && -z $err ]]; chk 56.5
 
 # 56.6 signal DFL restores default
-run_sash 'signal INT IGN
-signal INT DFL
+run_sash 'signal 2 IGN
+signal 2 DFL
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.6
 
 # 56.7 signal FLAG records without check points
-run_sash 'signal USR1 FLAG
+run_sash 'signal 10 FLAG
 /bin/kill -USR1 $$
 echo $(signum)'
 [[ $rc = 0 && $out = "10" && -z $err ]]; chk 56.7
 
 # 56.8 signal EXIT triggers END block
 run_sash 'END { echo shutting_down }
-signal TERM EXIT
+signal 15 EXIT
 /bin/kill -TERM $$
 echo should_not_reach'
 [[ $rc != 0 && $out == *"shutting_down"* && $out != *"should_not_reach"* && -z $err ]]; chk 56.8
 
 # 56.9 check points at external commands
 run_sash 'END { echo caught }
-signal INT EXIT
+signal 2 EXIT
 /bin/kill -INT $$
 /bin/echo after_kill'
 [[ $rc != 0 && $out == *"caught"* && $out != *"after_kill"* && -z $err ]]; chk 56.9
 
 # 56.10 FLAG has zero overhead (no early exit)
-run_sash 'signal INT FLAG
+run_sash 'signal 2 FLAG
 /bin/kill -INT $$
 echo still_here'
 [[ $rc = 0 && $out = "still_here" && -z $err ]]; chk 56.10
 
 # 56.11 $(signum) returns signal number
-run_sash 'signal USR2 FLAG
+run_sash 'signal 12 FLAG
 /bin/kill -USR2 $$
 int s=$(signum)
 echo $s'
 [[ $rc = 0 && $out = "12" && -z $err ]]; chk 56.11
 
 # 56.12a SIGHUP accepted
-run_sash 'signal HUP IGN
+run_sash 'signal 1 IGN
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.12a
 
 # 56.12b SIGPIPE accepted
-run_sash 'signal PIPE IGN
+run_sash 'signal 13 IGN
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.12b
 
-# 56.13a both forms accepted
-run_sash 'signal SIGTERM IGN
-signal TERM IGN
+# 56.13 signal takes numeric argument
+run_sash 'signal 15 IGN
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.13
-
-# 56.14 signal is a builtin (not resolved as external)
-run_sash 'signal INT IGN
-echo ok'
-[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.14
 
 # --- converter ---
 
 # 57.14a trap "" SIG → signal SIG IGN
 run_convert '#!/bin/bash
 trap "" SIGINT'
-[[ $rc = 0 && $out == *'signal INT IGN'* && -z $err ]]; chk 57.14a
+[[ $rc = 0 && $out == *'signal 2 IGN'* && -z $err ]]; chk 57.14a
 
-# 57.14b trap - SIG → signal SIG DFL
+# 57.14b trap - SIG → signal N DFL
 run_convert '#!/bin/bash
 trap - SIGTERM'
-[[ $rc = 0 && $out == *'signal TERM DFL'* && -z $err ]]; chk 57.14b
+[[ $rc = 0 && $out == *'signal 15 DFL'* && -z $err ]]; chk 57.14b
 
 set -e
 tally
