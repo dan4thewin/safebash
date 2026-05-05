@@ -10,4 +10,5 @@ Phase 1 of DD#57 split experiment.
 - [ ] → [[ ]] conversion (57.6)
 - $((x=10)) extraction to ((x=10)) (57.10)
 - Top-level positional $1 → $(argv 1) (57.13)
-- trap "" SIG → trap : SIG (57.14a, 57.14b)
+- trap "" SIG → signal SIG IGN (57.14a)
+- trap - SIG → signal SIG DFL (57.14b)

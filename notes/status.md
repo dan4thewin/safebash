@@ -28,8 +28,8 @@ to implementation:
 - **BUG: EXIT trap wrong scope** (bug-exit-trap-wrong-scope)
 - **DD#55 error model** (4 tasks: implicit checks, `-` prefix,
   `$?` scoping, non-void functions)
-- **DD#56 signal/trap model** (4 tasks: signum keyword, flag traps,
-  exiting traps, EXIT block rework)
+- **DD#56 signal model (4 tasks: signum keyword, signal FLAG,
+  signal EXIT, END block)
 - **DD#31 arithmetic refinement** (disjoint contexts, mutation
   rejection, operand type checking)
 - **Taint clean list review** (review-taint-clean-list)
@@ -49,7 +49,7 @@ DD audit triage complete. All audit tasks resolved.
 - **DD#55**: Error handling model — implicit exit checks, `-` suppression,
   `$?` scoping, void/non-void functions, background process rules
 - **DD#56**: Signal/trap model — flag-setting traps, `signum` keyword,
-  `trap :` (flag) vs `trap exit` (exiting), EXIT block dispatch
+  `signal builtin (IGN/DFL/FLAG/EXIT), END block, signum keyword
 
 ### DD amendments
 - **DD#31**: Postfix ++/-- only (Go rule), comma operator desugaring,
@@ -60,8 +60,8 @@ DD audit triage complete. All audit tasks resolved.
   runtime precompilation of literal patterns
 
 ### Bug found
-- EXIT trap inlined before every Return (fires on function returns,
-  misses `exit` builtin). Filed bug-exit-trap-wrong-scope.
+- END block: current impl inlines before every Return (fires on function returns,
+  misses `exit` builtin). Filed bug-exit-trap-wrong-scope. DD#56 redesign fixes this.
 
 ### Docs
 - README first section rewritten (compiler as specification, facts
@@ -74,7 +74,7 @@ DD audit triage complete. All audit tasks resolved.
 ### New tasks (~15)
 - dd55-implicit-exit-checks, dd55-suppress-prefix,
   dd55-dollar-question-scoping, dd55-nonvoid-functions
-- dd56-signum-keyword, dd56-flag-traps, dd56-exiting-traps,
+- dd56-signum-keyword, dd56-flag-traps, dd56-exiting-traps, dd56-exit-block-rework,
   dd56-exit-block-rework
 - bug-exit-trap-wrong-scope
 - dd25-overflow-recovery-model

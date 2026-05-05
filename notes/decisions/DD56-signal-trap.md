@@ -1,30 +1,35 @@
-title: DD#56 — Signal and Trap Model
+title: DD#56 — Signal Model: END block + signal builtin
 status: designed
 
 ## Mechanism
 
-All signal traps are flag-setting. When a signal arrives, the runtime
+All signal handling is flag-based. When a signal arrives, the runtime
 atomically writes the signal number to a global int. The program reads
 it via `$(signum)` (keyword, like `argv`/`getenv`). Default value is 0
 (no signal received).
 
-Two trap forms:
+## signal builtin
+
+`signal` is a sash builtin (not an external command). Four dispositions:
 
 | Form | Behavior |
 |------|----------|
-| `trap : SIG` | Flag only. Sets `signum`, program resumes. Programmer polls. |
-| `trap exit SIG` | Flag + compiler inserts checks. When check fires, jumps to EXIT block. |
+| `signal SIG IGN` | OS masks signal (SIG_IGN). Invisible, zero cost. |
+| `signal SIG DFL` | Restore kernel default disposition. |
+| `signal SIG FLAG` | Set `signum`, program resumes. Programmer polls. Zero overhead. |
+| `signal SIG EXIT` | Flag + compiler inserts check points. At next check, jump to END. |
 
-## EXIT block
+Leading `SIG` prefix is optional: `signal SIGTERM EXIT` and `signal TERM EXIT`
+are equivalent.
 
-The EXIT block is the universal cleanup path. It handles normal exit
-(signal 0) and all exiting traps. The programmer dispatches explicitly:
+## END block
+
+`END` is a top-level declaration (exactly one per program). It executes
+immediately before process exit — from any cause (normal exit, `exit`
+builtin, or signal-triggered shutdown).
 
 ```bash
-trap exit SIGTERM
-trap exit SIGINT
-
-trap EXIT {
+END {
     case $(signum) in
         15) echo "terminated"; rm "$lockfile"; exit 143 ;;
         2)  echo "interrupted"; exit 130 ;;
@@ -33,24 +38,26 @@ trap EXIT {
 }
 ```
 
-Every code path in the EXIT block must end with `exit`. The EXIT
-block does not return.
+The END block does NOT return to the program. Reaching the end of the
+block, `return`, or `exit N` all terminate the process.
+
+- `exit N` within END overrides the process exit status.
+- Without explicit `exit N`, the process exits with the status that
+  triggered END.
 
 ## signum keyword
 
-`$(signum)` returns the signal number as an int. Compiler-managed —
-backed by a runtime global that the C signal handler writes to.
+`$(signum)` returns the most recent signal number as an int.
 
 - Before any signal: 0
-- After `trap : SIG` fires: signal number, stays set until
-  programmer clears with `(( signum = 0 ))`
-- In EXIT block: signal number that triggered exit (or 0 for
-  normal exit)
+- After `signal SIG FLAG` fires: signal number, stays set until
+  cleared with `(( signum = 0 ))`
+- In END block: signal that triggered exit (or 0 for normal exit)
 
-## Check insertion
+## Check point insertion
 
 The compiler inserts signal flag checks only when at least one
-`trap exit SIG` is declared. Check points:
+`signal SIG EXIT` is declared. Check points:
 
 - Before external commands
 - Before function calls
@@ -58,76 +65,63 @@ The compiler inserts signal flag checks only when at least one
 - At loop tops (while/for/until)
 
 At each check point: load `signum`, if nonzero and signal is in the
-exiting set, jump to EXIT block. If the exiting set changes during
-the program (a signal goes from `:` to `exit` or vice versa), checks
-adjust from that point forward.
+exiting set, jump to END block.
 
-Flag-only traps (`trap :`) add zero overhead — no checks inserted.
+FLAG traps add zero runtime overhead — no checks inserted.
 
-## Changing traps
+## Changing signal disposition
 
-A signal's trap can be changed at any point in the program:
+A signal's disposition can be changed at any point:
 
 ```bash
 # Critical section: ignore SIGINT
-trap : SIGINT
+signal INT IGN
 
 # ... work ...
 
-# Now make it fatal
-trap exit SIGINT
+# Now make it trigger shutdown
+signal INT EXIT
 ```
 
 Last declaration wins at that point in execution.
 
 ## Supported signals
 
-Curated set (same as current implementation):
-
 | Signal | Number |
 |--------|--------|
-| SIGHUP | 1 |
-| SIGINT | 2 |
-| SIGUSR1 | 10 |
-| SIGUSR2 | 12 |
-| SIGPIPE | 13 |
-| SIGTERM | 15 |
-
-Accept both forms: `SIGTERM` and `TERM`.
-
-`trap '' SIG` (bash ignore) coerced to `trap : SIG`.
-`trap - SIG` (bash reset) supported — removes trap, restores default.
+| HUP | 1 |
+| INT | 2 |
+| USR1 | 10 |
+| USR2 | 12 |
+| PIPE | 13 |
+| TERM | 15 |
 
 ## Runtime implementation
 
-Signal handler (C, async-signal-safe):
-```c
-volatile sig_atomic_t sash_signum = 0;
+Signal handler (Rust, async-signal-safe):
+```rust
+static SASH_SIGNUM: AtomicI64 = AtomicI64::new(0);
 
-void sash_signal_handler(int sig) {
-    sash_signum = sig;
+extern "C" fn sash_signal_handler(sig: c_int) {
+    SASH_SIGNUM.store(sig as i64, Ordering::Relaxed);
 }
 ```
 
 Registration via `sigaction(2)`. Flag check in generated code:
-load `sash_signum`, compare against exiting set, branch.
+load `SASH_SIGNUM`, compare against exiting set, branch to END.
 
 ## Interaction with DD#55
 
-EXIT block follows DD#55 error model. External commands inside the
-EXIT block get implicit exit checks. However, since the EXIT block
-must exit, a failed command aborts the exit handler — which calls
-`sash_exit` directly. The programmer can use `- cmd` to suppress
-failures during cleanup.
+END block follows DD#55 error model. External commands inside END
+get implicit exit checks. A failed command aborts END and calls
+`sash_exit` directly. Use `- cmd` to suppress failures during cleanup.
 
-## EXIT trap bug (current)
+## Converter mappings
 
-Current implementation inlines EXIT trap before every Return
-terminator (wrong — fires on function returns) and omits it before
-`exit` builtin. See bug-exit-trap-wrong-scope task.
-
-This DD supersedes the current implementation. The EXIT block is a
-single block, reached from:
-- Program's final exit path (signal 0)
-- `exit` builtin
-- Exiting trap check points
+| Bash | Sash-native |
+|------|-------------|
+| `trap "" SIG` | `signal SIG IGN` |
+| `trap - SIG` | `signal SIG DFL` |
+| `trap : SIG` | `signal SIG FLAG` |
+| `trap handler SIG` | MANUAL (arbitrary handler bodies not supported) |
+| `trap handler EXIT` | MANUAL: restructure as `END { ... }` |

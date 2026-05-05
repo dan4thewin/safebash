@@ -1,46 +1,23 @@
 title: BUG — EXIT trap fires on function returns, not before exit
 status: ready
 severity: bug
-gates: [56.4a, 56.4b, 56.11, 56.12, 56.13]
-depends: []
-gates:
-  - tests
-  - commit
+gates: [56.1, 56.2a, 56.2b, 56.3, 56.4]
+---
 
-Two bugs in EXIT trap implementation:
+Two bugs in current EXIT/trap implementation:
 
-1. **Fires on function returns.** transform.rs inlines the EXIT trap
-   body before every `Return` terminator. In the trampoline model
-   (DD#27), function "returns" are gotos — only `_start`'s final
-   return is a real program exit. The trap body runs (and duplicates)
-   at every function return.
+1. transform.rs inlines EXIT trap body before every `Return`
+   terminator — fires on function returns (wrong).
+2. `exit` builtin bypasses trap body entirely.
 
-2. **Does not fire before `exit` builtin.** codegen.rs emits
-   `sash_exit(code)` directly with no trap body. EXIT trap should
-   run before explicit `exit` calls.
+### Fix (DD#56 redesign)
 
-### Fix
-
-Emit the EXIT trap body as a single block (`exit_trap_block`).
-
-- Program's final exit path: goto `exit_trap_block` instead of
-  `Return`.
-- `exit` builtin: goto `exit_trap_block` instead of calling
-  `sash_exit` directly. Pass exit code via a variable.
-- `exit_trap_block`: runs trap body, then calls `sash_exit(code)`.
-- Function returns (trampoline gotos): unchanged — do NOT go
-  through the trap block.
-
-### Test cases needed
-
-- EXIT trap with function calls (verify trap runs once at exit,
-  not at each function return)
-- EXIT trap with explicit `exit N` (verify trap runs)
-- EXIT trap with normal program completion (verify trap runs)
-- Multiple functions with returns (verify no trap duplication)
+Replace with END block model:
+- Single `end_block` in SSA, reached from: final exit path,
+  `exit` builtin, exiting signal checks.
+- Function returns (trampoline gotos) do NOT enter end_block.
+- END block always terminates the process.
 
 ### Ref
 
-transform.rs ~line 37 (EXIT trap inlining)
-codegen.rs ~line 1552 (exit builtin)
-DD#27 (trampoline model)
+transform.rs ~line 37, codegen.rs ~line 1552, DD#56
