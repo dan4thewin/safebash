@@ -9,6 +9,11 @@ setup() {
     set -x
     date
 
+    # Ensure sash/sash-convert are on PATH even after cd to tmpdir
+    if [[ ":$PATH:" != *"/target/"* ]]; then
+        PATH="$PATH:$(realpath "${BASH_SOURCE[0]%/*}/../target/release")"
+    fi
+
     local dir
     dir=$(mktemp -d)
     # shellcheck disable=SC2064 # single quotes - false positive
