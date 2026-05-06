@@ -589,10 +589,10 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                 } else {
                     // Other command with heredoc — pipe body text to stdin
                     indent(out, depth);
-                    let escaped = body_text.replace('\\', "\\\\").replace('"', "\\\"");
+                    let escaped = body_text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
                     writeln!(out, "(do").unwrap();
                     indent(out, depth + 1);
-                    writeln!(out, "(def _heredoc_body \"{}\")", escaped.trim_end_matches('\n')).unwrap();
+                    writeln!(out, "(def _heredoc_body \"{}\")", escaped).unwrap();
                     // Write body to a temp pipe and redirect
                     let cmd_name = match &r.body.kind {
                         StmtKind::Command(c) => expr_to_literal(&c.name),

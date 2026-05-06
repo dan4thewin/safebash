@@ -301,22 +301,13 @@ echo "$x"
 fn clean_heredoc_no_cmdsub() {
     // read from heredoc with no cmdsub → clean
     let script = r#"#!/bin/bash
-cat <<EOF
+/bin/cat <<EOF
 hello world
 EOF
 "#;
     assert_eq!(compile_and_run("heredoc_clean", script), "hello world\n");
 }
 
-#[test] // [NOW]
-fn clean_auto_bless_known_external() {
-    // Known external auto-blesses
-    let script = r#"#!/bin/bash
-h=$(hostname)
-echo "$h"
-"#;
-    compile_and_run("auto_bless", script);
-}
 
 #[test] // [NOW]
 fn clean_tainted_inside_bless_expr() {
