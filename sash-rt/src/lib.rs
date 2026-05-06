@@ -2330,6 +2330,8 @@ pub extern "C" fn sash_fnmatch(
     if fnmatch_impl(pat, s) { 1 } else { 0 }
 }
 
+/// Glob match with only `*` as a glob operator.
+/// `?`, `[...]`, `\\` are rejected at compile time (SB5006).
 fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
     let mut px = 0;
     let mut sx = 0;
@@ -2338,40 +2340,17 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
 
     while px < pat.len() || sx < s.len() {
         if px < pat.len() {
-            match pat[px] {
-                b'*' => {
-                    // * matches zero or more chars — remember backtrack point
-                    next_px = px;
-                    next_sx = sx + 1;
-                    px += 1;
-                    continue;
-                }
-                b'?' => {
-                    if sx < s.len() {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
-                b'\\' => {
-                    px += 1;
-                    if px < pat.len() && sx < s.len() && pat[px] == s[sx] {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
-                // [ globs rejected at compile time (SB5006); unreachable
-                c => {
-                    if sx < s.len() && c == s[sx] {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
+            if pat[px] == b'*' {
+                next_px = px;
+                next_sx = sx + 1;
+                px += 1;
+                continue;
+            } else if sx < s.len() && pat[px] == s[sx] {
+                px += 1;
+                sx += 1;
+                continue;
             }
         }
-        // No match — try backtracking to last *
         if next_sx > 0 && next_sx <= s.len() {
             px = next_px + 1;
             sx = next_sx;
