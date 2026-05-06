@@ -107,14 +107,12 @@ fn main() {
     }
 
     // Subset gate + taint tracking — always run (sash safety guarantees are structural)
-    let auto_blessed;
     {
         let rules = sash::rules::all_rules();
         let mut diags = sash::validator::validate(tree.root_node(), source.as_bytes(), &rules);
 
         let mut tracker = sash::taint::TaintTracker::new();
         diags.extend(tracker.analyze(tree.root_node(), source.as_bytes()));
-        auto_blessed = tracker.auto_blessed().to_vec();
 
         diags.sort_by_key(|d| (d.line, d.col));
 
@@ -141,11 +139,7 @@ fn main() {
     // --emit-source: apply coercions, print sash-native source, exit
     if flags.contains(&"--emit-source") {
         let annotate = flags.contains(&"--annotate");
-        let mut result = sash::emit_source::emit_source(source.as_bytes(), annotate);
-        // Insert auto-bless lines for known externals
-        if !auto_blessed.is_empty() {
-            result = sash::emit_source::inject_auto_bless(&result, &auto_blessed, annotate);
-        }
+        let result = sash::emit_source::emit_source(source.as_bytes(), annotate);
         print!("{}", result);
         return;
     }
@@ -192,8 +186,7 @@ fn main() {
     let program2 = sash::lower::lower_program(tree2.root_node(), source.as_bytes());
     let type_map2 = sash::type_check::infer_types(&program2);
     let (ssa2, _) = sash::transform::ir_to_ssa_typed(&program2, type_map2);
-    let blessed_names: Vec<String> = auto_blessed.iter().map(|ab| ab.var_name.clone()).collect();
-    let taint_ices = sash::ssa_taint::verify_ssa_taint(&ssa2, &blessed_names);
+    let taint_ices = sash::ssa_taint::verify_ssa_taint(&ssa2);
     if !taint_ices.is_empty() {
         for ice in &taint_ices {
             eprintln!("{}: {}", input, ice);

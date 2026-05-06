@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=24
+plan=27
 echo "1..$plan" >&3
 
 set +e
@@ -91,6 +91,18 @@ run_sash 'x=$(getenv HOME)
 bless x [[ $(echo yes) = yes ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.16
+
+# 24.17 compiler SHALL NOT auto-bless known external output
+run_sash 'd=$(/bin/date +%Y-%m-%d); echo $d'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 24.17
+
+# 24.18 known hostname — still tainted without explicit bless
+run_sash 'h=$(/bin/hostname); echo $h'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 24.18
+
+# 24.19 getenv without bless — tainted
+run_sash 'x=$(getenv HOME); echo $x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 24.19
 
 # 50.1 tainted global at call site → error
 run_sash 'x=$(getenv HOME)

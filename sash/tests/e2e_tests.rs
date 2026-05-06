@@ -996,9 +996,10 @@ fn pos_herestring_read_multi() {
 
 #[test]
 fn pos_bless_regex_validation() {
-    // cat /etc/hostname is auto-blessed via known_externals — no manual bless needed
+    // Explicit bless required — no auto-bless in compiler
     let script = r#"#!/bin/bash
 n=$(/bin/cat /etc/hostname)
+bless n [[ $n =~ ^[a-zA-Z0-9]+$ ]]
 echo $n
 "#;
     let output = compile_and_run("bless_regex", script);
@@ -1017,28 +1018,29 @@ fn pos_bless_numeric_check() {
 
 #[test]
 fn pos_auto_bless_hostname() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
+    // Explicit bless required — no auto-bless in compiler
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\necho $h";
     let output = compile_and_run("auto_hostname", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
 fn pos_auto_bless_whoami() {
-    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\necho $u";
+    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[a-z_][a-z0-9_]*$ ]]\necho $u";
     let output = compile_and_run("auto_whoami", script);
     assert!(!output.is_empty(), "expected username output");
 }
 
 #[test]
 fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ -n $d ]]\necho $d";
     let output = compile_and_run("auto_date", script);
     assert!(output.trim().len() == 10, "expected YYYY-MM-DD, got: {}", output);
 }
 
 #[test]
 fn pos_auto_bless_nproc() {
-    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\necho $n";
+    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\nbless n [[ $n =~ ^[0-9]+$ ]]\necho $n";
     let output = compile_and_run("auto_nproc", script);
     let n: u32 = output.trim().parse().expect("expected numeric nproc");
     assert!(n > 0, "expected positive nproc");
@@ -1046,14 +1048,14 @@ fn pos_auto_bless_nproc() {
 
 #[test]
 fn pos_auto_bless_cat_hostname() {
-    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\necho $h";
     let output = compile_and_run("auto_cat_hostname", script);
     assert!(!output.is_empty(), "expected hostname from /etc/hostname");
 }
 
 #[test]
 fn pos_auto_bless_multiple() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\nu=$(/usr/bin/whoami)\necho \"$h $u\"";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[a-z_][a-z0-9_]*$ ]]\necho \"$h $u\"";
     let output = compile_and_run("auto_multi", script);
     assert!(output.contains(' '), "expected 'host user', got: {}", output);
 }
@@ -1063,29 +1065,6 @@ fn neg_unknown_cmd_still_tainted() {
     let script = "#!/bin/bash\nx=$(some_unknown_cmd)\necho $x";
     let stderr = compile_expect_fail("unknown_taint", script);
     assert!(stderr.contains("SB4020"), "expected SB4020 for unknown cmd, got: {}", stderr);
-}
-
-#[test]
-fn emit_auto_bless_line() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
-    let src = emit_source("auto_bless_emit", script);
-    assert!(src.contains("bless h"), "expected bless line in emitted source: {}", src);
-    assert!(src.contains("[a-zA-Z0-9._-]"), "expected hostname pattern: {}", src);
-}
-
-#[test]
-fn emit_auto_bless_annotated() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
-    let src = emit_annotated("auto_bless_annot", script);
-    assert!(src.contains("# auto: system hostname"), "expected auto annotation: {}", src);
-}
-
-#[test]
-fn emit_auto_bless_date_pattern() {
-    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\necho $d";
-    let src = emit_source("auto_date_emit", script);
-    assert!(src.contains("bless d"), "expected bless d line: {}", src);
-    assert!(src.contains("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "expected date pattern: {}", src);
 }
 
 #[test]
@@ -1150,7 +1129,7 @@ fn brush_let_clean() {
 #[test]
 fn brush_home_clean() {
     // $HOME requires getenv — no implicit env access (DD#53)
-    let script = "#!/bin/bash\nx=$(getenv HOME)\necho $x";
+    let script = "#!/bin/bash\nx=$(getenv HOME)\nbless x [[ -n $x ]]\necho $x";
     let sash_out = compile_and_run("brush_home_clean", script);
     let bash_out = bash_output("echo $HOME");
     assert_eq!(sash_out, bash_out);
@@ -1159,7 +1138,7 @@ fn brush_home_clean() {
 #[test]
 fn brush_pwd_clean() {
     // $PWD requires getenv — no implicit env access (DD#53)
-    let script = "#!/bin/bash\nx=$(getenv PWD)\necho $x";
+    let script = "#!/bin/bash\nx=$(getenv PWD)\nbless x [[ $x =~ ^/ ]]\necho $x";
     let sash_out = compile_and_run("brush_pwd_clean", script);
     assert!(!sash_out.is_empty(), "PWD should produce output");
 }
@@ -1169,6 +1148,7 @@ fn brush_path_check() {
     // $PATH requires getenv — no implicit env access (DD#53)
     let script = r#"#!/bin/bash
 x=$(getenv PATH)
+bless x [[ -n $x ]]
 if [[ -z "$x" ]]; then
   echo "PATH is not set or is empty"
 else

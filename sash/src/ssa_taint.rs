@@ -24,20 +24,17 @@ enum Taint {
 
 /// Run the SSA taint verification pass. Returns a list of error messages
 /// (each is a compiler ICE — the CST pass should have caught these).
-pub fn verify_ssa_taint(program: &SsaProgram, auto_blessed: &[String]) -> Vec<String> {
+pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     let mut taint: HashMap<String, Taint> = HashMap::new();
     let mut errors = Vec::new();
 
     // Special variables are inherently clean — they aren't external data
-    for sv in &["?", "!", "$", "#", "0", "-", "_", "LINENO", "RANDOM",
-                "SECONDS", "BASHPID", "BASH_SUBSHELL", "PIPESTATUS"] {
-        // Version 0 is always the initial (unassigned) version
+    // In sash, there are no magic variables. PID/status/etc are builtins.
+    // Only $? and $! survive as sugar — and $? is scoped per DD#55.
+    // $$ (PID), $# (argc), $0 (argv 0) are process metadata — clean.
+    // These will eventually be desugared to builtins in the lowerer.
+    for sv in &["?", "!", "$", "#", "0"] {
         taint.insert(format!("{}_0", sv), Taint::Clean);
-    }
-
-    // Known env vars at version 0 are auto-blessed (clean)
-    for kev in crate::known_externals::KNOWN_ENV_VARS {
-        taint.insert(format!("{}_0", kev.name), Taint::Clean);
     }
 
     // Positional params at version 0 are clean — either program argv
@@ -203,29 +200,18 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
         SsaValue::Expr(_) => Taint::Clean, // string expressions from lowerer
         SsaValue::FuncCall(_) => Taint::Clean, // elidable user functions
         SsaValue::CmdSubst { argv, .. } => {
-            // Check if this is getenv/argv (tainted) or user func/known external (clean)
+            // All command substitution output is tainted unless it's a known-clean builtin.
+            // External command output (including getenv) requires explicit bless.
             if let Some(SsaValue::Literal(cmd)) = argv.first() {
                 match cmd.as_str() {
-                    "getenv" | "argv" => {
-                        // getenv of a known env var is auto-blessed (clean)
-                        if cmd == "getenv" {
-                            if let Some(SsaValue::Literal(var_name)) = argv.get(1) {
-                                if crate::known_externals::lookup_env_var(var_name).is_some() {
-                                    return Taint::Clean;
-                                }
-                            }
-                        }
-                        Taint::Tainted
-                    }
-                    // Known-safe builtins
-                    "len" | "keys" | "join" | "epochseconds" => Taint::Clean,
+                    "getenv" | "argv" => Taint::Tainted,
+                    // Known-safe internal builtins (pure computation, no external data)
+                    "len" | "keys" | "join" | "epochseconds" | "random"
+                    | "argc" | "getpid" | "getcpid" | "status" | "signum" => Taint::Clean,
                     _ => {
-                        // Known-safe bash builtins — if all args are clean, result is clean
-                        if matches!(cmd.as_str(),
-                            "echo" | "printf" | "true" | "false" | "test" | "["
-                            | "pwd" | "basename" | "dirname" | "type" | "command"
-                            | "seq" | "wc" | "tr" | "cat" | "head" | "tail"
-                            | "sort" | "uniq" | "cut" | "rev" | "tee") {
+                        // Sash builtins that produce output from their args:
+                        // if all args are clean, output is clean (pure computation).
+                        if matches!(cmd.as_str(), "echo" | "printf" | "pwd") {
                             let args_clean = argv[1..].iter()
                                 .all(|a| value_is_tainted(a, taint, user_functions) != Taint::Tainted);
                             if args_clean { return Taint::Clean; }
@@ -234,14 +220,9 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
                         if user_functions.contains(cmd.as_str()) {
                             return Taint::Clean;
                         }
-                        // Known-safe externals (auto-bless) — e.g. hostname, whoami, date
-                        let args: Vec<String> = argv[1..].iter()
-                            .filter_map(|a| if let SsaValue::Literal(s) = a { Some(s.clone()) } else { None })
-                            .collect();
-                        if crate::known_externals::lookup_command(cmd, &args).is_some() {
-                            return Taint::Clean;
-                        }
-                        Taint::Tainted // unknown external command
+                        // Everything else (external commands) is tainted.
+                        // Explicit `bless` is required — no auto-bless.
+                        Taint::Tainted
                     }
                 }
             } else {
