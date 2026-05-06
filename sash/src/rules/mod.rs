@@ -9,6 +9,7 @@ pub mod nameref_rejected;
 pub mod param_transform;
 pub mod parse_error;
 pub mod process_substitution;
+pub mod wordsplit_rejected;
 
 use crate::rule::Rule;
 
@@ -26,5 +27,7 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(parse_error::ParseError),
         Box::new(param_transform::ParamTransform),
         Box::new(process_substitution::ProcessSubstitution),
+        Box::new(wordsplit_rejected::IfsRejected),
+        Box::new(wordsplit_rejected::ForInExpansion),
     ]
 }
