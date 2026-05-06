@@ -1033,7 +1033,7 @@ fn pos_auto_bless_whoami() {
 
 #[test]
 fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ -n $d ]]\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ $d =~ ^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$ ]]\necho $d";
     let output = compile_and_run("auto_date", script);
     assert!(output.trim().len() == 10, "expected YYYY-MM-DD, got: {}", output);
 }
