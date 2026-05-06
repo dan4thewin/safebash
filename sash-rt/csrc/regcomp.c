@@ -357,11 +357,12 @@ static int
 bldshortclass(Rune c)
 {
 	Rune *p;
-	int type;
+	int type = CCLASS;
 
-	type = (c >= 'A' && c <= 'Z') ? NCCLASS : CCLASS;
-	if(c >= 'A' && c <= 'Z')
+	if(c < 'a') {
+		type = NCCLASS;
 		c += 'a' - 'A';
+	}
 
 	yyclassp = newclass();
 	p = yyclassp->spans;
@@ -478,7 +479,9 @@ bldcclass(void)
 		} else if(quoted && ep < &r[NCCRUNE-6]) {
 			/* expand shorthand classes inside [] */
 			switch(rune){
-			case 'd': *ep++ = '0'; *ep++ = '9'; break;
+			case 'd':
+				*ep++ = '0'; *ep++ = '9';
+				break;
 			case 'w':
 				*ep++ = '0'; *ep++ = '9';
 				*ep++ = 'A'; *ep++ = 'Z';
