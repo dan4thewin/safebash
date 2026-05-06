@@ -121,7 +121,6 @@ struct ExternFuncs {
     tolower_first: cranelift_module::FuncId,
     toupper_all: cranelift_module::FuncId,
     tolower_all: cranelift_module::FuncId,
-    command_v: cranelift_module::FuncId,
     getpid: cranelift_module::FuncId,
     epochseconds: cranelift_module::FuncId,
     random: cranelift_module::FuncId,
@@ -649,13 +648,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let toupper_all_func = module.declare_function("sash_toupper_all", Linkage::Import, &case_sig).expect("declare");
     let tolower_all_func = module.declare_function("sash_tolower_all", Linkage::Import, &case_sig).expect("declare");
 
-    // sash_command_v(name_ptr, name_len) -> i64 (0=found, 1=not found)
-    let mut cmdv_sig = module.make_signature();
-    cmdv_sig.params.push(AbiParam::new(I64));
-    cmdv_sig.params.push(AbiParam::new(I64));
-    cmdv_sig.returns.push(AbiParam::new(I64));
-    let command_v_func = module.declare_function("sash_command_v", Linkage::Import, &cmdv_sig).expect("declare");
-
     // sash_getpid() -> i64
     let mut getpid_sig = module.make_signature();
     getpid_sig.returns.push(AbiParam::new(I64));
@@ -784,7 +776,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         tolower_first: tolower_first_func,
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
-        command_v: command_v_func,
         getpid: getpid_func,
         epochseconds: epochseconds_func,
         random: random_func,
@@ -1935,15 +1926,14 @@ fn lower_inst(
             }
         }
         SsaInst::Command { name, args, redirects, .. } if name == "command" => {
+            // DD#23: `command -v` is rejected by the validator. If we reach here,
+            // it's `command [-p] <cmd>` — just run the command, bypassing functions.
             let restore = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
-            // Skip flags: -p, -v, -V, --
             let mut cmd_start = 0;
-            let mut is_v = false;
             for (i, arg) in args.iter().enumerate() {
                 if let SsaValue::Literal(s) = arg {
                     match s.as_str() {
-                        "-v" => { is_v = true; cmd_start = i + 1; }
-                        "-p" | "-V" | "--" => { cmd_start = i + 1; }
+                        "-p" | "--" => { cmd_start = i + 1; }
                         _ => { cmd_start = i; break; }
                     }
                 } else {
@@ -1951,28 +1941,16 @@ fn lower_inst(
                     break;
                 }
             }
-            if is_v && cmd_start < args.len() {
-                // command -v NAME — check if command exists
-                let (name_ptr, name_len) = lower_value(&args[cmd_start], builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
-                let cmdv_ref = module.declare_func_in_func(externs.command_v, builder.func);
-                let call = builder.ins().call(cmdv_ref, &[name_ptr, name_len]);
-                let result = builder.inst_results(call)[0];
-                builder.def_var(exit_status_var, result);
-                let zero = builder.ins().iconst(I64, 0);
-                let found = builder.ins().icmp(IntCC::Equal, result, zero);
-                let tr = builder.ins().uextend(I64, found);
-                builder.def_var(test_result_var, tr);
-            } else if cmd_start < args.len() {
+            if cmd_start < args.len() {
                 if let SsaValue::Literal(real_name) = &args[cmd_start] {
                     let real_args = args[cmd_start + 1..].to_vec();
                     lower_exec(real_name, &real_args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
                 } else {
-                    let all_args = args.clone();
-                    let real_name_str = match &all_args[cmd_start] {
+                    let real_name_str = match &args[cmd_start] {
                         SsaValue::Literal(s) => s.clone(),
                         _ => "command".to_string(),
                     };
-                    let real_args = all_args[cmd_start + 1..].to_vec();
+                    let real_args = args[cmd_start + 1..].to_vec();
                     lower_exec(&real_name_str, &real_args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
                 }
             }

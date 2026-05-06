@@ -2032,23 +2032,20 @@ echo "${x,,}"
 // ── command -v ──────────────────────────────────────────────
 
 #[test]
-fn command_v_found() {
-    let src = r#"command -v ls > /dev/null 2>&1
-echo "$?"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "0\n");
-}
-
-#[test]
-fn command_v_not_found() {
-    let src = r#"command -v nonexistent_cmd_xyz > /dev/null 2>&1
-echo "$?"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
-    assert_eq!(out, "1\n");
+fn command_v_rejected() {
+    // DD#23: `command` does not exist in sash-native — rejected at validation
+    use std::io::Write;
+    let tmp = "/tmp/sash_cmdv_test.sh";
+    let mut f = std::fs::File::create(tmp).unwrap();
+    writeln!(f, "#!/bin/bash").unwrap();
+    writeln!(f, "command -v ls").unwrap();
+    drop(f);
+    let sash = env!("CARGO_BIN_EXE_sash");
+    let output = Command::new(&sash).arg(tmp).output().expect("run sash");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(!output.status.success(), "expected compile failure, got success");
+    assert!(stderr.contains("SB5011"), "expected SB5011 in stderr, got: {stderr}");
+    let _ = std::fs::remove_file(tmp);
 }
 
 // ── Array subscript assignment and append ───────────────────

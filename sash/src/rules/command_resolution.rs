@@ -39,9 +39,34 @@ impl Rule for CommandResolution {
             return vec![];
         }
 
+        // DD#23: `command -v` rejected — command resolution is compile-time only
+        if name == "command" {
+            // Check if -v flag is present
+            let mut cursor = node.walk();
+            let mut has_v = false;
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
+                    if child.utf8_text(source).unwrap_or("") == "-v" {
+                        has_v = true;
+                        break;
+                    }
+                    if !cursor.goto_next_sibling() { break; }
+                }
+            }
+            if has_v {
+                return vec![Diagnostic::error(
+                    name_node,
+                    "SB5011",
+                    "'command -v' is not available in sash — command resolution is compile-time only".to_string(),
+                )];
+            }
+            return vec![];
+        }
+
         // Known keywords/special forms handled elsewhere
         if matches!(name,
-            "eval" | "source" | "." | "alias" | "command" | "trap" | "signal"
+            "eval" | "source" | "." | "alias" | "trap" | "signal"
             | "local" | "export" | "declare" | "typeset" | "readonly" | "set"
             | "shopt" | "select" | "coproc" | "bless" | "getenv" | "fn"
             | "let"
