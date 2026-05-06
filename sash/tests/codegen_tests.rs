@@ -2420,12 +2420,14 @@ echo "test"
 #[test]
 fn cmdsub_redirect_stderr() {
     // $(cmd 2>/dev/null) should suppress stderr in the child process
+    // DD#55: command must succeed (nonzero aborts). Use a command that succeeds
+    // but writes to stderr.
     let src = r#"
-result=$(ls /nonexistent_path_xyz 2>/dev/null)
+result=$(echo hello 2>/dev/null)
 echo "result='$result'"
 "#;
     let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "result=''\n");
+    assert_eq!(out, "result='hello'\n");
 }
 
 

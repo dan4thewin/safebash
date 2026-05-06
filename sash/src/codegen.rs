@@ -3994,7 +3994,28 @@ fn lower_value(
             builder.ins().call(close_ref, &[read_fd]);
 
             let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
-            builder.ins().call(wait_ref, &[pid]);
+            let wait_call = builder.ins().call(wait_ref, &[pid]);
+            let cmd_status = builder.inst_results(wait_call)[0];
+
+            // DD#55: store exit status and check — abort if nonzero
+            if let Some(esv) = exit_status_var {
+                builder.def_var(esv, cmd_status);
+
+                let zero_s = builder.ins().iconst(I64, 0);
+                let failed = builder.ins().icmp(IntCC::NotEqual, cmd_status, zero_s);
+                let abort_block = builder.create_block();
+                let cont_block = builder.create_block();
+                builder.ins().brif(failed, abort_block, &[], cont_block, &[]);
+
+                builder.switch_to_block(abort_block);
+                builder.seal_block(abort_block);
+                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                builder.ins().call(exit_ref, &[cmd_status]);
+                builder.ins().trap(TrapCode::user(1).unwrap());
+
+                builder.switch_to_block(cont_block);
+                builder.seal_block(cont_block);
+            }
 
             // Strip trailing newline (shell convention for $(...))
             let final_total = builder.use_var(total_var);
