@@ -238,7 +238,7 @@ fn janet_array_length() {
 #[test]
 fn janet_heredoc() {
     assert_janet_matches_bash("heredoc",
-        "#!/bin/bash\ncat <<EOF\nline one\nline two\nEOF");
+        "#!/bin/bash\n/bin/cat <<EOF\nline one\nline two\nEOF");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -289,13 +289,13 @@ fn janet_continue_not_external() {
 #[test]
 fn janet_bless_emitted() {
     // Use unknown command to taint x, then bless it
-    let janet = to_janet("bless", "#!/bin/bash\nx=$(curl http://example.com)\nbless x [[ -n $x ]]\necho $x");
+    let janet = to_janet("bless", "#!/bin/bash\nx=$(/usr/bin/curl http://example.com)\nbless x [[ -n $x ]]\necho $x");
     assert!(janet.contains("# bless x"), "expected bless comment: {}", janet);
 }
 
 #[test]
 fn janet_heredoc_not_empty() {
-    let janet = to_janet("hd_body", "#!/bin/bash\ncat <<EOF\nhello world\nEOF");
+    let janet = to_janet("hd_body", "#!/bin/bash\n/bin/cat <<EOF\nhello world\nEOF");
     assert!(janet.contains("hello world"), "heredoc body should be in output: {}", janet);
     assert!(!janet.contains("os/execute [\"cat\"]"), "cat heredoc should be inlined: {}", janet);
 }
