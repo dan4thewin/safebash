@@ -825,7 +825,9 @@ impl TaintTracker {
                 }
 
                 // $(hostname), $(date +%Y-%m-%d), etc. → check known commands
-                if let Some(known) = lookup_command(&cmd_name, &args) {
+                // Strip path to get basename for known_externals lookup
+                let basename = cmd_name.rsplit('/').next().unwrap_or(&cmd_name);
+                if let Some(known) = lookup_command(basename, &args) {
                     return Some(AutoBless {
                         var_name: var_name.to_string(),
                         pattern: known.pattern.to_string(),

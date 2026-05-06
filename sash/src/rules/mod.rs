@@ -10,6 +10,7 @@ pub mod param_transform;
 pub mod parse_error;
 pub mod process_substitution;
 pub mod wordsplit_rejected;
+pub mod command_resolution;
 
 use crate::rule::Rule;
 
@@ -29,5 +30,6 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(process_substitution::ProcessSubstitution),
         Box::new(wordsplit_rejected::IfsRejected),
         Box::new(wordsplit_rejected::ForInExpansion),
+        Box::new(command_resolution::CommandResolution),
     ]
 }

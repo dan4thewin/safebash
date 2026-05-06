@@ -24,7 +24,7 @@ enum Taint {
 
 /// Run the SSA taint verification pass. Returns a list of error messages
 /// (each is a compiler ICE — the CST pass should have caught these).
-pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
+pub fn verify_ssa_taint(program: &SsaProgram, auto_blessed: &[String]) -> Vec<String> {
     let mut taint: HashMap<String, Taint> = HashMap::new();
     let mut errors = Vec::new();
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=20
+plan=25
 echo "1..$plan" >&3
 
 set +e
@@ -91,6 +91,26 @@ run_sash 'fn f -> int { - /bin/false; return $?; }'
 run_sash '/nonexistent_binary_xyz &
 wait'
 [[ $rc != 0 && -z $err ]]; chk 55.16
+
+# 55.17 $(status) only valid as first expression in handling branch
+run_sash 'cmd || { s=$(status); echo $s; }'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 55.17a
+
+# first-expression rule: $(status) after another command → error
+run_sash '/bin/true || { /bin/echo x; s=$(status); }'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 55.17b
+
+# $(status) as first expression → OK
+run_sash '/bin/false || s=$(status)'
+[[ $rc = 0 && -z $err ]]; chk 55.17c
+
+# 55.18 $? is sugar for $(status)
+run_sash '/bin/false || echo $?'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 55.18
+
+# 55.19 $! is sugar for $(getcpid)
+run_sash '/bin/sleep 0 & p=$!; /bin/wait $p; echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.19
 
 set -e
 tally

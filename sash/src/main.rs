@@ -192,7 +192,8 @@ fn main() {
     let program2 = sash::lower::lower_program(tree2.root_node(), source.as_bytes());
     let type_map2 = sash::type_check::infer_types(&program2);
     let (ssa2, _) = sash::transform::ir_to_ssa_typed(&program2, type_map2);
-    let taint_ices = sash::ssa_taint::verify_ssa_taint(&ssa2);
+    let blessed_names: Vec<String> = auto_blessed.iter().map(|ab| ab.var_name.clone()).collect();
+    let taint_ices = sash::ssa_taint::verify_ssa_taint(&ssa2, &blessed_names);
     if !taint_ices.is_empty() {
         for ice in &taint_ices {
             eprintln!("{}: {}", input, ice);

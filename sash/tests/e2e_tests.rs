@@ -255,13 +255,13 @@ fn pos_command_substitution() {
 
 #[test]
 fn pos_pipeline() {
-    let script = "#!/bin/bash\necho hello world | tr ' ' '\\n'";
+    let script = "#!/bin/bash\necho hello world | /usr/bin/tr ' ' '\\n'";
     assert_eq!(compile_and_run("pipe", script), "hello\nworld\n");
 }
 
 #[test]
 fn pos_heredoc() {
-    let script = "#!/bin/bash\ncat <<EOF\nhello\nworld\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello\nworld\nEOF";
     assert_eq!(compile_and_run("heredoc", script), "hello\nworld\n");
 }
 
@@ -763,19 +763,19 @@ done
 
 #[test]
 fn pos_heredoc_with_vars() {
-    let script = "#!/bin/bash\nname=world\ncat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
+    let script = "#!/bin/bash\nname=world\n/bin/cat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
     assert_eq!(compile_and_run("hd_vars", script), "hello world\ngoodbye world\n");
 }
 
 #[test]
 fn pos_heredoc_literal() {
-    let script = "#!/bin/bash\ncat <<'EOF'\nhello $name\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<'EOF'\nhello $name\nEOF";
     assert_eq!(compile_and_run("hd_literal", script), "hello $name\n");
 }
 
 #[test]
 fn pos_heredoc_tab_strip() {
-    let script = "#!/bin/bash\ncat <<-EOF\n\t\thello\n\t\tworld\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<-EOF\n\t\thello\n\t\tworld\nEOF";
     assert_eq!(compile_and_run("hd_tabs", script), "hello\nworld\n");
 }
 
@@ -967,7 +967,7 @@ fn pos_alternate_value() {
 
 #[test]
 fn neg_heredoc_cmdsub() {
-    let script = "#!/bin/bash\ncat <<EOF\nhello $(hostname)\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello $(/bin/hostname)\nEOF";
     let stderr = compile_expect_fail("hd_cmdsub", script);
     assert!(stderr.contains("SB5002"), "expected SB5002 for $(cmd) in heredoc, got: {}", stderr);
 }
@@ -975,7 +975,7 @@ fn neg_heredoc_cmdsub() {
 #[test]
 fn pos_heredoc_blessed_var() {
     // cat /etc/hostname is auto-blessed via known_externals
-    let script = "#!/bin/bash\nh=$(cat /etc/hostname)\ncat <<EOF\nhello $h\nEOF";
+    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\n/bin/cat <<EOF\nhello $h\nEOF";
     let output = compile_and_run("hd_blessed", script);
     assert!(output.starts_with("hello "), "expected 'hello <hostname>', got: {}", output);
 }
@@ -998,7 +998,7 @@ fn pos_herestring_read_multi() {
 fn pos_bless_regex_validation() {
     // cat /etc/hostname is auto-blessed via known_externals — no manual bless needed
     let script = r#"#!/bin/bash
-n=$(cat /etc/hostname)
+n=$(/bin/cat /etc/hostname)
 echo $n
 "#;
     let output = compile_and_run("bless_regex", script);
@@ -1017,28 +1017,28 @@ fn pos_bless_numeric_check() {
 
 #[test]
 fn pos_auto_bless_hostname() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
     let output = compile_and_run("auto_hostname", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
 fn pos_auto_bless_whoami() {
-    let script = "#!/bin/bash\nu=$(whoami)\necho $u";
+    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\necho $u";
     let output = compile_and_run("auto_whoami", script);
     assert!(!output.is_empty(), "expected username output");
 }
 
 #[test]
 fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(date +%Y-%m-%d)\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\necho $d";
     let output = compile_and_run("auto_date", script);
     assert!(output.trim().len() == 10, "expected YYYY-MM-DD, got: {}", output);
 }
 
 #[test]
 fn pos_auto_bless_nproc() {
-    let script = "#!/bin/bash\nn=$(nproc)\necho $n";
+    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\necho $n";
     let output = compile_and_run("auto_nproc", script);
     let n: u32 = output.trim().parse().expect("expected numeric nproc");
     assert!(n > 0, "expected positive nproc");
@@ -1046,14 +1046,14 @@ fn pos_auto_bless_nproc() {
 
 #[test]
 fn pos_auto_bless_cat_hostname() {
-    let script = "#!/bin/bash\nh=$(cat /etc/hostname)\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\necho $h";
     let output = compile_and_run("auto_cat_hostname", script);
     assert!(!output.is_empty(), "expected hostname from /etc/hostname");
 }
 
 #[test]
 fn pos_auto_bless_multiple() {
-    let script = "#!/bin/bash\nh=$(hostname)\nu=$(whoami)\necho \"$h $u\"";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nu=$(/usr/bin/whoami)\necho \"$h $u\"";
     let output = compile_and_run("auto_multi", script);
     assert!(output.contains(' '), "expected 'host user', got: {}", output);
 }
@@ -1067,7 +1067,7 @@ fn neg_unknown_cmd_still_tainted() {
 
 #[test]
 fn emit_auto_bless_line() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
     let src = emit_source("auto_bless_emit", script);
     assert!(src.contains("bless h"), "expected bless line in emitted source: {}", src);
     assert!(src.contains("[a-zA-Z0-9._-]"), "expected hostname pattern: {}", src);
@@ -1075,14 +1075,14 @@ fn emit_auto_bless_line() {
 
 #[test]
 fn emit_auto_bless_annotated() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\necho $h";
     let src = emit_annotated("auto_bless_annot", script);
     assert!(src.contains("# auto: system hostname"), "expected auto annotation: {}", src);
 }
 
 #[test]
 fn emit_auto_bless_date_pattern() {
-    let script = "#!/bin/bash\nd=$(date +%Y-%m-%d)\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\necho $d";
     let src = emit_source("auto_date_emit", script);
     assert!(src.contains("bless d"), "expected bless d line: {}", src);
     assert!(src.contains("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "expected date pattern: {}", src);
@@ -1225,7 +1225,7 @@ fn brush_undefined_var() {
 #[test]
 fn brush_heredoc_clean() {
     // Heredoc with no cmdsub — content is clean
-    let script = "#!/bin/bash\ncat <<EOF\nhello world\nEOF\n";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello world\nEOF\n";
     let sash_out = compile_and_run("brush_heredoc_clean", script);
     assert_eq!(sash_out, "hello world\n");
 }
@@ -1233,7 +1233,7 @@ fn brush_heredoc_clean() {
 #[test]
 fn brush_heredoc_cmdsub_rejected() {
     // Heredoc with command substitution — SB5002
-    let script = "#!/bin/bash\ncat <<END\n$(echo hi)\nEND\n";
+    let script = "#!/bin/bash\n/bin/cat <<END\n$(echo hi)\nEND\n";
     let stderr = compile_expect_fail("brush_heredoc_cmdsub", script);
     assert!(stderr.contains("SB5002"), "expected SB5002, got: {}", stderr);
 }
