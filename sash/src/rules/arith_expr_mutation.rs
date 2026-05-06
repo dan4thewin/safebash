@@ -21,10 +21,14 @@ impl Rule for ArithExprMutation {
             find_mutations(node, source, &mut diags, "$(( ))");
             return diags;
         }
-        // arithmetic_command (( )) — reject mutations only in condition position
-        if node.kind() == "arithmetic_command" && in_condition_position(node) {
+        // arithmetic_command (( )) — reject prefix ++/-- always (DD#31.6)
+        if node.kind() == "arithmetic_command" {
             let mut diags = Vec::new();
-            find_mutations(node, source, &mut diags, "condition (( ))");
+            find_prefix_incdec(node, source, &mut diags);
+            // Also reject all mutations in condition position
+            if in_condition_position(node) {
+                find_mutations(node, source, &mut diags, "condition (( ))");
+            }
             return diags;
         }
         vec![]
@@ -176,4 +180,23 @@ fn has_mutation(node: Node, source: &[u8]) -> bool {
         }
     }
     false
+}
+
+/// Find prefix ++/-- anywhere in an arithmetic tree (banned per DD#31.6).
+fn find_prefix_incdec(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.kind() == "unary_expression" {
+            let text = child.utf8_text(source).unwrap_or("");
+            if text.starts_with("++") || text.starts_with("--") {
+                diags.push(Diagnostic::error(
+                    child,
+                    "SB5007",
+                    format!("prefix {} is not allowed — use postfix (x++) or (( x += 1 )) instead", text),
+                ));
+                continue;
+            }
+        }
+        find_prefix_incdec(child, source, diags);
+    }
 }
