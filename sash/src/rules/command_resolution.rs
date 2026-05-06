@@ -44,7 +44,7 @@ impl Rule for CommandResolution {
             "eval" | "source" | "." | "alias" | "command" | "trap" | "signal"
             | "local" | "export" | "declare" | "typeset" | "readonly" | "set"
             | "shopt" | "select" | "coproc" | "bless" | "getenv" | "fn"
-            | "let"
+            | "let" | "END"
         ) {
             return vec![];
         }

@@ -37,19 +37,19 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
     // If an EXIT trap was registered, inline its body before main program exit points only
     // (not function returns — those are trampoline gotos per DD#27)
     if let Some(trap_stmts) = state.exit_trap.take() {
-        // The main exit block and any explicit exit-builtin blocks
-        // Functions have labels starting with "fn_" — skip those
+        // Create a dedicated END handler block
+        let end_block = ssa.new_block("end_handler");
+        let end_exit = lower_stmts(&trap_stmts, &mut ssa, &mut state, end_block);
+        ssa.block_mut(end_exit).terminator = Terminator::Return;
+        ssa.end_handler = Some(end_block);
+
+        // Redirect all non-function Return blocks to jump to END handler
         let return_blocks: Vec<usize> = ssa.blocks.iter()
-            .filter(|(_, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_"))
+            .filter(|(id, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_") && **id != end_exit)
             .map(|(&id, _)| id)
             .collect();
         for block_id in return_blocks {
-            // Insert trap body before the Return
-            let trap_exit = lower_stmts(&trap_stmts, &mut ssa, &mut state, block_id);
-            if trap_exit != block_id {
-                // Trap body created new blocks — redirect the last one to Return
-                ssa.block_mut(trap_exit).terminator = Terminator::Return;
-            }
+            ssa.block_mut(block_id).terminator = Terminator::Goto(end_block);
         }
     }
 
@@ -66,8 +66,10 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         }
     }
 
-    // Ensure exit block terminates with Return
-    ssa.block_mut(exit).terminator = Terminator::Return;
+    // Ensure exit block terminates with Return (unless it already points to END handler)
+    if ssa.end_handler.is_none() || ssa.block_mut(exit).terminator == Terminator::Return {
+        ssa.block_mut(exit).terminator = Terminator::Return;
+    }
 
     let diags = state.diagnostics.clone();
     (ssa, diags)
@@ -498,6 +500,34 @@ fn lower_one(
                     redirects: vec![],
                     checked: true,
                 });
+                return block;
+            }
+
+            // `signal N DISPOSITION` — DD#56 signal builtin
+            if name == "signal" {
+                if c.args.len() >= 2 {
+                    let sig_str = expr_to_string(&c.args[0]);
+                    let disposition = expr_to_string(&c.args[1]);
+                    let signum: i64 = sig_str.parse().unwrap_or(0);
+                    if signum > 0 {
+                        let handler: i64 = match disposition.as_str() {
+                            "DFL" => 0,  // SIG_DFL
+                            "IGN" => 1,  // SIG_IGN
+                            "FLAG" => 2, // sash_signal_handler (flag-setting)
+                            "EXIT" => 3, // flag + check points (EXIT disposition)
+                            _ => 0,
+                        };
+                        ssa.block_mut(block).insts.push(SsaInst::Command {
+                            name: "__trap_signal".to_string(),
+                            args: vec![
+                                SsaValue::Literal(signum.to_string()),
+                                SsaValue::Literal(handler.to_string()),
+                            ],
+                            redirects: vec![],
+                            checked: true,
+                        });
+                    }
+                }
                 return block;
             }
 
@@ -1103,10 +1133,17 @@ fn lower_one(
             lower_stmts(&g.body, ssa, state, block)
         }
 
+        StmtKind::EndBlock(g) => {
+            // Store END block body as exit trap (same mechanism as trap '' EXIT)
+            state.exit_trap = Some(g.body.clone());
+            block
+        }
+
         StmtKind::Case(c) => {
             lower_case(c, ssa, state, block)
         }
 
+        StmtKind::EndBlock(_) => block, // handled at top level in lower_stmt for EndBlock
         StmtKind::Comment(_) => block,
     }
 }
@@ -1693,6 +1730,9 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             }
             if var == "RANDOM" {
                 return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("random".to_string())], redirects: vec![] };
+            }
+            if var == "signum" {
+                return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("signum".to_string())], redirects: vec![] };
             }
             SsaValue::Var(state.lookup(var))
         }
@@ -2330,6 +2370,9 @@ fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut us
             for st in &s.body { scan_expr_positionals_stmt(st, max, shifts); }
         }
         StmtKind::Group(g) => {
+            for st in &g.body { scan_expr_positionals_stmt(st, max, shifts); }
+        }
+        StmtKind::EndBlock(g) => {
             for st in &g.body { scan_expr_positionals_stmt(st, max, shifts); }
         }
         StmtKind::Comment(_) => {}

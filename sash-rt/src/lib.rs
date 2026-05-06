@@ -1983,7 +1983,54 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
 
 /// Register a signal handler.  handler_fn is a function pointer:
 ///   extern "C" fn(i32) -> ()
-/// Pass 0 for SIG_DFL, 1 for SIG_IGN.
+/// Global signal number — written by signal handler, read by $(signum).
+/// Volatile/atomic semantics via direct memory access in generated code.
+#[no_mangle]
+pub static mut sash_signum: i64 = 0;
+
+/// Signal handler that records the signal number into sash_signum.
+extern "C" fn sash_signal_handler(sig: i32) {
+    unsafe {
+        core::ptr::write_volatile(&mut sash_signum as *mut i64, sig as i64);
+    }
+}
+
+/// Read sash_signum and return as (ptr, len) string — like epochseconds.
+#[no_mangle]
+pub extern "C" fn sash_read_signum() -> (*mut u8, usize) {
+    let val = unsafe { core::ptr::read_volatile(&sash_signum as *const i64) };
+    // itoa into a small buffer
+    let mut buf = [0u8; 20];
+    let s = itoa_into(val, &mut buf);
+    let len = s.len();
+    let ptr = unsafe { crate::sash_alloc(len) } as *mut u8;
+    unsafe { core::ptr::copy_nonoverlapping(s.as_ptr(), ptr, len); }
+    (ptr, len)
+}
+
+/// Helper: format i64 into buffer, return slice
+fn itoa_into(mut val: i64, buf: &mut [u8; 20]) -> &[u8] {
+    if val == 0 {
+        buf[0] = b'0';
+        return &buf[..1];
+    }
+    let neg = val < 0;
+    if neg { val = -val; }
+    let mut i = 20;
+    while val > 0 {
+        i -= 1;
+        buf[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+    }
+    if neg {
+        i -= 1;
+        buf[i] = b'-';
+    }
+    &buf[i..]
+}
+
+/// Pass 0 for SIG_DFL, 1 for SIG_IGN, 2 for FLAG (sash_signal_handler),
+/// 3 for EXIT (same handler, check points handle the rest).
 /// Returns 0 on success, -1 on error.
 #[no_mangle]
 pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
@@ -1999,7 +2046,13 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
     }
 
     let mut act: KernelSigaction = unsafe { mem::zeroed() };
-    act.sa_handler = handler as u64;
+    // 0=SIG_DFL, 1=SIG_IGN, 2=FLAG(sash_signal_handler), 3=EXIT(sash_signal_handler)
+    let actual_handler: u64 = match handler {
+        0 => 0, // SIG_DFL
+        1 => 1, // SIG_IGN
+        _ => sash_signal_handler as u64, // FLAG or EXIT
+    };
+    act.sa_handler = actual_handler;
     // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
     act.sa_flags = 0x04000000 | 0x10000000;
 

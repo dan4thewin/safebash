@@ -200,6 +200,15 @@ fn print_stmt(out: &mut String, stmt: &Statement, depth: usize) {
             indent(out, depth);
             writeln!(out, "}}").unwrap();
         }
+        StmtKind::EndBlock(g) => {
+            indent(out, depth);
+            writeln!(out, "END {{").unwrap();
+            for stmt in &g.body {
+                print_stmt(out, stmt, depth + 1);
+            }
+            indent(out, depth);
+            writeln!(out, "}}").unwrap();
+        }
     }
 }
 

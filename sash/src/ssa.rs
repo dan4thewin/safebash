@@ -314,6 +314,7 @@ pub enum Terminator {
 pub struct SsaProgram {
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
+    pub end_handler: Option<BlockId>,
     next_block_id: usize,
 }
 
@@ -322,6 +323,7 @@ impl SsaProgram {
         Self {
             blocks: BTreeMap::new(),
             entry: 0,
+            end_handler: None,
             next_block_id: 0,
         }
     }

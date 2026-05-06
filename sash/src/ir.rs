@@ -81,6 +81,9 @@ pub enum StmtKind {
     /// { statements; }
     Group(Group),
 
+    /// END { body } — exit handler block (DD#56)
+    EndBlock(Group),
+
     /// Comment line (preserved for round-trip fidelity)
     Comment(String),
 }

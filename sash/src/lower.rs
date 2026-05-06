@@ -73,6 +73,32 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::Declaration(lower_declaration(node, source)?)
         }
         "command" => {
+            // END { body } → EndBlock (DD#56)
+            if let Some(name_node) = node.child_by_field_name("name") {
+                let name_text = name_node.utf8_text(source).unwrap_or("");
+                if name_text == "END" {
+                    // Reconstruct the body between { and } from the source
+                    let full_text = node.utf8_text(source).unwrap_or("");
+                    // Find first '{' and last '}'
+                    if let (Some(open), Some(close)) = (full_text.find('{'), full_text.rfind('}')) {
+                        let body_src = &full_text[open+1..close].trim();
+                        let mut parser = tree_sitter::Parser::new();
+                        parser.set_language(&tree_sitter_bash::LANGUAGE.into()).ok();
+                        if let Some(tree) = parser.parse(body_src.as_bytes(), None) {
+                            let body = lower_body(tree.root_node(), body_src.as_bytes());
+                            return Some(Statement {
+                                kind: StmtKind::EndBlock(Group { body }),
+                                span,
+                            });
+                        }
+                    }
+                    // Fallback: empty END block
+                    return Some(Statement {
+                        kind: StmtKind::EndBlock(Group { body: vec![] }),
+                        span,
+                    });
+                }
+            }
             // Coerce `let "expr"` → `(( expr ))` for source emission
             if let Some(name_node) = node.child_by_field_name("name") {
                 let name_text = name_node.utf8_text(source).unwrap_or("");

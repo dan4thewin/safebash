@@ -687,6 +687,9 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                 writeln!(out, "{}", text.replacen('#', "#", 1)).unwrap();
             }
         }
+        StmtKind::EndBlock(_) => {
+            // END blocks not supported in Janet backend
+        }
     }
 }
 

@@ -125,6 +125,7 @@ struct ExternFuncs {
     getpid: cranelift_module::FuncId,
     epochseconds: cranelift_module::FuncId,
     random: cranelift_module::FuncId,
+    read_signum: cranelift_module::FuncId,
     trap: cranelift_module::FuncId,
     glob: cranelift_module::FuncId,
     glob_regex: cranelift_module::FuncId,
@@ -672,6 +673,11 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     random_sig.returns.push(AbiParam::new(I64));
     let random_func = module.declare_function("sash_random", Linkage::Import, &random_sig).expect("declare");
 
+    // sash_read_signum() -> (ptr, len)
+    let mut read_signum_sig = module.make_signature();
+    read_signum_sig.returns.push(AbiParam::new(I64));
+    read_signum_sig.returns.push(AbiParam::new(I64));
+    let read_signum_func = module.declare_function("sash_read_signum", Linkage::Import, &read_signum_sig).expect("declare");
 
     // sash_glob(dir_ptr, dir_len, pat_ptr, pat_len) -> table_ptr
     let mut glob_sig = module.make_signature();
@@ -788,6 +794,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         getpid: getpid_func,
         epochseconds: epochseconds_func,
         random: random_func,
+        read_signum: read_signum_func,
         trap: trap_func,
         glob: glob_func,
         glob_regex: glob_regex_func,
@@ -1274,6 +1281,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         // Emit code for each SSA block
         let block_ids: Vec<BlockId> = program.blocks.keys().copied().collect();
         let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
+        // DD#56: If there's an END handler, the abort path should jump there
+        let end_handler_cl = program.end_handler.and_then(|id| cl_blocks.get(&id).copied());
         for (idx, &ssa_id) in block_ids.iter().enumerate() {
             if !reachable.contains(&ssa_id) { continue; }
             let cl_block = cl_blocks[&ssa_id];
@@ -1301,7 +1310,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                            &mut vars, &literals, &externs, space_id, nl_id,
                            test_result_var, exit_status_var, pipe_read_fd_var,
                            capture_saved_var, capture_pipe_var, func_constants,
-                           &mut redirect_stack);
+                           &mut redirect_stack, end_handler_cl);
             }
 
             // Emit terminator (unless block was already terminated by exit)
@@ -1377,6 +1386,7 @@ fn lower_inst(
     capture_pipe_var: Variable,
     func_constants: &HashMap<String, String>,
     redirect_stack: &mut Vec<Vec<SavedFd>>,
+    end_handler_cl: Option<cranelift_codegen::ir::Block>,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -1995,9 +2005,14 @@ fn lower_inst(
 
                 builder.switch_to_block(abort_block);
                 builder.seal_block(abort_block);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[status]);
-                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                if let Some(end_cl) = end_handler_cl {
+                    // Jump to END handler instead of exiting directly
+                    builder.ins().jump(end_cl, &[]);
+                } else {
+                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref, &[status]);
+                    builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                }
 
                 builder.switch_to_block(cont_block);
                 builder.seal_block(cont_block);
@@ -2443,9 +2458,13 @@ fn lower_inst(
 
                 builder.switch_to_block(abort_block);
                 builder.seal_block(abort_block);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[final_worst]);
-                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                if let Some(end_cl) = end_handler_cl {
+                    builder.ins().jump(end_cl, &[]);
+                } else {
+                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref, &[final_worst]);
+                    builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                }
 
                 builder.switch_to_block(cont_block);
                 builder.seal_block(cont_block);
@@ -3756,6 +3775,13 @@ fn lower_value(
                     }
                     "random" => {
                         let func_ref = module.declare_func_in_func(externs.random, builder.func);
+                        let call = builder.ins().call(func_ref, &[]);
+                        let ptr = builder.inst_results(call)[0];
+                        let len = builder.inst_results(call)[1];
+                        return (ptr, len);
+                    }
+                    "signum" => {
+                        let func_ref = module.declare_func_in_func(externs.read_signum, builder.func);
                         let call = builder.ins().call(func_ref, &[]);
                         let ptr = builder.inst_results(call)[0];
                         let len = builder.inst_results(call)[1];
