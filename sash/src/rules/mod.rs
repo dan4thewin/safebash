@@ -15,6 +15,7 @@ use crate::rule::Rule;
 pub fn all_rules() -> Vec<Box<dyn Rule>> {
     vec![
         Box::new(arith_expr_mutation::ArithExprMutation),
+        Box::new(arith_expr_mutation::ArithStmtNoEffect),
         Box::new(dynamic_execution::DynamicExecution),
         Box::new(export_rejected::ExportRejected),
         Box::new(extglob_rejected::ExtglobRejected),
