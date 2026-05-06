@@ -43,6 +43,7 @@ static	void	pushand(Reinst*, Reinst*);
 static	void	pushator(int);
 static	void	evaluntil(int);
 static	int	bldcclass(void);
+static	int	bldshortclass(Rune);
 
 static jmp_buf regkaboom;
 
@@ -346,6 +347,47 @@ nextc(Rune *rp)
 	return 0;
 }
 
+/*
+ * Build a character class from shorthand escape sequences.
+ * \d [0-9], \w [0-9A-Za-z_], \s [\t-\r ].
+ * Uppercase inverts (NCCLASS).
+ * Returns CCLASS/NCCLASS token type, or 0 if not a shorthand.
+ */
+static int
+bldshortclass(Rune c)
+{
+	Rune *p;
+	int type;
+
+	type = (c >= 'A' && c <= 'Z') ? NCCLASS : CCLASS;
+	if(c >= 'A' && c <= 'Z')
+		c += 'a' - 'A';
+
+	yyclassp = newclass();
+	p = yyclassp->spans;
+
+	switch(c){
+	case 'd':
+		*p++ = '0'; *p++ = '9';
+		break;
+	case 'w':
+		*p++ = '0'; *p++ = '9';
+		*p++ = 'A'; *p++ = 'Z';
+		*p++ = '_'; *p++ = '_';
+		*p++ = 'a'; *p++ = 'z';
+		break;
+	case 's':
+		*p++ = '\t'; *p++ = '\r';
+		*p++ = ' ';  *p++ = ' ';
+		break;
+	default:
+		return 0;
+	}
+	yyclassp->end = p;
+	return type;
+}
+
+
 static	int
 lex(int literal, int dot_type)
 {
@@ -355,6 +397,11 @@ lex(int literal, int dot_type)
 	if(literal || quoted){
 		if(yyrune == 0)
 			return END;
+		if(quoted){
+			int t = bldshortclass(yyrune);
+			if(t)
+				return t;
+		}
 		return RUNE;
 	}
 
@@ -428,6 +475,28 @@ bldcclass(void)
 				return 0;
 			}
 			*(ep-1) = rune;
+		} else if(quoted && ep < &r[NCCRUNE-6]) {
+			/* expand shorthand classes inside [] */
+			switch(rune){
+			case 'd': *ep++ = '0'; *ep++ = '9'; break;
+			case 'w':
+				*ep++ = '0'; *ep++ = '9';
+				*ep++ = 'A'; *ep++ = 'Z';
+				*ep++ = '_'; *ep++ = '_';
+				*ep++ = 'a'; *ep++ = 'z';
+				break;
+			case 's':
+				*ep++ = '\t'; *ep++ = '\r';
+				*ep++ = ' ';  *ep++ = ' ';
+				break;
+			case 'D': case 'W': case 'S':
+				rcerror("negated shorthand \\D/\\W/\\S not supported inside []");
+				return 0;
+			default:
+				*ep++ = rune;
+				*ep++ = rune;
+				break;
+			}
 		} else {
 			*ep++ = rune;
 			*ep++ = rune;

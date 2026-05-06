@@ -2364,7 +2364,6 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
 
 
 
-/// Shell-quote a string: wraps in single quotes, escaping embedded quotes.
 
 /// $RANDOM — return a pseudo-random number 0-32767 as a string.
 /// Uses getrandom syscall for seed, simple LCG for speed.
@@ -2401,7 +2400,9 @@ pub extern "C" fn sash_random() -> (*mut u8, usize) {
         }
     }
     let len = tmp.len() - i;
-    let ptr = unsafe { sash_alloc(len) };
-    unsafe { core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), ptr, len); }
-    (ptr, len)
+    unsafe {
+        let ptr = sash_alloc(len);
+        core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), ptr, len);
+        (ptr, len)
+    }
 }

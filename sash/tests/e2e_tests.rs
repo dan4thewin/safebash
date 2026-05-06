@@ -1019,21 +1019,21 @@ fn pos_bless_numeric_check() {
 #[test]
 fn pos_auto_bless_hostname() {
     // Explicit bless required — no auto-bless in compiler
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_hostname", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
 fn pos_auto_bless_whoami() {
-    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[a-z_][a-z0-9_]*$ ]]\necho $u";
+    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho $u";
     let output = compile_and_run("auto_whoami", script);
     assert!(!output.is_empty(), "expected username output");
 }
 
 #[test]
 fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ $d =~ ^[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9]$ ]]\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ $d =~ ^\\d\\d\\d\\d\\-\\d\\d\\-\\d\\d$ ]]\necho $d";
     let output = compile_and_run("auto_date", script);
     assert!(output.trim().len() == 10, "expected YYYY-MM-DD, got: {}", output);
 }
@@ -1048,14 +1048,14 @@ fn pos_auto_bless_nproc() {
 
 #[test]
 fn pos_auto_bless_cat_hostname() {
-    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\necho $h";
+    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_cat_hostname", script);
     assert!(!output.is_empty(), "expected hostname from /etc/hostname");
 }
 
 #[test]
 fn pos_auto_bless_multiple() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[a-zA-Z0-9]+$ ]]\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[a-z_][a-z0-9_]*$ ]]\necho \"$h $u\"";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho \"$h $u\"";
     let output = compile_and_run("auto_multi", script);
     assert!(output.contains(' '), "expected 'host user', got: {}", output);
 }
