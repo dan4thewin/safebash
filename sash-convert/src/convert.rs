@@ -456,6 +456,70 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>, pre
             original: Some(text.to_string()),
         });
     }
+
+    // Fix regex patterns: convert POSIX [-...] and [...-] to Plan 9 [\-...]
+    if text.starts_with("[[ ") && text.ends_with(" ]]") && text.contains(" =~ ") {
+        let inner = &text[3..text.len()-3];
+        if let Some(re_start) = inner.find(" =~ ") {
+            let pattern = &inner[re_start + 4..];
+            let fixed = fix_regex_dashes(pattern);
+            if fixed != pattern {
+                let full = format!("[[ {} =~ {} ]]", &inner[..re_start], fixed);
+                patches.push(Patch {
+                    start: node.start_byte(),
+                    end: node.end_byte(),
+                    replacement: full,
+                    prefix_line: None,
+                    original: Some(text.to_string()),
+                });
+            }
+        }
+    }
+}
+
+/// Rewrite POSIX-style character class dashes to Plan 9 escaped form.
+/// [-abc] → [\-abc], [abc-] → [abc\-], [a-z-] → [a-z\-]
+fn fix_regex_dashes(pattern: &str) -> String {
+    let bytes = pattern.as_bytes();
+    let mut result = Vec::with_capacity(bytes.len() + 4);
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'[' {
+            result.push(b'[');
+            i += 1;
+            // handle optional ^
+            if i < bytes.len() && bytes[i] == b'^' {
+                result.push(b'^');
+                i += 1;
+            }
+            // dash at start of class → \-
+            if i < bytes.len() && bytes[i] == b'-' {
+                result.push(b'\\');
+                result.push(b'-');
+                i += 1;
+            }
+            // rest of class
+            while i < bytes.len() && bytes[i] != b']' {
+                // dash before ] → \-
+                if bytes[i] == b'-' && i + 1 < bytes.len() && bytes[i + 1] == b']' {
+                    result.push(b'\\');
+                    result.push(b'-');
+                    i += 1;
+                } else {
+                    result.push(bytes[i]);
+                    i += 1;
+                }
+            }
+            if i < bytes.len() {
+                result.push(b']'); // the ]
+                i += 1;
+            }
+        } else {
+            result.push(bytes[i]);
+            i += 1;
+        }
+    }
+    String::from_utf8(result).unwrap_or_else(|_| pattern.to_string())
 }
 
 enum NumericResult {

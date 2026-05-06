@@ -1,7 +1,7 @@
 RT=sash-rt
 SASH=sash
 CONVERT=sash-convert
-CSRC=`{ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h}
+CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
 build:V: $RT/target/release/libsash_rt.a
 	(cd $SASH && cargo build --release)
