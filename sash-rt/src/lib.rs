@@ -610,12 +610,6 @@ pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {
     buf
 }
 
-/// Evaluate a simple arithmetic expression.
-#[no_mangle]
-pub extern "C" fn sash_arith_eval(var_val: i64, op: u8, operand: i64) -> i64 {
-    arith_eval_inner(var_val, op, operand)
-}
-
 // ═══════════════════════════════════════════════════════════════
 // sash_setenv
 // ═══════════════════════════════════════════════════════════════
@@ -728,15 +722,6 @@ pub extern "C" fn sash_dup(fd: i64) -> i64 {
         );
         result
     }
-}
-
-/// Compare two length-prefixed strings for equality.
-#[no_mangle]
-pub extern "C" fn sash_streq(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64 {
-    if l1 != l2 { return 0; }
-    let a = unsafe { core::slice::from_raw_parts(p1, l1 as usize) };
-    let b = unsafe { core::slice::from_raw_parts(p2, l2 as usize) };
-    if streq_inner(a, b) { 1 } else { 0 }
 }
 
 /// Lexicographic string comparison. Returns <0, 0, or >0.
@@ -2376,17 +2361,7 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
                         continue;
                     }
                 }
-                b'[' => {
-                    if sx < s.len() {
-                        if let Some((matched, end)) = match_bracket(&pat[px..], s[sx]) {
-                            if matched {
-                                px += end;
-                                sx += 1;
-                                continue;
-                            }
-                        }
-                    }
-                }
+                // [ globs rejected at compile time (SB5006); unreachable
                 c => {
                     if sx < s.len() && c == s[sx] {
                         px += 1;
@@ -2408,156 +2383,9 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
     true
 }
 
-/// Match a bracket expression [abc], [a-z], [!abc], [^abc].
-/// Returns (matched, bytes_consumed_from_pattern) or None on malformed.
-fn match_bracket(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
-    let mut i = 1; // skip '['
-    let negate = if i < pat.len() && (pat[i] == b'!' || pat[i] == b'^') {
-        i += 1;
-        true
-    } else {
-        false
-    };
-    // ] at first position is literal
-    if i < pat.len() && pat[i] == b']' {
-        i += 1;
-    }
-    let mut matched = false;
-    while i < pat.len() && pat[i] != b']' {
-        // POSIX character class [:alpha:], [:digit:], etc.
-        if pat[i] == b'[' && i + 1 < pat.len() && pat[i + 1] == b':' {
-            // Find closing :]
-            let start = i + 2;
-            let mut end = start;
-            while end + 1 < pat.len() && !(pat[end] == b':' && pat[end + 1] == b']') {
-                end += 1;
-            }
-            if end + 1 < pat.len() && pat[end] == b':' && pat[end + 1] == b']' {
-                let class = &pat[start..end];
-                let class_match = match class {
-                    b"alpha" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z'),
-                    b"digit" => ch >= b'0' && ch <= b'9',
-                    b"alnum" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') || (ch >= b'0' && ch <= b'9'),
-                    b"upper" => ch >= b'A' && ch <= b'Z',
-                    b"lower" => ch >= b'a' && ch <= b'z',
-                    b"space" => ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == 0x0b || ch == 0x0c,
-                    b"blank" => ch == b' ' || ch == b'\t',
-                    b"print" | b"graph" => ch >= 0x20 && ch <= 0x7e,
-                    b"cntrl" => ch < 0x20 || ch == 0x7f,
-                    b"punct" => (ch >= b'!' && ch <= b'/') || (ch >= b':' && ch <= b'@') || (ch >= b'[' && ch <= b'`') || (ch >= b'{' && ch <= b'~'),
-                    b"xdigit" => (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F'),
-                    b"ascii" => ch <= 0x7f,
-                    _ => false,
-                };
-                if class_match { matched = true; }
-                i = end + 2; // skip past :]
-                continue;
-            }
-        }
-        let lo = pat[i];
-        if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
-            let hi = pat[i + 2];
-            if ch >= lo && ch <= hi {
-                matched = true;
-            }
-            i += 3;
-        } else {
-            if ch == lo {
-                matched = true;
-            }
-            i += 1;
-        }
-    }
-    if i < pat.len() && pat[i] == b']' {
-        i += 1; // consume ']'
-        Some((if negate { !matched } else { matched }, i))
-    } else {
-        None // malformed — no closing ]
-    }
-}
 
 
 /// Shell-quote a string: wraps in single quotes, escaping embedded quotes.
-/// Dead code — kept for potential future printf %q implementation.
-/// Returns length written to out_ptr.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_shell_quote(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len < 0 {
-        // Empty string → ''
-        unsafe {
-            *out_ptr = b'\'';
-            *out_ptr.add(1) = b'\'';
-        }
-        return 2;
-    }
-    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
-    let mut i = 0usize;
-    unsafe { *out_ptr.add(i) = b'\''; }
-    i += 1;
-    for &b in s {
-        if b == b'\'' {
-            // End quote, escaped quote, start quote: '\''
-            unsafe {
-                *out_ptr.add(i) = b'\'';
-                *out_ptr.add(i + 1) = b'\\';
-                *out_ptr.add(i + 2) = b'\'';
-                *out_ptr.add(i + 3) = b'\'';
-            }
-            i += 4;
-        } else {
-            unsafe { *out_ptr.add(i) = b; }
-            i += 1;
-        }
-    }
-    unsafe { *out_ptr.add(i) = b'\''; }
-    i += 1;
-    i as i64
-}
-
-/// Expand escape sequences in a string: \n → newline, \t → tab, etc.
-/// Dead code — kept for potential future use.
-/// Returns length written to out_ptr.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_expand_escapes(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
-    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
-    let mut i = 0usize;
-    let mut o = 0usize;
-    while i < s.len() {
-        if s[i] == b'\\' && i + 1 < s.len() {
-            let c = match s[i + 1] {
-                b'n' => b'\n',
-                b't' => b'\t',
-                b'r' => b'\r',
-                b'a' => 0x07,
-                b'b' => 0x08,
-                b'e' | b'E' => 0x1b,
-                b'f' => 0x0c,
-                b'v' => 0x0b,
-                b'\\' => b'\\',
-                b'\'' => b'\'',
-                b'"' => b'"',
-                other => {
-                    // Unknown escape — pass through literally
-                    unsafe { *out_ptr.add(o) = b'\\'; }
-                    o += 1;
-                    unsafe { *out_ptr.add(o) = other; }
-                    o += 1;
-                    i += 2;
-                    continue;
-                }
-            };
-            unsafe { *out_ptr.add(o) = c; }
-            o += 1;
-            i += 2;
-        } else {
-            unsafe { *out_ptr.add(o) = s[i]; }
-            o += 1;
-            i += 1;
-        }
-    }
-    o as i64
-}
 
 /// $RANDOM — return a pseudo-random number 0-32767 as a string.
 /// Uses getrandom syscall for seed, simple LCG for speed.
