@@ -11,7 +11,7 @@ setup() {
 
     # Ensure sash/sash-convert are on PATH even after cd to tmpdir
     if [[ ":$PATH:" != *"/target/"* ]]; then
-        PATH="$PATH:$(realpath "${BASH_SOURCE[0]%/*}/../target/release")"
+        PATH="$PATH:$(cd "$(dirname "${BASH_SOURCE[0]}")" && realpath ../target/release)"
     fi
 
     local dir
