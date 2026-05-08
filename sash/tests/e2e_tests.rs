@@ -1233,3 +1233,42 @@ fn brush_export_rejected() {
     let stderr = compile_expect_fail("brush_export", script);
     assert!(stderr.contains("SB5001"), "expected SB5001, got: {}", stderr);
 }
+
+// ═══════════════════════════════════════════════════════════════
+// EXTGLOB REJECTION (SB5005 — DD#20/DD#39)
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn neg_extglob_at() {
+    let script = "#!/bin/bash\ncase x in @(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_at", script);
+    assert!(stderr.contains("SB5005"), "expected SB5005 for @(), got: {}", stderr);
+}
+
+#[test]
+fn neg_extglob_plus() {
+    let script = "#!/bin/bash\ncase x in +(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_plus", script);
+    assert!(stderr.contains("SB5005"), "expected SB5005 for +(), got: {}", stderr);
+}
+
+#[test]
+fn neg_extglob_question() {
+    let script = "#!/bin/bash\ncase x in ?(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_q", script);
+    assert!(stderr.contains("SB5005"), "expected SB5005 for ?(), got: {}", stderr);
+}
+
+#[test]
+fn neg_extglob_bang() {
+    let script = "#!/bin/bash\ncase x in !(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_bang", script);
+    assert!(stderr.contains("SB5005"), "expected SB5005 for !(), got: {}", stderr);
+}
+
+#[test]
+fn pos_case_bare_star() {
+    // bare * in case should NOT trigger SB5005
+    let script = "#!/bin/bash\ncase hello in *) echo matched;; esac";
+    assert_eq!(compile_and_run("case_star", script), "matched\n");
+}
