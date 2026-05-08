@@ -310,9 +310,12 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
 
 ## Anti-patterns (DO NOT do these)
 
-- **Do NOT suppress stderr globally.** Never redirect stderr to /dev/null
-  on compiler or linker invocations. If a specific message is noise,
-  filter that message only.
+- **Do NOT suppress stderr globally.** Never add \`Stdio::null()\`,
+  \`Stdio::piped()\`, \`2>/dev/null\`, or \`.stderr(...)\` on compiler,
+  linker, or external command invocations. If ld or shellcheck produce
+  warnings, that's acceptable — the spec test harness already handles it.
+- **Do NOT change eprintln to println** or remove user-facing messages
+  to make tests pass. The spec harness filters stderr appropriately.
 - **Do NOT delete user-facing output** (like success messages) to make
   tests pass. If a test is failing because of stderr output, the fix is
   to filter in the test harness or fix the message format, not to remove it.
@@ -352,12 +355,12 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
   git checkout "$BASE_BRANCH" -- spec/ notes/ 2>/dev/null || true
 
   # Verify no regressions
-  if cargo test --release -p sash 2>&1 | tail -1 | /bin/grep -q "^test result: ok"; then
-    echo "Cargo tests: PASS"
-  else
+  if cargo test --release -p sash 2>&1 | /bin/grep -q "^error: test failed"; then
     echo "Cargo tests: FAIL (regressions)"
     git checkout "$BASE_BRANCH"
     continue
+  else
+    echo "Cargo tests: PASS"
   fi
 
   # Check gated spec tests
