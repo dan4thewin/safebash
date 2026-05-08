@@ -1272,3 +1272,17 @@ fn pos_case_bare_star() {
     let script = "#!/bin/bash\ncase hello in *) echo matched;; esac";
     assert_eq!(compile_and_run("case_star", script), "matched\n");
 }
+
+#[test]
+fn neg_source_dot_rejected() {
+    let script = "#!/bin/bash\n. ./file.sh";
+    let stderr = compile_expect_fail("source_dot", script);
+    assert!(stderr.contains("SB4002"), "expected SB4002 for '.', got: {}", stderr);
+}
+
+#[test]
+fn neg_source_keyword_rejected() {
+    let script = "#!/bin/bash\nsource ./file.sh";
+    let stderr = compile_expect_fail("source_kw", script);
+    assert!(stderr.contains("SB4002"), "expected SB4002 for 'source', got: {}", stderr);
+}

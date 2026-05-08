@@ -1200,24 +1200,7 @@ fi
     assert_eq!(output, "negated\n");
 }
 
-#[test]
-fn source_kvp_file() {
-    use std::io::Write;
-    let id = COUNTER.fetch_add(1, Ordering::SeqCst);
-    let kvp_path = format!("/tmp/sash_kvp_{}.env", id);
-    let mut f = std::fs::File::create(&kvp_path).unwrap();
-    write!(f, "SSH_AUTH_SOCK=/tmp/agent.sock\nSSH_AGENT_PID=12345\n").unwrap();
-    drop(f);
 
-    let bash = format!(r#". "{}"
-echo "$SSH_AUTH_SOCK"
-echo "$SSH_AGENT_PID"
-"#, kvp_path);
-    let (output, status) = run_bash_native(&bash, &[]);
-    assert_eq!(output, "/tmp/agent.sock\n12345\n");
-    assert_eq!(status, 0);
-    std::fs::remove_file(&kvp_path).ok();
-}
 
 #[test]
 fn exit_status_true() {

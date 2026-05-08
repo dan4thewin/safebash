@@ -40,10 +40,10 @@ impl Rule for DynamicExecution {
                 "SB4001",
                 "eval is not allowed in the safe subset".to_string(),
             )],
-            "source" | "." => vec![Diagnostic::marker(
+            "source" | "." => vec![Diagnostic::error(
                 node,
                 "SB4002",
-                format!("'{}' will be compiled to safe kvp loader (sash-expand)", word),
+                format!("'source'/'.' is not allowed — use `sash-expand file | mapfile -m var` instead"),
             )],
             _ => vec![],
         }
