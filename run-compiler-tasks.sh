@@ -100,7 +100,7 @@ extract_example() {
   [[ -z "$symbol" || "$symbol" = "$file" ]] && return 0
 
   local range
-  range=$(sqlite3 .indexnudge.db \
+  range=$(sqlite3 .indexnudge-rust.db \
     "SELECT start_line, end_line FROM symbols
      WHERE name = '${symbol}' AND file = '${file}' LIMIT 1" 2>/dev/null) || true
 
@@ -140,14 +140,14 @@ extract_gate_lines() {
   done
 }
 
-# Query .indexnudge.db for symbols/references related to a keyword.
+# Query .indexnudge-rust.db for symbols/references related to a keyword.
 index_context() {
   local keyword="$1"
   echo "## Index context for '${keyword}'"
   echo ""
   echo "### Symbols matching '${keyword}'"
   echo '```'
-  sqlite3 .indexnudge.db \
+  sqlite3 .indexnudge-rust.db \
     "SELECT name, kind, file, start_line, end_line
      FROM symbols
      WHERE (name LIKE '%${keyword}%' OR qualified_name LIKE '%${keyword}%')
@@ -157,7 +157,7 @@ index_context() {
   echo ""
   echo "### References in sash/src/"
   echo '```'
-  sqlite3 .indexnudge.db \
+  sqlite3 .indexnudge-rust.db \
     "SELECT file, line_num, SUBSTR(content, 1, 120)
      FROM lines
      WHERE content LIKE '%${keyword}%'
@@ -167,7 +167,7 @@ index_context() {
   echo ""
   echo "### References in tests"
   echo '```'
-  sqlite3 .indexnudge.db \
+  sqlite3 .indexnudge-rust.db \
     "SELECT file, line_num, SUBSTR(content, 1, 120)
      FROM lines
      WHERE content LIKE '%${keyword}%'
@@ -240,7 +240,7 @@ ${index_block}
 
 ## How to navigate the codebase
 
-You have a code index at \`.indexnudge.db\` (refreshed automatically by the
+You have a code index at \`.indexnudge-rust.db\` (refreshed automatically by the
 sqlite3 shim). Use sqlite3 queries to find exactly what you need.
 **DO NOT read entire files.** The key files are thousands of lines long.
 Use the index to find the exact lines, then \`sed -n 'START,ENDp' FILE\`.

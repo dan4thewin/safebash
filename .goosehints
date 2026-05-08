@@ -16,6 +16,34 @@ At session end, update `notes/status.md` with progress.
 Read `notes/decisions/` for design decision quick-reference.
 The full journal is in `notes/journal/` (49 files, `cat notes/journal/*` reconstructs the whole).
 
+## Code Index
+
+A code index lives at `.indexnudge-rust.db` (SQLite, refreshed by
+the `indexnudge` shims on each invocation).  Use it instead of
+reading whole files:
+
+```sql
+-- Find a symbol
+SELECT file, line_start, line_end FROM symbols
+WHERE name = 'function_name' AND file LIKE 'sash/src/%';
+
+-- Find references to a keyword
+SELECT file, line_num, content FROM lines
+WHERE content LIKE '%keyword%' AND file LIKE 'sash/src/%'
+ORDER BY file, line_num;
+
+-- Find callers
+SELECT caller_file, caller_symbol, line_num FROM calls
+WHERE callee = 'function_name';
+
+-- Full-text search
+SELECT file, line_num, content FROM lines_fts
+WHERE content MATCH '"keyword"' AND file NOT LIKE 'exp/%';
+```
+
+The db name includes the language (`-rust`).  If other language
+indexes exist, they'll be `.indexnudge-<lang>.db`.
+
 ## Key constraint
 
 **`notes/decisions/`** are the authoritative source for what's intentional
