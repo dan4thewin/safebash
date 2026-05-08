@@ -12,10 +12,8 @@ FILTER="${1:-}"
 LOGDIR=".agent-runs"
 mkdir -p "$LOGDIR"
 
-# Tasks ordered by gate count (simplest first), no unresolved dependencies,
-# not already passing. Excluded: tasks requiring design decisions or infra work.
 TASKS=(
-  # 1-gate tasks (trivial)
+  # 1-gate tasks
   dd56-signum-keyword
   dd21-grammar-dash-prefix
   dd23-remove-command-v
@@ -75,14 +73,13 @@ spec_file_for_gate() {
   local gate="$1"
   local prefix="${gate%%.*}"
   case "$prefix" in
-    12|14|17|23) echo "spec/commands.sh" ;;
-    15) echo "spec/misc.sh" ;;
+    5|6|7|8|9|10|11|15|32|36|37|38|52) echo "spec/misc.sh" ;;
+    12|14|17|23|54) echo "spec/commands.sh" ;;
     16|33|35|41) echo "spec/types.sh" ;;
     18|42|46|48) echo "spec/functions.sh" ;;
     20|22|28|39|40) echo "spec/wordsplit.sh" ;;
-    24|50|53|54) echo "spec/taint.sh" ;;
+    24|50|53) echo "spec/taint.sh" ;;
     25|30|31) echo "spec/arithmetic.sh" ;;
-    32|36|37|38|52) echo "spec/misc.sh" ;;
     55) echo "spec/errors.sh" ;;
     56) echo "spec/signals.sh" ;;
     57) echo "spec/convert.sh spec/compiler.sh" ;;
@@ -90,8 +87,96 @@ spec_file_for_gate() {
   esac
 }
 
+# Extract example code from task file's example: field.
+# Format: example: file:symbol_name
+extract_example() {
+  local taskfile="$1"
+  local example_line
+  example_line=$(sed -n 's/^example: *//p' "$taskfile") || true
+  [[ -z "$example_line" ]] && return 0
+
+  local file="${example_line%%:*}"
+  local symbol="${example_line#*:}"
+  [[ -z "$symbol" || "$symbol" = "$file" ]] && return 0
+
+  local range
+  range=$(sqlite3 .indexnudge.db \
+    "SELECT start_line, end_line FROM symbols
+     WHERE name = '${symbol}' AND file = '${file}' LIMIT 1" 2>/dev/null) || true
+
+  if [[ -n "$range" ]]; then
+    local start="${range%%|*}" end="${range##*|}"
+    echo "## Example pattern (${file}:${symbol}, lines ${start}-${end})"
+    echo '```rust'
+    sed -n "${start},${end}p" "$file"
+    echo '```'
+  fi
+}
+
+# Extract specific gate assertion lines from spec files.
+extract_gate_lines() {
+  local gates="$1"; shift
+
+  echo "## Gate assertions (must pass)"
+  echo "Each gate is a test in a spec file. Your task succeeds when these pass."
+  echo ""
+
+  for g in $gates; do
+    for sf in "$@"; do
+      [[ -f "$sf" ]] || continue
+      local match
+      match=$(/bin/grep -nE "chk ${g}( |$)" "$sf" 2>/dev/null | head -1) || true
+      if [[ -n "$match" ]]; then
+        local chk_line="${match%%:*}"
+        local start=$((chk_line - 5))
+        (( start < 1 )) && start=1
+        echo "### Gate $g ($sf:$chk_line)"
+        echo '```bash'
+        sed -n "${start},${chk_line}p" "$sf"
+        echo '```'
+        echo ""
+      fi
+    done
+  done
+}
+
+# Query .indexnudge.db for symbols/references related to a keyword.
+index_context() {
+  local keyword="$1"
+  echo "## Index context for '${keyword}'"
+  echo ""
+  echo "### Symbols matching '${keyword}'"
+  echo '```'
+  sqlite3 .indexnudge.db \
+    "SELECT name, kind, file, start_line, end_line
+     FROM symbols
+     WHERE (name LIKE '%${keyword}%' OR qualified_name LIKE '%${keyword}%')
+       AND file NOT LIKE 'exp/%'
+     ORDER BY file, start_line" 2>/dev/null | head -30
+  echo '```'
+  echo ""
+  echo "### References in sash/src/"
+  echo '```'
+  sqlite3 .indexnudge.db \
+    "SELECT file, line_num, SUBSTR(content, 1, 120)
+     FROM lines
+     WHERE content LIKE '%${keyword}%'
+       AND file LIKE 'sash/src/%'
+     ORDER BY file, line_num" 2>/dev/null | head -40
+  echo '```'
+  echo ""
+  echo "### References in tests"
+  echo '```'
+  sqlite3 .indexnudge.db \
+    "SELECT file, line_num, SUBSTR(content, 1, 120)
+     FROM lines
+     WHERE content LIKE '%${keyword}%'
+       AND file LIKE 'sash/tests/%'
+     ORDER BY file, line_num" 2>/dev/null | head -20
+  echo '```'
+}
+
 for task in "${TASKS[@]}"; do
-  # Apply filter
   [[ -n "$FILTER" && "$task" != *"$FILTER"* ]] && continue
 
   branch="agent/$task"
@@ -103,71 +188,139 @@ for task in "${TASKS[@]}"; do
   echo "TASK: $task"
   echo "═══════════════════════════════════════════════════"
 
-  # Skip if task file doesn't exist
   if [[ ! -f "$taskfile" ]]; then
-    echo "SKIP: no task file"
-    continue
+    echo "SKIP: no task file"; continue
   fi
 
-  # Read gates
-  gates=$(grep '^gates:' "$taskfile" | sed 's/gates: *//; s/\[//; s/\]//; s/,/ /g')
+  # Parse gates from frontmatter
+  gates=$(sed -n 's/^gates: *\[//p' "$taskfile" | sed 's/\].*//; s/,/ /g')
   if [[ -z "$gates" ]]; then
-    echo "SKIP: no gates"
-    continue
+    echo "SKIP: no gates"; continue
   fi
 
-  # Determine which spec files contain these gates
-  spec_files=""
+  # Parse index_keyword (optional, falls back to last segment of task name)
+  index_keyword=$(sed -n 's/^index_keyword: *//p' "$taskfile") || true
+  [[ -z "$index_keyword" ]] && index_keyword="${task##*-}"
+
+  # Determine spec files for gates
+  spec_files=()
+  seen_specs=""
   for g in $gates; do
     for sf in $(spec_file_for_gate "$g"); do
-      [[ "$spec_files" != *"$sf"* ]] && spec_files="$spec_files $sf"
+      if [[ "$seen_specs" != *"$sf"* ]]; then
+        spec_files+=("$sf")
+        seen_specs="$seen_specs $sf"
+      fi
     done
   done
 
-  # Clean state
+  # Clean state — fresh branch from base
   git checkout "$BASE_BRANCH" -- . 2>/dev/null || true
   git checkout "$BASE_BRANCH" 2>/dev/null
   git branch -D "$branch" 2>/dev/null || true
   git checkout -b "$branch"
 
-  # Build prompt
+  # Build prompt sections
   task_content=$(cat "$taskfile")
-  spec_content=""
-  for sf in $spec_files; do
-    [[ -f "$sf" ]] && spec_content="${spec_content}
---- $sf ---
-$(cat "$sf")"
-  done
+  gate_block=$(extract_gate_lines "$gates" "${spec_files[@]}")
+  example_block=$(extract_example "$taskfile")
+  index_block=$(index_context "$index_keyword")
 
-  prompt="You are implementing a compiler feature for the safebash project.
+  prompt="You are implementing a compiler task for safebash — a compiler from
+a safe Bash subset to static native binaries.
 
-## Task
-$task_content
+## Your task
+${task_content}
 
-## Gated tests (must pass): $gates
+${gate_block}
 
-## Spec test files
-$spec_content
+${example_block:-}
 
-## Instructions
-1. Read AGENTS.md for project conventions
-2. Read the relevant source files in sash/src/
-3. Implement the feature to make the gated tests pass
-4. Run: cargo test --release -p sash (must pass — no regressions)
-5. Run the specific spec tests to verify gates pass
-6. Commit your changes with a descriptive message
-7. Write a brief post-mortem to stdout explaining what you did, any design choices, and anything ambiguous
+${index_block}
 
-IMPORTANT:
-- Do NOT modify spec test files — they define the acceptance criteria
-- Do NOT modify notes/tasks/ files
-- All existing tests must continue to pass (no regressions)
-- If you cannot implement the feature, explain why in the post-mortem
-- sash-rt is excluded from workspace; build with: cd sash-rt && cargo build --release
-- The binary links sash-rt at compile time from sash-rt/target/release/libsash_rt.a
+## How to navigate the codebase
+
+You have a code index at \`.indexnudge.db\` (refreshed automatically by the
+sqlite3 shim). Use sqlite3 queries to find exactly what you need.
+**DO NOT read entire files.** The key files are thousands of lines long.
+Use the index to find the exact lines, then \`sed -n 'START,ENDp' FILE\`.
+
+### Find a symbol (function, struct, enum) by name
+\`\`\`sql
+SELECT name, kind, file, start_line, end_line
+FROM symbols WHERE name LIKE '%keyword%' AND file NOT LIKE 'exp/%';
+\`\`\`
+
+### Read a specific function (use line range from symbols table)
+\`\`\`bash
+sed -n 'START,ENDp' FILE
+\`\`\`
+
+### Find all references to a name in compiler source
+\`\`\`sql
+SELECT file, line_num, content FROM lines
+WHERE content LIKE '%keyword%' AND file LIKE 'sash/src/%'
+ORDER BY file, line_num;
+\`\`\`
+
+### Find what calls a function
+\`\`\`sql
+SELECT caller_file, caller_symbol, line_num FROM calls
+WHERE callee = 'function_name' AND caller_file NOT LIKE 'exp/%';
+\`\`\`
+
+### Find what a function calls
+\`\`\`sql
+SELECT callee, line_num FROM calls
+WHERE caller_symbol = 'function_name' AND caller_file = 'sash/src/codegen.rs';
+\`\`\`
+
+### Find which symbol owns a line number
+\`\`\`sql
+SELECT DISTINCT symbol FROM lines
+WHERE file = 'FILE' AND line_num = LINE_NUM;
+\`\`\`
+
+### Full-text search (exact word match)
+\`\`\`sql
+SELECT file, line_num, content FROM lines_fts
+WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
+\`\`\`
+
+## Work rules
+
+1. **Compile after every edit.** \`cargo build --release -p sash\`
+   Fix errors before editing more files.
+2. **Test frequently.** \`cargo test --release -p sash 2>&1 | tail -5\`
+   Do this after every logical change. Zero regressions.
+3. **Never read entire large files.** Use index queries + sed ranges.
+   codegen.rs is 4500 lines. lower.rs is 2500 lines.
+4. **Do NOT modify** spec files (spec/*.sh), task files (notes/tasks/),
+   or anything in exp/.
+5. **sash-rt is a separate crate** excluded from the workspace.
+   Build with: \`cd sash-rt && cargo build --release\`
+6. **After all edits, verify:**
+   \`\`\`bash
+   cargo test --release -p sash 2>&1 | tail -3    # all tests pass
+   cd spec && bash SPEC_FILE 3>&1 2>/dev/null      # gated spec tests
+   \`\`\`
+7. **Commit** with a descriptive message when done.
+
+## Key files (do NOT read whole — use index)
+- sash/src/codegen.rs — Cranelift codegen (4500 lines)
+- sash/src/lower.rs — CST→IR lowering (2500 lines)
+- sash/src/transform.rs — IR→SSA (2600 lines)
+- sash/src/ir.rs — IR definitions
+- sash/src/ssa.rs — SSA instructions
+- sash/src/ssa_taint.rs — SSA taint checks
+- sash/src/type_check.rs — type checking
+- sash/src/taint.rs — CST taint analysis
+- sash/src/validator.rs + sash/src/rules/ — validation
+- sash-rt/src/lib.rs — runtime (2600 lines, no_std)
+- sash/tests/codegen_tests.rs — codegen tests (3000 lines)
+- sash/tests/e2e_tests.rs — e2e tests (1200 lines)
 "
 
-  # Run goose
   prompt_file="$LOGDIR/${task}-prompt.md"
   echo "$prompt" > "$prompt_file"
   echo "Running goose..."
@@ -177,14 +330,13 @@ IMPORTANT:
     echo "Goose exited with error"
   fi
 
-  # Extract post-mortem (last markdown section from log)
   tail -50 "$logfile" > "$postmortem"
 
-  # Check results
+  # Restore spec/notes from base (agent shouldn't have touched them)
   git checkout "$BASE_BRANCH" -- spec/ notes/ 2>/dev/null || true
 
   # Verify no regressions
-  if (cd sash && cargo test --release 2>&1 | tail -1 | grep -q "^test result: ok"); then
+  if cargo test --release -p sash 2>&1 | tail -1 | /bin/grep -q "^test result: ok"; then
     echo "Cargo tests: PASS"
   else
     echo "Cargo tests: FAIL (regressions)"
@@ -194,11 +346,11 @@ IMPORTANT:
 
   # Check gated spec tests
   all_gates_pass=true
-  for sf in $spec_files; do
+  for sf in "${spec_files[@]}"; do
     [[ -f "$sf" ]] && bash "$sf" > /tmp/spec_out.txt 2>&1 || true
   done
   for g in $gates; do
-    if ! grep -q "^ok.*$g" /tmp/spec_out.txt 2>/dev/null; then
+    if ! /bin/grep -q "^ok.*${g}" /tmp/spec_out.txt 2>/dev/null; then
       all_gates_pass=false
       echo "GATE FAIL: $g"
     fi

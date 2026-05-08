@@ -3,6 +3,8 @@ status: ready
 severity: cleanup
 depends: []
 gates: [23.3]
+example: sash/src/rules/process_substitution.rs:check
+index_keyword: command_v
   - tests
   - commit
 

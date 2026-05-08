@@ -2,6 +2,8 @@ title: Heredoc with command substitution
 status: ready
 depends: []
 gates: [5.1]
+example: sash/src/rules/heredoc_cmdsub.rs:walk_for_cmdsub
+index_keyword: heredoc
   - tests
   - commit
 

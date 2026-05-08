@@ -3,6 +3,8 @@ status: ready
 severity: security
 depends: []
 gates: [23.5]
+example: sash-rt/src/lib.rs:sash_exec
+index_keyword: find_path
   - tests
   - commit
 
