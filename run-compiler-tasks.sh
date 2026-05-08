@@ -304,7 +304,23 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
    cargo test --release -p sash 2>&1 | tail -3    # all tests pass
    cd spec && bash SPEC_FILE 3>&1 2>/dev/null      # gated spec tests
    \`\`\`
-7. **Commit** with a descriptive message when done.
+7. **Always commit** with a descriptive message when gates pass.
+   If you made changes but gates don't pass, commit anyway on the branch
+   with a message explaining what's incomplete.
+
+## Anti-patterns (DO NOT do these)
+
+- **Do NOT suppress stderr globally.** Never redirect stderr to /dev/null
+  on compiler or linker invocations. If a specific message is noise,
+  filter that message only.
+- **Do NOT delete user-facing output** (like success messages) to make
+  tests pass. If a test is failing because of stderr output, the fix is
+  to filter in the test harness or fix the message format, not to remove it.
+  But since you can't modify spec files, look for a targeted fix.
+- **Do NOT read AGENTS.md.** Everything you need is in this prompt.
+- **Do NOT read entire source files.** Use the index.
+- **Do NOT make speculative changes** to files not mentioned in the task.
+  If you think something else needs changing, note it but don't do it.
 
 ## Key files (do NOT read whole — use index)
 - sash/src/codegen.rs — Cranelift codegen (4500 lines)
