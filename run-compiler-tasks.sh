@@ -307,6 +307,7 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
 7. **Always commit** with a descriptive message when gates pass.
    If you made changes but gates don't pass, commit anyway on the branch
    with a message explaining what's incomplete.
+8. **Do NOT push.** Do not run \`git push\`. The harness handles merging.
 
 ## Anti-patterns (DO NOT do these)
 
@@ -365,11 +366,15 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
 
   # Check gated spec tests
   all_gates_pass=true
+  spec_tsv="/tmp/spec_gates.tsv"
+  rm -f "$spec_tsv"
   for sf in "${spec_files[@]}"; do
-    [[ -f "$sf" ]] && bash "$sf" > /tmp/spec_out.txt 2>&1 || true
+    [[ -f "$sf" ]] && SPEC_TSV="$spec_tsv" bash "$sf" 3>/dev/null 2>/dev/null || true
   done
   for g in $gates; do
-    if ! /bin/grep -q "^ok.*${g}" /tmp/spec_out.txt 2>/dev/null; then
+    if /bin/grep -qP "^${g}\tpassing\t" "$spec_tsv" 2>/dev/null; then
+      echo "GATE PASS: $g"
+    else
       all_gates_pass=false
       echo "GATE FAIL: $g"
     fi
