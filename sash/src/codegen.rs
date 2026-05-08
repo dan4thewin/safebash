@@ -107,7 +107,6 @@ struct ExternFuncs {
     read_line: cranelift_module::FuncId,
     read_delim: cranelift_module::FuncId,
     splice_argv: cranelift_module::FuncId,
-    source_kvp: cranelift_module::FuncId,
     file_test: cranelift_module::FuncId,
     pow: cranelift_module::FuncId,
     substring: cranelift_module::FuncId,
@@ -550,14 +549,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     let splice_argv_func = module.declare_function("sash_splice_argv", Linkage::Import, &splice_argv_sig)
         .expect("declare sash_splice_argv");
 
-    // sash_source_kvp(path_ptr, path_len) -> i64
-    let mut source_kvp_sig = module.make_signature();
-    source_kvp_sig.params.push(AbiParam::new(I64));
-    source_kvp_sig.params.push(AbiParam::new(I64));
-    source_kvp_sig.returns.push(AbiParam::new(I64));
-    let source_kvp_func = module.declare_function("sash_source_kvp", Linkage::Import, &source_kvp_sig)
-        .expect("declare sash_source_kvp");
-
     // sash_file_test(path_ptr, path_len, op) -> i64
     let mut file_test_sig = module.make_signature();
     file_test_sig.params.push(AbiParam::new(I64)); // path_ptr
@@ -762,7 +753,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         table_delete: table_delete_func,
         read_line: read_line_func,
         read_delim: read_delim_func,
-        source_kvp: source_kvp_func,
         file_test: file_test_func,
         pow: pow_func,
         substring: substring_func,
@@ -1791,49 +1781,6 @@ fn lower_inst(
             let call = builder.ins().call(wait_ref, &[pid]);
             let status = builder.inst_results(call)[0];
             builder.def_var(exit_status_var, status);
-        }
-        SsaInst::Command { name, args, .. } if name == "." || name == "source" => {
-            // source/. — load flat KEY=VALUE file, set env vars
-            if let Some(arg) = args.first() {
-                let (ptr, len) = lower_value(arg, builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
-                let kvp_ref = module.declare_func_in_func(externs.source_kvp, builder.func);
-                builder.ins().call(kvp_ref, &[ptr, len]);
-                // Re-read all env-backed variables (source may have changed them)
-                let getenv_ref = module.declare_func_in_func(externs.getenv, builder.func);
-                for (key, sv) in vars.iter() {
-                    if sv.is_int() { continue; }
-                    // Extract base name: "SSH_AUTH_SOCK_0" → "SSH_AUTH_SOCK"
-                    let base = if let Some(idx) = key.rfind('_') {
-                        let suffix = &key[idx+1..];
-                        if suffix.chars().all(|c| c.is_ascii_digit()) {
-                            &key[..idx]
-                        } else {
-                            key.as_str()
-                        }
-                    } else {
-                        key.as_str()
-                    };
-                    // Only re-read uppercase env-style vars (not positional, not local)
-                    if !base.chars().all(|c| c.is_uppercase() || c == '_') || base.len() <= 1 {
-                        continue;
-                    }
-                    let name_data = if let Some(&id) = literals.get(base) {
-                        id
-                    } else { continue; };
-                    let name_gv = module.declare_data_in_func(name_data, builder.func);
-                    let name_ptr = builder.ins().global_value(I64, name_gv);
-                    let name_len = builder.ins().iconst(I64, base.len() as i64);
-                    let out_slot = builder.create_sized_stack_slot(
-                        StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
-                    );
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let call = builder.ins().call(getenv_ref, &[name_ptr, name_len, out_addr]);
-                    let val_ptr = builder.inst_results(call)[0];
-                    let val_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), val_ptr);
-                    builder.def_var(sv.str_len(), val_len);
-                }
-            }
         }
         SsaInst::Command { name, args, .. } if name == "shift" => {
             // shift N: sash_argc -= N; sash_argv += N*8
