@@ -417,6 +417,10 @@ pub struct VersionState {
     pub loop_stack: Vec<(usize, usize)>,
     /// Return target block for `return` in inlined functions.
     pub return_target: Option<usize>,
+    /// Functions that have return statements (non-void).
+    pub function_non_void: std::collections::HashSet<String>,
+    /// Depth counter for condition position (if/while condition, LHS of &&/||).
+    pub in_condition: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
     /// Diagnostics collected during SSA transformation.
@@ -436,6 +440,8 @@ impl VersionState {
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
+            function_non_void: std::collections::HashSet::new(),
+            in_condition: 0,
             exit_trap: None, diagnostics: Vec::new(),
         }
     }
@@ -446,6 +452,8 @@ impl VersionState {
             counter: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
+            function_non_void: std::collections::HashSet::new(),
+            in_condition: 0,
             function_redirects: HashMap::new(),
             type_map,
             assoc_arrays: std::collections::HashSet::new(),

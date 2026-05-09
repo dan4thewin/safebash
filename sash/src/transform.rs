@@ -657,6 +657,14 @@ fn lower_one(
             // Check if this is a known function call → inline expansion
             if let Some(body) = state.function_bodies.get(&name).cloned() {
                 // Collect local variable names from function body
+                // DD#55/SB4016: bare call of non-void (-> int) function is error
+                if state.function_non_void.contains(&name) && state.in_condition == 0 {
+                    state.diagnostics.push(format!(
+                        "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $({})",
+                        stmt.span.line, stmt.span.col, name, name
+                    ));
+                }
+
                 let locals = collect_local_vars(&body);
 
                 // Save caller's positional params
@@ -916,7 +924,9 @@ fn lower_one(
             match l.op {
                 ListOp::And => {
                     // left && right: run left, skip right if left failed
+                    state.in_condition += 1;
                     block = lower_one(&l.left, ssa, state, block);
+                    state.in_condition -= 1;
                     let right_block = ssa.new_block("and.right");
                     let merge_block = ssa.new_block("and.merge");
                     ssa.block_mut(block).terminator = Terminator::Branch {
@@ -930,7 +940,9 @@ fn lower_one(
                 }
                 ListOp::Or => {
                     // left || right: run left, skip right if left succeeded
+                    state.in_condition += 1;
                     block = lower_one(&l.left, ssa, state, block);
+                    state.in_condition -= 1;
                     let right_block = ssa.new_block("or.right");
                     let merge_block = ssa.new_block("or.merge");
                     ssa.block_mut(block).terminator = Terminator::Branch {
@@ -981,6 +993,27 @@ fn lower_one(
         StmtKind::Function(f) => {
             // Store function body for inline expansion at call sites.
             state.function_bodies.insert(f.name.clone(), f.body.clone());
+
+            // DD#55: non-void function detection
+            let returns = collect_returns(&f.body);
+            if !returns.is_empty() {
+                // SB4017: -> int function that only returns 0 is ceremony
+                if f.return_type == crate::ir::VarType::Int {
+                    let all_zero = returns.iter().all(|v| v.is_empty() || v == "0");
+                    if all_zero {
+                        state.diagnostics.push(format!(
+                            "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
+                            stmt.span.line, stmt.span.col, f.name
+                        ));
+                    }
+                }
+                // SB4016: -> int function with nonzero returns — bare call is error
+                let has_nonzero = returns.iter().any(|v| !v.is_empty() && v != "0");
+                if has_nonzero && f.return_type == crate::ir::VarType::Int {
+                    state.function_non_void.insert(f.name.clone());
+                }
+            }
+
             let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
             let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
             ssa.block_mut(fn_exit).terminator = Terminator::Return;
@@ -1149,7 +1182,9 @@ fn lower_if(
     block: BlockId,
 ) -> BlockId {
     // Lower condition into current block
+    state.in_condition += 1;
     let cond_block = lower_stmts(&i.condition, ssa, state, block);
+    state.in_condition -= 1;
     let cond_str = "condition".to_string(); // placeholder
 
     let then_block = ssa.new_block("if.then");
@@ -1247,7 +1282,9 @@ fn lower_while(
     ssa.block_mut(header).insts.clear();
 
     // Lower condition in header using post-phi state
+    state.in_condition += 1;
     let cond_exit = lower_stmts(&w.condition, ssa, state, header);
+    state.in_condition -= 1;
 
     // Set loop terminator
     ssa.block_mut(cond_exit).terminator = Terminator::Loop {
@@ -2702,4 +2739,67 @@ fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
         return parse_arith_binop(inner);
     }
     (s, None, "")
+}
+
+/// Collect return values from a function body's IR statements.
+fn collect_returns(stmts: &[Statement]) -> Vec<String> {
+    let mut returns = Vec::new();
+    collect_returns_inner(stmts, &mut returns);
+    returns
+}
+
+fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Command(c) => {
+                let name_text = match &c.name.kind {
+                    ExprKind::Literal(s) => s.as_str(),
+                    _ => "",
+                };
+                if name_text == "return" {
+                    let val = c.args.first()
+                        .and_then(|a| if let ExprKind::Literal(s) = &a.kind {
+                            Some(s.clone())
+                        } else { None })
+                        .unwrap_or_default();
+                    returns.push(val);
+                }
+            }
+            StmtKind::If(i) => {
+                collect_returns_inner(&i.condition, returns);
+                collect_returns_inner(&i.then_body, returns);
+                if let Some(ref eb) = i.else_body {
+                    collect_returns_inner(eb, returns);
+                }
+            }
+            StmtKind::While(w) => {
+                collect_returns_inner(&w.condition, returns);
+                collect_returns_inner(&w.body, returns);
+            }
+            StmtKind::For(f) => {
+                collect_returns_inner(&f.body, returns);
+            }
+            StmtKind::Case(c) => {
+                for item in &c.items {
+                    collect_returns_inner(&item.body, returns);
+                }
+            }
+            StmtKind::Group(g) => {
+                collect_returns_inner(&g.body, returns);
+            }
+            StmtKind::Pipeline(p) => {
+                for s in &p.commands {
+                    collect_returns_inner(std::slice::from_ref(s), returns);
+                }
+            }
+            StmtKind::List(l) => {
+                collect_returns_inner(std::slice::from_ref(&l.left), returns);
+                collect_returns_inner(std::slice::from_ref(&l.right), returns);
+            }
+            StmtKind::Redirected(r) => {
+                collect_returns_inner(std::slice::from_ref(&r.body), returns);
+            }
+            _ => {}
+        }
+    }
 }

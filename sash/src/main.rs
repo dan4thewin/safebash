@@ -198,7 +198,7 @@ fn main() {
         Ok(bytes) => bytes,
         Err(diags) => {
             for d in &diags {
-                eprintln!("{}: {}", input, d);
+                eprintln!("{}:{}", input, d);
             }
             std::process::exit(1);
         }
