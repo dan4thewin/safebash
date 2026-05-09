@@ -352,6 +352,10 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
 
   tail -50 "$logfile" > "$postmortem"
 
+  # Auto-commit agent's work (prevents losing changes on branch switch)
+  git add -A
+  git commit -m "WIP: $task (autonomous agent)" --allow-empty 2>/dev/null || true
+
   # Restore spec/notes from base (agent shouldn't have touched them)
   git checkout "$BASE_BRANCH" -- spec/ notes/ 2>/dev/null || true
 
@@ -383,7 +387,7 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
   if $all_gates_pass; then
     echo "ALL GATES PASS — merging"
     git add -A
-    git commit -m "Implement $task (autonomous)" --allow-empty 2>/dev/null || true
+    git commit --amend -m "Implement $task (autonomous, all gates pass)" --allow-empty 2>/dev/null || true
     git checkout "$BASE_BRANCH"
     git merge --no-ff "$branch" -m "Merge $task (all gates pass)"
     git branch -d "$branch"
