@@ -8,13 +8,13 @@
 set -euo pipefail
 
 BASE_BRANCH="split-converter"
+LOGDIR=".agent-runs"
+mkdir -p "$LOGDIR"
 if (( $# > 0 )); then
   TASKS=("$@")
   FILTER=""
 else
   FILTER=""
-LOGDIR=".agent-runs"
-mkdir -p "$LOGDIR"
 
   TASKS=(
     # 1-gate tasks
