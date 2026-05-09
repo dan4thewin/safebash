@@ -3,6 +3,8 @@ status: ready
 depends: []
 gates: [46.1, 46.2, 46.4]
   - tests
+example: lower_value (sash/src/transform.rs)
+index_keyword: positional
   - commit
 
 `$1`–`$N`, `$@`, `$*` at top level should be a compile error in

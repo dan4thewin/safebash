@@ -657,7 +657,7 @@ fn lower_one(
             // DD#55/SB4016: bare call of non-void (-> int) function is error
             if state.function_non_void.contains(&name) && state.in_condition == 0 {
                 state.diagnostics.push(format!(
-                    "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $(({})))",
+                    "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $(({}))",
                     stmt.span.line, stmt.span.col, name, name
                 ));
             }

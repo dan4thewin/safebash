@@ -3,6 +3,8 @@ status: ready
 depends: []
 gates: [25.1, 25.2, 25.3]
 
+example: sash_add (sash-rt/src/lib.rs)
+index_keyword: overflow
 Replace wrapping `iadd`/`isub`/`imul` in `emit_arith_op` with
 overflow-checked sequences. On overflow: print error to stderr,
 set `$?=1`, exit (matching bash behavior for `((2**63))` etc.).

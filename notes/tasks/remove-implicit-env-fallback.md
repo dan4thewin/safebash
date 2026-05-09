@@ -3,6 +3,8 @@ status: ready
 severity: security
 depends: []
 gates: [53.1, 53.2, 53.3]
+example: lower_value (sash/src/transform.rs)
+index_keyword: getenv
   - tests
   - commit
 

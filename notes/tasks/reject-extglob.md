@@ -3,6 +3,8 @@ status: ready
 severity: correctness
 depends: []
 gates: [20.4, 39.1a, 39.1b]
+example: check (sash/src/rules/process_substitution.rs)
+index_keyword: extglob
   - tests
   - commit
 

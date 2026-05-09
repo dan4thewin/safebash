@@ -3,6 +3,8 @@ status: ready
 depends: []
 gates: [39.5, 39.6, 39.7, 39.8]
   - tests
+example: check (sash/src/rules/param_transform.rs)
+index_keyword: regex
   - commit
 
 For regex patterns that are pure literals (no `$var` or `${var}`

@@ -34,3 +34,4 @@ _tmp/
 a.out
 spec/.trace/
 .agent-runs/
+.indexnudge-rust.db

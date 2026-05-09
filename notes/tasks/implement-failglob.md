@@ -3,6 +3,8 @@ status: ready
 severity: correctness
 depends: []
 gates: [20.3, 20.6]
+example: check (sash/src/rules/process_substitution.rs)
+index_keyword: glob
   - tests
   - commit
 
