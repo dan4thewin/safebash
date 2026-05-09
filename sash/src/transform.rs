@@ -654,16 +654,17 @@ fn lower_one(
                 }
             }
 
+            // DD#55/SB4016: bare call of non-void (-> int) function is error
+            if state.function_non_void.contains(&name) && state.in_condition == 0 {
+                state.diagnostics.push(format!(
+                    "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $(({})))",
+                    stmt.span.line, stmt.span.col, name, name
+                ));
+            }
+
             // Check if this is a known function call → inline expansion
             if let Some(body) = state.function_bodies.get(&name).cloned() {
                 // Collect local variable names from function body
-                // DD#55/SB4016: bare call of non-void (-> int) function is error
-                if state.function_non_void.contains(&name) && state.in_condition == 0 {
-                    state.diagnostics.push(format!(
-                        "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $({})",
-                        stmt.span.line, stmt.span.col, name, name
-                    ));
-                }
 
                 let locals = collect_local_vars(&body);
 
@@ -997,18 +998,21 @@ fn lower_one(
             // DD#55: non-void function detection
             let returns = collect_returns(&f.body);
             if !returns.is_empty() {
-                // SB4017: -> int function that only returns 0 is ceremony
+                // SB4017: -> int function where all literal returns are 0
                 if f.return_type == crate::ir::VarType::Int {
-                    let all_zero = returns.iter().all(|v| v.is_empty() || v == "0");
-                    if all_zero {
+                    let all_literal_zero = returns.iter().all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
+                    if all_literal_zero {
                         state.diagnostics.push(format!(
                             "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
                             stmt.span.line, stmt.span.col, f.name
                         ));
                     }
                 }
-                // SB4016: -> int function with nonzero returns — bare call is error
-                let has_nonzero = returns.iter().any(|v| !v.is_empty() && v != "0");
+                // -> int function with any nonzero or computed returns is non-void
+                let has_nonzero = returns.iter().any(|v| match v {
+                    Some(s) => !s.is_empty() && s != "0",
+                    None => true, // computed value — assume non-void
+                });
                 if has_nonzero && f.return_type == crate::ir::VarType::Int {
                     state.function_non_void.insert(f.name.clone());
                 }
@@ -2742,13 +2746,15 @@ fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
 }
 
 /// Collect return values from a function body's IR statements.
-fn collect_returns(stmts: &[Statement]) -> Vec<String> {
+/// Collect return values from a function body's IR statements.
+/// Returns Some("N") for literal returns, Some("") for bare return, None for computed.
+fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
     let mut returns = Vec::new();
     collect_returns_inner(stmts, &mut returns);
     returns
 }
 
-fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<String>) {
+fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>) {
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Command(c) => {
@@ -2757,11 +2763,13 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<String>) {
                     _ => "",
                 };
                 if name_text == "return" {
-                    let val = c.args.first()
-                        .and_then(|a| if let ExprKind::Literal(s) = &a.kind {
-                            Some(s.clone())
-                        } else { None })
-                        .unwrap_or_default();
+                    let val = if c.args.is_empty() {
+                        Some(String::new()) // bare return = implicit 0
+                    } else if let Some(ExprKind::Literal(s)) = c.args.first().map(|a| &a.kind) {
+                        Some(s.clone()) // literal return value
+                    } else {
+                        None // computed return value — assume non-trivial
+                    };
                     returns.push(val);
                 }
             }

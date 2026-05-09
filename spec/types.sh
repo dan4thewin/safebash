@@ -24,9 +24,10 @@ run_sash 'x="hello world test"; echo ${#x}'
 run_sash 'int x=9223372036854775807; echo $x'
 [[ $rc = 0 && $out = "9223372036854775807" && -z $err ]]; chk 16.1
 
-# 16.2 fn -> int return type
+# 16.2 fn -> int return type, captured via $(( )) sexpr (DD#58)
 run_sash 'fn add -> int { return $(( $1 + $2 )); }
-echo $(add 3 4)'
+int x=$(( (add 3 4) ))
+echo "$x"'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 16.2
 
 # 16.3 no implicit int-to-string conversion
@@ -97,7 +98,55 @@ run_sash 'array arr=(a b c); echo ${arr[0]}'
 run_sash 'map m=([k]=v); echo ${m[k]}'
 [[ $rc = 0 && $out = "v" && -z $err ]]; chk 41.2
 
-set -e
+
+# --- DD#58 integer function capture syntax ---
+
+# 58.1 $((f)) captures zero-arg -> int function
+run_sash 'fn f -> int { return 42; }
+int x=$((f))
+echo "$x"'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.1
+
+# 58.2 $(( (add a b) )) sexpr call with args
+run_sash 'fn add -> int { return $(( $1 + $2 )); }
+int x=$(( (add 3 4) ))
+echo "$x"'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 58.2
+
+# 58.3 nested sexpr calls
+run_sash 'fn dbl -> int { return $(( $1 * 2 )); }
+fn add -> int { return $(( $1 + $2 )); }
+int x=$(( (add (dbl 3) 4) ))
+echo "$x"'
+[[ $rc = 0 && $out = "10" && -z $err ]]; chk 58.3
+
+# 58.4 ((x = f)) assignment form
+run_sash 'fn f -> int { return 42; }
+int x=0
+((x = f))
+echo "$x"'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.4
+
+# 58.5 if ((f > 0)) boolean context
+run_sash 'fn f -> int { return 1; }
+if ((f > 0)); then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.5
+
+# 58.6 $(f) for -> int function is type error
+run_sash 'fn f -> int { return 42; }
+x=$(f)'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 58.6
+
+# 58.7 function/variable name collision is error
+run_sash 'fn x { echo hi; }
+x=hello'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 58.7
+
+# 58.8 $(( (f) + 1 )) sexpr in expression
+run_sash 'fn f -> int { return 10; }
+int x=$(( (f) + 1 ))
+echo "$x"'
+[[ $rc = 0 && $out = "11" && -z $err ]]; chk 58.8
 tally
 
 # --- DD#30 unset semantics ---

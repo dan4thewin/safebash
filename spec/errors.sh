@@ -69,10 +69,10 @@ run_sash '/bin/false | /bin/true'
 run_sash '- /bin/false | /bin/true'
 [[ $rc = 0 && -z $err ]]; chk 55.11
 
-# 55.12 function with return is non-void
+# 55.12 $(f) for -> int function is type error (use $((f)) instead)
 run_sash 'fn f -> int { return 42; }
 echo $(f)'
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk 55.12
+[[ $rc != 0 && -z $out && -n $err ]]; chk 55.12
 
 # 55.13 bare call of non-void function → compile error
 run_sash 'fn f -> int { return 42; }
