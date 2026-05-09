@@ -8,66 +8,71 @@
 set -euo pipefail
 
 BASE_BRANCH="split-converter"
-FILTER="${1:-}"
+if (( $# > 0 )); then
+  TASKS=("$@")
+  FILTER=""
+else
+  FILTER=""
 LOGDIR=".agent-runs"
 mkdir -p "$LOGDIR"
 
-TASKS=(
-  # 1-gate tasks
-  dd56-signum-keyword
-  dd21-grammar-dash-prefix
-  dd23-remove-command-v
-  dd23-remove-path-walk
-  heredoc-cmdsub
-  source-rejection
-
-  # 2-gate tasks
-  dd23-compile-time-resolve
-  dd32-sash-source-section
-  dd35-decl-stacking
-  dd48-shift-tracking
-  dd52-case-conversion
-  implement-failglob
-  janet-parity-gate
-  dd55-dollar-question-scoping
-
-  # 3-gate tasks
-  compound-redirects
-  dd25-overflow-traps
-  dd46-reject-toplevel-positionals
-  dd49-bless-anti-tautology
-  if-bless-conditional
-  dd55-suppress-prefix
-  dd21-implement-dash-prefix
-
-  # 4-gate tasks
-  dd18-local-functions
-  dd30-arith-operand-typecheck
-  dd31-reject-mutation-in-expr
-  dd36-decimal-conversion
-  dd39-compiletime-regex-validation
-  dd42-builtins
-  dd55-nonvoid-functions
-  mapfile-map-mode
-
-  # 5+ gate tasks
-  bug-exit-trap-wrong-scope
-  dd30-separate-test-arith
-  refine-unset-semantics
-  dd33-array-map-types
-  dd57-strip-bash
-  dd22-wordsplit-runtime
-  dd55-implicit-exit-checks
-
-  # Large tasks
-  dd12-string-runtime
-  dd14-pipeline-primitives
-  dd16-integer-type
-  dd23-command-v-coercion
-  array-per-element-ops
-  dd39-regex-mutation
-  review-taint-clean-list
-)
+  TASKS=(
+    # 1-gate tasks
+    dd56-signum-keyword
+    dd21-grammar-dash-prefix
+    dd23-remove-command-v
+    dd23-remove-path-walk
+    heredoc-cmdsub
+    source-rejection
+  
+    # 2-gate tasks
+    dd23-compile-time-resolve
+    dd32-sash-source-section
+    dd35-decl-stacking
+    dd48-shift-tracking
+    dd52-case-conversion
+    implement-failglob
+    janet-parity-gate
+    dd55-dollar-question-scoping
+  
+    # 3-gate tasks
+    compound-redirects
+    dd25-overflow-traps
+    dd46-reject-toplevel-positionals
+    dd49-bless-anti-tautology
+    if-bless-conditional
+    dd55-suppress-prefix
+    dd21-implement-dash-prefix
+  
+    # 4-gate tasks
+    dd18-local-functions
+    dd30-arith-operand-typecheck
+    dd31-reject-mutation-in-expr
+    dd36-decimal-conversion
+    dd39-compiletime-regex-validation
+    dd42-builtins
+    dd55-nonvoid-functions
+    mapfile-map-mode
+  
+    # 5+ gate tasks
+    bug-exit-trap-wrong-scope
+    dd30-separate-test-arith
+    refine-unset-semantics
+    dd33-array-map-types
+    dd57-strip-bash
+    dd22-wordsplit-runtime
+    dd55-implicit-exit-checks
+  
+    # Large tasks
+    dd12-string-runtime
+    dd14-pipeline-primitives
+    dd16-integer-type
+    dd23-command-v-coercion
+    array-per-element-ops
+    dd39-regex-mutation
+    review-taint-clean-list
+  )
+fi
 
 spec_file_for_gate() {
   local gate="$1"
