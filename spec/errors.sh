@@ -49,13 +49,13 @@ run_sash '- /bin/false; echo $?'
 run_sash 'x=$?'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.6
 
-# 55.7 local x=$(cmd) checks exit status
-run_sash 'fn f { local x=$(/bin/false); echo $x; }; f'
+# 55.7 local x=$(cmd) checks exit status (taint orthogonal — don't reference x)
+run_sash 'fn f { local x=$(/bin/false); }; f'
 [[ $rc != 0 && -z $err ]]; chk 55.7
 
-# 55.8 x=$(cmd) where cmd fails aborts
-run_sash 'x=$(/bin/false); echo $x'
-[[ $rc != 0 && $out != *'$x'* && -z $err ]]; chk 55.8
+# 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)
+run_sash 'x=$(/bin/false)'
+[[ $rc != 0 && -z $err ]]; chk 55.8
 
 # 55.9 x=$(- cmd) captures output, discards exit
 run_sash 'x=$(- /bin/echo hello); echo $x'
