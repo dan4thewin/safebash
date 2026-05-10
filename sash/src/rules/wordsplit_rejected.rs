@@ -28,8 +28,9 @@ impl Rule for IfsRejected {
     }
 }
 
-/// SB5010: Unquoted $var in for-in word list is a compile error.
+/// SB5010: $var in for-in list — sash does not word-split.
 /// Without word splitting, `for x in $var` iterates once over the whole string.
+/// Use `array arr=(...)` and `for x in @arr`.
 pub struct ForInExpansion;
 
 impl Rule for ForInExpansion {
@@ -76,7 +77,7 @@ fn check_unquoted_expansion(node: Node, source: &[u8], diags: &mut Vec<Diagnosti
         diags.push(Diagnostic::error(
             node,
             "SB5010",
-            format!("unquoted {} in for-in list — word splitting doesn't occur in sash; use an array instead", text),
+            format!("{} in for-in list — sash does not word-split. Use array arr=(...) and for x in @arr", text),
         ));
         return;
     }
