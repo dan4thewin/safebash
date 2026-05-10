@@ -640,6 +640,7 @@ fn lower_one(
                         fd: 0,
                         delim,
                         redirects: vec![],
+                        clean_pipe: false,
                     });
                     return block;
                 } else if var_names.len() > 1 {
@@ -649,6 +650,7 @@ fn lower_one(
                         fd: 0,
                         delim,
                         redirects: vec![],
+                        clean_pipe: false,
                     });
                     return block;
                 }
@@ -842,6 +844,15 @@ fn lower_one(
                     }
                     _ => false,
                 };
+                // DD#20: lastpipe — `cmd | read -r var` runs read in main shell
+                let is_lastpipe_read = match &last.kind {
+                    StmtKind::Command(c) => {
+                        let n = expr_to_string(&c.name);
+                        let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                        n == "read" && !args.iter().any(|a| a == "-a")
+                    }
+                    _ => false,
+                };
 
                 if is_while_read || is_mapfile {
                     // pipe-while-read pattern: cmd1 | ... | while read -r var
@@ -882,6 +893,63 @@ fn lower_one(
                     } else {
                         // Now lower the while-read with fd = -1 (sentinel: use pipe fd)
                         block = lower_pipe_while_read(last, ssa, state, block);
+                    }
+                } else if is_lastpipe_read {
+                    // DD#20: lastpipe — `cmd | read -r x` runs read in main shell
+                    // Emit producer stages as a pipeline with captured pipe fd,
+                    // then emit ReadLine to read from the pipe in the main process.
+                    let mut stages = vec![];
+                    for cmd in &p.commands[..p.commands.len() - 1] {
+                        if let StmtKind::Command(c) = &cmd.kind {
+                            let name = expr_to_string(&c.name);
+                            let args: Vec<SsaValue> = c.args.iter()
+                                .map(|a| expr_to_value(a, state))
+                                .collect();
+                            stages.push((name, args, vec![]));
+                        } else if let StmtKind::Redirected(r) = &cmd.kind {
+                            if let StmtKind::Command(c) = &r.body.kind {
+                                let name = expr_to_string(&c.name);
+                                let args: Vec<SsaValue> = c.args.iter()
+                                    .map(|a| expr_to_value(a, state))
+                                    .collect();
+                                stages.push((name, args, r.redirects.clone()));
+                            }
+                        }
+                    }
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
+                    // Lower the read command with fd=-1 (pipe fd sentinel)
+                    // and clean_pipe=true (producer stages are clean)
+                    if let StmtKind::Command(c) = &last.kind {
+                        let mut var_names = vec![];
+                        let mut delim: Option<u8> = None;
+                        let mut skip_next = false;
+                        for arg in &c.args {
+                            let s = expr_to_string(arg);
+                            if skip_next { skip_next = false; continue; }
+                            if s == "-d" { skip_next = true; delim = Some(0); continue; }
+                            if s.starts_with("-d") { delim = Some(s.as_bytes().get(2).copied().unwrap_or(0)); continue; }
+                            if s.starts_with('-') { continue; }
+                            var_names.push(s);
+                        }
+                        if var_names.len() == 1 {
+                            let target = state.define(&var_names[0]);
+                            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+                                target,
+                                fd: -1,
+                                delim,
+                                redirects: vec![],
+                                clean_pipe: true,
+                            });
+                        } else if var_names.len() > 1 {
+                            let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
+                            ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
+                                targets,
+                                fd: -1,
+                                delim,
+                                redirects: vec![],
+                                clean_pipe: true,
+                            });
+                        }
                     }
                 } else {
                     // Regular pipeline: cmd1 | cmd2 | ...
@@ -1421,6 +1489,7 @@ fn lower_for(
                     fd: -1,
                     delim: None,
                     redirects: vec![],
+                    clean_pipe: false,
                 });
                 ssa.block_mut(header).terminator = Terminator::Branch {
                     condition: "__test_result".to_string(),

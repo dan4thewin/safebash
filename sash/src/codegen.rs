@@ -2106,7 +2106,7 @@ fn lower_inst(
             let result = lower_test_expr(test_expr, builder, module, vars, literals, externs, Some(exit_status_var));
             builder.def_var(test_result_var, result);
         }
-        SsaInst::ReadLine { target, fd, delim, redirects } => {
+        SsaInst::ReadLine { target, fd, delim, redirects, .. } => {
             // Set up redirects (e.g. herestring <<< "text")
             let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             // fd=-1 is sentinel for "use captured pipe fd"
@@ -2136,7 +2136,7 @@ fn lower_inst(
             // Restore redirects
             emit_restore(saved, builder, module, externs);
         }
-        SsaInst::ReadLineMulti { targets, fd, delim, redirects } => {
+        SsaInst::ReadLineMulti { targets, fd, delim, redirects, .. } => {
             let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             let fd_val = if *fd == -1 {
                 builder.use_var(pipe_read_fd_var)
