@@ -1,54 +1,44 @@
 ---
-created: 2026-05-07
-modified: 2026-05-07
 title: Status
+modified: 2026-05-10
 ---
 
-## Current Priority
+## Current branch: split-converter
 
-Presentation prep + compiler tasks.
+## Priority: autonomous agent infrastructure + DD#31/DD#55/DD#58
 
-## Branch: split-converter (43 commits, pushed)
+### Just completed (session 2026-05-09/10)
 
-### This session accomplished:
-- Regex engine: added \d \w \s and negations to Plan 9 regcomp.c (28 lines)
-- Shorthand classes work standalone and inside [] brackets
-- 126 regex tests in sash-rt/csrc/test_regex.c, wired into `mk test`
-- Fixed janet heredoc newline bug (raw newlines → \n escapes)
-- Converter: rewrites POSIX [-a] to Plan 9 [\-a] in regex patterns
-- known_externals.rs: patterns now use \w \d \- (raw strings)
-- mkfile: force sash-rt rebuild when C sources change
-- Removed dead code from sash-rt (~200 lines: match_bracket, sash_arith_eval, sash_streq, sash_shell_quote, sash_expand_escapes, fnmatch ? and [] arms)
-- Removed auto-bless from compiler (~600 lines, known_externals.rs deleted from sash)
-- Removed magic variables from SSA taint (no special vars, all via builtins)
-- DD#55 implicit exit checks + pipefail + command substitution exit check
-- DD#31 reject mutations in condition (()), prefix ++/--, pure comparison
-- DD#22/28 IFS rejected, for-in expansion rejected
-- DD#23 command resolution (absolute paths required)
-- DD#20 reject globstar **
-- EXIT trap scope fix (bug #1)
-- DD#56 redesign: END block + signal builtin + numeric args
-- DD#55 $(status) first-expression rule, $?/$! sugar
-- Autonomous task runner (run-compiler-tasks.sh) — ran 3 tasks, all failed due to agent regressions
-- New task: improve-agent-prompt.md (fix prompt to enable autonomous work)
+**Autonomous agent batch run — 10/10 tasks resolved:**
+- 9 merged automatically (reject-globstar, reject-extglob, implement-failglob,
+  dd23-remove-command-v, dd23-remove-path-walk, heredoc-cmdsub,
+  dd49-bless-anti-tautology, dd55-dollar-question-scoping,
+  remove-implicit-env-fallback)
+- 1 fixed manually (dd31-reject-mutation-in-expr — tree-sitter comma parsing)
 
-### Test stats at session end:
-- 162 passing / 86 failing spec tests (was 67/161 at session start)
-- 590+ internal tests passing (oracle, codegen, e2e, janet, taint)
+**Design decisions:**
+- DD#58: integer function capture via s-expression syntax in $(( )) and (( ))
+- DD#17: updated — $(f) is string-only, $(f) for -> int is a type error
+- DD#55 non-void functions: SB4016 (bare call), SB4017 (return-0-only)
 
-### Presentation:
-- ~/work/lsg-talk/safebash-pitch.md — 9-slide pitch deck (markdown)
-- ~/work/lsg-talk/pitch2pptx.py — converter (handles **bold**, `code`, font sizing)
-- Needs: python-pptx + lxml installed to generate .pptx
+**Infrastructure:**
+- run-compiler-tasks.sh autonomous runner: args mode, SPEC_TSV gate checking,
+  safe auto-commit, compile error detection, all-spec-file scanning
+- .goosehints: code index docs (indexnudge-rust.db)
+- spec/common.sh: fixed PATH resolution bug (all spec tests were broken)
+- sash/src/main.rs: SC2148/SC2030/SC2031 shellcheck excludes, ld -z noexecstack
 
-### Next priorities:
-1. Generate the .pptx deck (install python-pptx)
-2. Implement improve-agent-prompt.md and re-run autonomous loop
-3. Continue compiler tasks: dd55-suppress-prefix, dd56-signum-keyword, dd31-enforce-disjoint
-4. Plan 9 regex: add counted repetition {N,M} (regex-counted-repetition task)
+### Spec gate status
 
-### Key decision this session:
-- Plan 9 regex is the standard — \- required inside [], no {N} repetition yet
-- Auto-bless is converter-only; compiler has zero auto-bless
-- Zero magic variables in compiler; all accessed via builtins ($(status), $(getpid), etc.)
-- Signal model: END block + `signal N DISPOSITION` (numeric args, GPP for names)
+Passing (newly): 5.1, 20.3, 20.4, 20.5, 20.6, 23.3, 23.5, 24.10, 24.11,
+  24.16, 31.8, 31.9, 31.11, 39.1a, 39.1b, 53.1, 53.2, 53.3, 55.5, 55.6
+
+Still failing: 31.4a/b/c, 55.4, 55.9, 55.11, 55.12, 55.17c, 55.19,
+  58.1-58.8 (new gates, no implementation yet)
+
+### Next priorities
+
+1. DD#58 implementation (sexpr parsing in arithmetic, $(f) type error)
+2. DD#55 suppress-prefix (gates 55.4, 55.9, 55.11)
+3. Push and update TIMELINE
+4. Second autonomous batch run with remaining tasks
