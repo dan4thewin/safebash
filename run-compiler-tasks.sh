@@ -372,7 +372,7 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
   git checkout "$BASE_BRANCH" -- spec/ notes/ 2>/dev/null || true
 
   # Verify no regressions
-  if cargo test --release -p sash 2>&1 | /bin/grep -q "^error: test failed"; then
+  if cargo test --release -p sash 2>&1 | /bin/grep -q "^error\b"; then
     echo "Cargo tests: FAIL (regressions)"
     git checkout "$BASE_BRANCH"
     continue
