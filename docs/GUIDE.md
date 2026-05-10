@@ -317,7 +317,7 @@ Supports `${var:s/re/str/flags}` syntax (DD#39).
 
 ### Process management
 
-`sash_exec` — PATH lookup, fork/exec. `sash_capture_start`/
+`sash_exec` — execve with absolute path (no PATH walk; DD#23). `sash_capture_start`/
 `sash_capture_end` — command substitution via pipe + fork.
 
 ### Environment
