@@ -81,25 +81,25 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                     // Bless produces a clean version
                     taint.insert(var_key(target), Taint::Clean);
                 }
-                SsaInst::ReadLine { target, redirects, .. } => {
+                SsaInst::ReadLine { target, redirects, clean_pipe, .. } => {
                     // Read from herestring/heredoc of literal data is clean
                     let is_herestring = redirects.iter().any(|r| {
                         r.op == crate::ir::RedirectOp::HereString
                             || r.op == crate::ir::RedirectOp::HereDoc
                     });
-                    if is_herestring {
+                    if is_herestring || *clean_pipe {
                         taint.insert(var_key(target), Taint::Clean);
                     } else {
                         taint.insert(var_key(target), Taint::Tainted);
                     }
                 }
-                SsaInst::ReadLineMulti { targets, redirects, .. } => {
+                SsaInst::ReadLineMulti { targets, redirects, clean_pipe, .. } => {
                     let is_herestring = redirects.iter().any(|r| {
                         r.op == crate::ir::RedirectOp::HereString
                             || r.op == crate::ir::RedirectOp::HereDoc
                     });
                     for t in targets {
-                        taint.insert(var_key(t), if is_herestring { Taint::Clean } else { Taint::Tainted });
+                        taint.insert(var_key(t), if is_herestring || *clean_pipe { Taint::Clean } else { Taint::Tainted });
                     }
                 }
                 SsaInst::CaptureEnd { target } => {
