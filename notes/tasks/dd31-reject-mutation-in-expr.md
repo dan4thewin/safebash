@@ -1,5 +1,5 @@
 title: DD#31 — reject mutations in $(( )) expression context
-status: ready
+status: done
 severity: correctness
 gates: [31.5, 31.6, 31.8, 31.9]
 

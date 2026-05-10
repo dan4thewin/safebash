@@ -1,5 +1,5 @@
 title: Implement failglob for inline globs (DD#20)
-status: ready
+status: done
 severity: correctness
 depends: []
 gates: [20.3, 20.6]

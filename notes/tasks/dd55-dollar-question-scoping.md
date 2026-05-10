@@ -1,5 +1,5 @@
 title: DD#55 — $? scoping and restrictions
-status: ready
+status: done
 depends:
   - dd55-suppress-prefix
 severity: correctness

@@ -1,5 +1,5 @@
 title: Source rejection — SB4002 becomes hard error
-status: ready
+status: done
 severity: design
 depends:
   - mapfile-map-mode

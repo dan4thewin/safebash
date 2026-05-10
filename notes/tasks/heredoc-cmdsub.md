@@ -1,5 +1,5 @@
 title: Heredoc with command substitution
-status: ready
+status: done
 depends: []
 gates: [5.1]
 example: sash/src/rules/heredoc_cmdsub.rs:walk_for_cmdsub

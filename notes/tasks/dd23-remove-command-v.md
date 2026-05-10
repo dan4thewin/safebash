@@ -1,5 +1,5 @@
 title: Remove command -v runtime implementation
-status: ready
+status: done
 severity: cleanup
 depends: []
 gates: [23.3]

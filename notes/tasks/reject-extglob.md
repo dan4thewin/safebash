@@ -1,5 +1,5 @@
 title: Reject extglob patterns (DD#20/DD#39)
-status: ready
+status: done
 severity: correctness
 depends: []
 gates: [20.4, 39.1a, 39.1b]

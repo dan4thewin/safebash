@@ -1,5 +1,5 @@
 title: Remove PATH walk from sash_exec
-status: ready
+status: done
 severity: security
 depends: []
 gates: [23.5]

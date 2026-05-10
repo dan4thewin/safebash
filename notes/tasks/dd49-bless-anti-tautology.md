@@ -1,5 +1,5 @@
 title: DD#49 — bless test anti-tautology check
-status: ready
+status: done
 depends: []
 gates: [24.10, 24.11, 24.16]
   - tests

@@ -1,5 +1,5 @@
 title: Reject globstar ** pattern (DD#20)
-status: ready
+status: done
 severity: correctness
 depends: []
 gates: [20.5]
