@@ -307,8 +307,13 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
 6. **After all edits, verify:**
    \`\`\`bash
    cargo test --release -p sash 2>&1 | tail -3    # all tests pass
-   cd spec && bash SPEC_FILE 3>&1 2>/dev/null      # gated spec tests
+   # Check your specific gate(s):
+   cd spec && SPEC_TSV=/tmp/gates.tsv bash SPEC_FILE 3>/dev/null 2>/dev/null
+   grep '^GATE_ID' /tmp/gates.tsv   # should show "GATE_ID\tpassing\t..."
    \`\`\`
+   Replace SPEC_FILE with the spec file containing your gate. Replace GATE_ID
+   with your gate number (e.g. 20.5). TAP output (ok 1, ok 2...) uses test
+   numbers, NOT gate IDs — you MUST use SPEC_TSV to check gates by ID.
 7. **Always commit** with a descriptive message when gates pass.
    If you made changes but gates don't pass, commit anyway on the branch
    with a message explaining what's incomplete.
