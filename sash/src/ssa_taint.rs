@@ -186,7 +186,7 @@ fn is_tainted(taint: &HashMap<String, Taint>, vref: &VarRef) -> bool {
     match taint.get(&var_key(vref)) {
         Some(&Taint::Tainted) => true,
         Some(&Taint::Clean) => false,
-        None => true, // unknown = tainted (conservative)
+        None => false, // DD#53: unknown vars are empty strings, not tainted
     }
 }
 
