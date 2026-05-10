@@ -445,6 +445,37 @@ impl TaintTracker {
             return;
         }
 
+        // T2b: Anti-tautology — $VAR must NOT appear on RHS of binary operator
+        // Collect tokens between [[ and ]]
+        let tokens: Vec<&str> = args[1..].iter()
+            .map(|a| a.utf8_text(source).unwrap_or(""))
+            .filter(|t| *t != "[[" && *t != "]]")
+            .collect();
+        let binary_ops = ["==", "=", "!=", "=~", "-eq", "-ne", "-lt", "-le", "-gt", "-ge", "<", ">"];
+        // Find binary operator position and check RHS
+        for (i, tok) in tokens.iter().enumerate() {
+            if binary_ops.contains(tok) && i + 1 < tokens.len() {
+                let rhs = tokens[i + 1];
+                if rhs.contains(&var_ref) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4012",
+                        format!("bless: ${} appears on RHS of test operator — anti-tautology check", var_name),
+                    ));
+                    return;
+                }
+                // Also check: $VAR must be on LHS
+                if i == 0 || !tokens[i - 1].contains(&var_ref) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4012",
+                        format!("bless: ${} must appear on LHS of test operator", var_name),
+                    ));
+                    return;
+                }
+            }
+        }
+
         // Enter bless context — reads of var_name are allowed inside
         let old_ctx = self.bless_context.take();
         self.bless_context = Some(var_name.to_string());
