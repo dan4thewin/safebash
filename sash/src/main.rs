@@ -87,7 +87,7 @@ fn main() {
     if !nolint {
         // Shellcheck pre-flight (DD#40 — lint by default, --nolint to skip)
         match Command::new("shellcheck")
-            .args(["--enable=all", "--exclude=SC2248,SC2250,SC2086,SC2046,SC2148", "--format=gcc", input])
+            .args(["--enable=all", "--exclude=SC2248,SC2250,SC2086,SC2046,SC2148,SC2030,SC2031", "--format=gcc", input])
             .output()
         {
             Ok(output) => {
