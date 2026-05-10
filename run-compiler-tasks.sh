@@ -363,8 +363,10 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
   tail -50 "$logfile" > "$postmortem"
 
   # Auto-commit agent's work (prevents losing changes on branch switch)
-  git add -A
-  git commit -m "WIP: $task (autonomous agent)" --allow-empty 2>/dev/null || true
+  if [[ "$(git branch --show-current)" == "$branch" ]]; then
+    git add -A
+    git diff --cached --quiet || git commit -m "WIP: $task (autonomous agent)" 2>/dev/null || true
+  fi
 
   # Restore spec/notes from base (agent shouldn't have touched them)
   git checkout "$BASE_BRANCH" -- spec/ notes/ 2>/dev/null || true
