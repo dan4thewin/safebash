@@ -384,15 +384,8 @@ WHERE content MATCH '\"keyword\"' AND file NOT LIKE 'exp/%';
   rm -f "$spec_tsv"
   for sf in spec/*.sh; do
     [[ "$sf" == "spec/common.sh" || "$sf" == "spec/run.sh" ]] && continue
-    [[ -f "$sf" ]] && SPEC_TSV="$spec_tsv" bash "$sf" 3>/dev/null 2>/dev/null || true
-  done
-  for g in $gates; do
-    if /bin/grep -qP "^${g}\tpassing\t" "$spec_tsv" 2>/dev/null; then
-      echo "GATE PASS: $g"
-    else
-      all_gates_pass=false
-      echo "GATE FAIL: $g"
-    fi
+    base=$(basename "$sf")
+    [[ -f "$sf" ]] && (cd spec && SPEC_TSV="$spec_tsv" bash "$base" 3>/dev/null 2>/dev/null) || true
   done
   for g in $gates; do
     if /bin/grep -qP "^${g}\tpassing\t" "$spec_tsv" 2>/dev/null; then
