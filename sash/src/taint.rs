@@ -206,7 +206,62 @@ impl TaintTracker {
                     self.check_arith_reads(child, source, diags);
                 }
             }
-            "pipeline" | "list" | "redirected_statement" => {
+            "pipeline" => {
+                // Lastpipe: if the last command is `read -r var`, check if
+                // all preceding stages produce clean data (builtins with literal args).
+                // If so, mark the read targets as clean instead of tainted.
+                let children: Vec<_> = node.children(&mut node.walk())
+                    .filter(|c| c.kind() == "command")
+                    .collect();
+                if children.len() >= 2 {
+                    let last = children[children.len() - 1];
+                    let last_name = last.child_by_field_name("name")
+                        .and_then(|n| n.child(0))
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .unwrap_or("");
+                    if last_name == "read" {
+                        // Check if all preceding stages are clean (no tainted expansions)
+                        let producers_clean = children[..children.len() - 1].iter().all(|cmd| {
+                            // All arguments must be literals or clean expansions
+                            !cmd.children(&mut cmd.walk()).any(|c| {
+                                c.kind() != "command_name" && self.expr_has_tainted_read(c, source)
+                            })
+                        });
+                        if producers_clean {
+                            // Walk producer stages normally
+                            for child in &children[..children.len() - 1] {
+                                self.walk_statement(*child, source, diags);
+                            }
+                            // Mark read targets as clean (pipe source is clean)
+                            for child in last.children(&mut last.walk()) {
+                                if child.kind() == "word" {
+                                    let text = child.utf8_text(source).unwrap_or("");
+                                    if !text.starts_with('-') {
+                                        self.mark_declared(text);
+                                        self.mark_clean(text);
+                                    }
+                                }
+                            }
+                            // Also walk any pipe operator children ("|")
+                            // No further action needed — we handled all commands
+                        } else {
+                            // Tainted pipe source — normal taint for read
+                            for child in node.children(&mut node.walk()) {
+                                self.walk_statement(child, source, diags);
+                            }
+                        }
+                    } else {
+                        for child in node.children(&mut node.walk()) {
+                            self.walk_statement(child, source, diags);
+                        }
+                    }
+                } else {
+                    for child in node.children(&mut node.walk()) {
+                        self.walk_statement(child, source, diags);
+                    }
+                }
+            }
+            "list" | "redirected_statement" => {
                 for child in node.children(&mut node.walk()) {
                     self.walk_statement(child, source, diags);
                 }
