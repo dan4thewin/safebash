@@ -25,13 +25,105 @@ impl Rule for ArithExprMutation {
         if node.kind() == "arithmetic_command" {
             let mut diags = Vec::new();
             find_prefix_incdec(node, source, &mut diags);
-            // Also reject all mutations in condition position
+            // Condition vs statement position
             if in_condition_position(node) {
-                find_mutations(node, source, &mut diags, "condition (( ))");
+                // Count named children — multiple means comma expression
+                let mut c = node.walk();
+                let named: Vec<Node> = node.children(&mut c)
+                    .filter(|ch| ch.is_named()).collect();
+                if named.len() > 1 {
+                    // Comma: only reject mutations in the LAST expression
+                    let last = named[named.len() - 1];
+                    find_mutations(last, source, &mut diags, "condition (( )) final expression");
+                } else {
+                    find_mutations(node, source, &mut diags, "condition (( ))");
+                }
+            } else {
+                // Statement position: check for nested mutations (DD#31.8)
+                find_nested_mutations(node, source, &mut diags);
             }
             return diags;
         }
         vec![]
+    }
+}
+
+
+/// Check if a binary_expression uses comma operator.
+fn is_comma_expression(node: Node, source: &[u8]) -> bool {
+    if node.kind() != "binary_expression" { return false; }
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).filter(|c| c.is_named()).collect();
+    if children.len() < 2 { return false; }
+    let op_start = children[0].end_byte();
+    let op_end = children[1].start_byte();
+    if op_end <= op_start || op_end > source.len() { return false; }
+    let op = std::str::from_utf8(&source[op_start..op_end]).unwrap_or("").trim();
+    op == ","
+}
+
+/// Comma in condition: (( setup, setup, test ))
+/// Comma associates left: (( a, b, c )) = (( (a, b), c ))
+/// Right child is always the final (test) expression — must not mutate.
+fn check_comma_condition(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+    let mut cursor = node.walk();
+    let children: Vec<Node> = node.children(&mut cursor).filter(|c| c.is_named()).collect();
+    if children.len() < 2 { return; }
+    let right = children[children.len() - 1];
+    // Final expression must not have mutations
+    find_mutations(right, source, diags, "condition (( )) final comma expression");
+    // Non-final (left) — if also comma, recurse
+    let left = children[0];
+    if is_comma_expression(left, source) {
+        check_comma_condition(left, source, diags);
+    }
+}
+
+/// Statement position: top-level mutation is fine, but nested mutations
+/// inside operands are rejected (DD#31.8). E.g. `(( x = y++ ))`.
+fn find_nested_mutations(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if !child.is_named() { continue; }
+        match child.kind() {
+            "postfix_expression" => {} // top-level postfix fine
+            "binary_expression" if is_assignment_binop(child, source) => {
+                // Top-level assignment fine, but check RHS for nested mutations
+                let mut inner = child.walk();
+                let named: Vec<Node> = child.children(&mut inner).filter(|c| c.is_named()).collect();
+                for operand in named.iter().skip(1) {
+                    // Check operand itself (it might be a mutation like y++)
+                    match operand.kind() {
+                        "postfix_expression" | "unary_expression" => {
+                            let text = operand.utf8_text(source).unwrap_or("?");
+                            diags.push(Diagnostic::error(
+                                *operand,
+                                "SB5007",
+                                format!("mutation {} not allowed in {} expression context — use (( )) statement instead", text, "statement (( ))"),
+                            ));
+                        }
+                        "binary_expression" if is_assignment_binop(*operand, source) => {
+                            let text = operand.utf8_text(source).unwrap_or("?");
+                            diags.push(Diagnostic::error(
+                                *operand,
+                                "SB5007",
+                                format!("mutation {} not allowed in {} expression context — use (( )) statement instead", text, "statement (( ))"),
+                            ));
+                        }
+                        _ => {
+                            // Recurse into sub-expressions
+                            find_mutations(*operand, source, diags, "statement (( ))");
+                        }
+                    }
+                }
+            }
+            "binary_expression" if is_comma_expression(child, source) => {
+                find_nested_mutations(child, source, diags);
+            }
+            _ => {
+                find_nested_mutations(child, source, diags);
+            }
+        }
     }
 }
 
