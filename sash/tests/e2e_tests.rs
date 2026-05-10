@@ -1196,10 +1196,11 @@ fn brush_curl_tainted() {
 
 #[test]
 fn brush_undefined_var() {
-    // Undefined vars are tainted by default
+    // DD#53: Undefined vars are empty strings (not env lookups, not tainted).
+    // They compile and produce empty output.
     let script = "#!/bin/bash\necho ${undefined}";
-    let stderr = compile_expect_fail("brush_undefined", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    let out = compile_and_run_env("brush_undefined", script, &[]);
+    assert_eq!(out, "\n", "undefined var should expand to empty string");
 }
 
 #[test]

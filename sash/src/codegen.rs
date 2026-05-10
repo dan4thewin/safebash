@@ -4277,8 +4277,6 @@ fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<Stri
             let name = &vref.name;
             if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
                 refs.insert(name.clone());
-            } else if name.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
-                refs.insert(name.clone());
             }
         }
         SsaValue::Concat(parts) => {
@@ -4287,8 +4285,6 @@ fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<Stri
         SsaValue::ParamExpansion { var, .. } if var.version == 0 => {
             let name = &var.name;
             if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                refs.insert(name.clone());
-            } else if name.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
                 refs.insert(name.clone());
             }
         }
@@ -4335,8 +4331,6 @@ fn scan_test_for_vars(test: &TestExpr, refs: &mut std::collections::HashSet<Stri
         match &expr.kind {
             crate::ir::ExprKind::SimpleExpansion(name) => {
                 if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                    refs.insert(name.clone());
-                } else if name.chars().all(|c| c.is_ascii_uppercase() || c == '_') {
                     refs.insert(name.clone());
                 }
             }

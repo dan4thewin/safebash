@@ -77,7 +77,14 @@ impl TaintTracker {
     pub fn is_tainted(&self, name: &str) -> bool {
         match self.vars.get(name) {
             Some(TaintStatus::Tainted) => true,
-            None => !self.is_special_var(name) && !self.declared.contains(name),
+            // DD#53: undeclared variables are empty strings in sash (no env fallback).
+            // Positional params ($1-$9, $@, $*) are tainted — they come from argv.
+            // Everything else undeclared is clean (empty string).
+            None => {
+                // Positional params
+                matches!(name, "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"@"|"*")
+                    && !self.declared.contains(name)
+            }
             _ => false,
         }
     }
