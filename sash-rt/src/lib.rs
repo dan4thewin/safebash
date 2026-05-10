@@ -141,30 +141,7 @@ unsafe fn cstr_bytes(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, cstr_len(p))
 }
 
-unsafe fn find_path(envp: *const *const u8) -> &'static [u8] {
-    if envp.is_null() {
-        return b"/usr/bin:/bin";
-    }
-    let mut i = 0;
-    loop {
-        let entry = *envp.add(i);
-        if entry.is_null() {
-            break;
-        }
-        let bytes = cstr_bytes(entry);
-        if bytes.len() >= 5
-            && bytes[0] == b'P'
-            && bytes[1] == b'A'
-            && bytes[2] == b'T'
-            && bytes[3] == b'H'
-            && bytes[4] == b'='
-        {
-            return &bytes[5..];
-        }
-        i += 1;
-    }
-    b"/usr/bin:/bin"
-}
+
 
 /// Fork. Returns child pid in parent, 0 in child, -1 on error.
 #[no_mangle]
@@ -176,7 +153,7 @@ pub extern "C" fn sash_fork() -> i64 {
     }
 }
 
-/// Exec with PATH lookup. Does not return on success.
+/// Exec with absolute path only (DD#23). Does not return on success.
 #[no_mangle]
 pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> ! {
     unsafe {
@@ -189,33 +166,16 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
         let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
         let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
 
-        if has_slash {
-            let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
+        if !has_slash {
+            // DD#23: sash never walks PATH. The compiler resolves all
+            // commands to absolute paths. A bare name here is a bug.
+            let msg = b"sash: bug: bare command passed to sash_exec (expected absolute path)\n";
+            let fd = BorrowedFd::borrow_raw(2);
+            let _ = rustix::io::write(fd, msg);
             rustix::runtime::exit_group(127);
         }
 
-        let path_env = find_path(envp);
-        let mut buf = [0u8; 4096];
-        let mut pos = 0;
-        while pos <= path_env.len() {
-            let mut end = pos;
-            while end < path_env.len() && path_env[end] != b':' {
-                end += 1;
-            }
-            let dir = &path_env[pos..end];
-            pos = end + 1;
-            if dir.is_empty() { continue; }
-            let total = dir.len() + 1 + cmd_bytes.len() + 1;
-            if total > buf.len() { continue; }
-            buf[..dir.len()].copy_from_slice(dir);
-            buf[dir.len()] = b'/';
-            buf[dir.len() + 1..dir.len() + 1 + cmd_bytes.len()].copy_from_slice(cmd_bytes);
-            buf[dir.len() + 1 + cmd_bytes.len()] = 0;
-            let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
-            if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
-                let _ = rustix::runtime::execve(path_cstr, argv, envp);
-            }
-        }
+        let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
         rustix::runtime::exit_group(127);
     }
 }
