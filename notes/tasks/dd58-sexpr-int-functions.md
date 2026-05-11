@@ -1,5 +1,5 @@
 title: "DD#58: implement sexpr int-function calls in $(( ))"
-status: ready
+status: done
 severity: feature
 depends: []
 gates: [58.1, 58.2, 58.3, 58.4, 58.5, 58.6, 58.7, 58.8, 55.12, 16.2]

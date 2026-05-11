@@ -2298,6 +2298,29 @@ fn lower_inst(
                         builder.ins().call(redirect_s_ref, &[fd, ptr, len, flags]);
                     }
                 }
+                // Run stage: builtin inline or exec external
+                let is_pipeline_builtin = matches!(name.as_str(),
+                    "echo" | "true" | "false" | ":");
+                if is_pipeline_builtin {
+                    // Run builtin inline in the forked child, then _exit(0)
+                    match name.as_str() {
+                        "echo" => {
+                            lower_echo(args, builder, module, vars, literals, externs,
+                                space_id, nl_id, Some(exit_status_var));
+                        }
+                        "true" | ":" => {}
+                        "false" => {}
+                        _ => {}
+                    }
+                    let exit_code = if name == "false" {
+                        builder.ins().iconst(I64, 1)
+                    } else {
+                        builder.ins().iconst(I64, 0)
+                    };
+                    let exit_ref2 = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref2, &[exit_code]);
+                    builder.ins().trap(TrapCode::unwrap_user(1));
+                } else {
                 // Build argv and exec
                 let argc = 1 + args.len();
                 let argv_size = ((argc + 1) * 8) as u32;
@@ -2325,6 +2348,7 @@ fn lower_inst(
                 let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
                 builder.ins().call(exit_ref, &[code]);
                 builder.ins().trap(TrapCode::unwrap_user(1));
+                } // end else (non-builtin exec path)
 
                 // Parent block
                 builder.switch_to_block(parent_block);

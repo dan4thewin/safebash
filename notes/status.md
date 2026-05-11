@@ -23,13 +23,16 @@ modified: 2026-05-11
 
 **Still failing: 58.3** — nested sexpr $(( (add (dbl 3) 4) )).
 Tree-sitter can't parse nested parens with space-separated tokens
-in arithmetic. Needs grammar work or source preprocessing.
+in arithmetic. ~~Needs grammar work or source preprocessing.~~
+**FIXED** — source preprocessor replaces sexpr content with
+placeholders before tree-sitter, transform resolves them.
+All 8 DD#58 gates now pass.
 
 ### Spec gate status
 
 Passing (newly): 55.4-55.19 (all), 58.1, 58.2, 58.4-58.8
 
-Still failing: 31.4a/b/c, 58.3
+Still failing: 31.4a/b/c
 
 ### Next priorities
 
