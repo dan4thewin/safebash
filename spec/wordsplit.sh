@@ -20,16 +20,16 @@ run_sash 'IFS=:; echo ok'
 run_sash 'x="a b c"; for y in $x; do echo $y; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.3
 
-# 22.4 read -r line reads one line
-run_sash 'echo "hello" | read -r line; echo $line'
+# 22.4 read line reads one line
+run_sash 'echo "hello" | read line; echo $line'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 22.4
 
-# 22.5 read -d: splits by delimiter
-run_sash 'echo "a:b:c" | read -d: -r a b c; echo $a $b $c'
+# 22.5 read -f: splits by field separator
+run_sash 'echo "a:b:c" | read -f: a b c; echo $a $b $c'
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk 22.5
 
 # 22.6 mapfile -t reads lines into array
-run_sash 'printf "a\nb\nc\n" | mapfile -t arr; echo ${arr[1]}'
+run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; bless arr [[ -n "${arr[0]}" ]]; echo ${arr[1]}'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read

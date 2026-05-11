@@ -443,7 +443,8 @@ impl TaintTracker {
             .collect::<Vec<_>>()
             .join(" ");
         let var_ref = format!("${}", var_name);
-        if !test_text.contains(&var_ref) {
+        let var_ref_brace = format!("${{{}[", var_name);
+        if !test_text.contains(&var_ref) && !test_text.contains(&var_ref_brace) {
             diags.push(Diagnostic::error(
                 node,
                 "SB4012",

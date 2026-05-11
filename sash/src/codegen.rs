@@ -130,6 +130,7 @@ struct ExternFuncs {
     capture_end: cranelift_module::FuncId,
     fnmatch: cranelift_module::FuncId,
     split_first_word: cranelift_module::FuncId,
+    split_field: cranelift_module::FuncId,
     split_into_array: cranelift_module::FuncId,
     read_all: cranelift_module::FuncId,
     envp: cranelift_module::DataId,
@@ -711,6 +712,17 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     split_sig.returns.push(AbiParam::new(I64)); // word_len
     let split_first_word_func = module.declare_function("sash_split_first_word", Linkage::Import, &split_sig).expect("declare");
 
+    // sash_split_field(ptr, len, delim, rest_ptr_out, rest_len_out) -> (field_ptr, field_len)
+    let mut split_field_sig = module.make_signature();
+    split_field_sig.params.push(AbiParam::new(I64)); // ptr
+    split_field_sig.params.push(AbiParam::new(I64)); // len
+    split_field_sig.params.push(AbiParam::new(I64)); // delim byte
+    split_field_sig.params.push(AbiParam::new(I64)); // rest_ptr_out
+    split_field_sig.params.push(AbiParam::new(I64)); // rest_len_out
+    split_field_sig.returns.push(AbiParam::new(I64)); // field_ptr
+    split_field_sig.returns.push(AbiParam::new(I64)); // field_len
+    let split_field_func = module.declare_function("sash_split_field", Linkage::Import, &split_field_sig).expect("declare");
+
     // sash_split_into_array(ptr, len, delim, table) → void
     let mut split_arr_sig = module.make_signature();
     split_arr_sig.params.push(AbiParam::new(I64)); // ptr
@@ -788,6 +800,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         capture_start: capture_start_func,
         capture_end: capture_end_func,
         split_first_word: split_first_word_func,
+        split_field: split_field_func,
         split_into_array: split_into_array_func,
         read_all: read_all_func,
         splice_argv: splice_argv_func,
@@ -2152,7 +2165,7 @@ fn lower_inst(
             // Restore redirects
             emit_restore(saved, builder, module, externs);
         }
-        SsaInst::ReadLineMulti { targets, fd, delim, redirects, .. } => {
+        SsaInst::ReadLineMulti { targets, fd, delim, redirects, field_sep, .. } => {
             let saved = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             let fd_val = if *fd == -1 {
                 builder.use_var(pipe_read_fd_var)
@@ -2176,6 +2189,7 @@ fn lower_inst(
             builder.def_var(test_result_var, result);
 
             let split_ref = module.declare_func_in_func(externs.split_first_word, builder.func);
+            let split_field_ref = module.declare_func_in_func(externs.split_field, builder.func);
             let mut cur_ptr = line_ptr;
             let mut cur_len = line_len;
 
@@ -2193,9 +2207,14 @@ fn lower_inst(
                     ));
                     let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
                     let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
-                    let split_call = builder.ins().call(split_ref, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
-                    let word_ptr = builder.inst_results(split_call)[0];
-                    let word_len = builder.inst_results(split_call)[1];
+                    let (word_ptr, word_len) = if let Some(sep) = field_sep {
+                        let delim_val = builder.ins().iconst(I64, *sep as i64);
+                        let call = builder.ins().call(split_field_ref, &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr]);
+                        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+                    } else {
+                        let call = builder.ins().call(split_ref, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
+                        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+                    };
                     builder.def_var(sv.str_ptr(), word_ptr);
                     builder.def_var(sv.str_len(), word_len);
                     cur_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);

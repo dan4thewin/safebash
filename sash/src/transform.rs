@@ -766,19 +766,28 @@ fn lower_one(
 
             if name == "read" {
                 let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
-                // Parse flags: -r (raw), -t (strip trailing), -d DELIM (delimiter), -a ARR (array)
+                // Parse flags: -d DELIM (record delimiter), -f DELIM (field separator), -a ARR
                 let mut delim: Option<u8> = None;
+                let mut field_sep: Option<u8> = None;
                 let mut array_name: Option<String> = None;
                 let mut skip_next = false;
                 let mut var_names: Vec<&String> = Vec::new();
                 for (i, a) in args.iter().enumerate() {
                     if skip_next { skip_next = false; continue; }
-                    if a == "-r" || a == "-t" { continue; }
                     if a == "-d" || a.starts_with("-d") {
                         if a.len() > 2 {
                             delim = Some(a.as_bytes()[2]);
                         } else if i + 1 < args.len() {
                             delim = Some(args[i + 1].as_bytes()[0]);
+                            skip_next = true;
+                        }
+                        continue;
+                    }
+                    if a == "-f" || a.starts_with("-f") {
+                        if a.len() > 2 {
+                            field_sep = Some(a.as_bytes()[2]);
+                        } else if i + 1 < args.len() {
+                            field_sep = Some(args[i + 1].as_bytes()[0]);
                             skip_next = true;
                         }
                         continue;
@@ -790,8 +799,23 @@ fn lower_one(
                         }
                         continue;
                     }
-                    if a.starts_with('-') { continue; }
+                    if a.starts_with('-') {
+                        // Reject unknown flags (including -r, -t)
+                        state.diagnostics.push(format!(
+                            "{}:{}: error [SB5015] read: unknown flag '{}'",
+                            stmt.span.line, stmt.span.col, a
+                        ));
+                        return block;
+                    }
                     var_names.push(a);
+                }
+                // Reject -f with single variable
+                if field_sep.is_some() && var_names.len() <= 1 && array_name.is_none() {
+                    state.diagnostics.push(format!(
+                        "{}:{}: error [SB5016] read -f: field separator requires multiple target variables",
+                        stmt.span.line, stmt.span.col
+                    ));
+                    return block;
                 }
                 // read -a arr: split line into array
                 if let Some(arr) = array_name {
@@ -820,6 +844,7 @@ fn lower_one(
                         delim,
                         redirects: vec![],
                         clean_pipe: false,
+                        field_sep,
                     });
                     return block;
                 }
@@ -1045,14 +1070,14 @@ fn lower_one(
                             let args: Vec<SsaValue> = c.args.iter()
                                 .map(|a| expr_to_value(a, state))
                                 .collect();
-                            stages.push((name, args, vec![]));
+                            stages.push((resolve_pipeline_command(&name), args, vec![]));
                         } else if let StmtKind::Redirected(r) = &cmd.kind {
                             if let StmtKind::Command(c) = &r.body.kind {
                                 let name = expr_to_string(&c.name);
                                 let args: Vec<SsaValue> = c.args.iter()
                                     .map(|a| expr_to_value(a, state))
                                     .collect();
-                                stages.push((name, args, r.redirects.clone()));
+                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
                             }
                         }
                     }
@@ -1086,14 +1111,14 @@ fn lower_one(
                             let args: Vec<SsaValue> = c.args.iter()
                                 .map(|a| expr_to_value(a, state))
                                 .collect();
-                            stages.push((name, args, vec![]));
+                            stages.push((resolve_pipeline_command(&name), args, vec![]));
                         } else if let StmtKind::Redirected(r) = &cmd.kind {
                             if let StmtKind::Command(c) = &r.body.kind {
                                 let name = expr_to_string(&c.name);
                                 let args: Vec<SsaValue> = c.args.iter()
                                     .map(|a| expr_to_value(a, state))
                                     .collect();
-                                stages.push((name, args, r.redirects.clone()));
+                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
                             }
                         }
                     }
@@ -1103,12 +1128,19 @@ fn lower_one(
                     if let StmtKind::Command(c) = &last.kind {
                         let mut var_names = vec![];
                         let mut delim: Option<u8> = None;
+                        let mut field_sep: Option<u8> = None;
                         let mut skip_next = false;
                         for arg in &c.args {
                             let s = expr_to_string(arg);
-                            if skip_next { skip_next = false; continue; }
+                            if skip_next {
+                                // This arg is the value for the previous flag
+                                if field_sep == Some(0) { field_sep = Some(s.as_bytes().get(0).copied().unwrap_or(0)); }
+                                skip_next = false; continue;
+                            }
                             if s == "-d" { skip_next = true; delim = Some(0); continue; }
                             if s.starts_with("-d") { delim = Some(s.as_bytes().get(2).copied().unwrap_or(0)); continue; }
+                            if s == "-f" { skip_next = true; field_sep = Some(0); continue; }
+                            if s.starts_with("-f") { field_sep = Some(s.as_bytes().get(2).copied().unwrap_or(0)); continue; }
                             if s.starts_with('-') { continue; }
                             var_names.push(s);
                         }
@@ -1129,6 +1161,7 @@ fn lower_one(
                                 delim,
                                 redirects: vec![],
                                 clean_pipe: true,
+                                field_sep,
                             });
                         }
                     }
@@ -1141,14 +1174,14 @@ fn lower_one(
                             let args: Vec<SsaValue> = c.args.iter()
                                 .map(|a| expr_to_value(a, state))
                                 .collect();
-                            stages.push((name, args, vec![]));
+                            stages.push((resolve_pipeline_command(&name), args, vec![]));
                         } else if let StmtKind::Redirected(r) = &cmd.kind {
                             if let StmtKind::Command(c) = &r.body.kind {
                                 let name = expr_to_string(&c.name);
                                 let args: Vec<SsaValue> = c.args.iter()
                                     .map(|a| expr_to_value(a, state))
                                     .collect();
-                                stages.push((name, args, r.redirects.clone()));
+                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
                             }
                         }
                     }
@@ -1688,7 +1721,7 @@ fn lower_for(
                             StmtKind::Redirected(r) => r.redirects.clone(),
                             _ => vec![],
                         };
-                        stages.push((name, args, redirs));
+                        stages.push((resolve_pipeline_command(&name), args, redirs));
                     }
                 }
                 // Emit pipeline with pipe capture
@@ -3035,6 +3068,25 @@ fn lower_pipe_while_read(
 /// DD#58: Try to parse a sexpr function call inside arithmetic context.
 /// `inner` is the content between outer parens: "add 3 4" or "f" or "add (dbl 3) 4"
 /// Returns Some(IntFuncCall) if the first token is a known -> int function.
+/// Resolve a bare command name to an absolute path for pipeline stages.
+/// Builtins that are also available as external commands get resolved.
+/// Returns the name unchanged if it already has a path or is an inline builtin.
+fn resolve_pipeline_command(name: &str) -> String {
+    if name.contains('/') {
+        return name.to_string();
+    }
+    // Inline builtins handled directly in codegen — no resolution needed
+    if matches!(name, "echo" | "true" | "false" | ":") {
+        return name.to_string();
+    }
+    // Builtins with known system paths
+    match name {
+        "printf" => "/usr/bin/printf".to_string(),
+        "pwd" => "/bin/pwd".to_string(),
+        _ => name.to_string(),
+    }
+}
+
 fn try_parse_sexpr(inner: &str, span: Span, state: &VersionState) -> Option<SsaValue> {
     let inner = inner.trim();
     if inner.is_empty() { return None; }

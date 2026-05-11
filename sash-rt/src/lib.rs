@@ -1680,6 +1680,36 @@ pub unsafe extern "C" fn sash_split_first_word(
 }
 
 // ═══════════════════════════════════════════════════════════════
+// sash_split_field — split on a specific delimiter byte (DD#22 -f flag)
+// ═══════════════════════════════════════════════════════════════
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_split_field(
+    ptr: *const u8,
+    len: i64,
+    delim: i64,
+    rest_ptr_out: *mut *const u8,
+    rest_len_out: *mut i64,
+) -> (*const u8, i64) {
+    if ptr.is_null() || len <= 0 {
+        *rest_ptr_out = ptr;
+        *rest_len_out = 0;
+        return (ptr, 0);
+    }
+    let s = core::slice::from_raw_parts(ptr, len as usize);
+    let delim_byte = delim as u8;
+    // Find first occurrence of delimiter
+    let field_end = s.iter().position(|&b| b == delim_byte).unwrap_or(s.len());
+    let field_ptr = ptr;
+    let field_len = field_end as i64;
+    // Rest starts after the delimiter
+    let rest_offset = if field_end < s.len() { field_end + 1 } else { s.len() };
+    *rest_ptr_out = ptr.add(rest_offset);
+    *rest_len_out = (s.len() - rest_offset) as i64;
+    (field_ptr, field_len)
+}
+
+// ═══════════════════════════════════════════════════════════════
 // sash_read_delim — read until a specific delimiter byte
 // ═══════════════════════════════════════════════════════════════
 

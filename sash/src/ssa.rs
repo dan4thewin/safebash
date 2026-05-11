@@ -97,6 +97,8 @@ pub enum SsaInst {
         redirects: Vec<crate::ir::Redirect>,
         /// True when read is in a lastpipe position with clean producer stages
         clean_pipe: bool,
+        /// DD#22: field separator byte (-f flag). None = whitespace split.
+        field_sep: Option<u8>,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {
