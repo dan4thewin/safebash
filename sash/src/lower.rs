@@ -161,6 +161,9 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
         "negated_command" => {
             lower_negated(node, source)?
         }
+        "suppressed_command" => {
+            lower_suppressed(node, source)?
+        }
         "subshell" => {
             StmtKind::Subshell(Subshell {
                 body: lower_body(node, source),
@@ -657,6 +660,19 @@ fn lower_negated(node: Node, source: &[u8]) -> Option<StmtKind> {
     None
 }
 
+// ── Suppressed command (- cmd) ────────────────────────────────
+
+fn lower_suppressed(node: Node, source: &[u8]) -> Option<StmtKind> {
+    // - cmd or - pipeline
+    for child in node.children(&mut node.walk()) {
+        if child.is_named() {
+            if let Some(stmt) = lower_statement(child, source) {
+                return Some(StmtKind::Suppressed(Box::new(stmt)));
+            }
+        }
+    }
+    None
+}
 // ── If lowering ───────────────────────────────────────────────
 
 fn lower_if(node: Node, source: &[u8]) -> If {
@@ -1218,6 +1234,31 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
         "expansion" => lower_parameter_expansion(node, source),
 
         "command_substitution" => {
+            // DD#55: $(status) → $? and $(getcpid) → $!
+            // Check for single bare command that is a sash special form
+            let inner_stmts: Vec<_> = node.children(&mut node.walk())
+                .filter(|c| c.is_named())
+                .collect();
+            if inner_stmts.len() == 1 && inner_stmts[0].kind() == "command" {
+                let cmd_node = inner_stmts[0];
+                let cmd_name_node = cmd_node.child_by_field_name("name");
+                let has_args = cmd_node.children(&mut cmd_node.walk())
+                    .filter(|c| c.is_named() && c.kind() != "command_name")
+                    .count() > 0;
+                if !has_args {
+                    if let Some(name_node) = cmd_name_node {
+                        let name = name_node.utf8_text(source).unwrap_or("");
+                        if name == "status" {
+                            let span = Span::from_node(node);
+                            return Expr { kind: ExprKind::SimpleExpansion("?".to_string()), span };
+                        }
+                        if name == "getcpid" {
+                            let span = Span::from_node(node);
+                            return Expr { kind: ExprKind::SimpleExpansion("!".to_string()), span };
+                        }
+                    }
+                }
+            }
             let mut stmts = Vec::new();
             let mut is_file_slurp = false;
             let mut slurp_path = String::new();

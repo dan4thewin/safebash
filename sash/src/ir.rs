@@ -83,6 +83,9 @@ pub enum StmtKind {
 
     /// Comment line (preserved for round-trip fidelity)
     Comment(String),
+
+    /// DD#55: `- cmd` — suppressed command (no implicit exit check)
+    Suppressed(Box<Statement>),
 }
 
 // ── Individual statement types ────────────────────────────────

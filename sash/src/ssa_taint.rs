@@ -203,7 +203,9 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
             // All command substitution output is tainted unless it's a known-clean builtin.
             // External command output (including getenv) requires explicit bless.
             if let Some(SsaValue::Literal(cmd)) = argv.first() {
-                match cmd.as_str() {
+                // Strip path to get basename (e.g., /bin/echo → echo)
+                let basename = cmd.rsplit('/').next().unwrap_or(cmd);
+                match basename {
                     "getenv" | "argv" => Taint::Tainted,
                     // Known-safe internal builtins (pure computation, no external data)
                     "len" | "keys" | "join" | "epochseconds" | "random"
@@ -211,13 +213,13 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
                     _ => {
                         // Sash builtins that produce output from their args:
                         // if all args are clean, output is clean (pure computation).
-                        if matches!(cmd.as_str(), "echo" | "printf" | "pwd") {
+                        if matches!(basename, "echo" | "printf" | "pwd") {
                             let args_clean = argv[1..].iter()
                                 .all(|a| value_is_tainted(a, taint, user_functions) != Taint::Tainted);
                             if args_clean { return Taint::Clean; }
                         }
                         // User-defined functions are clean by DD#24
-                        if user_functions.contains(cmd.as_str()) {
+                        if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
                             return Taint::Clean;
                         }
                         // Everything else (external commands) is tainted.

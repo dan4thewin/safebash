@@ -1,5 +1,5 @@
 title: DD#55 — non-void function detection and call-site enforcement
-status: ready
+status: done
 depends: []
 severity: correctness
 gates: [55.12, 55.13, 55.14, 55.15]

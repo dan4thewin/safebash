@@ -109,7 +109,7 @@ run_sash '/bin/false || echo $?'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 55.18
 
 # 55.19 $! is sugar for $(getcpid)
-run_sash '/bin/sleep 0 & p=$!; /bin/wait $p; echo done'
+run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.19
 
 set -e

@@ -268,7 +268,7 @@ impl TaintTracker {
                     }
                 }
             }
-            "list" | "redirected_statement" => {
+            "list" | "redirected_statement" | "negated_command" | "suppressed_command" => {
                 for child in node.children(&mut node.walk()) {
                     self.walk_statement(child, source, diags);
                 }
@@ -855,9 +855,16 @@ impl TaintTracker {
     /// Check if all argument expressions inside a command_substitution are clean.
     fn cmdsub_args_clean(&self, node: Node, source: &[u8]) -> bool {
         for child in node.children(&mut node.walk()) {
-            if child.kind() == "command" {
+            let cmd_node = if child.kind() == "command" {
+                Some(child)
+            } else if child.kind() == "suppressed_command" {
+                child.children(&mut child.walk()).find(|c| c.kind() == "command")
+            } else {
+                None
+            };
+            if let Some(cmd) = cmd_node {
                 let mut past_name = false;
-                for arg in child.children(&mut child.walk()) {
+                for arg in cmd.children(&mut cmd.walk()) {
                     if arg.kind() == "command_name" { past_name = true; continue; }
                     if !past_name { continue; }
                     if self.expr_is_tainted(arg, source) { return false; }
@@ -872,8 +879,16 @@ impl TaintTracker {
     /// Extract command name from inside a command_substitution node.
     fn extract_cmd_subst_name(node: Node, source: &[u8]) -> String {
         for child in node.children(&mut node.walk()) {
-            if child.kind() == "command" {
-                if let Some(name_node) = child.child_by_field_name("name") {
+            // Direct command or command inside suppressed_command (- cmd)
+            let cmd_node = if child.kind() == "command" {
+                Some(child)
+            } else if child.kind() == "suppressed_command" {
+                child.children(&mut child.walk()).find(|c| c.kind() == "command")
+            } else {
+                None
+            };
+            if let Some(cmd) = cmd_node {
+                if let Some(name_node) = cmd.child_by_field_name("name") {
                     if let Some(word) = name_node.child(0) {
                         let full = word.utf8_text(source).unwrap_or("");
                         // Strip path to get basename

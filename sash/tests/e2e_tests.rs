@@ -1287,3 +1287,39 @@ fn neg_source_keyword_rejected() {
     let stderr = compile_expect_fail("source_kw", script);
     assert!(stderr.contains("SB4002"), "expected SB4002 for 'source', got: {}", stderr);
 }
+
+// ── DD#55: suppress prefix (- cmd) ──────────────────────────
+
+#[test]
+fn pos_suppress_prefix_false() {
+    // - /bin/false; echo ok → should succeed, echo ok
+    let script = "#!/bin/bash\n- /bin/false; echo ok";
+    assert_eq!(compile_and_run("suppress_false", script), "ok\n");
+}
+
+#[test]
+fn pos_suppress_pipeline_segment() {
+    // - /bin/false | /bin/true → suppressed first segment, pipeline succeeds
+    let script = "#!/bin/bash\n- /bin/false | /bin/true";
+    // Should compile and run with exit 0
+    let src = write_tmp("suppress_pipe.sh", script);
+    let bin = "/tmp/sash_e2e_suppress_pipe";
+    let out = sash_cmd(&["--nolint", "-o", bin, &src]);
+    assert!(out.status.success(), "compile failed: {}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(bin).output().expect("run failed");
+    assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
+}
+
+#[test]
+fn neg_unsuppressed_false_aborts() {
+    // /bin/false; echo should_not_reach → binary should abort (nonzero exit)
+    let script = "#!/bin/bash\n/bin/false\necho should_not_reach";
+    let src = write_tmp("unsup_false.sh", script);
+    let bin = "/tmp/sash_e2e_unsup_false";
+    let out = sash_cmd(&["--nolint", "-o", bin, &src]);
+    assert!(out.status.success(), "compile failed: {}", String::from_utf8_lossy(&out.stderr));
+    let run = Command::new(bin).output().expect("run failed");
+    assert!(!run.status.success(), "expected nonzero exit");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(!stdout.contains("should_not_reach"), "should not reach after /bin/false");
+}

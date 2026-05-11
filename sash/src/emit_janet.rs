@@ -687,6 +687,14 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                 writeln!(out, "{}", text.replacen('#', "#", 1)).unwrap();
             }
         }
+        StmtKind::Suppressed(inner) => {
+            // In Janet, suppression means ignoring the return value
+            indent(out, depth);
+            writeln!(out, "(do").unwrap();
+            emit_stmt(out, ctx, inner, depth + 1);
+            indent(out, depth);
+            writeln!(out, "  nil)").unwrap();
+        }
     }
 }
 

@@ -200,6 +200,11 @@ fn print_stmt(out: &mut String, stmt: &Statement, depth: usize) {
             indent(out, depth);
             writeln!(out, "}}").unwrap();
         }
+        StmtKind::Suppressed(inner) => {
+            indent(out, depth);
+            write!(out, "- ").unwrap();
+            print_stmt(out, inner, depth);
+        }
     }
 }
 

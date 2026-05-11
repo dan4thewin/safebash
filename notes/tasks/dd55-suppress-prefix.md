@@ -1,5 +1,5 @@
 title: DD#55 — implement `-` error suppression prefix
-status: ready
+status: done
 depends:
   - dd55-implicit-exit-checks
 severity: feature

@@ -70,6 +70,7 @@ impl Rule for CommandResolution {
             | "local" | "export" | "declare" | "typeset" | "readonly" | "set"
             | "shopt" | "select" | "coproc" | "bless" | "getenv" | "fn"
             | "let"
+            | "status" | "getcpid" | "getpid" | "argc" | "signum"
         ) {
             return vec![];
         }

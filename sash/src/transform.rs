@@ -158,6 +158,14 @@ fn lower_one(
                 let val = expr_to_value(&a.value, state);
                 // Check if the value is a FuncCall that needs capture
                 if let SsaValue::FuncCall(fname) = &val {
+                    // DD#55: $(f) for -> int function is a type error
+                    if state.function_int_typed.contains(fname.as_str()) {
+                        state.diagnostics.push(format!(
+                            "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                            stmt.span.line, stmt.span.col, fname, fname
+                        ));
+                        return block;
+                    }
                     // Non-constant function call: emit CaptureStart, inline body, CaptureEnd
                     if let Some(body) = state.function_bodies.get(fname).cloned() {
                         let locals = collect_local_vars(&body);
@@ -330,7 +338,19 @@ fn lower_one(
                     }
                 }
                 // If we couldn't find a TestExpr, emit as regular command (will be caught by taint checker)
-                let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                let args: Vec<SsaValue> = c.args.iter().map(|a| {
+                    let v = expr_to_value(a, state);
+                    // DD#55: $(f) for -> int function is a type error
+                    if let SsaValue::FuncCall(fname) = &v {
+                        if state.function_int_typed.contains(fname.as_str()) {
+                            state.diagnostics.push(format!(
+                                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                                a.span.line, a.span.col, fname, fname
+                            ));
+                        }
+                    }
+                    v
+                }).collect();
                 ssa.block_mut(block).insts.push(SsaInst::Command {
                     name: name.clone(),
                     args,
@@ -786,7 +806,19 @@ fn lower_one(
             }
 
             let args: Vec<SsaValue> = c.args.iter()
-                .map(|a| expr_to_value(a, state))
+                .map(|a| {
+                    let v = expr_to_value(a, state);
+                    // DD#55: $(f) for -> int function is a type error
+                    if let SsaValue::FuncCall(fname) = &v {
+                        if state.function_int_typed.contains(fname.as_str()) {
+                            state.diagnostics.push(format!(
+                                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                                a.span.line, a.span.col, fname, fname
+                            ));
+                        }
+                    }
+                    v
+                })
                 .collect();
             ssa.block_mut(block).insts.push(SsaInst::Command {
                 name,
@@ -1020,6 +1052,14 @@ fn lower_one(
                         false_block: right_block,   // failure → run right
                     };
                     let right_end = lower_one(&l.right, ssa, state, right_block);
+                    // DD#55: if the right side completes, the || list succeeded;
+                    // reset exit status to 0 so the program doesn't exit with
+                    // the left side's failure status.
+                    let zero_ref = state.define("?");
+                    ssa.block_mut(right_end).insts.push(SsaInst::Assign {
+                        target: zero_ref,
+                        value: SsaValue::Literal("0".to_string()),
+                    });
                     ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
                     merge_block
                 }
@@ -1062,6 +1102,11 @@ fn lower_one(
         StmtKind::Function(f) => {
             // Store function body for inline expansion at call sites.
             state.function_bodies.insert(f.name.clone(), f.body.clone());
+
+            // Track -> int functions for DD#55 type error on $(f)
+            if f.return_type == crate::ir::VarType::Int {
+                state.function_int_typed.insert(f.name.clone());
+            }
 
             // DD#55: non-void function detection
             let returns = collect_returns(&f.body);
@@ -1213,6 +1258,32 @@ fn lower_one(
         }
 
         StmtKind::Comment(_) => block,
+
+        StmtKind::Suppressed(inner) => {
+            // DD#55: lower the inner statement, then mark the last
+            // Command/Pipeline instruction as unchecked.
+            let pre_len = ssa.block(block).insts.len();
+            let result_block = lower_one(inner, ssa, state, block);
+            // Walk backwards through emitted instructions to uncheck commands/pipelines
+            fn uncheck_block(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {
+                let insts = &mut ssa.block_mut(block_id).insts;
+                for inst in insts[from..].iter_mut() {
+                    match inst {
+                        SsaInst::Command { checked, .. } => { *checked = false; }
+                        SsaInst::Pipeline { checked, .. } => { *checked = false; }
+                        _ => {}
+                    }
+                }
+            }
+            uncheck_block(ssa, block, pre_len);
+            // If lowering created new blocks, uncheck those too
+            if result_block != block {
+                for b in (block + 1)..=result_block {
+                    uncheck_block(ssa, b, 0);
+                }
+            }
+            result_block
+        }
     }
 }
 
@@ -2212,10 +2283,17 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                     .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
                     .collect();
                 if real_stmts.len() == 1 {
-                    // Unwrap Redirected to get the inner Command
-                    let inner = match &real_stmts[0].kind {
-                        StmtKind::Redirected(r) => &r.body.kind,
-                        other => other,
+                    // Unwrap Redirected or Suppressed to get the inner Command
+                    let (inner, _is_suppressed) = {
+                        let mut s = &real_stmts[0].kind;
+                        let mut suppressed = false;
+                        loop {
+                            match s {
+                                StmtKind::Redirected(r) => { s = &r.body.kind; }
+                                StmtKind::Suppressed(inner) => { s = &inner.kind; suppressed = true; }
+                                other => break (other, suppressed),
+                            }
+                        }
                     };
                     if let StmtKind::Command(c) = inner {
                         if let ExprKind::Literal(name) = &c.name.kind {
@@ -2443,6 +2521,9 @@ fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut us
             for st in &g.body { scan_expr_positionals_stmt(st, max, shifts); }
         }
         StmtKind::Comment(_) => {}
+        StmtKind::Suppressed(inner) => {
+            scan_expr_positionals_stmt(inner, max, shifts);
+        }
     }
 }
 
