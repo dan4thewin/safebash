@@ -95,17 +95,9 @@ impl TaintTracker {
     }
 
     /// Special variables that are always clean.
+    /// Compiler-managed values only — no external data.
     fn is_special_var(&self, name: &str) -> bool {
-        matches!(name, "0" | "#" | "?" | "$" | "LINENO" | "PIPESTATUS"
-            | "BASHPID" | "BASH_SUBSHELL" | "SHLVL" | "PPID" | "UID" | "EUID"
-            | "GROUPS" | "HOSTNAME" | "HOSTTYPE" | "MACHTYPE" | "OSTYPE"
-            | "SHELLOPTS" | "BASHOPTS" | "BASH_VERSION" | "BASH_VERSINFO"
-            | "SECONDS" | "RANDOM" | "SRANDOM" | "EPOCHSECONDS" | "EPOCHREALTIME"
-            | "IFS" | "OLDPWD" | "_"
-            | "HOME" | "PWD" | "PATH" | "USER" | "LOGNAME" | "SHELL"
-            | "TMPDIR" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TERM" | "DISPLAY"
-            | "XDG_RUNTIME_DIR" | "XDG_DATA_HOME" | "XDG_CONFIG_HOME"
-            | "XDG_CACHE_HOME" | "XDG_STATE_HOME")
+        matches!(name, "#" | "?" | "$" | "!" | "LINENO")
     }
 
     /// Run taint analysis on the full program.

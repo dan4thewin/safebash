@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=27
+plan=31
 echo "1..$plan" >&3
 
 set +e
@@ -82,7 +82,7 @@ x=$(getenv USER)
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.14
 
-# 24.15 literals and $0, $#, $?, $$ are clean
+# 24.15 literals and $#, $?, $$ are clean
 run_sash 'x="hello"; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.15
 
@@ -114,9 +114,9 @@ f'
 run_sash 'x=$(argv 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 51.1
 
-# 53.1 $HOME refers to sash var, not env
+# 53.1 $HOME is an env var — must use $(getenv HOME)
 run_sash 'echo $HOME'
-[[ $rc = 0 && $out = "" && -z $err ]]; chk 53.1
+[[ $rc != 0 && -z $out && -n $err ]]; chk 53.1
 
 # 53.2 only way to read env is getenv
 run_sash 'x=$(getenv HOME); bless x [[ $x =~ ^/ ]]; echo $x'
@@ -137,6 +137,22 @@ run_sash 'export PATH=/usr/bin'
 # 53.6 per-command env vars use /usr/bin/env
 run_sash '/usr/bin/env FOO=bar /bin/echo hello'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 53.6
+
+# 42.2 $0 rejected — use $(argv 0)
+run_sash 'echo $0'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 42.2
+
+# 53.7 $RANDOM rejected
+run_sash 'echo $RANDOM'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 53.7
+
+# 53.8 $BASH_VERSION rejected
+run_sash 'echo $BASH_VERSION'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 53.8
+
+# 53.9 $PATH requires getenv
+run_sash 'echo $PATH'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 53.9
 
 set -e
 tally

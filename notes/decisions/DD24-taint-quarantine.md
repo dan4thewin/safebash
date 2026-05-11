@@ -24,8 +24,17 @@ use or the function itself fails to compile.
 
 ## Clean sources
 
-Literals, arithmetic from clean operands, `$0`, `$#`, `$?`, `$$`,
-variables assigned from clean expressions.
+Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`,
+`$LINENO` (compile-time constant), variables assigned from clean
+expressions.
+
+Function positional params (`$1`..`$9`, `$@`) are clean within
+functions — the compiler sees the caller's arguments and knows
+their taint status. Top-level positionals are program argv (tainted,
+use `$(argv N)`).
+
+`$0` is not supported by the compiler — the converter rewrites it
+to `$(argv 0)`.
 
 ## Quarantine (DD#44)
 
