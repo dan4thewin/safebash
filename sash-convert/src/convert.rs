@@ -40,6 +40,15 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
     // Add CHECK hints from shellcheck SC2086 findings
     add_sc2086_hints(sc_findings, &mut prefix_lines);
 
+    // Collect prefix lines from patches (e.g., env var getenv+bless)
+    for patch in &patches {
+        if let Some(ref pl) = patch.prefix_line {
+            // Insert before the line where the patch starts
+            let line = source[..patch.start].matches('\n').count();
+            prefix_lines.push((line, pl.clone()));
+        }
+    }
+
     // Apply patches to source
     apply_patches(source, &patches, &prefix_lines, annotate)
 }
@@ -599,6 +608,22 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                         end: node.end_byte(),
                         replacement,
                         prefix_line: None,
+                        original: None,
+                    });
+                } else if let Some(env) = crate::known_externals::lookup_env_var(&name) {
+                    // Known env var: $HOME → $(getenv HOME) + bless
+                    let var = name.to_lowercase();
+                    let line = node.start_position().row + 1;
+                    let getenv = format!("$(getenv {})", name);
+                    // Emit: var=$(getenv NAME); bless var [[ $var =~ pattern ]]
+                    patches.push(Patch {
+                        start: node.start_byte(),
+                        end: node.end_byte(),
+                        replacement: format!("${}", var),
+                        prefix_line: Some(format!(
+                            "{}=$(getenv {}); bless {} [[ ${} =~ {} ]]",
+                            var, name, var, var, env.pattern
+                        )),
                         original: None,
                     });
                 }

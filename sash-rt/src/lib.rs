@@ -1641,6 +1641,14 @@ pub extern "C" fn sash_getpid() -> i64 {
     rustix::process::getpid().as_raw_nonzero().get() as i64
 }
 
+#[no_mangle]
+pub extern "C" fn sash_getppid() -> i64 {
+    match rustix::process::getppid() {
+        Some(pid) => pid.as_raw_nonzero().get() as i64,
+        None => 0, // init process has no parent
+    }
+}
+
 // ═══════════════════════════════════════════════════════════════
 // sash_split_first_word — split first whitespace-delimited word
 // ═══════════════════════════════════════════════════════════════
@@ -2204,46 +2212,3 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
 }
 
 
-
-
-/// $RANDOM — return a pseudo-random number 0-32767 as a string.
-/// Uses getrandom syscall for seed, simple LCG for speed.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_random() -> (*mut u8, usize) {
-    use core::sync::atomic::{AtomicU32, Ordering};
-    static SEED: AtomicU32 = AtomicU32::new(0);
-
-    let mut s = SEED.load(Ordering::Relaxed);
-    if s == 0 {
-        // Initialize from getrandom
-        let mut buf = [0u8; 4];
-        let _ = rustix::rand::getrandom(&mut buf, rustix::rand::GetRandomFlags::empty());
-        s = u32::from_ne_bytes(buf);
-        if s == 0 { s = 1; }
-    }
-    // LCG step
-    s = s.wrapping_mul(1103515245).wrapping_add(12345);
-    SEED.store(s, Ordering::Relaxed);
-    let val = (s >> 16) & 0x7FFF;
-
-    // itoa
-    let mut tmp = [0u8; 6];
-    let mut n = val;
-    let mut i = tmp.len();
-    if n == 0 {
-        i -= 1;
-        tmp[i] = b'0';
-    } else {
-        while n > 0 {
-            i -= 1;
-            tmp[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    let len = tmp.len() - i;
-    unsafe {
-        let ptr = sash_alloc(len);
-        core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), ptr, len);
-        (ptr, len)
-    }
-}

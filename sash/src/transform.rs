@@ -2054,9 +2054,6 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if var == "EPOCHSECONDS" {
                 return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("epochseconds".to_string())], redirects: vec![] };
             }
-            if var == "RANDOM" {
-                return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("random".to_string())], redirects: vec![] };
-            }
             SsaValue::Var(state.lookup(var))
         }
         ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),

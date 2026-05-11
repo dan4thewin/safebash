@@ -1245,6 +1245,14 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
                 .and_then(|c| c.utf8_text(source).ok())
                 .unwrap_or("?")
                 .to_string();
+            // DD#24: $LINENO → compile-time literal line number
+            if var == "LINENO" {
+                let line = node.start_position().row + 1;
+                return Expr {
+                    kind: ExprKind::Literal(line.to_string()),
+                    span: Span::from_node(node),
+                };
+            }
             ExprKind::SimpleExpansion(var)
         }
 

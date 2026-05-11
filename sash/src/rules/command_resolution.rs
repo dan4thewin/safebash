@@ -69,7 +69,7 @@ impl Rule for CommandResolution {
             | "local" | "export" | "declare" | "typeset" | "readonly" | "set"
             | "shopt" | "select" | "coproc" | "bless" | "getenv" | "fn"
             | "let"
-            | "status" | "getcpid" | "getpid" | "argc" | "signum"
+            | "status" | "getcpid" | "getpid" | "getppid" | "getcwd" | "argc" | "signum"
         ) {
             return vec![];
         }

@@ -121,8 +121,8 @@ struct ExternFuncs {
     toupper_all: cranelift_module::FuncId,
     tolower_all: cranelift_module::FuncId,
     getpid: cranelift_module::FuncId,
+    getppid: cranelift_module::FuncId,
     epochseconds: cranelift_module::FuncId,
-    random: cranelift_module::FuncId,
     trap: cranelift_module::FuncId,
     glob: cranelift_module::FuncId,
     glob_regex: cranelift_module::FuncId,
@@ -658,16 +658,17 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     getpid_sig.returns.push(AbiParam::new(I64));
     let getpid_func = module.declare_function("sash_getpid", Linkage::Import, &getpid_sig).expect("declare");
 
+    // sash_getppid() -> i64
+    let getppid_func = module.declare_function("sash_getppid", Linkage::Import, &getpid_sig).expect("declare");
+
+    // sash_getcwd(out_len) -> ptr  (same sig as existing)
+    // Already declared via pwd — reuse getcwd_func below
+
     // sash_epochseconds() -> (ptr, len)
     let mut epoch_sig = module.make_signature();
     epoch_sig.returns.push(AbiParam::new(I64));
     epoch_sig.returns.push(AbiParam::new(I64));
     let epochseconds_func = module.declare_function("sash_epochseconds", Linkage::Import, &epoch_sig).expect("declare");
-
-    let mut random_sig = module.make_signature();
-    random_sig.returns.push(AbiParam::new(I64));
-    random_sig.returns.push(AbiParam::new(I64));
-    let random_func = module.declare_function("sash_random", Linkage::Import, &random_sig).expect("declare");
 
 
     // sash_glob(dir_ptr, dir_len, pat_ptr, pat_len) -> table_ptr
@@ -792,8 +793,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
         getpid: getpid_func,
+        getppid: getppid_func,
         epochseconds: epochseconds_func,
-        random: random_func,
         trap: trap_func,
         glob: glob_func,
         glob_regex: glob_regex_func,
@@ -3767,11 +3768,31 @@ fn lower_value(
                         let len = builder.inst_results(call)[1];
                         return (ptr, len);
                     }
-                    "random" => {
-                        let func_ref = module.declare_func_in_func(externs.random, builder.func);
+                    "getppid" => {
+                        // $(getppid) → parent PID as string
+                        let func_ref = module.declare_func_in_func(externs.getppid, builder.func);
                         let call = builder.ins().call(func_ref, &[]);
+                        let pid = builder.inst_results(call)[0];
+                        let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot, 8, 3,
+                        ));
+                        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+                        let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
+                        let ptr = builder.inst_results(call2)[0];
+                        let len = builder.ins().stack_load(I64, out_slot, 0);
+                        return (ptr, len);
+                    }
+                    "getcwd" => {
+                        // $(getcwd) → current working directory
+                        let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
+                        let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                            StackSlotKind::ExplicitSlot, 8, 3,
+                        ));
+                        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                        let call = builder.ins().call(func_ref, &[out_addr]);
                         let ptr = builder.inst_results(call)[0];
-                        let len = builder.inst_results(call)[1];
+                        let len = builder.ins().stack_load(I64, out_slot, 0);
                         return (ptr, len);
                     }
                     "getenv" if argv_values.len() >= 2 => {
