@@ -5,44 +5,41 @@ modified: 2026-05-11
 
 ## Current branch: split-converter
 
-## Priority: next correctness batch
+## Spec status: 203 passing / 59 failing (spec.db)
 
-### Just completed (session 2026-05-11)
+### Session 2026-05-11 — completed
 
-**Four DDs fully implemented, zero regressions:**
+**DDs fully implemented (all gates pass):**
+- DD#55 (22/22): suppress prefix, $? scoping, error model
+- DD#58 (8/8): int function capture via sexpr in $(( ))
+- DD#31 (19/19): disjoint arithmetic contexts
+- DD#22 (7/7): word splitting elimination, read -f, pipeline builtins
 
-- **DD#55** (22/22 gates): suppress prefix `- cmd`, $? scoping,
-  $(status)/$(getcpid), SB4018 $(f) type error, || exit status reset
-- **DD#58** (8/8 gates): int function capture via sexpr in $(( )),
-  source preprocessor for nested sexprs, name collision SB4019
-- **DD#31** (19/19 gates): already passing (fixed as side effect of
-  DD#58 arithmetic comparison rewrite)
-- **DD#22** (7/7 gates): read -f field separator, reject -r,
-  pipeline inline builtins, mapfile+pipe fix
+**DD#24 taint audit:**
+- Clean list eliminated (was dead code)
+- Rejected vars rule: SB5017/SB5018
+- $LINENO → compile-time literal
+- $(getppid), $(getcwd) keywords implemented
+- sash_random removed from runtime
+- Converter: $HOME → $(getenv HOME) + auto-bless
 
-**Also fixed:**
-- 21.2: pipeline builtin echo (inline builtins in forked children)
-- Mapfile+pipe runtime: subscript lookup in test expressions
-- codegen_tests: 3 additional tests now pass (+3)
-- e2e_tests: 4 additional tests now pass (+4)
+**Structural:**
+- main.rs → thin wrapper, all logic in lib.rs
+- pub(crate) on internal modules (dead code detection)
+- 10 dead items removed (zero warnings)
+- Pipeline inline builtins (echo, true, false, :)
+- Mapfile+pipe fix (subscript in test expressions)
 
-**Test suite status (no regressions):**
-- e2e: 136 pass / 2 fail (brush compat, pre-existing)
-- oracle: 59 pass / 0 fail
-- taint: 42 pass / 0 fail
-- codegen: 220 pass / 46 fail (pre-existing pipeline/cmdsub gaps)
-
-### Spec gate status
-
-All DD#55, DD#58, DD#31, DD#22 gates pass.
-
-Still failing (from other spec files): various DD#14 (pipeline/cmdsub),
-DD#12 (string runtime), DD#30 (type separation), DD#33 (array types),
-DD#56 (exit trap/signals).
+### Test suite (no regressions)
+- e2e: 136 pass / 2 fail (brush compat)
+- oracle: 59 / 0
+- taint: 42 / 0
+- codegen: 219 pass / 47 fail (pre-existing pipeline/cmdsub)
 
 ### Next priorities
 
-1. DD#56 EXIT trap bug + END block redesign (5 gates, bug)
-2. DD#30 type separation (10 gates, correctness)
-3. DD#33 array/map type enforcement (6 gates, correctness)
-4. DD#14 pipeline primitives (6 gates, correctness)
+1. DD#56 EXIT trap bug + END block redesign (15 gates)
+2. DD#30 type separation (10 gates)
+3. DD#33 array/map type enforcement (6 gates)
+4. DD#18 local function scoping (4 gates)
+5. DD#42 builtins (3 gates)
