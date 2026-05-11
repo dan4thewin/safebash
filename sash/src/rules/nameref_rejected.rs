@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct NamerefRejected;
 
 impl Rule for NamerefRejected {
-    fn name(&self) -> &'static str { "nameref-rejected" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["declaration_command"]

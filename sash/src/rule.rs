@@ -13,12 +13,7 @@ use crate::diagnostic::Diagnostic;
 ///   3. Implement the check logic in `check()`
 ///   4. Register it in `all_rules()`
 pub trait Rule: Sync {
-    /// Human-readable name for this rule.
-    fn name(&self) -> &'static str;
-
     /// CST node kinds this rule wants to inspect.
-    /// The framework only calls `check()` for nodes matching these kinds.
-    /// Return `&[]` to receive every node (use sparingly).
     fn node_kinds(&self) -> &'static [&'static str];
 
     /// Inspect a node and return any diagnostics.

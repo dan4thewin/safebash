@@ -22,7 +22,6 @@ enum HandlingCheck {
 }
 
 impl Rule for DollarQuestion {
-    fn name(&self) -> &'static str { "dollar-question" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["simple_expansion", "command_substitution"]

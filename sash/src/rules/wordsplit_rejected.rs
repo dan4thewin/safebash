@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct IfsRejected;
 
 impl Rule for IfsRejected {
-    fn name(&self) -> &'static str { "ifs-rejected" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["variable_assignment"]
@@ -34,7 +33,6 @@ impl Rule for IfsRejected {
 pub struct ForInExpansion;
 
 impl Rule for ForInExpansion {
-    fn name(&self) -> &'static str { "for-in-expansion" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["for_statement"]

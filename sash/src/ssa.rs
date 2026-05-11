@@ -16,7 +16,7 @@
 ///   3. Insert phi nodes at dominance frontiers
 ///   4. Rename variables with version numbers
 
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{HashMap, BTreeMap};
 
 /// A unique identifier for a basic block.
 pub type BlockId = usize;
@@ -442,25 +442,6 @@ pub struct VersionState {
 }
 
 impl VersionState {
-    pub fn new() -> Self {
-        Self {
-            current: HashMap::new(),
-            counter: HashMap::new(),
-            known_functions: std::collections::HashSet::new(),
-            function_bodies: HashMap::new(),
-            function_redirects: HashMap::new(),
-            type_map: HashMap::new(),
-            assoc_arrays: std::collections::HashSet::new(),
-            readonly_vars: std::collections::HashSet::new(),
-            loop_stack: Vec::new(),
-            return_target: None,
-            function_non_void: std::collections::HashSet::new(),
-            function_int_typed: std::collections::HashSet::new(),
-            in_condition: 0,
-            exit_trap: None, diagnostics: Vec::new(),
-        }
-    }
-
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
         Self {
             current: HashMap::new(),
@@ -513,8 +494,4 @@ impl VersionState {
         self.current = snap.clone();
     }
 
-    /// Get all variable names that have been defined.
-    pub fn defined_vars(&self) -> HashSet<String> {
-        self.current.keys().cloned().collect()
-    }
 }

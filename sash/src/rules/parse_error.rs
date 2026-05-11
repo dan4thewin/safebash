@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct ParseError;
 
 impl Rule for ParseError {
-    fn name(&self) -> &'static str { "parse-error" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["ERROR"]

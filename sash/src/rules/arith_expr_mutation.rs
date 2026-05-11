@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct ArithExprMutation;
 
 impl Rule for ArithExprMutation {
-    fn name(&self) -> &'static str { "arith-expr-mutation" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["arithmetic_expansion", "arithmetic_command"]
@@ -65,20 +64,6 @@ fn is_comma_expression(node: Node, source: &[u8]) -> bool {
 /// Comma in condition: (( setup, setup, test ))
 /// Comma associates left: (( a, b, c )) = (( (a, b), c ))
 /// Right child is always the final (test) expression — must not mutate.
-fn check_comma_condition(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
-    let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).filter(|c| c.is_named()).collect();
-    if children.len() < 2 { return; }
-    let right = children[children.len() - 1];
-    // Final expression must not have mutations
-    find_mutations(right, source, diags, "condition (( )) final comma expression");
-    // Non-final (left) — if also comma, recurse
-    let left = children[0];
-    if is_comma_expression(left, source) {
-        check_comma_condition(left, source, diags);
-    }
-}
-
 /// Statement position: top-level mutation is fine, but nested mutations
 /// inside operands are rejected (DD#31.8). E.g. `(( x = y++ ))`.
 fn find_nested_mutations(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
@@ -189,15 +174,6 @@ fn in_condition_position(node: Node) -> bool {
     false
 }
 
-fn has_ancestor_kind(node: Node, kind: &str) -> bool {
-    let mut current = node.parent();
-    while let Some(n) = current {
-        if n.kind() == kind { return true; }
-        current = n.parent();
-    }
-    false
-}
-
 /// Check if a binary_expression uses an assignment operator.
 /// Tree-sitter doesn't expose the operator as a named child,
 /// so we look for assignment patterns in the text between operands.
@@ -225,7 +201,6 @@ fn is_assignment_binop(node: Node, source: &[u8]) -> bool {
 pub struct ArithStmtNoEffect;
 
 impl Rule for ArithStmtNoEffect {
-    fn name(&self) -> &'static str { "arith-stmt-no-effect" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["arithmetic_command"]

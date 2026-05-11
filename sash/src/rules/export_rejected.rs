@@ -12,7 +12,6 @@ use crate::rule::Rule;
 pub struct ExportRejected;
 
 impl Rule for ExportRejected {
-    fn name(&self) -> &'static str { "export-rejected" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["declaration_command"]

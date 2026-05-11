@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct DynamicExecution;
 
 impl Rule for DynamicExecution {
-    fn name(&self) -> &'static str { "dynamic-execution" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["command"]

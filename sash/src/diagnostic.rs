@@ -5,8 +5,6 @@ pub enum Severity {
     Error,
     /// Deferred — must be resolved by SSA in phase 4; error if unresolved.
     Deferred,
-    /// Marker — not an error; signals the compiler to transform this construct.
-    Marker,
 }
 
 /// A diagnostic emitted by a validation rule.
@@ -36,16 +34,6 @@ impl Diagnostic {
             col: node.start_position().column + 1,
             code,
             severity: Severity::Deferred,
-            message,
-        }
-    }
-
-    pub fn marker(node: tree_sitter::Node, code: &'static str, message: String) -> Self {
-        Self {
-            line: node.start_position().row + 1,
-            col: node.start_position().column + 1,
-            code,
-            severity: Severity::Marker,
             message,
         }
     }

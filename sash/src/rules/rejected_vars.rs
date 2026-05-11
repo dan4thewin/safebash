@@ -32,7 +32,6 @@ const USE_GETENV: &[&str] = &[
 ];
 
 impl Rule for RejectedVars {
-    fn name(&self) -> &'static str { "rejected-vars" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["simple_expansion", "expansion"]

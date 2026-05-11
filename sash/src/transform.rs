@@ -1931,7 +1931,7 @@ fn lower_case(
     // Build a no-match state: pre_state with "?" forced to 0
     // (POSIX: "if no pattern is matched, the exit status is zero")
     let no_match_path: Option<(BlockId, std::collections::HashMap<String, u32>)> = if !has_wildcard {
-        let mut no_match_state = pre_state.clone();
+        let _no_match_state = pre_state.clone();
         // Define "?" = 0 on the no-match path via a dedicated block
         let no_match_block = ssa.new_block("case.nomatch");
         state.restore(&pre_state);

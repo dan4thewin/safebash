@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct GlobRestricted;
 
 impl Rule for GlobRestricted {
-    fn name(&self) -> &'static str { "glob-restricted" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["word", "concatenation"]

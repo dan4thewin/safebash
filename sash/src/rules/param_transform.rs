@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct ParamTransform;
 
 impl Rule for ParamTransform {
-    fn name(&self) -> &'static str { "param-transform" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["expansion"]

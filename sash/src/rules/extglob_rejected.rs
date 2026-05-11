@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct ExtglobRejected;
 
 impl Rule for ExtglobRejected {
-    fn name(&self) -> &'static str { "extglob-rejected" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["extglob_pattern"]

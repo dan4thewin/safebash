@@ -124,7 +124,7 @@ fn has_sexpr_pattern(content: &str) -> bool {
             // Check if next token is an identifier (not a digit or operator)
             if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 // Read the identifier
-                let id_start = j;
+                let _id_start = j;
                 while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') { j += 1; }
                 // After identifier, must have whitespace or ) — NOT an operator
                 if j < bytes.len() && (bytes[j].is_ascii_whitespace() || bytes[j] == b')') {
@@ -281,7 +281,6 @@ pub fn cli_main(args: Vec<String>) {
             let prefix = match d.severity {
                 diagnostic::Severity::Error => { has_error = true; "error" }
                 diagnostic::Severity::Deferred => { has_error = true; "deferred" }
-                diagnostic::Severity::Marker => "note",
             };
             eprintln!("{}:{}:{}: {} [{}] {}", input, d.line, d.col, prefix, d.code, d.message);
         }

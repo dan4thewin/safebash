@@ -10,10 +10,6 @@ use crate::rule::Rule;
 pub struct HeredocCmdSub;
 
 impl Rule for HeredocCmdSub {
-    fn name(&self) -> &'static str {
-        "heredoc-cmdsub"
-    }
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["heredoc_body"]
     }

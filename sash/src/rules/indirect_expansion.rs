@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct IndirectExpansion;
 
 impl Rule for IndirectExpansion {
-    fn name(&self) -> &'static str { "indirect-expansion" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["expansion"]

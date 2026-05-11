@@ -13,7 +13,6 @@ const BUILTINS: &[&str] = &[
 ];
 
 impl Rule for CommandResolution {
-    fn name(&self) -> &'static str { "command-resolution" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["command"]

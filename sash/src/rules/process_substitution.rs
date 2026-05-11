@@ -6,7 +6,6 @@ use crate::rule::Rule;
 pub struct ProcessSubstitution;
 
 impl Rule for ProcessSubstitution {
-    fn name(&self) -> &'static str { "process-substitution" }
 
     fn node_kinds(&self) -> &'static [&'static str] {
         &["process_substitution"]
