@@ -199,6 +199,7 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
         }
         SsaValue::Expr(_) => Taint::Clean, // string expressions from lowerer
         SsaValue::FuncCall(_) => Taint::Clean, // elidable user functions
+        SsaValue::IntFuncCall { .. } => Taint::Clean, // int functions return clean integers
         SsaValue::CmdSubst { argv, .. } => {
             // All command substitution output is tainted unless it's a known-clean builtin.
             // External command output (including getenv) requires explicit bless.

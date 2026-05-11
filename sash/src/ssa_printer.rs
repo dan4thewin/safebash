@@ -113,6 +113,10 @@ fn print_value(val: &SsaValue) -> String {
         SsaValue::Var(vref) => vref.display(),
         SsaValue::Expr(s) => s.clone(),
         SsaValue::FuncCall(name) => format!("call {}()", name),
+        SsaValue::IntFuncCall { name, args } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| print_value(a)).collect();
+            format!("(int:{} {})", name, arg_strs.join(" "))
+        }
         SsaValue::CmdSubst { argv, .. } => {
             let parts: Vec<String> = argv.iter().map(|v| print_value(v)).collect();
             format!("$({})", parts.join(" "))

@@ -1447,6 +1447,9 @@ fn lower_inst(
                 let one = builder.ins().iconst(I64, 1);
                 let es = builder.ins().select(is_zero, one, zero);
                 builder.def_var(exit_status_var, es);
+                // Also set test_result_var for branch terminators (if/while)
+                let tr = builder.ins().select(is_zero, zero, one);
+                builder.def_var(test_result_var, tr);
             }
         }
         SsaInst::Command { name, .. } if name == "__subshell" => {
@@ -3215,6 +3218,9 @@ fn lower_value(
                 // Non-constant function — not yet supported
                 panic!("ICE: non-constant elidable function call not yet supported: {}", name);
             }
+        }
+        SsaValue::IntFuncCall { name, .. } => {
+            panic!("ICE: IntFuncCall should have been lifted during transform: {}", name);
         }
         SsaValue::Concat(parts) => {
             // Runtime string concatenation: fold left with sash_concat

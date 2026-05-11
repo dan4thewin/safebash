@@ -222,6 +222,12 @@ pub enum SsaValue {
     Expr(String),
     /// Call an elidable function, capture its output as a string.
     FuncCall(String),
+    /// DD#58: Call a -> int function in arithmetic context.
+    /// Produces an integer return value, not stdout.
+    IntFuncCall {
+        name: String,
+        args: Vec<SsaValue>,
+    },
     /// Runtime command substitution: fork/exec, capture stdout.
     /// Carries the command name and arguments as expressions.
     CmdSubst { argv: Vec<SsaValue>, redirects: Vec<crate::ir::Redirect> },

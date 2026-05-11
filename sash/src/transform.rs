@@ -88,6 +88,142 @@ fn lower_stmts(
 }
 
 /// Lower a single statement into SSA.
+/// DD#58: Lift IntFuncCall values out of arithmetic expressions.
+/// Inlines the function body, captures the return value as an int temp var.
+fn lift_int_func_calls(
+    val: SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    match val {
+        SsaValue::IntFuncCall { name, args } => {
+            // Inline the function and capture return value
+            let lifted_args: Vec<SsaValue> = args.into_iter()
+                .map(|a| lift_int_func_calls(a, ssa, state, block))
+                .collect();
+            inline_int_func(&name, &lifted_args, ssa, state, block)
+        }
+        SsaValue::ArithBinOp { left, op, right } => {
+            let l = lift_int_func_calls(*left, ssa, state, block);
+            let r = lift_int_func_calls(*right, ssa, state, block);
+            SsaValue::ArithBinOp { left: Box::new(l), op, right: Box::new(r) }
+        }
+        SsaValue::Ternary { cond, true_val, false_val } => {
+            let c = lift_int_func_calls(*cond, ssa, state, block);
+            let t = lift_int_func_calls(*true_val, ssa, state, block);
+            let f = lift_int_func_calls(*false_val, ssa, state, block);
+            SsaValue::Ternary { cond: Box::new(c), true_val: Box::new(t), false_val: Box::new(f) }
+        }
+        other => other, // no IntFuncCall inside
+    }
+}
+
+/// Inline a -> int function call, returning an SsaValue::Var pointing
+/// to the temp variable holding the return value.
+fn inline_int_func(
+    name: &str,
+    args: &[SsaValue],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    let body = match state.function_bodies.get(name).cloned() {
+        Some(b) => b,
+        None => return SsaValue::Expr("0".to_string()),
+    };
+
+    let locals = collect_local_vars(&body);
+
+    // Save positional params
+    let saved: Vec<(String, VarRef)> = (1..=9)
+        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+        .collect();
+    let saved_argc = state.lookup("#");
+
+    // Save local vars
+    let saved_locals: Vec<(String, VarRef)> = locals.iter()
+        .map(|lname| {
+            let save_ref = state.lookup(lname);
+            (lname.clone(), save_ref)
+        })
+        .collect();
+
+    // Set argc
+    let argc_val = SsaValue::Literal(args.len().to_string());
+    let argc_var = state.define("#");
+    ssa.block_mut(*block).insts.push(SsaInst::Assign { target: argc_var, value: argc_val });
+
+    // Set positional params from args
+    for (i, arg) in args.iter().enumerate() {
+        let param_var = state.define(&(i + 1).to_string());
+        ssa.block_mut(*block).insts.push(SsaInst::Assign { target: param_var, value: arg.clone() });
+    }
+    // Clear unbound positionals
+    for i in (args.len() + 1)..=9 {
+        let param_var = state.define(&i.to_string());
+        ssa.block_mut(*block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: SsaValue::Literal(String::new()),
+        });
+    }
+
+    // Save exit status
+    let saved_status = state.lookup("?");
+
+    // Inline function body
+    let call_block = ssa.new_block(&format!("intcall_{}", name));
+    ssa.block_mut(*block).terminator = Terminator::Goto(call_block);
+    let restore_block = ssa.new_block(&format!("intret_{}", name));
+    let saved_return_target = state.return_target;
+    state.return_target = Some(restore_block);
+    let exit_block = lower_stmts(&body, ssa, state, call_block);
+    state.return_target = saved_return_target;
+    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+    // The return value is in "?" (set by `return N`)
+    let result_ref = state.lookup("?");
+    let temp_name = format!("__intret_{}", name);
+    let temp_var = state.define(&temp_name);
+    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+        target: temp_var.clone(),
+        value: SsaValue::Var(result_ref),
+    });
+
+    // Restore positional params
+    for (pname, saved_ref) in &saved {
+        let rv = state.define(pname);
+        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+            target: rv,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
+    let argc_restore = state.define("#");
+    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+        target: argc_restore,
+        value: SsaValue::Var(saved_argc),
+    });
+
+    // Restore locals
+    for (lname, saved_ref) in &saved_locals {
+        let rv = state.define(lname);
+        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+            target: rv,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
+
+    // Restore exit status
+    let status_restore = state.define("?");
+    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+        target: status_restore,
+        value: SsaValue::Var(saved_status),
+    });
+
+    *block = restore_block;
+    SsaValue::Var(temp_var)
+}
+
 fn lower_one(
     stmt: &Statement,
     ssa: &mut SsaProgram,
@@ -96,6 +232,13 @@ fn lower_one(
 ) -> BlockId {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
+            // DD#58: name collision check — variable vs function
+            if state.known_functions.contains(a.name.as_str()) {
+                state.diagnostics.push(format!(
+                    "{}:{}: error [SB4019] variable '{}' collides with function '{}' — rename one",
+                    stmt.span.line, stmt.span.col, a.name, a.name
+                ));
+            }
             if let Some(ref idx) = a.index {
                 // Subscript assignment: arr[i]=val or map[key]=val
                 let val = expr_to_value(&a.value, state);
@@ -252,6 +395,8 @@ fn lower_one(
                         return restore_block;
                     }
                 }
+                // DD#58: lift IntFuncCall out of arithmetic expressions
+                let val = lift_int_func_calls(val, ssa, state, &mut block);
                 let target = state.define(&a.name);
                 ssa.block_mut(block).insts.push(SsaInst::Assign {
                     target,
@@ -291,6 +436,7 @@ fn lower_one(
                     }
                 } else {
                     let val = expr_to_value(&a.value, state);
+                    let val = lift_int_func_calls(val, ssa, state, &mut block);
                     if matches!(&val, SsaValue::AssocArray(_)) {
                         state.assoc_arrays.insert(a.name.clone());
                     }
@@ -427,16 +573,17 @@ fn lower_one(
             }
             if name == "return" {
                 // return N — set $? to N (default 0), jump to function exit
-                let exit_code = if let Some(arg) = c.args.first() {
-                    expr_to_string(arg)
+                let exit_val = if let Some(arg) = c.args.first() {
+                    let val = expr_to_value(arg, state);
+                    lift_int_func_calls(val, ssa, state, &mut block)
                 } else {
-                    "0".to_string()
+                    SsaValue::Literal("0".to_string())
                 };
                 // Set exit status variable
                 let es_var = state.define("?");
                 ssa.block_mut(block).insts.push(SsaInst::Assign {
                     target: es_var,
-                    value: SsaValue::Literal(exit_code),
+                    value: exit_val,
                 });
                 if let Some(target) = state.return_target {
                     ssa.block_mut(block).terminator = Terminator::Goto(target);
@@ -539,6 +686,7 @@ fn lower_one(
                                 span: Span { line: 0, col: 0 },
                             };
                             let val = expr_to_value(&val_expr, state);
+                            let val = lift_int_func_calls(val, ssa, state, &mut block);
                             let target = state.define(var_name);
                             ssa.block_mut(block).insts.push(SsaInst::Assign {
                                 target,
@@ -553,6 +701,7 @@ fn lower_one(
                         span: Span { line: 0, col: 0 },
                     };
                     let val = expr_to_value(&expr, state);
+                    let val = lift_int_func_calls(val, ssa, state, &mut block);
                     // We need to evaluate this and set exit status based on result
                     // For now, emit as a command that sets test_result
                     let target = state.define("__let_result");
@@ -1933,6 +2082,21 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                     };
                 }
             }
+            // DD#58: Bare function name in arithmetic → int function call
+            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty()
+                && state.function_int_typed.contains(trimmed) {
+                return SsaValue::IntFuncCall {
+                    name: trimmed.to_string(),
+                    args: vec![],
+                };
+            }
+            // DD#58: Sexpr call (name args...) in arithmetic context
+            if trimmed.starts_with('(') && trimmed.ends_with(')') {
+                let inner = trimmed[1..trimmed.len()-1].trim();
+                if let Some(call) = try_parse_sexpr(inner, expr.span, state) {
+                    return call;
+                }
+            }
             // Bare variable: $((y)) → force arithmetic interpretation (empty/non-numeric → 0)
             if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
                 return SsaValue::ArithBinOp {
@@ -2118,6 +2282,17 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                         }
                         (Err(_), Ok(operand)) => {
                         if l_is_simple {
+                            // DD#58: check if lhs is a known int function
+                            if state.function_int_typed.contains(lhs) {
+                                return SsaValue::ArithBinOp {
+                                    left: Box::new(SsaValue::IntFuncCall {
+                                        name: lhs.to_string(),
+                                        args: vec![],
+                                    }),
+                                    op,
+                                    right: Box::new(SsaValue::Expr(operand.to_string())),
+                                };
+                            }
                             return SsaValue::ArithExpr {
                                 var: state.lookup(lhs),
                                 op,
@@ -2850,6 +3025,78 @@ fn lower_pipe_while_read(
 
 /// Parse an arithmetic binary expression like "i+1", "i + 1", "$i+1", "a*b"
 /// Returns (lhs, op, rhs) or ("", None, "") if not parseable.
+/// DD#58: Try to parse a sexpr function call inside arithmetic context.
+/// `inner` is the content between outer parens: "add 3 4" or "f" or "add (dbl 3) 4"
+/// Returns Some(IntFuncCall) if the first token is a known -> int function.
+fn try_parse_sexpr(inner: &str, span: Span, state: &VersionState) -> Option<SsaValue> {
+    let inner = inner.trim();
+    if inner.is_empty() { return None; }
+
+    // Extract the function name (first whitespace-delimited token)
+    let name_end = inner.find(|c: char| c.is_whitespace()).unwrap_or(inner.len());
+    let name = &inner[..name_end];
+
+    // Must be a known -> int function
+    if !state.function_int_typed.contains(name) {
+        return None;
+    }
+
+    // Parse arguments (space-separated, respecting nested parens)
+    let args_str = inner[name_end..].trim();
+    let args = if args_str.is_empty() {
+        vec![]
+    } else {
+        parse_sexpr_args(args_str, span, state)
+    };
+
+    Some(SsaValue::IntFuncCall {
+        name: name.to_string(),
+        args,
+    })
+}
+
+/// Parse space-separated arguments for a sexpr call, respecting nested parens.
+fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec<SsaValue> {
+    let mut args = Vec::new();
+    let mut i = 0;
+    let bytes = s.as_bytes();
+    while i < bytes.len() {
+        // Skip whitespace
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
+        if i >= bytes.len() { break; }
+
+        if bytes[i] == b'(' {
+            // Find matching close paren
+            let start = i;
+            let mut depth = 0;
+            while i < bytes.len() {
+                if bytes[i] == b'(' { depth += 1; }
+                if bytes[i] == b')' { depth -= 1; if depth == 0 { i += 1; break; } }
+                i += 1;
+            }
+            let token = s[start..i].trim();
+            // Try as nested sexpr
+            let inner = &token[1..token.len()-1];
+            if let Some(call) = try_parse_sexpr(inner, span, state) {
+                args.push(call);
+            } else {
+                // Arithmetic grouping: evaluate as arithmetic expression
+                let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span };
+                args.push(expr_to_value(&e, state));
+            }
+        } else {
+            // Read until whitespace or paren
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'(' { i += 1; }
+            let token = &s[start..i];
+            // Parse as arithmetic expression (number or variable)
+            let e = Expr { kind: ExprKind::ArithmeticExpansion(token.to_string()), span };
+            args.push(expr_to_value(&e, state));
+        }
+    }
+    args
+}
+
 fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
     let bytes = s.as_bytes();
     let start = if bytes.first() == Some(&b'-') { 1 } else { 0 };

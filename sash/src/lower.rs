@@ -1077,6 +1077,23 @@ fn child_field_name(child: Node, parent: Node) -> Option<&'static str> {
 // ── Expression lowering ───────────────────────────────────────
 
 /// Lower any CST expression node to an IR Expr.
+/// Check if a node has any ERROR descendant (used for DD#58 sexpr fallback).
+fn has_error_descendant(node: Node) -> bool {
+    let mut cursor = node.walk();
+    fn walk(node: Node, cursor: &mut tree_sitter::TreeCursor) -> bool {
+        if node.kind() == "ERROR" { return true; }
+        if cursor.goto_first_child() {
+            loop {
+                if walk(cursor.node(), cursor) { return true; }
+                if !cursor.goto_next_sibling() { break; }
+            }
+            cursor.goto_parent();
+        }
+        false
+    }
+    walk(node, &mut cursor)
+}
+
 fn lower_expr(node: Node, source: &[u8]) -> Expr {
     let span = Span::from_node(node);
     let kind = match node.kind() {
@@ -1301,6 +1318,19 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
         }
 
         "arithmetic_expansion" => {
+            // DD#58: If arithmetic contains ERROR nodes (e.g., sexpr syntax),
+            // fall back to raw text so the transform text parser can handle it.
+            if has_error_descendant(node) {
+                let text = node.utf8_text(source).unwrap_or("$((0))");
+                let inner = text
+                    .strip_prefix("$((")
+                    .unwrap_or(text)
+                    .strip_suffix("))")
+                    .unwrap_or(text)
+                    .trim()
+                    .to_string();
+                ExprKind::ArithmeticExpansion(inner)
+            } else {
             // Walk tree-sitter's AST instead of text-parsing
             // For comma operator: multiple named children — use the last one
             let count = node.named_child_count();
@@ -1322,6 +1352,7 @@ fn lower_expr(node: Node, source: &[u8]) -> Expr {
                     .to_string();
                 ExprKind::ArithmeticExpansion(inner)
             }
+            } // end if has_error_descendant else
         }
 
         "concatenation" => {
@@ -2119,6 +2150,26 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
 
 fn lower_arithmetic_command(node: Node, source: &[u8]) -> Option<Statement> {
     let span = Span::from_node(node);
+    // DD#58: If arithmetic command contains ERROR nodes (sexpr syntax),
+    // fall back to raw text extraction.
+    if has_error_descendant(node) {
+        let text = node.utf8_text(source).unwrap_or("(( 0 ))");
+        let inner = text
+            .strip_prefix("((")
+            .unwrap_or(text)
+            .strip_suffix("))")
+            .unwrap_or(text)
+            .trim()
+            .to_string();
+        // Treat as a `let` command with the arithmetic expression
+        return Some(Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr { kind: ExprKind::Literal("let".to_string()), span },
+                args: vec![Expr { kind: ExprKind::Literal(inner), span }],
+            }),
+            span,
+        });
+    }
     // Check for comma operator: multiple named children means comma-separated expressions
     let named_count = node.named_child_count();
     if named_count > 1 {
@@ -2184,48 +2235,13 @@ fn lower_single_arith_expr_kind(expr_node: Node, source: &[u8], span: Span) -> O
                             "%=" => "%=",
                             "=" => "=",
                             ">" | "<" | ">=" | "<=" | "==" | "!=" => {
-                                // This is a comparison — desugar to test_command
-                                let test_op = match op.trim() {
-                                    ">" => "-gt",
-                                    "<" => "-lt",
-                                    ">=" => "-ge",
-                                    "<=" => "-le",
-                                    "==" => "-eq",
-                                    "!=" => "-ne",
-                                    _ => unreachable!(),
-                                };
-                                let make_arith_kind = |text: &str| -> ExprKind {
-                                    let t = text.trim_matches(|c| c == '(' || c == ')').trim();
-                                    if t.chars().all(|c| c.is_ascii_digit() || c == '-') && !t.is_empty() {
-                                        ExprKind::Literal(t.to_string())
-                                    } else if t.chars().all(|c| c.is_alphanumeric() || c == '_') && !t.is_empty() {
-                                        ExprKind::SimpleExpansion(t.to_string())
-                                    } else {
-                                        ExprKind::ArithmeticExpansion(t.to_string())
-                                    }
-                                };
-                                let left_kind = make_arith_kind(&left_text);
-                                let right_kind = make_arith_kind(&right_text);
-                                let test_expr = Expr {
-                                    kind: ExprKind::Test(TestExpr::Binary {
-                                        left: Box::new(Expr {
-                                            kind: left_kind,
-                                            span,
-                                        }),
-                                        op: test_op.to_string(),
-                                        right: Box::new(Expr {
-                                            kind: right_kind,
-                                            span,
-                                        }),
-                                    }),
-                                    span,
-                                };
+                                // Emit as raw ArithmeticExpansion text — the transform
+                                // text parser handles comparisons with DD#58 function
+                                // call awareness.
+                                let full_text = expr_node.utf8_text(source).unwrap_or("0").to_string();
                                 return Some(StmtKind::Command(Command {
-                                    name: Expr {
-                                        kind: ExprKind::Literal("[[".to_string()),
-                                        span,
-                                    },
-                                    args: vec![test_expr],
+                                    name: Expr { kind: ExprKind::Literal("let".to_string()), span },
+                                    args: vec![Expr { kind: ExprKind::Literal(full_text), span }],
                                 }));
                             }
                             other => other,
