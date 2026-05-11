@@ -2034,6 +2034,13 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if trimmed.is_empty() {
                 return SsaValue::Expr("0".to_string());
             }
+            // DD#58: look up arithmetic placeholder from preprocessor
+            if trimmed.starts_with("__ARITH_") && trimmed.ends_with("__") {
+                if let Some(original) = crate::lookup_arith(trimmed) {
+                    let e = Expr { kind: ExprKind::ArithmeticExpansion(original), span: expr.span };
+                    return expr_to_value(&e, state);
+                }
+            }
             // Base literal: N#digits → evaluate at compile time
             if let Some(hash_pos) = trimmed.find('#') {
                 let base_str = &trimmed[..hash_pos];

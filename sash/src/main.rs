@@ -79,6 +79,10 @@ fn main() {
         }
     };
 
+    // DD#58: preprocess sexpr syntax in arithmetic before parsing
+    let (source, arith_map) = sash::preprocess_arithmetic(&source);
+    sash::set_arith_map(arith_map);
+
     // Parse
     let tree = sash::parse(&source);
 

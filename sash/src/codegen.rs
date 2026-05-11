@@ -139,8 +139,21 @@ struct ExternFuncs {
 
 pub fn compile_to_object(bash_source: &str) -> Result<Vec<u8>, Vec<String>> {
     crate::emit_source::clear_coercions();
-    let tree = crate::parse(bash_source);
-    let program = crate::lower::lower_program(tree.root_node(), bash_source.as_bytes());
+    // DD#58: preprocess sexpr syntax in arithmetic
+    // (arith_map may already be set by main.rs — only preprocess if not)
+    let source = {
+        let existing = crate::ARITH_MAP.lock().unwrap();
+        if existing.is_some() {
+            bash_source.to_string()
+        } else {
+            drop(existing);
+            let (preprocessed, arith_map) = crate::preprocess_arithmetic(bash_source);
+            crate::set_arith_map(arith_map);
+            preprocessed
+        }
+    };
+    let tree = crate::parse(&source);
+    let program = crate::lower::lower_program(tree.root_node(), source.as_bytes());
     let type_map = crate::type_check::infer_types(&program);
     let (ssa, diags) = crate::transform::ir_to_ssa_typed(&program, type_map);
 
