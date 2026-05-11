@@ -2011,12 +2011,11 @@ fn lower_inst(
         }
         SsaInst::Mapfile { array, fd } => {
             // Read all lines from fd into an indexed array
-            let array_key = format!("{}_0", array);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys().find(|k| k.starts_with(&format!("{}_", array)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-            });
+            let sv = vars.keys()
+                .filter(|k| k.starts_with(&format!("{}_", array)))
+                .max_by_key(|k| k.rsplit('_').next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0))
+                .and_then(|k| vars.get(k))
+                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array));
             let table_ptr = builder.use_var(sv.str_ptr());
 
             let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
@@ -2984,6 +2983,33 @@ fn lower_expr_value(
                 let zero = builder.ins().iconst(I64, 0);
                 (zero, zero)
             }
+        }
+        crate::ir::ExprKind::Subscript { name, index } => {
+            // Array/map subscript: look up in table
+            let array_key = format!("{}_0", name);
+            let sv = vars.get(&array_key).unwrap_or_else(|| {
+                vars.keys().find(|k| k.starts_with(&format!("{}_", name)))
+                    .and_then(|k| vars.get(k))
+                    .unwrap_or_else(|| panic!("ICE: undefined array in test: {}", name))
+            });
+            let table_ptr = builder.use_var(sv.str_ptr());
+            // Integer key lookup
+            let idx_val = lower_expr_value_as_int(index, builder, module, vars, literals, externs);
+            let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot, 8, 3,
+            ));
+            builder.ins().stack_store(idx_val, idx_slot, 0);
+            let kp = builder.ins().stack_addr(I64, idx_slot, 0);
+            let kl = builder.ins().iconst(I64, 8);
+            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot, 8, 3,
+            ));
+            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+            let get_ref = module.declare_func_in_func(externs.table_get, builder.func);
+            let call = builder.ins().call(get_ref, &[table_ptr, kp, kl, out_addr]);
+            let val_ptr = builder.inst_results(call)[0];
+            let val_len = builder.ins().stack_load(I64, out_slot, 0);
+            (val_ptr, val_len)
         }
         _ => {
             let zero = builder.ins().iconst(I64, 0);
