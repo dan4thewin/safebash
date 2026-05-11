@@ -14,7 +14,7 @@ Update notes via iwe or direct file edits to `notes/` — do NOT use the todo ex
 At session end, update `notes/status.md` with progress.
 
 Read `notes/decisions/` for design decision quick-reference.
-The full journal is in `notes/journal/` (49 files, `cat notes/journal/*` reconstructs the whole).
+The full journal is in `notes/journal/` (54 files, `cat notes/journal/*` reconstructs the whole).
 
 ## Code Index
 

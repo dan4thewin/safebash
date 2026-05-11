@@ -1,5 +1,5 @@
 title: Verify tree-sitter grammar supports - prefix syntax
-status: ready
+status: done
 severity: design
 depends: []
 gates: [21.1]

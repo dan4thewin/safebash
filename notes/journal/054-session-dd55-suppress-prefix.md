@@ -1,105 +1,72 @@
 ---
-title: "Session: DD#55 suppress prefix and error model gates"
+title: "Session: DD#55, DD#58, DD#22 implementation"
 date: 2026-05-11
 ---
 
-## DD#55 Implementation — Suppress Prefix and Error Model
+## Full session — four DDs, zero regressions
 
-Full implementation of the `-` suppress prefix and completion of all
-DD#55 error model spec gates.
+### DD#55 — Suppress prefix and error model (22/22 gates)
 
-### Grammar (tree-sitter-bash-safebash)
+Grammar: `suppressed_command` node in tree-sitter-bash-safebash.
+IR: `StmtKind::Suppressed(Box<Statement>)`.
+Transform: `checked: false` on inner commands/pipelines.
+Validation: SB5013 ($? after `-`), SB5014 (stale $? in handler),
+SB4018 ($(f) for -> int).
+Taint: unwrap suppressed_command in CST taint, basename matching
+in SSA taint for `/bin/echo` etc.
+Lowerer: `$(status)` → `$?`, `$(getcpid)` → `$!`.
+|| exit status: RHS completion resets to 0.
+Return: `expr_to_value` for return args (arithmetic return values).
 
-Added `suppressed_command` node to grammar, modeled after
-`negated_command`. Supports:
-- `- cmd` — bare suppressed command
-- `- cmd1 | cmd2` — per-segment pipeline suppression (inside pipeline)
+### DD#58 — Integer function capture (8/8 gates)
 
-### IR
+Transform: `SsaValue::IntFuncCall`, `lift_int_func_calls`,
+`inline_int_func` for inlining -> int functions in arithmetic.
+Arithmetic parser: bare identifier + sexpr `(name args...)` recognition.
+Source preprocessor: replaces sexpr content in `$(( ))` with
+placeholders before tree-sitter, transform resolves via global
+`ARITH_MAP`. Fixes nested sexpr `$(( (add (dbl 3) 4) ))`.
+UTF-8 fix in preprocessor: `utf8_char_len` instead of byte-as-char.
+Lowerer: arithmetic comparisons → raw text (not test desugaring),
+enables DD#31 context enforcement.
+Codegen: `__let_exit` sets `test_result_var` for if/while branches.
+Name collision: SB4019 for fn/variable name conflicts.
 
-Added `StmtKind::Suppressed(Box<Statement>)` variant to the IR.
-Wraps the inner statement — no need to modify every `Statement`
-construction site.
+### DD#31 — Disjoint arithmetic contexts (19/19 gates)
 
-### Lowerer
+Already passing after DD#58 work. The arithmetic comparison
+desugaring change (raw text instead of test_command) fixed 31.4a/b/c
+as a side effect.
 
-`lower_suppressed()` unwraps `suppressed_command` CST nodes into
-`Suppressed(inner)`.
+### DD#22 — Word splitting elimination (7/7 gates)
 
-### Transform
+New `read -f:` flag: explicit field separator for multi-var read.
+`-d` keeps bash semantics (record terminator). `-f` with single
+var → SB5016 compile error. Unknown flags (including `-r`) → SB5015.
+Runtime: `sash_split_field` splits on arbitrary delimiter byte.
+Pipeline inline builtins: echo, true, false, : run in forked
+children instead of exec'ing. Other builtins (printf) resolved
+to absolute paths at compile time.
+Mapfile+pipe fix: `lower_expr_value` now handles `Subscript`
+expressions in test context (was returning 0,0 for `${arr[0]}`
+in bless tests).
 
-Handles `Suppressed`: lowers inner statement normally, then marks
-all emitted `Command`/`Pipeline` SSA instructions as `checked: false`
-so codegen skips the implicit exit check.
+### Infrastructure changes
 
-### Codegen
+- tree-sitter-bash-safebash: `suppressed_command` node
+- sash-rt: `sash_split_field` function
+- Spec fixes: 22.4 drop `-r`, 22.5 use `-f:`, 22.6 add bless,
+  55.19 `/bin/wait` → `wait`
+- Parse error rule: suppress ERROR inside arithmetic (sexpr syntax)
+- Taint: bless anti-tautology accepts `${name[` for array subscripts
+- Command resolution: status, getcpid, getpid, argc, signum as
+  known special forms
 
-No changes needed — `checked: false` was already implemented.
+### Test deltas
 
-### $? scoping (dollar_question.rs)
-
-Rewrote the rule with tri-state `HandlingCheck`:
-- `NotHandling` — use normal $? rules
-- `ValidFirst` — in handling position and $? is the first expression
-- `StaleStatus` — in handling position but another command ran first
-
-New error codes:
-- **SB5013**: `$?` after `- cmd` — suppression discards exit status
-- **SB5014**: `$?`/`$(status)` not first expression in handling branch
-
-Rule now also catches `$(status)` (command_substitution containing
-bare `status` command), not just `$?` (simple_expansion).
-
-### $(status) / $(getcpid) lowering
-
-Lowerer recognizes `$(status)` → `$?` and `$(getcpid)` → `$!` as
-syntactic sugar. Command resolution rule allows `status`, `getcpid`,
-`getpid`, `argc`, `signum` as special forms.
-
-### || exit status fix
-
-`||` RHS now resets exit status to 0 when the right side completes.
-Previously, `/bin/false || s=hello` would exit 1 because the left
-side's failure status leaked through.
-
-### $(f) for -> int function (SB4018)
-
-`$(f)` where `f` is `-> int` now emits a proper compile error instead
-of an ICE. Error message: "cannot capture -> int function with $()
-— use $((f))".
-
-### Taint fixes
-
-- CST taint: `extract_cmd_subst_name` and `cmdsub_args_clean` now
-  unwrap `suppressed_command` to find the inner command.
-- SSA taint: uses basename comparison (e.g., `/bin/echo` → `echo`)
-  for known-clean command detection.
-
-### Spec test fix
-
-55.19: Changed `/bin/wait` to `wait` — `wait` is a shell builtin
-with no `/bin/wait` binary.
-
-### Gates resolved
-
-| Gate | Description |
-|------|-------------|
-| 55.4 | `- cmd` suppresses exit check |
-| 55.5 | `$?` after `- cmd` → SB5013 |
-| 55.9 | `$(- cmd)` captures output, discards exit |
-| 55.11 | `- cmd1 | cmd2` per-segment suppression |
-| 55.12 | `$(f)` for `-> int` → SB4018 |
-| 55.15 | `- cmd; return $?` → SB5013 |
-| 55.17b | `$(status)` not first expression → SB5014 |
-| 55.17c | `$(status)` as first expression → OK |
-| 55.18 | `$?` in `||` RHS → valid handling position |
-| 55.19 | `$!` sugar for `$(getcpid)` |
-
-All 25 DD#55 spec gates now pass. Only 21.2 (pre-existing pipeline/
-builtin issue) remains failing in errors.sh.
-
-### Tests added
-
-- `pos_suppress_prefix_false` — `- /bin/false; echo ok`
-- `pos_suppress_pipeline_segment` — `- /bin/false | /bin/true`
-- `neg_unsuppressed_false_aborts` — `/bin/false` without suppress aborts
+| Suite | Before | After | Delta |
+|-------|--------|-------|-------|
+| e2e | 132/3 | 136/2 | +4/-1 |
+| oracle | 59/0 | 59/0 | — |
+| taint | 42/0 | 42/0 | — |
+| codegen | 217/49 | 220/46 | +3/-3 |

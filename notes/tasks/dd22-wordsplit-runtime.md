@@ -1,5 +1,5 @@
 title: Word splitting elimination — runtime semantics
-status: ready
+status: done
 severity: correctness
 gates: [22.1, 22.4, 22.5, 22.6, 22.7, 28.2, 40.3]
 ---

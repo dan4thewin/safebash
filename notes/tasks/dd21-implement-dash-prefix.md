@@ -1,5 +1,5 @@
 title: Implement - prefix error suppression (DD#21)
-status: ready
+status: done
 severity: feature
 depends:
   - dd21-grammar-dash-prefix

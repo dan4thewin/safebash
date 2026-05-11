@@ -28,8 +28,8 @@ your first session. It sets the tone for everything.
 - **contrib/** — contributed scripts/tools
 - **suites/** — test suites
 - **exp/** — git submodule → safebash-exp (30 historical experiments, not needed for build)
-- **457 tests** (247 codegen, 114 e2e, 37 janet, 59 oracle)
-- **52 design decisions** in `notes/decisions/` (one file per DD)
+- **457 tests** (266 codegen, 138 e2e, 38 janet, 59 oracle, 42 taint, 52 brush)
+- **46 design decisions** in `notes/decisions/` (one file per DD)
 - **1 adversarial audit** completed (5 models, 3 passes, remediation done)
 - **Tree-sitter fork** at `~/src/tree-sitter-bash-safebash` with custom grammar
   (int, const, array, map, bless, fn, `${var:s/re/str/}`)
@@ -61,7 +61,7 @@ tree-sitter CST → validate (rules + taint) → lower (CST→IR, coercions)
 
 - `notes/` — iwe knowledge graph (status, architecture, decisions, journal, tasks)
 - `notes/decisions/` — One file per DD#, bare frontmatter with status
-- `notes/journal/` — Full journal in 47 files (`cat notes/journal/*` reconstructs)
+- `notes/journal/` — Full journal in 54 files (`cat notes/journal/*` reconstructs)
 - `notes/tasks/` — Backlog with bare frontmatter (status, depends, gates)
 - `docs/GUIDE.md` — Architecture overview (public-facing)
 - `docs/SUBSET.md` — Safe subset specification (public-facing)
@@ -74,12 +74,12 @@ Build system uses Plan 9 `mk` (not `make`). Top-level `mkfile` has
 `build`, `test`, and `clean` targets.
 
 Tests live in `sash/tests/`:
-- `codegen_tests.rs` (268) — codegen correctness
-- `e2e_tests.rs` (131) — end-to-end compilation and execution
+- `codegen_tests.rs` (266) — codegen correctness
+- `e2e_tests.rs` (138) — end-to-end compilation and execution
 - `oracle_tests.rs` (59) — compare output against Bash
-- `janet_tests.rs` (37) — Janet backend
+- `janet_tests.rs` (38) — Janet backend
 - `brush_compat_tests.rs` (52) — Brush compatibility
-- `taint_spec_tests.rs` (43) — taint/bless scenarios
+- `taint_spec_tests.rs` (42) — taint/bless scenarios
 
 ## Completion checklist
 

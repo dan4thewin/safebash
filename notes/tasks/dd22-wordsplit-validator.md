@@ -1,5 +1,5 @@
 title: Word splitting validator — reject IFS and for-in $var
-status: ready
+status: done
 severity: correctness
 gates: [22.2, 22.3, 28.1]
 ---
