@@ -29,7 +29,7 @@ run_sash 'x=$(/bin/date); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.5
 
 # 24.6 read from clean heredoc → clean
-run_sash 'read -r x <<< "hello"; echo $x'
+run_sash 'read x <<< "hello"; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.6
 
 # 24.7 user func capture → clean

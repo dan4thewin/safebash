@@ -35,7 +35,7 @@ run_sash_janet 'x="hello world"; echo $x'
 [[ $rc = 0 && -z $err ]]; chk 15.2
 
 # 20.3 lastpipe always on
-run_sash 'echo hello | read -r x; echo $x'
+run_sash 'echo hello | read x; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.3
 
 # 20.4 extglob @() rejected
