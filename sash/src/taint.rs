@@ -94,11 +94,6 @@ impl TaintTracker {
         self.bless_context.as_deref() == Some(name)
     }
 
-    /// Special variables that are always clean.
-    /// Compiler-managed values only — no external data.
-    fn is_special_var(&self, name: &str) -> bool {
-        matches!(name, "#" | "?" | "$" | "!" | "LINENO")
-    }
 
     /// Run taint analysis on the full program.
     /// Returns diagnostics for tainted variable reads.
