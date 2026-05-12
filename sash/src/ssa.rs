@@ -429,6 +429,8 @@ pub struct VersionState {
     pub type_map: HashMap<String, crate::ir::VarType>,
     /// Variables known to be associative arrays (vs indexed).
     pub assoc_arrays: std::collections::HashSet<String>,
+    /// Variables known to be any collection (array or map) — for unset semantics.
+    pub collections: std::collections::HashSet<String>,
     /// Variables declared readonly — error on reassignment.
     pub readonly_vars: std::collections::HashSet<String>,
     /// Loop context stack: (header_block, exit_block) for break/continue.
@@ -462,6 +464,7 @@ impl VersionState {
             function_redirects: HashMap::new(),
             type_map,
             assoc_arrays: std::collections::HashSet::new(),
+            collections: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,

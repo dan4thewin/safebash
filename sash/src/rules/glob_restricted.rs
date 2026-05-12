@@ -19,6 +19,12 @@ impl Rule for GlobRestricted {
             return vec![];
         }
 
+        // Skip words inside declarations/assignments/unset (map keys: [key]=value, unset m[key])
+        if has_ancestor(node, "declaration_command") || has_ancestor(node, "variable_assignment")
+            || has_ancestor(node, "unset_command") {
+            return vec![];
+        }
+
         // Skip quoted words (the word itself won't contain glob chars literally
         // if properly quoted, but tree-sitter separates them)
         if text.starts_with('"') || text.starts_with('\'') {

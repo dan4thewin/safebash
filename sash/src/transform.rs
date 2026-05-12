@@ -449,8 +449,10 @@ fn lower_one(
                     // Bare declaration like `array arr` or `map m` — empty table
                     if is_assoc {
                         state.assoc_arrays.insert(a.name.clone());
+                        state.collections.insert(a.name.clone());
                         SsaValue::AssocArray(vec![])
                     } else {
+                        state.collections.insert(a.name.clone());
                         SsaValue::IndexedArray(vec![])
                     }
                 } else {
@@ -458,6 +460,9 @@ fn lower_one(
                     let val = lift_int_func_calls(val, ssa, state, &mut block);
                     if matches!(&val, SsaValue::AssocArray(_)) {
                         state.assoc_arrays.insert(a.name.clone());
+                    }
+                    if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
+                        state.collections.insert(a.name.clone());
                     }
                     val
                 };
@@ -835,12 +840,22 @@ fn lower_one(
                     checked: true,
                         });
                     } else {
-                        // Plain variable unset → assign empty string (or empty table for arrays)
-                        let target = state.define(full);
-                        ssa.block_mut(block).insts.push(SsaInst::Assign {
-                            target,
-                            value: SsaValue::Literal(String::new()),
-                        });
+                        // Plain variable unset
+                        if state.collections.contains(full) {
+                            // Array/map: assign new empty table
+                            let target = state.define(full);
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target,
+                                value: SsaValue::Literal("__new_table__".to_string()),
+                            });
+                        } else {
+                            // Scalar: assign empty string
+                            let target = state.define(full);
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target,
+                                value: SsaValue::Literal(String::new()),
+                            });
+                        }
                     }
                 }
                 return block;

@@ -1437,6 +1437,20 @@ fn lower_inst(
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
+            // DD#30: unset on collection → new empty table
+            if let SsaValue::Literal(s) = value {
+                if s == "__new_table__" {
+                    let sv = vars[&target.display()];
+                    let cap = builder.ins().iconst(I64, 0);
+                    let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
+                    let call = builder.ins().call(new_ref, &[cap]);
+                    let tbl_ptr = builder.inst_results(call)[0];
+                    builder.def_var(sv.str_ptr(), tbl_ptr);
+                    let zero_len = builder.ins().iconst(I64, 0);
+                    builder.def_var(sv.str_len(), zero_len);
+                    return false;
+                }
+            }
             // Special: assignment to $? updates the exit_status_var directly
             let base = {
                 let d = target.display();
