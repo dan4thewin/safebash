@@ -33,11 +33,12 @@ tally() {
 
 run_sash() {
     rc=-1 out="" err=""
-    sash -c "$1" -o ./test_bin 2> err.raw
+    local src=$1; shift
+    sash -c "$src" -o ./test_bin 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         # Compilation succeeded — run the binary
-        out=$(./test_bin 2>/dev/null)
+        out=$(./test_bin "$@" 2>/dev/null)
         rc=$?
         rm -f ./test_bin
         err=""

@@ -1,5 +1,5 @@
 title: DD#56 — implement signal SIG FLAG
-status: ready
+status: done
 depends: [dd56-signum-keyword]
 severity: feature
 gates: [56.7, 56.10, 56.11]

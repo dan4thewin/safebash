@@ -136,6 +136,9 @@ struct ExternFuncs {
     envp: cranelift_module::DataId,
     argc: cranelift_module::DataId,
     argv: cranelift_module::DataId,
+    argv_get: cranelift_module::FuncId,
+    signal_flag: cranelift_module::FuncId,
+    signum: cranelift_module::DataId,
 }
 
 pub fn compile_to_object(bash_source: &str) -> Result<Vec<u8>, Vec<String>> {
@@ -264,6 +267,25 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     getenv_sig.returns.push(AbiParam::new(I64)); // val ptr
     let getenv_func = module.declare_function("sash_getenv", Linkage::Import, &getenv_sig)
         .expect("declare sash_getenv");
+
+    // sash_argv_get(idx, &out_len) -> ptr  (aborts if out of range)
+    let mut argv_get_sig = Signature::new(CallConv::SystemV);
+    argv_get_sig.params.push(AbiParam::new(I64)); // idx (1-based)
+    argv_get_sig.params.push(AbiParam::new(I64)); // &out_len
+    argv_get_sig.returns.push(AbiParam::new(I64)); // str ptr
+    let argv_get_func = module.declare_function("sash_argv_get", Linkage::Import, &argv_get_sig)
+        .expect("declare sash_argv_get");
+
+    // sash_signal_flag(signum) -> i64
+    let mut signal_flag_sig = Signature::new(CallConv::SystemV);
+    signal_flag_sig.params.push(AbiParam::new(I64)); // signum
+    signal_flag_sig.returns.push(AbiParam::new(I64));
+    let signal_flag_func = module.declare_function("sash_signal_flag", Linkage::Import, &signal_flag_sig)
+        .expect("declare sash_signal_flag");
+
+    // sash_signum global
+    let signum_data = module.declare_data("sash_signum", Linkage::Import, true, false)
+        .expect("declare sash_signum");
 
     // sash_capture(argv, envp, &out_len) -> ptr
     let mut capture_sig = Signature::new(CallConv::SystemV);
@@ -808,6 +830,9 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         envp: envp_data,
         argc: argc_data,
         argv: argv_data,
+        argv_get: argv_get_func,
+        signal_flag: signal_flag_func,
+        signum: signum_data,
     };
 
     // ── Intern string literals ─────────────────────────────────
@@ -985,6 +1010,9 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         }
 
         let entry_cl = cl_blocks[&program.entry];
+        // DD#56: resolve end_block CL target for abort paths
+        let end_cl_block: Option<cranelift_codegen::ir::Block> = program.end_block
+            .and_then(|id| cl_blocks.get(&id).copied());
         builder.append_block_params_for_function_params(entry_cl);
         builder.switch_to_block(entry_cl);
 
@@ -1109,6 +1137,10 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         // $? — exit status of last command (0 = success)
         let exit_status_var = builder.declare_var(I64);
         builder.def_var(exit_status_var, zero);
+
+        // DD#56: saved exit status for END block (preserves triggering status)
+        let saved_end_status_var = builder.declare_var(I64);
+        builder.def_var(saved_end_status_var, zero);
 
         // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
         let pipe_read_fd_var = builder.declare_var(I64);
@@ -1297,6 +1329,12 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 builder.switch_to_block(cl_block);
             }
 
+            // DD#56: save exit status on entering END block
+            if ssa_block.label == "__end__" {
+                let es = builder.use_var(exit_status_var);
+                builder.def_var(saved_end_status_var, es);
+            }
+
             // Phi nodes are no-ops in Cranelift codegen: all SSA versions
             // of the same bash variable share the same Cranelift Variable,
             // so Cranelift's SSA builder handles the merge automatically.
@@ -1309,14 +1347,20 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                            &mut vars, &literals, &externs, space_id, nl_id,
                            test_result_var, exit_status_var, pipe_read_fd_var,
                            capture_saved_var, capture_pipe_var, func_constants,
-                           &mut redirect_stack);
+                           &mut redirect_stack, end_cl_block, ssa_block,
+                           &program, ssa_id, saved_end_status_var);
             }
 
             // Emit terminator (unless block was already terminated by exit)
             if !block_terminated {
             match &ssa_block.terminator {
                 Terminator::Return => {
-                    let status = builder.use_var(exit_status_var);
+                    // DD#56: if END block exists, use saved triggering status
+                    let status = if program.end_block.is_some() && !ssa_block.label.starts_with("fn_") {
+                        builder.use_var(saved_end_status_var)
+                    } else {
+                        builder.use_var(exit_status_var)
+                    };
                     let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
                     builder.ins().call(exit_ref, &[status]);
                     builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -1385,6 +1429,11 @@ fn lower_inst(
     capture_pipe_var: Variable,
     func_constants: &HashMap<String, String>,
     redirect_stack: &mut Vec<Vec<SavedFd>>,
+    end_cl_block: Option<cranelift_codegen::ir::Block>,
+    ssa_block: &crate::ssa::BasicBlock,
+    program: &crate::ssa::SsaProgram,
+    ssa_id: usize,
+    saved_end_status_var: Variable,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -1535,6 +1584,14 @@ fn lower_inst(
                 }
             }
         }
+        SsaInst::Command { name, args, .. } if name == "__signal_flag" => {
+            // signal N FLAG: call sash_signal_flag(signum)
+            if let Some(SsaValue::Literal(sig_s)) = args.first() {
+                let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
+                let flag_ref = module.declare_func_in_func(externs.signal_flag, builder.func);
+                builder.ins().call(flag_ref, &[signum]);
+            }
+        }
         SsaInst::Command { name, args, .. } if name == "__table_delete" => {
             // unset map[key] → sash_table_delete(table_ptr, key_ptr, key_len)
             if args.len() >= 2 {
@@ -1563,6 +1620,19 @@ fn lower_inst(
                 0
             };
             let code_val = builder.ins().iconst(I64, code);
+            // DD#56: if END block exists and we're NOT inside it, jump to END
+            if let Some(end_cl) = end_cl_block {
+                if let Some(end_id) = program.end_block {
+                    if ssa_id < end_id {
+                        builder.def_var(exit_status_var, code_val);
+                        builder.ins().jump(end_cl, &[]);
+                        return true;
+                    }
+                }
+            }
+            // Direct exit (no END block, or inside END block)
+            // Inside END: also update saved_end_status_var so Return uses it
+            builder.def_var(saved_end_status_var, code_val);
             let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
             builder.ins().call(exit_ref, &[code_val]);
             builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -1950,12 +2020,43 @@ fn lower_inst(
 
                 builder.switch_to_block(abort_block);
                 builder.seal_block(abort_block);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[status]);
-                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                if let Some(end_cl) = end_cl_block {
+                    // DD#56: jump to END block instead of exiting directly
+                    builder.def_var(exit_status_var, status);
+                    builder.ins().jump(end_cl, &[]);
+                } else {
+                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref, &[status]);
+                    builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                }
 
                 builder.switch_to_block(cont_block);
                 builder.seal_block(cont_block);
+            }
+
+            // DD#56: signal EXIT check point after external command
+            if !program.exiting_signals.is_empty() {
+                if let Some(end_cl) = end_cl_block {
+                    if program.end_block.map_or(true, |eb| ssa_id < eb) {
+                        let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
+                        let signum_base = builder.ins().global_value(I64, signum_gv);
+                        let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+                        let zero_sig = builder.ins().iconst(I64, 0);
+                        let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
+                        let sig_end_block = builder.create_block();
+                        let sig_cont_block = builder.create_block();
+                        builder.ins().brif(sig_fired, sig_end_block, &[], sig_cont_block, &[]);
+                        builder.switch_to_block(sig_end_block);
+                        builder.seal_block(sig_end_block);
+                        // Set exit status to 128+signum (standard convention)
+                        let c128 = builder.ins().iconst(I64, 128);
+                        let exit_code = builder.ins().iadd(signum_val, c128);
+                        builder.def_var(exit_status_var, exit_code);
+                        builder.ins().jump(end_cl, &[]);
+                        builder.switch_to_block(sig_cont_block);
+                        builder.seal_block(sig_cont_block);
+                    }
+                }
             }
         }
         SsaInst::Phi(_) => {}
@@ -2427,9 +2528,14 @@ fn lower_inst(
 
                 builder.switch_to_block(abort_block);
                 builder.seal_block(abort_block);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[final_worst]);
-                builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                if let Some(end_cl) = end_cl_block {
+                    builder.def_var(exit_status_var, final_worst);
+                    builder.ins().jump(end_cl, &[]);
+                } else {
+                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                    builder.ins().call(exit_ref, &[final_worst]);
+                    builder.ins().trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                }
 
                 builder.switch_to_block(cont_block);
                 builder.seal_block(cont_block);
@@ -3829,9 +3935,24 @@ fn lower_value(
                         let len = builder.ins().stack_load(I64, out_slot, 0);
                         return (ptr, len);
                     }
+                    "signum" => {
+                        // $(signum) — return last signal number as string
+                        let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
+                        let signum_base = builder.ins().global_value(I64, signum_gv);
+                        let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+                        let out_slot = builder.create_sized_stack_slot(
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
+                        );
+                        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+                        let call = builder.ins().call(itoa_ref, &[signum_val, out_addr]);
+                        let ptr = builder.inst_results(call)[0];
+                        let len = builder.ins().stack_load(I64, out_slot, 0);
+                        return (ptr, len);
+                    }
                     "argv" if argv_values.len() >= 2 => {
-                        // $(argv N) — get positional parameter by index
-                        // Bounds-checked: if idx >= argc, return empty string + set $? to 1
+                        // $(argv N) — get positional parameter by 1-based index
+                        // Aborts if index is out of range (like integer overflow)
                         let (idx_ptr, idx_len) = lower_value(
                             &argv_values[1], builder, module, vars, literals,
                             func_constants, externs, exit_status_var,
@@ -3840,69 +3961,15 @@ fn lower_value(
                         let call_atoi = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
                         let idx = builder.inst_results(call_atoi)[0];
 
-                        // Load argc
-                        let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-                        let argc_base = builder.ins().global_value(I64, argc_gv);
-                        let argc = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
-
-                        // Check idx < argc
-                        let in_bounds = builder.ins().icmp(IntCC::SignedLessThan, idx, argc);
-
-                        let ok_block = builder.create_block();
-                        let fail_block = builder.create_block();
-                        let merge_block = builder.create_block();
-
-                        // Declare CL vars for the result
-                        let res_ptr_var = builder.declare_var(I64);
-                        let res_len_var = builder.declare_var(I64);
-                        let res_status_var = builder.declare_var(I64);
-
-                        builder.ins().brif(in_bounds, ok_block, &[], fail_block, &[]);
-
-                        // OK: load argv[idx]
-                        builder.switch_to_block(ok_block);
-                        builder.seal_block(ok_block);
-                        let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-                        let argv_base = builder.ins().global_value(I64, argv_gv);
-                        let argv_ptr = builder.ins().load(I64, MemFlags::new(), argv_base, 0);
-                        let eight = builder.ins().iconst(I64, 8);
-                        let offset = builder.ins().imul(idx, eight);
-                        let elem_addr = builder.ins().iadd(argv_ptr, offset);
-                        let str_ptr = builder.ins().load(I64, MemFlags::new(), elem_addr, 0);
-                        let strlen_ref = module.declare_func_in_func(externs.strlen, builder.func);
-                        let call_len = builder.ins().call(strlen_ref, &[str_ptr]);
-                        let str_len = builder.inst_results(call_len)[0];
-                        let zero_status = builder.ins().iconst(I64, 0);
-                        builder.def_var(res_ptr_var, str_ptr);
-                        builder.def_var(res_len_var, str_len);
-                        builder.def_var(res_status_var, zero_status);
-                        builder.ins().jump(merge_block, &[]);
-
-                        // FAIL: return empty string, exit status 1
-                        builder.switch_to_block(fail_block);
-                        builder.seal_block(fail_block);
-                        let empty_data = literals.get("").unwrap_or_else(|| {
-                            panic!("ICE: empty string not interned");
-                        });
-                        let empty_gv = module.declare_data_in_func(*empty_data, builder.func);
-                        let empty_ptr = builder.ins().global_value(I64, empty_gv);
-                        let zero_len = builder.ins().iconst(I64, 0);
-                        let one_status = builder.ins().iconst(I64, 1);
-                        builder.def_var(res_ptr_var, empty_ptr);
-                        builder.def_var(res_len_var, zero_len);
-                        builder.def_var(res_status_var, one_status);
-                        builder.ins().jump(merge_block, &[]);
-
-                        // MERGE
-                        builder.switch_to_block(merge_block);
-                        builder.seal_block(merge_block);
-                        let result_ptr = builder.use_var(res_ptr_var);
-                        let result_len = builder.use_var(res_len_var);
-                        let result_status = builder.use_var(res_status_var);
-                        if let Some(esv) = exit_status_var {
-                            builder.def_var(esv, result_status);
-                        }
-                        return (result_ptr, result_len);
+                        let out_len_slot = builder.create_sized_stack_slot(
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
+                        );
+                        let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+                        let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
+                        let call = builder.ins().call(argv_get_ref, &[idx, out_len_addr]);
+                        let str_ptr = builder.inst_results(call)[0];
+                        let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
+                        return (str_ptr, str_len);
                     }
                     _ => {}
                 }
@@ -4043,6 +4110,7 @@ fn lower_value(
 
                 builder.switch_to_block(abort_block);
                 builder.seal_block(abort_block);
+                // TODO: DD#56 — route to END block for cmdsub abort
                 let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
                 builder.ins().call(exit_ref, &[cmd_status]);
                 builder.ins().trap(TrapCode::user(1).unwrap());

@@ -1,5 +1,5 @@
 title: DD#56 — Signal Model: END block + signal builtin
-status: designed
+status: implemented
 
 ## Mechanism
 

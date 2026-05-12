@@ -326,6 +326,10 @@ pub enum Terminator {
 pub struct SsaProgram {
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
+    /// DD#56: dedicated END block — all exit paths goto here
+    pub end_block: Option<BlockId>,
+    /// DD#56: signals with EXIT disposition (check points inserted)
+    pub exiting_signals: std::collections::HashSet<i64>,
     next_block_id: usize,
 }
 
@@ -334,6 +338,8 @@ impl SsaProgram {
         Self {
             blocks: BTreeMap::new(),
             entry: 0,
+            end_block: None,
+            exiting_signals: std::collections::HashSet::new(),
             next_block_id: 0,
         }
     }
@@ -437,6 +443,8 @@ pub struct VersionState {
     pub in_condition: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
+    /// Signals registered with EXIT disposition (compiler inserts check points).
+    pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
     pub diagnostics: Vec<String>,
 }
@@ -457,7 +465,7 @@ impl VersionState {
             readonly_vars: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None, diagnostics: Vec::new(),
+            exit_trap: None, exiting_signals: std::collections::HashSet::new(), diagnostics: Vec::new(),
         }
     }
 

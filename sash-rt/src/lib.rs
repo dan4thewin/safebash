@@ -92,6 +92,8 @@ pub static mut sash_envp: *const *const u8 = core::ptr::null();
 pub static mut sash_argc: i64 = 0;
 #[no_mangle]
 pub static mut sash_argv: *const *const u8 = core::ptr::null();
+#[no_mangle]
+pub static mut sash_signum: i64 = 0;
 
 // ═══════════════════════════════════════════════════════════════
 // Safe inner functions — no raw pointers, no unsafe
@@ -346,6 +348,80 @@ pub extern "C" fn sash_getenv(
     }
     unsafe { *out_len = 0 };
     core::ptr::null()
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_argv_get
+// ═══════════════════════════════════════════════════════════════
+
+/// Get positional parameter by 1-based index.
+/// Panics (aborts) if index is out of range.
+#[no_mangle]
+pub extern "C" fn sash_argv_get(
+    idx: i64,
+    out_len: *mut i64,
+) -> *const u8 {
+    let argc = unsafe { sash_argc };
+    // idx is 1-based positional ($1..$N), argv[0] is program name
+    if idx < 1 || idx >= argc {
+        sash_panic_argv(idx, argc);
+    }
+    let argv = unsafe { sash_argv };
+    let ptr = unsafe { *argv.add(idx as usize) };
+    let len = unsafe { strlen(ptr) };
+    unsafe { *out_len = len as i64 };
+    ptr
+}
+
+#[cold]
+#[inline(never)]
+fn sash_panic_argv(idx: i64, argc: i64) -> ! {
+    // argc includes $0, so available range is 1..argc-1
+    let max = argc - 1;
+    let mut buf = [0u8; 128];
+    let msg = b"sash: argv index out of range (requested ";
+    let mut pos = msg.len();
+    buf[..pos].copy_from_slice(msg);
+    pos += write_i64(&mut buf[pos..], idx);
+    let mid = b", have 1..";
+    buf[pos..pos + mid.len()].copy_from_slice(mid);
+    pos += mid.len();
+    pos += write_i64(&mut buf[pos..], max);
+    buf[pos] = b')';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
+    sash_write(2, buf.as_ptr(), pos as i64);
+    sash_exit(1);
+}
+
+/// Write an i64 into a byte buffer, return number of bytes written.
+fn write_i64(buf: &mut [u8], mut val: i64) -> usize {
+    if val == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let negative = val < 0;
+    if negative {
+        val = val.wrapping_neg();
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    while val > 0 {
+        tmp[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+        i += 1;
+    }
+    let mut pos = 0;
+    if negative {
+        buf[pos] = b'-';
+        pos += 1;
+    }
+    for j in (0..i).rev() {
+        buf[pos] = tmp[j];
+        pos += 1;
+    }
+    pos
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1881,6 +1957,61 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
         );
     }
     if ret < 0 { -1 } else { 0 }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_signal_flag
+// ═══════════════════════════════════════════════════════════════
+
+/// Register a FLAG handler for the given signal.
+/// When the signal arrives, sash_signum is set to the signal number.
+/// Program continues — no check points, zero overhead.
+#[no_mangle]
+pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
+    use core::mem;
+
+    #[repr(C)]
+    struct KernelSigaction {
+        sa_handler: u64,
+        sa_flags: u64,
+        sa_restorer: u64,
+        sa_mask: [u64; 16],
+    }
+
+    let mut act: KernelSigaction = unsafe { mem::zeroed() };
+    act.sa_handler = sash_flag_handler as u64;
+    // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
+    act.sa_flags = 0x04000000 | 0x10000000;
+    #[allow(clippy::fn_to_numeric_cast)]
+    { act.sa_restorer = sash_flag_restorer as u64; }
+
+    let ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 13i64,           // __NR_rt_sigaction
+            in("rdi") signum_val,
+            in("rsi") &act as *const _ as i64,
+            in("rdx") 0i64,           // NULL oldact
+            in("r10") 8i64,           // sigsetsize
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    if ret < 0 { -1 } else { 0 }
+}
+
+extern "C" fn sash_flag_handler(sig: i32) {
+    unsafe { sash_signum = sig as i64; }
+}
+
+#[unsafe(naked)]
+extern "C" fn sash_flag_restorer() {
+    core::arch::naked_asm!(
+        "mov rax, 15",  // __NR_rt_sigreturn
+        "syscall",
+    );
 }
 
 // ── Directory reading (glob support) ─────────────────────────

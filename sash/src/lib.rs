@@ -27,6 +27,30 @@ pub fn parse(source: &str) -> tree_sitter::Tree {
     parser.parse(source, None).expect("Failed to parse")
 }
 
+/// DD#56: Preprocess END { ... } into fn __sash_end__ { ... }
+/// so tree-sitter parses it as a function definition.
+pub(crate) fn preprocess_end_block(source: &str) -> String {
+    // Match `END` at start of line (or start of source) followed by optional whitespace and `{`
+    let mut result = String::with_capacity(source.len());
+    let mut remaining = source;
+    while let Some(pos) = remaining.find("END") {
+        // Check it's at line start (pos==0 or preceded by newline)
+        let at_line_start = pos == 0 || remaining.as_bytes()[pos - 1] == b'\n';
+        let after = &remaining[pos + 3..];
+        let followed_by_brace = after.trim_start().starts_with('{');
+        if at_line_start && followed_by_brace {
+            result.push_str(&remaining[..pos]);
+            result.push_str("fn __sash_end__");
+            remaining = after;
+        } else {
+            result.push_str(&remaining[..pos + 3]);
+            remaining = after;
+        }
+    }
+    result.push_str(remaining);
+    result
+}
+
 /// DD#58: Preprocess source to protect sexpr syntax inside arithmetic.
 /// Replaces `$(( content ))` with `$(( __ARITH_N__ ))` when content
 /// contains sexpr patterns that tree-sitter can't parse.
@@ -238,6 +262,9 @@ pub fn cli_main(args: Vec<String>) {
     // DD#58: preprocess sexpr syntax in arithmetic before parsing
     let (source, arith_map) = preprocess_arithmetic(&source);
     set_arith_map(arith_map);
+
+    // DD#56: preprocess END { ... } → fn __sash_end__ { ... }
+    let source = preprocess_end_block(&source);
 
     // Parse
     let tree = parse(&source);

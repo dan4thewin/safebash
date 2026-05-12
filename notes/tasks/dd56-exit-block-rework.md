@@ -1,5 +1,5 @@
 title: DD#56 — END block implementation
-status: ready
+status: done
 depends: [bug-exit-trap-wrong-scope]
 severity: feature
 gates: [56.1, 56.2a, 56.2b, 56.3, 56.4]

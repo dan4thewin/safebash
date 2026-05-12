@@ -64,24 +64,23 @@ echo $x'
 run_sash 'x=$(getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 42.2
 
-# 42.3 $(argv N) reads positional parameter
-run_sash 'fn f { echo $(argv 1); }
-f hello'
+# 42.3 $(argv N) reads program arg
+run_sash 'x=$(argv 1)
+bless x [[ $x =~ ^[a-z]+$ ]]
+echo $x' hello
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 42.3
 
 # 42.4 $(argv N) result is tainted (at top level)
 run_sash 'x=$(argv 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 42.4
 
-# 42.5 $(argc) returns count of positional params
-run_sash 'fn f { echo $(argc); }
-f a b c'
+# 42.5 $(argc) returns count of program args
+run_sash 'echo $(argc)' a b c
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 42.5
 
-# 42.6 out-of-range $(argv N) returns empty, $?=1
-run_sash 'fn f { x=$(argv 99); echo "x=$x rc=$?"; }
-f hello'
-[[ $rc = 0 && $out == *"x= rc=1"* && -z $err ]]; chk 42.6
+# 42.6 out-of-range $(argv N) aborts with error
+run_sash 'echo $(argv 99)' hello
+[[ $rc != 0 && -z $out ]]; chk 42.6
 
 # 46.1 top-level $1..$N → compile error
 run_sash 'echo $1'

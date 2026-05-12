@@ -9,27 +9,38 @@ set +e
 # --- END block ---
 
 # 56.1 END block executes at exit
-run_sash 'END { echo bye }
+run_sash 'END {
+  echo bye
+}
 echo hello'
 [[ $rc = 0 && $out == *"hello"* && $out == *"bye"* && -z $err ]]; chk 56.1
 
 # 56.2a reaching end of END terminates
-run_sash 'END { echo done }
+run_sash 'END {
+  echo done
+}
 echo main'
 [[ $rc = 0 && $out == *"done"* && -z $err ]]; chk 56.2a
 
 # 56.2b return in END terminates (no re-entry)
-run_sash 'END { return; echo unreachable }
+run_sash 'END {
+  return
+  echo unreachable
+}
 echo main'
 [[ $rc = 0 && $out != *"unreachable"* && -z $err ]]; chk 56.2b
 
 # 56.3 exit N in END overrides exit status
-run_sash 'END { exit 42 }
+run_sash 'END {
+  exit 42
+}
 /bin/false'
 [[ $rc = 42 && -z $err ]]; chk 56.3
 
 # 56.4 without exit N, preserves triggering status
-run_sash 'END { echo cleanup }
+run_sash 'END {
+  echo cleanup
+}
 /bin/false'
 [[ $rc != 0 && $out == *"cleanup"* && -z $err ]]; chk 56.4
 
@@ -54,14 +65,18 @@ echo $(signum)'
 [[ $rc = 0 && $out = "10" && -z $err ]]; chk 56.7
 
 # 56.8 signal EXIT triggers END block
-run_sash 'END { echo shutting_down }
+run_sash 'END {
+  echo shutting_down
+}
 signal 15 EXIT
 /bin/kill -TERM $$
 echo should_not_reach'
 [[ $rc != 0 && $out == *"shutting_down"* && $out != *"should_not_reach"* && -z $err ]]; chk 56.8
 
 # 56.9 check points at external commands
-run_sash 'END { echo caught }
+run_sash 'END {
+  echo caught
+}
 signal 2 EXIT
 /bin/kill -INT $$
 /bin/echo after_kill'

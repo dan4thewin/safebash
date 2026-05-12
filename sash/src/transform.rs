@@ -34,24 +34,35 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
 
     let exit = lower_stmts(&program.statements, &mut ssa, &mut state, entry);
 
-    // If an EXIT trap was registered, inline its body before main program exit points only
-    // (not function returns — those are trampoline gotos per DD#27)
+    // Ensure exit block terminates with Return before END rewrite
+    ssa.block_mut(exit).terminator = Terminator::Return;
+
+    // DD#56: Create a dedicated end_block for the END body.
+    // All exit paths (normal, abort, explicit exit) goto end_block.
+    // This ensures END always fires regardless of how the program exits.
     if let Some(trap_stmts) = state.exit_trap.take() {
-        // The main exit block and any explicit exit-builtin blocks
-        // Functions have labels starting with "fn_" — skip those
+        let end_block = ssa.new_block("__end__");
+        let end_exit = lower_stmts(&trap_stmts, &mut ssa, &mut state, end_block);
+        ssa.block_mut(end_exit).terminator = Terminator::Return;
+
+        // Redirect all non-function Return terminators to goto end_block
         let return_blocks: Vec<usize> = ssa.blocks.iter()
-            .filter(|(_, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_"))
+            .filter(|(_, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_")
+                    && !b.label.starts_with("__end__"))
             .map(|(&id, _)| id)
             .collect();
         for block_id in return_blocks {
-            // Insert trap body before the Return
-            let trap_exit = lower_stmts(&trap_stmts, &mut ssa, &mut state, block_id);
-            if trap_exit != block_id {
-                // Trap body created new blocks — redirect the last one to Return
-                ssa.block_mut(trap_exit).terminator = Terminator::Return;
+            if block_id != end_block && block_id != end_exit {
+                ssa.block_mut(block_id).terminator = Terminator::Goto(end_block);
             }
         }
+
+        // Store end_block id for codegen abort paths
+        ssa.end_block = Some(end_block);
     }
+
+    // Copy exiting signals to program for codegen check point insertion
+    ssa.exiting_signals = state.exiting_signals.clone();
 
     // DD#55: Mark commands/pipelines in condition position as unchecked.
     for block in ssa.blocks.values_mut() {
@@ -64,10 +75,18 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
                 }
             }
         }
+        // DD#56: Commands in END block are unchecked (cleanup must not abort)
+        if block.label.starts_with("__end__") || block.label.contains("__end__") {
+            for inst in block.insts.iter_mut() {
+                match inst {
+                    SsaInst::Command { checked, .. } => { *checked = false; }
+                    SsaInst::Pipeline { checked, .. } => { *checked = false; }
+                    _ => {}
+                }
+            }
+        }
     }
 
-    // Ensure exit block terminates with Return
-    ssa.block_mut(exit).terminator = Terminator::Return;
 
     let diags = state.diagnostics.clone();
     (ssa, diags)
@@ -609,6 +628,69 @@ fn lower_one(
             }
 
             // `read -r var` → ReadLine instruction (sets test_result for while-read)
+            if name == "signal" {
+                // signal N DISPOSITION
+                // N is a signal number (int literal)
+                // DISPOSITION: IGN, DFL, FLAG, EXIT
+                if c.args.len() >= 2 {
+                    let sig_str = expr_to_string(&c.args[0]);
+                    let disposition = expr_to_string(&c.args[1]);
+                    let signum: i64 = sig_str.parse().unwrap_or(0);
+                    if signum > 0 {
+                        match disposition.as_str() {
+                            "IGN" => {
+                                // SIG_IGN = 1
+                                ssa.block_mut(block).insts.push(SsaInst::Command {
+                                    name: "__trap_signal".to_string(),
+                                    args: vec![
+                                        SsaValue::Literal(signum.to_string()),
+                                        SsaValue::Literal("1".to_string()),
+                                    ],
+                                    redirects: vec![],
+                                    checked: true,
+                                });
+                            }
+                            "DFL" => {
+                                // SIG_DFL = 0
+                                ssa.block_mut(block).insts.push(SsaInst::Command {
+                                    name: "__trap_signal".to_string(),
+                                    args: vec![
+                                        SsaValue::Literal(signum.to_string()),
+                                        SsaValue::Literal("0".to_string()),
+                                    ],
+                                    redirects: vec![],
+                                    checked: true,
+                                });
+                            }
+                            "FLAG" => {
+                                ssa.block_mut(block).insts.push(SsaInst::Command {
+                                    name: "__signal_flag".to_string(),
+                                    args: vec![
+                                        SsaValue::Literal(signum.to_string()),
+                                    ],
+                                    redirects: vec![],
+                                    checked: true,
+                                });
+                            }
+                            "EXIT" => {
+                                // Register FLAG handler + mark as exiting signal
+                                ssa.block_mut(block).insts.push(SsaInst::Command {
+                                    name: "__signal_flag".to_string(),
+                                    args: vec![
+                                        SsaValue::Literal(signum.to_string()),
+                                    ],
+                                    redirects: vec![],
+                                    checked: true,
+                                });
+                                state.exiting_signals.insert(signum);
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                return block;
+            }
+
             if name == "trap" {
                 // trap 'body' SIGNAL
                 // For EXIT: record body, emit before all Return terminators
@@ -1282,6 +1364,12 @@ fn lower_one(
         }
 
         StmtKind::Function(f) => {
+            // DD#56: END block — store body for end_block, don't emit as function
+            if f.name == "__sash_end__" {
+                state.exit_trap = Some(f.body.clone());
+                return block;
+            }
+
             // Store function body for inline expansion at call sites.
             state.function_bodies.insert(f.name.clone(), f.body.clone());
 

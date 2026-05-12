@@ -1,5 +1,5 @@
 title: DD#56 — implement signal SIG EXIT
-status: ready
+status: done
 depends: [dd56-flag-traps, bug-exit-trap-wrong-scope]
 severity: feature
 gates: [56.8, 56.9]
