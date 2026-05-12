@@ -58,8 +58,9 @@ pub fn print_ssa(program: &SsaProgram) -> String {
                     let names: Vec<&str> = stages.iter().map(|(n, _, _)| n.as_str()).collect();
                     out.push_str(&format!("  pipeline: {}\n", names.join(" | ")));
                 }
-                SsaInst::Mapfile { array, fd } => {
-                    out.push_str(&format!("  mapfile -t {} (fd={})\n", array, fd));
+                SsaInst::Mapfile { array, fd, map_mode, .. } => {
+                    let flag = if *map_mode { "-m" } else { "-t" };
+                    out.push_str(&format!("  mapfile {} {} (fd={})\n", flag, array, fd));
                 }
                 SsaInst::ReadArray { array, fd, delim } => {
                     let d = delim.map(|b| format!(" -d'{}'", b as char)).unwrap_or_default();

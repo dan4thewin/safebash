@@ -116,6 +116,9 @@ pub enum SsaInst {
     Mapfile {
         array: String,
         fd: i64,
+        /// DD#36: map mode — split lines on separator, populate as key=value
+        map_mode: bool,
+        separator: char,
     },
     /// Read a line, split by delimiter, store into indexed array
     ReadArray {

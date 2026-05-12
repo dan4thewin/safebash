@@ -2154,8 +2154,8 @@ fn lower_inst(
             let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
             builder.ins().call(set_ref, &[table_ptr, kp, kl, val_ptr, val_len]);
         }
-        SsaInst::Mapfile { array, fd } => {
-            // Read all lines from fd into an indexed array
+        SsaInst::Mapfile { array, fd, map_mode, separator } => {
+            // Read all lines from fd into an array (or map in map_mode)
             let sv = vars.keys()
                 .filter(|k| k.starts_with(&format!("{}_", array)))
                 .max_by_key(|k| k.rsplit('_').next().and_then(|n| n.parse::<u32>().ok()).unwrap_or(0))
@@ -2186,19 +2186,55 @@ fn lower_inst(
             builder.switch_to_block(loop_body);
             builder.seal_block(loop_body);
 
-            // Key = current table length (next integer index)
-            let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-            let len_call = builder.ins().call(len_ref, &[table_ptr]);
-            let next_idx = builder.inst_results(len_call)[0];
-            let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot, 8, 3,
-            ));
-            builder.ins().stack_store(next_idx, idx_slot, 0);
-            let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-            let kl = builder.ins().iconst(I64, 8);
-            let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-            builder.ins().call(set_ref, &[table_ptr, kp, kl, line_ptr, line_len]);
-            builder.ins().jump(loop_hdr, &[]);
+            if *map_mode {
+                // Split line on separator, insert key/value into map
+                let delim_val = builder.ins().iconst(I64, *separator as i64);
+                let rest_ptr_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                let rest_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
+                let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
+                let split_ref = module.declare_func_in_func(externs.split_field, builder.func);
+                let split_call = builder.ins().call(split_ref, &[
+                    line_ptr, line_len, delim_val, rest_ptr_addr, rest_len_addr
+                ]);
+                let key_ptr = builder.inst_results(split_call)[0];
+                let key_len = builder.inst_results(split_call)[1];
+                let val_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
+                let val_len = builder.ins().stack_load(I64, rest_len_slot, 0);
+                // Skip empty keys (blank lines)
+                let key_empty = builder.ins().icmp(IntCC::Equal, key_len, zero);
+                let skip_block = builder.create_block();
+                let insert_block = builder.create_block();
+                builder.ins().brif(key_empty, skip_block, &[], insert_block, &[]);
+
+                builder.switch_to_block(insert_block);
+                builder.seal_block(insert_block);
+                let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+                builder.ins().call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
+                builder.ins().jump(loop_hdr, &[]);
+
+                builder.switch_to_block(skip_block);
+                builder.seal_block(skip_block);
+                builder.ins().jump(loop_hdr, &[]);
+            } else {
+                // Key = current table length (next integer index)
+                let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+                let len_call = builder.ins().call(len_ref, &[table_ptr]);
+                let next_idx = builder.inst_results(len_call)[0];
+                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                builder.ins().stack_store(next_idx, idx_slot, 0);
+                let kp = builder.ins().stack_addr(I64, idx_slot, 0);
+                let kl = builder.ins().iconst(I64, 8);
+                let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+                builder.ins().call(set_ref, &[table_ptr, kp, kl, line_ptr, line_len]);
+                builder.ins().jump(loop_hdr, &[]);
+            }
             builder.seal_block(loop_hdr);
 
             builder.switch_to_block(loop_exit);

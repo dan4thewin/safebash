@@ -631,13 +631,33 @@ fn lower_one(
             }
 
             // `mapfile -t arr` / `readarray -t arr` → Mapfile instruction
+            // `mapfile -m [-f SEP] map` → Mapfile in map mode
             if name == "mapfile" || name == "readarray" {
                 let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let mut map_mode = false;
+                let mut separator = '=';
+                let mut i = 0;
+                while i < args.len() {
+                    if args[i] == "-m" {
+                        map_mode = true;
+                    } else if args[i].starts_with("-f") {
+                        // -f: or -f = or -f<char>
+                        if args[i].len() > 2 {
+                            separator = args[i].chars().nth(2).unwrap_or('=');
+                        } else if i + 1 < args.len() {
+                            separator = args[i + 1].chars().next().unwrap_or('=');
+                            i += 1;
+                        }
+                    }
+                    i += 1;
+                }
                 let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
                 if let Some(arr_name) = var_names.first() {
                     ssa.block_mut(block).insts.push(SsaInst::Mapfile {
                         array: arr_name.to_string(),
                         fd: 0,
+                        map_mode,
+                        separator,
                     });
                     return block;
                 }
