@@ -8,9 +8,13 @@
 use std::process::Command;
 
 fn sash_bin() -> String {
-    std::env::current_dir()
-        .unwrap()
-        .join("target/debug/sash")
+    // Workspace root target — go up from sash/ crate dir
+    let mut dir = std::env::current_dir().unwrap();
+    // If we're in sash/, go up to workspace root
+    if dir.ends_with("sash") {
+        dir = dir.parent().unwrap().to_path_buf();
+    }
+    dir.join("target/debug/sash")
         .to_string_lossy()
         .to_string()
 }
@@ -35,7 +39,7 @@ fn compile_and_run(name: &str, script: &str) -> String {
     let src = write_tmp(name, &format!("#!/bin/bash\n{}", script));
     let bin = format!("/tmp/sash_brush_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("sash failed");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -49,7 +53,7 @@ fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String
     let src = write_tmp(name, &format!("#!/bin/bash\n{}", script));
     let bin = format!("/tmp/sash_brush_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("sash failed");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -65,7 +69,7 @@ fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(name, &format!("#!/bin/bash\n{}", script));
     let bin = format!("/tmp/sash_brush_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("sash failed");
     assert!(!out.status.success(), "expected compile failure for {}", name);
@@ -465,7 +469,7 @@ fn brush_rejected_param_transform_cap_a() {
 }
 
 // --- SC2128: bare array without subscript (shellcheck catches before sash) ---
-// These use --nolint to confirm sash behavior, but in practice shellcheck
+// These use sash to confirm sash behavior, but in practice shellcheck
 // blocks them. We verify compile failure or wrong output either way.
 
 #[test]
@@ -475,7 +479,7 @@ fn brush_rejected_bare_array_access() {
     let script = r#"declare -a arr=(10 20 30)
 echo "${arr}""#;
     // With shellcheck enabled, this would fail at lint.
-    // With --nolint it compiles but produces wrong output (empty or pointer).
+    // With sash it compiles but produces wrong output (empty or pointer).
     // Either way it's not a sash correctness target.
     let out = compile_and_run("rej_bare_arr", script);
     // We just verify it doesn't crash — output is known-wrong

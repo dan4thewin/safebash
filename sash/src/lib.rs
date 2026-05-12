@@ -184,7 +184,7 @@ use std::process::Command;
 
 pub fn cli_main(args: Vec<String>) {
     if args.len() < 2 {
-        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--emit-source] [--extract <binary>]");
+        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--extract <binary>]");
         std::process::exit(1);
     }
 
@@ -266,31 +266,16 @@ pub fn cli_main(args: Vec<String>) {
     // DD#56: preprocess END { ... } → fn __sash_end__ { ... }
     let source = preprocess_end_block(&source);
 
-    // Parse
-    let tree = parse(&source);
-
-    // --nolint skips shellcheck only; subset gate + taint always run
-    let nolint = flags.contains(&"--nolint") || inline_source.is_some();
-    if !nolint {
-        match Command::new("shellcheck")
-            .args(["--enable=all", "--exclude=SC2248,SC2250,SC2086,SC2046,SC2148,SC2030,SC2031", "--format=gcc", input])
-            .output()
-        {
-            Ok(output) => {
-                if !output.status.success() {
-                    let stderr = String::from_utf8_lossy(&output.stdout);
-                    for line in stderr.lines() {
-                        eprintln!("{}", line);
-                    }
-                    eprintln!("sash: shellcheck found issues (use --nolint to skip)");
-                    std::process::exit(1);
-                }
-            }
-            Err(_) => {
-                eprintln!("sash: warning: shellcheck not found — install shellcheck for intent verification");
-            }
+    // DD#57: reject converter flags
+    for flag in &flags {
+        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
+            eprintln!("sash: '{}' is not a valid flag — use sash-convert for source transformations", flag);
+            std::process::exit(1);
         }
     }
+
+    // Parse
+    let tree = parse(&source);
 
     // Subset gate + taint tracking
     {
@@ -302,7 +287,6 @@ pub fn cli_main(args: Vec<String>) {
 
         diags.sort_by_key(|d| (d.line, d.col));
 
-        let is_emit_source = flags.contains(&"--emit-source");
         let mut has_error = false;
         for d in &diags {
             let prefix = match d.severity {
@@ -311,7 +295,7 @@ pub fn cli_main(args: Vec<String>) {
             };
             eprintln!("{}:{}:{}: {} [{}] {}", input, d.line, d.col, prefix, d.code, d.message);
         }
-        if has_error && !is_emit_source {
+        if has_error {
             std::process::exit(1);
         }
     }
@@ -319,13 +303,6 @@ pub fn cli_main(args: Vec<String>) {
     // Lower to IR
     emit_source::clear_coercions();
     let program = lower::lower_program(tree.root_node(), source.as_bytes());
-
-    if flags.contains(&"--emit-source") {
-        let annotate = flags.contains(&"--annotate");
-        let result = emit_source::emit_source(source.as_bytes(), annotate);
-        print!("{}", result);
-        return;
-    }
     if flags.contains(&"--ir") {
         let ir = printer::print_program(&program);
         print!("{}", ir);

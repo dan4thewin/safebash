@@ -39,7 +39,7 @@ fn bash_output(script: &str) -> String {
 fn compile_and_run(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
     let run = Command::new(&bin).output().expect("run failed");
@@ -50,7 +50,7 @@ fn compile_and_run(name: &str, script: &str) -> String {
 fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
     let mut cmd = Command::new(&bin);
@@ -63,30 +63,16 @@ fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String
 fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}_fail", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     assert!(!out.status.success(), "expected compile failure for {}", name);
     String::from_utf8_lossy(&out.stderr).to_string()
-}
-
-/// Run --emit-source on a script, return stdout
-fn emit_source(name: &str, script: &str) -> String {
-    let src = write_tmp(&format!("{}.sh", name), script);
-    let out = sash_cmd(&["--nolint", "--emit-source", &src]);
-    String::from_utf8_lossy(&out.stdout).to_string()
-}
-
-/// Run --emit-source --annotate on a script, return stdout
-fn emit_annotated(name: &str, script: &str) -> String {
-    let src = write_tmp(&format!("{}.sh", name), script);
-    let out = sash_cmd(&["--nolint", "--emit-source", "--annotate", &src]);
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 /// Compile, then extract .sash_source from binary
 fn extract_source(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     assert!(out.status.success(), "compile failed for {}", name);
     let ext = sash_cmd(&["--extract", &bin]);
     String::from_utf8_lossy(&ext.stdout).to_string()
@@ -440,108 +426,6 @@ fn neg_eval_rejected() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// COERCION TESTS — --emit-source output
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn coerce_declare_i_to_int() {
-    let script = "#!/bin/bash\ndeclare -i x=5\necho $x";
-    let out = emit_source("coerce_int", script);
-    assert!(out.contains("int x=5"), "expected 'int x=5', got:\n{}", out);
-    assert!(!out.contains("declare"), "should not contain 'declare'");
-}
-
-#[test]
-fn coerce_declare_a_to_array() {
-    let script = "#!/bin/bash\ndeclare -a arr=(1 2 3)";
-    let out = emit_source("coerce_arr", script);
-    assert!(out.contains("array arr=(1 2 3)"), "expected 'array', got:\n{}", out);
-}
-
-#[test]
-fn coerce_declare_A_to_map() {
-    let script = "#!/bin/bash\ndeclare -A m=([a]=1)";
-    let out = emit_source("coerce_map", script);
-    assert!(out.contains("map m=([a]=1)"), "expected 'map', got:\n{}", out);
-}
-
-#[test]
-fn coerce_readonly_to_const() {
-    let script = "#!/bin/bash\nreadonly msg=hello";
-    let out = emit_source("coerce_const", script);
-    assert!(out.contains("const msg=hello"), "expected 'const', got:\n{}", out);
-}
-
-#[test]
-fn coerce_declare_ri_to_const_int() {
-    let script = "#!/bin/bash\ndeclare -ri x=5";
-    let out = emit_source("coerce_ri", script);
-    assert!(out.contains("const int x=5"), "expected 'const int', got:\n{}", out);
-}
-
-#[test]
-fn coerce_let_to_arith() {
-    let script = "#!/bin/bash\nlet \"x=3+4\"";
-    let out = emit_source("coerce_let", script);
-    assert!(out.contains("(( x=3+4 ))"), "expected '(( x=3+4 ))', got:\n{}", out);
-}
-
-#[test]
-fn coerce_local_i_to_local_int() {
-    let script = "#!/bin/bash\nf() { local -i x=5; echo $x; }\nf";
-    let out = emit_source("coerce_local_int", script);
-    assert!(out.contains("local int x=5"), "expected 'local int', got:\n{}", out);
-}
-
-#[test]
-fn coerce_typeset_stripped() {
-    let script = "#!/bin/bash\ntypeset x=hello";
-    let out = emit_source("coerce_typeset", script);
-    assert!(!out.contains("typeset"), "should not contain 'typeset'");
-}
-
-#[test]
-fn coerce_native_unchanged() {
-    let script = "#!/bin/bash\nint x=5\nconst msg=hello\narray arr=(1 2 3)";
-    let out = emit_source("coerce_native", script);
-    assert!(out.contains("int x=5"), "int should pass through");
-    assert!(out.contains("const msg=hello"), "const should pass through");
-    assert!(out.contains("array arr=(1 2 3)"), "array should pass through");
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ANNOTATION TESTS — --emit-source --annotate shows # was: comments
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn annotate_declare_i() {
-    let script = "#!/bin/bash\ndeclare -i x=5";
-    let out = emit_annotated("ann_int", script);
-    assert!(out.contains("# was: declare -i x=5"), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_readonly() {
-    let script = "#!/bin/bash\nreadonly msg=hello";
-    let out = emit_annotated("ann_const", script);
-    assert!(out.contains("# was: readonly msg=hello"), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_let() {
-    let script = "#!/bin/bash\nlet \"x=1\"";
-    let out = emit_annotated("ann_let", script);
-    assert!(out.contains("# was: let \"x=1\""), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_native_no_annotation() {
-    let script = "#!/bin/bash\nint x=5\nconst msg=hello";
-    let out = emit_annotated("ann_native", script);
-    assert!(!out.contains("# was:"), "native syntax should have no annotations, got:\n{}", out);
-}
-
-// ═══════════════════════════════════════════════════════════════
 // EXTRACT TESTS — .sash_source ELF section
 // ═══════════════════════════════════════════════════════════════
 
@@ -705,7 +589,7 @@ foo onearg
 "#;
     let src = write_tmp("func_unbound_pos.sh", script);
     let bin = "/tmp/sash_e2e_func_unbound_pos".to_string();
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     assert!(!out.status.success(), "expected compile failure for out-of-range $2");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("reads $2") || stderr.contains("out-of-range"),
@@ -1067,15 +951,6 @@ fn neg_unknown_cmd_still_tainted() {
     assert!(stderr.contains("SB4020"), "expected SB4020 for unknown cmd, got: {}", stderr);
 }
 
-#[test]
-fn emit_no_auto_bless_for_unknown() {
-    // Unknown command: no auto-bless line should appear
-    // (will have taint error on stderr but emit-source still runs)
-    let script = "#!/bin/bash\nx=$(curl http://example.com)\necho $x";
-    let src = emit_source("no_auto_unknown", script);
-    assert!(!src.contains("bless x"), "should NOT have auto-bless for curl: {}", src);
-}
-
 // ═══════════════════════════════════════════════════════════════
 // BRUSH RECOVERABLE CASES — verify diagnostic then native rewrite
 // Each test: (1) original fails with correct code, (2) native compiles,
@@ -1304,7 +1179,7 @@ fn pos_suppress_pipeline_segment() {
     // Should compile and run with exit 0
     let src = write_tmp("suppress_pipe.sh", script);
     let bin = "/tmp/sash_e2e_suppress_pipe";
-    let out = sash_cmd(&["--nolint", "-o", bin, &src]);
+    let out = sash_cmd(&["-o", bin, &src]);
     assert!(out.status.success(), "compile failed: {}", String::from_utf8_lossy(&out.stderr));
     let run = Command::new(bin).output().expect("run failed");
     assert!(run.status.success(), "expected exit 0, got {:?}", run.status);
@@ -1316,7 +1191,7 @@ fn neg_unsuppressed_false_aborts() {
     let script = "#!/bin/bash\n/bin/false\necho should_not_reach";
     let src = write_tmp("unsup_false.sh", script);
     let bin = "/tmp/sash_e2e_unsup_false";
-    let out = sash_cmd(&["--nolint", "-o", bin, &src]);
+    let out = sash_cmd(&["-o", bin, &src]);
     assert!(out.status.success(), "compile failed: {}", String::from_utf8_lossy(&out.stderr));
     let run = Command::new(bin).output().expect("run failed");
     assert!(!run.status.success(), "expected nonzero exit");

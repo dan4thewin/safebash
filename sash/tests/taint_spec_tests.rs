@@ -29,7 +29,7 @@ fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_taint_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("failed to run sash");
     assert!(!out.status.success(), "expected compile failure for {}", name);
@@ -41,7 +41,7 @@ fn compile_and_run(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_taint_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -55,7 +55,7 @@ fn compile_and_exit_code(name: &str, script: &str, env: &[(&str, &str)]) -> i32 
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_taint_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -71,7 +71,7 @@ fn compile_and_run_with_env(name: &str, script: &str, env: &[(&str, &str)]) -> S
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_taint_{}", name);
     let out = Command::new(sash_bin())
-        .args(["--nolint", "-o", &bin, &src])
+        .args(["-o", &bin, &src])
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
