@@ -5,7 +5,7 @@ modified: 2026-05-11
 
 ## Current branch: split-converter
 
-## Spec status: 231 passing / 44 failing (spec.db)
+## Spec status: 236 passing / 39 failing (spec.db)
 
 ### Session 2026-05-11 — completed
 

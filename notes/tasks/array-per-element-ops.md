@@ -1,5 +1,5 @@
 title: Array per-element operations
-status: ready
+status: done
 severity: feature
 gates: [33.5, 33.6, 33.7]
 ---

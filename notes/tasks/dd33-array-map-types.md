@@ -1,5 +1,5 @@
 title: Array and map key type enforcement
-status: ready
+status: done
 severity: correctness
 gates: [33.1, 33.2, 33.3, 33.4, 41.1, 41.2]
 ---
