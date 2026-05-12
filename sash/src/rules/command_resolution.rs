@@ -94,6 +94,14 @@ impl Rule for CommandResolution {
             return vec![];
         }
 
+        // DD#39: var =~ s/pat/rep/ is regex mutation, not a command
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "=~" {
+                return vec![];
+            }
+        }
+
         vec![Diagnostic::error(
             name_node,
             "SB5011",

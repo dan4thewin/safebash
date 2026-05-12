@@ -550,6 +550,17 @@ fn lower_one(
                         let pattern = parts[0].to_string();
                         let replacement = parts[1].to_string();
                         let flags = if parts.len() > 2 { parts[2] } else { "" };
+
+                        // DD#39: compile-time regex validation
+                        if !pattern.contains('$') {
+                            if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
+                                state.diagnostics.push(format!(
+                                    "1:1: error [SB5023] invalid regex in substitution: {}", msg
+                                ));
+                                return block;
+                            }
+                        }
+
                         let global = if flags.contains('g') { "1" } else { "0" };
                         let var_ref = state.lookup(&name);
                         let new_ref = state.define(&name);
