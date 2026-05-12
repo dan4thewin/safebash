@@ -58,19 +58,21 @@ parsecounted(void)
 {
 	char *p = exprp;
 	int n = 0, m = 0;
+	int have_n = 0;
 
 	if(*p != '{')
 		return 0;
 	p++;
-	if(!(*p >= '0' && *p <= '9'))
-		return 0;
-	while(*p >= '0' && *p <= '9')
-		n = n*10 + (*p++ - '0');
-	if(n > 32){
-		rcerror("repetition count too large");
-		return 0;
+	if(*p >= '0' && *p <= '9'){
+		have_n = 1;
+		while(*p >= '0' && *p <= '9')
+			n = n*10 + (*p++ - '0');
+		if(n > 32){
+			rcerror("repetition count too large");
+			return 0;
+		}
 	}
-	if(*p == '}'){
+	if(*p == '}' && have_n){
 		rep_min = n;
 		rep_max = n;
 		exprp = p+1;
