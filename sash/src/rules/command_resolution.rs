@@ -15,10 +15,19 @@ const BUILTINS: &[&str] = &[
 impl Rule for CommandResolution {
 
     fn node_kinds(&self) -> &'static [&'static str] {
-        &["command", "for_statement"]
+        &["command", "for_statement", "subshell"]
     }
 
     fn check(&self, node: Node, source: &[u8]) -> Vec<Diagnostic> {
+        // DD#38: reject subshell syntax
+        if node.kind() == "subshell" {
+            return vec![Diagnostic::error(
+                node,
+                "SB5011",
+                "subshell (...) is not supported in sash".to_string(),
+            )];
+        }
+
         // Reject 'select' (tree-sitter parses as for_statement variant)
         if node.kind() == "for_statement" {
             if let Some(kw) = node.child(0) {

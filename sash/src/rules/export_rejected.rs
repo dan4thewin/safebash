@@ -45,6 +45,21 @@ impl Rule for ExportRejected {
             _ => {}
         }
 
+        // DD#35: reject invalid declaration stacking (const array, const map)
+        if keyword == "const" {
+            let mut cursor = node.walk();
+            for child in node.children(&mut cursor) {
+                let text = child.utf8_text(source).unwrap_or("");
+                if text == "array" || text == "map" {
+                    return vec![Diagnostic::error(
+                        node,
+                        "SB5001",
+                        format!("'const {}' is not allowed \u{2014} collections are mutable", text),
+                    )];
+                }
+            }
+        }
+
         vec![]
     }
 }

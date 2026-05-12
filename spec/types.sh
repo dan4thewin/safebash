@@ -18,7 +18,7 @@ run_sash 'x="hello"; /usr/bin/printf "%s\n" "$x"'
 
 # 12.3 O(1) length — proves ${#x} works without scanning
 run_sash 'x="hello world test"; echo ${#x}'
-[[ $rc = 0 && $out = "17" && -z $err ]]; chk 12.3
+[[ $rc = 0 && $out = "16" && -z $err ]]; chk 12.3
 
 # 16.1 int stores machine-width
 run_sash 'int x=9223372036854775807; echo $x'

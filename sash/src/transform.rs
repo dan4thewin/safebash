@@ -1028,7 +1028,7 @@ fn lower_one(
                 let call_argc = c.args.len();
                 if max_positional > call_argc {
                     state.diagnostics.push(format!(
-                        "error: function '{}' reads ${}  but called with only {} argument{}",
+                        "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
                         name, max_positional, call_argc,
                         if call_argc == 1 { "" } else { "s" }
                     ));
@@ -2717,6 +2717,27 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                                 };
                             }
                         }
+                        // DD#14: $(echo args) — build inline as concat
+                        if let ExprKind::Literal(name) = &c.name.kind {
+                          if name == "echo" {
+                            if c.args.is_empty() {
+                                return SsaValue::Literal(String::new());
+                            }
+                            let mut parts: Vec<SsaValue> = Vec::new();
+                            for (i, arg) in c.args.iter().enumerate() {
+                                if i > 0 {
+                                    parts.push(SsaValue::Literal(" ".to_string()));
+                                }
+                                parts.push(expr_to_value(arg, state));
+                            }
+                            return if parts.len() == 1 {
+                                parts.remove(0)
+                            } else {
+                                SsaValue::Concat(parts)
+                            };
+                          }
+                        }
+
                         // Not an elidable function — emit CmdSubst with argv
                         let mut argv = Vec::new();
                         argv.push(expr_to_value(&c.name, state));
