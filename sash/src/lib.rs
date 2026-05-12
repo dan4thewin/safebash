@@ -16,6 +16,7 @@ pub mod codegen;
 pub(crate) mod diagnostic;
 pub(crate) mod validator;
 pub(crate) mod rule;
+pub(crate) mod regex_validate;
 pub(crate) mod rules;
 pub(crate) mod taint;
 
