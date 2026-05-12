@@ -10,12 +10,16 @@ build:V: $RT/target/release/libsash_rt.a
 $RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
-test:V: build regex-test
+test:V: build regex-test sash-grep-test
 	(cd $SASH && cargo test --release)
+	(cd $CONVERT && cargo test --release)
 
 regex-test:V:
 	cc -O0 -o /tmp/sash_test_regex sash-rt/csrc/test_regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c -I sash-rt/csrc
 	/tmp/sash_test_regex
+
+sash-grep-test:V: build
+	PATH=target/release:$$PATH bash contrib/test-regex.sh
 
 spec:V: build
 	bash spec/run.sh
