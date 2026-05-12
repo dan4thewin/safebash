@@ -82,9 +82,9 @@ parsecounted(void)
 		return 0;
 	p++;
 	if(*p == '}'){
-		/* {n,} — unbounded; cap at n+8 */
+		/* {n,} — unbounded */
 		rep_min = n;
-		rep_max = n + 8;
+		rep_max = -1; /* sentinel for unbounded */
 		exprp = p+1;
 		return 1;
 	}
@@ -677,11 +677,26 @@ regcomp1(char *s, int literal, int dot_type)
 					token = lex(literal, dot_type);
 					operand(token);
 				}
-				for(i = 0; i < rep_max - rep_min; i++){
-					exprp = prev_atom_start;
-					token = lex(literal, dot_type);
-					operand(token);
-					operator(QUEST);
+				if(rep_max == -1){
+					/* {n,} unbounded: last copy gets PLUS */
+					if(rep_min <= 1){
+						/* {1,} == PLUS on existing atom */
+						operator(PLUS);
+					} else {
+						/* already emitted n copies; make last one PLUS */
+						/* Re-lex one more copy with STAR */
+						exprp = prev_atom_start;
+						token = lex(literal, dot_type);
+						operand(token);
+						operator(STAR);
+					}
+				} else {
+					for(i = 0; i < rep_max - rep_min; i++){
+						exprp = prev_atom_start;
+						token = lex(literal, dot_type);
+						operand(token);
+						operator(QUEST);
+					}
 				}
 			}
 			exprp = after_count;
