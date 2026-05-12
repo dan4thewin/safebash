@@ -1,5 +1,5 @@
 title: DD#30 — reject numeric comparisons in [[ ]], coerce to (( ))
-status: ready
+status: done
 severity: correctness
 gates: [30.5a, 30.5b, 30.5c, 30.6a, 30.6b]
 ---

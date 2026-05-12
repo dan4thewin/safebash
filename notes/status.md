@@ -5,7 +5,7 @@ modified: 2026-05-11
 
 ## Current branch: split-converter
 
-## Spec status: 221 passing / 41 failing (spec.db)
+## Spec status: 231 passing / 44 failing (spec.db)
 
 ### Session 2026-05-11 — completed
 
@@ -27,6 +27,17 @@ modified: 2026-05-11
 - Signal EXIT check points after external commands
 - Exit code: 128+signum on signal-triggered shutdown
 
+**DD#30 (14/14): strict type separation**
+- Wired type_check() into compilation pipeline (was dead code)
+- SB4030: reject `int y=$x` when x is string-typed
+- SB5019: reject -gt/-lt/-ge/-le/-eq/-ne in [[ ]] (use (( )))
+- SB4030: reject `unset x` on scalar variables
+- Exempt declarations/unset from SB5006 glob check (map [key]=val)
+- Track indexed arrays in collections set for unset semantics
+- `unset arr` creates new empty table (clears collection)
+- Register signum/argc/status/getpid/getppid as int-returning keywords
+- Fix misplaced tally in types.sh and wordsplit.sh
+
 ### Test suite (no regressions)
 - e2e: 136 pass / 2 fail (brush compat)
 - oracle: 58 / 1 (pipeline grep)
@@ -35,8 +46,8 @@ modified: 2026-05-11
 
 ### Next priorities
 
-1. DD#30 type separation (10 gates)
-2. DD#33 array/map type enforcement (6 gates)
-3. DD#18 local function scoping (4 gates)
-4. DD#36 decimal conversion (4 gates)
+1. DD#33 array/map type enforcement (9 gates)
+2. DD#18 local function scoping (4 gates)
+3. DD#36 decimal conversion (4 gates)
+4. DD#39 regex (8 gates)
 5. DD#46 reject top-level positionals (3 gates)

@@ -1,5 +1,5 @@
 title: Refine unset semantics — scalar vs collection
-status: ready
+status: done
 severity: correctness
 gates: [30.7, 30.8, 30.9, 30.10, 30.11]
 ---
