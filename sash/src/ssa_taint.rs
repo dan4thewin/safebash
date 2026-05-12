@@ -210,7 +210,8 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
                     "getenv" | "argv" => Taint::Tainted,
                     // Known-safe internal builtins (pure computation, no external data)
                     "len" | "keys" | "join" | "epochseconds" | "random"
-                    | "argc" | "getpid" | "getppid" | "getcpid" | "getcwd" | "status" | "signum" => Taint::Clean,
+                    | "argc" | "getpid" | "getppid" | "getcpid" | "getcwd" | "status" | "signum"
+                    | "dtoi" | "itod" => Taint::Clean,
                     _ => {
                         // Sash builtins that produce output from their args:
                         // if all args are clean, output is clean (pure computation).

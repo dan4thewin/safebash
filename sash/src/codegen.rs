@@ -138,6 +138,8 @@ struct ExternFuncs {
     argv: cranelift_module::DataId,
     argv_get: cranelift_module::FuncId,
     signal_flag: cranelift_module::FuncId,
+    dtoi: cranelift_module::FuncId,
+    itod: cranelift_module::FuncId,
     signum: cranelift_module::DataId,
 }
 
@@ -282,6 +284,24 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     signal_flag_sig.returns.push(AbiParam::new(I64));
     let signal_flag_func = module.declare_function("sash_signal_flag", Linkage::Import, &signal_flag_sig)
         .expect("declare sash_signal_flag");
+
+    // sash_dtoi(digits, ptr, len) -> i64
+    let mut dtoi_sig = Signature::new(CallConv::SystemV);
+    dtoi_sig.params.push(AbiParam::new(I64)); // digits
+    dtoi_sig.params.push(AbiParam::new(I64)); // str ptr
+    dtoi_sig.params.push(AbiParam::new(I64)); // str len
+    dtoi_sig.returns.push(AbiParam::new(I64)); // int result
+    let dtoi_func = module.declare_function("sash_dtoi", Linkage::Import, &dtoi_sig)
+        .expect("declare sash_dtoi");
+
+    // sash_itod(digits, value, &out_len) -> ptr
+    let mut itod_sig = Signature::new(CallConv::SystemV);
+    itod_sig.params.push(AbiParam::new(I64)); // digits
+    itod_sig.params.push(AbiParam::new(I64)); // int value
+    itod_sig.params.push(AbiParam::new(I64)); // &out_len
+    itod_sig.returns.push(AbiParam::new(I64)); // str ptr
+    let itod_func = module.declare_function("sash_itod", Linkage::Import, &itod_sig)
+        .expect("declare sash_itod");
 
     // sash_signum global
     let signum_data = module.declare_data("sash_signum", Linkage::Import, true, false)
@@ -832,6 +852,8 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         argv: argv_data,
         argv_get: argv_get_func,
         signal_flag: signal_flag_func,
+        dtoi: dtoi_func,
+        itod: itod_func,
         signum: signum_data,
     };
 
@@ -4067,6 +4089,62 @@ fn lower_value(
                         let str_ptr = builder.inst_results(call)[0];
                         let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
                         return (str_ptr, str_len);
+                    }
+                    "dtoi" if argv_values.len() >= 3 => {
+                        // $(dtoi N "str") — decimal to int
+                        let (digits_ptr, digits_len) = lower_value(
+                            &argv_values[1], builder, module, vars, literals,
+                            func_constants, externs, exit_status_var,
+                        );
+                        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                        let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
+                        let digits = builder.inst_results(call_atoi)[0];
+
+                        let (str_ptr, str_len) = lower_value(
+                            &argv_values[2], builder, module, vars, literals,
+                            func_constants, externs, exit_status_var,
+                        );
+                        let dtoi_ref = module.declare_func_in_func(externs.dtoi, builder.func);
+                        let call = builder.ins().call(dtoi_ref, &[digits, str_ptr, str_len]);
+                        let int_val = builder.inst_results(call)[0];
+                        // Convert int result to string via itoa
+                        let out_slot = builder.create_sized_stack_slot(
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
+                        );
+                        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+                        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+                        let call2 = builder.ins().call(itoa_ref, &[int_val, out_addr]);
+                        let ptr = builder.inst_results(call2)[0];
+                        let len = builder.ins().stack_load(I64, out_slot, 0);
+                        return (ptr, len);
+                    }
+                    "itod" if argv_values.len() >= 3 => {
+                        // $(itod N $var) — int to decimal string
+                        let (digits_ptr, digits_len) = lower_value(
+                            &argv_values[1], builder, module, vars, literals,
+                            func_constants, externs, exit_status_var,
+                        );
+                        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                        let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
+                        let digits = builder.inst_results(call_atoi)[0];
+
+                        let (val_ptr, val_len) = lower_value(
+                            &argv_values[2], builder, module, vars, literals,
+                            func_constants, externs, exit_status_var,
+                        );
+                        // Convert string arg to int
+                        let call_val = builder.ins().call(atoi_ref, &[val_ptr, val_len]);
+                        let value = builder.inst_results(call_val)[0];
+
+                        let out_len_slot = builder.create_sized_stack_slot(
+                            StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3),
+                        );
+                        let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+                        let itod_ref = module.declare_func_in_func(externs.itod, builder.func);
+                        let call = builder.ins().call(itod_ref, &[digits, value, out_len_addr]);
+                        let ptr = builder.inst_results(call)[0];
+                        let len = builder.ins().stack_load(I64, out_len_slot, 0);
+                        return (ptr, len);
                     }
                     _ => {}
                 }

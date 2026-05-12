@@ -656,7 +656,8 @@ impl TaintTracker {
                 // Internal builtins — pure computation, always clean
                 if matches!(inner_cmd.as_str(),
                     "len" | "keys" | "join" | "epochseconds" | "random"
-                    | "argc" | "getpid" | "getppid" | "getcpid" | "getcwd" | "status" | "signum") {
+                    | "argc" | "getpid" | "getppid" | "getcpid" | "getcwd" | "status" | "signum"
+                    | "dtoi" | "itod") {
                     return false;
                 }
                 // Sash builtins that format their args — clean if args clean

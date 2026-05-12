@@ -84,6 +84,7 @@ impl Rule for CommandResolution {
             | "shopt" | "bless" | "getenv" | "fn"
             | "let"
             | "status" | "getcpid" | "getpid" | "getppid" | "getcwd" | "argc" | "argv" | "signum"
+            | "dtoi" | "itod"
         ) {
             return vec![];
         }

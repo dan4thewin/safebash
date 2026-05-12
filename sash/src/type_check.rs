@@ -94,7 +94,7 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
                 if let StmtKind::Command(c) = &first.kind {
                     let name = expr_to_name(&c.name);
                     // Compiler keywords that return int
-                    if matches!(name.as_str(), "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid") {
+                    if matches!(name.as_str(), "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid" | "dtoi") {
                         return VarType::Int;
                     }
                     return env.func_type(&name);
