@@ -801,23 +801,28 @@ pub extern "C" fn sash_assoc_lookup(
 pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let mut buf = [0u8; 4096];
     let mut total = 0usize;
+    let mut got_newline = false;
     loop {
         if total >= buf.len() { break; }
         let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
         match n {
             Ok(0) => break,
             Ok(1) => {
-                if buf[total] == b'\n' { break; }
+                if buf[total] == b'\n' { got_newline = true; break; }
                 total += 1;
             }
             _ => break,
         }
     }
-    if total == 0 {
+    if total == 0 && !got_newline {
+        // True EOF
         return (core::ptr::null_mut(), 0);
     }
-    let ptr = unsafe { sash_alloc(total) };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    // Empty line (got_newline with total=0) or normal line
+    let ptr = unsafe { sash_alloc(core::cmp::max(total, 1)) };
+    if total > 0 {
+        unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    }
     (ptr, total)
 }
 

@@ -2180,7 +2180,7 @@ fn lower_inst(
             let line_ptr = builder.inst_results(call)[0];
             let line_len = builder.inst_results(call)[1];
             let zero = builder.ins().iconst(I64, 0);
-            let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, line_len, zero);
+            let got_data = builder.ins().icmp(IntCC::NotEqual, line_ptr, zero);
             builder.ins().brif(got_data, loop_body, &[], loop_exit, &[]);
 
             builder.switch_to_block(loop_body);
@@ -2205,6 +2205,7 @@ fn lower_inst(
                 let key_len = builder.inst_results(split_call)[1];
                 let val_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
                 let val_len = builder.ins().stack_load(I64, rest_len_slot, 0);
+
                 // Skip empty keys (blank lines)
                 let key_empty = builder.ins().icmp(IntCC::Equal, key_len, zero);
                 let skip_block = builder.create_block();
@@ -2213,6 +2214,7 @@ fn lower_inst(
 
                 builder.switch_to_block(insert_block);
                 builder.seal_block(insert_block);
+                // Insert key/value into table
                 let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
                 builder.ins().call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
                 builder.ins().jump(loop_hdr, &[]);
@@ -3179,14 +3181,29 @@ fn lower_expr_value(
                     .unwrap_or_else(|| panic!("ICE: undefined array in test: {}", name))
             });
             let table_ptr = builder.use_var(sv.str_ptr());
-            // Integer key lookup
-            let idx_val = lower_expr_value_as_int(index, builder, module, vars, literals, externs);
-            let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot, 8, 3,
-            ));
-            builder.ins().stack_store(idx_val, idx_slot, 0);
-            let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-            let kl = builder.ins().iconst(I64, 8);
+
+            // Determine key type: if index is a non-numeric literal, use string key
+            let use_string_key = match &index.kind {
+                crate::ir::ExprKind::Literal(s) => !s.chars().all(|c| c.is_ascii_digit()),
+                crate::ir::ExprKind::SimpleExpansion(_) | crate::ir::ExprKind::ParameterExpansion(_) => false,
+                _ => false,
+            };
+
+            let (kp, kl) = if use_string_key {
+                // String key: use literal bytes
+                let (p, l) = lower_expr_value(index, builder, module, vars, literals, externs, None);
+                (p, l)
+            } else {
+                // Integer key
+                let idx_val = lower_expr_value_as_int(index, builder, module, vars, literals, externs);
+                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot, 8, 3,
+                ));
+                builder.ins().stack_store(idx_val, idx_slot, 0);
+                let p = builder.ins().stack_addr(I64, idx_slot, 0);
+                let l = builder.ins().iconst(I64, 8);
+                (p, l)
+            };
             let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot, 8, 3,
             ));
