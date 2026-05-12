@@ -577,6 +577,35 @@ fn lower_one(
                 }
             }
 
+            // DD#48: shift — remap positional parameters
+            if name == "shift" {
+                let n = c.args.first()
+                    .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+                    .unwrap_or(1);
+                // $1 ← $(1+n), $2 ← $(2+n), ..., $9 ← $(9+n) or ""
+                for i in 1..=9usize {
+                    let src_idx = i + n;
+                    let val = if src_idx <= 9 {
+                        SsaValue::Var(state.lookup(&src_idx.to_string()))
+                    } else {
+                        SsaValue::Literal(String::new())
+                    };
+                    let target = state.define(&i.to_string());
+                    ssa.block_mut(block).insts.push(SsaInst::Assign {
+                        target,
+                        value: val,
+                    });
+                }
+                // Decrement $#
+                let argc_ref = state.lookup("#");
+                let new_argc = state.define("#");
+                ssa.block_mut(block).insts.push(SsaInst::Assign {
+                    target: new_argc,
+                    value: SsaValue::Literal("__shift__".to_string()), // placeholder
+                });
+                return block;
+            }
+
             // break → Goto(exit_block), continue → Goto(header_block)
             if name == "break" {
                 let n = c.args.first()
