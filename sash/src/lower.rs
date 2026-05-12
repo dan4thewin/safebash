@@ -128,6 +128,22 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::While(lower_while(node, source))
         }
         "for_statement" => {
+            // Reject 'select' (parsed as for_statement variant)
+            if let Some(kw) = node.child(0) {
+                if kw.utf8_text(source).unwrap_or("") == "select" {
+                    // Emit as a Command so SB5011 rejects it naturally
+                    return Some(Statement {
+                        kind: StmtKind::Command(Command {
+                            name: Expr {
+                                kind: ExprKind::Literal("select".to_string()),
+                                span: span.clone(),
+                            },
+                            args: vec![],
+                        }),
+                        span,
+                    });
+                }
+            }
             StmtKind::For(lower_for(node, source))
         }
         "c_style_for_statement" => {

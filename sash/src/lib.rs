@@ -241,7 +241,7 @@ pub fn cli_main(args: Vec<String>) {
         Some(f) => *f,
         None if inline_source.is_some() => "-c",
         None => {
-            eprintln!("Usage: sash [--nolint] [--ir|--ssa|--emit-source|--annotate] [-c 'script'] [-o output] <script.sh>");
+            eprintln!("Usage: sash [-c 'script'] [-o output] [--ir|--ssa] <script.sh>");
             std::process::exit(1);
         }
     };

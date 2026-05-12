@@ -554,10 +554,10 @@ fn extract_recovers_source() {
 
 #[test]
 fn extract_coerced_source() {
-    let script = "#!/bin/bash\ndeclare -i x=5\necho $x";
+    let script = "#!/bin/bash\nint x=5\necho $x";
     let extracted = extract_source("extract_coerce", script);
-    // The .sash_source should contain the coerced form
-    assert!(extracted.contains("int x=5"), "expected coerced source, got:\n{}", extracted);
+    // The .sash_source should contain the source
+    assert!(extracted.contains("int x=5"), "expected source with int, got:\n{}", extracted);
 }
 
 // ═══════════════════════════════════════════════════════════════

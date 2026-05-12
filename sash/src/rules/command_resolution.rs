@@ -15,10 +15,24 @@ const BUILTINS: &[&str] = &[
 impl Rule for CommandResolution {
 
     fn node_kinds(&self) -> &'static [&'static str] {
-        &["command"]
+        &["command", "for_statement"]
     }
 
     fn check(&self, node: Node, source: &[u8]) -> Vec<Diagnostic> {
+        // Reject 'select' (tree-sitter parses as for_statement variant)
+        if node.kind() == "for_statement" {
+            if let Some(kw) = node.child(0) {
+                if kw.utf8_text(source).unwrap_or("") == "select" {
+                    return vec![Diagnostic::error(
+                        node,
+                        "SB5011",
+                        "'select' is not supported in sash".to_string(),
+                    )];
+                }
+            }
+            return vec![];
+        }
+
         let name_node = match node.child_by_field_name("name") {
             Some(n) => n,
             None => return vec![],
@@ -66,8 +80,8 @@ impl Rule for CommandResolution {
         // Known keywords/special forms handled elsewhere
         if matches!(name,
             "eval" | "source" | "." | "alias" | "trap" | "signal"
-            | "local" | "export" | "declare" | "typeset" | "readonly" | "set"
-            | "shopt" | "select" | "coproc" | "bless" | "getenv" | "fn"
+            | "local" | "set"
+            | "shopt" | "bless" | "getenv" | "fn"
             | "let"
             | "status" | "getcpid" | "getpid" | "getppid" | "getcwd" | "argc" | "argv" | "signum"
         ) {
