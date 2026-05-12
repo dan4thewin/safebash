@@ -60,13 +60,12 @@ bless x [[ "foo" = $x ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.11
 
-# 24.12 bless failure (unconditional) writes to stderr and exits 1
+# 24.12 bless failure (unconditional) aborts at runtime
 run_sash 'x=$(getenv HOME)
 bless x [[ $x =~ ^NEVER_MATCH$ ]]
 echo $x'
-# This is a runtime test — the bless test fails at runtime
-# rc=0 means it compiled, but output depends on runtime. Just check it compiles.
-[[ $rc = 0 && -z $err ]]; chk 24.12
+# bless fails at runtime → exits 1, no stdout
+[[ $rc != 0 && -z $out ]]; chk 24.12
 
 # 24.13 if bless failure → takes false branch, var still tainted
 run_sash 'x=$(getenv HOME)

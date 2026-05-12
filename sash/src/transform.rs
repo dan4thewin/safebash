@@ -1657,12 +1657,86 @@ fn flatten_elif(i: &If) -> If {
     }
 }
 
+/// DD#24: if bless VAR [[ test ]]; then ... fi
+/// Non-fatal bless: test branch gets clean var, else branch keeps tainted.
+fn lower_if_bless(
+    i: &If,
+    c: &crate::ir::Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let var_name = expr_to_string(&c.args[0]);
+    // Find test expression
+    let test_expr = c.args[1..].iter()
+        .find_map(|a| if let crate::ir::ExprKind::Test(t) = &a.kind { Some(t.clone()) } else { None });
+    let test_expr = match test_expr {
+        Some(t) => t,
+        None => return block,
+    };
+
+    // Emit the test as a condition (non-fatal)
+    let test_expr_copy = test_expr.clone();
+    ssa.block_mut(block).insts.push(SsaInst::Test(test_expr));
+
+    let then_block = ssa.new_block("if_bless.then");
+    let merge_block = ssa.new_block("if_bless.merge");
+
+    let pre_state = state.snapshot();
+
+    // Branch on test result
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        true_block: then_block,
+        false_block: merge_block,
+        condition: "bless".to_string(),
+    };
+
+    // Then branch: bless var (copy source to target, marking clean)
+    let source_ref = state.lookup(&var_name);
+    let target_ref = state.define(&var_name);
+    // Use a trivial always-true test for the SSA taint verifier
+    ssa.block_mut(then_block).insts.push(SsaInst::Bless {
+        target: target_ref,
+        source: source_ref,
+        test: test_expr_copy,
+    });
+    let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
+    ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
+    let then_snap = state.snapshot();
+
+    if let Some(else_body) = &i.else_body {
+        let else_block = ssa.new_block("if_bless.else");
+        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
+            *false_block = else_block;
+        }
+        state.restore(&pre_state);
+        let else_exit = lower_stmts(else_body, ssa, state, else_block);
+        ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
+    } else {
+        state.restore(&pre_state);
+    }
+
+    // Merge: use then_state versions for variables modified in then
+    // (simplified: just restore to pre-state, let Cranelift SSA handle merge)
+
+    merge_block
+}
+
 fn lower_if(
     i: &If,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    // DD#24: detect if-bless conditional form
+    if i.condition.len() == 1 {
+        if let StmtKind::Command(c) = &i.condition[0].kind {
+            if expr_to_string(&c.name) == "bless" && c.args.len() >= 2 {
+                return lower_if_bless(i, c, ssa, state, block);
+            }
+        }
+    }
+
     // Lower condition into current block
     state.in_condition += 1;
     let cond_block = lower_stmts(&i.condition, ssa, state, block);
