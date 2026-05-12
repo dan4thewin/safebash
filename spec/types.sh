@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=29
+plan=37
 echo "1..$plan" >&3
 
 set +e
@@ -147,7 +147,6 @@ run_sash 'fn f -> int { return 10; }
 int x=$(( (f) + 1 ))
 echo "$x"'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk 58.8
-tally
 
 # --- DD#30 unset semantics ---
 
@@ -180,4 +179,7 @@ run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
 # 33.7 ${arr[@]%%suffix} strip suffix per element
 run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
 [[ $rc = 0 && $out = "file doc note.md" && -z $err ]]; chk 33.7
+
+set -e
+tally
 

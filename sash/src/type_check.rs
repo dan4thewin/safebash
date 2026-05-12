@@ -28,6 +28,8 @@ struct TypeEnv {
     funcs: HashMap<String, VarType>,
     /// Variables that are intrinsically int ($#, $?)
     intrinsic_int: HashSet<String>,
+    /// Variables declared as array or map (collections)
+    collections: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -39,6 +41,7 @@ impl TypeEnv {
             vars: HashMap::new(),
             funcs: HashMap::new(),
             intrinsic_int,
+            collections: HashSet::new(),
         }
     }
 
@@ -52,6 +55,10 @@ impl TypeEnv {
 
     fn func_type(&self, name: &str) -> VarType {
         self.funcs.get(name).copied().unwrap_or(VarType::String)
+    }
+
+    fn is_collection(&self, name: &str) -> bool {
+        self.collections.contains(name)
     }
 
     fn declare(&mut self, name: &str, vtype: VarType) {
@@ -83,6 +90,10 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
             if let Some(first) = parts.first() {
                 if let StmtKind::Command(c) = &first.kind {
                     let name = expr_to_name(&c.name);
+                    // Compiler keywords that return int
+                    if matches!(name.as_str(), "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid") {
+                        return VarType::Int;
+                    }
                     return env.func_type(&name);
                 }
             }
@@ -184,10 +195,38 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                 }
                 env.declare(&a.name, d.var_type);
             }
+            // Track collections
+            if d.flags.contains(&"-a".to_string()) || d.flags.contains(&"-A".to_string()) {
+                for a in &d.assignments {
+                    env.collections.insert(a.name.clone());
+                }
+            }
         }
 
         StmtKind::Command(c) => {
             let cmd_name = expr_to_name(&c.name);
+            if cmd_name == "unset" {
+                // DD#30: unset on scalar variables is rejected
+                for arg in &c.args {
+                    let name = expr_to_name(arg);
+                    // If the name contains '[', it's a subscript (array/map element) — allowed
+                    if !name.contains('[') && !name.is_empty() {
+                        let vtype = env.var_type(&name);
+                        if vtype == VarType::String || vtype == VarType::Int {
+                            // Check if it's declared as array/map — those are OK
+                            if !env.is_collection(&name) {
+                                errors.push(TypeError {
+                                    message: format!(
+                                        "unset on scalar '{}' is not allowed — use {}=\"\" to clear",
+                                        name, name,
+                                    ),
+                                    span: stmt.span.clone(),
+                                });
+                            }
+                        }
+                    }
+                }
+            }
             if cmd_name == "exit" {
                 // exit with int variable → error (unbounded)
                 if let Some(arg) = c.args.first() {

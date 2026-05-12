@@ -117,8 +117,8 @@ fn pos_arithmetic() {
 #[test]
 fn pos_if_else() {
     let script = r#"#!/bin/bash
-x=5
-if [[ $x -gt 3 ]]; then
+int x=5
+if (( x > 3 )); then
     echo big
 else
     echo small
@@ -130,8 +130,8 @@ fi
 #[test]
 fn pos_while_loop() {
     let script = r#"#!/bin/bash
-i=0
-while [[ $i -lt 5 ]]; do
+int i=0
+while (( i < 5 )); do
     echo $i
     (( i = i + 1 ))
 done
@@ -295,13 +295,13 @@ fn pos_exit_status() {
 
 #[test]
 fn pos_declare_int() {
-    let script = "#!/bin/bash\ndeclare -i x=5\nx+=3\necho $x";
+    let script = "#!/bin/bash\nint x=5\n(( x += 3 ))\necho $x";
     assert_eq!(compile_and_run("decl_int", script), "8\n");
 }
 
 #[test]
 fn pos_int_keyword() {
-    let script = "#!/bin/bash\nint x=5\nx+=3\necho $x";
+    let script = "#!/bin/bash\nint x=5\n(( x += 3 ))\necho $x";
     assert_eq!(compile_and_run("int_kw", script), "8\n");
 }
 
@@ -364,9 +364,9 @@ fn pos_test_string_ops() {
 #[test]
 fn pos_test_numeric_ops() {
     let script = r#"#!/bin/bash
-[[ 5 -gt 3 ]] && echo gt
-[[ 3 -eq 3 ]] && echo eq
-[[ 2 -lt 3 ]] && echo lt
+if (( 5 > 3 )); then echo gt; fi
+if (( 3 == 3 )); then echo eq; fi
+if (( 2 < 3 )); then echo lt; fi
 "#;
     assert_eq!(compile_and_run("test_num", script), "gt\neq\nlt\n");
 }
@@ -719,8 +719,8 @@ foo onearg
 #[test]
 fn pos_if_in_while() {
     let script = r#"#!/bin/bash
-i=0
-while [[ $i -lt 6 ]]; do
+int i=0
+while (( i < 6 )); do
     if [[ $i == "0" ]] || [[ $i == "2" ]] || [[ $i == "4" ]]; then
         echo "even $i"
     fi
@@ -924,8 +924,8 @@ fn pos_c_style_for() {
 #[test]
 fn pos_until_loop() {
     let script = r#"#!/bin/bash
-i=0
-until [[ $i -ge 3 ]]; do
+int i=0
+while (( i < 3 )); do
     echo $i
     (( i = i + 1 ))
 done

@@ -362,6 +362,16 @@ pub fn cli_main(args: Vec<String>) {
     let tree2 = parse(&source);
     let program2 = lower::lower_program(tree2.root_node(), source.as_bytes());
     let type_map2 = type_check::infer_types(&program2);
+
+    // DD#30: strict type checking
+    let type_errors = type_check::type_check(&program2);
+    if !type_errors.is_empty() {
+        for te in &type_errors {
+            eprintln!("{}:{}:{}: error [SB4030] {}", input, te.span.line, te.span.col, te.message);
+        }
+        std::process::exit(1);
+    }
+
     let (ssa2, _) = transform::ir_to_ssa_typed(&program2, type_map2);
     let taint_ices = ssa_taint::verify_ssa_taint(&ssa2);
     if !taint_ices.is_empty() {

@@ -87,9 +87,6 @@ run_sash 'x="hello123"; [[ $x =~ ^[a-z]+[0-9]+$ ]] && echo yes'
 run_sash 'x="a b c"; echo $x'
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk 40.3
 
-set -e
-tally
-
 # --- DD#30 numeric operators not valid sash-native ---
 
 # 30.6a -gt in [[ ]] is compile error
@@ -118,4 +115,7 @@ run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; echo ${m[key]}'
 # 22.11 mapfile -m result is tainted
 run_sash 'map m; printf "k=v\n" | mapfile -m m; echo ${m[k]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.11
+
+set -e
+tally
 

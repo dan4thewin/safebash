@@ -12,6 +12,7 @@ pub mod process_substitution;
 pub mod wordsplit_rejected;
 pub mod command_resolution;
 pub mod dollar_question;
+pub mod numeric_test_rejected;
 pub mod rejected_vars;
 
 use crate::rule::Rule;
@@ -35,5 +36,6 @@ pub fn all_rules() -> Vec<Box<dyn Rule>> {
         Box::new(command_resolution::CommandResolution),
         Box::new(dollar_question::DollarQuestion),
         Box::new(rejected_vars::RejectedVars),
+        Box::new(numeric_test_rejected::NumericTestRejected),
     ]
 }
