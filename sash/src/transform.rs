@@ -956,10 +956,22 @@ fn lower_one(
             }
 
             // Check if this is a known function call → inline expansion
-            if let Some(body) = state.function_bodies.get(&name).cloned() {
+            // DD#18: try local function first (__local__name), only if in scope
+            let resolved_name = {
+                let local_name = format!("__local__{}", name);
+                if state.local_fn_scope.contains(&local_name) && state.function_bodies.contains_key(&local_name) {
+                    local_name
+                } else {
+                    name.clone()
+                }
+            };
+            if let Some(body) = state.function_bodies.get(&resolved_name).cloned() {
                 // Collect local variable names from function body
 
                 let locals = collect_local_vars(&body);
+
+                // DD#18: save local function scope before inlining
+                let saved_local_fn_scope = state.local_fn_scope.clone();
 
                 // Save caller's positional params
                 let saved: Vec<(String, VarRef)> = (1..=9)
@@ -1072,6 +1084,9 @@ fn lower_one(
                         value: SsaValue::Var(saved_ref.clone()),
                     });
                 }
+
+                // DD#18: restore local function scope
+                state.local_fn_scope = saved_local_fn_scope;
 
                 return restore_block;
             }
@@ -1388,6 +1403,11 @@ fn lower_one(
             // Store function body for inline expansion at call sites.
             state.function_bodies.insert(f.name.clone(), f.body.clone());
 
+            // DD#18: track local function scope
+            if f.name.starts_with("__local__") {
+                state.local_fn_scope.insert(f.name.clone());
+            }
+
             // Track -> int functions for DD#55 type error on $(f)
             if f.return_type == crate::ir::VarType::Int {
                 state.function_int_typed.insert(f.name.clone());
@@ -1417,7 +1437,10 @@ fn lower_one(
             }
 
             let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
+            // DD#18: save/restore local_fn_scope around function body compilation
+            let saved_scope = state.local_fn_scope.clone();
             let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
+            state.local_fn_scope = saved_scope;
             ssa.block_mut(fn_exit).terminator = Terminator::Return;
             block
         }

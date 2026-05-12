@@ -52,6 +52,38 @@ pub(crate) fn preprocess_end_block(source: &str) -> String {
 }
 
 /// DD#58: Preprocess source to protect sexpr syntax inside arithmetic.
+
+/// DD#18: Preprocess `local fn name` → `fn __local__name`
+/// so tree-sitter parses it as a function_definition.
+pub(crate) fn preprocess_local_fn(source: &str) -> String {
+    // Match `local fn NAME` and replace with `fn __local__NAME`
+    let mut result = String::with_capacity(source.len());
+    for line in source.lines() {
+        let trimmed = line.trim_start();
+        if let Some(rest) = trimmed.strip_prefix("local fn ") {
+            let indent = &line[..line.len() - trimmed.len()];
+            result.push_str(indent);
+            // rest is "name { ..." or "name {" etc
+            if let Some(space_pos) = rest.find(|c: char| c == ' ' || c == '{') {
+                let name = &rest[..space_pos].trim();
+                let remainder = &rest[space_pos..];
+                result.push_str(&format!("fn __local__{}{}", name, remainder));
+            } else {
+                result.push_str(&format!("fn __local__{}", rest));
+            }
+        } else {
+            result.push_str(line);
+        }
+        result.push('\n');
+    }
+    // Remove trailing newline if source didn't have one
+    if !source.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
+/// DD#58: Preprocess source to protect sexpr syntax inside arithmetic.
 /// Replaces `$(( content ))` with `$(( __ARITH_N__ ))` when content
 /// contains sexpr patterns that tree-sitter can't parse.
 /// Returns (preprocessed_source, map of placeholder → original content).
@@ -265,6 +297,9 @@ pub fn cli_main(args: Vec<String>) {
 
     // DD#56: preprocess END { ... } → fn __sash_end__ { ... }
     let source = preprocess_end_block(&source);
+
+    // DD#18: preprocess local fn name { ... } → fn __local__name { ... }
+    let source = preprocess_local_fn(&source);
 
     // DD#57: reject converter flags
     for flag in &flags {

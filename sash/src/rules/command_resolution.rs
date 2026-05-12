@@ -112,7 +112,13 @@ fn find_root(node: Node) -> Node {
 
 fn is_function_name(root: Node, name: &str, source: &[u8]) -> bool {
     let mut cursor = root.walk();
+    // DD#18: also check for local function variant
     is_function_name_walk(root, &mut cursor, name, source)
+        || {
+            let local_name = format!("__local__{}", name);
+            let mut cursor2 = root.walk();
+            is_function_name_walk(root, &mut cursor2, &local_name, source)
+        }
 }
 
 fn is_function_name_walk<'a>(node: Node<'a>, cursor: &mut tree_sitter::TreeCursor<'a>, name: &str, source: &[u8]) -> bool {

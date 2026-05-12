@@ -433,6 +433,8 @@ pub struct VersionState {
     pub collections: std::collections::HashSet<String>,
     /// Variables declared readonly — error on reassignment.
     pub readonly_vars: std::collections::HashSet<String>,
+    /// DD#18: local functions currently in scope during inline expansion.
+    pub local_fn_scope: std::collections::HashSet<String>,
     /// Loop context stack: (header_block, exit_block) for break/continue.
     pub loop_stack: Vec<(usize, usize)>,
     /// Return target block for `return` in inlined functions.
@@ -466,6 +468,7 @@ impl VersionState {
             assoc_arrays: std::collections::HashSet::new(),
             collections: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
+            local_fn_scope: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
             exit_trap: None, exiting_signals: std::collections::HashSet::new(), diagnostics: Vec::new(),
