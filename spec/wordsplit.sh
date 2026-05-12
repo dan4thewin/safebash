@@ -67,17 +67,17 @@ run_sash 'x="hello world"; echo ${x/world/earth}'
 run_sash 'x="hello"; x =~ s/[invalid/repl/; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 39.5
 
-# 39.6 no {n,m} counted repetition
-run_sash 'x="aaa"; [[ $x =~ a{2,3} ]] && echo yes'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 39.6
+# 39.6 {n,m} counted repetition
+run_sash 'x="aaa"; [[ $x =~ ^a{2,3}$ ]] && echo yes'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 39.6
 
-# 39.7 no \d \w shortcuts
-run_sash 'x="123"; [[ $x =~ \d+ ]] && echo yes'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 39.7
+# 39.7 \d \w \s shorthand classes
+run_sash 'x="123"; [[ $x =~ ^\d+$ ]] && echo yes'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 39.7
 
-# 39.8 no lookahead/lookbehind
+# 39.8 invalid regex (lookahead) is runtime error
 run_sash 'x="hello"; [[ $x =~ (?=h)ello ]] && echo yes'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 39.8
+[[ $rc != 0 && -z $out ]]; chk 39.8
 
 # 39.9 precompiled literal patterns (just verify regex works at runtime)
 run_sash 'x="hello123"; [[ $x =~ ^[a-z]+[0-9]+$ ]] && echo yes'

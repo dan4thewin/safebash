@@ -1183,6 +1183,7 @@ extern "C" {
 }
 
 /// Match a string against a regex pattern.
+
 /// Returns 1 if matched, 0 if not.
 /// pattern and str must be null-terminated.
 #[no_mangle]

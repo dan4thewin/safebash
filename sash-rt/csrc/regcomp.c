@@ -45,6 +45,63 @@ static	void	evaluntil(int);
 static	int	bldcclass(void);
 static	int	bldshortclass(Rune);
 
+static int rep_min, rep_max; /* {n,m} repetition counts */
+static void rcerror(char *);
+
+/*
+ * Parse {n} or {n,m} at current exprp position.
+ * exprp points to the '{'. On success, advances exprp past '}'.
+ * Returns 1 on success, 0 if not a valid counted repetition.
+ */
+static int
+parsecounted(void)
+{
+	char *p = exprp;
+	int n = 0, m = 0;
+
+	if(*p != '{')
+		return 0;
+	p++;
+	if(!(*p >= '0' && *p <= '9'))
+		return 0;
+	while(*p >= '0' && *p <= '9')
+		n = n*10 + (*p++ - '0');
+	if(n > 32){
+		rcerror("repetition count too large");
+		return 0;
+	}
+	if(*p == '}'){
+		rep_min = n;
+		rep_max = n;
+		exprp = p+1;
+		return 1;
+	}
+	if(*p != ',')
+		return 0;
+	p++;
+	if(*p == '}'){
+		/* {n,} — unbounded; cap at n+8 */
+		rep_min = n;
+		rep_max = n + 8;
+		exprp = p+1;
+		return 1;
+	}
+	if(!(*p >= '0' && *p <= '9'))
+		return 0;
+	while(*p >= '0' && *p <= '9')
+		m = m*10 + (*p++ - '0');
+	if(*p != '}')
+		return 0;
+	if(m > 32 || m < n){
+		rcerror("invalid repetition range");
+		return 0;
+	}
+	rep_min = n;
+	rep_max = m;
+	exprp = p+1;
+	return 1;
+}
+
 static jmp_buf regkaboom;
 
 static	void
@@ -429,6 +486,16 @@ lex(int literal, int dot_type)
 		return EOL;
 	case '[':
 		return bldcclass();
+	case '{':
+		/* Counted repetition {n,m} — handled by main loop re-lex */
+		if(lastwasand){
+			exprp--; /* back up to point at '{' */
+			if(parsecounted())
+				return COUNTED;
+			exprp++; /* restore */
+		}
+		rcerror("invalid '{' — use \\{ for literal or {n,m} for repetition");
+		return END;
 	}
 	return RUNE;
 }
@@ -580,11 +647,49 @@ regcomp1(char *s, int literal, int dot_type)
 
 	/* Start with a low priority operator to prime parser */
 	pushator(START-1);
-	while((token = lex(literal, dot_type)) != END){
-		if((token&0300) == OPERATOR)
+	{
+	char *prev_atom_start = exprp;
+	while(1){
+		char *atom_start = exprp; /* source pos before this lex */
+		token = lex(literal, dot_type);
+		if(token == END)
+			break;
+		if(token == COUNTED){
+			/* DD#39: {n,m} counted repetition.
+			 * Re-lex the preceding atom for additional copies.
+			 * prev_atom_start points to where the preceding atom started.
+			 */
+			int i;
+			char *after_count = exprp; /* past the } */
+			if(rep_min == 0){
+				operator(QUEST); /* make existing copy optional */
+				for(i = 1; i < rep_max; i++){
+					exprp = prev_atom_start;
+					token = lex(literal, dot_type);
+					operand(token);
+					operator(QUEST);
+				}
+			} else {
+				for(i = 1; i < rep_min; i++){
+					exprp = prev_atom_start;
+					token = lex(literal, dot_type);
+					operand(token);
+				}
+				for(i = 0; i < rep_max - rep_min; i++){
+					exprp = prev_atom_start;
+					token = lex(literal, dot_type);
+					operand(token);
+					operator(QUEST);
+				}
+			}
+			exprp = after_count;
+		} else if((token&0300) == OPERATOR)
 			operator(token);
 		else
 			operand(token);
+		if((token&0300) != OPERATOR)
+			prev_atom_start = atom_start;
+	}
 	}
 
 	/* Close with a low priority operator */
