@@ -207,6 +207,36 @@ int main() {
     check(++id, "[", "", -1);            /* unclosed bracket */
     check(++id, "(", "", -1);            /* unclosed paren */
 
+    /* === Invalid { (DD#39) === */
+    check(++id, "a{b", "", -1);          /* { not followed by digits */
+    check(++id, "a{}", "", -1);          /* empty count */
+    check(++id, "a{,}", "", -1);         /* no numbers at all */
+    check(++id, "a{99}", "", -1);        /* count too large (>32) */
+    check(++id, "a{3,1}", "", -1);       /* max < min */
+    check(++id, "{2}", "", -1);          /* { without preceding atom */
+
+    /* === Valid {n,m} === */
+    check(++id, "^a{2}$", "aa", 1);
+    check(++id, "^a{2}$", "a", 0);
+    check(++id, "^a{2}$", "aaa", 0);
+    check(++id, "^a{2,4}$", "aa", 1);
+    check(++id, "^a{2,4}$", "aaaa", 1);
+    check(++id, "^a{2,4}$", "a", 0);
+    check(++id, "^a{2,4}$", "aaaaa", 0);
+    check(++id, "^a{0,2}$", "", 1);
+    check(++id, "^a{0,2}$", "aa", 1);
+    check(++id, "^a{0,2}$", "aaa", 0);
+    check(++id, "^a{3,}$", "aaa", 1);
+    check(++id, "^a{3,}$", "aaaaaa", 1);
+    check(++id, "^a{3,}$", "aa", 0);
+    check(++id, "^[ab]{2}$", "ab", 1);
+    check(++id, "^[ab]{2}$", "ba", 1);
+    check(++id, "^[ab]{2}$", "abc", 0);
+    check(++id, "^\\d{3}$", "123", 1);
+    check(++id, "^\\d{3}$", "12", 0);
+    check(++id, "^a{,2}$", "a", 1);
+    check(++id, "^a{,2}$", "aaa", 0);
+
     printf("1..%d\n", id);
     printf("# %d passed, %d failed\n", pass, fail);
     return fail > 0 ? 1 : 0;

@@ -81,7 +81,7 @@ parsecounted(void)
 	if(*p != ',')
 		return 0;
 	p++;
-	if(*p == '}'){
+	if(*p == '}' && have_n){
 		/* {n,} — unbounded */
 		rep_min = n;
 		rep_max = -1; /* sentinel for unbounded */
