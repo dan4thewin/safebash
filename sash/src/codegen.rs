@@ -879,6 +879,13 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                         intern(module, part);
                     }
                 }
+                // DD#33: per-element operations on arrvals
+                if operator.starts_with("arrvals_/") {
+                    // operand is "regex\0replacement" (null-separated)
+                    for part in operand.split('\0') {
+                        intern(module, part);
+                    }
+                }
             }
             SsaValue::CmdSubst { argv, .. } => { for a in argv { intern_value(module, intern, a); } }
             SsaValue::AssocArray(pairs) => {
@@ -3578,7 +3585,8 @@ fn lower_value(
                 let result_len = builder.inst_results(call)[1];
                 return (result_ptr, result_len);
             }
-            if operator == "arrkeys" || operator == "arrvals" || operator == "arrjoin" {
+            if operator == "arrkeys" || operator == "arrvals" || operator == "arrjoin"
+                || operator.starts_with("arrvals_") {
                 // Build separator-joined list of keys or values from a table.
                 let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
                 let call = builder.ins().call(len_ref, &[s_ptr]);
@@ -3687,6 +3695,81 @@ fn lower_value(
                 let call = builder.ins().call(item_fn, &[s_ptr, cur_i2, item_len_addr]);
                 let item_ptr = builder.inst_results(call)[0];
                 let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
+
+                // DD#33: per-element operation (if arrvals_OP)
+                let (item_ptr, item_len) = if operator.starts_with("arrvals_") {
+                    let sub_op = &operator["arrvals_".len()..];
+                    let op_data_id = literals.get(operand.as_str()).unwrap_or_else(|| {
+                        panic!("ICE: per-element operand not interned: {:?}", operand);
+                    });
+                    let op_gv = module.declare_data_in_func(*op_data_id, builder.func);
+                    let op_ptr = builder.ins().global_value(I64, op_gv);
+                    let op_len = builder.ins().iconst(I64, operand.len() as i64);
+                    match sub_op {
+                        "/" | "//" => {
+                            // ${arr[@]/pat/rep} or ${arr[@]//pat/rep}
+                            // operand is "regex\0replacement" (null-separated)
+                            let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((&operand, ""));
+                            let pat_did = literals.get(pat_s).unwrap_or_else(|| {
+                                panic!("ICE: pattern not interned: {:?}", pat_s);
+                            });
+                            let rep_did = literals.get(rep_s).unwrap_or_else(|| {
+                                panic!("ICE: replacement not interned: {:?}", rep_s);
+                            });
+                            let p_gv = module.declare_data_in_func(*pat_did, builder.func);
+                            let p_ptr = builder.ins().global_value(I64, p_gv);
+                            let p_len = builder.ins().iconst(I64, pat_s.len() as i64);
+                            let r_gv = module.declare_data_in_func(*rep_did, builder.func);
+                            let r_ptr = builder.ins().global_value(I64, r_gv);
+                            let r_len = builder.ins().iconst(I64, rep_s.len() as i64);
+                            let global = if sub_op == "//" {
+                                builder.ins().iconst(I64, 1)
+                            } else {
+                                builder.ins().iconst(I64, 0)
+                            };
+                            let regex_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+                            let call2 = builder.ins().call(regex_ref, &[
+                                item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global
+                            ]);
+                            let res_ptr = builder.inst_results(call2)[0];
+                            let res_len = builder.inst_results(call2)[1];
+                            (res_ptr, res_len)
+                        }
+                        "#" | "##" => {
+                            // ${arr[@]#pat} or ${arr[@]##pat} — strip prefix
+                            let longest = if sub_op == "##" {
+                                builder.ins().iconst(I64, 1)
+                            } else {
+                                builder.ins().iconst(I64, 0)
+                            };
+                            let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
+                            let call2 = builder.ins().call(strip_ref, &[
+                                item_ptr, item_len, op_ptr, op_len, longest
+                            ]);
+                            let offset = builder.inst_results(call2)[0];
+                            let res_ptr = builder.ins().iadd(item_ptr, offset);
+                            let res_len = builder.ins().isub(item_len, offset);
+                            (res_ptr, res_len)
+                        }
+                        "%" | "%%" => {
+                            // ${arr[@]%pat} or ${arr[@]%%pat} — strip suffix
+                            let longest = if sub_op == "%%" {
+                                builder.ins().iconst(I64, 1)
+                            } else {
+                                builder.ins().iconst(I64, 0)
+                            };
+                            let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
+                            let call2 = builder.ins().call(strip_ref, &[
+                                item_ptr, item_len, op_ptr, op_len, longest
+                            ]);
+                            let res_len = builder.inst_results(call2)[0];
+                            (item_ptr, res_len)
+                        }
+                        _ => (item_ptr, item_len),
+                    }
+                } else {
+                    (item_ptr, item_len)
+                };
 
                 // Byte-copy loop
                 let copy_idx = builder.declare_var(I64);

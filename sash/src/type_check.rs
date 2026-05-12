@@ -30,6 +30,8 @@ struct TypeEnv {
     intrinsic_int: HashSet<String>,
     /// Variables declared as array or map (collections)
     collections: HashSet<String>,
+    /// Variables declared as map (associative array) — string keys
+    assoc_arrays: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -42,6 +44,7 @@ impl TypeEnv {
             funcs: HashMap::new(),
             intrinsic_int,
             collections: HashSet::new(),
+            assoc_arrays: HashSet::new(),
         }
     }
 
@@ -146,6 +149,82 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     errors
 }
 
+/// DD#33: Check expressions for subscript key type mismatches.
+fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    match &expr.kind {
+        ExprKind::Subscript { name, index } => {
+            let is_map = env.assoc_arrays.contains(name);
+            let is_collection = env.collections.contains(name);
+            if is_collection {
+                if is_map {
+                    // Map: reject integer-only keys (looks like indexed access)
+                    if is_integer_literal(index) {
+                        errors.push(TypeError {
+                            message: format!(
+                                "integer key on map '{}' — maps use string keys. Use ${{{}[\"key\"]}}",
+                                name, name,
+                            ),
+                            span: expr.span.clone(),
+                        });
+                    }
+                } else {
+                    // Indexed array: reject non-integer keys
+                    if is_string_key(index) {
+                        errors.push(TypeError {
+                            message: format!(
+                                "string key on indexed array '{}' — use integer indices. Declare as `map` for string keys",
+                                name,
+                            ),
+                            span: expr.span.clone(),
+                        });
+                    }
+                }
+            }
+            check_subscript_types(index, env, errors);
+        }
+        ExprKind::DoubleQuoted(parts) => {
+            for p in parts { check_subscript_types(p, env, errors); }
+        }
+        ExprKind::Concat(parts) => {
+            for p in parts { check_subscript_types(p, env, errors); }
+        }
+        ExprKind::CommandSubstitution(stmts) => {
+            for s in stmts { check_subscript_in_stmt(s, env, errors); }
+        }
+        _ => {}
+    }
+}
+
+fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            check_subscript_types(&c.name, env, errors);
+            for arg in &c.args { check_subscript_types(arg, env, errors); }
+        }
+        StmtKind::Assignment(a) => {
+            check_subscript_types(&a.value, env, errors);
+        }
+        _ => {}
+    }
+}
+
+/// Check if an expression is a plain string literal (non-numeric)
+fn is_string_key(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(s) => !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit()),
+        ExprKind::SimpleExpansion(_) => false, // variable — could be either
+        _ => false,
+    }
+}
+
+/// Check if an expression is an integer literal
+fn is_integer_literal(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(s) => !s.is_empty() && s.chars().all(|c| c.is_ascii_digit()),
+        _ => false,
+    }
+}
+
 fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
@@ -199,6 +278,9 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
             if d.flags.contains(&"-a".to_string()) || d.flags.contains(&"-A".to_string()) {
                 for a in &d.assignments {
                     env.collections.insert(a.name.clone());
+                    if d.flags.contains(&"-A".to_string()) {
+                        env.assoc_arrays.insert(a.name.clone());
+                    }
                 }
             }
         }
@@ -245,6 +327,9 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                     }
                 }
             }
+
+            // DD#33: check subscript key types in command args
+            for arg in &c.args { check_subscript_types(arg, env, errors); }
         }
 
         StmtKind::If(if_stmt) => {

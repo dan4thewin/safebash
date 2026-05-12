@@ -2123,6 +2123,17 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
                         operand: None,
                     });
                 }
+                // DD#33: per-element operations
+                if let Some(ref op) = operator {
+                    if matches!(op.as_str(), "/" | "//" | "#" | "##" | "%" | "%%" | "^" | "^^" | "," | ",,") {
+                        // Encode as arrvals_OP:operand for codegen to iterate
+                        return ExprKind::ParameterExpansion(ParameterExpansion {
+                            name,
+                            operator: Some(format!("arrvals_{}", op)),
+                            operand,
+                        });
+                    }
+                }
                 return ExprKind::ParameterExpansion(ParameterExpansion {
                     name,
                     operator: Some("arrvals".to_string()),
