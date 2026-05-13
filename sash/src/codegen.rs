@@ -977,11 +977,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 SsaInst::Command { name, args, redirects, .. } => {
                     if name != "[[" {
                         intern(&mut module, name);
-                        // DD#32: intern trace message if tracing
-                        if trace {
-                            let trace_msg = format!("+ {}", name);
-                            intern(&mut module, &trace_msg);
-                        }
                     }
                     for a in args { intern_value(&mut module, &mut intern, a); }
                     for r in redirects {
@@ -1028,6 +1023,27 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     // Intern constant-folded function outputs
     for s in func_constants.values() {
         intern(&mut module, s);
+    }
+
+    // DD#32: intern branch trace messages
+    if trace {
+        for block in program.blocks.values() {
+            match &block.terminator {
+                crate::ssa::Terminator::Branch { true_block, false_block, .. } => {
+                    let true_label = program.block(*true_block).label.as_str();
+                    let false_label = program.block(*false_block).label.as_str();
+                    intern(&mut module, &format!("+ branch \u{2192} {}\n", true_label));
+                    intern(&mut module, &format!("+ branch \u{2192} {}\n", false_label));
+                }
+                crate::ssa::Terminator::Loop { body_block, exit_block, .. } => {
+                    let body_label = program.block(*body_block).label.as_str();
+                    let exit_label = program.block(*exit_block).label.as_str();
+                    intern(&mut module, &format!("+ loop \u{2192} {}\n", body_label));
+                    intern(&mut module, &format!("+ loop \u{2192} {}\n", exit_label));
+                }
+                _ => {}
+            }
+        }
     }
 
     // ── Build main() ───────────────────────────────────────────
@@ -1413,12 +1429,86 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                     builder.ins().jump(target_cl, &[]);
                 }
                 Terminator::Branch { true_block, false_block, .. } => {
+                    // DD#32: trace branch outcome
+                    if trace {
+                        let cond_val = builder.use_var(test_result_var);
+                        let true_label = program.block(*true_block).label.as_str();
+                        let false_label = program.block(*false_block).label.as_str();
+                        let true_msg = format!("+ branch → {}\n", true_label);
+                        let false_msg = format!("+ branch → {}\n", false_label);
+                        if let (Some(&true_id), Some(&false_id)) = (literals.get(true_msg.as_str()), literals.get(false_msg.as_str())) {
+                            let trace_gv = module.declare_data_in_func(externs.trace_flag, builder.func);
+                            let trace_base = builder.ins().global_value(I64, trace_gv);
+                            let trace_val = builder.ins().load(I64, MemFlags::new(), trace_base, 0);
+                            let zero_t = builder.ins().iconst(I64, 0);
+                            let is_tracing = builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
+                            let trace_block = builder.create_block();
+                            let no_trace_block = builder.create_block();
+                            builder.ins().brif(is_tracing, trace_block, &[], no_trace_block, &[]);
+
+                            builder.switch_to_block(trace_block);
+                            builder.seal_block(trace_block);
+                            let fd2 = builder.ins().iconst(I64, 2);
+                            let write_ref = module.declare_func_in_func(externs.write, builder.func);
+                            // Write the appropriate message based on condition
+                            let zero2 = builder.ins().iconst(I64, 0);
+                            let took_true = builder.ins().icmp(IntCC::NotEqual, cond_val, zero2);
+                            let true_gv = module.declare_data_in_func(true_id, builder.func);
+                            let true_ptr = builder.ins().global_value(I64, true_gv);
+                            let true_len = builder.ins().iconst(I64, true_msg.len() as i64);
+                            let false_gv = module.declare_data_in_func(false_id, builder.func);
+                            let false_ptr = builder.ins().global_value(I64, false_gv);
+                            let false_len = builder.ins().iconst(I64, false_msg.len() as i64);
+                            let msg_ptr = builder.ins().select(took_true, true_ptr, false_ptr);
+                            let msg_len = builder.ins().select(took_true, true_len, false_len);
+                            builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
+                            builder.ins().jump(no_trace_block, &[]);
+
+                            builder.switch_to_block(no_trace_block);
+                            builder.seal_block(no_trace_block);
+                        }
+                    }
                     let cond = builder.use_var(test_result_var);
                     let true_cl = cl_blocks[true_block];
                     let false_cl = cl_blocks[false_block];
                     builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
                 }
                 Terminator::Loop { body_block, exit_block, .. } => {
+                    if trace {
+                        let cond_val = builder.use_var(test_result_var);
+                        let body_label = program.block(*body_block).label.as_str();
+                        let exit_label = program.block(*exit_block).label.as_str();
+                        let body_msg = format!("+ loop \u{2192} {}\n", body_label);
+                        let exit_msg = format!("+ loop \u{2192} {}\n", exit_label);
+                        if let (Some(&body_id), Some(&exit_id)) = (literals.get(body_msg.as_str()), literals.get(exit_msg.as_str())) {
+                            let trace_gv = module.declare_data_in_func(externs.trace_flag, builder.func);
+                            let trace_base = builder.ins().global_value(I64, trace_gv);
+                            let trace_val = builder.ins().load(I64, MemFlags::new(), trace_base, 0);
+                            let zero_t = builder.ins().iconst(I64, 0);
+                            let is_tracing = builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
+                            let trace_block = builder.create_block();
+                            let no_trace_block = builder.create_block();
+                            builder.ins().brif(is_tracing, trace_block, &[], no_trace_block, &[]);
+                            builder.switch_to_block(trace_block);
+                            builder.seal_block(trace_block);
+                            let fd2 = builder.ins().iconst(I64, 2);
+                            let write_ref = module.declare_func_in_func(externs.write, builder.func);
+                            let zero2 = builder.ins().iconst(I64, 0);
+                            let took_body = builder.ins().icmp(IntCC::NotEqual, cond_val, zero2);
+                            let body_gv = module.declare_data_in_func(body_id, builder.func);
+                            let body_ptr = builder.ins().global_value(I64, body_gv);
+                            let body_len = builder.ins().iconst(I64, body_msg.len() as i64);
+                            let exit_gv = module.declare_data_in_func(exit_id, builder.func);
+                            let exit_ptr = builder.ins().global_value(I64, exit_gv);
+                            let exit_len = builder.ins().iconst(I64, exit_msg.len() as i64);
+                            let msg_ptr = builder.ins().select(took_body, body_ptr, exit_ptr);
+                            let msg_len = builder.ins().select(took_body, body_len, exit_len);
+                            builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
+                            builder.ins().jump(no_trace_block, &[]);
+                            builder.switch_to_block(no_trace_block);
+                            builder.seal_block(no_trace_block);
+                        }
+                    }
                     let cond = builder.use_var(test_result_var);
                     let body_cl = cl_blocks[body_block];
                     let exit_cl = cl_blocks[exit_block];
@@ -2063,36 +2153,6 @@ fn lower_inst(
             emit_restore(restore, builder, module, externs);
         }
         SsaInst::Command { name, args, redirects, checked, .. } => {
-            // DD#32: trace command execution
-            if trace {
-                let trace_msg = format!("+ {}", name);
-                if let Some(&msg_id) = literals.get(trace_msg.as_str()) {
-                    let trace_gv = module.declare_data_in_func(externs.trace_flag, builder.func);
-                    let trace_base = builder.ins().global_value(I64, trace_gv);
-                    let trace_val = builder.ins().load(I64, MemFlags::new(), trace_base, 0);
-                    let zero_t = builder.ins().iconst(I64, 0);
-                    let is_tracing = builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
-                    let trace_block = builder.create_block();
-                    let skip_trace = builder.create_block();
-                    builder.ins().brif(is_tracing, trace_block, &[], skip_trace, &[]);
-                    builder.switch_to_block(trace_block);
-                    builder.seal_block(trace_block);
-                    let msg_gv = module.declare_data_in_func(msg_id, builder.func);
-                    let msg_ptr = builder.ins().global_value(I64, msg_gv);
-                    let msg_len = builder.ins().iconst(I64, trace_msg.len() as i64);
-                    let fd2 = builder.ins().iconst(I64, 2);
-                    let write_ref = module.declare_func_in_func(externs.write, builder.func);
-                    builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
-                    let nl_id2 = literals["\n"];
-                    let nl_gv = module.declare_data_in_func(nl_id2, builder.func);
-                    let nl_ptr = builder.ins().global_value(I64, nl_gv);
-                    let one = builder.ins().iconst(I64, 1);
-                    builder.ins().call(write_ref, &[fd2, nl_ptr, one]);
-                    builder.ins().jump(skip_trace, &[]);
-                    builder.switch_to_block(skip_trace);
-                    builder.seal_block(skip_trace);
-                }
-            }
             let restore = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             lower_exec(name, args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
             emit_restore(restore, builder, module, externs);
