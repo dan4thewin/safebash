@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=22
+plan=23
 echo "1..$plan" >&3
 
 set +e
@@ -111,6 +111,14 @@ run_sash 'x=hello; echo ${x^^}'
 # 52.6b ${var,,} accepted
 run_sash 'x=HELLO; echo ${x,,}'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 52.6b
+
+# --- DD#54 sash-expand pipeline ---
+
+# 54.1 sash-expand | mapfile -m loads config into map
+printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
+EXPAND=$(which sash-expand)
+run_sash "map config; $EXPAND /tmp/sash_test_config.conf | mapfile -m config; bless config [[ -n \"\${config[NAME]}\" ]]; echo \${config[GREETING]}"
+[[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
 
 set -e
 tally
