@@ -8,7 +8,7 @@ fn run_bash_native(bash_src: &str, args: &[&str]) -> (String, i32) {
     let obj = format!("/tmp/sash_032_{}.o", id);
     let bin = format!("/tmp/sash_032_{}", id);
 
-    let obj_bytes = sash::codegen::compile_to_object(bash_src).expect("compile failed");
+    let obj_bytes = sash::codegen::compile_to_object(bash_src, false).expect("compile failed");
     std::fs::write(&obj, &obj_bytes).expect("write .o");
 
     let rt_path = format!(
@@ -827,7 +827,7 @@ done
     let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let obj_path = format!("/tmp/sash_read_{}.o", id);
     let bin_path = format!("/tmp/sash_read_{}", id);
-    let obj = sash::codegen::compile_to_object(src).expect("compile failed");
+    let obj = sash::codegen::compile_to_object(src, false).expect("compile failed");
     std::fs::write(&obj_path, &obj).unwrap();
     let status = std::process::Command::new("ld")
         .args([
@@ -878,7 +878,7 @@ echo "$n"
     let id = COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let obj_path = format!("/tmp/sash-040_rc_{}.o", id);
     let bin_path = format!("/tmp/sash-040_rc_{}", id);
-    let obj = sash::codegen::compile_to_object(src).expect("compile failed");
+    let obj = sash::codegen::compile_to_object(src, false).expect("compile failed");
     std::fs::write(&obj_path, &obj).unwrap();
     let status = std::process::Command::new("ld")
         .args([

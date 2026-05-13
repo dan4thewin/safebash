@@ -141,10 +141,11 @@ struct ExternFuncs {
     dtoi: cranelift_module::FuncId,
     itod: cranelift_module::FuncId,
     signum: cranelift_module::DataId,
+    trace_flag: cranelift_module::DataId,
 }
 
-pub fn compile_to_object(bash_source: &str) -> Result<Vec<u8>, Vec<String>> {
-    crate::emit_source::clear_coercions();
+pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8>, Vec<String>> {
+    let trace = enable_trace;
     // DD#58: preprocess sexpr syntax in arithmetic
     // (arith_map may already be set by main.rs — only preprocess if not)
     let source = {
@@ -169,7 +170,7 @@ pub fn compile_to_object(bash_source: &str) -> Result<Vec<u8>, Vec<String>> {
 
     // Try to constant-fold elidable function calls
     let func_constants = fold_function_outputs(&ssa);
-    Ok(compile_ssa(&ssa, &func_constants, Some(bash_source)))
+    Ok(compile_ssa(&ssa, &func_constants, Some(bash_source), enable_trace))
 }
 
 /// Try to evaluate function bodies at compile time. If a function's
@@ -218,7 +219,7 @@ fn try_fold_block(block: &BasicBlock, _program: &SsaProgram) -> Option<String> {
     Some(output)
 }
 
-pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String>, bash_source: Option<&str>) -> Vec<u8> {
+pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String>, bash_source: Option<&str>, trace: bool) -> Vec<u8> {
     let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
@@ -306,6 +307,9 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     // sash_signum global
     let signum_data = module.declare_data("sash_signum", Linkage::Import, true, false)
         .expect("declare sash_signum");
+
+    let trace_flag_data = module.declare_data("sash_trace_flag", Linkage::Import, true, false)
+        .expect("declare sash_trace_flag");
 
     // sash_capture(argv, envp, &out_len) -> ptr
     let mut capture_sig = Signature::new(CallConv::SystemV);
@@ -855,6 +859,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         dtoi: dtoi_func,
         itod: itod_func,
         signum: signum_data,
+        trace_flag: trace_flag_data,
     };
 
     // ── Intern string literals ─────────────────────────────────
@@ -972,6 +977,11 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 SsaInst::Command { name, args, redirects, .. } => {
                     if name != "[[" {
                         intern(&mut module, name);
+                        // DD#32: intern trace message if tracing
+                        if trace {
+                            let trace_msg = format!("+ {}", name);
+                            intern(&mut module, &trace_msg);
+                        }
                     }
                     for a in args { intern_value(&mut module, &mut intern, a); }
                     for r in redirects {
@@ -1381,7 +1391,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                            test_result_var, exit_status_var, pipe_read_fd_var,
                            capture_saved_var, capture_pipe_var, func_constants,
                            &mut redirect_stack, end_cl_block, ssa_block,
-                           &program, ssa_id, saved_end_status_var, &cl_blocks);
+                           &program, ssa_id, saved_end_status_var, &cl_blocks, trace);
             }
 
             // Emit terminator (unless block was already terminated by exit)
@@ -1468,6 +1478,7 @@ fn lower_inst(
     ssa_id: usize,
     saved_end_status_var: Variable,
     cl_blocks: &HashMap<usize, cranelift_codegen::ir::Block>,
+    trace: bool,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -2052,6 +2063,36 @@ fn lower_inst(
             emit_restore(restore, builder, module, externs);
         }
         SsaInst::Command { name, args, redirects, checked, .. } => {
+            // DD#32: trace command execution
+            if trace {
+                let trace_msg = format!("+ {}", name);
+                if let Some(&msg_id) = literals.get(trace_msg.as_str()) {
+                    let trace_gv = module.declare_data_in_func(externs.trace_flag, builder.func);
+                    let trace_base = builder.ins().global_value(I64, trace_gv);
+                    let trace_val = builder.ins().load(I64, MemFlags::new(), trace_base, 0);
+                    let zero_t = builder.ins().iconst(I64, 0);
+                    let is_tracing = builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
+                    let trace_block = builder.create_block();
+                    let skip_trace = builder.create_block();
+                    builder.ins().brif(is_tracing, trace_block, &[], skip_trace, &[]);
+                    builder.switch_to_block(trace_block);
+                    builder.seal_block(trace_block);
+                    let msg_gv = module.declare_data_in_func(msg_id, builder.func);
+                    let msg_ptr = builder.ins().global_value(I64, msg_gv);
+                    let msg_len = builder.ins().iconst(I64, trace_msg.len() as i64);
+                    let fd2 = builder.ins().iconst(I64, 2);
+                    let write_ref = module.declare_func_in_func(externs.write, builder.func);
+                    builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
+                    let nl_id2 = literals["\n"];
+                    let nl_gv = module.declare_data_in_func(nl_id2, builder.func);
+                    let nl_ptr = builder.ins().global_value(I64, nl_gv);
+                    let one = builder.ins().iconst(I64, 1);
+                    builder.ins().call(write_ref, &[fd2, nl_ptr, one]);
+                    builder.ins().jump(skip_trace, &[]);
+                    builder.switch_to_block(skip_trace);
+                    builder.seal_block(skip_trace);
+                }
+            }
             let restore = emit_redirects(redirects, builder, module, externs, literals, vars, Some(exit_status_var));
             lower_exec(name, args, builder, module, vars, literals, externs, test_result_var, exit_status_var);
             emit_restore(restore, builder, module, externs);

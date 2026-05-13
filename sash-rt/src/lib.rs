@@ -94,6 +94,8 @@ pub static mut sash_argc: i64 = 0;
 pub static mut sash_argv: *const *const u8 = core::ptr::null();
 #[no_mangle]
 pub static mut sash_signum: i64 = 0;
+#[no_mangle]
+pub static mut sash_trace_flag: i64 = 0;
 
 // ═══════════════════════════════════════════════════════════════
 // Safe inner functions — no raw pointers, no unsafe
@@ -502,6 +504,31 @@ pub unsafe extern "C" fn sash_init_heap() {
     sash_heap_init(ptr as *mut u8, HEAP_SIZE);
 }
 
+/// DD#32: check SASH_TRACE env var at startup
+#[no_mangle]
+pub extern "C" fn sash_trace_init() {
+    let envp = unsafe { sash_envp };
+    if envp.is_null() { return; }
+    let mut i = 0;
+    loop {
+        let entry = unsafe { *envp.add(i) };
+        if entry.is_null() { break; }
+        let prefix = b"SASH_TRACE=";
+        let mut matches = true;
+        for (j, &b) in prefix.iter().enumerate() {
+            if unsafe { *entry.add(j) } != b { matches = false; break; }
+        }
+        if matches {
+            let val = unsafe { *entry.add(prefix.len()) };
+            if val != b'0' && val != 0 {
+                unsafe { sash_trace_flag = 1; }
+            }
+            return;
+        }
+        i += 1;
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
     sash_malloc(n)
@@ -539,6 +566,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "lea rax, [rsp + rdi*8 + 16]",
         "mov [rip + sash_envp], rax",
         "call sash_init_heap",
+        "call sash_trace_init",
         "call main",
         "mov rdi, rax",
         "mov eax, 60",

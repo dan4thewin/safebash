@@ -394,7 +394,8 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    let obj_bytes = match codegen::compile_to_object(&source) {
+    let trace = flags.contains(&"--trace");
+    let obj_bytes = match codegen::compile_to_object(&source, trace) {
         Ok(bytes) => bytes,
         Err(diags) => {
             for d in &diags {
