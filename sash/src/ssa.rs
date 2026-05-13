@@ -333,6 +333,8 @@ pub struct SsaProgram {
     pub end_block: Option<BlockId>,
     /// DD#56: signals with EXIT disposition (check points inserted)
     pub exiting_signals: std::collections::HashSet<i64>,
+    /// DD#14: compound pipeline stage entry blocks (reachable roots)
+    pub compound_pipeline_blocks: Vec<BlockId>,
     next_block_id: usize,
 }
 
@@ -343,6 +345,7 @@ impl SsaProgram {
             entry: 0,
             end_block: None,
             exiting_signals: std::collections::HashSet::new(),
+            compound_pipeline_blocks: Vec::new(),
             next_block_id: 0,
         }
     }
@@ -394,6 +397,10 @@ impl SsaProgram {
     pub fn reachable(&self) -> std::collections::HashSet<BlockId> {
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![0usize];
+        // Also include compound pipeline blocks as roots
+        for &b in &self.compound_pipeline_blocks {
+            stack.push(b);
+        }
         while let Some(id) = stack.pop() {
             if !visited.insert(id) { continue; }
             if let Some(block) = self.blocks.get(&id) {

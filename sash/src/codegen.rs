@@ -945,6 +945,10 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
             match &expr.kind {
                 crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => { intern(module, s); }
                 crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => { for p in parts { intern_expr(module, intern, p); } }
+                crate::ir::ExprKind::Subscript { name, index } => {
+                    intern(module, name);
+                    intern_expr(module, intern, index);
+                }
                 _ => {}
             }
         }
@@ -1377,7 +1381,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                            test_result_var, exit_status_var, pipe_read_fd_var,
                            capture_saved_var, capture_pipe_var, func_constants,
                            &mut redirect_stack, end_cl_block, ssa_block,
-                           &program, ssa_id, saved_end_status_var);
+                           &program, ssa_id, saved_end_status_var, &cl_blocks);
             }
 
             // Emit terminator (unless block was already terminated by exit)
@@ -1463,6 +1467,7 @@ fn lower_inst(
     program: &crate::ssa::SsaProgram,
     ssa_id: usize,
     saved_end_status_var: Variable,
+    cl_blocks: &HashMap<usize, cranelift_codegen::ir::Block>,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -2521,6 +2526,12 @@ fn lower_inst(
                     let exit_ref2 = module.declare_func_in_func(externs.exit, builder.func);
                     builder.ins().call(exit_ref2, &[exit_code]);
                     builder.ins().trap(TrapCode::unwrap_user(1));
+                } else if name.starts_with("__compound_") {
+                    // DD#14: compound command as pipeline stage
+                    // Jump to the pre-lowered SSA blocks, which end with Return
+                    let compound_block_id: usize = name["__compound_".len()..].parse().unwrap();
+                    let compound_cl = cl_blocks[&compound_block_id];
+                    builder.ins().jump(compound_cl, &[]);
                 } else {
                 // Build argv and exec
                 let argc = 1 + args.len();

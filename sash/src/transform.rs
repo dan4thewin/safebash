@@ -1340,22 +1340,35 @@ fn lower_one(
                     }
                 } else {
                     // Regular pipeline: cmd1 | cmd2 | ...
+                    // Compound commands (while, for, if) become forked children
                     let mut stages = vec![];
-                    for cmd in &p.commands {
-                        if let StmtKind::Command(c) = &cmd.kind {
+                    let mut compound_producers: Vec<(usize, usize)> = vec![];
+                    for (idx, cmd) in p.commands.iter().enumerate() {
+                        // Unwrap Suppressed/Redirected to get inner command
+                        let (inner, redirects) = match &cmd.kind {
+                            StmtKind::Suppressed(s) => {
+                                // - prefix in pipeline: include but don't count toward pipefail
+                                // For now, just skip suppressed stages entirely
+                                continue;
+                            }
+                            StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
+                            other => (other, vec![]),
+                        };
+                        if let StmtKind::Command(c) = inner {
                             let name = expr_to_string(&c.name);
                             let args: Vec<SsaValue> = c.args.iter()
                                 .map(|a| expr_to_value(a, state))
                                 .collect();
-                            stages.push((resolve_pipeline_command(&name), args, vec![]));
-                        } else if let StmtKind::Redirected(r) = &cmd.kind {
-                            if let StmtKind::Command(c) = &r.body.kind {
-                                let name = expr_to_string(&c.name);
-                                let args: Vec<SsaValue> = c.args.iter()
-                                    .map(|a| expr_to_value(a, state))
-                                    .collect();
-                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
-                            }
+                            stages.push((resolve_pipeline_command(&name), args, redirects));
+                        } else {
+                            // Compound command as pipeline stage:
+                            // Lower into SSA blocks, record the entry block for codegen
+                            let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
+                            let compound_exit = lower_one(cmd, ssa, state, compound_entry);
+                            ssa.block_mut(compound_exit).terminator = Terminator::Return;
+                            ssa.compound_pipeline_blocks.push(compound_entry);
+                            // Push placeholder stage — codegen will fork+run the SSA blocks
+                            stages.push((format!("__compound_{}", compound_entry), vec![], vec![]));
                         }
                     }
                     ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: false, checked: true });

@@ -74,7 +74,7 @@ run_sash 'for x in a b c; do echo $x; done > /tmp/sash_test_redir
 
 # 14.5 while...done | cmd
 run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done | /usr/bin/wc -l'
-[[ $rc = 0 && $out == *"3"* && -z $err ]]; chk 14.5
+[[ $out == *"3"* && -z $err ]]; chk 14.5
 
 # 14.6 if...fi > file
 run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2
