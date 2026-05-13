@@ -1,5 +1,5 @@
 title: DD#23 — External Command Resolution
-status: designed
+status: partial
 
 Sash does not walk PATH at runtime. External commands are resolved to
 absolute paths at compile time.

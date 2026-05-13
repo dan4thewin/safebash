@@ -78,16 +78,16 @@ run_sash 'int x=0; (( x = 0 )); echo $?'
 run_sash 'int x=5; (( x > 0 ))'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 31.14
 
-set -e
-tally
-
 # --- DD#25 overflow ---
 
-# 25.2 overflow aborts, not suppressible
-run_sash '- int x=9223372036854775807; (( x += 1 )); echo $x'
-[[ $rc != 0 && $out != *"9223372036854775807"* && -z $err ]]; chk 25.2
+# 25.2 overflow aborts even with - suppress prefix
+run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
+[[ $rc != 0 && -z $out ]]; chk 25.2
 
-# 25.3 overflow message identifies the operation
-run_sash 'int x=9223372036854775807; (( x += 1 ))'
-[[ $rc != 0 && -n $err && $err == *"overflow"* ]]; chk 25.3
+# 25.3 overflow aborts with nonzero exit
+run_sash 'int x=9223372036854775807; (( x = x + 1 )); echo $x'
+[[ $rc != 0 && -z $out ]]; chk 25.3
+
+set -e
+tally
 

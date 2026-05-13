@@ -1,5 +1,5 @@
 title: DD#46 — reject top-level positional params in sash-native
-status: ready
+status: done
 depends: []
 gates: [46.1, 46.2, 46.4]
   - tests

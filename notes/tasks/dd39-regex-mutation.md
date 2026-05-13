@@ -1,5 +1,5 @@
 title: Regex mutation and substitution operators
-status: ready
+status: done
 severity: feature
 gates: [39.2, 39.3, 39.4]
 ---

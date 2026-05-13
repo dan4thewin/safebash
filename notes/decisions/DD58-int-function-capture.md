@@ -1,5 +1,5 @@
 title: DD#58 — Integer Function Capture Syntax
-status: decided
+status: implemented
 
 `-> int` functions return an integer via `return N`. Their return
 value is captured in arithmetic context via s-expression call syntax:

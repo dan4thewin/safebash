@@ -1,5 +1,5 @@
 title: DD#54 — Source replacement: sash-expand pipeline
-status: approved
+status: implemented
 
 `. ./file` and `source ./file` are rejected (SB4002). The runtime
 config-loading use case is served by an explicit pipeline:

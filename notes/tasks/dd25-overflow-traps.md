@@ -1,5 +1,5 @@
 title: DD#25 — implement arithmetic overflow traps
-status: ready
+status: done
 depends: []
 gates: [25.1, 25.2, 25.3]
 

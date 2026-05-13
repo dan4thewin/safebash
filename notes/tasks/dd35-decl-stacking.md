@@ -1,5 +1,5 @@
 title: Declaration stacking — local const int
-status: ready
+status: done
 severity: feature
 gates: [35.1, 35.2]
 ---

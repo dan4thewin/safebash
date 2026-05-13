@@ -1,5 +1,5 @@
 title: Local function scoping
-status: ready
+status: done
 severity: feature
 gates: [18.1, 18.2, 18.3, 18.4]
 ---

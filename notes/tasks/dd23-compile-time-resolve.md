@@ -1,5 +1,5 @@
 title: Compiler path resolution pass (bare name → absolute path)
-status: ready
+status: done
 severity: feature
 depends: []
 gates: [23.1, 23.2]

@@ -1,5 +1,5 @@
 title: sash-convert — pipeline integration test
-status: blocked
+status: done
 depends: dd57-convert-mechanical, dd57-convert-annotations
 severity: feature
 gates: [57.15b, 57.38, 57.41]

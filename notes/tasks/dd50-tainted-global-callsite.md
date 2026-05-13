@@ -1,5 +1,5 @@
 title: DD#50 — tainted global at function call site
-status: ready
+status: done
 severity: correctness
 gates: [50.1]
 ---

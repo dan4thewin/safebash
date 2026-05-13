@@ -1,5 +1,5 @@
 title: DD#21 — Error Suppression with - Prefix
-status: designed
+status: implemented
 
 `- cmd` suppresses failure (equivalent to `cd /tmp || true`).
 

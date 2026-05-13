@@ -1,5 +1,5 @@
 title: Compile-time regex validation for literal patterns
-status: ready
+status: done
 depends: []
 gates: [39.5, 39.6, 39.7, 39.8]
   - tests

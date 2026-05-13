@@ -1,5 +1,5 @@
 title: Pipeline and command substitution primitives
-status: ready
+status: done
 severity: correctness
 gates: [14.1, 14.2, 14.3]
 ---

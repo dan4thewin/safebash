@@ -1,5 +1,5 @@
 title: Sash-native subshell rejection — validator rule
-status: ready
+status: done
 depends: subshell-decomposition
 severity: correctness
 gates: [38.1]

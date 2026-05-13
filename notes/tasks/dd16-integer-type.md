@@ -1,5 +1,5 @@
 title: Integer type — machine-width, fn return type, no implicit conversion
-status: ready
+status: done
 severity: correctness
 gates: [16.1, 16.2, 16.3]
 ---

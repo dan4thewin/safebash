@@ -1,5 +1,5 @@
 title: DD#55 — Implicit Exit Checks and Error Handling Model
-status: designed
+status: implemented
 
 No `set -e` at runtime. The compiler inserts implicit exit checks on
 every operation that can fail at runtime. Failure = nonzero exit or

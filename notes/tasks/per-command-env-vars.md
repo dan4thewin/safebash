@@ -1,5 +1,5 @@
 title: Per-command env vars — delegate to /usr/bin/env
-status: ready
+status: done
 depends:
   - dd23-compile-time-resolve
 gates: [53.6]

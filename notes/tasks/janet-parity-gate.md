@@ -1,5 +1,5 @@
 title: Janet parity quality gate
-status: ready
+status: done
 severity: infrastructure
 gates: [15.1, 15.2]
 

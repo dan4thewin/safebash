@@ -1,5 +1,5 @@
 title: Implement mapfile -m for KEY=VALUE → map
-status: ready
+status: done
 severity: feature
 gates: [22.8, 22.9, 22.10, 22.11]
 ---

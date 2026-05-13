@@ -1,5 +1,5 @@
 title: Implement if-bless conditional form
-status: ready
+status: done
 severity: correctness
 gates: [24.9, 24.12, 24.13]
 

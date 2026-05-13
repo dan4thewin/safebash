@@ -1,5 +1,5 @@
 title: Case conversion operators ${var^^} and ${var,,}
-status: ready
+status: done
 severity: feature
 gates: [52.6a, 52.6b]
 ---

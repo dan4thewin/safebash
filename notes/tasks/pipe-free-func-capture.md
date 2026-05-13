@@ -1,5 +1,5 @@
 title: Pipe-free user-function capture
-status: ready
+status: done
 depends: []
 gates: [17.1, 17.2]
   - tests

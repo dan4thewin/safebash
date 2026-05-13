@@ -1,5 +1,5 @@
 title: Coerce bash command -v to [[ -x /path ]]
-status: ready
+status: done
 severity: feature
 depends:
   - dd23-compile-time-resolve

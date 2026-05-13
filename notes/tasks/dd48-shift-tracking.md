@@ -1,5 +1,5 @@
 title: Positional arity checking with shift tracking
-status: ready
+status: done
 severity: correctness
 gates: [48.1, 48.2]
 ---
