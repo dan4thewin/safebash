@@ -806,8 +806,9 @@ fn lower_one(
                 }
                 // Unsupported trap form — emit as regular command
                 let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                let resolved = resolve_pipeline_command(&name);
                 ssa.block_mut(block).insts.push(SsaInst::Command {
-                    name: name.clone(),
+                    name: resolved,
                     args,
                     redirects: vec![],
                     checked: true,
@@ -3357,12 +3358,20 @@ fn resolve_pipeline_command(name: &str) -> String {
     if matches!(name, "echo" | "true" | "false" | ":") {
         return name.to_string();
     }
-    // Builtins with known system paths
-    match name {
-        "printf" => "/usr/bin/printf".to_string(),
-        "pwd" => "/bin/pwd".to_string(),
-        _ => name.to_string(),
+    // DD#23: compile-time PATH resolution
+    resolve_command_path(name).unwrap_or_else(|| name.to_string())
+}
+
+/// DD#23: Search build host PATH for a command, return absolute path.
+fn resolve_command_path(name: &str) -> Option<String> {
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    for dir in path_var.split(':') {
+        let candidate = format!("{}/{}", dir, name);
+        if std::path::Path::new(&candidate).is_file() {
+            return Some(candidate);
+        }
     }
+    None
 }
 
 fn try_parse_sexpr(inner: &str, span: Span, state: &VersionState) -> Option<SsaValue> {

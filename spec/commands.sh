@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=13
+plan=16
 echo "1..$plan" >&3
 
 set +e
@@ -49,9 +49,21 @@ run_sash '. ./file.sh'
 run_sash 'source ./file.sh'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 54.1b
 
-set -e
-tally
+# --- DD#23 compile-time path resolution ---
 
+# 23.6 bare 'cat' resolved to absolute path
+run_sash 'echo hello | cat'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 23.6
+
+# 23.7 bare 'grep' resolved to absolute path
+run_sash 'echo hello | grep hello'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 23.7
+
+# 23.8 bare 'wc' resolved
+run_sash 'echo hello | wc -c'
+[[ $rc = 0 && -n $out && -z $err ]]; chk 23.8
+
+# --- DD#14 compound redirects ---
 # --- DD#14 compound redirects ---
 
 # 14.4 for...done > file
@@ -70,3 +82,5 @@ run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2
 /bin/rm /tmp/sash_test_redir2'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 14.6
 
+set -e
+tally

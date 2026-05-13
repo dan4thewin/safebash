@@ -112,6 +112,17 @@ impl Rule for CommandResolution {
             }
         }
 
+        // DD#23: try compile-time PATH resolution
+        if !name.contains('/') {
+            let path_var = std::env::var("PATH").unwrap_or_default();
+            for dir in path_var.split(':') {
+                let candidate = format!("{}/{}", dir, name);
+                if std::path::Path::new(&candidate).is_file() {
+                    return vec![]; // resolved — transform will substitute
+                }
+            }
+        }
+
         vec![Diagnostic::error(
             name_node,
             "SB5011",
