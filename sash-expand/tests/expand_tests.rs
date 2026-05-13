@@ -83,6 +83,37 @@ fn blank_lines_and_comments() {
     assert!(!out.contains("#"));
 }
 
+#[test]
+fn strip_suffix_longest() {
+    assert_eq!(expand("A=foo.tar.gz\nB=${A%%.*}\n"), "A=foo.tar.gz\nB=foo\n");
+}
+
+#[test]
+fn strip_suffix_shortest() {
+    assert_eq!(expand("A=foo.tar.gz\nB=${A%.*}\n"), "A=foo.tar.gz\nB=foo.tar\n");
+}
+
+#[test]
+fn strip_prefix_longest() {
+    assert_eq!(expand("A=/home/user/file\nB=${A##*/}\n"), "A=/home/user/file\nB=file\n");
+}
+
+#[test]
+fn strip_prefix_shortest() {
+    assert_eq!(expand("A=/home/user/file\nB=${A#*/}\n"), "A=/home/user/file\nB=home/user/file\n");
+}
+
+#[test]
+fn default_when_set() {
+    // default not used when var is set
+    assert_eq!(expand("A=real\nB=${A:-fallback}\n"), "A=real\nB=real\n");
+}
+
+#[test]
+fn alternate_when_unset() {
+    assert_eq!(expand("B=${MISSING:+alt}\n"), "B=\n");
+}
+
 // --- Rejections ---
 
 #[test]
@@ -95,4 +126,16 @@ fn reject_command_substitution() {
 fn reject_backtick() {
     let err = expand_fails("X=`cmd`\n");
     assert!(err.contains("backtick") || err.contains("command"), "got: {}", err);
+}
+
+#[test]
+fn reject_indirect() {
+    let err = expand_fails("A=hello\nB=${!A}\n");
+    assert!(err.contains("indirect") || err.contains("!"), "got: {}", err);
+}
+
+#[test]
+fn reject_arithmetic() {
+    let err = expand_fails("X=$((1+2))\n");
+    assert!(err.contains("arithmetic") || err.contains("command"), "got: {}", err);
 }
