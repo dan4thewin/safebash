@@ -411,8 +411,8 @@ pub fn cli_main(args: Vec<String>) {
     );
 
     let ld = Command::new("ld")
-        .args(["-o", &output, &obj_path, &rt_path, "-static", "--gc-sections",
-               "-z", "noexecstack"])
+        .args([&format!("-o{}", output), &obj_path, &rt_path, "-static", "--gc-sections",
+               "-z", "noexecstack", "--strip-debug"])
         .status()
         .expect("ld failed");
 
