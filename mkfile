@@ -29,3 +29,19 @@ clean:V:
 	(cd $RT && cargo clean)
 	(cd $SASH && cargo clean)
 	(cd $CONVERT && cargo clean)
+
+fmt:V:
+	(cd $SASH && cargo fmt --check)
+	(cd $CONVERT && cargo fmt --check)
+
+lint:V:
+	(cd $SASH && cargo clippy -- -D warnings)
+	(cd $CONVERT && cargo clippy -- -D warnings)
+
+coverage:V:
+	(cd $SASH && cargo llvm-cov --test e2e_tests --test oracle_tests --test taint_spec_tests --test janet_tests --test codegen_tests --test brush_compat_tests --ignore-run-fail)
+
+complexity:V:
+	bash contrib/cyclo.sh sash/src --top 20
+
+check:V: lint test complexity
