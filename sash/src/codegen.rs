@@ -91,7 +91,6 @@ struct ExternFuncs {
     concat: cranelift_module::FuncId,
     atoi: cranelift_module::FuncId,
     itoa: cranelift_module::FuncId,
-    setenv: cranelift_module::FuncId,
     join_args: cranelift_module::FuncId,
     assoc_lookup: cranelift_module::FuncId,
     strcmp: cranelift_module::FuncId,
@@ -170,7 +169,24 @@ pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8
 
     // Try to constant-fold elidable function calls
     let func_constants = fold_function_outputs(&ssa);
-    Ok(compile_ssa(&ssa, &func_constants, Some(bash_source), enable_trace))
+    
+    // Catch ICE panics in codegen and convert to clean error messages
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        compile_ssa(&ssa, &func_constants, Some(bash_source), enable_trace)
+    }));
+    match result {
+        Ok(obj) => Ok(obj),
+        Err(payload) => {
+            let msg = if let Some(s) = payload.downcast_ref::<String>() {
+                s.clone()
+            } else if let Some(s) = payload.downcast_ref::<&str>() {
+                s.to_string()
+            } else {
+                "internal compiler error in codegen".to_string()
+            };
+            Err(vec![msg])
+        }
+    }
 }
 
 /// Try to evaluate function bodies at compile time. If a function's
@@ -461,15 +477,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
     itoa_sig.returns.push(AbiParam::new(I64)); // buf ptr
     let itoa_func = module.declare_function("sash_itoa", Linkage::Import, &itoa_sig)
         .expect("declare sash_itoa");
-
-    // sash_setenv(name_ptr, name_len, val_ptr, val_len)
-    let mut setenv_sig = Signature::new(CallConv::SystemV);
-    setenv_sig.params.push(AbiParam::new(I64)); // name_ptr
-    setenv_sig.params.push(AbiParam::new(I64)); // name_len
-    setenv_sig.params.push(AbiParam::new(I64)); // val_ptr
-    setenv_sig.params.push(AbiParam::new(I64)); // val_len
-    let setenv_func = module.declare_function("sash_setenv", Linkage::Import, &setenv_sig)
-        .expect("declare sash_setenv");
 
     // sash_join_args(argv, argc, sep_ptr, sep_len, out_len_ptr) -> ptr
     let mut join_args_sig = Signature::new(CallConv::SystemV);
@@ -809,7 +816,6 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
         concat: concat_func,
         atoi: atoi_func,
         itoa: itoa_func,
-        setenv: setenv_func,
         join_args: join_args_func,
         assoc_lookup: assoc_lookup_func,
         regex_match: regex_match_func,
@@ -986,10 +992,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                 SsaInst::Test(test_expr) => {
                     intern_test_expr(&mut module, &mut intern, test_expr);
                 }
-                SsaInst::Export { value, name, .. } => {
-                    intern_value(&mut module, &mut intern, value);
-                    intern(&mut module, name);
-                }
+
                 SsaInst::Pipeline { stages, .. } => {
                     for (name, args, redirects) in stages {
                         intern(&mut module, name);
@@ -1111,7 +1114,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                         }
                     }
                 }
-                if let SsaInst::Assign { target, .. } | SsaInst::Export { target, .. } | SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } = inst {
+                if let SsaInst::Assign { target, .. } | SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } = inst {
                     let base = target.name.clone();
                     if !base_vars.contains_key(&base) {
                         let sv = if target.var_type == crate::ir::VarType::Int {
@@ -1153,7 +1156,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
                         }
                     }
                 }
-                if let SsaInst::Assign { target, .. } | SsaInst::Export { target, .. } | SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } = inst {
+                if let SsaInst::Assign { target, .. } | SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } = inst {
                     let key = target.display();
                     if !vars.contains_key(&key) {
                         let sv = base_vars[&target.name].clone();
@@ -1228,7 +1231,7 @@ pub fn compile_ssa(program: &SsaProgram, func_constants: &HashMap<String, String
             for block in program.blocks.values() {
                 for inst in &block.insts {
                     match inst {
-                        SsaInst::Assign { value, .. } | SsaInst::Export { value, .. } => scan_value_for_vars(value, &mut positional_refs),
+                        SsaInst::Assign { value, .. } => scan_value_for_vars(value, &mut positional_refs),
                         SsaInst::Command { args, redirects, .. } => {
                             for a in args { scan_value_for_vars(a, &mut positional_refs); }
                             for r in redirects { scan_redirect_for_vars(&r.target, &mut positional_refs); }
@@ -2404,20 +2407,6 @@ fn lower_inst(
                 builder.def_var(sv.str_ptr(), ptr);
                 builder.def_var(sv.str_len(), len);
             }
-        }
-        SsaInst::Export { target, value, name } => {
-            // First assign the value (same as Assign)
-            let (ptr, len) = lower_value(value, builder, module, vars, literals, func_constants, externs, Some(exit_status_var));
-            let sv = &vars[&target.display()];
-            builder.def_var(sv.str_ptr(), ptr);
-            builder.def_var(sv.str_len(), len);
-            // Then call sash_setenv to push to environment
-            let name_id = literals[name];
-            let name_gv = module.declare_data_in_func(name_id, builder.func);
-            let name_ptr = builder.ins().global_value(I64, name_gv);
-            let name_len = builder.ins().iconst(I64, name.len() as i64);
-            let setenv_ref = module.declare_func_in_func(externs.setenv, builder.func);
-            builder.ins().call(setenv_ref, &[name_ptr, name_len, ptr, len]);
         }
         SsaInst::Test(test_expr) => {
             let result = lower_test_expr(test_expr, builder, module, vars, literals, externs, Some(exit_status_var));

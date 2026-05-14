@@ -1,53 +1,68 @@
 ---
 title: Status
-modified: 2026-05-11
+modified: 2026-05-14
 ---
 
 ## Current branch: split-converter
 
-## Spec status: 236 passing / 39 failing (spec.db)
+## Spec status: 282 passing / 3 failing (spec.db)
 
-### Session 2026-05-11 — completed
+### Session 2026-05-14 — completed
 
-**DD#42 (6/6): getenv/argv/argc builtins**
-- Added `argv` to command_resolution known keywords
-- `run_sash` now passes program args to compiled binary
-- Out-of-range `$(argv N)` aborts (like integer overflow)
-- Runtime: `sash_argv_get` with bounds check and panic message
+**Cleanup: Remove SsaInst::Export dead code**
+- Removed `SsaInst::Export` variant from SSA, codegen, taint, transform
+- Removed `sash_setenv` from runtime (sash-rt)
+- Removed `export_basic` and `export_visible_to_child` tests (dead code)
+- Validator still rejects `export` (SB5001) — that's the gate
 
-**DD#56 (15/15): END block + signal model**
-- END block preprocessor (`END {` → `fn __sash_end__ {`)
-- Dedicated end_block in SSA, all exit paths goto it
-- DD#55 abort blocks jump to end_block (END always fires)
-- `exit N` in END overrides exit status
-- Commands in END block are unchecked (cleanup must not abort)
-- `signal N IGN/DFL/FLAG/EXIT` builtin
-- `sash_signum` global + `sash_signal_flag` runtime handler
-- `$(signum)` keyword reads signal number
-- Signal EXIT check points after external commands
-- Exit code: 128+signum on signal-triggered shutdown
+**UX: Convert codegen panics to diagnostics**
+- Wrapped `compile_ssa` in `catch_unwind` — ICE panics now produce
+  clean error messages instead of Rust stacktraces
+- 36 ICE panics remain as safety nets (legitimate internal errors if
+  earlier passes have bugs), but users see clean messages
 
-**DD#30 (14/14): strict type separation**
-- Wired type_check() into compilation pipeline (was dead code)
-- SB4030: reject `int y=$x` when x is string-typed
-- SB5019: reject -gt/-lt/-ge/-le/-eq/-ne in [[ ]] (use (( )))
-- SB4030: reject `unset x` on scalar variables
-- Exempt declarations/unset from SB5006 glob check (map [key]=val)
-- Track indexed arrays in collections set for unset semantics
-- `unset arr` creates new empty table (clears collection)
-- Register signum/argc/status/getpid/getppid as int-returning keywords
-- Fix misplaced tally in types.sh and wordsplit.sh
+**Feature: DD#23 --manifest (dependency manifest)**
+- `sash --manifest script.sh` lists all external command dependencies
+- Resolves bare command names via PATH (same as compilation)
+- Outputs sorted absolute paths, one per line
+
+**Feature: DD#23 --sysroot (cross-compilation path resolution)**
+- `sash --sysroot=/mnt/target script.sh` resolves commands against
+  target filesystem instead of build host
+- Each PATH component checked with sysroot prepended
+- Affects validator, transform, and --manifest
+
+**Feature: DD#23 squashfs sysroot**
+- `sash --sysroot=rootfs.squashfs script.sh` resolves commands against
+  a squashfs image without mounting it
+- Uses `unsquashfs -l` to list files, caches result
+- Combined with dm-verity: guarantees compiled binary's dependencies
+  match the verified filesystem
+
+**Docs: DD#57 two-tool model**
+- Updated README.md for sash + sash-convert split
+- Updated GUIDE.md with Two-Tool Model section and repo structure
+- Updated SUBSET.md coercions section
+
+**Stale task cleanup**
+- Marked done: dd32-runtime-trace, dd57-strip-bash, regex-counted-repetition
+- Marked done: compound-redirects (specs already passing)
+- Unblocked: dd57-docs (blocker completed)
 
 ### Test suite (no regressions)
-- e2e: 136 pass / 2 fail (brush compat)
-- oracle: 58 / 1 (pipeline grep)
+- e2e: 124 / 0
+- oracle: 59 / 0
 - taint: 42 / 0
-- codegen: 218 pass / 48 fail (pre-existing pipeline/cmdsub)
+- codegen: 221 pass / 43 fail (pre-existing pipeline/cmdsub)
+- spec: 282 pass / 3 fail (DD#56 signal tests)
 
-### Next priorities
+### Remaining tasks
 
-1. DD#33 array/map type enforcement (9 gates)
-2. DD#18 local function scoping (4 gates)
-3. DD#36 decimal conversion (4 gates)
-4. DD#39 regex (8 gates)
-5. DD#46 reject top-level positionals (3 gates)
+**Ready:**
+- brush-rerun — Brush suite re-run and triage
+- fuzz-validator — Fuzz target for validator
+- improve-agent-prompt — Improve autonomous agent prompt
+- dd23-sysroot-squashfs — done (just completed)
+
+**Deferred:**
+- audit-run3 — Adversarial audit run-3 (schedule after significant new code)

@@ -675,53 +675,6 @@ pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// sash_setenv
-// ═══════════════════════════════════════════════════════════════
-
-#[no_mangle]
-pub unsafe extern "C" fn sash_setenv(
-    name_ptr: *const u8, name_len: i64,
-    val_ptr: *const u8, val_len: i64,
-) {
-    let nlen = name_len as usize;
-    let vlen = val_len as usize;
-    let entry_len = nlen + 1 + vlen;
-    let entry = sash_alloc(entry_len + 1);
-    core::ptr::copy_nonoverlapping(name_ptr, entry, nlen);
-    *entry.add(nlen) = b'=';
-    core::ptr::copy_nonoverlapping(val_ptr, entry.add(nlen + 1), vlen);
-    *entry.add(entry_len) = 0;
-
-    let name_slice = core::slice::from_raw_parts(name_ptr, nlen);
-
-    let envp = sash_envp;
-    if envp.is_null() { return; }
-    let mut count = 0usize;
-    let mut found: Option<usize> = None;
-    loop {
-        let e = *envp.add(count);
-        if e.is_null() { break; }
-        let elen = strlen(e);
-        let eslice = core::slice::from_raw_parts(e, elen);
-        if found.is_none() && elen > nlen && eslice[nlen] == b'=' && &eslice[..nlen] == name_slice {
-            found = Some(count);
-        }
-        count += 1;
-    }
-
-    if let Some(idx) = found {
-        let envp_mut = envp as *mut *const u8;
-        *envp_mut.add(idx) = entry;
-    } else {
-        let new_envp = sash_alloc((count + 2) * 8) as *mut *const u8;
-        core::ptr::copy_nonoverlapping(envp, new_envp, count);
-        *new_envp.add(count) = entry;
-        *new_envp.add(count + 1) = core::ptr::null();
-        sash_envp = new_envp;
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
 // sash_join_args
 // ═══════════════════════════════════════════════════════════════
 

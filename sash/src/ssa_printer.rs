@@ -40,10 +40,7 @@ pub fn print_ssa(program: &SsaProgram) -> String {
                     out.push('\n');
                 }
                 SsaInst::Phi(_) => {} // printed above
-                SsaInst::Export { target, value, name } => {
-                    out.push_str(&format!("  export {} {} = {}\n",
-                        name, target.display(), print_value(value)));
-                }
+
                 SsaInst::Test(test_expr) => {
                     out.push_str(&format!("  test {:?}\n", test_expr));
                 }

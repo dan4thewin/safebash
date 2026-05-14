@@ -306,7 +306,8 @@ stores a tainted element; subsequent reads of that element (including
 
 ## Coercions
 
-Coercions are silent transformations visible via `--emit-source`.
+Coercions are transformations applied by `sash-convert` when
+converting Bash to sash-native source.
 
 | Input | Output |
 |-------|--------|

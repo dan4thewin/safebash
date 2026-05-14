@@ -71,12 +71,7 @@ pub enum SsaInst {
     /// Test expression from [[ ]]. Preserved through SSA so codegen
     /// can emit inline comparisons instead of shelling out.
     Test(crate::ir::TestExpr),
-    /// export VAR=value — assign + push to environment
-    Export {
-        target: VarRef,
-        value: SsaValue,
-        name: String,  // original bash variable name (for setenv)
-    },
+
     /// phi node
     Phi(PhiNode),
     /// read -r line: reads one line from fd, assigns to target, sets __read_eof

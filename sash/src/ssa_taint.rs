@@ -115,10 +115,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                     // already rejected it. Making this clean avoids false ICEs
                     // for user-func captures which are the common case.
                 }
-                SsaInst::Export { target, value, .. } => {
-                    let t = value_is_tainted(value, &taint, &user_functions);
-                    taint.insert(var_key(target), t);
-                }
+
                 // Instructions that don't define a VarRef
                 SsaInst::Command { .. }
                 | SsaInst::Test(_)
@@ -165,10 +162,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                     check_value_use(value, &taint, &mut errors,
                         &format!("array append to '{}'", array));
                 }
-                SsaInst::Export { value, name, .. } => {
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("export of '{}'", name));
-                }
+
                 // Assign, Bless, ReadLine, etc. — definitions, not uses
                 _ => {}
             }

@@ -1,5 +1,5 @@
 title: sash compiler — strip bash concerns
-status: ready
+status: done
 severity: feature
 gates: [57.42a, 57.42b, 57.43, 57.44, 57.45, 57.46]
 ---

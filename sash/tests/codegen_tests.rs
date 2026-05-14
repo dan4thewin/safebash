@@ -197,16 +197,6 @@ echo "$#"
 }
 
 #[test]
-fn export_basic() {
-    // export sets env var visible to child processes
-    let src = r#"export FOO="hello"
-echo "$FOO"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "hello\n");
-}
-
-#[test]
 fn dollar_at_echo() {
     let src = r#"echo "$@"
 "#;
@@ -229,16 +219,6 @@ echo "$@"
 "#;
     let (out, _) = run_bash_native(src, &["a", "b", "c"]);
     assert_eq!(out, "b c\n");
-}
-
-#[test]
-fn export_visible_to_child() {
-    // export a var, run a child that reads it from env
-    let src = r#"export SASH_TEST_VAR="works"
-echo "$SASH_TEST_VAR"
-"#;
-    let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, "works\n");
 }
 
 #[test]

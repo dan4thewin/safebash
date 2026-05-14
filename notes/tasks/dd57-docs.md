@@ -1,6 +1,6 @@
 title: DD#57 split — docs and assessment
-status: blocked
-depends: dd57-convert-pipeline, dd57-strip-bash
+status: done
+depends: []
 severity: docs
 ---
 

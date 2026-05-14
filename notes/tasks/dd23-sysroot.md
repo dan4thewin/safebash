@@ -1,5 +1,5 @@
 title: DD#23 — --sysroot flag for cross-compilation path resolution
-status: ready
+status: done
 severity: feature
 depends: []
 gates: []

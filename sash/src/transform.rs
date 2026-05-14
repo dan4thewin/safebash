@@ -434,15 +434,6 @@ fn lower_one(
                     && !is_array && !is_assoc;
                 if is_bare && state.lookup(&a.name).version > 0 {
                     // Variable already defined — bare declare is a no-op
-                    // But bare export still needs to export the existing value
-                    if d.keyword == crate::ir::DeclKeyword::Export {
-                        let var_ref = state.lookup(&a.name);
-                        ssa.block_mut(block).insts.push(SsaInst::Export {
-                            target: var_ref.clone(),
-                            value: SsaValue::Var(var_ref),
-                            name: a.name.clone(),
-                        });
-                    }
                     continue;
                 }
                 let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
@@ -471,13 +462,7 @@ fn lower_one(
                     target: target.clone(),
                     value: val.clone(),
                 });
-                if d.keyword == crate::ir::DeclKeyword::Export || d.flags.contains(&"-x".to_string()) {
-                    ssa.block_mut(block).insts.push(SsaInst::Export {
-                        target,
-                        value: val,
-                        name: a.name.clone(),
-                    });
-                }
+
                 if d.keyword == crate::ir::DeclKeyword::Readonly {
                     state.readonly_vars.insert(a.name.clone());
                 }
@@ -3375,13 +3360,20 @@ fn resolve_pipeline_command(name: &str) -> String {
     resolve_command_path(name).unwrap_or_else(|| name.to_string())
 }
 
-/// DD#23: Search build host PATH for a command, return absolute path.
+/// DD#23: Search PATH for a command, return absolute path.
+/// Respects --sysroot for cross-compilation.
 fn resolve_command_path(name: &str) -> Option<String> {
+    let sysroot = crate::get_sysroot();
     let path_var = std::env::var("PATH").unwrap_or_default();
     for dir in path_var.split(':') {
-        let candidate = format!("{}/{}", dir, name);
-        if std::path::Path::new(&candidate).is_file() {
-            return Some(candidate);
+        let target_path = format!("{}/{}", dir, name);
+        let exists = if let Some(ref sr) = sysroot {
+            crate::sysroot_file_exists(sr, &target_path)
+        } else {
+            std::path::Path::new(&target_path).is_file()
+        };
+        if exists {
+            return Some(target_path);
         }
     }
     None

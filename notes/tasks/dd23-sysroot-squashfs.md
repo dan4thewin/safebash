@@ -1,5 +1,5 @@
 title: DD#23 — squashfs sysroot for verified path resolution
-status: ready
+status: done
 severity: feature
 depends: [dd23-sysroot]
 gates: []

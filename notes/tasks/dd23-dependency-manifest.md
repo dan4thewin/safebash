@@ -1,5 +1,5 @@
 title: DD#23 — dependency manifest for resolved external commands
-status: ready
+status: done
 severity: feature
 depends: []
 gates: []

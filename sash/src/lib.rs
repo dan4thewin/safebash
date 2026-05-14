@@ -202,6 +202,52 @@ use std::sync::Mutex;
 use std::collections::HashMap;
 
 static ARITH_MAP: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
+static SYSROOT: Mutex<Option<String>> = Mutex::new(None);
+
+/// Set the sysroot path for cross-compilation command resolution.
+pub(crate) fn set_sysroot(path: String) {
+    *SYSROOT.lock().unwrap() = Some(path);
+}
+
+/// Get the current sysroot path (if set).
+pub(crate) fn get_sysroot() -> Option<String> {
+    SYSROOT.lock().unwrap().clone()
+}
+
+/// Cache of squashfs file listings (path → set of files)
+static SQUASHFS_CACHE: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
+
+/// Check if a path exists in the sysroot. Supports both directory sysroots
+/// and .squashfs image files (via unsquashfs -l).
+pub(crate) fn sysroot_file_exists(sysroot: &str, path: &str) -> bool {
+    if sysroot.ends_with(".squashfs") || sysroot.ends_with(".sqsh") {
+        let mut cache = SQUASHFS_CACHE.lock().unwrap();
+        if cache.is_none() {
+            // Populate cache from unsquashfs -l
+            let output = std::process::Command::new("unsquashfs")
+                .args(["-l", "-no-progress", sysroot])
+                .output();
+            let files: std::collections::HashSet<String> = match output {
+                Ok(out) => {
+                    String::from_utf8_lossy(&out.stdout)
+                        .lines()
+                        .filter_map(|line| {
+                            // unsquashfs -l output: "squashfs-root/usr/bin/cat"
+                            line.strip_prefix("squashfs-root")
+                                .map(|p| p.to_string())
+                        })
+                        .collect()
+                }
+                Err(_) => std::collections::HashSet::new(),
+            };
+            *cache = Some(files);
+        }
+        cache.as_ref().unwrap().contains(path)
+    } else {
+        let full_path = format!("{}{}", sysroot, path);
+        std::path::Path::new(&full_path).is_file()
+    }
+}
 
 /// Store the arithmetic placeholder map for the current compilation.
 pub(crate) fn set_arith_map(map: HashMap<String, String>) {
@@ -217,7 +263,7 @@ use std::process::Command;
 
 pub fn cli_main(args: Vec<String>) {
     if args.len() < 2 {
-        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--extract <binary>]");
+        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--manifest] [--extract <binary>]");
         std::process::exit(1);
     }
 
@@ -296,6 +342,13 @@ pub fn cli_main(args: Vec<String>) {
     let (source, arith_map) = preprocess_arithmetic(&source);
     set_arith_map(arith_map);
 
+    // DD#23: --sysroot=<path> for cross-compilation path resolution
+    for flag in &flags {
+        if let Some(path) = flag.strip_prefix("--sysroot=") {
+            set_sysroot(path.to_string());
+        }
+    }
+
     // DD#56: preprocess END { ... } → fn __sash_end__ { ... }
     let source = preprocess_end_block(&source);
 
@@ -353,6 +406,58 @@ pub fn cli_main(args: Vec<String>) {
         let (ssa, _diags) = transform::ir_to_ssa(&program);
         let ssa_text = ssa_printer::print_ssa(&ssa);
         print!("{}", ssa_text);
+        return;
+    }
+    if flags.contains(&"--manifest") {
+        let type_map = type_check::infer_types(&program);
+        let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
+        let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+        let builtins: std::collections::HashSet<&str> = ["echo", "true", "false", ":", "exit",
+            "cd", "pwd", "wait", "shift", "read", "exec", "command", "[[",
+            "__redirect_push", "__redirect_pop", "__store_bg_pid", "__subshell_wait",
+            "__table_delete", "printf", "signal",
+        ].iter().copied().collect();
+        let path_var = std::env::var("PATH").unwrap_or_default();
+        let sysroot = get_sysroot();
+        let resolve = |name: &str| -> Option<String> {
+            if name.starts_with('/') {
+                return Some(name.to_string());
+            }
+            if builtins.contains(name) {
+                return None;
+            }
+            for dir in path_var.split(':') {
+                let target_path = format!("{}/{}", dir, name);
+                let exists = if let Some(ref sr) = sysroot {
+                    crate::sysroot_file_exists(sr, &target_path)
+                } else {
+                    std::path::Path::new(&target_path).is_file()
+                };
+                if exists {
+                    return Some(target_path);
+                }
+            }
+            Some(name.to_string()) // unresolved — still a dependency
+        };
+        for (_, block) in &ssa.blocks {
+            for inst in &block.insts {
+                if let ssa::SsaInst::Command { name, .. } = inst {
+                    if let Some(path) = resolve(name) {
+                        deps.insert(path);
+                    }
+                }
+                if let ssa::SsaInst::Pipeline { stages, .. } = inst {
+                    for (name, _, _) in stages {
+                        if let Some(path) = resolve(name) {
+                            deps.insert(path);
+                        }
+                    }
+                }
+            }
+        }
+        for dep in &deps {
+            println!("{}", dep);
+        }
         return;
     }
 

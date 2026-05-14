@@ -112,12 +112,18 @@ impl Rule for CommandResolution {
             }
         }
 
-        // DD#23: try compile-time PATH resolution
+        // DD#23: try compile-time PATH resolution (respects --sysroot)
         if !name.contains('/') {
+            let sysroot = crate::get_sysroot();
             let path_var = std::env::var("PATH").unwrap_or_default();
             for dir in path_var.split(':') {
-                let candidate = format!("{}/{}", dir, name);
-                if std::path::Path::new(&candidate).is_file() {
+                let target_path = format!("{}/{}", dir, name);
+                let exists = if let Some(ref sr) = sysroot {
+                    crate::sysroot_file_exists(sr, &target_path)
+                } else {
+                    std::path::Path::new(&target_path).is_file()
+                };
+                if exists {
                     return vec![]; // resolved — transform will substitute
                 }
             }

@@ -1,5 +1,5 @@
 title: Compound command redirects
-status: ready
+status: done
 severity: feature
 gates: [14.4, 14.5, 14.6]
 ---
