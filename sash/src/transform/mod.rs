@@ -17,6 +17,7 @@ mod helpers;
 mod pipelines;
 mod resolution;
 mod statements;
+mod stmt_handlers;
 
 pub use self::entry::ir_to_ssa;
 pub use self::entry::ir_to_ssa_typed;
