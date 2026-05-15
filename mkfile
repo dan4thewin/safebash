@@ -38,8 +38,16 @@ lint:V:
 	(cd $SASH && cargo clippy -- -D warnings)
 	(cd $CONVERT && cargo clippy -- -D warnings)
 
-coverage:V:
-	(cd $SASH && cargo llvm-cov --test e2e_tests --test oracle_tests --test taint_spec_tests --test janet_tests --test codegen_tests --test brush_compat_tests --ignore-run-fail)
+coverage:V: build
+	(cd $SASH && cargo llvm-cov clean --workspace) >/dev/null 2>&1
+	(cd $SASH && cargo llvm-cov --no-report --release \
+		--test e2e_tests --test oracle_tests --test taint_spec_tests \
+		--test janet_tests --test codegen_tests --test brush_compat_tests \
+		--ignore-run-fail) 2>&1 | tail -1
+	LLVM_PROFILE_FILE="`pwd`/target/llvm-cov-target/spec-%p-%m.profraw" \
+		PATH="`pwd`/target/llvm-cov-target/release:$$PATH" \
+		bash spec/run.sh >/dev/null 2>&1
+	(cd $SASH && cargo llvm-cov report --release)
 
 complexity:V:
 	bash contrib/cyclo.sh sash/src --top 20
