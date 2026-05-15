@@ -145,3 +145,16 @@ pub(super) struct InstCtx<'a> {
     pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
     pub(super) trace: bool,
 }
+
+/// Per-function compilation state, built during variable allocation.
+pub(super) struct FuncState {
+    pub(super) cl_blocks: std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
+    pub(super) vars: std::collections::HashMap<String, VarSlot>,
+    pub(super) test_result_var: cranelift_frontend::Variable,
+    pub(super) exit_status_var: cranelift_frontend::Variable,
+    pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
+    pub(super) capture_saved_var: cranelift_frontend::Variable,
+    pub(super) capture_pipe_var: cranelift_frontend::Variable,
+    pub(super) saved_end_status_var: cranelift_frontend::Variable,
+    pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
+}
