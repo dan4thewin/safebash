@@ -6,6 +6,7 @@
 
 mod arithmetic;
 mod commands;
+mod dispatch;
 mod entry;
 mod inst_handlers;
 mod redirects;
