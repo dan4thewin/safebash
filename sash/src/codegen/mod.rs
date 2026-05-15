@@ -13,6 +13,7 @@ mod redirects;
 mod setup;
 mod tests;
 mod types;
+mod value_handlers;
 mod values;
 
 pub use entry::compile_ssa;
