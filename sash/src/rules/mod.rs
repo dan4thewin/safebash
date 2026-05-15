@@ -1,3 +1,14 @@
+//! Validation rules — one module per rejected construct.
+//!
+//! SECURITY: Each rule enforces one aspect of the safe subset.
+//! Together they ensure that only safe-subset constructs survive
+//! to the lowering phase. A reviewer should verify:
+//! 1. Every unsafe Bash construct has a corresponding rule
+//! 2. Rules reject on the CST structure, not string matching
+//! 3. No rule has an early-return path that silently passes
+//!
+//! Rule codes: SB4xxx = IR-level, SB5xxx = CST-level
+
 pub mod arith_expr_mutation;
 pub mod command_resolution;
 pub mod dollar_question;

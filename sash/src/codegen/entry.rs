@@ -27,122 +27,16 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 use crate::ir::TestExpr;
 use crate::ssa::*;
 
-#[derive(Debug, Clone, Copy)]
-enum VarSlot {
-    Str { ptr: Variable, len: Variable },
-    Int(Variable),
-}
+use super::types::{ExternFuncs, VarSlot};
 
-impl VarSlot {
-    #[allow(dead_code)]
-    fn as_str(&self) -> (&Variable, &Variable) {
-        match self {
-            VarSlot::Str { ptr, len } => (ptr, len),
-            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
-        }
-    }
-    fn str_ptr(&self) -> Variable {
-        match self {
-            VarSlot::Str { ptr, .. } => *ptr,
-            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
-        }
-    }
-    fn str_len(&self) -> Variable {
-        match self {
-            VarSlot::Str { ptr: _, len } => *len,
-            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
-        }
-    }
-    fn as_int(&self) -> &Variable {
-        match self {
-            VarSlot::Int(v) => v,
-            VarSlot::Str { .. } => panic!("ICE: expected int var, got string"),
-        }
-    }
-    fn is_int(&self) -> bool {
-        matches!(self, VarSlot::Int(_))
-    }
-}
-
-#[allow(dead_code)]
-struct ExternFuncs {
-    write: cranelift_module::FuncId,
-    exit: cranelift_module::FuncId,
-    run: cranelift_module::FuncId,
-    getenv: cranelift_module::FuncId,
-    #[allow(dead_code)]
-    capture: cranelift_module::FuncId,
-    strlen: cranelift_module::FuncId,
-    strip_suffix: cranelift_module::FuncId,
-    strip_prefix: cranelift_module::FuncId,
-    default_value: cranelift_module::FuncId,
-    // Composable process primitives (Design Decision #14)
-    fork: cranelift_module::FuncId,
-    exec: cranelift_module::FuncId,
-    wait: cranelift_module::FuncId,
-    pipe: cranelift_module::FuncId,
-    close: cranelift_module::FuncId,
-    dup2: cranelift_module::FuncId,
-    dup: cranelift_module::FuncId,
-    redirect: cranelift_module::FuncId,
-    redirect_s: cranelift_module::FuncId,
-    read: cranelift_module::FuncId,
-    alloc: cranelift_module::FuncId,
-    concat: cranelift_module::FuncId,
-    atoi: cranelift_module::FuncId,
-    itoa: cranelift_module::FuncId,
-    join_args: cranelift_module::FuncId,
-    assoc_lookup: cranelift_module::FuncId,
-    strcmp: cranelift_module::FuncId,
-    regex_match: cranelift_module::FuncId,
-    regex_replace: cranelift_module::FuncId,
-    table_new: cranelift_module::FuncId,
-    table_set: cranelift_module::FuncId,
-    table_get: cranelift_module::FuncId,
-    table_len: cranelift_module::FuncId,
-    table_value: cranelift_module::FuncId,
-    table_key: cranelift_module::FuncId,
-    table_delete: cranelift_module::FuncId,
-    read_line: cranelift_module::FuncId,
-    read_delim: cranelift_module::FuncId,
-    splice_argv: cranelift_module::FuncId,
-    file_test: cranelift_module::FuncId,
-    pow: cranelift_module::FuncId,
-    substring: cranelift_module::FuncId,
-    isatty: cranelift_module::FuncId,
-    file_newer: cranelift_module::FuncId,
-    file_same_dev: cranelift_module::FuncId,
-    chdir: cranelift_module::FuncId,
-    getcwd: cranelift_module::FuncId,
-    heredoc_redirect: cranelift_module::FuncId,
-    toupper_first: cranelift_module::FuncId,
-    tolower_first: cranelift_module::FuncId,
-    toupper_all: cranelift_module::FuncId,
-    tolower_all: cranelift_module::FuncId,
-    getpid: cranelift_module::FuncId,
-    getppid: cranelift_module::FuncId,
-    epochseconds: cranelift_module::FuncId,
-    trap: cranelift_module::FuncId,
-    glob: cranelift_module::FuncId,
-    glob_regex: cranelift_module::FuncId,
-    capture_start: cranelift_module::FuncId,
-    capture_end: cranelift_module::FuncId,
-    fnmatch: cranelift_module::FuncId,
-    split_first_word: cranelift_module::FuncId,
-    split_field: cranelift_module::FuncId,
-    split_into_array: cranelift_module::FuncId,
-    read_all: cranelift_module::FuncId,
-    envp: cranelift_module::DataId,
-    argc: cranelift_module::DataId,
-    argv: cranelift_module::DataId,
-    argv_get: cranelift_module::FuncId,
-    signal_flag: cranelift_module::FuncId,
-    dtoi: cranelift_module::FuncId,
-    itod: cranelift_module::FuncId,
-    signum: cranelift_module::DataId,
-    trace_flag: cranelift_module::DataId,
-}
-
+/// Compile sash source to a native object file.
+///
+/// TRUST: This is the ONLY entry point from validated source to object code.
+/// The pipeline is: parse → validate → taint → lower → type_check → transform → codegen.
+/// By the time we reach compile_ssa (called below), the source has passed all gates.
+///
+/// The catch_unwind wrapper ensures ICE panics in codegen produce clean errors
+/// rather than stacktraces — codegen should never panic on validated input.
 pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8>, Vec<String>> {
     let _trace = enable_trace;
     // DD#58: preprocess sexpr syntax in arithmetic
@@ -4419,6 +4313,16 @@ fn lower_echo(
     }
 }
 
+/// Emit fork/exec for an external command.
+///
+/// TRUST: The command name comes from SSA, which was:
+/// 1. Validated by command_resolution (SB5011) — must be absolute path or resolved
+/// 2. Resolved at compile time by resolve_pipeline_command (DD#23)
+/// No runtime PATH lookup occurs. The binary literally contains "/usr/bin/grep".
+///
+/// TRUST: Arguments are SSA values — literals, variable reads, or
+/// concatenations thereof. No shell interpretation (no word splitting,
+/// no globbing, no metacharacter expansion).
 #[allow(clippy::too_many_arguments)]
 fn lower_exec(
     name: &str,

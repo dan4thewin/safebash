@@ -1,3 +1,14 @@
+//! Validation orchestrator.
+//!
+//! SECURITY: This is the first gate. Every CST node passes through every
+//! registered rule. If a rule returns an error diagnostic, compilation fails.
+//! The validator runs BEFORE lowering — rejected constructs never reach IR.
+//!
+//! A reviewer should verify:
+//! 1. `rules::all_rules()` returns ALL rules (none omitted)
+//! 2. `walk()` visits EVERY node in the tree (no subtrees skipped)
+//! 3. Rules are stateless — a node's validity doesn't depend on visit order
+
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
 use tree_sitter::Node;

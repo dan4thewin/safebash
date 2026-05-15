@@ -1,7 +1,10 @@
 use std::process::Command;
 
 fn expand(input: &str) -> String {
-    let id = std::thread::current().name().unwrap_or("t").replace(" ", "_");
+    let id = std::thread::current()
+        .name()
+        .unwrap_or("t")
+        .replace(" ", "_");
     let path = format!("/tmp/sash_expand_test_{}.conf", id);
     std::fs::write(&path, input).expect("write test conf");
     let output = Command::new(env!("CARGO_BIN_EXE_sash-expand"))
@@ -9,13 +12,19 @@ fn expand(input: &str) -> String {
         .output()
         .expect("run sash-expand");
     let _ = std::fs::remove_file(&path);
-    assert!(output.status.success(),
-        "sash-expand failed: {}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "sash-expand failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     String::from_utf8(output.stdout).expect("utf8")
 }
 
 fn expand_fails(input: &str) -> String {
-    let id = std::thread::current().name().unwrap_or("t").replace(" ", "_");
+    let id = std::thread::current()
+        .name()
+        .unwrap_or("t")
+        .replace(" ", "_");
     let path = format!("/tmp/sash_expand_test_{}.conf", id);
     std::fs::write(&path, input).expect("write test conf");
     let output = Command::new(env!("CARGO_BIN_EXE_sash-expand"))
@@ -36,7 +45,10 @@ fn literal() {
 
 #[test]
 fn simple_expansion() {
-    assert_eq!(expand("A=world\nB=hello ${A}\n"), "A=world\nB=hello world\n");
+    assert_eq!(
+        expand("A=world\nB=hello ${A}\n"),
+        "A=world\nB=hello world\n"
+    );
 }
 
 #[test]
@@ -71,8 +83,10 @@ fn strip_prefix() {
 
 #[test]
 fn chained() {
-    assert_eq!(expand("A=base\nB=${A}_ext\nC=${B}_final\n"),
-        "A=base\nB=base_ext\nC=base_ext_final\n");
+    assert_eq!(
+        expand("A=base\nB=${A}_ext\nC=${B}_final\n"),
+        "A=base\nB=base_ext\nC=base_ext_final\n"
+    );
 }
 
 #[test]
@@ -85,22 +99,34 @@ fn blank_lines_and_comments() {
 
 #[test]
 fn strip_suffix_longest() {
-    assert_eq!(expand("A=foo.tar.gz\nB=${A%%.*}\n"), "A=foo.tar.gz\nB=foo\n");
+    assert_eq!(
+        expand("A=foo.tar.gz\nB=${A%%.*}\n"),
+        "A=foo.tar.gz\nB=foo\n"
+    );
 }
 
 #[test]
 fn strip_suffix_shortest() {
-    assert_eq!(expand("A=foo.tar.gz\nB=${A%.*}\n"), "A=foo.tar.gz\nB=foo.tar\n");
+    assert_eq!(
+        expand("A=foo.tar.gz\nB=${A%.*}\n"),
+        "A=foo.tar.gz\nB=foo.tar\n"
+    );
 }
 
 #[test]
 fn strip_prefix_longest() {
-    assert_eq!(expand("A=/home/user/file\nB=${A##*/}\n"), "A=/home/user/file\nB=file\n");
+    assert_eq!(
+        expand("A=/home/user/file\nB=${A##*/}\n"),
+        "A=/home/user/file\nB=file\n"
+    );
 }
 
 #[test]
 fn strip_prefix_shortest() {
-    assert_eq!(expand("A=/home/user/file\nB=${A#*/}\n"), "A=/home/user/file\nB=home/user/file\n");
+    assert_eq!(
+        expand("A=/home/user/file\nB=${A#*/}\n"),
+        "A=/home/user/file\nB=home/user/file\n"
+    );
 }
 
 #[test]
@@ -125,17 +151,29 @@ fn reject_command_substitution() {
 #[test]
 fn reject_backtick() {
     let err = expand_fails("X=`cmd`\n");
-    assert!(err.contains("backtick") || err.contains("command"), "got: {}", err);
+    assert!(
+        err.contains("backtick") || err.contains("command"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
 fn reject_indirect() {
     let err = expand_fails("A=hello\nB=${!A}\n");
-    assert!(err.contains("indirect") || err.contains("!"), "got: {}", err);
+    assert!(
+        err.contains("indirect") || err.contains("!"),
+        "got: {}",
+        err
+    );
 }
 
 #[test]
 fn reject_arithmetic() {
     let err = expand_fails("X=$((1+2))\n");
-    assert!(err.contains("arithmetic") || err.contains("command"), "got: {}", err);
+    assert!(
+        err.contains("arithmetic") || err.contains("command"),
+        "got: {}",
+        err
+    );
 }

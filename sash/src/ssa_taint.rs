@@ -1,8 +1,20 @@
+//! SSA taint verification pass.
+//!
+//! SECURITY: This is the final taint gate before codegen. It operates on
+//! the SSA (after all transformations) and verifies that no tainted value
+//! reaches a position where it would be executed or written unsanitized.
+//!
+//! This is the "airbag" — a post-transform safety check that verifies
+//! the CST taint analyzer didn't miss anything. If this pass finds a
+//! tainted value in a sensitive position, it's an Internal Compiler Error
+//! (the CST analyzer should have caught it first).
+//!
+//! A reviewer should verify:
+//! 1. Every SsaInst that USES a value checks taint (not just the ones that define)
+//! 2. The taint propagation rules match the CST analyzer's rules
+//! 3. `bless` is the ONLY way to move from Tainted → Clean
+
 use crate::ssa::*;
-/// SSA taint verification pass.
-///
-/// This is the "airbag" — a post-transform safety check that verifies
-/// the CST taint analyzer didn't miss anything. If this pass finds a
 /// tainted value reaching a use site, that's a bug in the CST analyzer.
 ///
 /// The pass walks all SSA instructions and classifies each VarRef version

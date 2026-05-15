@@ -8,17 +8,26 @@ pub fn atoi_inner(bytes: &[u8]) -> i64 {
     let mut result: i64 = 0;
     let mut negative = false;
     let mut i = 0;
-    while i < bytes.len() && bytes[i] == b' ' { i += 1; }
-    if i < bytes.len() && bytes[i] == b'-' { negative = true; i += 1; }
-    else if i < bytes.len() && bytes[i] == b'+' { i += 1; }
+    while i < bytes.len() && bytes[i] == b' ' {
+        i += 1;
+    }
+    if i < bytes.len() && bytes[i] == b'-' {
+        negative = true;
+        i += 1;
+    } else if i < bytes.len() && bytes[i] == b'+' {
+        i += 1;
+    }
     while i < bytes.len() && bytes[i] >= b'0' && bytes[i] <= b'9' {
-        result = result.checked_mul(10)
+        result = result
+            .checked_mul(10)
             .and_then(|r| r.checked_add((bytes[i] - b'0') as i64))
             .expect("sash: integer overflow in atoi");
         i += 1;
     }
     if negative {
-        result.checked_neg().expect("sash: integer overflow in atoi (negation)")
+        result
+            .checked_neg()
+            .expect("sash: integer overflow in atoi (negation)")
     } else {
         result
     }
@@ -28,7 +37,9 @@ pub fn atoi_inner(bytes: &[u8]) -> i64 {
 pub fn itoa_inner(val: i64, buf: &mut [u8; 21]) -> &[u8] {
     let mut n = val;
     let negative = n < 0;
-    if negative { n = n.checked_neg().expect("sash: integer overflow in itoa"); }
+    if negative {
+        n = n.checked_neg().expect("sash: integer overflow in itoa");
+    }
     let mut i = buf.len();
     if n == 0 {
         i -= 1;
@@ -50,7 +61,9 @@ pub fn itoa_inner(val: i64, buf: &mut [u8; 21]) -> &[u8] {
 /// ${var%%pat} / ${var%pat} — returns new length (ptr unchanged).
 pub fn strip_suffix_inner(s: &[u8], pat: &[u8], longest: bool) -> usize {
     let s_len = s.len();
-    if s_len == 0 { return 0; }
+    if s_len == 0 {
+        return 0;
+    }
 
     if pat.ends_with(b"*") && pat.len() > 1 {
         let prefix = &pat[..pat.len() - 1];
@@ -82,7 +95,9 @@ pub fn strip_suffix_inner(s: &[u8], pat: &[u8], longest: bool) -> usize {
 
 /// ${var##pat} / ${var#pat} — returns offset (bytes to skip from start).
 pub fn strip_prefix_inner(s: &[u8], pat: &[u8], longest: bool) -> usize {
-    if s.is_empty() { return 0; }
+    if s.is_empty() {
+        return 0;
+    }
 
     if pat.starts_with(b"*") && pat.len() > 1 {
         let suffix = &pat[1..];
@@ -120,11 +135,33 @@ pub fn streq_inner(a: &[u8], b: &[u8]) -> bool {
 /// Evaluate arithmetic. Panics on overflow (DD#26).
 pub fn arith_eval_inner(var_val: i64, op: u8, operand: i64) -> i64 {
     match op {
-        b'+' => var_val.checked_add(operand).expect("sash: integer overflow in arithmetic (+)"),
-        b'-' => var_val.checked_sub(operand).expect("sash: integer overflow in arithmetic (-)"),
-        b'*' => var_val.checked_mul(operand).expect("sash: integer overflow in arithmetic (*)"),
-        b'/' => if operand != 0 { var_val.checked_div(operand).expect("sash: integer overflow in arithmetic (/)") } else { panic!("sash: division by zero") },
-        b'%' => if operand != 0 { var_val.checked_rem(operand).expect("sash: integer overflow in arithmetic (%)") } else { panic!("sash: division by zero") },
+        b'+' => var_val
+            .checked_add(operand)
+            .expect("sash: integer overflow in arithmetic (+)"),
+        b'-' => var_val
+            .checked_sub(operand)
+            .expect("sash: integer overflow in arithmetic (-)"),
+        b'*' => var_val
+            .checked_mul(operand)
+            .expect("sash: integer overflow in arithmetic (*)"),
+        b'/' => {
+            if operand != 0 {
+                var_val
+                    .checked_div(operand)
+                    .expect("sash: integer overflow in arithmetic (/)")
+            } else {
+                panic!("sash: division by zero")
+            }
+        }
+        b'%' => {
+            if operand != 0 {
+                var_val
+                    .checked_rem(operand)
+                    .expect("sash: integer overflow in arithmetic (%)")
+            } else {
+                panic!("sash: division by zero")
+            }
+        }
         _ => 0,
     }
 }
@@ -167,8 +204,11 @@ pub fn dtoi_inner(digits: i64, bytes: &[u8]) -> i64 {
 
     let mut int_val: i64 = 0;
     for &b in &int_part[int_start..] {
-        if b < b'0' || b > b'9' { panic!("sash: invalid decimal number in dtoi"); }
-        int_val = int_val.checked_mul(10)
+        if b < b'0' || b > b'9' {
+            panic!("sash: invalid decimal number in dtoi");
+        }
+        int_val = int_val
+            .checked_mul(10)
             .and_then(|v| v.checked_add((b - b'0') as i64))
             .expect("sash: integer overflow in dtoi");
     }
@@ -180,7 +220,9 @@ pub fn dtoi_inner(digits: i64, bytes: &[u8]) -> i64 {
 
     let mut frac_val: i64 = 0;
     for &b in frac_bytes {
-        if b < b'0' || b > b'9' { panic!("sash: invalid decimal number in dtoi"); }
+        if b < b'0' || b > b'9' {
+            panic!("sash: invalid decimal number in dtoi");
+        }
         frac_val = frac_val * 10 + (b - b'0') as i64;
     }
     // Right-pad with zeros: "0.5" with digits=3 → frac_val=500
@@ -194,11 +236,18 @@ pub fn dtoi_inner(digits: i64, bytes: &[u8]) -> i64 {
         scale = scale.checked_mul(10).expect("sash: scale overflow in dtoi");
     }
 
-    let result = int_val.checked_mul(scale)
+    let result = int_val
+        .checked_mul(scale)
         .and_then(|v| v.checked_add(frac_val))
         .expect("sash: integer overflow in dtoi");
 
-    if negative { result.checked_neg().expect("sash: overflow in dtoi negation") } else { result }
+    if negative {
+        result
+            .checked_neg()
+            .expect("sash: overflow in dtoi negation")
+    } else {
+        result
+    }
 }
 
 /// Convert fixed-point integer to decimal string.
@@ -208,7 +257,9 @@ pub fn itod_inner(digits: i64, value: i64, buf: &mut [u8]) -> usize {
     let digits = digits as usize;
     let negative = value < 0;
     let abs_val = if negative {
-        value.checked_neg().expect("sash: overflow in itod negation")
+        value
+            .checked_neg()
+            .expect("sash: overflow in itod negation")
     } else {
         value
     };
@@ -258,7 +309,9 @@ pub fn itod_inner(digits: i64, value: i64, buf: &mut [u8]) -> usize {
     while f > 0 {
         buf[frac_pos] = b'0' + (f % 10) as u8;
         f /= 10;
-        if frac_pos == frac_start { break; }
+        if frac_pos == frac_start {
+            break;
+        }
         frac_pos -= 1;
     }
 

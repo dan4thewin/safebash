@@ -1,3 +1,15 @@
+//! SB5011: Command resolution rule.
+//!
+//! SECURITY: This rule ensures every external command in the compiled binary
+//! is either a known builtin or resolves to an absolute path at compile time.
+//! Combined with DD#23 (compile-time PATH resolution), this guarantees the
+//! binary cannot execute commands that weren't visible to the compiler.
+//!
+//! TRUST: After this rule passes, every command name in the IR is either:
+//! - A builtin (echo, true, false, :, exit, cd, pwd, wait, shift, read)
+//! - An absolute path (/usr/bin/grep) resolved at compile time
+//! - A user-defined function name
+
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
 use tree_sitter::Node;

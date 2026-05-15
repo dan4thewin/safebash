@@ -1,5 +1,5 @@
 //! Overflow tests for sash-rt (DD#26: integer overflow traps).
-//! 
+//!
 //! The inner functions are pure safe Rust that use .expect()/.panic!()
 //! for overflow. We test them directly here — the standard test harness
 //! catches panics normally without hitting the no_std panic handler.
@@ -54,7 +54,7 @@ fn atoi_overflow_min_i64() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// itoa overflow  
+// itoa overflow
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
@@ -66,7 +66,10 @@ fn itoa_max_i64() {
 #[test]
 fn itoa_neg_max() {
     let mut buf = [0u8; 21];
-    assert_eq!(itoa_inner(-9223372036854775807, &mut buf), b"-9223372036854775807");
+    assert_eq!(
+        itoa_inner(-9223372036854775807, &mut buf),
+        b"-9223372036854775807"
+    );
 }
 
 #[test]
