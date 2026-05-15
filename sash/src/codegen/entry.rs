@@ -165,22 +165,6 @@ pub fn compile_ssa(
     let (literals, space_id, nl_id) =
         super::setup::intern_literals(&mut module, program, func_constants, bash_source, trace);
     let mut literals = literals;
-    let mut intern = |module: &mut ObjectModule, s: &str| -> cranelift_module::DataId {
-        if let Some(&id) = literals.get(s) {
-            return id;
-        }
-        let name = format!("__str_{}", literals.len());
-        let data_id = module
-            .declare_data(&name, Linkage::Local, false, false)
-            .expect("declare data");
-        let mut desc = DataDescription::new();
-        let mut bytes = s.as_bytes().to_vec();
-        bytes.push(0);
-        desc.define(bytes.into_boxed_slice());
-        module.define_data(data_id, &desc).expect("define data");
-        literals.insert(s.to_string(), data_id);
-        data_id
-    };
     // ── Build main() ───────────────────────────────────────────
     let main_sig = Signature::new(CallConv::SystemV);
     let main_func_id = module
@@ -204,199 +188,18 @@ pub fn compile_ssa(
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
 
-        // ── Initialize positional params from sash_argv ───────
-        // Scan the SSA for references to positional params (1, 2, ...)
-        // and special vars (#, @, 0) and pre-define them.
-        {
-            let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-            let argv_ptr = builder.ins().global_value(I64, argv_gv);
-            let argv_val = builder.ins().load(I64, MemFlags::trusted(), argv_ptr, 0);
-
-            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-            let argc_ptr = builder.ins().global_value(I64, argc_gv);
-            let argc_val = builder.ins().load(I64, MemFlags::trusted(), argc_ptr, 0);
-
-            // Pre-scan: collect all referenced positional/special var names
-            let mut positional_refs: std::collections::HashSet<String> =
-                std::collections::HashSet::new();
-            for block in program.blocks.values() {
-                for inst in &block.insts {
-                    match inst {
-                        SsaInst::Assign { value, .. } => {
-                            scan_value_for_vars(value, &mut positional_refs)
-                        }
-                        SsaInst::Command {
-                            args, redirects, ..
-                        } => {
-                            for a in args {
-                                scan_value_for_vars(a, &mut positional_refs);
-                            }
-                            for r in redirects {
-                                scan_redirect_for_vars(&r.target, &mut positional_refs);
-                            }
-                        }
-                        SsaInst::Pipeline { stages, .. } => {
-                            for (_, args, redirects) in stages {
-                                for a in args {
-                                    scan_value_for_vars(a, &mut positional_refs);
-                                }
-                                for r in redirects {
-                                    scan_redirect_for_vars(&r.target, &mut positional_refs);
-                                }
-                            }
-                        }
-                        SsaInst::Test(test_expr) => {
-                            scan_test_for_vars(test_expr, &mut positional_refs);
-                        }
-                        _ => {}
-                    }
-                }
-            }
-
-            for var_name in &positional_refs {
-                if var_name == "?" {
-                    continue;
-                } // $? handled via exit_status_var
-                if var_name == "$" {
-                    continue;
-                } // $$ handled via sash_getpid
-                let key_suffix = "_0"; // version 0
-                let key = format!("{}{}", var_name, key_suffix);
-                if vars.contains_key(&key) {
-                    continue;
-                }
-
-                let sv = VarSlot::Str {
-                    ptr: builder.declare_var(I64),
-                    len: builder.declare_var(I64),
-                };
-
-                if let Ok(idx) = var_name.parse::<i64>() {
-                    // Positional: $1, $2, ... — load from argv[idx]
-                    // Guard: only load if idx < argc (arg exists)
-                    let idx_val = builder.ins().iconst(I64, idx);
-                    let in_bounds = builder.ins().icmp(IntCC::SignedLessThan, idx_val, argc_val);
-
-                    let load_block = builder.create_block();
-                    let empty_block = builder.create_block();
-                    let done_block = builder.create_block();
-
-                    builder
-                        .ins()
-                        .brif(in_bounds, load_block, &[], empty_block, &[]);
-
-                    builder.switch_to_block(load_block);
-                    builder.seal_block(load_block);
-                    let offset = builder.ins().imul_imm(idx_val, 8);
-                    let arg_ptr_addr = builder.ins().iadd(argv_val, offset);
-                    let arg_ptr = builder
-                        .ins()
-                        .load(I64, MemFlags::trusted(), arg_ptr_addr, 0);
-                    let len = emit_strlen(&mut builder, &mut module, externs.strlen, arg_ptr);
-                    builder.def_var(sv.str_ptr(), arg_ptr);
-                    builder.def_var(sv.str_len(), len);
-                    builder.ins().jump(done_block, &[]);
-
-                    builder.switch_to_block(empty_block);
-                    builder.seal_block(empty_block);
-                    let null_ptr = builder.ins().iconst(I64, 0);
-                    let zero_len = builder.ins().iconst(I64, 0);
-                    builder.def_var(sv.str_ptr(), null_ptr);
-                    builder.def_var(sv.str_len(), zero_len);
-                    builder.ins().jump(done_block, &[]);
-
-                    builder.switch_to_block(done_block);
-                    builder.seal_block(done_block);
-                } else if var_name == "#" {
-                    // $# = argc - 1 (program name excluded)
-                    let one = builder.ins().iconst(I64, 1);
-                    let count = builder.ins().isub(argc_val, one);
-                    // Convert integer to string via sash_itoa
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[count, out_addr]);
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                } else if var_name == "@" {
-                    // $@ = join all positional params with space
-                    let space_id = intern(&mut module, " ");
-                    let space_gv = module.declare_data_in_func(space_id, builder.func);
-                    let space_ptr = builder.ins().global_value(I64, space_gv);
-                    let space_len = builder.ins().iconst(I64, 1);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let join_ref = module.declare_func_in_func(externs.join_args, builder.func);
-                    let call = builder.ins().call(
-                        join_ref,
-                        &[argv_val, argc_val, space_ptr, space_len, out_addr],
-                    );
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                } else if var_name == "?" {
-                    // $? = exit status of last command, convert to string
-                    let status = builder.use_var(exit_status_var);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[status, out_addr]);
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                } else if var_name == "$" {
-                    // $$ = PID — initialize with sash_getpid
-                    let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
-                    let call = builder.ins().call(getpid_ref, &[]);
-                    let pid = builder.inst_results(call)[0];
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                    let str_ptr = builder.inst_results(call2)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                } else {
-                    // Undeclared variable — initialize to empty string (DD#53)
-                    // Use getenv() builtin explicitly to access environment.
-                    // Intern the name so source-kvp re-read can find it.
-                    intern(&mut module, var_name);
-                    let empty_id = intern(&mut module, "");
-                    let empty_gv = module.declare_data_in_func(empty_id, builder.func);
-                    let empty_ptr = builder.ins().global_value(I64, empty_gv);
-                    let empty_len = builder.ins().iconst(I64, 0);
-                    builder.def_var(sv.str_ptr(), empty_ptr);
-                    builder.def_var(sv.str_len(), empty_len);
-                }
-
-                vars.insert(key, sv);
-            }
-        }
-
-        // Seal the entry block if it has no predecessors besides itself
-        // (we'll seal blocks as we go)
-
+        super::setup::init_positional_params(
+            &mut builder,
+            &mut module,
+            program,
+            &externs,
+            &mut vars,
+            &mut literals,
+            &reachable,
+            space_id,
+            exit_status_var,
+            test_result_var,
+        );
         // Emit code for each SSA block
         let block_ids: Vec<BlockId> = program.blocks.keys().copied().collect();
         let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
