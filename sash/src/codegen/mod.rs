@@ -10,6 +10,7 @@ mod dispatch;
 mod entry;
 mod inst_handlers;
 mod redirects;
+mod setup;
 mod tests;
 mod types;
 mod values;
