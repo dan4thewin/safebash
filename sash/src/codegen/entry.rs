@@ -34,7 +34,7 @@ use super::redirects::{
     scan_redirect_for_vars, SavedFd,
 };
 use super::tests::{emit_string_eq, lower_test_expr};
-use super::types::{ExternFuncs, VarSlot};
+use super::types::{ExternFuncs, InstCtx, VarSlot};
 use super::values::{
     emit_strlen, lower_expr_value, lower_expr_value_as_int, lower_value, lower_value_as_int,
     scan_test_for_vars, scan_value_for_vars,
@@ -1512,25 +1512,26 @@ pub fn compile_ssa(
                     inst,
                     &mut builder,
                     &mut module,
-                    &mut vars,
-                    &literals,
-                    &externs,
-                    space_id,
-                    nl_id,
-                    test_result_var,
-                    exit_status_var,
-                    pipe_read_fd_var,
-                    capture_saved_var,
-                    capture_pipe_var,
-                    func_constants,
-                    &mut redirect_stack,
-                    end_cl_block,
-                    ssa_block,
-                    program,
-                    ssa_id,
-                    saved_end_status_var,
-                    &cl_blocks,
-                    trace,
+                    &mut InstCtx {
+                        vars: &mut vars,
+                        literals: &literals,
+                        externs: &externs,
+                        space_id,
+                        nl_id,
+                        test_result_var,
+                        exit_status_var,
+                        pipe_read_fd_var,
+                        capture_saved_var,
+                        capture_pipe_var,
+                        func_constants,
+                        redirect_stack: &mut redirect_stack,
+                        end_cl_block,
+                        program,
+                        ssa_id,
+                        saved_end_status_var,
+                        cl_blocks: &cl_blocks,
+                        trace,
+                    },
                 );
             }
 
@@ -1717,26 +1718,26 @@ fn lower_inst(
     inst: &SsaInst,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
-    vars: &mut HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    space_id: cranelift_module::DataId,
-    nl_id: cranelift_module::DataId,
-    test_result_var: Variable,
-    exit_status_var: Variable,
-    pipe_read_fd_var: Variable,
-    capture_saved_var: Variable,
-    capture_pipe_var: Variable,
-    func_constants: &HashMap<String, String>,
-    redirect_stack: &mut Vec<Vec<SavedFd>>,
-    end_cl_block: Option<cranelift_codegen::ir::Block>,
-    _ssa_block: &crate::ssa::BasicBlock,
-    program: &crate::ssa::SsaProgram,
-    ssa_id: usize,
-    saved_end_status_var: Variable,
-    cl_blocks: &HashMap<usize, cranelift_codegen::ir::Block>,
-    _trace: bool,
+    ctx: &mut InstCtx,
 ) -> bool {
+    let vars = &mut *ctx.vars;
+    let literals = ctx.literals;
+    let externs = ctx.externs;
+    let space_id = ctx.space_id;
+    let nl_id = ctx.nl_id;
+    let test_result_var = ctx.test_result_var;
+    let exit_status_var = ctx.exit_status_var;
+    let pipe_read_fd_var = ctx.pipe_read_fd_var;
+    let capture_saved_var = ctx.capture_saved_var;
+    let capture_pipe_var = ctx.capture_pipe_var;
+    let func_constants = ctx.func_constants;
+    let redirect_stack = &mut *ctx.redirect_stack;
+    let end_cl_block = ctx.end_cl_block;
+    let program = ctx.program;
+    let ssa_id = ctx.ssa_id;
+    let saved_end_status_var = ctx.saved_end_status_var;
+    let cl_blocks = ctx.cl_blocks;
+    let _trace = ctx.trace;
     match inst {
         SsaInst::Assign { target, value } => {
             // DD#30: unset on collection → new empty table

@@ -120,3 +120,28 @@ pub(super) struct ExternFuncs {
     pub(super) signum: cranelift_module::DataId,
     pub(super) trace_flag: cranelift_module::DataId,
 }
+
+/// Shared context for instruction code generation.
+///
+/// Groups the many parameters that every instruction handler needs,
+/// reducing the call signature from 23 params to 4: (inst, builder, module, ctx).
+pub(super) struct InstCtx<'a> {
+    pub(super) vars: &'a mut std::collections::HashMap<String, VarSlot>,
+    pub(super) literals: &'a std::collections::HashMap<String, cranelift_module::DataId>,
+    pub(super) externs: &'a ExternFuncs,
+    pub(super) space_id: cranelift_module::DataId,
+    pub(super) nl_id: cranelift_module::DataId,
+    pub(super) test_result_var: cranelift_frontend::Variable,
+    pub(super) exit_status_var: cranelift_frontend::Variable,
+    pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
+    pub(super) capture_saved_var: cranelift_frontend::Variable,
+    pub(super) capture_pipe_var: cranelift_frontend::Variable,
+    pub(super) func_constants: &'a std::collections::HashMap<String, String>,
+    pub(super) redirect_stack: &'a mut Vec<Vec<super::redirects::SavedFd>>,
+    pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
+    pub(super) program: &'a crate::ssa::SsaProgram,
+    pub(super) ssa_id: usize,
+    pub(super) saved_end_status_var: cranelift_frontend::Variable,
+    pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
+    pub(super) trace: bool,
+}
