@@ -11,6 +11,7 @@
 //! 3. Phi nodes don't merge tainted/clean values incorrectly
 
 mod control_flow;
+mod expr_handlers;
 mod expressions;
 mod functions;
 mod helpers;
