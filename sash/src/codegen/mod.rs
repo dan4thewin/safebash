@@ -7,6 +7,7 @@
 mod arithmetic;
 mod commands;
 mod entry;
+mod inst_handlers;
 mod redirects;
 mod tests;
 mod types;
