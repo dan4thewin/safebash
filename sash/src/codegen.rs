@@ -144,7 +144,7 @@ struct ExternFuncs {
 }
 
 pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8>, Vec<String>> {
-    let trace = enable_trace;
+    let _trace = enable_trace;
     // DD#58: preprocess sexpr syntax in arithmetic
     // (arith_map may already be set by main.rs — only preprocess if not)
     let source = {
@@ -1257,13 +1257,10 @@ pub fn compile_ssa(
                 if let SsaInst::ReadLineMulti { targets, .. } = inst {
                     for target in targets {
                         let base = target.name.clone();
-                        if !base_vars.contains_key(&base) {
-                            let sv = VarSlot::Str {
-                                ptr: builder.declare_var(I64),
-                                len: builder.declare_var(I64),
-                            };
-                            base_vars.insert(base, sv);
-                        }
+                        base_vars.entry(base).or_insert_with(|| VarSlot::Str {
+                            ptr: builder.declare_var(I64),
+                            len: builder.declare_var(I64),
+                        });
                     }
                 }
                 if let SsaInst::Mapfile { array, .. } | SsaInst::ReadArray { array, .. } = inst {
@@ -1279,13 +1276,10 @@ pub fn compile_ssa(
                     if name == "__store_bg_pid" {
                         if let Some(SsaValue::Var(vr)) = args.first() {
                             let base = vr.name.clone();
-                            if !base_vars.contains_key(&base) {
-                                let sv = VarSlot::Str {
-                                    ptr: builder.declare_var(I64),
-                                    len: builder.declare_var(I64),
-                                };
-                                base_vars.insert(base, sv);
-                            }
+                            base_vars.entry(base).or_insert_with(|| VarSlot::Str {
+                                ptr: builder.declare_var(I64),
+                                len: builder.declare_var(I64),
+                            });
                         }
                     }
                 }
@@ -1294,32 +1288,30 @@ pub fn compile_ssa(
                 | SsaInst::CaptureEnd { target } = inst
                 {
                     let base = target.name.clone();
-                    if !base_vars.contains_key(&base) {
-                        let sv = if target.var_type == crate::ir::VarType::Int {
+                    base_vars.entry(base).or_insert_with(|| {
+                        if target.var_type == crate::ir::VarType::Int {
                             VarSlot::Int(builder.declare_var(I64))
                         } else {
                             VarSlot::Str {
                                 ptr: builder.declare_var(I64),
                                 len: builder.declare_var(I64),
                             }
-                        };
-                        base_vars.insert(base, sv);
-                    }
+                        }
+                    });
                 }
             }
             for phi in &block.phis {
                 let base = phi.target.name.clone();
-                if !base_vars.contains_key(&base) {
-                    let sv = if phi.target.var_type == crate::ir::VarType::Int {
+                base_vars.entry(base).or_insert_with(|| {
+                    if phi.target.var_type == crate::ir::VarType::Int {
                         VarSlot::Int(builder.declare_var(I64))
                     } else {
                         VarSlot::Str {
                             ptr: builder.declare_var(I64),
                             len: builder.declare_var(I64),
                         }
-                    };
-                    base_vars.insert(base, sv);
-                }
+                    }
+                });
             }
         }
         // Second pass: map every versioned name to its base variable's CL vars
@@ -1328,10 +1320,7 @@ pub fn compile_ssa(
                 if let SsaInst::ReadLineMulti { targets, .. } = inst {
                     for target in targets {
                         let key = target.display();
-                        if !vars.contains_key(&key) {
-                            let sv = base_vars[&target.name].clone();
-                            vars.insert(key, sv);
-                        }
+                        vars.entry(key).or_insert_with(|| base_vars[&target.name]);
                     }
                 }
                 if let SsaInst::Assign { target, .. }
@@ -1339,35 +1328,24 @@ pub fn compile_ssa(
                 | SsaInst::CaptureEnd { target } = inst
                 {
                     let key = target.display();
-                    if !vars.contains_key(&key) {
-                        let sv = base_vars[&target.name].clone();
-                        vars.insert(key, sv);
-                    }
+                    vars.entry(key).or_insert_with(|| base_vars[&target.name]);
                 }
                 if let SsaInst::Command { name, args, .. } = inst {
                     if name == "__store_bg_pid" {
                         if let Some(SsaValue::Var(vr)) = args.first() {
                             let key = vr.display();
-                            if !vars.contains_key(&key) {
-                                let sv = base_vars[&vr.name].clone();
-                                vars.insert(key, sv);
-                            }
+                            vars.entry(key).or_insert_with(|| base_vars[&vr.name]);
                         }
                     }
                 }
             }
             for phi in &block.phis {
                 let key = phi.target.display();
-                if !vars.contains_key(&key) {
-                    let sv = base_vars[&phi.target.name].clone();
-                    vars.insert(key, sv);
-                }
+                vars.entry(key)
+                    .or_insert_with(|| base_vars[&phi.target.name]);
                 for (_, src) in &phi.sources {
                     let sk = src.display();
-                    if !vars.contains_key(&sk) {
-                        let sv = base_vars[&src.name].clone();
-                        vars.insert(sk, sv);
-                    }
+                    vars.entry(sk).or_insert_with(|| base_vars[&src.name]);
                 }
             }
         }
@@ -1642,7 +1620,7 @@ pub fn compile_ssa(
                     &mut redirect_stack,
                     end_cl_block,
                     ssa_block,
-                    &program,
+                    program,
                     ssa_id,
                     saved_end_status_var,
                     &cl_blocks,
@@ -1828,6 +1806,7 @@ pub fn compile_ssa(
 }
 
 /// Returns true if the block is now terminated (e.g., by exit).
+#[allow(clippy::too_many_arguments)]
 fn lower_inst(
     inst: &SsaInst,
     builder: &mut FunctionBuilder,
@@ -1845,12 +1824,12 @@ fn lower_inst(
     func_constants: &HashMap<String, String>,
     redirect_stack: &mut Vec<Vec<SavedFd>>,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
-    ssa_block: &crate::ssa::BasicBlock,
+    _ssa_block: &crate::ssa::BasicBlock,
     program: &crate::ssa::SsaProgram,
     ssa_id: usize,
     saved_end_status_var: Variable,
     cl_blocks: &HashMap<usize, cranelift_codegen::ir::Block>,
-    trace: bool,
+    _trace: bool,
 ) -> bool {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -2133,11 +2112,8 @@ fn lower_inst(
         }
         SsaInst::Command { name, args, .. } if name == "exit" => {
             // exit N — get the exit code from first arg, default 0
-            let code = if let Some(arg) = args.first() {
-                match arg {
-                    SsaValue::Literal(s) => s.parse::<i64>().unwrap_or(0),
-                    _ => 0,
-                }
+            let code = if let Some(SsaValue::Literal(s)) = args.first() {
+                s.parse::<i64>().unwrap_or(0)
             } else {
                 0
             };
@@ -2498,11 +2474,8 @@ fn lower_inst(
         }
         SsaInst::Command { name, args, .. } if name == "shift" => {
             // shift N: sash_argc -= N; sash_argv += N*8
-            let shift_n = if let Some(arg) = args.first() {
-                match arg {
-                    SsaValue::Literal(s) => s.parse::<i64>().unwrap_or(1),
-                    _ => 1,
-                }
+            let shift_n = if let Some(SsaValue::Literal(s)) = args.first() {
+                s.parse::<i64>().unwrap_or(1)
             } else {
                 1
             };
@@ -2736,7 +2709,7 @@ fn lower_inst(
             // DD#56: signal EXIT check point after external command
             if !program.exiting_signals.is_empty() {
                 if let Some(end_cl) = end_cl_block {
-                    if program.end_block.map_or(true, |eb| ssa_id < eb) {
+                    if program.end_block.is_none_or(|eb| ssa_id < eb) {
                         let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
                         let signum_base = builder.ins().global_value(I64, signum_gv);
                         let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
@@ -3177,7 +3150,7 @@ fn lower_inst(
             capture_read_fd,
             checked,
         } => {
-            for (_i, (_n, _, _r)) in stages.iter().enumerate() {}
+            for (_n, _, _r) in stages.iter() {}
             // N-stage pipeline: fork N children, wire pipes between them
             // For each adjacent pair, create a pipe.
             // Child i: stdin from pipe[i-1] read end, stdout to pipe[i] write end
@@ -3321,10 +3294,10 @@ fn lower_inst(
                     let exit_ref2 = module.declare_func_in_func(externs.exit, builder.func);
                     builder.ins().call(exit_ref2, &[exit_code]);
                     builder.ins().trap(TrapCode::unwrap_user(1));
-                } else if name.starts_with("__compound_") {
+                } else if let Some(suffix) = name.strip_prefix("__compound_") {
                     // DD#14: compound command as pipeline stage
                     // Jump to the pre-lowered SSA blocks, which end with Return
-                    let compound_block_id: usize = name["__compound_".len()..].parse().unwrap();
+                    let compound_block_id: usize = suffix.parse().unwrap();
                     let compound_cl = cl_blocks[&compound_block_id];
                     builder.ins().jump(compound_cl, &[]);
                 } else {
@@ -3963,7 +3936,7 @@ fn lower_test_expr(
                         // If any version exists and has non-zero length, it's "set"
                         let mut found = false;
                         for key in vars.keys() {
-                            if let Some(base) = key.rsplit('_').last() {
+                            if let Some(base) = key.rsplit('_').next_back() {
                                 // key format is "name_version"
                                 let base_name = if let Some(idx) = key.rfind('_') {
                                     let suffix = &key[idx + 1..];
@@ -4123,8 +4096,8 @@ fn lower_expr_value(
             let mut best_ver: Option<u32> = None;
             for key in vars.keys() {
                 if let Some(rest) = key.strip_prefix(name.as_str()) {
-                    if rest.starts_with('_') {
-                        if let Ok(v) = rest[1..].parse::<u32>() {
+                    if let Some(ver_str) = rest.strip_prefix('_') {
+                        if let Ok(v) = ver_str.parse::<u32>() {
                             if best_ver.is_none() || v > best_ver.unwrap() {
                                 best_ver = Some(v);
                                 best_key = Some(key.clone());
@@ -4306,8 +4279,8 @@ fn lower_expr_value_as_int(
             let mut best_ver: Option<u32> = None;
             for key in vars.keys() {
                 if let Some(rest) = key.strip_prefix(name.as_str()) {
-                    if rest.starts_with('_') {
-                        if let Ok(v) = rest[1..].parse::<u32>() {
+                    if let Some(ver_str) = rest.strip_prefix('_') {
+                        if let Ok(v) = ver_str.parse::<u32>() {
                             if best_ver.is_none() || v > best_ver.unwrap() {
                                 best_ver = Some(v);
                                 best_key = Some(key.clone());
@@ -4341,8 +4314,8 @@ fn lower_expr_value_as_int(
                     let mut best_ver: Option<u32> = None;
                     for key in vars.keys() {
                         if let Some(rest) = key.strip_prefix(pe.name.as_str()) {
-                            if rest.starts_with('_') {
-                                if let Ok(v) = rest[1..].parse::<u32>() {
+                            if let Some(ver_str) = rest.strip_prefix('_') {
+                                if let Ok(v) = ver_str.parse::<u32>() {
                                     if best_ver.is_none() || v > best_ver.unwrap() {
                                         best_ver = Some(v);
                                         best_key = Some(key.clone());
@@ -4374,6 +4347,7 @@ fn lower_expr_value_as_int(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_echo(
     args: &[SsaValue],
     builder: &mut FunctionBuilder,
@@ -4445,6 +4419,7 @@ fn lower_echo(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_exec(
     name: &str,
     args: &[SsaValue],
@@ -4513,6 +4488,7 @@ fn lower_exec(
     builder.def_var(exit_status_var, exit_status);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_value(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
@@ -4807,7 +4783,7 @@ fn lower_value(
             if operator == "regex_replace" {
                 // operand format: "pattern\0replacement\0global"
                 let parts: Vec<&str> = operand.split('\0').collect();
-                let pattern = parts.get(0).unwrap_or(&"");
+                let pattern = parts.first().unwrap_or(&"");
                 let replacement = parts.get(1).unwrap_or(&"");
                 let global_s = parts.get(2).unwrap_or(&"0");
                 let global_i: i64 = if *global_s == "1" { 1 } else { 0 };
@@ -4974,8 +4950,7 @@ fn lower_value(
                 let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
 
                 // DD#33: per-element operation (if arrvals_OP)
-                let (item_ptr, item_len) = if operator.starts_with("arrvals_") {
-                    let sub_op = &operator["arrvals_".len()..];
+                let (item_ptr, item_len) = if let Some(sub_op) = operator.strip_prefix("arrvals_") {
                     let op_data_id = literals.get(operand.as_str()).unwrap_or_else(|| {
                         panic!("ICE: per-element operand not interned: {:?}", operand);
                     });
@@ -4986,7 +4961,7 @@ fn lower_value(
                         "/" | "//" => {
                             // ${arr[@]/pat/rep} or ${arr[@]//pat/rep}
                             // operand is "regex\0replacement" (null-separated)
-                            let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((&operand, ""));
+                            let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
                             let pat_did = literals.get(pat_s).unwrap_or_else(|| {
                                 panic!("ICE: pattern not interned: {:?}", pat_s);
                             });
@@ -5206,7 +5181,7 @@ fn lower_value(
                     // ${var/pat/rep} → coerce to regex_replace (DD#37)
                     // operand is "pattern\0replacement"
                     let parts: Vec<&str> = operand.splitn(2, '\0').collect();
-                    let pattern = parts.get(0).unwrap_or(&"");
+                    let pattern = parts.first().unwrap_or(&"");
                     let replacement = parts.get(1).unwrap_or(&"");
 
                     let pat_id = literals
@@ -6512,7 +6487,7 @@ fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
         }
         crate::ir::ExprKind::SimpleExpansion(v) => SsaValue::Var(VarRef::new(v, 0)),
         crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
-            let vals: Vec<SsaValue> = parts.iter().map(|p| ir_expr_to_ssa_value(p)).collect();
+            let vals: Vec<SsaValue> = parts.iter().map(ir_expr_to_ssa_value).collect();
             SsaValue::Concat(vals)
         }
         _ => SsaValue::Literal(String::new()),

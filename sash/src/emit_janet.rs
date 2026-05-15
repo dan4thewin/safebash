@@ -68,18 +68,14 @@ fn _stmt_uses_args(stmt: &Statement) -> bool {
         StmtKind::Assignment(a) => _expr_uses_args(&a.value),
         StmtKind::Declaration(d) => d.assignments.iter().any(|a| _expr_uses_args(&a.value)),
         StmtKind::If(i) => {
-            i.condition.iter().any(|s| _stmt_uses_args(s))
+            i.condition.iter().any(_stmt_uses_args)
                 || needs_args_preamble(&i.then_body)
-                || i.else_body
-                    .as_ref()
-                    .map_or(false, |e| needs_args_preamble(e))
+                || i.else_body.as_ref().is_some_and(|e| needs_args_preamble(e))
         }
         StmtKind::While(w) => {
-            w.condition.iter().any(|s| _stmt_uses_args(s)) || needs_args_preamble(&w.body)
+            w.condition.iter().any(_stmt_uses_args) || needs_args_preamble(&w.body)
         }
-        StmtKind::For(f) => {
-            f.words.iter().any(|w| _expr_uses_args(w)) || needs_args_preamble(&f.body)
-        }
+        StmtKind::For(f) => f.words.iter().any(_expr_uses_args) || needs_args_preamble(&f.body),
         StmtKind::Redirected(r) => _stmt_uses_args(&r.body),
         StmtKind::List(l) => _stmt_uses_args(&l.left) || _stmt_uses_args(&l.right),
         _ => false,
@@ -91,8 +87,8 @@ fn _expr_uses_args(expr: &Expr) -> bool {
         ExprKind::SimpleExpansion(v) => {
             v == "#" || v == "@" || v == "0" || v.parse::<u32>().is_ok()
         }
-        ExprKind::DoubleQuoted(parts) => parts.iter().any(|p| _expr_uses_args(p)),
-        ExprKind::Concat(parts) => parts.iter().any(|p| _expr_uses_args(p)),
+        ExprKind::DoubleQuoted(parts) => parts.iter().any(_expr_uses_args),
+        ExprKind::Concat(parts) => parts.iter().any(_expr_uses_args),
         ExprKind::ParameterExpansion(pe) => {
             pe.name == "#" || pe.name == "@" || pe.name.parse::<u32>().is_ok()
         }
@@ -312,7 +308,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     let var_name = c
                         .args
                         .iter()
-                        .map(|a| expr_to_literal(a))
+                        .map(expr_to_literal)
                         .find(|a| !a.starts_with('-'))
                         .unwrap_or_else(|| "REPLY".to_string());
                     if !ctx.is_declared(&var_name) {
@@ -333,7 +329,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     }
                 }
                 "bless" => {
-                    if c.args.len() >= 1 {
+                    if !c.args.is_empty() {
                         let var_name = expr_to_literal(&c.args[0]);
                         writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
                     }
@@ -397,15 +393,6 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                             "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
                             i,
                             parts.join(" ")
-                        )
-                        .unwrap();
-                    } else if i == p.commands.len() - 1 {
-                        writeln!(
-                            out,
-                            "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
-                            i,
-                            parts.join(" "),
-                            i - 1
                         )
                         .unwrap();
                     } else {
@@ -497,7 +484,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     let var_name = c
                         .args
                         .iter()
-                        .map(|a| expr_to_literal(a))
+                        .map(expr_to_literal)
                         .find(|a| !a.starts_with('-'))
                         .unwrap_or_else(|| "line".to_string());
                     ctx.declare(&var_name);
@@ -624,7 +611,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                         let var_name = c
                             .args
                             .iter()
-                            .map(|a| expr_to_literal(a))
+                            .map(expr_to_literal)
                             .find(|a| !a.starts_with('-'))
                             .unwrap_or_else(|| "REPLY".to_string());
                         let val = body_text.trim_end_matches('\n');
@@ -743,7 +730,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
             if text.starts_with("#!") {
                 // Skip shebang
             } else {
-                writeln!(out, "{}", text.replacen('#', "#", 1)).unwrap();
+                writeln!(out, "{}", text).unwrap();
             }
         }
         StmtKind::Suppressed(inner) => {
@@ -835,18 +822,18 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
             TestExpr::Not(inner) => {
                 let inner_expr = Expr {
                     kind: ExprKind::Test(*inner.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 format!("(not {})", emit_test_expr(&inner_expr, ctx))
             }
             TestExpr::And(l, r) => {
                 let le = Expr {
                     kind: ExprKind::Test(*l.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 let re = Expr {
                     kind: ExprKind::Test(*r.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 format!(
                     "(and {} {})",
@@ -857,11 +844,11 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
             TestExpr::Or(l, r) => {
                 let le = Expr {
                     kind: ExprKind::Test(*l.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 let re = Expr {
                     kind: ExprKind::Test(*r.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 format!(
                     "(or {} {})",
@@ -872,7 +859,7 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
             TestExpr::Paren(inner) => {
                 let ie = Expr {
                     kind: ExprKind::Test(*inner.clone()),
-                    span: expr.span.clone(),
+                    span: expr.span,
                 };
                 emit_test_expr(&ie, ctx)
             }
@@ -971,9 +958,8 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                             let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
-                        } else if operand.starts_with('*') {
+                        } else if let Some(lit) = operand.strip_prefix('*') {
                             // pat is *lit — match lit, strip from first occurrence onward
-                            let lit = &operand[1..];
                             format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
                         } else {
@@ -994,9 +980,8 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                             let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
-                        } else if operand.starts_with('*') {
+                        } else if let Some(lit) = operand.strip_prefix('*') {
                             // pat is *lit — match lit, strip from last occurrence onward
-                            let lit = &operand[1..];
                             format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
                         } else {
@@ -1012,9 +997,8 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                             .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
-                        if operand.starts_with('*') {
+                        if let Some(lit) = operand.strip_prefix('*') {
                             // pat is *lit — match lit at end, strip up through last occurrence
-                            let lit = &operand[1..];
                             format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
                                 var_ref, lit, lit)
                         } else if operand.ends_with('*') {
@@ -1035,9 +1019,8 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                             .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
-                        if operand.starts_with('*') {
+                        if let Some(lit) = operand.strip_prefix('*') {
                             // pat is *lit — match lit, skip past first occurrence
-                            let lit = &operand[1..];
                             format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
                                 var_ref, lit, lit)
                         } else if operand.ends_with('*') {
@@ -1122,12 +1105,10 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     _ => var_ref,
                 }
+            } else if ctx.is_declared(&pe.name) {
+                pe.name.clone()
             } else {
-                if ctx.is_declared(&pe.name) {
-                    pe.name.clone()
-                } else {
-                    format!("(or (os/getenv \"{}\") \"\")", pe.name)
-                }
+                format!("(or (os/getenv \"{}\") \"\")", pe.name)
             }
         }
         ExprKind::CommandSubstitution(stmts) => {
@@ -1182,7 +1163,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
         ExprKind::Test(test) => {
             let wrapper = Expr {
                 kind: ExprKind::Test(test.clone()),
-                span: expr.span.clone(),
+                span: expr.span,
             };
             emit_test_expr(&wrapper, ctx)
         }
@@ -1248,8 +1229,7 @@ fn bash_arith_operand(s: &str) -> String {
     let s = s.trim();
     if s.chars().all(|c| c.is_ascii_digit()) {
         s.to_string()
-    } else if s.starts_with('$') {
-        let name = &s[1..];
+    } else if let Some(name) = s.strip_prefix('$') {
         if let Ok(n) = name.parse::<u32>() {
             let idx = n.saturating_sub(1) as usize;
             format!("(scan-number (or (get _args {}) \"0\"))", idx)

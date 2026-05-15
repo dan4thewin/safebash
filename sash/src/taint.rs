@@ -891,8 +891,6 @@ impl TaintTracker {
         String::new()
     }
 
-    /// Get the command name inside a command_substitution $(cmd ...).
-
     /// Check if an expression contains reads of tainted variables (no diagnostics).
     fn expr_has_tainted_read(&self, node: Node, source: &[u8]) -> bool {
         match node.kind() {

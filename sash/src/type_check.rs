@@ -170,7 +170,7 @@ fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>
                                 "integer key on map '{}' — maps use string keys. Use ${{{}[\"key\"]}}",
                                 name, name,
                             ),
-                            span: expr.span.clone(),
+                            span: expr.span,
                         });
                     }
                 } else {
@@ -181,7 +181,7 @@ fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>
                                 "string key on indexed array '{}' — use integer indices. Declare as `map` for string keys",
                                 name,
                             ),
-                            span: expr.span.clone(),
+                            span: expr.span,
                         });
                     }
                 }
@@ -255,7 +255,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                         a.name,
                         conversion_hint(rtype, ltype),
                     ),
-                    span: stmt.span.clone(),
+                    span: stmt.span,
                 });
             } else {
                 env.declare(&a.name, rtype);
@@ -275,7 +275,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                                 a.name,
                                 conversion_hint(VarType::String, VarType::Int),
                             ),
-                            span: stmt.span.clone(),
+                            span: stmt.span,
                         });
                     }
                 } else if d.var_type == VarType::String && rtype == VarType::Int {
@@ -285,7 +285,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                             a.name,
                             conversion_hint(VarType::Int, VarType::String),
                         ),
-                        span: stmt.span.clone(),
+                        span: stmt.span,
                     });
                 }
                 env.declare(&a.name, d.var_type);
@@ -318,7 +318,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                                         "unset on scalar '{}' is not allowed — use {}=\"\" to clear",
                                         name, name,
                                     ),
-                                    span: stmt.span.clone(),
+                                    span: stmt.span,
                                 });
                             }
                         }
@@ -337,7 +337,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                                      Use `exit $(({}<256?{}:1))`",
                                     var, var, var,
                                 ),
-                                span: stmt.span.clone(),
+                                span: stmt.span,
                             });
                         }
                     }
@@ -420,7 +420,7 @@ fn check_condition_type(condition: &[Statement], env: &TypeEnv, errors: &mut Vec
                          int functions return values, not success/failure",
                         name,
                     ),
-                    span: stmt.span.clone(),
+                    span: stmt.span,
                 });
             }
         }

@@ -53,7 +53,6 @@ pub(crate) fn preprocess_end_block(source: &str) -> String {
 }
 
 /// DD#58: Preprocess source to protect sexpr syntax inside arithmetic.
-
 /// DD#18: Preprocess `local fn name` → `fn __local__name`
 /// so tree-sitter parses it as a function_definition.
 pub(crate) fn preprocess_local_fn(source: &str) -> String {
@@ -65,7 +64,7 @@ pub(crate) fn preprocess_local_fn(source: &str) -> String {
             let indent = &line[..line.len() - trimmed.len()];
             result.push_str(indent);
             // rest is "name { ..." or "name {" etc
-            if let Some(space_pos) = rest.find(|c: char| c == ' ' || c == '{') {
+            if let Some(space_pos) = rest.find([' ', '{']) {
                 let name = &rest[..space_pos].trim();
                 let remainder = &rest[space_pos..];
                 result.push_str(&format!("fn __local__{}{}", name, remainder));
@@ -503,7 +502,7 @@ pub fn cli_main(args: Vec<String>) {
             }
             Some(name.to_string()) // unresolved — still a dependency
         };
-        for (_, block) in &ssa.blocks {
+        for block in ssa.blocks.values() {
             for inst in &block.insts {
                 if let ssa::SsaInst::Command { name, .. } = inst {
                     if let Some(path) = resolve(name) {

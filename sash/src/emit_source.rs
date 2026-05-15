@@ -17,7 +17,7 @@ pub struct Coercion {
 }
 
 thread_local! {
-    static COERCIONS: RefCell<Vec<Coercion>> = RefCell::new(Vec::new());
+    static COERCIONS: RefCell<Vec<Coercion>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Record a coercion during lowering.

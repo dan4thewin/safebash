@@ -22,7 +22,7 @@ impl Rule for ParamTransform {
                 && after
                     .chars()
                     .next()
-                    .map_or(false, |c| c.is_ascii_alphabetic())
+                    .is_some_and(|c| c.is_ascii_alphabetic())
             {
                 // Make sure this isn't an array @-subscript like ${arr[@]}
                 if !text.contains("[@]") && !text.contains("[@}") {

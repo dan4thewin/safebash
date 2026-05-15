@@ -41,9 +41,8 @@ impl Rule for DynamicExecution {
             "source" | "." => vec![Diagnostic::error(
                 node,
                 "SB4002",
-                format!(
-                    "'source'/'.' is not allowed — use `sash-expand file | mapfile -m var` instead"
-                ),
+                "'source'/'.' is not allowed — use `sash-expand file | mapfile -m var` instead"
+                    .to_string(),
             )],
             _ => vec![],
         }

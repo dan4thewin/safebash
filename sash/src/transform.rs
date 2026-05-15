@@ -582,9 +582,9 @@ fn lower_one(
             // var =~ s/pattern/replacement/flags — regex mutation
             if c.args.len() == 1 {
                 let arg_s = expr_to_string(&c.args[0]);
-                if arg_s.starts_with("s/") {
+                if let Some(after_prefix) = arg_s.strip_prefix("s/") {
                     // Parse s/pattern/replacement/flags
-                    let parts: Vec<&str> = arg_s[2..].splitn(3, '/').collect();
+                    let parts: Vec<&str> = after_prefix.splitn(3, '/').collect();
                     if parts.len() >= 2 {
                         let pattern = parts[0].to_string();
                         let replacement = parts[1].to_string();
@@ -638,7 +638,7 @@ fn lower_one(
                         .push(SsaInst::Assign { target, value: val });
                 }
                 // Decrement $#
-                let argc_ref = state.lookup("#");
+                let _argc_ref = state.lookup("#");
                 let new_argc = state.define("#");
                 ssa.block_mut(block).insts.push(SsaInst::Assign {
                     target: new_argc,
@@ -707,7 +707,7 @@ fn lower_one(
             // `mapfile -t arr` / `readarray -t arr` → Mapfile instruction
             // `mapfile -m [-f SEP] map` → Mapfile in map mode
             if name == "mapfile" || name == "readarray" {
-                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
                 let mut map_mode = false;
                 let mut separator = '=';
                 let mut i = 0;
@@ -868,7 +868,7 @@ fn lower_one(
             if name == "let" {
                 // let "expr" → evaluate arithmetic, set exit status
                 // Exit status: 0 if result != 0, 1 if result == 0
-                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
                 for arg in &args {
                     // Strip surrounding quotes if present
                     let expr_str = arg.trim_matches('"').trim_matches('\'').to_string();
@@ -923,7 +923,7 @@ fn lower_one(
                 // unset var → assign empty string (simulates unset)
                 // unset -f func → ignore (function unset not supported)
                 // Args may be split: ["m", "[b]"] or single "m[b]"
-                let args_str: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let args_str: Vec<String> = c.args.iter().map(expr_to_string).collect();
                 // Filter out flags like -v, -f, -n
                 let var_args: Vec<String> = args_str
                     .iter()
@@ -976,7 +976,7 @@ fn lower_one(
             }
 
             if name == "read" {
-                let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
                 // Parse flags: -d DELIM (record delimiter), -f DELIM (field separator), -a ARR
                 let mut delim: Option<u8> = None;
                 let mut field_sep: Option<u8> = None;
@@ -1281,7 +1281,7 @@ fn lower_one(
                 let is_mapfile = match &last.kind {
                     StmtKind::Command(c) => {
                         let n = expr_to_string(&c.name);
-                        let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                        let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
                         n == "mapfile"
                             || n == "readarray"
                             || (n == "read" && args.iter().any(|a| a == "-a"))
@@ -1292,7 +1292,7 @@ fn lower_one(
                 let is_lastpipe_read = match &last.kind {
                     StmtKind::Command(c) => {
                         let n = expr_to_string(&c.name);
-                        let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
+                        let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
                         n == "read" && !args.iter().any(|a| a == "-a")
                     }
                     _ => false,
@@ -1389,7 +1389,7 @@ fn lower_one(
                             if skip_next {
                                 // This arg is the value for the previous flag
                                 if field_sep == Some(0) {
-                                    field_sep = Some(s.as_bytes().get(0).copied().unwrap_or(0));
+                                    field_sep = Some(s.as_bytes().first().copied().unwrap_or(0));
                                 }
                                 skip_next = false;
                                 continue;
@@ -1443,11 +1443,11 @@ fn lower_one(
                     // Regular pipeline: cmd1 | cmd2 | ...
                     // Compound commands (while, for, if) become forked children
                     let mut stages = vec![];
-                    let mut compound_producers: Vec<(usize, usize)> = vec![];
+                    let _compound_producers: Vec<(usize, usize)> = vec![];
                     for (idx, cmd) in p.commands.iter().enumerate() {
                         // Unwrap Suppressed/Redirected to get inner command
                         let (inner, redirects) = match &cmd.kind {
-                            StmtKind::Suppressed(s) => {
+                            StmtKind::Suppressed(_s) => {
                                 // - prefix in pipeline: include but don't count toward pipefail
                                 // For now, just skip suppressed stages entirely
                                 continue;
@@ -1863,7 +1863,7 @@ fn lower_if_bless(
     });
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
-    let then_snap = state.snapshot();
+    let _then_snap = state.snapshot();
 
     if let Some(else_body) = &i.else_body {
         let else_block = ssa.new_block("if_bless.else");
@@ -2494,7 +2494,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 let base_str = &trimmed[..hash_pos];
                 let digits = &trimmed[hash_pos + 1..];
                 if let Ok(base) = base_str.parse::<u32>() {
-                    if base >= 2 && base <= 64 && !digits.is_empty() {
+                    if (2..=64).contains(&base) && !digits.is_empty() {
                         let val = digits.chars().fold(0i64, |acc, c| {
                             let d = match c {
                                 '0'..='9' => c as i64 - '0' as i64,
@@ -2519,7 +2519,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // Octal literal: 0... (but not just "0")
             if trimmed.starts_with('0')
                 && trimmed.len() > 1
-                && trimmed[1..].chars().all(|c| c >= '0' && c <= '7')
+                && trimmed[1..].chars().all(|c| ('0'..='7').contains(&c))
             {
                 if let Ok(v) = i64::from_str_radix(&trimmed[1..], 8) {
                     return SsaValue::Expr(v.to_string());
@@ -2566,8 +2566,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 };
             }
             // Unary plus: $((+x)) → strip plus
-            if trimmed.starts_with('+') {
-                let inner = trimmed[1..].trim();
+            if let Some(rest) = trimmed.strip_prefix('+') {
+                let inner = rest.trim();
                 if !inner.is_empty() {
                     let e = Expr {
                         kind: ExprKind::ArithmeticExpansion(inner.to_string()),
@@ -2577,8 +2577,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 }
             }
             // Unary bitwise NOT: $((~expr)) → compute inline
-            if trimmed.starts_with('~') {
-                let inner = trimmed[1..].trim();
+            if let Some(rest) = trimmed.strip_prefix('~') {
+                let inner = rest.trim();
                 if !inner.is_empty() {
                     let e = Expr {
                         kind: ExprKind::ArithmeticExpansion(inner.to_string()),
@@ -2679,7 +2679,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                         // For now, we can't easily do the SSA assignment + return in an expression context.
                         // But we can at least constant-fold the common case.
                         if let SsaValue::Expr(ref s) = result_val {
-                            if let Ok(_) = s.parse::<i64>() {
+                            if s.parse::<i64>().is_ok() {
                                 // Assignment with constant value: define the var and return the value
                                 // Note: we can't properly emit SSA assign here since we're in expr_to_value.
                                 // Just return the value — the variable won't be updated.
@@ -2692,8 +2692,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 }
             }
             // Unary minus on variable: $((-x)) → 0 - x
-            if trimmed.starts_with('-') {
-                let inner = trimmed[1..].trim();
+            if let Some(rest) = trimmed.strip_prefix('-') {
+                let inner = rest.trim();
                 if inner.chars().all(|c| c.is_alphanumeric() || c == '_') && !inner.is_empty() {
                     return SsaValue::ArithBinOp {
                         left: Box::new(SsaValue::Expr("0".to_string())),
@@ -2749,12 +2749,12 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 let l_const = if lhs_was_var {
                     Err(std::num::IntErrorKind::InvalidDigit)
                 } else {
-                    lhs.parse::<i64>().map_err(|e| e.kind().clone())
+                    lhs.parse::<i64>().map_err(|e| *e.kind())
                 };
                 let r_const = if rhs_was_var {
                     Err(std::num::IntErrorKind::InvalidDigit)
                 } else {
-                    rhs.parse::<i64>().map_err(|e| e.kind().clone())
+                    rhs.parse::<i64>().map_err(|e| *e.kind())
                 };
 
                 // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
@@ -3078,9 +3078,9 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                             if name == "len" {
                                 if let Some(arg) = c.args.first() {
                                     let arg_str = expr_to_string(arg);
-                                    if arg_str.starts_with('$') {
+                                    if let Some(var_name) = arg_str.strip_prefix('$') {
                                         // len $var → string length
-                                        let v = state.lookup(&arg_str[1..]);
+                                        let v = state.lookup(var_name);
                                         return SsaValue::ParamExpansion {
                                             var: v,
                                             operator: "strlen".to_string(),
@@ -3213,9 +3213,9 @@ fn expr_to_string(expr: &Expr) -> String {
         }
         ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
         ExprKind::ArithmeticExpansion(e) => format!("$(({}))", e),
-        ExprKind::Concat(parts) => parts.iter().map(|p| expr_to_string(p)).collect(),
+        ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
         ExprKind::Array(elems) => {
-            let inner: Vec<String> = elems.iter().map(|e| expr_to_string(e)).collect();
+            let inner: Vec<String> = elems.iter().map(expr_to_string).collect();
             format!("({})", inner.join(" "))
         }
         ExprKind::AssocArray(pairs) => {
@@ -3369,7 +3369,7 @@ fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
     match &expr.kind {
         ExprKind::SimpleExpansion(name) => {
             if let Ok(n) = name.parse::<usize>() {
-                if n >= 1 && n <= 9 && n > *max {
+                if (1..=9).contains(&n) && n > *max {
                     *max = n;
                 }
             }
@@ -3391,7 +3391,7 @@ fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
         }
         ExprKind::ParameterExpansion(pe) => {
             if let Ok(n) = pe.name.parse::<usize>() {
-                if n >= 1 && n <= 9 && n > *max {
+                if (1..=9).contains(&n) && n > *max {
                     *max = n;
                 }
             }

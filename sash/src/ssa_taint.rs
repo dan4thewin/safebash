@@ -53,7 +53,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     }
 
     // Phase 1: classify every defined VarRef
-    for (_id, block) in &program.blocks {
+    for block in program.blocks.values() {
         // Phi nodes — optimistic: default to clean, will be corrected
         // by iteration if any incoming is tainted. Since the CST pass
         // is the authority, false-clean here just means we don't catch
@@ -62,10 +62,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
             let key = var_key(&phi.target);
             let t = phi.sources.iter().any(|(_bid, vref)| {
                 // Only check sources that are already classified
-                match taint.get(&var_key(vref)) {
-                    Some(&Taint::Tainted) => true,
-                    _ => false,
-                }
+                matches!(taint.get(&var_key(vref)), Some(&Taint::Tainted))
             });
             taint.insert(key, if t { Taint::Tainted } else { Taint::Clean });
         }
@@ -131,7 +128,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
 
     // Phase 2: check uses — any instruction reading a tainted VarRef
     // in a position that would produce output or side effects is a bug.
-    for (_id, block) in &program.blocks {
+    for block in program.blocks.values() {
         for inst in &block.insts {
             match inst {
                 SsaInst::Command { name, args, .. } => {

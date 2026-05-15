@@ -84,9 +84,8 @@ fn walk_node(
             let text = node_text(node, source);
             prefix_lines.push((
                 line,
-                format!(
-                    "# MANUAL: subshell ( ... ) — convert to function with local vars, or remove"
-                ),
+                "# MANUAL: subshell ( ... ) — convert to function with local vars, or remove"
+                    .to_string(),
             ));
             let _ = text; // pass through unchanged
         }
@@ -96,7 +95,7 @@ fn walk_node(
         "expansion" => {
             convert_expansion(node, source, patches, prefix_lines);
         }
-        "for_statement" if node.child(0).map_or(false, |c| c.kind() == "select") => {
+        "for_statement" if node.child(0).is_some_and(|c| c.kind() == "select") => {
             let line = node.start_position().row;
             prefix_lines.push((
                 line,
@@ -488,9 +487,7 @@ fn convert_test_command(
             }
             NumericResult::TooComplex => {
                 let line = node.start_position().row;
-                prefix_lines.push((line, format!(
-                    "# MANUAL: numeric comparison needs conversion to (( )) — operands too complex for auto-convert"
-                )));
+                prefix_lines.push((line, "# MANUAL: numeric comparison needs conversion to (( )) — operands too complex for auto-convert".to_string()));
                 // Still convert [ ] → [[ ]] below if single bracket
                 if is_double {
                     return;
@@ -663,11 +660,11 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                         prefix_line: None,
                         original: None,
                     });
-                } else if let Some(env) = crate::known_externals::lookup_env_var(&name) {
+                } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
                     // Known env var: $HOME → $(getenv HOME) + bless
                     let var = name.to_lowercase();
-                    let line = node.start_position().row + 1;
-                    let getenv = format!("$(getenv {})", name);
+                    let _line = node.start_position().row + 1;
+                    let _getenv = format!("$(getenv {})", name);
                     // Emit: var=$(getenv NAME); bless var [[ $var =~ pattern ]]
                     patches.push(Patch {
                         start: node.start_byte(),
@@ -683,7 +680,7 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
             }
             "special_variable_name" => {
                 let name = node_text(child, source);
-                let replacement = match &*name {
+                let replacement = match name {
                     "@" | "*" => Some("$(argv @)".to_string()),
                     "#" => Some("$(argc)".to_string()),
                     _ => None,
@@ -936,9 +933,7 @@ fn add_sc2086_hints(findings: &[ScFinding], prefix_lines: &mut Vec<(usize, Strin
         // SC2086: double quote to prevent globbing/word splitting
         // SC2248: prefer double quoting (optional check, supersedes SC2086 for simple cases)
         if f.code == 2086 || f.code == 2248 {
-            prefix_lines.push((f.line.saturating_sub(1), format!(
-                "# CHECK: unquoted variable (SC2086) — word splitting won't occur in sash. Was splitting intended?"
-            )));
+            prefix_lines.push((f.line.saturating_sub(1), "# CHECK: unquoted variable (SC2086) — word splitting won't occur in sash. Was splitting intended?".to_string()));
         }
     }
 }

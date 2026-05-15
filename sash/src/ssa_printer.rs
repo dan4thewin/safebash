@@ -165,15 +165,15 @@ fn print_value(val: &SsaValue) -> String {
         SsaValue::Expr(s) => s.clone(),
         SsaValue::FuncCall(name) => format!("call {}()", name),
         SsaValue::IntFuncCall { name, args } => {
-            let arg_strs: Vec<String> = args.iter().map(|a| print_value(a)).collect();
+            let arg_strs: Vec<String> = args.iter().map(print_value).collect();
             format!("(int:{} {})", name, arg_strs.join(" "))
         }
         SsaValue::CmdSubst { argv, .. } => {
-            let parts: Vec<String> = argv.iter().map(|v| print_value(v)).collect();
+            let parts: Vec<String> = argv.iter().map(print_value).collect();
             format!("$({})", parts.join(" "))
         }
         SsaValue::Concat(parts) => {
-            let ps: Vec<String> = parts.iter().map(|v| print_value(v)).collect();
+            let ps: Vec<String> = parts.iter().map(print_value).collect();
             ps.join(" ++ ")
         }
         SsaValue::ParamExpansion {
@@ -208,7 +208,7 @@ fn print_value(val: &SsaValue) -> String {
             format!("argv[{}]", idx.display())
         }
         SsaValue::IndexedArray(elems) => {
-            let inner: Vec<String> = elems.iter().map(|v| print_value(v)).collect();
+            let inner: Vec<String> = elems.iter().map(print_value).collect();
             format!("({})", inner.join(" "))
         }
         SsaValue::Ternary {

@@ -1,15 +1,15 @@
-/// safebash intermediate representation.
-///
-/// This IR sits between the tree-sitter CST and SSA.  It strips
-/// syntactic noise (semicolons, keywords, braces) and models the
-/// semantic structure of a Bash script.
-///
-/// Design principles:
-///   - Every CST construct that survives the safe-subset validator
-///     has a corresponding IR node.
-///   - The IR is a tree, not a graph (SSA adds edges later).
-///   - String data is owned — the IR is independent of the source text.
-///   - Spans are preserved for error reporting.
+//! safebash intermediate representation.
+//!
+//! This IR sits between the tree-sitter CST and SSA.  It strips
+//! syntactic noise (semicolons, keywords, braces) and models the
+//! semantic structure of a Bash script.
+//!
+//! Design principles:
+//!   - Every CST construct that survives the safe-subset validator
+//!     has a corresponding IR node.
+//!   - The IR is a tree, not a graph (SSA adds edges later).
+//!   - String data is owned — the IR is independent of the source text.
+//!   - Spans are preserved for error reporting.
 
 /// Source location for error reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]

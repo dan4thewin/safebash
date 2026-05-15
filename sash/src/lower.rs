@@ -134,7 +134,7 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
                         kind: StmtKind::Command(Command {
                             name: Expr {
                                 kind: ExprKind::Literal("select".to_string()),
-                                span: span.clone(),
+                                span,
                             },
                             args: vec![],
                         }),
@@ -193,7 +193,7 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::Command(Command {
                 name: Expr {
                     kind: ExprKind::Literal("unset".to_string()),
-                    span: span.clone(),
+                    span,
                 },
                 args,
             })
@@ -203,7 +203,7 @@ fn lower_statement(node: Node, source: &[u8]) -> Option<Statement> {
             StmtKind::Command(Command {
                 name: Expr {
                     kind: ExprKind::Literal("[[".to_string()),
-                    span: span.clone(),
+                    span,
                 },
                 args: vec![lower_expr(node, source)],
             })
@@ -376,9 +376,9 @@ fn lower_declaration(node: Node, source: &[u8]) -> Option<Declaration> {
             }
             "word" => {
                 let text = child.utf8_text(source).unwrap_or("").to_string();
-                if text.starts_with('-') {
+                if let Some(flag_chars) = text.strip_prefix('-') {
                     // Parse combined flags: -ri → -r + -i
-                    for ch in text[1..].chars() {
+                    for ch in flag_chars.chars() {
                         match ch {
                             'i' => var_type = VarType::Int,
                             'a' => flags.push("-a".to_string()),
@@ -661,11 +661,11 @@ fn lower_list(node: Node, source: &[u8]) -> Statement {
             kind: StmtKind::Command(Command {
                 name: Expr {
                     kind: ExprKind::Literal("?".to_string()),
-                    span: span.clone(),
+                    span,
                 },
                 args: vec![],
             }),
-            span: span.clone(),
+            span,
         });
 
     // Right side: everything after the operator
@@ -681,11 +681,11 @@ fn lower_list(node: Node, source: &[u8]) -> Statement {
             kind: StmtKind::Command(Command {
                 name: Expr {
                     kind: ExprKind::Literal("?".to_string()),
-                    span: span.clone(),
+                    span,
                 },
                 args: vec![],
             }),
-            span: span.clone(),
+            span,
         })
     } else {
         // Multiple nodes on right — shouldn't happen in practice
@@ -698,11 +698,11 @@ fn lower_list(node: Node, source: &[u8]) -> Statement {
                 kind: StmtKind::Command(Command {
                     name: Expr {
                         kind: ExprKind::Literal("?".to_string()),
-                        span: span.clone(),
+                        span,
                     },
                     args: vec![],
                 }),
-                span: span.clone(),
+                span,
             })
     };
 
@@ -815,10 +815,8 @@ fn lower_elif(node: Node, source: &[u8]) -> ElifClause {
                     if let Some(s) = lower_statement(child, source) {
                         condition.push(s);
                     }
-                } else {
-                    if let Some(s) = lower_statement(child, source) {
-                        body.push(s);
-                    }
+                } else if let Some(s) = lower_statement(child, source) {
+                    body.push(s);
                 }
             }
         }
@@ -959,10 +957,8 @@ fn lower_case_item(node: Node, source: &[u8]) -> CaseItem {
                             }
                         }
                     }
-                } else {
-                    if let Some(s) = lower_statement(child, source) {
-                        body.push(s);
-                    }
+                } else if let Some(s) = lower_statement(child, source) {
+                    body.push(s);
                 }
             }
         }
@@ -2198,7 +2194,7 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
             let gap = std::str::from_utf8(&source[var_end..first_regex_start]).unwrap_or("");
             if gap.starts_with(":s/") {
                 // It's a sed expression: ${var:s/pattern/replacement/flags}
-                let pattern = regex_texts.get(0).cloned().unwrap_or_default();
+                let pattern = regex_texts.first().cloned().unwrap_or_default();
                 let replacement = regex_texts.get(1).cloned().unwrap_or_default();
                 let is_global = flags_text.contains('g');
                 // Build operand as pattern\0replacement (null-separated, like ${var/pat/rep})
@@ -2392,8 +2388,7 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
             if op == "strlen" {
                 // ${#arr[@]} or ${#arr[*]} — array length
                 // ${#arr[N]} — string length of element N
-                let is_all = subscript_index.as_ref().map_or(
-                    false,
+                let is_all = subscript_index.as_ref().is_some_and(
                     |idx| matches!(&idx.kind, ExprKind::Literal(s) if s == "@" || s == "*"),
                 );
                 if is_all || subscript_index.is_none() {
