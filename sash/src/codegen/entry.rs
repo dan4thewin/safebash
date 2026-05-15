@@ -1740,87 +1740,7 @@ fn lower_inst(
     let _trace = ctx.trace;
     match inst {
         SsaInst::Assign { target, value } => {
-            // DD#30: unset on collection → new empty table
-            if let SsaValue::Literal(s) = value {
-                if s == "__new_table__" {
-                    let sv = vars[&target.display()];
-                    let cap = builder.ins().iconst(I64, 0);
-                    let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
-                    let call = builder.ins().call(new_ref, &[cap]);
-                    let tbl_ptr = builder.inst_results(call)[0];
-                    builder.def_var(sv.str_ptr(), tbl_ptr);
-                    let zero_len = builder.ins().iconst(I64, 0);
-                    builder.def_var(sv.str_len(), zero_len);
-                    return false;
-                }
-            }
-            // Special: assignment to $? updates the exit_status_var directly
-            let base = {
-                let d = target.display();
-                if let Some(idx) = d.rfind('_') {
-                    let suffix = &d[idx + 1..];
-                    if suffix.chars().all(|c| c.is_ascii_digit()) {
-                        d[..idx].to_string()
-                    } else {
-                        d.to_string()
-                    }
-                } else {
-                    d.to_string()
-                }
-            };
-            if base == "?" {
-                // Parse the literal value as an integer for exit_status_var
-                let int_val = match value {
-                    SsaValue::Literal(s) => {
-                        let n = s.parse::<i64>().unwrap_or(0);
-                        builder.ins().iconst(I64, n)
-                    }
-                    _ => {
-                        let (ptr, len) = lower_value(
-                            value,
-                            builder,
-                            module,
-                            vars,
-                            literals,
-                            func_constants,
-                            externs,
-                            Some(exit_status_var),
-                        );
-                        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                        let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                        builder.inst_results(call)[0]
-                    }
-                };
-                builder.def_var(exit_status_var, int_val);
-            } else {
-                let sv = vars[&target.display()];
-                if sv.is_int() {
-                    // Int var: evaluate value as i64 and store directly
-                    let int_val = lower_value_as_int(
-                        value,
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                    );
-                    builder.def_var(*sv.as_int(), int_val);
-                } else {
-                    let (ptr_val, len_val) = lower_value(
-                        value,
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                        Some(exit_status_var),
-                    );
-                    builder.def_var(sv.str_ptr(), ptr_val);
-                    builder.def_var(sv.str_len(), len_val);
-                }
-            }
+            return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
         }
         SsaInst::Command {
             name,
@@ -2185,128 +2105,7 @@ fn lower_inst(
             }
         }
         SsaInst::Command { name, args, .. } if name == "cd" => {
-            // Determine target: explicit arg, "-" (OLDPWD), or no arg (HOME)
-            let is_dash = matches!(args.first(), Some(SsaValue::Literal(s)) if s == "-");
-
-            if is_dash {
-                // cd - → cd to $OLDPWD, then print new dir
-                if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
-                    let old_ptr = builder.use_var(oldpwd_slot.str_ptr());
-                    let old_len = builder.use_var(oldpwd_slot.str_len());
-                    let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
-                    let call = builder.ins().call(chdir_ref, &[old_ptr, old_len]);
-                    let result = builder.inst_results(call)[0];
-                    let zero = builder.ins().iconst(I64, 0);
-                    let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
-                    let es = builder.ins().uextend(I64, failed);
-                    builder.def_var(exit_status_var, es);
-                    // Update OLDPWD = current PWD, then PWD = getcwd()
-                    if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
-                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
-                        let cur_len = builder.use_var(pwd_slot.str_len());
-                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
-                        builder.def_var(oldpwd_slot.str_len(), cur_len);
-                        let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            8,
-                            3,
-                        ));
-                        let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
-                        let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
-                        let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
-                        let new_ptr = builder.inst_results(call2)[0];
-                        let new_len = builder.ins().stack_load(I64, len_slot2, 0);
-                        builder.def_var(pwd_slot.str_ptr(), new_ptr);
-                        builder.def_var(pwd_slot.str_len(), new_len);
-                        // Print new dir (bash cd - behavior)
-                        let write_ref = module.declare_func_in_func(externs.write, builder.func);
-                        let stdout_fd = builder.ins().iconst(I64, 1);
-                        builder
-                            .ins()
-                            .call(write_ref, &[stdout_fd, new_ptr, new_len]);
-                        let nl_gv = module.declare_data_in_func(nl_id, builder.func);
-                        let nl_ptr2 = builder.ins().global_value(I64, nl_gv);
-                        let one = builder.ins().iconst(I64, 1);
-                        builder.ins().call(write_ref, &[stdout_fd, nl_ptr2, one]);
-                    }
-                }
-            } else if let Some(arg) = args.first() {
-                let (ptr, len) = lower_value(
-                    arg,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    Some(exit_status_var),
-                );
-                let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
-                let call = builder.ins().call(chdir_ref, &[ptr, len]);
-                let result = builder.inst_results(call)[0];
-                // Set $? based on result (0=success, -1=failure → 1)
-                let zero = builder.ins().iconst(I64, 0);
-                let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
-                let es = builder.ins().uextend(I64, failed);
-                builder.def_var(exit_status_var, es);
-
-                // Update $PWD and $OLDPWD after successful cd
-                // Save current PWD as OLDPWD, then getcwd for new PWD
-                if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
-                    if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
-                        // OLDPWD = current PWD
-                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
-                        let cur_len = builder.use_var(pwd_slot.str_len());
-                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
-                        builder.def_var(oldpwd_slot.str_len(), cur_len);
-                    }
-                    // PWD = getcwd()
-                    let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
-                    let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
-                    let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
-                    let new_ptr = builder.inst_results(call2)[0];
-                    let new_len = builder.ins().stack_load(I64, len_slot2, 0);
-                    builder.def_var(pwd_slot.str_ptr(), new_ptr);
-                    builder.def_var(pwd_slot.str_len(), new_len);
-                }
-            } else {
-                // cd with no args — cd to $HOME
-                if let Some(home_slot) = vars.get("HOME_0") {
-                    let ptr = builder.use_var(home_slot.str_ptr());
-                    let len = builder.use_var(home_slot.str_len());
-                    let chdir_ref = module.declare_func_in_func(externs.chdir, builder.func);
-                    builder.ins().call(chdir_ref, &[ptr, len]);
-                }
-                let zero = builder.ins().iconst(I64, 0);
-                builder.def_var(exit_status_var, zero);
-
-                // Update PWD after cd to HOME
-                if let Some(pwd_slot) = vars.get("PWD_0").cloned() {
-                    if let Some(oldpwd_slot) = vars.get("OLDPWD_0").cloned() {
-                        let cur_ptr = builder.use_var(pwd_slot.str_ptr());
-                        let cur_len = builder.use_var(pwd_slot.str_len());
-                        builder.def_var(oldpwd_slot.str_ptr(), cur_ptr);
-                        builder.def_var(oldpwd_slot.str_len(), cur_len);
-                    }
-                    let len_slot2 = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let len_addr2 = builder.ins().stack_addr(I64, len_slot2, 0);
-                    let getcwd_ref2 = module.declare_func_in_func(externs.getcwd, builder.func);
-                    let call2 = builder.ins().call(getcwd_ref2, &[len_addr2]);
-                    let new_ptr = builder.inst_results(call2)[0];
-                    let new_len = builder.ins().stack_load(I64, len_slot2, 0);
-                    builder.def_var(pwd_slot.str_ptr(), new_ptr);
-                    builder.def_var(pwd_slot.str_len(), new_len);
-                }
-            }
+            return super::inst_handlers::handle_cd(args, builder, module, ctx);
         }
         SsaInst::Command { name, args, .. } if name == "pwd" => {
             // pwd — getcwd, write to stdout
@@ -2380,110 +2179,7 @@ fn lower_inst(
             builder.def_var(exit_status_var, status);
         }
         SsaInst::Command { name, args, .. } if name == "shift" => {
-            // shift N: sash_argc -= N; sash_argv += N*8
-            let shift_n = if let Some(SsaValue::Literal(s)) = args.first() {
-                s.parse::<i64>().unwrap_or(1)
-            } else {
-                1
-            };
-            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-            let argc_addr = builder.ins().global_value(I64, argc_gv);
-            let old_argc = builder.ins().load(I64, MemFlags::trusted(), argc_addr, 0);
-            let n_val = builder.ins().iconst(I64, shift_n);
-            let new_argc = builder.ins().isub(old_argc, n_val);
-            builder
-                .ins()
-                .store(MemFlags::trusted(), new_argc, argc_addr, 0);
-
-            let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-            let argv_addr = builder.ins().global_value(I64, argv_gv);
-            let old_argv = builder.ins().load(I64, MemFlags::trusted(), argv_addr, 0);
-            let offset = builder.ins().iconst(I64, shift_n * 8);
-            let new_argv = builder.ins().iadd(old_argv, offset);
-            builder
-                .ins()
-                .store(MemFlags::trusted(), new_argv, argv_addr, 0);
-
-            // Reload all positional params from updated argv/argc
-            let fresh_argv = builder.ins().load(I64, MemFlags::trusted(), argv_addr, 0);
-            let fresh_argc = builder.ins().load(I64, MemFlags::trusted(), argc_addr, 0);
-            for (key, sv) in vars.iter() {
-                // key is like "1_0", "2_0", "#_0" — extract base name
-                let base = key.split('_').next().unwrap_or("");
-                if let Ok(idx) = base.parse::<i64>() {
-                    // Guard: only reload if idx < fresh_argc (arg still exists)
-                    let idx_val = builder.ins().iconst(I64, idx);
-                    let in_bounds = builder
-                        .ins()
-                        .icmp(IntCC::SignedLessThan, idx_val, fresh_argc);
-
-                    let reload_block = builder.create_block();
-                    let skip_block = builder.create_block();
-                    let merge_block = builder.create_block();
-
-                    builder
-                        .ins()
-                        .brif(in_bounds, reload_block, &[], skip_block, &[]);
-
-                    builder.switch_to_block(reload_block);
-                    builder.seal_block(reload_block);
-                    let offset = builder.ins().imul_imm(idx_val, 8);
-                    let arg_ptr_addr = builder.ins().iadd(fresh_argv, offset);
-                    let arg_ptr = builder
-                        .ins()
-                        .load(I64, MemFlags::trusted(), arg_ptr_addr, 0);
-                    let len = emit_strlen(builder, module, externs.strlen, arg_ptr);
-                    builder.def_var(sv.str_ptr(), arg_ptr);
-                    builder.def_var(sv.str_len(), len);
-                    builder.ins().jump(merge_block, &[]);
-
-                    builder.switch_to_block(skip_block);
-                    builder.seal_block(skip_block);
-                    let null_ptr = builder.ins().iconst(I64, 0);
-                    let zero_len = builder.ins().iconst(I64, 0);
-                    builder.def_var(sv.str_ptr(), null_ptr);
-                    builder.def_var(sv.str_len(), zero_len);
-                    builder.ins().jump(merge_block, &[]);
-
-                    builder.switch_to_block(merge_block);
-                    builder.seal_block(merge_block);
-                } else if base == "#" {
-                    let one = builder.ins().iconst(I64, 1);
-                    let count = builder.ins().isub(fresh_argc, one);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[count, out_addr]);
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                } else if base == "@" {
-                    let space_id = literals.get(" ").expect("space not interned");
-                    let space_gv = module.declare_data_in_func(*space_id, builder.func);
-                    let space_ptr = builder.ins().global_value(I64, space_gv);
-                    let space_len = builder.ins().iconst(I64, 1);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let join_ref = module.declare_func_in_func(externs.join_args, builder.func);
-                    let call = builder.ins().call(
-                        join_ref,
-                        &[fresh_argv, fresh_argc, space_ptr, space_len, out_addr],
-                    );
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                }
-            }
+            return super::inst_handlers::handle_shift(args, builder, module, ctx);
         }
         SsaInst::Command {
             name,
@@ -2561,84 +2257,9 @@ fn lower_inst(
             checked,
             ..
         } => {
-            let restore = emit_redirects(
-                redirects,
-                builder,
-                module,
-                externs,
-                literals,
-                vars,
-                Some(exit_status_var),
+            return super::inst_handlers::handle_general_command(
+                name, args, redirects, checked, builder, module, ctx,
             );
-            lower_exec(
-                name,
-                args,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                test_result_var,
-                exit_status_var,
-            );
-            emit_restore(restore, builder, module, externs);
-
-            // DD#55: implicit exit check — abort if nonzero
-            if *checked {
-                let status = builder.use_var(exit_status_var);
-                let zero = builder.ins().iconst(I64, 0);
-                let failed = builder.ins().icmp(IntCC::NotEqual, status, zero);
-
-                let abort_block = builder.create_block();
-                let cont_block = builder.create_block();
-                builder
-                    .ins()
-                    .brif(failed, abort_block, &[], cont_block, &[]);
-
-                builder.switch_to_block(abort_block);
-                builder.seal_block(abort_block);
-                if let Some(end_cl) = end_cl_block {
-                    // DD#56: jump to END block instead of exiting directly
-                    builder.def_var(exit_status_var, status);
-                    builder.ins().jump(end_cl, &[]);
-                } else {
-                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                    builder.ins().call(exit_ref, &[status]);
-                    builder
-                        .ins()
-                        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                }
-
-                builder.switch_to_block(cont_block);
-                builder.seal_block(cont_block);
-            }
-
-            // DD#56: signal EXIT check point after external command
-            if !program.exiting_signals.is_empty() {
-                if let Some(end_cl) = end_cl_block {
-                    if program.end_block.is_none_or(|eb| ssa_id < eb) {
-                        let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
-                        let signum_base = builder.ins().global_value(I64, signum_gv);
-                        let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-                        let zero_sig = builder.ins().iconst(I64, 0);
-                        let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
-                        let sig_end_block = builder.create_block();
-                        let sig_cont_block = builder.create_block();
-                        builder
-                            .ins()
-                            .brif(sig_fired, sig_end_block, &[], sig_cont_block, &[]);
-                        builder.switch_to_block(sig_end_block);
-                        builder.seal_block(sig_end_block);
-                        // Set exit status to 128+signum (standard convention)
-                        let c128 = builder.ins().iconst(I64, 128);
-                        let exit_code = builder.ins().iadd(signum_val, c128);
-                        builder.def_var(exit_status_var, exit_code);
-                        builder.ins().jump(end_cl, &[]);
-                        builder.switch_to_block(sig_cont_block);
-                        builder.seal_block(sig_cont_block);
-                    }
-                }
-            }
         }
         SsaInst::Phi(_) => {}
         SsaInst::SubscriptAssign {
@@ -2647,61 +2268,15 @@ fn lower_inst(
             value,
             is_integer_key,
         } => {
-            let array_key = format!("{}_0", array);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys()
-                    .find(|k| k.starts_with(&format!("{}_", array)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-            });
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            let (key_ptr, key_len) = if *is_integer_key {
-                let idx_int = lower_value_as_int(
-                    index,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                );
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                builder.ins().stack_store(idx_int, idx_slot, 0);
-                let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-                let kl = builder.ins().iconst(I64, 8);
-                (kp, kl)
-            } else {
-                lower_value(
-                    index,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    Some(exit_status_var),
-                )
-            };
-
-            let (val_ptr, val_len) = lower_value(
+            return super::inst_handlers::handle_subscript_assign(
+                array,
+                index,
                 value,
+                is_integer_key,
                 builder,
                 module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                Some(exit_status_var),
+                ctx,
             );
-            let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-            builder
-                .ins()
-                .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
         }
         SsaInst::ArrayAppend { array, value } => {
             let array_key = format!("{}_0", array);
@@ -2748,111 +2323,9 @@ fn lower_inst(
             map_mode,
             separator,
         } => {
-            // Read all lines from fd into an array (or map in map_mode)
-            let sv = vars
-                .keys()
-                .filter(|k| k.starts_with(&format!("{}_", array)))
-                .max_by_key(|k| {
-                    k.rsplit('_')
-                        .next()
-                        .and_then(|n| n.parse::<u32>().ok())
-                        .unwrap_or(0)
-                })
-                .and_then(|k| vars.get(k))
-                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array));
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
-            let fd_val = if *fd == -1 {
-                builder.use_var(pipe_read_fd_var)
-            } else {
-                builder.ins().iconst(I64, *fd)
-            };
-
-            let loop_hdr = builder.create_block();
-            let loop_body = builder.create_block();
-            let loop_exit = builder.create_block();
-            builder.ins().jump(loop_hdr, &[]);
-
-            builder.switch_to_block(loop_hdr);
-            let call = builder.ins().call(read_line_ref, &[fd_val]);
-            let line_ptr = builder.inst_results(call)[0];
-            let line_len = builder.inst_results(call)[1];
-            let zero = builder.ins().iconst(I64, 0);
-            let got_data = builder.ins().icmp(IntCC::NotEqual, line_ptr, zero);
-            builder.ins().brif(got_data, loop_body, &[], loop_exit, &[]);
-
-            builder.switch_to_block(loop_body);
-            builder.seal_block(loop_body);
-
-            if *map_mode {
-                // Split line on separator, insert key/value into map
-                let delim_val = builder.ins().iconst(I64, *separator as i64);
-                let rest_ptr_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let rest_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
-                let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
-                let split_ref = module.declare_func_in_func(externs.split_field, builder.func);
-                let split_call = builder.ins().call(
-                    split_ref,
-                    &[line_ptr, line_len, delim_val, rest_ptr_addr, rest_len_addr],
-                );
-                let key_ptr = builder.inst_results(split_call)[0];
-                let key_len = builder.inst_results(split_call)[1];
-                let val_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
-                let val_len = builder.ins().stack_load(I64, rest_len_slot, 0);
-
-                // Skip empty keys (blank lines)
-                let key_empty = builder.ins().icmp(IntCC::Equal, key_len, zero);
-                let skip_block = builder.create_block();
-                let insert_block = builder.create_block();
-                builder
-                    .ins()
-                    .brif(key_empty, skip_block, &[], insert_block, &[]);
-
-                builder.switch_to_block(insert_block);
-                builder.seal_block(insert_block);
-                // Insert key/value into table
-                let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-                builder
-                    .ins()
-                    .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
-                builder.ins().jump(loop_hdr, &[]);
-
-                builder.switch_to_block(skip_block);
-                builder.seal_block(skip_block);
-                builder.ins().jump(loop_hdr, &[]);
-            } else {
-                // Key = current table length (next integer index)
-                let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-                let len_call = builder.ins().call(len_ref, &[table_ptr]);
-                let next_idx = builder.inst_results(len_call)[0];
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                builder.ins().stack_store(next_idx, idx_slot, 0);
-                let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-                let kl = builder.ins().iconst(I64, 8);
-                let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-                builder
-                    .ins()
-                    .call(set_ref, &[table_ptr, kp, kl, line_ptr, line_len]);
-                builder.ins().jump(loop_hdr, &[]);
-            }
-            builder.seal_block(loop_hdr);
-
-            builder.switch_to_block(loop_exit);
-            builder.seal_block(loop_exit);
+            return super::inst_handlers::handle_mapfile(
+                array, fd, map_mode, separator, builder, module, ctx,
+            );
         }
         SsaInst::ReadArray { array, fd, delim } => {
             // Slurp all input from fd, then split by delimiter into indexed array
