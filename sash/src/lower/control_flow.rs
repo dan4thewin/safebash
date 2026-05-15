@@ -1,6 +1,6 @@
 //! Control flow lowering: if, while, for, case → IR.
 
-use super::expressions::{lower_expr, lower_test_command};
+use super::expressions::lower_expr;
 use super::helpers::child_field_name;
 use super::lower_body;
 use super::statements::lower_statement;

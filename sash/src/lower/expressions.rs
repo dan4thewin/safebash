@@ -6,7 +6,6 @@
 use super::arithmetic::lower_arith_expr_to_exprkind;
 use super::helpers::has_error_descendant;
 use super::statements::lower_statement;
-use crate::emit_source::record_coercion;
 use crate::ir::*;
 use tree_sitter::Node;
 

@@ -55,7 +55,8 @@ pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8
     let tree = crate::parse(&source);
     let program = crate::lower::lower_program(tree.root_node(), source.as_bytes());
     let type_map = crate::type_check::infer_types(&program);
-    let (ssa, diags) = crate::transform::ir_to_ssa_typed(&program, type_map);
+    let (ssa, diags): (crate::ssa::SsaProgram, Vec<String>) =
+        crate::transform::ir_to_ssa_typed(&program, type_map);
 
     if !diags.is_empty() {
         return Err(diags);

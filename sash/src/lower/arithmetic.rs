@@ -2,11 +2,9 @@
 //!
 //! Handles: (( expr )), C-style for loops, arithmetic expressions.
 
-use super::expressions::lower_expr;
 use super::helpers::has_error_descendant;
 use super::lower_body;
 use super::statements::lower_statement;
-use crate::emit_source::record_coercion;
 use crate::ir::*;
 use tree_sitter::Node;
 
