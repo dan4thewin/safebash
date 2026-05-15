@@ -71,12 +71,34 @@ resolves via global `ARITH_MAP`.
 ### Key source files (`sash/src/`)
 
 - `lib.rs` — entry point, cli_main, arithmetic preprocessor
-- `lower.rs` — CST → IR lowering with coercions
+- `lower/` — CST → IR lowering (7 files)
+  - `mod.rs` — lower_program, lower_body
+  - `statements.rs` — statement/declaration/command lowering
+  - `control_flow.rs` — if/while/for/case
+  - `functions.rs` — function definitions, redirects
+  - `expressions.rs` — expression lowering
+  - `arithmetic.rs` — (( )) and C-style for
+  - `helpers.rs` — utilities
 - `ir.rs` — IR definitions
 - `type_check.rs` — type checking pass
-- `transform.rs` — IR → SSA transformation, int func inlining
+- `transform/` — IR → SSA transformation (9 files)
+  - `entry.rs` — ir_to_ssa, ir_to_ssa_typed
+  - `statements.rs` — lower_one dispatch
+  - `control_flow.rs` — if/while/for/case → SSA blocks
+  - `expressions.rs` — expr_to_value
+  - `functions.rs` — int-func lifting, inlining
+  - `pipelines.rs` — pipeline decomposition
+  - `resolution.rs` — DD#23 command resolution
+  - `helpers.rs` — phi insertion, positional scanning
 - `ssa.rs`, `ssa_printer.rs` — SSA representation and printing
-- `codegen.rs` — Cranelift code generation
+- `codegen/` — Cranelift code generation (8 files)
+  - `entry.rs` — compile_to_object, compile_ssa, lower_inst dispatch
+  - `types.rs` — VarSlot, ExternFuncs, InstCtx
+  - `arithmetic.rs` — emit_arith_op
+  - `commands.rs` — lower_echo, lower_exec (fork/exec path)
+  - `tests.rs` — [[ ]] test expressions
+  - `values.rs` — lower_value, lower_value_as_int
+  - `redirects.rs` — fd save/restore
 - `taint.rs` — CST taint analysis
 - `ssa_taint.rs` — SSA taint verification
 - `validator.rs`, `rule.rs` — validation framework
