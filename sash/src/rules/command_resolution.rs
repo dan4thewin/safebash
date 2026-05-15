@@ -1,19 +1,35 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5011: Bare commands must be builtins or absolute paths.
 /// sash does not resolve commands via PATH at runtime.
 pub struct CommandResolution;
 
 const BUILTINS: &[&str] = &[
-    "echo", "printf", "cd", "pwd", "wait", "shift", "true", "false", ":",
-    "read", "mapfile", "readarray", "unset", "test", "[", "[[",
-    "break", "continue", "return", "exit",
+    "echo",
+    "printf",
+    "cd",
+    "pwd",
+    "wait",
+    "shift",
+    "true",
+    "false",
+    ":",
+    "read",
+    "mapfile",
+    "readarray",
+    "unset",
+    "test",
+    "[",
+    "[[",
+    "break",
+    "continue",
+    "return",
+    "exit",
 ];
 
 impl Rule for CommandResolution {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["command", "for_statement", "subshell"]
     }
@@ -73,7 +89,9 @@ impl Rule for CommandResolution {
                         has_v = true;
                         break;
                     }
-                    if !cursor.goto_next_sibling() { break; }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
                 }
             }
             if has_v {
@@ -87,13 +105,31 @@ impl Rule for CommandResolution {
         }
 
         // Known keywords/special forms handled elsewhere
-        if matches!(name,
-            "eval" | "source" | "." | "alias" | "trap" | "signal"
-            | "local" | "set"
-            | "shopt" | "bless" | "getenv" | "fn"
-            | "let"
-            | "status" | "getcpid" | "getpid" | "getppid" | "getcwd" | "argc" | "argv" | "signum"
-            | "dtoi" | "itod"
+        if matches!(
+            name,
+            "eval"
+                | "source"
+                | "."
+                | "alias"
+                | "trap"
+                | "signal"
+                | "local"
+                | "set"
+                | "shopt"
+                | "bless"
+                | "getenv"
+                | "fn"
+                | "let"
+                | "status"
+                | "getcpid"
+                | "getpid"
+                | "getppid"
+                | "getcwd"
+                | "argc"
+                | "argv"
+                | "signum"
+                | "dtoi"
+                | "itod"
         ) {
             return vec![];
         }
@@ -132,7 +168,10 @@ impl Rule for CommandResolution {
         vec![Diagnostic::error(
             name_node,
             "SB5011",
-            format!("unresolved command '{}' — use an absolute path (e.g. /usr/bin/{})", name, name),
+            format!(
+                "unresolved command '{}' — use an absolute path (e.g. /usr/bin/{})",
+                name, name
+            ),
         )]
     }
 }
@@ -148,15 +187,19 @@ fn find_root(node: Node) -> Node {
 fn is_function_name(root: Node, name: &str, source: &[u8]) -> bool {
     let mut cursor = root.walk();
     // DD#18: also check for local function variant
-    is_function_name_walk(root, &mut cursor, name, source)
-        || {
-            let local_name = format!("__local__{}", name);
-            let mut cursor2 = root.walk();
-            is_function_name_walk(root, &mut cursor2, &local_name, source)
-        }
+    is_function_name_walk(root, &mut cursor, name, source) || {
+        let local_name = format!("__local__{}", name);
+        let mut cursor2 = root.walk();
+        is_function_name_walk(root, &mut cursor2, &local_name, source)
+    }
 }
 
-fn is_function_name_walk<'a>(node: Node<'a>, cursor: &mut tree_sitter::TreeCursor<'a>, name: &str, source: &[u8]) -> bool {
+fn is_function_name_walk<'a>(
+    node: Node<'a>,
+    cursor: &mut tree_sitter::TreeCursor<'a>,
+    name: &str,
+    source: &[u8],
+) -> bool {
     if node.kind() == "function_definition" {
         if let Some(name_node) = node.child_by_field_name("name") {
             if name_node.utf8_text(source).unwrap_or("") == name {

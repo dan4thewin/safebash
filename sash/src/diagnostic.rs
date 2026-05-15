@@ -10,8 +10,8 @@ pub enum Severity {
 /// A diagnostic emitted by a validation rule.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Diagnostic {
-    pub line: usize,      // 1-based
-    pub col: usize,       // 1-based
+    pub line: usize, // 1-based
+    pub col: usize,  // 1-based
     pub code: &'static str,
     pub severity: Severity,
     pub message: String,

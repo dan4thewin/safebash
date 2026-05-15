@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5001: bash declaration keywords rejected in sash-native.
 ///
@@ -9,7 +9,6 @@ use crate::rule::Rule;
 pub struct ExportRejected;
 
 impl Rule for ExportRejected {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["declaration_command"]
     }
@@ -32,7 +31,10 @@ impl Rule for ExportRejected {
                 return vec![Diagnostic::error(
                     node,
                     "SB5001",
-                    format!("'{}' is bash syntax — use sash declarations: int, const, array, map", keyword),
+                    format!(
+                        "'{}' is bash syntax — use sash declarations: int, const, array, map",
+                        keyword
+                    ),
                 )];
             }
             "readonly" => {
@@ -54,7 +56,10 @@ impl Rule for ExportRejected {
                     return vec![Diagnostic::error(
                         node,
                         "SB5001",
-                        format!("'const {}' is not allowed \u{2014} collections are mutable", text),
+                        format!(
+                            "'const {}' is not allowed \u{2014} collections are mutable",
+                            text
+                        ),
                     )];
                 }
             }

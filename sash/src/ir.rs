@@ -14,8 +14,8 @@
 /// Source location for error reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 pub struct Span {
-    pub line: usize,   // 1-based
-    pub col: usize,    // 1-based
+    pub line: usize, // 1-based
+    pub col: usize,  // 1-based
 }
 
 impl Span {
@@ -101,7 +101,7 @@ pub enum VarType {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assignment {
     pub name: String,
-    pub index: Option<Expr>,  // arr[i]=val or map[key]=val
+    pub index: Option<Expr>, // arr[i]=val or map[key]=val
     pub op: AssignOp,
     pub value: Expr,
 }
@@ -158,7 +158,7 @@ pub struct ElifClause {
 pub struct While {
     pub condition: Vec<Statement>,
     pub body: Vec<Statement>,
-    pub until: bool,   // true for `until` loops
+    pub until: bool, // true for `until` loops
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -204,14 +204,14 @@ pub struct Redirect {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum RedirectOp {
-    Write,       // >
-    Append,      // >>
-    Read,        // <
-    DupOutput,   // >&
-    DupInput,    // <&
-    ReadWrite,   // <>
-    HereDoc,     // <<
-    HereString,  // <<<
+    Write,      // >
+    Append,     // >>
+    Read,       // <
+    DupOutput,  // >&
+    DupInput,   // <&
+    ReadWrite,  // <>
+    HereDoc,    // <<
+    HereString, // <<<
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -223,8 +223,8 @@ pub struct List {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ListOp {
-    And,  // &&
-    Or,   // ||
+    And,        // &&
+    Or,         // ||
     Background, // &
 }
 
@@ -288,7 +288,7 @@ pub enum ExprKind {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ParameterExpansion {
     pub name: String,
-    pub operator: Option<String>,   // :-, :=, :+, %, %%, #, ##, etc.
+    pub operator: Option<String>, // :-, :=, :+, %, %%, #, ##, etc.
     pub operand: Option<Box<Expr>>,
 }
 
@@ -296,10 +296,7 @@ pub struct ParameterExpansion {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TestExpr {
     /// -f file, -n str, -z str, etc.
-    Unary {
-        op: String,
-        operand: Box<Expr>,
-    },
+    Unary { op: String, operand: Box<Expr> },
     /// str = str, num -eq num, etc.
     Binary {
         left: Box<Expr>,

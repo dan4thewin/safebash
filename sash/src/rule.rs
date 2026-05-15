@@ -1,5 +1,5 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
+use tree_sitter::Node;
 
 /// A validation rule that inspects CST nodes and emits diagnostics.
 ///

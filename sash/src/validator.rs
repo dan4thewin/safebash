@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// Walk the CST once, dispatching each node to all registered rules.
 /// Returns collected diagnostics sorted by position.

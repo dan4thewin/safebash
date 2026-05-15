@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5019: Numeric comparison operators in [[ ]] are rejected.
 /// Use (( )) for arithmetic comparisons.

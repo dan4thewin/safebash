@@ -32,7 +32,11 @@ fn compile_expect_fail(name: &str, script: &str) -> String {
         .args(["-o", &bin, &src])
         .output()
         .expect("failed to run sash");
-    assert!(!out.status.success(), "expected compile failure for {}", name);
+    assert!(
+        !out.status.success(),
+        "expected compile failure for {}",
+        name
+    );
     String::from_utf8_lossy(&out.stderr).to_string()
 }
 
@@ -45,7 +49,12 @@ fn compile_and_run(name: &str, script: &str) -> String {
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    assert!(
+        out.status.success(),
+        "compile failed for {}: {}",
+        name,
+        stderr
+    );
     let run = Command::new(&bin).output().expect("run failed");
     String::from_utf8_lossy(&run.stdout).to_string()
 }
@@ -59,9 +68,16 @@ fn compile_and_exit_code(name: &str, script: &str, env: &[(&str, &str)]) -> i32 
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    assert!(
+        out.status.success(),
+        "compile failed for {}: {}",
+        name,
+        stderr
+    );
     let mut cmd = Command::new(&bin);
-    for (k, v) in env { cmd.env(k, v); }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let run = cmd.output().expect("run failed");
     run.status.code().unwrap_or(-1)
 }
@@ -75,9 +91,16 @@ fn compile_and_run_with_env(name: &str, script: &str, env: &[(&str, &str)]) -> S
         .output()
         .expect("failed to run sash");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    assert!(
+        out.status.success(),
+        "compile failed for {}: {}",
+        name,
+        stderr
+    );
     let mut cmd = Command::new(&bin);
-    for (k, v) in env { cmd.env(k, v); }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let run = cmd.output().expect("run failed");
     String::from_utf8_lossy(&run.stdout).to_string()
 }
@@ -95,7 +118,11 @@ b=$x
 echo "$b"
 "#;
     let stderr = compile_expect_fail("copy_read", script);
-    assert!(stderr.contains("SB4020"), "copying tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "copying tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [NOW]
@@ -106,7 +133,11 @@ x=$(getenv UNTRUSTED)
 echo "$x"
 "#;
     let stderr = compile_expect_fail("cmd_arg", script);
-    assert!(stderr.contains("SB4020"), "tainted var as cmd arg should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "tainted var as cmd arg should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -118,7 +149,11 @@ x=$(getenv IDX)
 echo "${items[$x]}"
 "#;
     let stderr = compile_expect_fail("arr_index", script);
-    assert!(stderr.contains("SB4020"), "tainted index should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "tainted index should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -129,7 +164,11 @@ x=$(getenv NUM)
 (( x + 1 ))
 "#;
     let stderr = compile_expect_fail("arith", script);
-    assert!(stderr.contains("SB4020"), "tainted var in arithmetic should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "tainted var in arithmetic should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -140,7 +179,11 @@ x=$(getenv NUM)
 echo $(( x * 2 ))
 "#;
     let stderr = compile_expect_fail("arith_exp", script);
-    assert!(stderr.contains("SB4020"), "tainted var in $(()) should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "tainted var in $(()) should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -152,7 +195,11 @@ x=$(getenv NAME)
 greet "$x"
 "#;
     let stderr = compile_expect_fail("func_arg", script);
-    assert!(stderr.contains("SB4020"), "passing tainted var to function should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "passing tainted var to function should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -163,7 +210,11 @@ x=$(getenv VAL)
 echo "${x:-fallback}"
 "#;
     let stderr = compile_expect_fail("default_exp", script);
-    assert!(stderr.contains("SB4020"), "default expansion of tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "default expansion of tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -174,7 +225,11 @@ x=$(getenv VAL)
 echo "${#x}"
 "#;
     let stderr = compile_expect_fail("length", script);
-    assert!(stderr.contains("SB4020"), "length of tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "length of tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -185,7 +240,11 @@ x=$(getenv PATH_VAL)
 echo "${x#/usr}"
 "#;
     let stderr = compile_expect_fail("prefix_strip", script);
-    assert!(stderr.contains("SB4020"), "prefix strip of tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "prefix strip of tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -196,7 +255,11 @@ x=$(getenv FILENAME)
 echo "${x%%.*}"
 "#;
     let stderr = compile_expect_fail("suffix_strip", script);
-    assert!(stderr.contains("SB4020"), "suffix strip of tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "suffix strip of tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -207,7 +270,11 @@ mapfile -t lines < /dev/stdin
 echo "${lines[0]}"
 "#;
     let stderr = compile_expect_fail("mapfile", script);
-    assert!(stderr.contains("SB4020"), "mapfile element read should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "mapfile element read should be SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test] // [SSA]
@@ -220,7 +287,11 @@ x=$(getenv B)
 echo "$x"
 "#;
     let stderr = compile_expect_fail("retaint", script);
-    assert!(stderr.contains("SB4020"), "re-tainted var should be SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "re-tainted var should be SB4020, got: {}",
+        stderr
+    );
 }
 
 // ===================================================================
@@ -235,8 +306,11 @@ echo $1
 "#;
     let stderr = compile_expect_fail("toplevel_1", script);
     // Could be SB4020 (tainted) or a dedicated "use argv" diagnostic
-    assert!(stderr.contains("SB4020") || stderr.contains("argv"),
-        "top-level $1 should be rejected, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020") || stderr.contains("argv"),
+        "top-level $1 should be rejected, got: {}",
+        stderr
+    );
 }
 
 #[test] // [DD46]
@@ -246,8 +320,11 @@ fn taint_toplevel_at_rejected() {
 for x in "$@"; do echo "$x"; done
 "#;
     let stderr = compile_expect_fail("toplevel_at", script);
-    assert!(stderr.contains("SB4020") || stderr.contains("argv"),
-        "top-level $@ should be rejected, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020") || stderr.contains("argv"),
+        "top-level $@ should be rejected, got: {}",
+        stderr
+    );
 }
 
 #[test] // [DD46]
@@ -258,7 +335,11 @@ foo() { echo "$1"; echo "$2"; }
 foo "only-one"
 "#;
     let stderr = compile_expect_fail("outofrange", script);
-    assert!(!stderr.is_empty(), "out-of-range positional $2 should be rejected, got: {}", stderr);
+    assert!(
+        !stderr.is_empty(),
+        "out-of-range positional $2 should be rejected, got: {}",
+        stderr
+    );
 }
 
 // ===================================================================
@@ -308,7 +389,6 @@ EOF
     assert_eq!(compile_and_run("heredoc_clean", script), "hello world\n");
 }
 
-
 #[test] // [NOW]
 fn clean_tainted_inside_bless_expr() {
     // The one legal read: inside bless test expression
@@ -317,8 +397,7 @@ x=$(getenv MY_CUSTOM_VAR)
 bless x [[ -n $x ]]
 echo ok
 "#;
-    let output = compile_and_run_with_env("bless_expr", script,
-        &[("MY_CUSTOM_VAR", "something")]);
+    let output = compile_and_run_with_env("bless_expr", script, &[("MY_CUSTOM_VAR", "something")]);
     assert_eq!(output, "ok\n");
 }
 
@@ -334,9 +413,15 @@ x=$(getenv TAINT_VAL)
 bless x [[ $x =~ ^[0-9]+$ ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_re", script,
-        &[("TAINT_VAL", "not-a-number")]);
-    assert_ne!(code, 0, "bless with failing regex should abort, but exited 0");
+    let code = compile_and_exit_code(
+        "bless_mismatch_re",
+        script,
+        &[("TAINT_VAL", "not-a-number")],
+    );
+    assert_ne!(
+        code, 0,
+        "bless with failing regex should abort, but exited 0"
+    );
 }
 
 #[test] // [RT]
@@ -347,8 +432,7 @@ x=$(getenv TAINT_VAL)
 bless x [[ -n $x ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_n", script,
-        &[("TAINT_VAL", "")]);
+    let code = compile_and_exit_code("bless_mismatch_n", script, &[("TAINT_VAL", "")]);
     assert_ne!(code, 0, "bless with failing -n should abort, but exited 0");
 }
 
@@ -360,8 +444,11 @@ x=$(getenv TAINT_VAL)
 bless x [[ -f $x ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_f", script,
-        &[("TAINT_VAL", "/nonexistent/path/zzz")]);
+    let code = compile_and_exit_code(
+        "bless_mismatch_f",
+        script,
+        &[("TAINT_VAL", "/nonexistent/path/zzz")],
+    );
     assert_ne!(code, 0, "bless with failing -f should abort, but exited 0");
 }
 
@@ -373,8 +460,7 @@ x=$(getenv TAINT_VAL)
 bless x [[ -d $x ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_d", script,
-        &[("TAINT_VAL", "/etc/passwd")]);
+    let code = compile_and_exit_code("bless_mismatch_d", script, &[("TAINT_VAL", "/etc/passwd")]);
     assert_ne!(code, 0, "bless with failing -d should abort, but exited 0");
 }
 
@@ -386,8 +472,7 @@ x=$(getenv TAINT_VAL)
 bless x [[ $x == "oranges" ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_eq", script,
-        &[("TAINT_VAL", "apples")]);
+    let code = compile_and_exit_code("bless_mismatch_eq", script, &[("TAINT_VAL", "apples")]);
     assert_ne!(code, 0, "bless with failing == should abort, but exited 0");
 }
 
@@ -399,8 +484,7 @@ x=$(getenv TAINT_VAL)
 bless x [[ $x =~ ^[0-9]+$ ]]
 echo "$x"
 "#;
-    let output = compile_and_run_with_env("bless_match_ok", script,
-        &[("TAINT_VAL", "42")]);
+    let output = compile_and_run_with_env("bless_match_ok", script, &[("TAINT_VAL", "42")]);
     assert_eq!(output, "42\n");
 }
 
@@ -419,14 +503,22 @@ read y <<< "$x"
 echo "$y"
 "#;
     let stderr = compile_expect_fail("t1_hs_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn t1_heredoc_tainted_expansion_rejected() {
     let script = "#!/bin/bash\nx=$(getenv UNTRUSTED)\nread y <<EOF\n$x\nEOF\necho \"$y\"\n";
     let stderr = compile_expect_fail("t1_heredoc_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T2: tautological bless (test doesn't reference blessed var) ---
@@ -439,8 +531,11 @@ bless x [[ 1 == 1 ]]
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t2_tautology", script);
-    assert!(stderr.contains("SB4012") || stderr.contains("does not reference"),
-        "expected tautology diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4012") || stderr.contains("does not reference"),
+        "expected tautology diagnostic, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -452,8 +547,11 @@ bless x [[ -n $y ]]
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t2_wrong_var", script);
-    assert!(stderr.contains("SB4012") || stderr.contains("does not reference"),
-        "expected tautology diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4012") || stderr.contains("does not reference"),
+        "expected tautology diagnostic, got: {}",
+        stderr
+    );
 }
 
 // --- T3: bless without valid test expression ---
@@ -466,8 +564,11 @@ bless x nope
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t3_no_test", script);
-    assert!(stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
-        "expected invalid bless diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
+        "expected invalid bless diagnostic, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -478,8 +579,11 @@ bless x -n "$x"
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t3_no_brackets", script);
-    assert!(stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
-        "expected invalid bless diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
+        "expected invalid bless diagnostic, got: {}",
+        stderr
+    );
 }
 
 // --- T4: arithmetic assignment taint laundering ---
@@ -492,7 +596,11 @@ y=$((x + 1))
 echo "$y"
 "#;
     let stderr = compile_expect_fail("t4_arith_launder", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T5: parameter expansion operand taint ---
@@ -505,7 +613,11 @@ x=$(getenv SECRET)
 echo "${safe:-$x}"
 "#;
     let stderr = compile_expect_fail("t5_default_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -516,7 +628,11 @@ safe="value"
 echo "${safe:+$x}"
 "#;
     let stderr = compile_expect_fail("t5_alternate_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T6: function global re-taint at call site ---
@@ -530,7 +646,11 @@ x=$(getenv SECRET)
 leak
 "#;
     let stderr = compile_expect_fail("t6_global_retaint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T9: shift then positional read ---
@@ -542,8 +662,11 @@ f() { shift; echo "$1"; }
 f one
 "#;
     let stderr = compile_expect_fail("t9_shift_pos", script);
-    assert!(stderr.contains("reads $") || stderr.contains("out-of-range") || stderr.contains("shift"),
-        "expected positional diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("reads $") || stderr.contains("out-of-range") || stderr.contains("shift"),
+        "expected positional diagnostic, got: {}",
+        stderr
+    );
 }
 
 // --- T10: direct $(getenv) in expression ---
@@ -554,7 +677,11 @@ fn t10_direct_getenv_cmdsub_rejected() {
 echo "$(getenv UNTRUSTED)"
 "#;
     let stderr = compile_expect_fail("t10_direct_getenv", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T11: case pattern taint ---
@@ -569,7 +696,11 @@ case "test" in
 esac
 "#;
     let stderr = compile_expect_fail("t11_case_pattern", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 // --- T7/T8/T12: regression locks for validator rules ---
@@ -582,7 +713,11 @@ ref="x"
 echo "${!ref}"
 "#;
     let stderr = compile_expect_fail("t7_indirect", script);
-    assert!(stderr.contains("SB") , "expected validator diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB"),
+        "expected validator diagnostic, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -593,7 +728,11 @@ declare -n ref=x
 echo "$ref"
 "#;
     let stderr = compile_expect_fail("t8_nameref", script);
-    assert!(stderr.contains("SB"), "expected validator diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB"),
+        "expected validator diagnostic, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -602,5 +741,9 @@ fn t12_process_substitution_rejected() {
 cat <(echo "test")
 "#;
     let stderr = compile_expect_fail("t12_procsub", script);
-    assert!(stderr.contains("SB"), "expected validator diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("SB"),
+        "expected validator diagnostic, got: {}",
+        stderr
+    );
 }

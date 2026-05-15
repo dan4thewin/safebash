@@ -1,4 +1,6 @@
 pub mod arith_expr_mutation;
+pub mod command_resolution;
+pub mod dollar_question;
 pub mod dynamic_execution;
 pub mod export_rejected;
 pub mod extglob_rejected;
@@ -6,15 +8,13 @@ pub mod glob_restricted;
 pub mod heredoc_cmdsub;
 pub mod indirect_expansion;
 pub mod nameref_rejected;
+pub mod numeric_test_rejected;
 pub mod param_transform;
 pub mod parse_error;
 pub mod process_substitution;
-pub mod wordsplit_rejected;
-pub mod command_resolution;
-pub mod dollar_question;
-pub mod numeric_test_rejected;
 pub mod regex_validation;
 pub mod rejected_vars;
+pub mod wordsplit_rejected;
 
 use crate::rule::Rule;
 

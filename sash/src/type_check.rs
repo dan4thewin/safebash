@@ -6,7 +6,6 @@
 /// - String comparison operators on int variables
 /// - `exit` with unbounded int variable
 /// - `if func` where func is `-> int`
-
 use crate::ir::*;
 use std::collections::{HashMap, HashSet};
 
@@ -18,7 +17,11 @@ pub struct TypeError {
 
 impl std::fmt::Display for TypeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "type error at {}:{}: {}", self.span.line, self.span.col, self.message)
+        write!(
+            f,
+            "type error at {}:{}: {}",
+            self.span.line, self.span.col, self.message
+        )
     }
 }
 
@@ -37,8 +40,8 @@ struct TypeEnv {
 impl TypeEnv {
     fn new() -> Self {
         let mut intrinsic_int = HashSet::new();
-        intrinsic_int.insert("#".to_string());  // $#
-        intrinsic_int.insert("?".to_string());  // $?
+        intrinsic_int.insert("#".to_string()); // $#
+        intrinsic_int.insert("?".to_string()); // $?
         Self {
             vars: HashMap::new(),
             funcs: HashMap::new(),
@@ -94,7 +97,10 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
                 if let StmtKind::Command(c) = &first.kind {
                     let name = expr_to_name(&c.name);
                     // Compiler keywords that return int
-                    if matches!(name.as_str(), "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid" | "dtoi") {
+                    if matches!(
+                        name.as_str(),
+                        "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid" | "dtoi"
+                    ) {
                         return VarType::Int;
                     }
                     return env.func_type(&name);
@@ -183,13 +189,19 @@ fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>
             check_subscript_types(index, env, errors);
         }
         ExprKind::DoubleQuoted(parts) => {
-            for p in parts { check_subscript_types(p, env, errors); }
+            for p in parts {
+                check_subscript_types(p, env, errors);
+            }
         }
         ExprKind::Concat(parts) => {
-            for p in parts { check_subscript_types(p, env, errors); }
+            for p in parts {
+                check_subscript_types(p, env, errors);
+            }
         }
         ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts { check_subscript_in_stmt(s, env, errors); }
+            for s in stmts {
+                check_subscript_in_stmt(s, env, errors);
+            }
         }
         _ => {}
     }
@@ -199,7 +211,9 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
     match &stmt.kind {
         StmtKind::Command(c) => {
             check_subscript_types(&c.name, env, errors);
-            for arg in &c.args { check_subscript_types(arg, env, errors); }
+            for arg in &c.args {
+                check_subscript_types(arg, env, errors);
+            }
         }
         StmtKind::Assignment(a) => {
             check_subscript_types(&a.value, env, errors);
@@ -236,7 +250,9 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
                 errors.push(TypeError {
                     message: format!(
                         "cannot assign {} value to {} variable `{}`{}",
-                        type_name(rtype), type_name(ltype), a.name,
+                        type_name(rtype),
+                        type_name(ltype),
+                        a.name,
                         conversion_hint(rtype, ltype),
                     ),
                     span: stmt.span.clone(),
@@ -329,40 +345,62 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
             }
 
             // DD#33: check subscript key types in command args
-            for arg in &c.args { check_subscript_types(arg, env, errors); }
+            for arg in &c.args {
+                check_subscript_types(arg, env, errors);
+            }
         }
 
         StmtKind::If(if_stmt) => {
             // Check condition for int-function-in-boolean-context
             check_condition_type(&if_stmt.condition, env, errors);
-            for s in &if_stmt.condition { check_stmt(s, env, errors); }
-            for s in &if_stmt.then_body { check_stmt(s, env, errors); }
+            for s in &if_stmt.condition {
+                check_stmt(s, env, errors);
+            }
+            for s in &if_stmt.then_body {
+                check_stmt(s, env, errors);
+            }
             for elif in &if_stmt.elif_clauses {
-                for s in &elif.condition { check_stmt(s, env, errors); }
-                for s in &elif.body { check_stmt(s, env, errors); }
+                for s in &elif.condition {
+                    check_stmt(s, env, errors);
+                }
+                for s in &elif.body {
+                    check_stmt(s, env, errors);
+                }
             }
             if let Some(else_body) = &if_stmt.else_body {
-                for s in else_body { check_stmt(s, env, errors); }
+                for s in else_body {
+                    check_stmt(s, env, errors);
+                }
             }
         }
 
         StmtKind::For(for_stmt) => {
-            for s in &for_stmt.body { check_stmt(s, env, errors); }
+            for s in &for_stmt.body {
+                check_stmt(s, env, errors);
+            }
         }
 
         StmtKind::While(while_stmt) => {
-            for s in &while_stmt.condition { check_stmt(s, env, errors); }
-            for s in &while_stmt.body { check_stmt(s, env, errors); }
+            for s in &while_stmt.condition {
+                check_stmt(s, env, errors);
+            }
+            for s in &while_stmt.body {
+                check_stmt(s, env, errors);
+            }
         }
 
         StmtKind::Function(f) => {
             // Type-check the body
-            for s in &f.body { check_stmt(s, env, errors); }
+            for s in &f.body {
+                check_stmt(s, env, errors);
+            }
         }
 
         StmtKind::Case(case_stmt) => {
             for item in &case_stmt.items {
-                for s in &item.body { check_stmt(s, env, errors); }
+                for s in &item.body {
+                    check_stmt(s, env, errors);
+                }
             }
         }
 
@@ -406,7 +444,9 @@ fn type_name(t: VarType) -> &'static str {
 fn conversion_hint(from: VarType, to: VarType) -> String {
     match (from, to) {
         (VarType::Int, VarType::String) => " — use `\"$var\"` to convert int to string".to_string(),
-        (VarType::String, VarType::Int) => " — use `$(($var))` to convert string to int".to_string(),
+        (VarType::String, VarType::Int) => {
+            " — use `$(($var))` to convert string to int".to_string()
+        }
         _ => String::new(),
     }
 }
@@ -449,22 +489,34 @@ fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
             }
         }
         StmtKind::If(i) => {
-            for s in &i.then_body { infer_stmt(s, env); }
+            for s in &i.then_body {
+                infer_stmt(s, env);
+            }
             for elif in &i.elif_clauses {
-                for s in &elif.body { infer_stmt(s, env); }
+                for s in &elif.body {
+                    infer_stmt(s, env);
+                }
             }
             if let Some(e) = &i.else_body {
-                for s in e { infer_stmt(s, env); }
+                for s in e {
+                    infer_stmt(s, env);
+                }
             }
         }
         StmtKind::While(w) => {
-            for s in &w.body { infer_stmt(s, env); }
+            for s in &w.body {
+                infer_stmt(s, env);
+            }
         }
         StmtKind::For(f) => {
-            for s in &f.body { infer_stmt(s, env); }
+            for s in &f.body {
+                infer_stmt(s, env);
+            }
         }
         StmtKind::Function(f) => {
-            for s in &f.body { infer_stmt(s, env); }
+            for s in &f.body {
+                infer_stmt(s, env);
+            }
         }
         _ => {}
     }

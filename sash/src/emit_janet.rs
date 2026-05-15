@@ -19,7 +19,6 @@
 ///   func() { body }         (defn func [] body)
 ///   $var                    x  (Janet variable reference)
 ///   "hello $var"            (string "hello " var)
-
 use crate::ir::*;
 use std::fmt::Write;
 
@@ -45,7 +44,9 @@ pub fn emit_janet(program: &Program) -> String {
 /// Check if any statement references positional params or shift.
 fn needs_args_preamble(stmts: &[Statement]) -> bool {
     for stmt in stmts {
-        if _stmt_uses_args(stmt) { return true; }
+        if _stmt_uses_args(stmt) {
+            return true;
+        }
     }
     false
 }
@@ -54,9 +55,13 @@ fn _stmt_uses_args(stmt: &Statement) -> bool {
     match &stmt.kind {
         StmtKind::Command(c) => {
             let name = expr_to_literal(&c.name);
-            if name == "shift" { return true; }
+            if name == "shift" {
+                return true;
+            }
             for arg in &c.args {
-                if _expr_uses_args(arg) { return true; }
+                if _expr_uses_args(arg) {
+                    return true;
+                }
             }
             _expr_uses_args(&c.name)
         }
@@ -65,15 +70,15 @@ fn _stmt_uses_args(stmt: &Statement) -> bool {
         StmtKind::If(i) => {
             i.condition.iter().any(|s| _stmt_uses_args(s))
                 || needs_args_preamble(&i.then_body)
-                || i.else_body.as_ref().map_or(false, |e| needs_args_preamble(e))
+                || i.else_body
+                    .as_ref()
+                    .map_or(false, |e| needs_args_preamble(e))
         }
         StmtKind::While(w) => {
-            w.condition.iter().any(|s| _stmt_uses_args(s))
-                || needs_args_preamble(&w.body)
+            w.condition.iter().any(|s| _stmt_uses_args(s)) || needs_args_preamble(&w.body)
         }
         StmtKind::For(f) => {
-            f.words.iter().any(|w| _expr_uses_args(w))
-                || needs_args_preamble(&f.body)
+            f.words.iter().any(|w| _expr_uses_args(w)) || needs_args_preamble(&f.body)
         }
         StmtKind::Redirected(r) => _stmt_uses_args(&r.body),
         StmtKind::List(l) => _stmt_uses_args(&l.left) || _stmt_uses_args(&l.right),
@@ -220,14 +225,12 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     if c.args.is_empty() {
                         writeln!(out, "(print)").unwrap();
                     } else {
-                        let parts: Vec<String> = c.args.iter()
-                            .map(|a| emit_expr_inline(a, ctx))
-                            .collect();
+                        let parts: Vec<String> =
+                            c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
                         if parts.len() == 1 {
                             writeln!(out, "(print {})", parts[0]).unwrap();
                         } else {
-                            writeln!(out, "(print (string {}))",
-                                parts.join(" \" \" ")).unwrap();
+                            writeln!(out, "(print (string {}))", parts.join(" \" \" ")).unwrap();
                         }
                     }
                 }
@@ -280,11 +283,16 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     }
                 }
                 "printf" => {
-                    let args: Vec<String> = c.args.iter()
-                        .map(|a| emit_expr_inline(a, ctx))
-                        .collect();
+                    let args: Vec<String> =
+                        c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
                     if args.len() >= 2 {
-                        writeln!(out, "(prin (string/format {} {}))", args[0], args[1..].join(" ")).unwrap();
+                        writeln!(
+                            out,
+                            "(prin (string/format {} {}))",
+                            args[0],
+                            args[1..].join(" ")
+                        )
+                        .unwrap();
                     } else if args.len() == 1 {
                         writeln!(out, "(prin {})", args[0]).unwrap();
                     }
@@ -301,15 +309,27 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     }
                 }
                 "read" => {
-                    let var_name = c.args.iter()
+                    let var_name = c
+                        .args
+                        .iter()
                         .map(|a| expr_to_literal(a))
                         .find(|a| !a.starts_with('-'))
                         .unwrap_or_else(|| "REPLY".to_string());
                     if !ctx.is_declared(&var_name) {
                         ctx.declare(&var_name);
-                        writeln!(out, "(var {} (string/trimr (or (file/read stdin :line) \"\")))", var_name).unwrap();
+                        writeln!(
+                            out,
+                            "(var {} (string/trimr (or (file/read stdin :line) \"\")))",
+                            var_name
+                        )
+                        .unwrap();
                     } else {
-                        writeln!(out, "(set {} (string/trimr (or (file/read stdin :line) \"\")))", var_name).unwrap();
+                        writeln!(
+                            out,
+                            "(set {} (string/trimr (or (file/read stdin :line) \"\")))",
+                            var_name
+                        )
+                        .unwrap();
                     }
                 }
                 "bless" => {
@@ -372,14 +392,31 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     }
 
                     if i == 0 {
-                        writeln!(out, "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
-                            i, parts.join(" ")).unwrap();
+                        writeln!(
+                            out,
+                            "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
+                            i,
+                            parts.join(" ")
+                        )
+                        .unwrap();
                     } else if i == p.commands.len() - 1 {
-                        writeln!(out, "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
-                            i, parts.join(" "), i - 1).unwrap();
+                        writeln!(
+                            out,
+                            "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
+                            i,
+                            parts.join(" "),
+                            i - 1
+                        )
+                        .unwrap();
                     } else {
-                        writeln!(out, "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
-                            i, parts.join(" "), i - 1).unwrap();
+                        writeln!(
+                            out,
+                            "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
+                            i,
+                            parts.join(" "),
+                            i - 1
+                        )
+                        .unwrap();
                     }
                 }
                 // Wait for upstream processes, then read final output
@@ -389,7 +426,12 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     writeln!(out, "(os/proc-wait p{})", i).unwrap();
                 }
                 indent(out, depth + 1);
-                writeln!(out, "(def result (string/trim (:read (p{} :out) :all)))", last).unwrap();
+                writeln!(
+                    out,
+                    "(def result (string/trim (:read (p{} :out) :all)))",
+                    last
+                )
+                .unwrap();
                 indent(out, depth + 1);
                 writeln!(out, "(os/proc-wait p{})", last).unwrap();
                 indent(out, depth + 1);
@@ -447,11 +489,14 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
 
         StmtKind::While(w) => {
             // Check if this is `while read -r var` — emit Janet file/read loop
-            let is_while_read = !w.until && w.condition.len() == 1
+            let is_while_read = !w.until
+                && w.condition.len() == 1
                 && matches!(&w.condition[0].kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read");
             if is_while_read {
                 if let StmtKind::Command(c) = &w.condition[0].kind {
-                    let var_name = c.args.iter()
+                    let var_name = c
+                        .args
+                        .iter()
                         .map(|a| expr_to_literal(a))
                         .find(|a| !a.starts_with('-'))
                         .unwrap_or_else(|| "line".to_string());
@@ -490,9 +535,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
 
         StmtKind::For(f) => {
             indent(out, depth);
-            let words: Vec<String> = f.words.iter()
-                .map(|w| emit_expr_inline(w, ctx))
-                .collect();
+            let words: Vec<String> = f.words.iter().map(|w| emit_expr_inline(w, ctx)).collect();
             ctx.declare(&f.variable);
             writeln!(out, "(each {} [{}]", f.variable, words.join(" ")).unwrap();
             for s in &f.body {
@@ -549,11 +592,15 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
 
         StmtKind::Redirected(r) => {
             // Check for heredoc/herestring content
-            let has_heredoc = r.redirects.iter().any(|rd|
-                matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString));
+            let has_heredoc = r
+                .redirects
+                .iter()
+                .any(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString));
             if has_heredoc {
                 // Find the heredoc body
-                let body_text = r.redirects.iter()
+                let body_text = r
+                    .redirects
+                    .iter()
                     .filter(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
                     .map(|rd| expr_to_literal(&rd.target))
                     .collect::<Vec<_>>()
@@ -564,15 +611,19 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     // cat <<EOF → just print the body
                     indent(out, depth);
                     // Escape for Janet string literal
-                    let escaped = body_text.trim_end_matches('\n')
+                    let escaped = body_text
+                        .trim_end_matches('\n')
                         .replace('\\', "\\\\")
                         .replace('"', "\\\"")
                         .replace('\n', "\\n");
                     writeln!(out, "(print \"{}\")", escaped).unwrap();
-                } else if matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read") {
+                } else if matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read")
+                {
                     // read <<< "string" — herestring
                     if let StmtKind::Command(c) = &r.body.kind {
-                        let var_name = c.args.iter()
+                        let var_name = c
+                            .args
+                            .iter()
                             .map(|a| expr_to_literal(a))
                             .find(|a| !a.starts_with('-'))
                             .unwrap_or_else(|| "REPLY".to_string());
@@ -589,7 +640,10 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                 } else {
                     // Other command with heredoc — pipe body text to stdin
                     indent(out, depth);
-                    let escaped = body_text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n");
+                    let escaped = body_text
+                        .replace('\\', "\\\\")
+                        .replace('"', "\\\"")
+                        .replace('\n', "\\n");
                     writeln!(out, "(do").unwrap();
                     indent(out, depth + 1);
                     writeln!(out, "(def _heredoc_body \"{}\")", escaped).unwrap();
@@ -599,7 +653,9 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                         _ => "?".to_string(),
                     };
                     let args = match &r.body.kind {
-                        StmtKind::Command(c) => c.args.iter()
+                        StmtKind::Command(c) => c
+                            .args
+                            .iter()
                             .map(|a| emit_expr_inline(a, ctx))
                             .collect::<Vec<_>>(),
                         _ => vec![],
@@ -607,7 +663,12 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
                     let mut parts = vec![format!("\"{}\"", cmd_name)];
                     parts.extend(args);
                     indent(out, depth + 1);
-                    writeln!(out, "(def p (os/spawn [{}] :p {{:in :pipe}}))", parts.join(" ")).unwrap();
+                    writeln!(
+                        out,
+                        "(def p (os/spawn [{}] :p {{:in :pipe}}))",
+                        parts.join(" ")
+                    )
+                    .unwrap();
                     indent(out, depth + 1);
                     writeln!(out, "(:write (p :in) _heredoc_body)").unwrap();
                     indent(out, depth + 1);
@@ -627,37 +688,35 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
             }
         }
 
-        StmtKind::List(l) => {
-            match l.op {
-                crate::ir::ListOp::And => {
-                    indent(out, depth);
-                    writeln!(out, "(when (do").unwrap();
-                    emit_stmt(out, ctx, &l.left, depth + 1);
-                    indent(out, depth);
-                    writeln!(out, ")").unwrap();
-                    emit_stmt(out, ctx, &l.right, depth + 1);
-                    indent(out, depth);
-                    writeln!(out, ")").unwrap();
-                }
-                crate::ir::ListOp::Or => {
-                    indent(out, depth);
-                    writeln!(out, "(when (not (do").unwrap();
-                    emit_stmt(out, ctx, &l.left, depth + 1);
-                    indent(out, depth);
-                    writeln!(out, "))").unwrap();
-                    emit_stmt(out, ctx, &l.right, depth + 1);
-                    indent(out, depth);
-                    writeln!(out, ")").unwrap();
-                }
-                crate::ir::ListOp::Background => {
-                    indent(out, depth);
-                    writeln!(out, "(ev/spawn (fn []").unwrap();
-                    emit_stmt(out, ctx, &l.left, depth + 1);
-                    indent(out, depth);
-                    writeln!(out, "))").unwrap();
-                }
+        StmtKind::List(l) => match l.op {
+            crate::ir::ListOp::And => {
+                indent(out, depth);
+                writeln!(out, "(when (do").unwrap();
+                emit_stmt(out, ctx, &l.left, depth + 1);
+                indent(out, depth);
+                writeln!(out, ")").unwrap();
+                emit_stmt(out, ctx, &l.right, depth + 1);
+                indent(out, depth);
+                writeln!(out, ")").unwrap();
             }
-        }
+            crate::ir::ListOp::Or => {
+                indent(out, depth);
+                writeln!(out, "(when (not (do").unwrap();
+                emit_stmt(out, ctx, &l.left, depth + 1);
+                indent(out, depth);
+                writeln!(out, "))").unwrap();
+                emit_stmt(out, ctx, &l.right, depth + 1);
+                indent(out, depth);
+                writeln!(out, ")").unwrap();
+            }
+            crate::ir::ListOp::Background => {
+                indent(out, depth);
+                writeln!(out, "(ev/spawn (fn []").unwrap();
+                emit_stmt(out, ctx, &l.left, depth + 1);
+                indent(out, depth);
+                writeln!(out, "))").unwrap();
+            }
+        },
 
         StmtKind::Subshell(s) => {
             indent(out, depth);
@@ -749,9 +808,18 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
                 }
             }
             TestExpr::Binary { left, op, right } => {
-                let is_numeric_op = matches!(op.as_str(), "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le");
-                let l = if is_numeric_op { emit_expr_as_int(left, ctx) } else { emit_expr_inline(left, ctx) };
-                let r = if is_numeric_op { emit_expr_as_int(right, ctx) } else { emit_expr_inline(right, ctx) };
+                let is_numeric_op =
+                    matches!(op.as_str(), "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le");
+                let l = if is_numeric_op {
+                    emit_expr_as_int(left, ctx)
+                } else {
+                    emit_expr_inline(left, ctx)
+                };
+                let r = if is_numeric_op {
+                    emit_expr_as_int(right, ctx)
+                } else {
+                    emit_expr_inline(right, ctx)
+                };
                 match op.as_str() {
                     "=" | "==" => format!("(= {} {})", l, r),
                     "!=" => format!("(not= {} {})", l, r),
@@ -772,20 +840,43 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
                 format!("(not {})", emit_test_expr(&inner_expr, ctx))
             }
             TestExpr::And(l, r) => {
-                let le = Expr { kind: ExprKind::Test(*l.clone()), span: expr.span.clone() };
-                let re = Expr { kind: ExprKind::Test(*r.clone()), span: expr.span.clone() };
-                format!("(and {} {})", emit_test_expr(&le, ctx), emit_test_expr(&re, ctx))
+                let le = Expr {
+                    kind: ExprKind::Test(*l.clone()),
+                    span: expr.span.clone(),
+                };
+                let re = Expr {
+                    kind: ExprKind::Test(*r.clone()),
+                    span: expr.span.clone(),
+                };
+                format!(
+                    "(and {} {})",
+                    emit_test_expr(&le, ctx),
+                    emit_test_expr(&re, ctx)
+                )
             }
             TestExpr::Or(l, r) => {
-                let le = Expr { kind: ExprKind::Test(*l.clone()), span: expr.span.clone() };
-                let re = Expr { kind: ExprKind::Test(*r.clone()), span: expr.span.clone() };
-                format!("(or {} {})", emit_test_expr(&le, ctx), emit_test_expr(&re, ctx))
+                let le = Expr {
+                    kind: ExprKind::Test(*l.clone()),
+                    span: expr.span.clone(),
+                };
+                let re = Expr {
+                    kind: ExprKind::Test(*r.clone()),
+                    span: expr.span.clone(),
+                };
+                format!(
+                    "(or {} {})",
+                    emit_test_expr(&le, ctx),
+                    emit_test_expr(&re, ctx)
+                )
             }
             TestExpr::Paren(inner) => {
-                let ie = Expr { kind: ExprKind::Test(*inner.clone()), span: expr.span.clone() };
+                let ie = Expr {
+                    kind: ExprKind::Test(*inner.clone()),
+                    span: expr.span.clone(),
+                };
                 emit_test_expr(&ie, ctx)
             }
-        }
+        },
         _ => "true".to_string(),
     }
 }
@@ -843,9 +934,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
             } else if parts.len() == 1 {
                 emit_expr_inline(&parts[0], ctx)
             } else {
-                let ps: Vec<String> = parts.iter()
-                    .map(|p| emit_expr_inline(p, ctx))
-                    .collect();
+                let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
                 format!("(string {})", ps.join(" "))
             }
         }
@@ -858,7 +947,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                 };
                 match op.as_str() {
                     ":-" => {
-                        let default = pe.operand.as_ref()
+                        let default = pe
+                            .operand
+                            .as_ref()
                             .map(|o| emit_expr_inline(o, ctx))
                             .unwrap_or_else(|| "\"\"".to_string());
                         if ctx.is_declared(&pe.name) {
@@ -870,12 +961,14 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "%%" => {
                         // Longest suffix strip: ${x%%pat}
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if operand.ends_with('*') {
                             // pat is lit* — match lit at start, strip from there
-                            let lit = &operand[..operand.len()-1];
+                            let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
                         } else if operand.starts_with('*') {
@@ -891,12 +984,14 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "%" => {
                         // Shortest suffix strip: ${x%pat}
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if operand.ends_with('*') {
                             // pat is lit* — match lit at end, strip from last occurrence
-                            let lit = &operand[..operand.len()-1];
+                            let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
                                 var_ref, lit)
                         } else if operand.starts_with('*') {
@@ -912,7 +1007,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "##" => {
                         // Longest prefix strip: ${x##pat}
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if operand.starts_with('*') {
@@ -922,7 +1019,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                                 var_ref, lit, lit)
                         } else if operand.ends_with('*') {
                             // pat is lit* — match lit, strip up through last occurrence
-                            let lit = &operand[..operand.len()-1];
+                            let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
                                 var_ref, lit, lit)
                         } else {
@@ -933,7 +1030,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "#" => {
                         // Shortest prefix strip: ${x#pat}
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if operand.starts_with('*') {
@@ -943,7 +1042,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                                 var_ref, lit, lit)
                         } else if operand.ends_with('*') {
                             // pat is lit* — match lit, skip past first occurrence
-                            let lit = &operand[..operand.len()-1];
+                            let lit = &operand[..operand.len() - 1];
                             format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
                                 var_ref, lit, lit)
                         } else {
@@ -973,7 +1072,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                         format!("(string (length {}))", var_ref)
                     }
                     "substring" => {
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if let Some((off, len)) = operand.split_once(':') {
@@ -981,7 +1082,10 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                             let len_n: i64 = len.parse().unwrap_or(-1);
                             if len_n < 0 {
                                 // Negative length: trim from end
-                                format!("(string/slice {} {} (+ (length {}) {}))", var_ref, off_n, var_ref, len_n)
+                                format!(
+                                    "(string/slice {} {} (+ (length {}) {}))",
+                                    var_ref, off_n, var_ref, len_n
+                                )
                             } else {
                                 format!("(string/slice {} {} {})", var_ref, off_n, off_n + len_n)
                             }
@@ -992,7 +1096,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "/" => {
                         // First match replace
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if let Some((pat, rep)) = operand.split_once('\0') {
@@ -1003,7 +1109,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     }
                     "//" => {
                         // Global replace
-                        let operand = pe.operand.as_ref()
+                        let operand = pe
+                            .operand
+                            .as_ref()
                             .map(|o| expr_to_literal(o))
                             .unwrap_or_default();
                         if let Some((pat, rep)) = operand.split_once('\0') {
@@ -1047,19 +1155,16 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
             format!("(string ({}))", bash_arith_to_janet(s))
         }
         ExprKind::Concat(parts) => {
-            let ps: Vec<String> = parts.iter()
-                .map(|p| emit_expr_inline(p, ctx))
-                .collect();
+            let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
             format!("(string {})", ps.join(" "))
         }
         ExprKind::Array(elems) => {
-            let es: Vec<String> = elems.iter()
-                .map(|e| emit_expr_inline(e, ctx))
-                .collect();
+            let es: Vec<String> = elems.iter().map(|e| emit_expr_inline(e, ctx)).collect();
             format!("@[{}]", es.join(" "))
         }
         ExprKind::AssocArray(pairs) => {
-            let es: Vec<String> = pairs.iter()
+            let es: Vec<String> = pairs
+                .iter()
                 .map(|(k, v)| format!("{:?} {}", k, emit_expr_inline(v, ctx)))
                 .collect();
             format!("@{{{}}}", es.join(" "))
@@ -1097,10 +1202,18 @@ fn bash_arith_to_janet(s: &str) -> String {
     }
     // Binary operators — check multi-char first
     if let Some((left, rest)) = s.split_once('%') {
-        return format!("mod {} {}", bash_arith_operand(left), bash_arith_operand(rest));
+        return format!(
+            "mod {} {}",
+            bash_arith_operand(left),
+            bash_arith_operand(rest)
+        );
     }
     if let Some((left, rest)) = s.split_once('+') {
-        format!("+ {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+        format!(
+            "+ {} {}",
+            bash_arith_operand(left),
+            bash_arith_operand(rest)
+        )
     } else if let Some((left, rest)) = s.split_once('-') {
         let left = left.trim();
         let rest = rest.trim();
@@ -1108,12 +1221,24 @@ fn bash_arith_to_janet(s: &str) -> String {
             // Unary minus
             format!("(- 0 {})", bash_arith_operand(rest))
         } else {
-            format!("- {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+            format!(
+                "- {} {}",
+                bash_arith_operand(left),
+                bash_arith_operand(rest)
+            )
         }
     } else if let Some((left, rest)) = s.split_once('*') {
-        format!("* {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+        format!(
+            "* {} {}",
+            bash_arith_operand(left),
+            bash_arith_operand(rest)
+        )
     } else if let Some((left, rest)) = s.split_once('/') {
-        format!("div {} {}", bash_arith_operand(left), bash_arith_operand(rest))
+        format!(
+            "div {} {}",
+            bash_arith_operand(left),
+            bash_arith_operand(rest)
+        )
     } else {
         bash_arith_operand(s)
     }

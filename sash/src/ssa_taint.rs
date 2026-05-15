@@ -1,3 +1,4 @@
+use crate::ssa::*;
 /// SSA taint verification pass.
 ///
 /// This is the "airbag" — a post-transform safety check that verifies
@@ -12,9 +13,7 @@
 ///   - phi → tainted if any incoming is tainted (conservative)
 ///   - copy of tainted → tainted
 ///   - arithmetic on tainted → tainted
-
 use std::collections::HashMap;
-use crate::ssa::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Taint {
@@ -138,29 +137,56 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                 SsaInst::Command { name, args, .. } => {
                     // Commands that produce output (echo, printf, etc.)
                     // or execute externals — reading tainted args is a bug.
-                    if name == "bless" { continue; }
+                    if name == "bless" {
+                        continue;
+                    }
                     for arg in args {
-                        check_value_use(arg, &taint, &mut errors,
-                            &format!("argument to command '{}'", name));
+                        check_value_use(
+                            arg,
+                            &taint,
+                            &mut errors,
+                            &format!("argument to command '{}'", name),
+                        );
                     }
                 }
                 SsaInst::Pipeline { stages, .. } => {
                     for (name, args, _) in stages {
                         for arg in args {
-                            check_value_use(arg, &taint, &mut errors,
-                                &format!("argument in pipeline stage '{}'", name));
+                            check_value_use(
+                                arg,
+                                &taint,
+                                &mut errors,
+                                &format!("argument in pipeline stage '{}'", name),
+                            );
                         }
                     }
                 }
-                SsaInst::SubscriptAssign { index, value, array, .. } => {
-                    check_value_use(index, &taint, &mut errors,
-                        &format!("subscript index of '{}'", array));
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("subscript value of '{}'", array));
+                SsaInst::SubscriptAssign {
+                    index,
+                    value,
+                    array,
+                    ..
+                } => {
+                    check_value_use(
+                        index,
+                        &taint,
+                        &mut errors,
+                        &format!("subscript index of '{}'", array),
+                    );
+                    check_value_use(
+                        value,
+                        &taint,
+                        &mut errors,
+                        &format!("subscript value of '{}'", array),
+                    );
                 }
                 SsaInst::ArrayAppend { value, array, .. } => {
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("array append to '{}'", array));
+                    check_value_use(
+                        value,
+                        &taint,
+                        &mut errors,
+                        &format!("array append to '{}'", array),
+                    );
                 }
 
                 // Assign, Bless, ReadLine, etc. — definitions, not uses
@@ -184,12 +210,19 @@ fn is_tainted(taint: &HashMap<String, Taint>, vref: &VarRef) -> bool {
     }
 }
 
-fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
-                    user_functions: &std::collections::HashSet<String>) -> Taint {
+fn value_is_tainted(
+    value: &SsaValue,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
     match value {
         SsaValue::Literal(_) => Taint::Clean,
         SsaValue::Var(vref) => {
-            if is_tainted(taint, vref) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, vref) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::Expr(_) => Taint::Clean, // string expressions from lowerer
         SsaValue::FuncCall(_) => Taint::Clean, // elidable user functions
@@ -203,19 +236,25 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
                 match basename {
                     "getenv" | "argv" => Taint::Tainted,
                     // Known-safe internal builtins (pure computation, no external data)
-                    "len" | "keys" | "join" | "epochseconds" | "random"
-                    | "argc" | "getpid" | "getppid" | "getcpid" | "getcwd" | "status" | "signum"
-                    | "dtoi" | "itod" => Taint::Clean,
+                    "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid"
+                    | "getppid" | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => {
+                        Taint::Clean
+                    }
                     _ => {
                         // Sash builtins that produce output from their args:
                         // if all args are clean, output is clean (pure computation).
                         if matches!(basename, "echo" | "printf" | "pwd") {
-                            let args_clean = argv[1..].iter()
-                                .all(|a| value_is_tainted(a, taint, user_functions) != Taint::Tainted);
-                            if args_clean { return Taint::Clean; }
+                            let args_clean = argv[1..].iter().all(|a| {
+                                value_is_tainted(a, taint, user_functions) != Taint::Tainted
+                            });
+                            if args_clean {
+                                return Taint::Clean;
+                            }
                         }
                         // User-defined functions are clean by DD#24
-                        if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
+                        if user_functions.contains(cmd.as_str())
+                            || user_functions.contains(basename)
+                        {
                             return Taint::Clean;
                         }
                         // Everything else (external commands) is tainted.
@@ -228,46 +267,69 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
             }
         }
         SsaValue::Concat(parts) => {
-            if parts.iter().any(|p| value_is_tainted(p, taint, user_functions) == Taint::Tainted) {
+            if parts
+                .iter()
+                .any(|p| value_is_tainted(p, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::ArithExpr { var, .. } => {
-            if is_tainted(taint, var) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, var) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::ArithBinOp { left, right, .. } => {
             if value_is_tainted(left, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(right, taint, user_functions) == Taint::Tainted {
+                || value_is_tainted(right, taint, user_functions) == Taint::Tainted
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::ParamExpansion { var, .. } => {
-            if is_tainted(taint, var) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, var) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::Subscript { .. } => Taint::Clean, // array access — taint is on the array
-        SsaValue::ArgvIndex(_) => Taint::Tainted, // program argv — tainted
+        SsaValue::ArgvIndex(_) => Taint::Tainted,   // program argv — tainted
         SsaValue::IndexedArray(elems) => {
-            if elems.iter().any(|e| value_is_tainted(e, taint, user_functions) == Taint::Tainted) {
+            if elems
+                .iter()
+                .any(|e| value_is_tainted(e, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::AssocArray(pairs) => {
-            if pairs.iter().any(|(_, v)| value_is_tainted(v, taint, user_functions) == Taint::Tainted) {
+            if pairs
+                .iter()
+                .any(|(_, v)| value_is_tainted(v, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
-        SsaValue::Ternary { cond, true_val, false_val } => {
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
             if value_is_tainted(cond, taint, user_functions) == Taint::Tainted
                 || value_is_tainted(true_val, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(false_val, taint, user_functions) == Taint::Tainted {
+                || value_is_tainted(false_val, taint, user_functions) == Taint::Tainted
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
@@ -277,8 +339,12 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
     }
 }
 
-fn check_value_use(value: &SsaValue, taint: &HashMap<String, Taint>,
-                   errors: &mut Vec<String>, context: &str) {
+fn check_value_use(
+    value: &SsaValue,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
     match value {
         SsaValue::Var(vref) => {
             if is_tainted(taint, vref) {

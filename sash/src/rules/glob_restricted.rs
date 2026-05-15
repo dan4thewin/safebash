@@ -1,12 +1,11 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5006: Only * glob is allowed. ? and [...] glob patterns are rejected.
 pub struct GlobRestricted;
 
 impl Rule for GlobRestricted {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["word", "concatenation"]
     }
@@ -20,8 +19,10 @@ impl Rule for GlobRestricted {
         }
 
         // Skip words inside declarations/assignments/unset (map keys: [key]=value, unset m[key])
-        if has_ancestor(node, "declaration_command") || has_ancestor(node, "variable_assignment")
-            || has_ancestor(node, "unset_command") {
+        if has_ancestor(node, "declaration_command")
+            || has_ancestor(node, "variable_assignment")
+            || has_ancestor(node, "unset_command")
+        {
             return vec![];
         }
 
@@ -36,7 +37,10 @@ impl Rule for GlobRestricted {
             return vec![Diagnostic::error(
                 node,
                 "SB5006",
-                format!("** globstar is not supported in sash — only * is allowed: {}", text),
+                format!(
+                    "** globstar is not supported in sash — only * is allowed: {}",
+                    text
+                ),
             )];
         }
 
@@ -45,7 +49,10 @@ impl Rule for GlobRestricted {
             return vec![Diagnostic::error(
                 node,
                 "SB5006",
-                format!("? glob is not supported in sash — only * is allowed: {}", text),
+                format!(
+                    "? glob is not supported in sash — only * is allowed: {}",
+                    text
+                ),
             )];
         }
 
@@ -54,7 +61,10 @@ impl Rule for GlobRestricted {
             return vec![Diagnostic::error(
                 node,
                 "SB5006",
-                format!("[...] glob is not supported in sash — only * is allowed: {}", text),
+                format!(
+                    "[...] glob is not supported in sash — only * is allowed: {}",
+                    text
+                ),
             )];
         }
 
@@ -65,7 +75,9 @@ impl Rule for GlobRestricted {
 fn has_ancestor(node: Node, kind: &str) -> bool {
     let mut current = node.parent();
     while let Some(n) = current {
-        if n.kind() == kind { return true; }
+        if n.kind() == kind {
+            return true;
+        }
         current = n.parent();
     }
     false
@@ -79,8 +91,8 @@ fn has_bracket_glob(text: &str) -> bool {
     while i < bytes.len() {
         if bytes[i] == b'[' {
             // Look for matching ]
-            if let Some(j) = bytes[i+1..].iter().position(|&b| b == b']') {
-                let inner = &text[i+1..i+1+j];
+            if let Some(j) = bytes[i + 1..].iter().position(|&b| b == b']') {
+                let inner = &text[i + 1..i + 1 + j];
                 // Skip empty [] or [0], [1] etc (array subscripts)
                 if !inner.is_empty() && !inner.chars().all(|c| c.is_ascii_digit()) {
                     return true;

@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5017: Reject bash magic variables that don't exist in sash.
 /// These are either meaningless (BASH_*), dropped by design (RANDOM,
@@ -9,30 +9,58 @@ pub struct RejectedVars;
 
 /// Variables rejected outright — no sash equivalent.
 const DROPPED: &[&str] = &[
-    "BASH_VERSION", "BASH_VERSINFO", "BASHOPTS", "SHELLOPTS",
-    "BASH_SUBSHELL", "BASHPID", "BASH_SOURCE", "BASH_LINENO",
-    "BASH_COMMAND", "BASH_ALIASES", "BASH_ARGV", "BASH_ARGC",
+    "BASH_VERSION",
+    "BASH_VERSINFO",
+    "BASHOPTS",
+    "SHELLOPTS",
+    "BASH_SUBSHELL",
+    "BASHPID",
+    "BASH_SOURCE",
+    "BASH_LINENO",
+    "BASH_COMMAND",
+    "BASH_ALIASES",
+    "BASH_ARGV",
+    "BASH_ARGC",
     "BASH_REMATCH",
-    "SECONDS", "PIPESTATUS", "OLDPWD", "SHLVL", "_",
-    "RANDOM", "SRANDOM", "EPOCHREALTIME",
+    "SECONDS",
+    "PIPESTATUS",
+    "OLDPWD",
+    "SHLVL",
+    "_",
+    "RANDOM",
+    "SRANDOM",
+    "EPOCHREALTIME",
 ];
 
 /// Variables that should be accessed via external commands.
 const COERCE_TO_COMMAND: &[&str] = &[
-    "HOSTNAME", "UID", "EUID", "GROUPS",
-    "HOSTTYPE", "OSTYPE", "MACHTYPE",
+    "HOSTNAME", "UID", "EUID", "GROUPS", "HOSTTYPE", "OSTYPE", "MACHTYPE",
 ];
 
 /// Variables that should be accessed via $(getenv NAME).
 const USE_GETENV: &[&str] = &[
-    "HOME", "PWD", "PATH", "USER", "LOGNAME", "SHELL",
-    "TMPDIR", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "DISPLAY",
-    "XDG_RUNTIME_DIR", "XDG_DATA_HOME", "XDG_CONFIG_HOME",
-    "XDG_CACHE_HOME", "XDG_STATE_HOME", "IFS", "PPID",
+    "HOME",
+    "PWD",
+    "PATH",
+    "USER",
+    "LOGNAME",
+    "SHELL",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "TERM",
+    "DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XDG_DATA_HOME",
+    "XDG_CONFIG_HOME",
+    "XDG_CACHE_HOME",
+    "XDG_STATE_HOME",
+    "IFS",
+    "PPID",
 ];
 
 impl Rule for RejectedVars {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["simple_expansion", "expansion"]
     }
@@ -55,7 +83,10 @@ impl Rule for RejectedVars {
             return vec![Diagnostic::error(
                 node,
                 "SB5017",
-                format!("${} is not available — use an external command instead", var_name),
+                format!(
+                    "${} is not available — use an external command instead",
+                    var_name
+                ),
             )];
         }
 
@@ -63,7 +94,10 @@ impl Rule for RejectedVars {
             return vec![Diagnostic::error(
                 node,
                 "SB5018",
-                format!("${} is an environment variable — use $(getenv {})", var_name, var_name),
+                format!(
+                    "${} is an environment variable — use $(getenv {})",
+                    var_name, var_name
+                ),
             )];
         }
 

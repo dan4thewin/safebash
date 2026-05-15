@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5012: $? is only valid after a command in the same scope.
 ///
@@ -22,7 +22,6 @@ enum HandlingCheck {
 }
 
 impl Rule for DollarQuestion {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["simple_expansion", "command_substitution"]
     }
@@ -37,18 +36,22 @@ impl Rule for DollarQuestion {
             })
         } else if node.kind() == "command_substitution" {
             // Check for $(status) — single bare command named "status"
-            let inner_stmts: Vec<_> = node.children(&mut node.walk())
+            let inner_stmts: Vec<_> = node
+                .children(&mut node.walk())
                 .filter(|c| c.is_named())
                 .collect();
             inner_stmts.len() == 1
                 && inner_stmts[0].kind() == "command"
-                && inner_stmts[0].child_by_field_name("name")
+                && inner_stmts[0]
+                    .child_by_field_name("name")
                     .and_then(|n| n.utf8_text(source).ok())
                     .map(|n| n == "status")
                     .unwrap_or(false)
-                && inner_stmts[0].children(&mut inner_stmts[0].walk())
+                && inner_stmts[0]
+                    .children(&mut inner_stmts[0].walk())
                     .filter(|c| c.is_named() && c.kind() != "command_name")
-                    .count() == 0
+                    .count()
+                    == 0
         } else {
             false
         };
@@ -87,7 +90,8 @@ impl Rule for DollarQuestion {
                 return vec![Diagnostic::error(
                     node,
                     "SB5013",
-                    "$? is not available after `- cmd` — suppression discards exit status".to_string(),
+                    "$? is not available after `- cmd` — suppression discards exit status"
+                        .to_string(),
                 )];
             }
             Ok(false) => {
@@ -109,9 +113,9 @@ fn find_statement_ancestor(node: Node) -> Option<Node> {
     let mut current = node;
     while let Some(parent) = current.parent() {
         let pk = parent.kind();
-        if matches!(pk,
-            "program" | "compound_statement" | "subshell"
-            | "do_group" | "then" | "else"
+        if matches!(
+            pk,
+            "program" | "compound_statement" | "subshell" | "do_group" | "then" | "else"
         ) {
             return Some(current);
         }
@@ -129,10 +133,17 @@ fn check_preceding_command(stmt: Node) -> Result<bool, ()> {
         if kind == "suppressed_command" {
             return Err(());
         }
-        if matches!(kind,
-            "command" | "pipeline" | "subshell" | "if_statement"
-            | "while_statement" | "for_statement" | "case_statement"
-            | "negated_command" | "list"
+        if matches!(
+            kind,
+            "command"
+                | "pipeline"
+                | "subshell"
+                | "if_statement"
+                | "while_statement"
+                | "for_statement"
+                | "case_statement"
+                | "negated_command"
+                | "list"
         ) {
             return Ok(true);
         }
@@ -196,11 +207,20 @@ fn has_preceding_command_in_scope(dollar_q: Node) -> bool {
     let mut sib = stmt.prev_named_sibling();
     while let Some(s) = sib {
         let kind = s.kind();
-        if matches!(kind,
-            "command" | "pipeline" | "subshell" | "if_statement"
-            | "while_statement" | "for_statement" | "case_statement"
-            | "negated_command" | "suppressed_command" | "list"
-            | "variable_assignment" | "declaration_command"
+        if matches!(
+            kind,
+            "command"
+                | "pipeline"
+                | "subshell"
+                | "if_statement"
+                | "while_statement"
+                | "for_statement"
+                | "case_statement"
+                | "negated_command"
+                | "suppressed_command"
+                | "list"
+                | "variable_assignment"
+                | "declaration_command"
         ) {
             return true;
         }

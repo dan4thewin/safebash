@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5007: Mutations inside $(( )) or condition (( )) are not allowed.
 /// Mutations (=, +=, ++, --) in $(( )) are always rejected.
@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct ArithExprMutation;
 
 impl Rule for ArithExprMutation {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["arithmetic_expansion", "arithmetic_command"]
     }
@@ -28,8 +27,7 @@ impl Rule for ArithExprMutation {
             if in_condition_position(node) {
                 // Count named children — multiple means comma expression
                 let mut c = node.walk();
-                let named: Vec<Node> = node.children(&mut c)
-                    .filter(|ch| ch.is_named()).collect();
+                let named: Vec<Node> = node.children(&mut c).filter(|ch| ch.is_named()).collect();
                 if named.len() > 1 {
                     // Comma: only reject mutations in the LAST expression
                     let last = named[named.len() - 1];
@@ -47,17 +45,27 @@ impl Rule for ArithExprMutation {
     }
 }
 
-
 /// Check if a binary_expression uses comma operator.
 fn is_comma_expression(node: Node, source: &[u8]) -> bool {
-    if node.kind() != "binary_expression" { return false; }
+    if node.kind() != "binary_expression" {
+        return false;
+    }
     let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor).filter(|c| c.is_named()).collect();
-    if children.len() < 2 { return false; }
+    let children: Vec<Node> = node
+        .children(&mut cursor)
+        .filter(|c| c.is_named())
+        .collect();
+    if children.len() < 2 {
+        return false;
+    }
     let op_start = children[0].end_byte();
     let op_end = children[1].start_byte();
-    if op_end <= op_start || op_end > source.len() { return false; }
-    let op = std::str::from_utf8(&source[op_start..op_end]).unwrap_or("").trim();
+    if op_end <= op_start || op_end > source.len() {
+        return false;
+    }
+    let op = std::str::from_utf8(&source[op_start..op_end])
+        .unwrap_or("")
+        .trim();
     op == ","
 }
 
@@ -69,13 +77,18 @@ fn is_comma_expression(node: Node, source: &[u8]) -> bool {
 fn find_nested_mutations(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if !child.is_named() { continue; }
+        if !child.is_named() {
+            continue;
+        }
         match child.kind() {
             "postfix_expression" => {} // top-level postfix fine
             "binary_expression" if is_assignment_binop(child, source) => {
                 // Top-level assignment fine, but check RHS for nested mutations
                 let mut inner = child.walk();
-                let named: Vec<Node> = child.children(&mut inner).filter(|c| c.is_named()).collect();
+                let named: Vec<Node> = child
+                    .children(&mut inner)
+                    .filter(|c| c.is_named())
+                    .collect();
                 for operand in named.iter().skip(1) {
                     // Check operand itself (it might be a mutation like y++)
                     match operand.kind() {
@@ -163,7 +176,9 @@ fn in_condition_position(node: Node) -> bool {
     let mut inside_do_group = false;
     while let Some(n) = current {
         match n.kind() {
-            "do_group" => { inside_do_group = true; }
+            "do_group" => {
+                inside_do_group = true;
+            }
             "if_statement" | "elif_clause" => return !inside_do_group,
             "while_statement" | "until_statement" => return !inside_do_group,
             "function_definition" | "subshell" | "program" => return false,
@@ -180,7 +195,8 @@ fn in_condition_position(node: Node) -> bool {
 fn is_assignment_binop(node: Node, source: &[u8]) -> bool {
     // Get positions of first and last named children (operands)
     let mut cursor = node.walk();
-    let children: Vec<Node> = node.children(&mut cursor)
+    let children: Vec<Node> = node
+        .children(&mut cursor)
         .filter(|c| c.is_named())
         .collect();
     if children.len() < 2 {
@@ -192,8 +208,13 @@ fn is_assignment_binop(node: Node, source: &[u8]) -> bool {
     if op_end <= op_start || op_end > source.len() {
         return false;
     }
-    let op = std::str::from_utf8(&source[op_start..op_end]).unwrap_or("").trim();
-    matches!(op, "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^=")
+    let op = std::str::from_utf8(&source[op_start..op_end])
+        .unwrap_or("")
+        .trim();
+    matches!(
+        op,
+        "=" | "+=" | "-=" | "*=" | "/=" | "%=" | "<<=" | ">>=" | "&=" | "|=" | "^="
+    )
 }
 
 /// SB5008: Arithmetic command (( )) in statement position must contain a mutation.
@@ -201,7 +222,6 @@ fn is_assignment_binop(node: Node, source: &[u8]) -> bool {
 pub struct ArithStmtNoEffect;
 
 impl Rule for ArithStmtNoEffect {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["arithmetic_command"]
     }
@@ -219,7 +239,10 @@ impl Rule for ArithStmtNoEffect {
         vec![Diagnostic::error(
             node,
             "SB5008",
-            format!("arithmetic statement {} has no side effect — use `if {}` for comparisons", text, text),
+            format!(
+                "arithmetic statement {} has no side effect — use `if {}` for comparisons",
+                text, text
+            ),
         )]
     }
 }
@@ -259,7 +282,10 @@ fn find_prefix_incdec(node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
                 diags.push(Diagnostic::error(
                     child,
                     "SB5007",
-                    format!("prefix {} is not allowed — use postfix (x++) or (( x += 1 )) instead", text),
+                    format!(
+                        "prefix {} is not allowed — use postfix (x++) or (( x += 1 )) instead",
+                        text
+                    ),
                 ));
                 continue;
             }

@@ -1,12 +1,11 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5009: IFS assignment is not allowed (word splitting doesn't exist in sash).
 pub struct IfsRejected;
 
 impl Rule for IfsRejected {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["variable_assignment"]
     }
@@ -19,7 +18,8 @@ impl Rule for IfsRejected {
                 return vec![Diagnostic::error(
                     node,
                     "SB5009",
-                    "IFS does not exist in sash — word splitting is eliminated by design".to_string(),
+                    "IFS does not exist in sash — word splitting is eliminated by design"
+                        .to_string(),
                 )];
             }
         }
@@ -33,7 +33,6 @@ impl Rule for IfsRejected {
 pub struct ForInExpansion;
 
 impl Rule for ForInExpansion {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["for_statement"]
     }

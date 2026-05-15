@@ -15,8 +15,7 @@
 ///   2. Compute dominance frontiers
 ///   3. Insert phi nodes at dominance frontiers
 ///   4. Rename variables with version numbers
-
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// A unique identifier for a basic block.
 pub type BlockId = usize;
@@ -32,11 +31,19 @@ pub struct VarRef {
 
 impl VarRef {
     pub fn new(name: &str, version: u32) -> Self {
-        Self { name: name.to_string(), version, var_type: crate::ir::VarType::String }
+        Self {
+            name: name.to_string(),
+            version,
+            var_type: crate::ir::VarType::String,
+        }
     }
 
     pub fn new_typed(name: &str, version: u32, var_type: crate::ir::VarType) -> Self {
-        Self { name: name.to_string(), version, var_type }
+        Self {
+            name: name.to_string(),
+            version,
+            var_type,
+        }
     }
 
     pub fn display(&self) -> String {
@@ -55,10 +62,7 @@ pub struct PhiNode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaInst {
     /// x_n = value
-    Assign {
-        target: VarRef,
-        value: SsaValue,
-    },
+    Assign { target: VarRef, value: SsaValue },
     /// A command (no variable defined)
     Command {
         name: String,
@@ -77,8 +81,8 @@ pub enum SsaInst {
     /// read -r line: reads one line from fd, assigns to target, sets __read_eof
     ReadLine {
         target: VarRef,
-        fd: i64,  // 0 = stdin
-        delim: Option<u8>,  // None = newline (default), Some(byte) = custom delimiter
+        fd: i64,           // 0 = stdin
+        delim: Option<u8>, // None = newline (default), Some(byte) = custom delimiter
         redirects: Vec<crate::ir::Redirect>,
         /// True when read is in a lastpipe position with clean producer stages
         clean_pipe: bool,
@@ -103,10 +107,7 @@ pub enum SsaInst {
         is_integer_key: bool,
     },
     /// arr+=(val) — append to indexed array
-    ArrayAppend {
-        array: String,
-        value: SsaValue,
-    },
+    ArrayAppend { array: String, value: SsaValue },
     /// mapfile -t arr — read all lines from fd into indexed array
     Mapfile {
         array: String,
@@ -124,9 +125,7 @@ pub enum SsaInst {
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
     /// End capturing, assign captured output to target
-    CaptureEnd {
-        target: VarRef,
-    },
+    CaptureEnd { target: VarRef },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
@@ -147,10 +146,25 @@ pub enum SsaInst {
 /// Arithmetic operators for $(( )) and (( )) contexts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or, Not,
-    Shl, Shr, BitAnd, BitOr, BitXor,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    Not,
+    Shl,
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
     Pow,
 }
 
@@ -182,31 +196,50 @@ impl ArithOp {
 
     pub fn as_u8(self) -> u8 {
         match self {
-            ArithOp::Add => b'+', ArithOp::Sub => b'-',
-            ArithOp::Mul => b'*', ArithOp::Div => b'/',
+            ArithOp::Add => b'+',
+            ArithOp::Sub => b'-',
+            ArithOp::Mul => b'*',
+            ArithOp::Div => b'/',
             ArithOp::Mod => b'%',
-            ArithOp::Eq => 1, ArithOp::Ne => 2,
-            ArithOp::Lt => 3, ArithOp::Le => 4,
-            ArithOp::Gt => 5, ArithOp::Ge => 6,
-            ArithOp::And => 7, ArithOp::Or => 8,
+            ArithOp::Eq => 1,
+            ArithOp::Ne => 2,
+            ArithOp::Lt => 3,
+            ArithOp::Le => 4,
+            ArithOp::Gt => 5,
+            ArithOp::Ge => 6,
+            ArithOp::And => 7,
+            ArithOp::Or => 8,
             ArithOp::Not => 9,
-            ArithOp::Shl => 10, ArithOp::Shr => 11,
-            ArithOp::BitAnd => 12, ArithOp::BitOr => 13, ArithOp::BitXor => 14,
+            ArithOp::Shl => 10,
+            ArithOp::Shr => 11,
+            ArithOp::BitAnd => 12,
+            ArithOp::BitOr => 13,
+            ArithOp::BitXor => 14,
             ArithOp::Pow => 15,
         }
     }
 
     pub fn display(&self) -> &'static str {
         match self {
-            ArithOp::Add => "+", ArithOp::Sub => "-",
-            ArithOp::Mul => "*", ArithOp::Div => "/", ArithOp::Mod => "%",
-            ArithOp::Eq => "==", ArithOp::Ne => "!=",
-            ArithOp::Lt => "<", ArithOp::Le => "<=",
-            ArithOp::Gt => ">", ArithOp::Ge => ">=",
-            ArithOp::And => "&&", ArithOp::Or => "||",
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+            ArithOp::Div => "/",
+            ArithOp::Mod => "%",
+            ArithOp::Eq => "==",
+            ArithOp::Ne => "!=",
+            ArithOp::Lt => "<",
+            ArithOp::Le => "<=",
+            ArithOp::Gt => ">",
+            ArithOp::Ge => ">=",
+            ArithOp::And => "&&",
+            ArithOp::Or => "||",
             ArithOp::Not => "!",
-            ArithOp::Shl => "<<", ArithOp::Shr => ">>",
-            ArithOp::BitAnd => "&", ArithOp::BitOr => "|", ArithOp::BitXor => "^",
+            ArithOp::Shl => "<<",
+            ArithOp::Shr => ">>",
+            ArithOp::BitAnd => "&",
+            ArithOp::BitOr => "|",
+            ArithOp::BitXor => "^",
             ArithOp::Pow => "**",
         }
     }
@@ -230,7 +263,10 @@ pub enum SsaValue {
     },
     /// Runtime command substitution: fork/exec, capture stdout.
     /// Carries the command name and arguments as expressions.
-    CmdSubst { argv: Vec<SsaValue>, redirects: Vec<crate::ir::Redirect> },
+    CmdSubst {
+        argv: Vec<SsaValue>,
+        redirects: Vec<crate::ir::Redirect>,
+    },
     /// Concatenation of multiple values (from double-quoted strings
     /// with mixed literal and variable parts).
     Concat(Vec<SsaValue>),
@@ -260,7 +296,7 @@ pub enum SsaValue {
     Subscript {
         array: String,
         index: Box<SsaValue>,
-        is_integer_key: bool,   // true = indexed array (key is raw i64 bytes)
+        is_integer_key: bool, // true = indexed array (key is raw i64 bytes)
     },
     /// Positional parameter by index: argv[i+1] (for dynamic for loops)
     ArgvIndex(VarRef),
@@ -348,13 +384,16 @@ impl SsaProgram {
     pub fn new_block(&mut self, label: &str) -> BlockId {
         let id = self.next_block_id;
         self.next_block_id += 1;
-        self.blocks.insert(id, BasicBlock {
+        self.blocks.insert(
             id,
-            label: label.to_string(),
-            phis: Vec::new(),
-            insts: Vec::new(),
-            terminator: Terminator::Return,
-        });
+            BasicBlock {
+                id,
+                label: label.to_string(),
+                phis: Vec::new(),
+                insts: Vec::new(),
+                terminator: Terminator::Return,
+            },
+        );
         id
     }
 
@@ -372,12 +411,20 @@ impl SsaProgram {
         for (id, block) in &self.blocks {
             match &block.terminator {
                 Terminator::Goto(dest) if *dest == target => preds.push(*id),
-                Terminator::Branch { true_block, false_block, .. } => {
+                Terminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                } => {
                     if *true_block == target || *false_block == target {
                         preds.push(*id);
                     }
                 }
-                Terminator::Loop { body_block, exit_block, .. } => {
+                Terminator::Loop {
+                    body_block,
+                    exit_block,
+                    ..
+                } => {
                     if *body_block == target || *exit_block == target {
                         preds.push(*id);
                     }
@@ -397,15 +444,27 @@ impl SsaProgram {
             stack.push(b);
         }
         while let Some(id) = stack.pop() {
-            if !visited.insert(id) { continue; }
+            if !visited.insert(id) {
+                continue;
+            }
             if let Some(block) = self.blocks.get(&id) {
                 match &block.terminator {
-                    Terminator::Goto(dest) => { stack.push(*dest); }
-                    Terminator::Branch { true_block, false_block, .. } => {
+                    Terminator::Goto(dest) => {
+                        stack.push(*dest);
+                    }
+                    Terminator::Branch {
+                        true_block,
+                        false_block,
+                        ..
+                    } => {
                         stack.push(*true_block);
                         stack.push(*false_block);
                     }
-                    Terminator::Loop { body_block, exit_block, .. } => {
+                    Terminator::Loop {
+                        body_block,
+                        exit_block,
+                        ..
+                    } => {
                         stack.push(*body_block);
                         stack.push(*exit_block);
                     }
@@ -476,7 +535,9 @@ impl VersionState {
             local_fn_scope: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None, exiting_signals: std::collections::HashSet::new(), diagnostics: Vec::new(),
+            exit_trap: None,
+            exiting_signals: std::collections::HashSet::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -490,14 +551,22 @@ impl VersionState {
         *next += 1;
         let version = *next;
         self.current.insert(name.to_string(), version);
-        let vtype = self.type_map.get(name).copied().unwrap_or(crate::ir::VarType::String);
+        let vtype = self
+            .type_map
+            .get(name)
+            .copied()
+            .unwrap_or(crate::ir::VarType::String);
         VarRef::new_typed(name, version, vtype)
     }
 
     /// Look up the current version of a variable.
     pub fn lookup(&self, name: &str) -> VarRef {
         let version = self.current.get(name).copied().unwrap_or(0);
-        let vtype = self.type_map.get(name).copied().unwrap_or(crate::ir::VarType::String);
+        let vtype = self
+            .type_map
+            .get(name)
+            .copied()
+            .unwrap_or(crate::ir::VarType::String);
         VarRef::new_typed(name, version, vtype)
     }
 
@@ -512,5 +581,4 @@ impl VersionState {
     pub fn restore(&mut self, snap: &HashMap<String, u32>) {
         self.current = snap.clone();
     }
-
 }

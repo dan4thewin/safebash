@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5023: Validate literal regex patterns at compile time.
 /// Catches invalid patterns (bad syntax, unsupported PCRE features)
@@ -19,7 +19,8 @@ impl Rule for RegexValidation {
         }
 
         // Check for =~ operator
-        let op = node.child_by_field_name("operator")
+        let op = node
+            .child_by_field_name("operator")
             .and_then(|n| n.utf8_text(source).ok())
             .unwrap_or("");
         if op != "=~" {
@@ -53,7 +54,9 @@ impl Rule for RegexValidation {
 fn has_ancestor(node: Node, kind: &str) -> bool {
     let mut current = node.parent();
     while let Some(n) = current {
-        if n.kind() == kind { return true; }
+        if n.kind() == kind {
+            return true;
+        }
         current = n.parent();
     }
     false

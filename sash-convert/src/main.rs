@@ -67,10 +67,12 @@ fn main() {
             std::process::exit(1);
         });
     } else {
-        io::stdout().write_all(output.as_bytes()).unwrap_or_else(|e| {
-            eprintln!("sash-convert: stdout: {}", e);
-            std::process::exit(1);
-        });
+        io::stdout()
+            .write_all(output.as_bytes())
+            .unwrap_or_else(|e| {
+                eprintln!("sash-convert: stdout: {}", e);
+                std::process::exit(1);
+            });
     }
 }
 
@@ -93,8 +95,8 @@ fn run_shellcheck(path: Option<&str>, source: &str) -> Vec<ScFinding> {
     // Always pipe source via stdin to avoid file-path issues
     cmd.arg("-");
     cmd.stdin(std::process::Stdio::piped())
-       .stdout(std::process::Stdio::piped())
-       .stderr(std::process::Stdio::null());
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null());
 
     let _ = path; // not used — we always pipe
 
@@ -171,7 +173,9 @@ fn split_json_objects(s: &str) -> Vec<String> {
             '\\' if in_string => escape = true,
             '"' => in_string = !in_string,
             '{' if !in_string => {
-                if depth == 0 { start = i; }
+                if depth == 0 {
+                    start = i;
+                }
                 depth += 1;
             }
             '}' if !in_string => {

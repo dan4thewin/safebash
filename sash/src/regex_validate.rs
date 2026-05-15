@@ -26,7 +26,9 @@ pub fn validate_regex(pattern: &str) -> Result<(), String> {
             let msg = if regex_get_error_flag() != 0 {
                 let raw = regex_get_error_msg();
                 let mut len = 0;
-                while *raw.add(len) != 0 { len += 1; }
+                while *raw.add(len) != 0 {
+                    len += 1;
+                }
                 std::str::from_utf8(std::slice::from_raw_parts(raw, len))
                     .unwrap_or("unknown regex error")
                     .to_string()

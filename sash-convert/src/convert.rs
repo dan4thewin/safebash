@@ -3,7 +3,6 @@
 /// Walks the tree-sitter CST, collects source patches (mechanical conversions,
 /// MANUAL annotations, CHECK hints, BLESS hints), and applies them to produce
 /// sash-native source.
-
 use crate::known_externals;
 use crate::ScFinding;
 use tree_sitter::Node;
@@ -32,7 +31,13 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
     let mut prefix_lines: Vec<(usize, String)> = Vec::new(); // (line_number, text)
 
     // Walk the CST
-    walk_node(tree.root_node(), src, &mut patches, &mut prefix_lines, annotate);
+    walk_node(
+        tree.root_node(),
+        src,
+        &mut patches,
+        &mut prefix_lines,
+        annotate,
+    );
 
     // Inject bless hints for command substitution assignments
     inject_bless_hints(tree.root_node(), src, &mut prefix_lines);
@@ -77,9 +82,12 @@ fn walk_node(
             // Subshell: mark as MANUAL for now (mechanical conversion is complex)
             let line = node.start_position().row;
             let text = node_text(node, source);
-            prefix_lines.push((line, format!(
-                "# MANUAL: subshell ( ... ) — convert to function with local vars, or remove"
-            )));
+            prefix_lines.push((
+                line,
+                format!(
+                    "# MANUAL: subshell ( ... ) — convert to function with local vars, or remove"
+                ),
+            ));
             let _ = text; // pass through unchanged
         }
         "simple_expansion" => {
@@ -90,11 +98,17 @@ fn walk_node(
         }
         "for_statement" if node.child(0).map_or(false, |c| c.kind() == "select") => {
             let line = node.start_position().row;
-            prefix_lines.push((line, "# MANUAL: select — not supported in sash, rewrite as while+read menu".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: select — not supported in sash, rewrite as while+read menu".into(),
+            ));
         }
         "process_substitution" => {
             let line = node.start_position().row;
-            prefix_lines.push((line, "# MANUAL: process substitution <()/>() not supported in sash".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: process substitution <()/>() not supported in sash".into(),
+            ));
         }
         "command_substitution" => {
             if has_ancestor_kind(node, "heredoc_body") {
@@ -118,7 +132,12 @@ fn walk_node(
 
 // ── Declaration conversions ───────────────────────────────────
 
-fn convert_declaration(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
+fn convert_declaration(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
     if children.is_empty() {
@@ -144,7 +163,10 @@ fn convert_declaration(node: Node, source: &[u8], patches: &mut Vec<Patch>, pref
     if flags.contains(&"-n".to_string()) {
         // nameref — unconvertible
         let line = node.start_position().row;
-        prefix_lines.push((line, "# MANUAL: declare -n (nameref) not supported in sash".into()));
+        prefix_lines.push((
+            line,
+            "# MANUAL: declare -n (nameref) not supported in sash".into(),
+        ));
         return;
     }
 
@@ -183,8 +205,7 @@ fn convert_declaration(node: Node, source: &[u8], patches: &mut Vec<Patch>, pref
     }
 
     // For bare `declare x=5` or `typeset x=5` with no flags → bare assignment
-    let needs_conversion = is_declare || is_readonly
-        || (is_local && has_type_flag);
+    let needs_conversion = is_declare || is_readonly || (is_local && has_type_flag);
 
     if !needs_conversion {
         return;
@@ -285,25 +306,43 @@ fn convert_command(
 
         // MANUAL annotations for unconvertible commands
         "eval" => {
-            prefix_lines.push((line, "# MANUAL: eval — dynamic execution not supported in sash".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: eval — dynamic execution not supported in sash".into(),
+            ));
         }
         "source" | "." => {
-            prefix_lines.push((line, "# MANUAL: source/. — use sash-expand pipeline instead (DD#54)".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: source/. — use sash-expand pipeline instead (DD#54)".into(),
+            ));
         }
         "export" => {
             prefix_lines.push((line, "# MANUAL: export — env isolation in sash (DD#53), use /usr/bin/env for per-command env".into()));
         }
         "alias" => {
-            prefix_lines.push((line, "# MANUAL: alias — not supported in sash, convert to a function".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: alias — not supported in sash, convert to a function".into(),
+            ));
         }
         "set" => {
-            prefix_lines.push((line, "# MANUAL: set — shell options not configurable in sash".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: set — shell options not configurable in sash".into(),
+            ));
         }
         "shopt" => {
-            prefix_lines.push((line, "# MANUAL: shopt — shell options not configurable in sash".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: shopt — shell options not configurable in sash".into(),
+            ));
         }
         "select" => {
-            prefix_lines.push((line, "# MANUAL: select — not supported in sash, rewrite as while+read menu".into()));
+            prefix_lines.push((
+                line,
+                "# MANUAL: select — not supported in sash, rewrite as while+read menu".into(),
+            ));
         }
         "coproc" => {
             prefix_lines.push((line, "# MANUAL: coproc — not supported in sash".into()));
@@ -312,18 +351,18 @@ fn convert_command(
         // Mechanical: trap → signal N DISPOSITION
         "trap" => {
             let mut cursor = node.walk();
-            let args: Vec<Node> = node.children(&mut cursor)
+            let args: Vec<Node> = node
+                .children(&mut cursor)
                 .filter(|c| c.is_named() && *c != name_node)
                 .collect();
             if let Some(first_arg) = args.first() {
                 let arg_text = node_text(*first_arg, source);
                 if arg_text == "\"\"" || arg_text == "''" {
                     // trap "" SIG → signal N IGN
-                    let sigs: Vec<&str> = args[1..].iter()
-                        .map(|a| node_text(*a, source))
-                        .collect();
+                    let sigs: Vec<&str> = args[1..].iter().map(|a| node_text(*a, source)).collect();
                     let original = node_text(node, source).to_string();
-                    let lines: Vec<String> = sigs.iter()
+                    let lines: Vec<String> = sigs
+                        .iter()
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} IGN", n)))
                         .collect();
                     if !lines.is_empty() {
@@ -337,11 +376,10 @@ fn convert_command(
                     }
                 } else if arg_text == "-" {
                     // trap - SIG → signal N DFL
-                    let sigs: Vec<&str> = args[1..].iter()
-                        .map(|a| node_text(*a, source))
-                        .collect();
+                    let sigs: Vec<&str> = args[1..].iter().map(|a| node_text(*a, source)).collect();
                     let original = node_text(node, source).to_string();
-                    let lines: Vec<String> = sigs.iter()
+                    let lines: Vec<String> = sigs
+                        .iter()
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} DFL", n)))
                         .collect();
                     if !lines.is_empty() {
@@ -355,11 +393,10 @@ fn convert_command(
                     }
                 } else if arg_text == ":" {
                     // trap : SIG → signal N FLAG
-                    let sigs: Vec<&str> = args[1..].iter()
-                        .map(|a| node_text(*a, source))
-                        .collect();
+                    let sigs: Vec<&str> = args[1..].iter().map(|a| node_text(*a, source)).collect();
                     let original = node_text(node, source).to_string();
-                    let lines: Vec<String> = sigs.iter()
+                    let lines: Vec<String> = sigs
+                        .iter()
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} FLAG", n)))
                         .collect();
                     if !lines.is_empty() {
@@ -373,7 +410,11 @@ fn convert_command(
                     }
                 } else {
                     // trap 'handler' SIG → MANUAL
-                    prefix_lines.push((line, "# MANUAL: trap with handler body — restructure as END { ... } block".into()));
+                    prefix_lines.push((
+                        line,
+                        "# MANUAL: trap with handler body — restructure as END { ... } block"
+                            .into(),
+                    ));
                 }
             }
         }
@@ -399,7 +440,9 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
                 let quoted: String = chars[i + 1..close].iter().collect();
                 // Only strip if the entire quoted content is a single $var or ${var}
                 let is_simple_var = quoted.starts_with('$')
-                    && quoted[1..].chars().all(|c| c.is_alphanumeric() || c == '_' || c == '{' || c == '}');
+                    && quoted[1..]
+                        .chars()
+                        .all(|c| c.is_alphanumeric() || c == '_' || c == '{' || c == '}');
                 if is_simple_var {
                     result.push_str(&quoted);
                     i = close + 1;
@@ -416,13 +459,18 @@ fn strip_unnecessary_quotes(inner: &str) -> String {
     result
 }
 
-fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
+fn convert_test_command(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
     let text = node_text(node, source);
 
     // Check for numeric comparisons — in either [ ] or [[ ]] form
     let (is_double, is_single) = (
         text.starts_with("[[ ") && text.ends_with(" ]]"),
-        text.starts_with("[ ") && text.ends_with(" ]") && !text.starts_with("[[ ")
+        text.starts_with("[ ") && text.ends_with(" ]") && !text.starts_with("[[ "),
     );
     if is_double || is_single {
         let (start_trim, end_trim) = if is_double { (3, 3) } else { (2, 2) };
@@ -444,7 +492,9 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>, pre
                     "# MANUAL: numeric comparison needs conversion to (( )) — operands too complex for auto-convert"
                 )));
                 // Still convert [ ] → [[ ]] below if single bracket
-                if is_double { return; }
+                if is_double {
+                    return;
+                }
             }
             NumericResult::NotNumeric => {}
         }
@@ -468,7 +518,7 @@ fn convert_test_command(node: Node, source: &[u8], patches: &mut Vec<Patch>, pre
 
     // Fix regex patterns: convert POSIX [-...] and [...-] to Plan 9 [\-...]
     if text.starts_with("[[ ") && text.ends_with(" ]]") && text.contains(" =~ ") {
-        let inner = &text[3..text.len()-3];
+        let inner = &text[3..text.len() - 3];
         if let Some(re_start) = inner.find(" =~ ") {
             let pattern = &inner[re_start + 4..];
             let fixed = fix_regex_dashes(pattern);
@@ -568,7 +618,10 @@ fn try_numeric_comparison(inner: &str) -> NumericResult {
 fn is_simple_arith_operand(s: &str) -> bool {
     if let Some(rest) = s.strip_prefix('$') {
         // $var or ${var}
-        let inner = rest.strip_prefix('{').and_then(|r| r.strip_suffix('}')).unwrap_or(rest);
+        let inner = rest
+            .strip_prefix('{')
+            .and_then(|r| r.strip_suffix('}'))
+            .unwrap_or(rest);
         inner.chars().all(|c| c.is_alphanumeric() || c == '_')
     } else {
         // integer literal
@@ -650,12 +703,17 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
     }
 }
 
-fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix_lines: &mut Vec<(usize, String)>) {
+fn convert_expansion(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
     let text = node_text(node, source);
 
     // ${1}, ${2}, etc. → $(argv N); ${@} → $(argv @); ${#} → $(argc)
     if text.starts_with("${") && text.ends_with('}') {
-        let inner = &text[2..text.len()-1];
+        let inner = &text[2..text.len() - 1];
         if inner.chars().all(|c| c.is_ascii_digit()) {
             patches.push(Patch {
                 start: node.start_byte(),
@@ -691,13 +749,14 @@ fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix
     // ${var-x} → ${var:-x}  (but not ${var:-x} which already has the colon)
     // The expansion node text includes ${ and }
     // Look for pattern: ${NAME-default} where there's no : before the -
-    if text.contains('-') && !text.contains(":-") && !text.contains(":+")
-        && !text.contains(":?") {
+    if text.contains('-') && !text.contains(":-") && !text.contains(":+") && !text.contains(":?") {
         // Check it's a simple default: ${var-value}
         if let Some(dash_pos) = text.find('-') {
             // Make sure it's not ${var:offset:length} arithmetic
             let before_dash = &text[2..dash_pos]; // skip ${
-            if !before_dash.contains(':') && before_dash.chars().all(|c| c.is_alphanumeric() || c == '_') {
+            if !before_dash.contains(':')
+                && before_dash.chars().all(|c| c.is_alphanumeric() || c == '_')
+            {
                 let replacement = format!("${{{}:-{}", before_dash, &text[dash_pos + 1..]);
                 patches.push(Patch {
                     start: node.start_byte(),
@@ -713,12 +772,15 @@ fn convert_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>, prefix
     // ${!var} → MANUAL
     if text.starts_with("${!") {
         let line = node.start_position().row;
-        prefix_lines.push((line, "# MANUAL: ${!var} indirect expansion not supported in sash".into()));
+        prefix_lines.push((
+            line,
+            "# MANUAL: ${!var} indirect expansion not supported in sash".into(),
+        ));
     }
 
     // ${var@X} → MANUAL
     if text.contains('@') && text.starts_with("${") && text.ends_with('}') {
-        let inner = &text[2..text.len()-1];
+        let inner = &text[2..text.len() - 1];
         if inner.contains('@') {
             let line = node.start_position().row;
             prefix_lines.push((line, "# MANUAL: ${var@X} parameter transformation not supported in sash — use ${var^^}/${var,,} for case".into()));
@@ -764,11 +826,22 @@ fn contains_arith_assignment(expr: &str) -> bool {
             // Check it's not ==, !=, <=, >=
             let prev = if i > 0 { bytes[i - 1] } else { 0 };
             let next = if i + 1 < bytes.len() { bytes[i + 1] } else { 0 };
-            if next == b'=' { continue; } // == 
-            if prev == b'!' || prev == b'<' || prev == b'>' { continue; } // !=, <=, >=
-            // Also skip +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
-            if prev == b'+' || prev == b'-' || prev == b'*' || prev == b'/' ||
-               prev == b'%' || prev == b'&' || prev == b'|' || prev == b'^' {
+            if next == b'=' {
+                continue;
+            } // ==
+            if prev == b'!' || prev == b'<' || prev == b'>' {
+                continue;
+            } // !=, <=, >=
+              // Also skip +=, -=, *=, /=, %=, &=, |=, ^=, <<=, >>=
+            if prev == b'+'
+                || prev == b'-'
+                || prev == b'*'
+                || prev == b'/'
+                || prev == b'%'
+                || prev == b'&'
+                || prev == b'|'
+                || prev == b'^'
+            {
                 // These are compound assignments — still side effects, include them
                 return true;
             }
@@ -782,23 +855,19 @@ fn contains_arith_assignment(expr: &str) -> bool {
 
 /// Scan for variable assignments from command substitution and inject bless hints.
 /// Called after the main walk — examines assignment nodes.
-fn inject_bless_hints(
-    node: Node,
-    source: &[u8],
-    prefix_lines: &mut Vec<(usize, String)>,
-) {
+fn inject_bless_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, String)>) {
     if node.kind() == "variable_assignment" {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
 
         // Look for var=$(cmd) pattern
-        let var_name = children.first()
+        let var_name = children
+            .first()
             .filter(|c| c.kind() == "variable_name")
             .map(|c| node_text(*c, source));
 
         let has_cmdsub = children.iter().any(|c| {
-            c.kind() == "command_substitution"
-                || has_descendant_kind(*c, "command_substitution")
+            c.kind() == "command_substitution" || has_descendant_kind(*c, "command_substitution")
         });
 
         if let (Some(var), true) = (var_name, has_cmdsub) {
@@ -810,10 +879,13 @@ fn inject_bless_hints(
                     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                     if let Some(known) = known_externals::lookup_command(&cmd_name, &arg_refs) {
                         // Known external → real bless line
-                        prefix_lines.push((line + 1, format!(
-                            "bless {} [[ ${} =~ {} ]]  # auto: {}",
-                            var, var, known.pattern, known.description
-                        )));
+                        prefix_lines.push((
+                            line + 1,
+                            format!(
+                                "bless {} [[ ${} =~ {} ]]  # auto: {}",
+                                var, var, known.pattern, known.description
+                            ),
+                        ));
                     } else {
                         // Unknown external → hint
                         prefix_lines.push((line + 1, format!(
@@ -838,7 +910,8 @@ fn inject_bless_hints(
                 for child in node.children(&mut cursor) {
                     if child.is_named() && child != name_node {
                         let t = node_text(child, source);
-                        if !t.starts_with('-') && t.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        if !t.starts_with('-') && t.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        {
                             prefix_lines.push((line + 1, format!(
                                 "# BLESS: {} is read from input — add a bless with appropriate pattern", t
                             )));
@@ -992,8 +1065,20 @@ fn convert_backtick_substitution(node: Node, source: &[u8], patches: &mut Vec<Pa
         let start = node.start_byte();
         let end = node.end_byte();
         // Replace opening backtick with $(
-        patches.push(Patch { start, end: start + 1, replacement: "$(".to_string(), prefix_line: None, original: None });
-        patches.push(Patch { start: end - 1, end, replacement: ")".to_string(), prefix_line: None, original: None });
+        patches.push(Patch {
+            start,
+            end: start + 1,
+            replacement: "$(".to_string(),
+            prefix_line: None,
+            original: None,
+        });
+        patches.push(Patch {
+            start: end - 1,
+            end,
+            replacement: ")".to_string(),
+            prefix_line: None,
+            original: None,
+        });
     }
 }
 

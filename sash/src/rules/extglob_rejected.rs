@@ -1,12 +1,11 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5005: extglob patterns @(), ?(), +(), *(), !() are not allowed.
 pub struct ExtglobRejected;
 
 impl Rule for ExtglobRejected {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["extglob_pattern"]
     }
@@ -20,7 +19,10 @@ impl Rule for ExtglobRejected {
         vec![Diagnostic::error(
             node,
             "SB5005",
-            format!("extglob pattern {} is not supported in sash — use regex operators instead", text),
+            format!(
+                "extglob pattern {} is not supported in sash — use regex operators instead",
+                text
+            ),
         )]
     }
 }

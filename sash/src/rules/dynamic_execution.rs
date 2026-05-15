@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB4001: eval is not allowed.
 /// SB4002: source/. compiled to safe kvp loader (marker).
@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct DynamicExecution;
 
 impl Rule for DynamicExecution {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["command"]
     }
@@ -42,7 +41,9 @@ impl Rule for DynamicExecution {
             "source" | "." => vec![Diagnostic::error(
                 node,
                 "SB4002",
-                format!("'source'/'.' is not allowed — use `sash-expand file | mapfile -m var` instead"),
+                format!(
+                    "'source'/'.' is not allowed — use `sash-expand file | mapfile -m var` instead"
+                ),
             )],
             _ => vec![],
         }

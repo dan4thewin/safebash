@@ -1,24 +1,24 @@
 // Modules used by tests (oracle_tests.rs) — must be pub
+pub mod emit_janet;
 pub mod ir;
 pub mod lower;
-pub mod emit_janet;
 pub mod oracle;
 
 // Internal modules — not used outside the crate
-pub(crate) mod printer;
-pub(crate) mod ssa;
-pub(crate) mod ssa_taint;
-pub(crate) mod transform;
-pub(crate) mod ssa_printer;
-pub mod type_check;
-pub(crate) mod emit_source;
 pub mod codegen;
 pub(crate) mod diagnostic;
-pub(crate) mod validator;
-pub(crate) mod rule;
+pub(crate) mod emit_source;
+pub(crate) mod printer;
 pub(crate) mod regex_validate;
+pub(crate) mod rule;
 pub(crate) mod rules;
+pub(crate) mod ssa;
+pub(crate) mod ssa_printer;
+pub(crate) mod ssa_taint;
 pub(crate) mod taint;
+pub(crate) mod transform;
+pub mod type_check;
+pub(crate) mod validator;
 
 pub fn parse(source: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
@@ -88,7 +88,9 @@ pub(crate) fn preprocess_local_fn(source: &str) -> String {
 /// Replaces `$(( content ))` with `$(( __ARITH_N__ ))` when content
 /// contains sexpr patterns that tree-sitter can't parse.
 /// Returns (preprocessed_source, map of placeholder → original content).
-pub(crate) fn preprocess_arithmetic(source: &str) -> (String, std::collections::HashMap<String, String>) {
+pub(crate) fn preprocess_arithmetic(
+    source: &str,
+) -> (String, std::collections::HashMap<String, String>) {
     use std::collections::HashMap;
     let mut result = String::with_capacity(source.len());
     let mut map = HashMap::new();
@@ -98,16 +100,17 @@ pub(crate) fn preprocess_arithmetic(source: &str) -> (String, std::collections::
 
     while i < bytes.len() {
         // Look for $(( or ((
-        let (is_dollar, start) = if i + 3 <= bytes.len() && &bytes[i..i+3] == b"$((" {
+        let (is_dollar, start) = if i + 3 <= bytes.len() && &bytes[i..i + 3] == b"$((" {
             (true, i + 3)
         } else if i + 2 <= bytes.len() && &bytes[i..i+2] == b"(("
             // Don't match (( inside words — must be at start of line or after whitespace/;
-            && (i == 0 || matches!(bytes[i-1], b' ' | b'\t' | b'\n' | b';' | b'(' | b'!')) {
+            && (i == 0 || matches!(bytes[i-1], b' ' | b'\t' | b'\n' | b';' | b'(' | b'!'))
+        {
             (false, i + 2)
         } else {
             // Copy one UTF-8 character (may be multi-byte)
             let ch_len = utf8_char_len(bytes[i]);
-            result.push_str(&source[i..i+ch_len]);
+            result.push_str(&source[i..i + ch_len]);
             i += ch_len;
             continue;
         };
@@ -116,22 +119,33 @@ pub(crate) fn preprocess_arithmetic(source: &str) -> (String, std::collections::
         let mut depth = 1i32;
         let mut j = start;
         while j + 1 < bytes.len() && depth > 0 {
-            if j + 2 < bytes.len() && &bytes[j..j+3] == b"$((" {
-                depth += 1; j += 3; continue;
+            if j + 2 < bytes.len() && &bytes[j..j + 3] == b"$((" {
+                depth += 1;
+                j += 3;
+                continue;
             }
-            if &bytes[j..j+2] == b"((" {
-                depth += 1; j += 2; continue;
+            if &bytes[j..j + 2] == b"((" {
+                depth += 1;
+                j += 2;
+                continue;
             }
-            if &bytes[j..j+2] == b"))" {
+            if &bytes[j..j + 2] == b"))" {
                 depth -= 1;
-                if depth == 0 { break; }
-                j += 2; continue;
+                if depth == 0 {
+                    break;
+                }
+                j += 2;
+                continue;
             }
             j += 1;
         }
         if depth != 0 {
             // Unmatched — emit as-is
-            if is_dollar { result.push_str("$(("); } else { result.push_str("(("); }
+            if is_dollar {
+                result.push_str("$((");
+            } else {
+                result.push_str("((");
+            }
             i = start;
             continue;
         }
@@ -154,7 +168,11 @@ pub(crate) fn preprocess_arithmetic(source: &str) -> (String, std::collections::
             }
         } else {
             // No sexpr — emit unchanged
-            if is_dollar { result.push_str("$(("); } else { result.push_str("(("); }
+            if is_dollar {
+                result.push_str("$((");
+            } else {
+                result.push_str("((");
+            }
             result.push_str(content);
             result.push_str("))");
         }
@@ -164,10 +182,15 @@ pub(crate) fn preprocess_arithmetic(source: &str) -> (String, std::collections::
 }
 
 fn utf8_char_len(b: u8) -> usize {
-    if b < 0x80 { 1 }
-    else if b < 0xE0 { 2 }
-    else if b < 0xF0 { 3 }
-    else { 4 }
+    if b < 0x80 {
+        1
+    } else if b < 0xE0 {
+        2
+    } else if b < 0xF0 {
+        3
+    } else {
+        4
+    }
 }
 
 fn has_sexpr_pattern(content: &str) -> bool {
@@ -177,16 +200,22 @@ fn has_sexpr_pattern(content: &str) -> bool {
         if bytes[i] == b'(' {
             // Skip whitespace after (
             let mut j = i + 1;
-            while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
+            while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                j += 1;
+            }
             // Check if next token is an identifier (not a digit or operator)
             if j < bytes.len() && (bytes[j].is_ascii_alphabetic() || bytes[j] == b'_') {
                 // Read the identifier
                 let _id_start = j;
-                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') { j += 1; }
+                while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+                    j += 1;
+                }
                 // After identifier, must have whitespace or ) — NOT an operator
                 if j < bytes.len() && (bytes[j].is_ascii_whitespace() || bytes[j] == b')') {
                     // Check it's not just (var) which is valid grouping
-                    while j < bytes.len() && bytes[j].is_ascii_whitespace() { j += 1; }
+                    while j < bytes.len() && bytes[j].is_ascii_whitespace() {
+                        j += 1;
+                    }
                     if j < bytes.len() && bytes[j] != b')' {
                         return true;
                     }
@@ -198,8 +227,8 @@ fn has_sexpr_pattern(content: &str) -> bool {
     false
 }
 
-use std::sync::Mutex;
 use std::collections::HashMap;
+use std::sync::Mutex;
 
 static ARITH_MAP: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 static SYSROOT: Mutex<Option<String>> = Mutex::new(None);
@@ -233,8 +262,7 @@ pub(crate) fn sysroot_file_exists(sysroot: &str, path: &str) -> bool {
                         .lines()
                         .filter_map(|line| {
                             // unsquashfs -l output: "squashfs-root/usr/bin/cat"
-                            line.strip_prefix("squashfs-root")
-                                .map(|p| p.to_string())
+                            line.strip_prefix("squashfs-root").map(|p| p.to_string())
                         })
                         .collect()
                 }
@@ -305,11 +333,15 @@ pub fn cli_main(args: Vec<String>) {
         match args[i].as_str() {
             "-o" => {
                 i += 1;
-                if i < args.len() { output_path = Some(&args[i]); }
+                if i < args.len() {
+                    output_path = Some(&args[i]);
+                }
             }
             "-c" => {
                 i += 1;
-                if i < args.len() { inline_source = Some(&args[i]); }
+                if i < args.len() {
+                    inline_source = Some(&args[i]);
+                }
             }
             s if s.starts_with("--") => flags.push(s),
             s => positional.push(s),
@@ -358,7 +390,10 @@ pub fn cli_main(args: Vec<String>) {
     // DD#57: reject converter flags
     for flag in &flags {
         if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
-            eprintln!("sash: '{}' is not a valid flag — use sash-convert for source transformations", flag);
+            eprintln!(
+                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
+                flag
+            );
             std::process::exit(1);
         }
     }
@@ -379,10 +414,19 @@ pub fn cli_main(args: Vec<String>) {
         let mut has_error = false;
         for d in &diags {
             let prefix = match d.severity {
-                diagnostic::Severity::Error => { has_error = true; "error" }
-                diagnostic::Severity::Deferred => { has_error = true; "deferred" }
+                diagnostic::Severity::Error => {
+                    has_error = true;
+                    "error"
+                }
+                diagnostic::Severity::Deferred => {
+                    has_error = true;
+                    "deferred"
+                }
             };
-            eprintln!("{}:{}:{}: {} [{}] {}", input, d.line, d.col, prefix, d.code, d.message);
+            eprintln!(
+                "{}:{}:{}: {} [{}] {}",
+                input, d.line, d.col, prefix, d.code, d.message
+            );
         }
         if has_error {
             std::process::exit(1);
@@ -412,11 +456,31 @@ pub fn cli_main(args: Vec<String>) {
         let type_map = type_check::infer_types(&program);
         let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let builtins: std::collections::HashSet<&str> = ["echo", "true", "false", ":", "exit",
-            "cd", "pwd", "wait", "shift", "read", "exec", "command", "[[",
-            "__redirect_push", "__redirect_pop", "__store_bg_pid", "__subshell_wait",
-            "__table_delete", "printf", "signal",
-        ].iter().copied().collect();
+        let builtins: std::collections::HashSet<&str> = [
+            "echo",
+            "true",
+            "false",
+            ":",
+            "exit",
+            "cd",
+            "pwd",
+            "wait",
+            "shift",
+            "read",
+            "exec",
+            "command",
+            "[[",
+            "__redirect_push",
+            "__redirect_pop",
+            "__store_bg_pid",
+            "__subshell_wait",
+            "__table_delete",
+            "printf",
+            "signal",
+        ]
+        .iter()
+        .copied()
+        .collect();
         let path_var = std::env::var("PATH").unwrap_or_default();
         let sysroot = get_sysroot();
         let resolve = |name: &str| -> Option<String> {
@@ -485,7 +549,10 @@ pub fn cli_main(args: Vec<String>) {
     let type_errors = type_check::type_check(&program2);
     if !type_errors.is_empty() {
         for te in &type_errors {
-            eprintln!("{}:{}:{}: error [SB4030] {}", input, te.span.line, te.span.col, te.message);
+            eprintln!(
+                "{}:{}:{}: error [SB4030] {}",
+                input, te.span.line, te.span.col, te.message
+            );
         }
         std::process::exit(1);
     }
@@ -517,8 +584,16 @@ pub fn cli_main(args: Vec<String>) {
     );
 
     let ld = Command::new("ld")
-        .args([&format!("-o{}", output), &obj_path, &rt_path, "-static", "--gc-sections",
-               "-z", "noexecstack", "--strip-debug"])
+        .args([
+            &format!("-o{}", output),
+            &obj_path,
+            &rt_path,
+            "-static",
+            "--gc-sections",
+            "-z",
+            "noexecstack",
+            "--strip-debug",
+        ])
         .status()
         .expect("ld failed");
 

@@ -4,7 +4,6 @@
 ///   1. Build basic blocks from IR statements
 ///   2. Version variable assignments
 ///   3. Insert phi nodes at if/else and loop merge points
-
 use crate::ir::*;
 use crate::ssa::*;
 use std::collections::HashMap;
@@ -15,7 +14,10 @@ pub fn ir_to_ssa(program: &Program) -> (SsaProgram, Vec<String>) {
 }
 
 /// Transform an IR Program into SSA form with type information.
-pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) -> (SsaProgram, Vec<String>) {
+pub fn ir_to_ssa_typed(
+    program: &Program,
+    type_map: HashMap<String, VarType>,
+) -> (SsaProgram, Vec<String>) {
     let mut ssa = SsaProgram::new();
     let mut state = VersionState::with_types(type_map);
 
@@ -46,9 +48,14 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         ssa.block_mut(end_exit).terminator = Terminator::Return;
 
         // Redirect all non-function Return terminators to goto end_block
-        let return_blocks: Vec<usize> = ssa.blocks.iter()
-            .filter(|(_, b)| b.terminator == Terminator::Return && !b.label.starts_with("fn_")
-                    && !b.label.starts_with("__end__"))
+        let return_blocks: Vec<usize> = ssa
+            .blocks
+            .iter()
+            .filter(|(_, b)| {
+                b.terminator == Terminator::Return
+                    && !b.label.starts_with("fn_")
+                    && !b.label.starts_with("__end__")
+            })
             .map(|(&id, _)| id)
             .collect();
         for block_id in return_blocks {
@@ -69,8 +76,14 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         if matches!(block.terminator, Terminator::Branch { .. }) {
             for inst in block.insts.iter_mut().rev() {
                 match inst {
-                    SsaInst::Command { checked, .. } => { *checked = false; break; }
-                    SsaInst::Pipeline { checked, .. } => { *checked = false; break; }
+                    SsaInst::Command { checked, .. } => {
+                        *checked = false;
+                        break;
+                    }
+                    SsaInst::Pipeline { checked, .. } => {
+                        *checked = false;
+                        break;
+                    }
                     _ => {}
                 }
             }
@@ -79,14 +92,17 @@ pub fn ir_to_ssa_typed(program: &Program, type_map: HashMap<String, VarType>) ->
         if block.label.starts_with("__end__") || block.label.contains("__end__") {
             for inst in block.insts.iter_mut() {
                 match inst {
-                    SsaInst::Command { checked, .. } => { *checked = false; }
-                    SsaInst::Pipeline { checked, .. } => { *checked = false; }
+                    SsaInst::Command { checked, .. } => {
+                        *checked = false;
+                    }
+                    SsaInst::Pipeline { checked, .. } => {
+                        *checked = false;
+                    }
                     _ => {}
                 }
             }
         }
     }
-
 
     let diags = state.diagnostics.clone();
     (ssa, diags)
@@ -118,7 +134,8 @@ fn lift_int_func_calls(
     match val {
         SsaValue::IntFuncCall { name, args } => {
             // Inline the function and capture return value
-            let lifted_args: Vec<SsaValue> = args.into_iter()
+            let lifted_args: Vec<SsaValue> = args
+                .into_iter()
                 .map(|a| lift_int_func_calls(a, ssa, state, block))
                 .collect();
             inline_int_func(&name, &lifted_args, ssa, state, block)
@@ -126,13 +143,25 @@ fn lift_int_func_calls(
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lift_int_func_calls(*left, ssa, state, block);
             let r = lift_int_func_calls(*right, ssa, state, block);
-            SsaValue::ArithBinOp { left: Box::new(l), op, right: Box::new(r) }
+            SsaValue::ArithBinOp {
+                left: Box::new(l),
+                op,
+                right: Box::new(r),
+            }
         }
-        SsaValue::Ternary { cond, true_val, false_val } => {
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
             let c = lift_int_func_calls(*cond, ssa, state, block);
             let t = lift_int_func_calls(*true_val, ssa, state, block);
             let f = lift_int_func_calls(*false_val, ssa, state, block);
-            SsaValue::Ternary { cond: Box::new(c), true_val: Box::new(t), false_val: Box::new(f) }
+            SsaValue::Ternary {
+                cond: Box::new(c),
+                true_val: Box::new(t),
+                false_val: Box::new(f),
+            }
         }
         other => other, // no IntFuncCall inside
     }
@@ -161,7 +190,8 @@ fn inline_int_func(
     let saved_argc = state.lookup("#");
 
     // Save local vars
-    let saved_locals: Vec<(String, VarRef)> = locals.iter()
+    let saved_locals: Vec<(String, VarRef)> = locals
+        .iter()
         .map(|lname| {
             let save_ref = state.lookup(lname);
             (lname.clone(), save_ref)
@@ -171,12 +201,18 @@ fn inline_int_func(
     // Set argc
     let argc_val = SsaValue::Literal(args.len().to_string());
     let argc_var = state.define("#");
-    ssa.block_mut(*block).insts.push(SsaInst::Assign { target: argc_var, value: argc_val });
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: argc_var,
+        value: argc_val,
+    });
 
     // Set positional params from args
     for (i, arg) in args.iter().enumerate() {
         let param_var = state.define(&(i + 1).to_string());
-        ssa.block_mut(*block).insts.push(SsaInst::Assign { target: param_var, value: arg.clone() });
+        ssa.block_mut(*block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: arg.clone(),
+        });
     }
     // Clear unbound positionals
     for i in (args.len() + 1)..=9 {
@@ -291,7 +327,8 @@ fn lower_one(
                         } else {
                             // String concatenation: var = var ++ val
                             // Check if integer-typed: += does arithmetic addition
-                            let is_int = state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
+                            let is_int = state.type_map.get(&a.name).copied()
+                                == Some(crate::ir::VarType::Int);
                             if is_int {
                                 let old = SsaValue::Var(state.lookup(&a.name));
                                 let new_val = SsaValue::ArithBinOp {
@@ -338,7 +375,8 @@ fn lower_one(
                             .map(|i| (i.to_string(), state.lookup(&i.to_string())))
                             .collect();
                         let saved_argc = state.lookup("#");
-                        let saved_locals: Vec<(String, VarRef)> = locals.iter()
+                        let saved_locals: Vec<(String, VarRef)> = locals
+                            .iter()
                             .map(|lname| {
                                 let save_name = format!("__save_{}_{}", fname, lname);
                                 let src = state.lookup(lname);
@@ -361,17 +399,25 @@ fn lower_one(
                                 };
                                 if let StmtKind::Command(c) = inner {
                                     c.args.clone()
-                                } else { vec![] }
+                                } else {
+                                    vec![]
+                                }
                             }
                             _ => vec![],
                         };
                         let argc_val = SsaValue::Literal(func_args.len().to_string());
                         let argc_var = state.define("#");
-                        ssa.block_mut(block).insts.push(SsaInst::Assign { target: argc_var, value: argc_val });
+                        ssa.block_mut(block).insts.push(SsaInst::Assign {
+                            target: argc_var,
+                            value: argc_val,
+                        });
                         for (i, arg) in func_args.iter().enumerate() {
                             let v = expr_to_value(arg, state);
                             let param_var = state.define(&(i + 1).to_string());
-                            ssa.block_mut(block).insts.push(SsaInst::Assign { target: param_var, value: v });
+                            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                                target: param_var,
+                                value: v,
+                            });
                         }
                         // DD#46: clear unbound positional slots so caller's
                         // $K doesn't leak through inside the inlined body.
@@ -393,22 +439,27 @@ fn lower_one(
                         ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
                         // CaptureEnd — assign captured output to target
                         let target = state.define(&a.name);
-                        ssa.block_mut(restore_block).insts.push(SsaInst::CaptureEnd { target });
+                        ssa.block_mut(restore_block)
+                            .insts
+                            .push(SsaInst::CaptureEnd { target });
                         // Restore params
                         for (param_name, saved_ref) in &saved {
                             let rv = state.define(param_name);
                             ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                                target: rv, value: SsaValue::Var(saved_ref.clone()),
+                                target: rv,
+                                value: SsaValue::Var(saved_ref.clone()),
                             });
                         }
                         let ra = state.define("#");
                         ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                            target: ra, value: SsaValue::Var(saved_argc),
+                            target: ra,
+                            value: SsaValue::Var(saved_argc),
                         });
                         for (local_name, saved_ref) in &saved_locals {
                             let rv = state.define(local_name);
                             ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                                target: rv, value: SsaValue::Var(saved_ref.clone()),
+                                target: rv,
+                                value: SsaValue::Var(saved_ref.clone()),
                             });
                         }
                         return restore_block;
@@ -417,10 +468,9 @@ fn lower_one(
                 // DD#58: lift IntFuncCall out of arithmetic expressions
                 let val = lift_int_func_calls(val, ssa, state, &mut block);
                 let target = state.define(&a.name);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target,
-                    value: val,
-                });
+                ssa.block_mut(block)
+                    .insts
+                    .push(SsaInst::Assign { target, value: val });
             }
             block
         }
@@ -431,32 +481,34 @@ fn lower_one(
             for a in &d.assignments {
                 // Bare `declare var` (no =value) — don't reset existing variable
                 let is_bare = matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty())
-                    && !is_array && !is_assoc;
+                    && !is_array
+                    && !is_assoc;
                 if is_bare && state.lookup(&a.name).version > 0 {
                     // Variable already defined — bare declare is a no-op
                     continue;
                 }
-                let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
-                    // Bare declaration like `array arr` or `map m` — empty table
-                    if is_assoc {
-                        state.assoc_arrays.insert(a.name.clone());
-                        state.collections.insert(a.name.clone());
-                        SsaValue::AssocArray(vec![])
+                let val =
+                    if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
+                        // Bare declaration like `array arr` or `map m` — empty table
+                        if is_assoc {
+                            state.assoc_arrays.insert(a.name.clone());
+                            state.collections.insert(a.name.clone());
+                            SsaValue::AssocArray(vec![])
+                        } else {
+                            state.collections.insert(a.name.clone());
+                            SsaValue::IndexedArray(vec![])
+                        }
                     } else {
-                        state.collections.insert(a.name.clone());
-                        SsaValue::IndexedArray(vec![])
-                    }
-                } else {
-                    let val = expr_to_value(&a.value, state);
-                    let val = lift_int_func_calls(val, ssa, state, &mut block);
-                    if matches!(&val, SsaValue::AssocArray(_)) {
-                        state.assoc_arrays.insert(a.name.clone());
-                    }
-                    if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
-                        state.collections.insert(a.name.clone());
-                    }
-                    val
-                };
+                        let val = expr_to_value(&a.value, state);
+                        let val = lift_int_func_calls(val, ssa, state, &mut block);
+                        if matches!(&val, SsaValue::AssocArray(_)) {
+                            state.assoc_arrays.insert(a.name.clone());
+                        }
+                        if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
+                            state.collections.insert(a.name.clone());
+                        }
+                        val
+                    };
                 let target = state.define(&a.name);
                 ssa.block_mut(block).insts.push(SsaInst::Assign {
                     target: target.clone(),
@@ -519,7 +571,9 @@ fn lower_one(
             if name == "[[" {
                 for arg in &c.args {
                     if let ExprKind::Test(test_expr) = &arg.kind {
-                        ssa.block_mut(block).insts.push(SsaInst::Test(test_expr.clone()));
+                        ssa.block_mut(block)
+                            .insts
+                            .push(SsaInst::Test(test_expr.clone()));
                         return block;
                     }
                 }
@@ -540,7 +594,8 @@ fn lower_one(
                         if !pattern.contains('$') {
                             if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
                                 state.diagnostics.push(format!(
-                                    "1:1: error [SB5023] invalid regex in substitution: {}", msg
+                                    "1:1: error [SB5023] invalid regex in substitution: {}",
+                                    msg
                                 ));
                                 return block;
                             }
@@ -564,7 +619,9 @@ fn lower_one(
 
             // DD#48: shift — remap positional parameters
             if name == "shift" {
-                let n = c.args.first()
+                let n = c
+                    .args
+                    .first()
                     .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
                     .unwrap_or(1);
                 // $1 ← $(1+n), $2 ← $(2+n), ..., $9 ← $(9+n) or ""
@@ -576,10 +633,9 @@ fn lower_one(
                         SsaValue::Literal(String::new())
                     };
                     let target = state.define(&i.to_string());
-                    ssa.block_mut(block).insts.push(SsaInst::Assign {
-                        target,
-                        value: val,
-                    });
+                    ssa.block_mut(block)
+                        .insts
+                        .push(SsaInst::Assign { target, value: val });
                 }
                 // Decrement $#
                 let argc_ref = state.lookup("#");
@@ -593,7 +649,9 @@ fn lower_one(
 
             // break → Goto(exit_block), continue → Goto(header_block)
             if name == "break" {
-                let n = c.args.first()
+                let n = c
+                    .args
+                    .first()
                     .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
                     .unwrap_or(1);
                 let depth = state.loop_stack.len();
@@ -607,7 +665,9 @@ fn lower_one(
                 return block;
             }
             if name == "continue" {
-                let n = c.args.first()
+                let n = c
+                    .args
+                    .first()
                     .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
                     .unwrap_or(1);
                 let depth = state.loop_stack.len();
@@ -715,9 +775,7 @@ fn lower_one(
                             "FLAG" => {
                                 ssa.block_mut(block).insts.push(SsaInst::Command {
                                     name: "__signal_flag".to_string(),
-                                    args: vec![
-                                        SsaValue::Literal(signum.to_string()),
-                                    ],
+                                    args: vec![SsaValue::Literal(signum.to_string())],
                                     redirects: vec![],
                                     checked: true,
                                 });
@@ -726,9 +784,7 @@ fn lower_one(
                                 // Register FLAG handler + mark as exiting signal
                                 ssa.block_mut(block).insts.push(SsaInst::Command {
                                     name: "__signal_flag".to_string(),
-                                    args: vec![
-                                        SsaValue::Literal(signum.to_string()),
-                                    ],
+                                    args: vec![SsaValue::Literal(signum.to_string())],
                                     redirects: vec![],
                                     checked: true,
                                 });
@@ -752,18 +808,26 @@ fn lower_one(
                         // Parse the trap body as bash source and store for later
                         // Strip surrounding quotes if present
                         let body_clean = if (body_str.starts_with('\'') && body_str.ends_with('\''))
-                            || (body_str.starts_with('"') && body_str.ends_with('"')) {
-                            &body_str[1..body_str.len()-1]
+                            || (body_str.starts_with('"') && body_str.ends_with('"'))
+                        {
+                            &body_str[1..body_str.len() - 1]
                         } else {
                             &body_str
                         };
                         let mut parser = tree_sitter::Parser::new();
-                        parser.set_language(&tree_sitter_bash::LANGUAGE.into()).unwrap();
+                        parser
+                            .set_language(&tree_sitter_bash::LANGUAGE.into())
+                            .unwrap();
                         let tree = parser.parse(body_clean.as_bytes(), None).unwrap();
-                        let trap_stmts = crate::lower::lower_body(tree.root_node(), body_clean.as_bytes());
+                        let trap_stmts =
+                            crate::lower::lower_body(tree.root_node(), body_clean.as_bytes());
                         state.exit_trap = Some(trap_stmts);
                         return block;
-                    } else if body_str.is_empty() || body_str == "''" || body_str == "\"\"" || body_str == "-" {
+                    } else if body_str.is_empty()
+                        || body_str == "''"
+                        || body_str == "\"\""
+                        || body_str == "-"
+                    {
                         // trap '' SIG or trap - SIG → ignore/reset
                         let signum = match signal.as_str() {
                             "INT" | "SIGINT" | "2" => 2,
@@ -783,7 +847,7 @@ fn lower_one(
                                     SsaValue::Literal(handler.to_string()),
                                 ],
                                 redirects: vec![],
-                    checked: true,
+                                checked: true,
                             });
                         }
                         return block;
@@ -813,7 +877,9 @@ fn lower_one(
                     if let Some(eq_pos) = expr_str.find('=') {
                         let var_name = &expr_str[..eq_pos];
                         let val_str = &expr_str[eq_pos + 1..];
-                        if !var_name.is_empty() && var_name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                        if !var_name.is_empty()
+                            && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        {
                             let val_expr = crate::ir::Expr {
                                 kind: ExprKind::ArithmeticExpansion(val_str.to_string()),
                                 span: Span { line: 0, col: 0 },
@@ -821,10 +887,9 @@ fn lower_one(
                             let val = expr_to_value(&val_expr, state);
                             let val = lift_int_func_calls(val, ssa, state, &mut block);
                             let target = state.define(var_name);
-                            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                                target,
-                                value: val,
-                            });
+                            ssa.block_mut(block)
+                                .insts
+                                .push(SsaInst::Assign { target, value: val });
                             continue;
                         }
                     }
@@ -839,16 +904,15 @@ fn lower_one(
                     // For now, emit as a command that sets test_result
                     let target = state.define("__let_result");
                     let target_ref = target.clone();
-                    ssa.block_mut(block).insts.push(SsaInst::Assign {
-                        target,
-                        value: val,
-                    });
+                    ssa.block_mut(block)
+                        .insts
+                        .push(SsaInst::Assign { target, value: val });
                     // Set exit status: result != 0 → exit 0, result == 0 → exit 1
                     ssa.block_mut(block).insts.push(SsaInst::Command {
                         name: "__let_exit".to_string(),
                         args: vec![SsaValue::Var(target_ref)],
                         redirects: vec![],
-                    checked: true,
+                        checked: true,
                     });
                 }
                 return block;
@@ -861,7 +925,11 @@ fn lower_one(
                 // Args may be split: ["m", "[b]"] or single "m[b]"
                 let args_str: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
                 // Filter out flags like -v, -f, -n
-                let var_args: Vec<String> = args_str.iter().filter(|a| !a.starts_with('-')).cloned().collect();
+                let var_args: Vec<String> = args_str
+                    .iter()
+                    .filter(|a| !a.starts_with('-'))
+                    .cloned()
+                    .collect();
                 // Join consecutive args to handle split "m" "[b]" → "m[b]"
                 let joined = var_args.join("");
                 // Split on whitespace-before-word boundaries that aren't inside brackets
@@ -876,14 +944,14 @@ fn lower_one(
                 for full in &items {
                     if let Some(bracket) = full.find('[') {
                         let arr_name = &full[..bracket];
-                        let key = full[bracket+1..full.len()-1].to_string();
+                        let key = full[bracket + 1..full.len() - 1].to_string();
                         let arr_ref = state.lookup(arr_name);
                         let key_val = SsaValue::Literal(key);
                         ssa.block_mut(block).insts.push(SsaInst::Command {
                             name: "__table_delete".to_string(),
                             args: vec![SsaValue::Var(arr_ref), key_val],
                             redirects: vec![],
-                    checked: true,
+                            checked: true,
                         });
                     } else {
                         // Plain variable unset
@@ -916,7 +984,10 @@ fn lower_one(
                 let mut skip_next = false;
                 let mut var_names: Vec<&String> = Vec::new();
                 for (i, a) in args.iter().enumerate() {
-                    if skip_next { skip_next = false; continue; }
+                    if skip_next {
+                        skip_next = false;
+                        continue;
+                    }
                     if a == "-d" || a.starts_with("-d") {
                         if a.len() > 2 {
                             delim = Some(a.as_bytes()[2]);
@@ -1005,7 +1076,9 @@ fn lower_one(
             // DD#18: try local function first (__local__name), only if in scope
             let resolved_name = {
                 let local_name = format!("__local__{}", name);
-                if state.local_fn_scope.contains(&local_name) && state.function_bodies.contains_key(&local_name) {
+                if state.local_fn_scope.contains(&local_name)
+                    && state.function_bodies.contains_key(&local_name)
+                {
                     local_name
                 } else {
                     name.clone()
@@ -1027,7 +1100,8 @@ fn lower_one(
 
                 // Save caller's versions of local variables to temp names
                 // (different base name so they get separate CL Variables)
-                let saved_locals: Vec<(String, VarRef)> = locals.iter()
+                let saved_locals: Vec<(String, VarRef)> = locals
+                    .iter()
                     .map(|lname| {
                         let save_name = format!("__save_{}_{}", name, lname);
                         let src = state.lookup(lname);
@@ -1064,7 +1138,9 @@ fn lower_one(
                 if max_positional > call_argc {
                     state.diagnostics.push(format!(
                         "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
-                        name, max_positional, call_argc,
+                        name,
+                        max_positional,
+                        call_argc,
                         if call_argc == 1 { "" } else { "s" }
                     ));
                 }
@@ -1081,13 +1157,17 @@ fn lower_one(
                 ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
                 // Apply function-level redirects if defined with `f() { ... } > file`
-                let func_redirs = state.function_redirects.get(&name).cloned().unwrap_or_default();
+                let func_redirs = state
+                    .function_redirects
+                    .get(&name)
+                    .cloned()
+                    .unwrap_or_default();
                 if !func_redirs.is_empty() {
                     ssa.block_mut(call_block).insts.push(SsaInst::Command {
                         name: "__redirect_push".to_string(),
                         args: vec![],
                         redirects: func_redirs.clone(),
-                    checked: true,
+                        checked: true,
                     });
                 }
 
@@ -1104,7 +1184,7 @@ fn lower_one(
                         name: "__redirect_pop".to_string(),
                         args: vec![],
                         redirects: vec![],
-                    checked: true,
+                        checked: true,
                     });
                 }
 
@@ -1156,7 +1236,7 @@ fn lower_one(
                 name,
                 args,
                 redirects: Vec::new(),
-                    checked: true,
+                checked: true,
             });
             block
         }
@@ -1191,9 +1271,7 @@ fn lower_one(
             }
         }
 
-        StmtKind::For(f) => {
-            lower_for(f, ssa, state, block)
-        }
+        StmtKind::For(f) => lower_for(f, ssa, state, block),
 
         StmtKind::Pipeline(p) => {
             if p.commands.len() > 1 {
@@ -1204,7 +1282,9 @@ fn lower_one(
                     StmtKind::Command(c) => {
                         let n = expr_to_string(&c.name);
                         let args: Vec<String> = c.args.iter().map(|a| expr_to_string(a)).collect();
-                        n == "mapfile" || n == "readarray" || (n == "read" && args.iter().any(|a| a == "-a"))
+                        n == "mapfile"
+                            || n == "readarray"
+                            || (n == "read" && args.iter().any(|a| a == "-a"))
                     }
                     _ => false,
                 };
@@ -1225,32 +1305,42 @@ fn lower_one(
                     for cmd in &p.commands[..p.commands.len() - 1] {
                         if let StmtKind::Command(c) = &cmd.kind {
                             let name = expr_to_string(&c.name);
-                            let args: Vec<SsaValue> = c.args.iter()
-                                .map(|a| expr_to_value(a, state))
-                                .collect();
+                            let args: Vec<SsaValue> =
+                                c.args.iter().map(|a| expr_to_value(a, state)).collect();
                             stages.push((resolve_pipeline_command(&name), args, vec![]));
                         } else if let StmtKind::Redirected(r) = &cmd.kind {
                             if let StmtKind::Command(c) = &r.body.kind {
                                 let name = expr_to_string(&c.name);
-                                let args: Vec<SsaValue> = c.args.iter()
-                                    .map(|a| expr_to_value(a, state))
-                                    .collect();
-                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
+                                let args: Vec<SsaValue> =
+                                    c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                                stages.push((
+                                    resolve_pipeline_command(&name),
+                                    args,
+                                    r.redirects.clone(),
+                                ));
                             }
                         }
                     }
                     // Emit PipeIntoWhile: pipeline stages + while body
-                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
+                        stages,
+                        capture_read_fd: true,
+                        checked: true,
+                    });
                     if is_mapfile {
                         // Lower the mapfile command, then patch fd to -1
                         block = lower_one(last, ssa, state, block);
                         for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
                             for inst in &mut ssa.block_mut(bid).insts {
                                 if let SsaInst::Mapfile { fd, .. } = inst {
-                                    if *fd == 0 { *fd = -1; }
+                                    if *fd == 0 {
+                                        *fd = -1;
+                                    }
                                 }
                                 if let SsaInst::ReadArray { fd, .. } = inst {
-                                    if *fd == 0 { *fd = -1; }
+                                    if *fd == 0 {
+                                        *fd = -1;
+                                    }
                                 }
                             }
                         }
@@ -1266,21 +1356,27 @@ fn lower_one(
                     for cmd in &p.commands[..p.commands.len() - 1] {
                         if let StmtKind::Command(c) = &cmd.kind {
                             let name = expr_to_string(&c.name);
-                            let args: Vec<SsaValue> = c.args.iter()
-                                .map(|a| expr_to_value(a, state))
-                                .collect();
+                            let args: Vec<SsaValue> =
+                                c.args.iter().map(|a| expr_to_value(a, state)).collect();
                             stages.push((resolve_pipeline_command(&name), args, vec![]));
                         } else if let StmtKind::Redirected(r) = &cmd.kind {
                             if let StmtKind::Command(c) = &r.body.kind {
                                 let name = expr_to_string(&c.name);
-                                let args: Vec<SsaValue> = c.args.iter()
-                                    .map(|a| expr_to_value(a, state))
-                                    .collect();
-                                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
+                                let args: Vec<SsaValue> =
+                                    c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                                stages.push((
+                                    resolve_pipeline_command(&name),
+                                    args,
+                                    r.redirects.clone(),
+                                ));
                             }
                         }
                     }
-                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
+                        stages,
+                        capture_read_fd: true,
+                        checked: true,
+                    });
                     // Lower the read command with fd=-1 (pipe fd sentinel)
                     // and clean_pipe=true (producer stages are clean)
                     if let StmtKind::Command(c) = &last.kind {
@@ -1292,14 +1388,33 @@ fn lower_one(
                             let s = expr_to_string(arg);
                             if skip_next {
                                 // This arg is the value for the previous flag
-                                if field_sep == Some(0) { field_sep = Some(s.as_bytes().get(0).copied().unwrap_or(0)); }
-                                skip_next = false; continue;
+                                if field_sep == Some(0) {
+                                    field_sep = Some(s.as_bytes().get(0).copied().unwrap_or(0));
+                                }
+                                skip_next = false;
+                                continue;
                             }
-                            if s == "-d" { skip_next = true; delim = Some(0); continue; }
-                            if s.starts_with("-d") { delim = Some(s.as_bytes().get(2).copied().unwrap_or(0)); continue; }
-                            if s == "-f" { skip_next = true; field_sep = Some(0); continue; }
-                            if s.starts_with("-f") { field_sep = Some(s.as_bytes().get(2).copied().unwrap_or(0)); continue; }
-                            if s.starts_with('-') { continue; }
+                            if s == "-d" {
+                                skip_next = true;
+                                delim = Some(0);
+                                continue;
+                            }
+                            if s.starts_with("-d") {
+                                delim = Some(s.as_bytes().get(2).copied().unwrap_or(0));
+                                continue;
+                            }
+                            if s == "-f" {
+                                skip_next = true;
+                                field_sep = Some(0);
+                                continue;
+                            }
+                            if s.starts_with("-f") {
+                                field_sep = Some(s.as_bytes().get(2).copied().unwrap_or(0));
+                                continue;
+                            }
+                            if s.starts_with('-') {
+                                continue;
+                            }
                             var_names.push(s);
                         }
                         if var_names.len() == 1 {
@@ -1312,7 +1427,8 @@ fn lower_one(
                                 clean_pipe: true,
                             });
                         } else if var_names.len() > 1 {
-                            let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
+                            let targets: Vec<VarRef> =
+                                var_names.iter().map(|n| state.define(n)).collect();
                             ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
                                 targets,
                                 fd: -1,
@@ -1341,9 +1457,8 @@ fn lower_one(
                         };
                         if let StmtKind::Command(c) = inner {
                             let name = expr_to_string(&c.name);
-                            let args: Vec<SsaValue> = c.args.iter()
-                                .map(|a| expr_to_value(a, state))
-                                .collect();
+                            let args: Vec<SsaValue> =
+                                c.args.iter().map(|a| expr_to_value(a, state)).collect();
                             stages.push((resolve_pipeline_command(&name), args, redirects));
                         } else {
                             // Compound command as pipeline stage:
@@ -1356,7 +1471,11 @@ fn lower_one(
                             stages.push((format!("__compound_{}", compound_entry), vec![], vec![]));
                         }
                     }
-                    ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: false, checked: true });
+                    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
+                        stages,
+                        capture_read_fd: false,
+                        checked: true,
+                    });
                 }
             } else {
                 for cmd in &p.commands {
@@ -1401,8 +1520,8 @@ fn lower_one(
                     let merge_block = ssa.new_block("or.merge");
                     ssa.block_mut(block).terminator = Terminator::Branch {
                         condition: block.to_string(),
-                        true_block: merge_block,   // success → skip right
-                        false_block: right_block,   // failure → run right
+                        true_block: merge_block,  // success → skip right
+                        false_block: right_block, // failure → run right
                     };
                     let right_end = lower_one(&l.right, ssa, state, right_block);
                     // DD#55: if the right side completes, the || list succeeded;
@@ -1426,12 +1545,12 @@ fn lower_one(
                         name: "__subshell".to_string(),
                         args: vec![],
                         redirects: vec![],
-                    checked: true,
+                        checked: true,
                     });
                     ssa.block_mut(block).terminator = Terminator::Branch {
                         condition: "__fork_pid".to_string(),
-                        true_block: parent_block,  // parent continues
-                        false_block: child_block,   // child runs command
+                        true_block: parent_block, // parent continues
+                        false_block: child_block, // child runs command
                     };
 
                     // Store fork pid in $! variable
@@ -1440,7 +1559,7 @@ fn lower_one(
                         name: "__store_bg_pid".to_string(),
                         args: vec![SsaValue::Var(bg_target)],
                         redirects: vec![],
-                    checked: true,
+                        checked: true,
                     });
 
                     // Child: run the command then _exit
@@ -1477,7 +1596,9 @@ fn lower_one(
             if !returns.is_empty() {
                 // SB4017: -> int function where all literal returns are 0
                 if f.return_type == crate::ir::VarType::Int {
-                    let all_literal_zero = returns.iter().all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
+                    let all_literal_zero = returns
+                        .iter()
+                        .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
                     if all_literal_zero {
                         state.diagnostics.push(format!(
                             "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
@@ -1507,17 +1628,24 @@ fn lower_one(
         StmtKind::Redirected(r) => {
             // For compound commands (for/while/if/case/group/function), the redirect
             // applies to the entire body — emit push/pop around it.
-            let is_compound = matches!(r.body.kind,
-                StmtKind::While(_) | StmtKind::If(_) | StmtKind::For(_)
-                | StmtKind::Case(_) | StmtKind::Group(_) | StmtKind::Subshell(_)
-                | StmtKind::Function { .. }
+            let is_compound = matches!(
+                r.body.kind,
+                StmtKind::While(_)
+                    | StmtKind::If(_)
+                    | StmtKind::For(_)
+                    | StmtKind::Case(_)
+                    | StmtKind::Group(_)
+                    | StmtKind::Subshell(_)
+                    | StmtKind::Function { .. }
             );
 
             // Special case: redirected function definition — store redirects
             // for application at call sites
             if let StmtKind::Function(ref f) = r.body.kind {
                 if !r.redirects.is_empty() {
-                    state.function_redirects.insert(f.name.clone(), r.redirects.clone());
+                    state
+                        .function_redirects
+                        .insert(f.name.clone(), r.redirects.clone());
                 }
                 // Still lower the function def normally
                 return lower_one(&r.body, ssa, state, block);
@@ -1586,7 +1714,7 @@ fn lower_one(
                 name: "__subshell".to_string(),
                 args: vec![],
                 redirects: vec![],
-                    checked: true,
+                checked: true,
             });
             // Branch: parent (pid>0) → after, child (pid==0) → body
             ssa.block_mut(block).terminator = Terminator::Branch {
@@ -1600,7 +1728,7 @@ fn lower_one(
                 name: "__subshell_wait".to_string(),
                 args: vec![],
                 redirects: vec![],
-                    checked: true,
+                checked: true,
             });
 
             // Snapshot SSA state — child modifications don't affect parent
@@ -1616,13 +1744,9 @@ fn lower_one(
             after_block
         }
 
-        StmtKind::Group(g) => {
-            lower_stmts(&g.body, ssa, state, block)
-        }
+        StmtKind::Group(g) => lower_stmts(&g.body, ssa, state, block),
 
-        StmtKind::Case(c) => {
-            lower_case(c, ssa, state, block)
-        }
+        StmtKind::Case(c) => lower_case(c, ssa, state, block),
 
         StmtKind::Comment(_) => block,
 
@@ -1636,8 +1760,12 @@ fn lower_one(
                 let insts = &mut ssa.block_mut(block_id).insts;
                 for inst in insts[from..].iter_mut() {
                     match inst {
-                        SsaInst::Command { checked, .. } => { *checked = false; }
-                        SsaInst::Pipeline { checked, .. } => { *checked = false; }
+                        SsaInst::Command { checked, .. } => {
+                            *checked = false;
+                        }
+                        SsaInst::Pipeline { checked, .. } => {
+                            *checked = false;
+                        }
                         _ => {}
                     }
                 }
@@ -1696,8 +1824,13 @@ fn lower_if_bless(
 ) -> BlockId {
     let var_name = expr_to_string(&c.args[0]);
     // Find test expression
-    let test_expr = c.args[1..].iter()
-        .find_map(|a| if let crate::ir::ExprKind::Test(t) = &a.kind { Some(t.clone()) } else { None });
+    let test_expr = c.args[1..].iter().find_map(|a| {
+        if let crate::ir::ExprKind::Test(t) = &a.kind {
+            Some(t.clone())
+        } else {
+            None
+        }
+    });
     let test_expr = match test_expr {
         Some(t) => t,
         None => return block,
@@ -1750,12 +1883,7 @@ fn lower_if_bless(
     merge_block
 }
 
-fn lower_if(
-    i: &If,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
+fn lower_if(i: &If, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) -> BlockId {
     // DD#24: detect if-bless conditional form
     if i.condition.len() == 1 {
         if let StmtKind::Command(c) = &i.condition[0].kind {
@@ -1800,9 +1928,13 @@ fn lower_if(
 
         // Insert phi nodes at merge point for variables modified in either branch
         insert_phis_two_branch(
-            state, ssa, merge_block,
-            then_exit, &then_state,
-            else_exit, &else_state,
+            state,
+            ssa,
+            merge_block,
+            then_exit,
+            &then_state,
+            else_exit,
+            &else_state,
         );
     } else {
         // No else — branch to then or skip to merge
@@ -1814,9 +1946,13 @@ fn lower_if(
 
         // Phi nodes: then-branch version vs pre-branch version
         insert_phis_two_branch(
-            state, ssa, merge_block,
-            then_exit, &then_state,
-            cond_block, &pre_state,
+            state,
+            ssa,
+            merge_block,
+            then_exit,
+            &then_state,
+            cond_block,
+            &pre_state,
         );
     }
 
@@ -1855,9 +1991,13 @@ fn lower_while(
     // Insert phi nodes at header for loop-carried variables
     // This creates new versions (e.g., x_3) for modified variables
     insert_phis_two_branch(
-        state, ssa, header,
-        block, &pre_state,
-        body_exit_1, &body_state_1,
+        state,
+        ssa,
+        header,
+        block,
+        &pre_state,
+        body_exit_1,
+        &body_state_1,
     );
 
     // Pass 2: Re-lower condition and body using phi-merged versions
@@ -1903,14 +2043,12 @@ fn lower_while(
 
 // ── For lowering ──────────────────────────────────────────────
 
-fn lower_for(
-    f: &For,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
+fn lower_for(f: &For, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) -> BlockId {
     // Check if this is a dynamic for loop (e.g., `for x in "$@"`)
-    let is_dynamic = f.words.iter().any(|w| !matches!(&w.kind, ExprKind::Literal(_)));
+    let is_dynamic = f
+        .words
+        .iter()
+        .any(|w| !matches!(&w.kind, ExprKind::Literal(_)));
 
     if is_dynamic && f.words.len() == 1 {
         // Check for "$@" — may be SimpleExpansion("@") or DoubleQuoted([SimpleExpansion("@")])
@@ -1927,15 +2065,21 @@ fn lower_for(
 
         // Check for "${arr[@]}" or "${!arr[@]}" — array iteration
         let arr_info = match &f.words[0].kind {
-            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => Some((pe.name.clone(), false)),
-            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => Some((pe.name.clone(), true)),
-            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
-                match &parts[0].kind {
-                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => Some((pe.name.clone(), false)),
-                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => Some((pe.name.clone(), true)),
-                    _ => None,
-                }
+            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+                Some((pe.name.clone(), false))
             }
+            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
+                Some((pe.name.clone(), true))
+            }
+            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
+                ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+                    Some((pe.name.clone(), false))
+                }
+                ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
+                    Some((pe.name.clone(), true))
+                }
+                _ => None,
+            },
             // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
             ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
                 let inner = match &stmts[0].kind {
@@ -1949,8 +2093,12 @@ fn lower_for(
                         } else {
                             None
                         }
-                    } else { None }
-                } else { None }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
             }
             _ => None,
         };
@@ -1973,9 +2121,8 @@ fn lower_for(
                     };
                     if let StmtKind::Command(c) = &cmd_stmt.kind {
                         let name = expr_to_string(&c.name);
-                        let args: Vec<SsaValue> = c.args.iter()
-                            .map(|a| expr_to_value(a, state))
-                            .collect();
+                        let args: Vec<SsaValue> =
+                            c.args.iter().map(|a| expr_to_value(a, state)).collect();
                         let redirs = match &stmt.kind {
                             StmtKind::Redirected(r) => r.redirects.clone(),
                             _ => vec![],
@@ -1984,7 +2131,11 @@ fn lower_for(
                     }
                 }
                 // Emit pipeline with pipe capture
-                ssa.block_mut(block).insts.push(SsaInst::Pipeline { stages, capture_read_fd: true, checked: true });
+                ssa.block_mut(block).insts.push(SsaInst::Pipeline {
+                    stages,
+                    capture_read_fd: true,
+                    checked: true,
+                });
 
                 // Build a while-read loop over the pipe
                 let loop_var = &f.variable;
@@ -2025,9 +2176,7 @@ fn lower_for(
     let mut current = block;
 
     // Pre-create iteration blocks so continue can jump to the next one
-    let iter_blocks: Vec<BlockId> = f.words.iter()
-        .map(|_| ssa.new_block("for.iter"))
-        .collect();
+    let iter_blocks: Vec<BlockId> = f.words.iter().map(|_| ssa.new_block("for.iter")).collect();
 
     for (i, word) in f.words.iter().enumerate() {
         let iter_block = iter_blocks[i];
@@ -2035,7 +2184,11 @@ fn lower_for(
         current = iter_block;
 
         // continue → next iteration (or exit if last)
-        let continue_target = if i + 1 < iter_blocks.len() { iter_blocks[i + 1] } else { exit_block };
+        let continue_target = if i + 1 < iter_blocks.len() {
+            iter_blocks[i + 1]
+        } else {
+            exit_block
+        };
         state.loop_stack.push((continue_target, exit_block));
 
         let val = expr_to_value(word, state);
@@ -2055,12 +2208,7 @@ fn lower_for(
 
 // ── Case lowering ─────────────────────────────────────────────
 
-fn lower_case(
-    c: &Case,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
+fn lower_case(c: &Case, ssa: &mut SsaProgram, state: &mut VersionState, block: BlockId) -> BlockId {
     let merge_block = ssa.new_block("case.merge");
 
     // Empty case — no items
@@ -2120,9 +2268,10 @@ fn lower_case(
 
     for (i, item) in c.items.iter().enumerate() {
         let current = check_blocks[i];
-        let is_wildcard = item.patterns.iter().any(|p| {
-            matches!(&p.kind, ExprKind::Literal(s) if s == "*")
-        });
+        let is_wildcard = item
+            .patterns
+            .iter()
+            .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"));
 
         let next_check = if i + 1 < check_blocks.len() {
             check_blocks[i + 1]
@@ -2184,12 +2333,15 @@ fn lower_case(
     // any arm is a wildcard.  Otherwise the false branch of the last check
     // falls through to merge.
     let has_wildcard = c.items.iter().any(|item| {
-        item.patterns.iter().any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
+        item.patterns
+            .iter()
+            .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
     });
 
     // Build a no-match state: pre_state with "?" forced to 0
     // (POSIX: "if no pattern is matched, the exit status is zero")
-    let no_match_path: Option<(BlockId, std::collections::HashMap<String, u32>)> = if !has_wildcard {
+    let no_match_path: Option<(BlockId, std::collections::HashMap<String, u32>)> = if !has_wildcard
+    {
         let _no_match_state = pre_state.clone();
         // Define "?" = 0 on the no-match path via a dedicated block
         let no_match_block = ssa.new_block("case.nomatch");
@@ -2240,25 +2392,27 @@ fn lower_case(
     }
 
     if all_paths.len() >= 2 {
-        let all_vars: std::collections::HashSet<String> = all_paths.iter()
+        let all_vars: std::collections::HashSet<String> = all_paths
+            .iter()
             .flat_map(|(_, s)| s.keys().cloned())
             .collect();
 
         for var in &all_vars {
-            let versions: Vec<(BlockId, u32)> = all_paths.iter()
+            let versions: Vec<(BlockId, u32)> = all_paths
+                .iter()
                 .map(|(bid, s)| (*bid, s.get(var).copied().unwrap_or(0)))
                 .collect();
 
             let first_ver = versions[0].1;
             if versions.iter().any(|(_, v)| *v != first_ver) {
                 let target = state.define(var);
-                let sources: Vec<(BlockId, VarRef)> = versions.iter()
+                let sources: Vec<(BlockId, VarRef)> = versions
+                    .iter()
                     .map(|(bid, ver)| (*bid, VarRef::new(var, *ver)))
                     .collect();
-                ssa.block_mut(merge_block).phis.push(PhiNode {
-                    target,
-                    sources,
-                });
+                ssa.block_mut(merge_block)
+                    .phis
+                    .push(PhiNode { target, sources });
             }
         }
     } else if all_paths.len() == 1 {
@@ -2283,9 +2437,8 @@ fn insert_phis_two_branch(
     block_b: BlockId,
     state_b: &std::collections::HashMap<String, u32>,
 ) {
-    let all_vars: std::collections::HashSet<&String> = state_a.keys()
-        .chain(state_b.keys())
-        .collect();
+    let all_vars: std::collections::HashSet<&String> =
+        state_a.keys().chain(state_b.keys()).collect();
 
     for var in all_vars {
         let ver_a = state_a.get(var).copied().unwrap_or(0);
@@ -2311,7 +2464,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
         ExprKind::SimpleExpansion(var) => {
             // Coerce magic variables to builtins (DD#40)
             if var == "EPOCHSECONDS" {
-                return SsaValue::CmdSubst { argv: vec![SsaValue::Literal("epochseconds".to_string())], redirects: vec![] };
+                return SsaValue::CmdSubst {
+                    argv: vec![SsaValue::Literal("epochseconds".to_string())],
+                    redirects: vec![],
+                };
             }
             SsaValue::Var(state.lookup(var))
         }
@@ -2326,14 +2482,17 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // DD#58: look up arithmetic placeholder from preprocessor
             if trimmed.starts_with("__ARITH_") && trimmed.ends_with("__") {
                 if let Some(original) = crate::lookup_arith(trimmed) {
-                    let e = Expr { kind: ExprKind::ArithmeticExpansion(original), span: expr.span };
+                    let e = Expr {
+                        kind: ExprKind::ArithmeticExpansion(original),
+                        span: expr.span,
+                    };
                     return expr_to_value(&e, state);
                 }
             }
             // Base literal: N#digits → evaluate at compile time
             if let Some(hash_pos) = trimmed.find('#') {
                 let base_str = &trimmed[..hash_pos];
-                let digits = &trimmed[hash_pos+1..];
+                let digits = &trimmed[hash_pos + 1..];
                 if let Ok(base) = base_str.parse::<u32>() {
                     if base >= 2 && base <= 64 && !digits.is_empty() {
                         let val = digits.chars().fold(0i64, |acc, c| {
@@ -2358,7 +2517,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 }
             }
             // Octal literal: 0... (but not just "0")
-            if trimmed.starts_with('0') && trimmed.len() > 1 && trimmed[1..].chars().all(|c| c >= '0' && c <= '7') {
+            if trimmed.starts_with('0')
+                && trimmed.len() > 1
+                && trimmed[1..].chars().all(|c| c >= '0' && c <= '7')
+            {
                 if let Ok(v) = i64::from_str_radix(&trimmed[1..], 8) {
                     return SsaValue::Expr(v.to_string());
                 }
@@ -2379,8 +2541,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                 }
             }
             // DD#58: Bare function name in arithmetic → int function call
-            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty()
-                && state.function_int_typed.contains(trimmed) {
+            if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+                && !trimmed.is_empty()
+                && state.function_int_typed.contains(trimmed)
+            {
                 return SsaValue::IntFuncCall {
                     name: trimmed.to_string(),
                     args: vec![],
@@ -2388,7 +2552,7 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             }
             // DD#58: Sexpr call (name args...) in arithmetic context
             if trimmed.starts_with('(') && trimmed.ends_with(')') {
-                let inner = trimmed[1..trimmed.len()-1].trim();
+                let inner = trimmed[1..trimmed.len() - 1].trim();
                 if let Some(call) = try_parse_sexpr(inner, expr.span, state) {
                     return call;
                 }
@@ -2405,7 +2569,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if trimmed.starts_with('+') {
                 let inner = trimmed[1..].trim();
                 if !inner.is_empty() {
-                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    let e = Expr {
+                        kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                        span: expr.span,
+                    };
                     return expr_to_value(&e, state);
                 }
             }
@@ -2413,7 +2580,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if trimmed.starts_with('~') {
                 let inner = trimmed[1..].trim();
                 if !inner.is_empty() {
-                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    let e = Expr {
+                        kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                        span: expr.span,
+                    };
                     let inner_val = expr_to_value(&e, state);
                     // Constant fold if possible
                     if let SsaValue::Expr(ref s) = inner_val {
@@ -2433,7 +2603,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
                 let inner = trimmed[1..].trim();
                 if !inner.is_empty() {
-                    let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span: expr.span };
+                    let e = Expr {
+                        kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                        span: expr.span,
+                    };
                     let inner_val = expr_to_value(&e, state);
                     if let SsaValue::Expr(ref s) = inner_val {
                         if let Ok(v) = s.parse::<i64>() {
@@ -2451,28 +2624,47 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // Arithmetic assignment: var = expr → assign var, return value
             if let Some(eq_pos) = trimmed.find('=') {
                 // Make sure it's not ==, !=, <=, >=
-                let before_eq = if eq_pos > 0 { trimmed.as_bytes()[eq_pos - 1] } else { 0 };
-                let after_eq = if eq_pos + 1 < trimmed.len() { trimmed.as_bytes()[eq_pos + 1] } else { 0 };
-                if after_eq != b'=' && before_eq != b'!' && before_eq != b'<' && before_eq != b'>' && before_eq != b'=' {
+                let before_eq = if eq_pos > 0 {
+                    trimmed.as_bytes()[eq_pos - 1]
+                } else {
+                    0
+                };
+                let after_eq = if eq_pos + 1 < trimmed.len() {
+                    trimmed.as_bytes()[eq_pos + 1]
+                } else {
+                    0
+                };
+                if after_eq != b'='
+                    && before_eq != b'!'
+                    && before_eq != b'<'
+                    && before_eq != b'>'
+                    && before_eq != b'='
+                {
                     let lhs = trimmed[..eq_pos].trim();
-                    let rhs = trimmed[eq_pos+1..].trim();
+                    let rhs = trimmed[eq_pos + 1..].trim();
                     // Check for compound assignment: +=, -=, *=, /=, %=
                     let (var_name, op, rhs_str) = if !lhs.is_empty() && lhs.ends_with('+') {
-                        (&lhs[..lhs.len()-1], Some(ArithOp::Add), rhs)
+                        (&lhs[..lhs.len() - 1], Some(ArithOp::Add), rhs)
                     } else if !lhs.is_empty() && lhs.ends_with('-') {
-                        (&lhs[..lhs.len()-1], Some(ArithOp::Sub), rhs)
+                        (&lhs[..lhs.len() - 1], Some(ArithOp::Sub), rhs)
                     } else if !lhs.is_empty() && lhs.ends_with('*') {
-                        (&lhs[..lhs.len()-1], Some(ArithOp::Mul), rhs)
+                        (&lhs[..lhs.len() - 1], Some(ArithOp::Mul), rhs)
                     } else if !lhs.is_empty() && lhs.ends_with('/') {
-                        (&lhs[..lhs.len()-1], Some(ArithOp::Div), rhs)
+                        (&lhs[..lhs.len() - 1], Some(ArithOp::Div), rhs)
                     } else if !lhs.is_empty() && lhs.ends_with('%') {
-                        (&lhs[..lhs.len()-1], Some(ArithOp::Mod), rhs)
+                        (&lhs[..lhs.len() - 1], Some(ArithOp::Mod), rhs)
                     } else {
                         (lhs, None, rhs)
                     };
                     let var_name = var_name.trim();
-                    if var_name.chars().all(|c| c.is_alphanumeric() || c == '_') && !var_name.is_empty() && !rhs_str.is_empty() {
-                        let rhs_expr = Expr { kind: ExprKind::ArithmeticExpansion(rhs_str.to_string()), span: expr.span };
+                    if var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
+                        && !var_name.is_empty()
+                        && !rhs_str.is_empty()
+                    {
+                        let rhs_expr = Expr {
+                            kind: ExprKind::ArithmeticExpansion(rhs_str.to_string()),
+                            span: expr.span,
+                        };
                         let rhs_val = expr_to_value(&rhs_expr, state);
                         let result_val = if let Some(op) = op {
                             // Compound: var OP= rhs → var = var OP rhs
@@ -2512,15 +2704,24 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             }
             // Ternary: cond ? true_val : false_val
             if let Some(q_pos) = trimmed.find('?') {
-                let after_q = &trimmed[q_pos+1..];
+                let after_q = &trimmed[q_pos + 1..];
                 if let Some(c_pos) = after_q.find(':') {
                     let cond_str = trimmed[..q_pos].trim();
                     let true_str = after_q[..c_pos].trim();
-                    let false_str = after_q[c_pos+1..].trim();
+                    let false_str = after_q[c_pos + 1..].trim();
                     // Recursively evaluate each part
-                    let cond_expr = Expr { kind: ExprKind::ArithmeticExpansion(cond_str.to_string()), span: expr.span };
-                    let true_expr = Expr { kind: ExprKind::ArithmeticExpansion(true_str.to_string()), span: expr.span };
-                    let false_expr = Expr { kind: ExprKind::ArithmeticExpansion(false_str.to_string()), span: expr.span };
+                    let cond_expr = Expr {
+                        kind: ExprKind::ArithmeticExpansion(cond_str.to_string()),
+                        span: expr.span,
+                    };
+                    let true_expr = Expr {
+                        kind: ExprKind::ArithmeticExpansion(true_str.to_string()),
+                        span: expr.span,
+                    };
+                    let false_expr = Expr {
+                        kind: ExprKind::ArithmeticExpansion(false_str.to_string()),
+                        span: expr.span,
+                    };
                     return SsaValue::Ternary {
                         cond: Box::new(expr_to_value(&cond_expr, state)),
                         true_val: Box::new(expr_to_value(&true_expr, state)),
@@ -2538,12 +2739,23 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 
                 // Helper: convert an arithmetic sub-expression string to SsaValue
                 let to_val = |s: &str| -> SsaValue {
-                    let e = Expr { kind: ExprKind::ArithmeticExpansion(s.to_string()), span: expr.span };
+                    let e = Expr {
+                        kind: ExprKind::ArithmeticExpansion(s.to_string()),
+                        span: expr.span,
+                    };
                     expr_to_value(&e, state)
                 };
 
-                let l_const = if lhs_was_var { Err(std::num::IntErrorKind::InvalidDigit) } else { lhs.parse::<i64>().map_err(|e| e.kind().clone()) };
-                let r_const = if rhs_was_var { Err(std::num::IntErrorKind::InvalidDigit) } else { rhs.parse::<i64>().map_err(|e| e.kind().clone()) };
+                let l_const = if lhs_was_var {
+                    Err(std::num::IntErrorKind::InvalidDigit)
+                } else {
+                    lhs.parse::<i64>().map_err(|e| e.kind().clone())
+                };
+                let r_const = if rhs_was_var {
+                    Err(std::num::IntErrorKind::InvalidDigit)
+                } else {
+                    rhs.parse::<i64>().map_err(|e| e.kind().clone())
+                };
 
                 // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
                 let l_is_simple = lhs.chars().all(|c| c.is_alphanumeric() || c == '_');
@@ -2551,32 +2763,100 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 
                 match (l_const, r_const) {
                     (Ok(l), Ok(r)) => {
-                            // Constant fold
-                            let result = match op {
-                                ArithOp::Add => l + r,
-                                ArithOp::Sub => l - r,
-                                ArithOp::Mul => l * r,
-                                ArithOp::Div => if r != 0 { l / r } else { return SsaValue::ArithBinOp { left: Box::new(SsaValue::Expr(l.to_string())), op: ArithOp::Div, right: Box::new(SsaValue::Expr(r.to_string())) }; },
-                                ArithOp::Mod => if r != 0 { l % r } else { return SsaValue::ArithBinOp { left: Box::new(SsaValue::Expr(l.to_string())), op: ArithOp::Mod, right: Box::new(SsaValue::Expr(r.to_string())) }; },
-                                ArithOp::Eq => if l == r { 1 } else { 0 },
-                                ArithOp::Ne => if l != r { 1 } else { 0 },
-                                ArithOp::Lt => if l < r { 1 } else { 0 },
-                                ArithOp::Le => if l <= r { 1 } else { 0 },
-                                ArithOp::Gt => if l > r { 1 } else { 0 },
-                                ArithOp::Ge => if l >= r { 1 } else { 0 },
-                                ArithOp::And => if l != 0 && r != 0 { 1 } else { 0 },
-                                ArithOp::Or => if l != 0 || r != 0 { 1 } else { 0 },
-                                ArithOp::Not => 0, // shouldn't appear as binary
-                                ArithOp::Shl => l << r,
-                                ArithOp::Shr => l >> r,
-                                ArithOp::BitAnd => l & r,
-                                ArithOp::BitOr => l | r,
-                                ArithOp::BitXor => l ^ r,
-                                ArithOp::Pow => l.pow(r as u32),
-                            };
-                            return SsaValue::Expr(result.to_string());
-                        }
-                        (Err(_), Ok(operand)) => {
+                        // Constant fold
+                        let result = match op {
+                            ArithOp::Add => l + r,
+                            ArithOp::Sub => l - r,
+                            ArithOp::Mul => l * r,
+                            ArithOp::Div => {
+                                if r != 0 {
+                                    l / r
+                                } else {
+                                    return SsaValue::ArithBinOp {
+                                        left: Box::new(SsaValue::Expr(l.to_string())),
+                                        op: ArithOp::Div,
+                                        right: Box::new(SsaValue::Expr(r.to_string())),
+                                    };
+                                }
+                            }
+                            ArithOp::Mod => {
+                                if r != 0 {
+                                    l % r
+                                } else {
+                                    return SsaValue::ArithBinOp {
+                                        left: Box::new(SsaValue::Expr(l.to_string())),
+                                        op: ArithOp::Mod,
+                                        right: Box::new(SsaValue::Expr(r.to_string())),
+                                    };
+                                }
+                            }
+                            ArithOp::Eq => {
+                                if l == r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Ne => {
+                                if l != r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Lt => {
+                                if l < r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Le => {
+                                if l <= r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Gt => {
+                                if l > r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Ge => {
+                                if l >= r {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::And => {
+                                if l != 0 && r != 0 {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Or => {
+                                if l != 0 || r != 0 {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            ArithOp::Not => 0, // shouldn't appear as binary
+                            ArithOp::Shl => l << r,
+                            ArithOp::Shr => l >> r,
+                            ArithOp::BitAnd => l & r,
+                            ArithOp::BitOr => l | r,
+                            ArithOp::BitXor => l ^ r,
+                            ArithOp::Pow => l.pow(r as u32),
+                        };
+                        return SsaValue::Expr(result.to_string());
+                    }
+                    (Err(_), Ok(operand)) => {
                         if l_is_simple {
                             // DD#58: check if lhs is a known int function
                             if state.function_int_typed.contains(lhs) {
@@ -2605,9 +2885,12 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                     (Ok(l_val), Err(_)) => {
                         if r_is_simple {
                             match op {
-                                ArithOp::Add | ArithOp::Mul
-                                | ArithOp::Eq | ArithOp::Ne
-                                | ArithOp::And | ArithOp::Or => {
+                                ArithOp::Add
+                                | ArithOp::Mul
+                                | ArithOp::Eq
+                                | ArithOp::Ne
+                                | ArithOp::And
+                                | ArithOp::Or => {
                                     return SsaValue::ArithExpr {
                                         var: state.lookup(rhs),
                                         op,
@@ -2655,7 +2938,9 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
         ExprKind::ParameterExpansion(pe) => {
             let var = state.lookup(&pe.name);
             if let Some(ref op) = pe.operator {
-                let operand = pe.operand.as_ref()
+                let operand = pe
+                    .operand
+                    .as_ref()
                     .map(|e| expr_to_string(e))
                     .unwrap_or_default();
                 SsaValue::ParamExpansion {
@@ -2678,7 +2963,10 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             for part in parts {
                 match &part.kind {
                     ExprKind::Literal(lit) => lit_concat.push_str(lit),
-                    _ => { all_literal = false; break; }
+                    _ => {
+                        all_literal = false;
+                        break;
+                    }
                 }
             }
             if all_literal {
@@ -2693,7 +2981,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             }
         }
         ExprKind::AssocArray(pairs) => {
-            let vals: Vec<(String, SsaValue)> = pairs.iter()
+            let vals: Vec<(String, SsaValue)> = pairs
+                .iter()
                 .map(|(k, v)| (k.clone(), expr_to_value(v, state)))
                 .collect();
             SsaValue::AssocArray(vals)
@@ -2714,13 +3003,13 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             SsaValue::Concat(vals)
         }
         ExprKind::Array(elems) => {
-            let vals: Vec<SsaValue> = elems.iter()
-                .map(|e| expr_to_value(e, state))
-                .collect();
+            let vals: Vec<SsaValue> = elems.iter().map(|e| expr_to_value(e, state)).collect();
             // Check for regex filter pattern: (* =~ 'regex')
             // vals would be ["*", "=~", "pattern"]
             if vals.len() == 3 {
-                if let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) = (&vals[0], &vals[1], &vals[2]) {
+                if let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) =
+                    (&vals[0], &vals[1], &vals[2])
+                {
                     if star == "*" && op == "=~" {
                         return SsaValue::ParamExpansion {
                             var: VarRef::new(".", 0),
@@ -2732,14 +3021,22 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             }
             // Check if any element is a glob pattern (contains *)
             let has_glob = vals.iter().any(|v| {
-                if let SsaValue::Literal(s) = v { s.contains('*') } else { false }
+                if let SsaValue::Literal(s) = v {
+                    s.contains('*')
+                } else {
+                    false
+                }
             });
             if has_glob && vals.len() == 1 {
                 // Single glob pattern: arr=(*.sh) → sash_glob(".", "*.sh")
                 SsaValue::ParamExpansion {
                     var: VarRef::new(".", 0),
                     operator: "glob".to_string(),
-                    operand: if let SsaValue::Literal(s) = &vals[0] { s.clone() } else { String::new() },
+                    operand: if let SsaValue::Literal(s) = &vals[0] {
+                        s.clone()
+                    } else {
+                        String::new()
+                    },
                 }
             } else {
                 SsaValue::IndexedArray(vals)
@@ -2750,7 +3047,8 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             // or CmdSubst for runtime capture
             if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
                 // Filter out comments — they're not real statements
-                let real_stmts: Vec<&Statement> = stmts.iter()
+                let real_stmts: Vec<&Statement> = stmts
+                    .iter()
                     .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
                     .collect();
                 if real_stmts.len() == 1 {
@@ -2760,8 +3058,13 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                         let mut suppressed = false;
                         loop {
                             match s {
-                                StmtKind::Redirected(r) => { s = &r.body.kind; }
-                                StmtKind::Suppressed(inner) => { s = &inner.kind; suppressed = true; }
+                                StmtKind::Redirected(r) => {
+                                    s = &r.body.kind;
+                                }
+                                StmtKind::Suppressed(inner) => {
+                                    s = &inner.kind;
+                                    suppressed = true;
+                                }
                                 other => break (other, suppressed),
                             }
                         }
@@ -2811,7 +3114,9 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                                 let (sep, arr_expr) = if c.args.len() >= 2 {
                                     // Strip quotes from separator
                                     let sep_raw = match &c.args[0].kind {
-                                        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
+                                        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
+                                            s.clone()
+                                        }
                                         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
                                             match &parts[0].kind {
                                                 ExprKind::Literal(s) => s.clone(),
@@ -2828,7 +3133,11 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                                 };
                                 // The array arg should be @arr → ParameterExpansion(arrvals)
                                 let arr_name = match &arr_expr.kind {
-                                    ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => pe.name.clone(),
+                                    ExprKind::ParameterExpansion(pe)
+                                        if pe.operator.as_deref() == Some("arrvals") =>
+                                    {
+                                        pe.name.clone()
+                                    }
                                     _ => expr_to_string(arr_expr),
                                 };
                                 let v = state.lookup(&arr_name);
@@ -2841,23 +3150,23 @@ fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
                         }
                         // DD#14: $(echo args) — build inline as concat
                         if let ExprKind::Literal(name) = &c.name.kind {
-                          if name == "echo" {
-                            if c.args.is_empty() {
-                                return SsaValue::Literal(String::new());
-                            }
-                            let mut parts: Vec<SsaValue> = Vec::new();
-                            for (i, arg) in c.args.iter().enumerate() {
-                                if i > 0 {
-                                    parts.push(SsaValue::Literal(" ".to_string()));
+                            if name == "echo" {
+                                if c.args.is_empty() {
+                                    return SsaValue::Literal(String::new());
                                 }
-                                parts.push(expr_to_value(arg, state));
+                                let mut parts: Vec<SsaValue> = Vec::new();
+                                for (i, arg) in c.args.iter().enumerate() {
+                                    if i > 0 {
+                                        parts.push(SsaValue::Literal(" ".to_string()));
+                                    }
+                                    parts.push(expr_to_value(arg, state));
+                                }
+                                return if parts.len() == 1 {
+                                    parts.remove(0)
+                                } else {
+                                    SsaValue::Concat(parts)
+                                };
                             }
-                            return if parts.len() == 1 {
-                                parts.remove(0)
-                            } else {
-                                SsaValue::Concat(parts)
-                            };
-                          }
                         }
 
                         // Not an elidable function — emit CmdSubst with argv
@@ -2910,7 +3219,8 @@ fn expr_to_string(expr: &Expr) -> String {
             format!("({})", inner.join(" "))
         }
         ExprKind::AssocArray(pairs) => {
-            let inner: Vec<String> = pairs.iter()
+            let inner: Vec<String> = pairs
+                .iter()
                 .map(|(k, v)| format!("[{}]={}", k, expr_to_string(v)))
                 .collect();
             format!("({})", inner.join(" "))
@@ -2962,40 +3272,72 @@ fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut us
             };
             if name_text == "shift" {
                 // shift with no args shifts by 1; shift N shifts by N
-                let n = c.args.first()
-                    .and_then(|a| if let ExprKind::Literal(s) = &a.kind { s.parse::<usize>().ok() } else { None })
+                let n = c
+                    .args
+                    .first()
+                    .and_then(|a| {
+                        if let ExprKind::Literal(s) = &a.kind {
+                            s.parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
                     .unwrap_or(1);
                 *shifts += n;
             }
             scan_expr_positionals_expr(&c.name, max);
-            for a in &c.args { scan_expr_positionals_expr(a, max); }
+            for a in &c.args {
+                scan_expr_positionals_expr(a, max);
+            }
         }
         StmtKind::Assignment(a) => {
             scan_expr_positionals_expr(&a.value, max);
         }
         StmtKind::Declaration(d) => {
-            for a in &d.assignments { scan_expr_positionals_expr(&a.value, max); }
+            for a in &d.assignments {
+                scan_expr_positionals_expr(&a.value, max);
+            }
         }
         StmtKind::Pipeline(p) => {
-            for s in &p.commands { scan_expr_positionals_stmt(s, max, shifts); }
+            for s in &p.commands {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
         }
         StmtKind::If(i) => {
-            for s in &i.condition { scan_expr_positionals_stmt(s, max, shifts); }
-            for s in &i.then_body { scan_expr_positionals_stmt(s, max, shifts); }
-            if let Some(ref eb) = i.else_body { for s in eb { scan_expr_positionals_stmt(s, max, shifts); } }
+            for s in &i.condition {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
+            for s in &i.then_body {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
+            if let Some(ref eb) = i.else_body {
+                for s in eb {
+                    scan_expr_positionals_stmt(s, max, shifts);
+                }
+            }
         }
         StmtKind::While(w) => {
-            for s in &w.condition { scan_expr_positionals_stmt(s, max, shifts); }
-            for s in &w.body { scan_expr_positionals_stmt(s, max, shifts); }
+            for s in &w.condition {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
+            for s in &w.body {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
         }
         StmtKind::For(f) => {
-            for w in &f.words { scan_expr_positionals_expr(w, max); }
-            for s in &f.body { scan_expr_positionals_stmt(s, max, shifts); }
+            for w in &f.words {
+                scan_expr_positionals_expr(w, max);
+            }
+            for s in &f.body {
+                scan_expr_positionals_stmt(s, max, shifts);
+            }
         }
         StmtKind::Case(c) => {
             scan_expr_positionals_expr(&c.value, max);
             for item in &c.items {
-                for s in &item.body { scan_expr_positionals_stmt(s, max, shifts); }
+                for s in &item.body {
+                    scan_expr_positionals_stmt(s, max, shifts);
+                }
             }
         }
         StmtKind::Function(_) => {} // don't recurse into nested functions
@@ -3007,10 +3349,14 @@ fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut us
             scan_expr_positionals_stmt(&l.right, max, shifts);
         }
         StmtKind::Subshell(s) => {
-            for st in &s.body { scan_expr_positionals_stmt(st, max, shifts); }
+            for st in &s.body {
+                scan_expr_positionals_stmt(st, max, shifts);
+            }
         }
         StmtKind::Group(g) => {
-            for st in &g.body { scan_expr_positionals_stmt(st, max, shifts); }
+            for st in &g.body {
+                scan_expr_positionals_stmt(st, max, shifts);
+            }
         }
         StmtKind::Comment(_) => {}
         StmtKind::Suppressed(inner) => {
@@ -3023,21 +3369,31 @@ fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
     match &expr.kind {
         ExprKind::SimpleExpansion(name) => {
             if let Ok(n) = name.parse::<usize>() {
-                if n >= 1 && n <= 9 && n > *max { *max = n; }
+                if n >= 1 && n <= 9 && n > *max {
+                    *max = n;
+                }
             }
         }
         ExprKind::DoubleQuoted(parts) => {
-            for p in parts { scan_expr_positionals_expr(p, max); }
+            for p in parts {
+                scan_expr_positionals_expr(p, max);
+            }
         }
         ExprKind::Concat(parts) => {
-            for p in parts { scan_expr_positionals_expr(p, max); }
+            for p in parts {
+                scan_expr_positionals_expr(p, max);
+            }
         }
         ExprKind::Array(elems) => {
-            for e in elems { scan_expr_positionals_expr(e, max); }
+            for e in elems {
+                scan_expr_positionals_expr(e, max);
+            }
         }
         ExprKind::ParameterExpansion(pe) => {
             if let Ok(n) = pe.name.parse::<usize>() {
-                if n >= 1 && n <= 9 && n > *max { *max = n; }
+                if n >= 1 && n <= 9 && n > *max {
+                    *max = n;
+                }
             }
             if let Some(ref op) = pe.operand {
                 scan_expr_positionals_expr(op, max);
@@ -3045,7 +3401,9 @@ fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
         }
         ExprKind::CommandSubstitution(stmts) => {
             let mut sub_shifts = 0;
-            for s in stmts { scan_expr_positionals_stmt(s, max, &mut sub_shifts); }
+            for s in stmts {
+                scan_expr_positionals_stmt(s, max, &mut sub_shifts);
+            }
         }
         ExprKind::Test(t) => {
             scan_test_positionals(t, max);
@@ -3106,7 +3464,10 @@ fn lower_for_array(
     // Condition: __ai < sash_table_len(arr)
     // We use arrlen as a ParamExpansion that codegen already handles
     let cond_test = crate::ir::TestExpr::Binary {
-        left: Box::new(Expr { kind: ExprKind::SimpleExpansion("__ai".to_string()), span: Span::default() }),
+        left: Box::new(Expr {
+            kind: ExprKind::SimpleExpansion("__ai".to_string()),
+            span: Span::default(),
+        }),
         op: "-lt".to_string(),
         right: Box::new(Expr {
             kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
@@ -3117,7 +3478,9 @@ fn lower_for_array(
             span: Span::default(),
         }),
     };
-    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test.clone()));
+    ssa.block_mut(header)
+        .insts
+        .push(SsaInst::Test(cond_test.clone()));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -3130,9 +3493,15 @@ fn lower_for_array(
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
         value: if use_keys {
-            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref.clone() }
+            SsaValue::TableKey {
+                array: array_name.to_string(),
+                index: idx_ref.clone(),
+            }
         } else {
-            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref.clone() }
+            SsaValue::TableValue {
+                array: array_name.to_string(),
+                index: idx_ref.clone(),
+            }
         },
     });
 
@@ -3143,14 +3512,22 @@ fn lower_for_array(
     let idx_next = state.define("__ai");
     ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
         target: idx_next,
-        value: SsaValue::ArithExpr { var: idx_cur, op: ArithOp::Add, operand: 1 },
+        value: SsaValue::ArithExpr {
+            var: idx_cur,
+            op: ArithOp::Add,
+            operand: 1,
+        },
     });
     let body_state_1 = state.snapshot();
 
     insert_phis_two_branch(
-        state, ssa, header,
-        block, &pre_state,
-        body_exit_1, &body_state_1,
+        state,
+        ssa,
+        header,
+        block,
+        &pre_state,
+        body_exit_1,
+        &body_state_1,
     );
 
     // --- Pass 2 ---
@@ -3169,9 +3546,15 @@ fn lower_for_array(
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
         value: if use_keys {
-            SsaValue::TableKey { array: array_name.to_string(), index: idx_ref_2.clone() }
+            SsaValue::TableKey {
+                array: array_name.to_string(),
+                index: idx_ref_2.clone(),
+            }
         } else {
-            SsaValue::TableValue { array: array_name.to_string(), index: idx_ref_2.clone() }
+            SsaValue::TableValue {
+                array: array_name.to_string(),
+                index: idx_ref_2.clone(),
+            }
         },
     });
 
@@ -3181,7 +3564,11 @@ fn lower_for_array(
     let idx_next_2 = state.define("__ai");
     ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
         target: idx_next_2,
-        value: SsaValue::ArithExpr { var: idx_cur_2, op: ArithOp::Add, operand: 1 },
+        value: SsaValue::ArithExpr {
+            var: idx_cur_2,
+            op: ArithOp::Add,
+            operand: 1,
+        },
     });
 
     ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
@@ -3222,11 +3609,19 @@ fn lower_for_dollar_at(
     // Emit condition: __fi < $#
     let _argc_ref = state.lookup("#");
     let cond_test = crate::ir::TestExpr::Binary {
-        left: Box::new(Expr { kind: ExprKind::SimpleExpansion("__fi".to_string()), span: Span::default() }),
+        left: Box::new(Expr {
+            kind: ExprKind::SimpleExpansion("__fi".to_string()),
+            span: Span::default(),
+        }),
         op: "-lt".to_string(),
-        right: Box::new(Expr { kind: ExprKind::SimpleExpansion("#".to_string()), span: Span::default() }),
+        right: Box::new(Expr {
+            kind: ExprKind::SimpleExpansion("#".to_string()),
+            span: Span::default(),
+        }),
     };
-    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test.clone()));
+    ssa.block_mut(header)
+        .insts
+        .push(SsaInst::Test(cond_test.clone()));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -3249,15 +3644,23 @@ fn lower_for_dollar_at(
     let idx_next = state.define("__fi");
     ssa.block_mut(body_exit_1).insts.push(SsaInst::Assign {
         target: idx_next,
-        value: SsaValue::ArithExpr { var: idx_cur, op: ArithOp::Add, operand: 1 },
+        value: SsaValue::ArithExpr {
+            var: idx_cur,
+            op: ArithOp::Add,
+            operand: 1,
+        },
     });
     let body_state_1 = state.snapshot();
 
     // Insert phis at header
     insert_phis_two_branch(
-        state, ssa, header,
-        block, &pre_state,
-        body_exit_1, &body_state_1,
+        state,
+        ssa,
+        header,
+        block,
+        &pre_state,
+        body_exit_1,
+        &body_state_1,
     );
 
     // --- Pass 2: re-lower with phi-merged versions ---
@@ -3288,7 +3691,11 @@ fn lower_for_dollar_at(
     let idx_next_2 = state.define("__fi");
     ssa.block_mut(body_exit_2).insts.push(SsaInst::Assign {
         target: idx_next_2,
-        value: SsaValue::ArithExpr { var: idx_cur_2, op: ArithOp::Add, operand: 1 },
+        value: SsaValue::ArithExpr {
+            var: idx_cur_2,
+            op: ArithOp::Add,
+            operand: 1,
+        },
     });
 
     ssa.block_mut(body_exit_2).terminator = Terminator::Goto(header);
@@ -3326,8 +3733,12 @@ fn lower_pipe_while_read(
         for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
             for inst in &mut ssa.block_mut(bid).insts {
                 match inst {
-                    SsaInst::ReadLine { fd, .. } if *fd == 0 => { *fd = -1; }
-                    SsaInst::ReadLineMulti { fd, .. } if *fd == 0 => { *fd = -1; }
+                    SsaInst::ReadLine { fd, .. } if *fd == 0 => {
+                        *fd = -1;
+                    }
+                    SsaInst::ReadLineMulti { fd, .. } if *fd == 0 => {
+                        *fd = -1;
+                    }
                     _ => {}
                 }
             }
@@ -3381,10 +3792,14 @@ fn resolve_command_path(name: &str) -> Option<String> {
 
 fn try_parse_sexpr(inner: &str, span: Span, state: &VersionState) -> Option<SsaValue> {
     let inner = inner.trim();
-    if inner.is_empty() { return None; }
+    if inner.is_empty() {
+        return None;
+    }
 
     // Extract the function name (first whitespace-delimited token)
-    let name_end = inner.find(|c: char| c.is_whitespace()).unwrap_or(inner.len());
+    let name_end = inner
+        .find(|c: char| c.is_whitespace())
+        .unwrap_or(inner.len());
     let name = &inner[..name_end];
 
     // Must be a known -> int function
@@ -3413,35 +3828,55 @@ fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec<SsaValue> 
     let bytes = s.as_bytes();
     while i < bytes.len() {
         // Skip whitespace
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() { i += 1; }
-        if i >= bytes.len() { break; }
+        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
+            i += 1;
+        }
+        if i >= bytes.len() {
+            break;
+        }
 
         if bytes[i] == b'(' {
             // Find matching close paren
             let start = i;
             let mut depth = 0;
             while i < bytes.len() {
-                if bytes[i] == b'(' { depth += 1; }
-                if bytes[i] == b')' { depth -= 1; if depth == 0 { i += 1; break; } }
+                if bytes[i] == b'(' {
+                    depth += 1;
+                }
+                if bytes[i] == b')' {
+                    depth -= 1;
+                    if depth == 0 {
+                        i += 1;
+                        break;
+                    }
+                }
                 i += 1;
             }
             let token = s[start..i].trim();
             // Try as nested sexpr
-            let inner = &token[1..token.len()-1];
+            let inner = &token[1..token.len() - 1];
             if let Some(call) = try_parse_sexpr(inner, span, state) {
                 args.push(call);
             } else {
                 // Arithmetic grouping: evaluate as arithmetic expression
-                let e = Expr { kind: ExprKind::ArithmeticExpansion(inner.to_string()), span };
+                let e = Expr {
+                    kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                    span,
+                };
                 args.push(expr_to_value(&e, state));
             }
         } else {
             // Read until whitespace or paren
             let start = i;
-            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'(' { i += 1; }
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'(' {
+                i += 1;
+            }
             let token = &s[start..i];
             // Parse as arithmetic expression (number or variable)
-            let e = Expr { kind: ExprKind::ArithmeticExpansion(token.to_string()), span };
+            let e = Expr {
+                kind: ExprKind::ArithmeticExpansion(token.to_string()),
+                span,
+            };
             args.push(expr_to_value(&e, state));
         }
     }
@@ -3455,13 +3890,21 @@ fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
     // Skip operators inside parentheses
     let mut depth = 0i32;
     for i in start..bytes.len().saturating_sub(1) {
-        if bytes[i] == b'(' { depth += 1; continue; }
-        if bytes[i] == b')' { depth -= 1; continue; }
-        if depth > 0 { continue; }
-        let two = &s[i..i+2];
+        if bytes[i] == b'(' {
+            depth += 1;
+            continue;
+        }
+        if bytes[i] == b')' {
+            depth -= 1;
+            continue;
+        }
+        if depth > 0 {
+            continue;
+        }
+        let two = &s[i..i + 2];
         if let Some(op) = ArithOp::from_str(two) {
             let lhs = s[..i].trim();
-            let rhs = s[i+2..].trim();
+            let rhs = s[i + 2..].trim();
             if !lhs.is_empty() && !rhs.is_empty() {
                 return (lhs, Some(op), rhs);
             }
@@ -3471,13 +3914,21 @@ fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
     depth = 0;
     for (i, &b) in bytes[start..].iter().enumerate() {
         let pos = i + start;
-        if b == b'(' { depth += 1; continue; }
-        if b == b')' { depth -= 1; continue; }
-        if depth > 0 { continue; }
-        let op_str = &s[pos..pos+1];
+        if b == b'(' {
+            depth += 1;
+            continue;
+        }
+        if b == b')' {
+            depth -= 1;
+            continue;
+        }
+        if depth > 0 {
+            continue;
+        }
+        let op_str = &s[pos..pos + 1];
         if let Some(op) = ArithOp::from_str(op_str) {
             let lhs = s[..pos].trim();
-            let rhs = s[pos+1..].trim();
+            let rhs = s[pos + 1..].trim();
             if !lhs.is_empty() && !rhs.is_empty() {
                 return (lhs, Some(op), rhs);
             }
@@ -3487,7 +3938,7 @@ fn parse_arith_binop(s: &str) -> (&str, Option<ArithOp>, &str) {
     let trimmed = s.trim();
     if trimmed.starts_with('(') && trimmed.ends_with(')') {
         // Strip outer parens and recurse
-        let inner = &trimmed[1..trimmed.len()-1];
+        let inner = &trimmed[1..trimmed.len() - 1];
         return parse_arith_binop(inner);
     }
     (s, None, "")

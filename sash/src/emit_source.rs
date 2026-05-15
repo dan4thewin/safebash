@@ -5,7 +5,6 @@
 /// comments, whitespace, and formatting for uncoerced regions.
 ///
 /// DD#45: coerce in lowerer, emit from CST.
-
 use std::cell::RefCell;
 
 /// A single source-level coercion: replace source[start..end] with `replacement`.
@@ -24,7 +23,12 @@ thread_local! {
 /// Record a coercion during lowering.
 pub fn record_coercion(start: usize, end: usize, replacement: String, original: String) {
     COERCIONS.with(|c| {
-        c.borrow_mut().push(Coercion { start, end, replacement, original });
+        c.borrow_mut().push(Coercion {
+            start,
+            end,
+            replacement,
+            original,
+        });
     });
 }
 
@@ -43,8 +47,10 @@ pub fn emit_source(source: &[u8], annotate: bool) -> String {
         // Check for overlaps (shouldn't happen, but be safe)
         for w in coercions.windows(2) {
             if w[0].end > w[1].start {
-                eprintln!("sash: warning: overlapping coercions at {}..{} and {}..{}",
-                    w[0].start, w[0].end, w[1].start, w[1].end);
+                eprintln!(
+                    "sash: warning: overlapping coercions at {}..{} and {}..{}",
+                    w[0].start, w[0].end, w[1].start, w[1].end
+                );
             }
         }
 
@@ -73,4 +79,3 @@ pub fn emit_source(source: &[u8], annotate: bool) -> String {
         out
     })
 }
-

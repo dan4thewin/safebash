@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB4014: tree-sitter parse error — source contains syntax that
 /// tree-sitter couldn't parse. This catches malformed input before
@@ -8,7 +8,6 @@ use crate::rule::Rule;
 pub struct ParseError;
 
 impl Rule for ParseError {
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["ERROR"]
     }
