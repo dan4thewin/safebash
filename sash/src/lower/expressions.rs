@@ -102,103 +102,7 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
             ExprKind::SingleQuoted(inner.to_string())
         }
 
-        "ansi_c_string" => {
-            // $'...' — compile-time desugaring of escape sequences
-            let text = node.utf8_text(source).unwrap_or("$''");
-            let inner = &text[2..text.len().saturating_sub(1)]; // strip $' and '
-            let mut result = String::new();
-            let bytes = inner.as_bytes();
-            let mut i = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'\\' && i + 1 < bytes.len() {
-                    match bytes[i + 1] {
-                        b'n' => {
-                            result.push('\n');
-                            i += 2;
-                        }
-                        b't' => {
-                            result.push('\t');
-                            i += 2;
-                        }
-                        b'r' => {
-                            result.push('\r');
-                            i += 2;
-                        }
-                        b'a' => {
-                            result.push('\x07');
-                            i += 2;
-                        }
-                        b'b' => {
-                            result.push('\x08');
-                            i += 2;
-                        }
-                        b'e' | b'E' => {
-                            result.push('\x1b');
-                            i += 2;
-                        }
-                        b'f' => {
-                            result.push('\x0c');
-                            i += 2;
-                        }
-                        b'v' => {
-                            result.push('\x0b');
-                            i += 2;
-                        }
-                        b'\\' => {
-                            result.push('\\');
-                            i += 2;
-                        }
-                        b'\'' => {
-                            result.push('\'');
-                            i += 2;
-                        }
-                        b'"' => {
-                            result.push('"');
-                            i += 2;
-                        }
-                        b'0' => {
-                            // Octal: \0NNN
-                            let mut val = 0u8;
-                            let mut j = i + 2;
-                            let end = (j + 3).min(bytes.len());
-                            while j < end && bytes[j] >= b'0' && bytes[j] <= b'7' {
-                                val = val * 8 + (bytes[j] - b'0');
-                                j += 1;
-                            }
-                            result.push(val as char);
-                            i = j;
-                        }
-                        b'x' => {
-                            // Hex: \xNN
-                            let mut val = 0u8;
-                            let mut j = i + 2;
-                            let end = (j + 2).min(bytes.len());
-                            while j < end {
-                                let d = match bytes[j] {
-                                    b'0'..=b'9' => bytes[j] - b'0',
-                                    b'a'..=b'f' => bytes[j] - b'a' + 10,
-                                    b'A'..=b'F' => bytes[j] - b'A' + 10,
-                                    _ => break,
-                                };
-                                val = val * 16 + d;
-                                j += 1;
-                            }
-                            result.push(val as char);
-                            i = j;
-                        }
-                        _ => {
-                            result.push('\\');
-                            result.push(bytes[i + 1] as char);
-                            i += 2;
-                        }
-                    }
-                } else {
-                    result.push(bytes[i] as char);
-                    i += 1;
-                }
-            }
-            ExprKind::Literal(result)
-        }
+        "ansi_c_string" => lower_ansi_c_string(node, source),
 
         "string_content" => {
             let text = node.utf8_text(source).unwrap_or("").to_string();
@@ -417,86 +321,7 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
 
         "test_command" => lower_test_command(node, source),
 
-        "regex" => {
-            // Regex nodes in [[ =~ ]] — tree-sitter doesn't expand ${var} inside regex.
-            // Manually parse variable references.
-            let text = node.utf8_text(source).unwrap_or("").to_string();
-            if text.contains("${")
-                || (text.contains('$') && {
-                    // Only treat $ as expansion if followed by alpha/_ or {
-                    let b = text.as_bytes();
-                    b.iter().enumerate().any(|(i, &c)| {
-                        c == b'$'
-                            && i + 1 < b.len()
-                            && (b[i + 1] == b'{'
-                                || b[i + 1].is_ascii_alphabetic()
-                                || b[i + 1] == b'_')
-                    })
-                })
-            {
-                // Parse variable expansions manually
-                let mut parts = Vec::new();
-                let bytes = text.as_bytes();
-                let mut i = 0;
-                let mut literal_start = 0;
-                while i < bytes.len() {
-                    if bytes[i] == b'$' {
-                        // Capture preceding literal
-                        if i > literal_start {
-                            parts.push(Expr {
-                                kind: ExprKind::Literal(text[literal_start..i].to_string()),
-                                span: Span::from_node(node),
-                            });
-                        }
-                        if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
-                            // ${var} or ${var[...]}
-                            if let Some(close) = text[i..].find('}') {
-                                let var_name = &text[i + 2..i + close];
-                                parts.push(Expr {
-                                    kind: ExprKind::SimpleExpansion(var_name.to_string()),
-                                    span: Span::from_node(node),
-                                });
-                                i += close + 1;
-                                literal_start = i;
-                                continue;
-                            }
-                        } else if i + 1 < bytes.len()
-                            && (bytes[i + 1].is_ascii_alphanumeric() || bytes[i + 1] == b'_')
-                        {
-                            // $var
-                            let start = i + 1;
-                            let mut end = start;
-                            while end < bytes.len()
-                                && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
-                            {
-                                end += 1;
-                            }
-                            parts.push(Expr {
-                                kind: ExprKind::SimpleExpansion(text[start..end].to_string()),
-                                span: Span::from_node(node),
-                            });
-                            i = end;
-                            literal_start = i;
-                            continue;
-                        }
-                    }
-                    i += 1;
-                }
-                if literal_start < bytes.len() {
-                    parts.push(Expr {
-                        kind: ExprKind::Literal(text[literal_start..].to_string()),
-                        span: Span::from_node(node),
-                    });
-                }
-                if parts.len() == 1 {
-                    parts.into_iter().next().unwrap().kind
-                } else {
-                    ExprKind::Concat(parts)
-                }
-            } else {
-                ExprKind::Literal(text)
-            }
-        }
+        "regex" => lower_regex_node(node, source, span),
 
         _ => {
             let text = node.utf8_text(source).unwrap_or("??").to_string();
@@ -505,6 +330,183 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
     };
 
     Expr { kind, span }
+}
+
+fn lower_regex_node(node: Node, source: &[u8], span: Span) -> ExprKind {
+    // Regex nodes in [[ =~ ]] — tree-sitter doesn't expand ${var} inside regex.
+    // Manually parse variable references.
+    let text = node.utf8_text(source).unwrap_or("").to_string();
+    if text.contains("${")
+        || (text.contains('$') && {
+            // Only treat $ as expansion if followed by alpha/_ or {
+            let b = text.as_bytes();
+            b.iter().enumerate().any(|(i, &c)| {
+                c == b'$'
+                    && i + 1 < b.len()
+                    && (b[i + 1] == b'{' || b[i + 1].is_ascii_alphabetic() || b[i + 1] == b'_')
+            })
+        })
+    {
+        // Parse variable expansions manually
+        let mut parts = Vec::new();
+        let bytes = text.as_bytes();
+        let mut i = 0;
+        let mut literal_start = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'$' {
+                // Capture preceding literal
+                if i > literal_start {
+                    parts.push(Expr {
+                        kind: ExprKind::Literal(text[literal_start..i].to_string()),
+                        span: Span::from_node(node),
+                    });
+                }
+                if i + 1 < bytes.len() && bytes[i + 1] == b'{' {
+                    // ${var} or ${var[...]}
+                    if let Some(close) = text[i..].find('}') {
+                        let var_name = &text[i + 2..i + close];
+                        parts.push(Expr {
+                            kind: ExprKind::SimpleExpansion(var_name.to_string()),
+                            span: Span::from_node(node),
+                        });
+                        i += close + 1;
+                        literal_start = i;
+                        continue;
+                    }
+                } else if i + 1 < bytes.len()
+                    && (bytes[i + 1].is_ascii_alphanumeric() || bytes[i + 1] == b'_')
+                {
+                    // $var
+                    let start = i + 1;
+                    let mut end = start;
+                    while end < bytes.len()
+                        && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                    {
+                        end += 1;
+                    }
+                    parts.push(Expr {
+                        kind: ExprKind::SimpleExpansion(text[start..end].to_string()),
+                        span: Span::from_node(node),
+                    });
+                    i = end;
+                    literal_start = i;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        if literal_start < bytes.len() {
+            parts.push(Expr {
+                kind: ExprKind::Literal(text[literal_start..].to_string()),
+                span: Span::from_node(node),
+            });
+        }
+        if parts.len() == 1 {
+            parts.into_iter().next().unwrap().kind
+        } else {
+            ExprKind::Concat(parts)
+        }
+    } else {
+        ExprKind::Literal(text)
+    }
+}
+
+fn lower_ansi_c_string(node: Node, source: &[u8]) -> ExprKind {
+    // $'...' — compile-time desugaring of escape sequences
+    let text = node.utf8_text(source).unwrap_or("$''");
+    let inner = &text[2..text.len().saturating_sub(1)]; // strip $' and '
+    let mut result = String::new();
+    let bytes = inner.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 1 < bytes.len() {
+            match bytes[i + 1] {
+                b'n' => {
+                    result.push('\n');
+                    i += 2;
+                }
+                b't' => {
+                    result.push('\t');
+                    i += 2;
+                }
+                b'r' => {
+                    result.push('\r');
+                    i += 2;
+                }
+                b'a' => {
+                    result.push('\x07');
+                    i += 2;
+                }
+                b'b' => {
+                    result.push('\x08');
+                    i += 2;
+                }
+                b'e' | b'E' => {
+                    result.push('\x1b');
+                    i += 2;
+                }
+                b'f' => {
+                    result.push('\x0c');
+                    i += 2;
+                }
+                b'v' => {
+                    result.push('\x0b');
+                    i += 2;
+                }
+                b'\\' => {
+                    result.push('\\');
+                    i += 2;
+                }
+                b'\'' => {
+                    result.push('\'');
+                    i += 2;
+                }
+                b'"' => {
+                    result.push('"');
+                    i += 2;
+                }
+                b'0' => {
+                    // Octal: \0NNN
+                    let mut val = 0u8;
+                    let mut j = i + 2;
+                    let end = (j + 3).min(bytes.len());
+                    while j < end && bytes[j] >= b'0' && bytes[j] <= b'7' {
+                        val = val * 8 + (bytes[j] - b'0');
+                        j += 1;
+                    }
+                    result.push(val as char);
+                    i = j;
+                }
+                b'x' => {
+                    // Hex: \xNN
+                    let mut val = 0u8;
+                    let mut j = i + 2;
+                    let end = (j + 2).min(bytes.len());
+                    while j < end {
+                        let d = match bytes[j] {
+                            b'0'..=b'9' => bytes[j] - b'0',
+                            b'a'..=b'f' => bytes[j] - b'a' + 10,
+                            b'A'..=b'F' => bytes[j] - b'A' + 10,
+                            _ => break,
+                        };
+                        val = val * 16 + d;
+                        j += 1;
+                    }
+                    result.push(val as char);
+                    i = j;
+                }
+                _ => {
+                    result.push('\\');
+                    result.push(bytes[i + 1] as char);
+                    i += 2;
+                }
+            }
+        } else {
+            result.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    ExprKind::Literal(result)
 }
 
 /// Lower a [[ ]] or [ ] test_command to a Test expression.
