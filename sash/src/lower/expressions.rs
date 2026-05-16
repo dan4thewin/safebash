@@ -941,58 +941,9 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
     let mut subscript_index: Option<Expr> = None;
 
     // Pre-scan for ${var:s/regex/replacement/flags} (DD#39 sed expression)
-    // The external scanner consumes :s/ as a hidden token, so we detect it
-    // by checking source bytes between variable_name and first regex child.
-    {
-        let mut var_end = 0usize;
-        let mut first_regex_start = 0usize;
-        let mut regex_texts = Vec::new();
-        let mut flags_text = String::new();
-        let mut found_var = false;
-        for child in node.children(&mut node.walk()) {
-            match child.kind() {
-                "variable_name" if !found_var => {
-                    name = child.utf8_text(source).unwrap_or("").to_string();
-                    var_end = child.end_byte();
-                    found_var = true;
-                }
-                "regex" if found_var => {
-                    if first_regex_start == 0 {
-                        first_regex_start = child.start_byte();
-                    }
-                    regex_texts.push(child.utf8_text(source).unwrap_or("").to_string());
-                }
-                "word" if found_var && !regex_texts.is_empty() => {
-                    // flags node after the last /
-                    flags_text = child.utf8_text(source).unwrap_or("").to_string();
-                }
-                _ => {}
-            }
-        }
-        if found_var && first_regex_start > var_end {
-            let gap = std::str::from_utf8(&source[var_end..first_regex_start]).unwrap_or("");
-            if gap.starts_with(":s/") {
-                // It's a sed expression: ${var:s/pattern/replacement/flags}
-                let pattern = regex_texts.first().cloned().unwrap_or_default();
-                let replacement = regex_texts.get(1).cloned().unwrap_or_default();
-                let is_global = flags_text.contains('g');
-                // Build operand as pattern\0replacement (null-separated, like ${var/pat/rep})
-                let combined = format!("{}\0{}", pattern, replacement);
-                let op = if is_global { "//" } else { "/" };
-                return ExprKind::ParameterExpansion(ParameterExpansion {
-                    name,
-                    operator: Some(op.to_string()),
-                    operand: Some(Box::new(Expr {
-                        kind: ExprKind::Literal(combined),
-                        span: Span::from_node(node),
-                    })),
-                });
-            }
-        }
-        // Reset name for normal path
-        name = String::new();
+    if let Some(kind) = prescan_regex(node, source) {
+        return kind;
     }
-
     // Check for substring pattern: ${var:offset:length} or ${var:offset}
     // tree-sitter gives: variable_name, ":", number, ":", number
     let mut colon_count = 0;
@@ -1242,4 +1193,55 @@ fn lower_parameter_expansion(node: Node, source: &[u8]) -> ExprKind {
         operator,
         operand,
     })
+}
+
+/// Pre-scan for ${var:s/regex/replacement/flags} (DD#39 sed expression).
+fn prescan_regex(node: Node, source: &[u8]) -> Option<ExprKind> {
+    let mut name = String::new();
+    let mut var_end = 0usize;
+    let mut first_regex_start = 0usize;
+    let mut regex_texts = Vec::new();
+    let mut flags_text = String::new();
+    let mut found_var = false;
+    for child in node.children(&mut node.walk()) {
+        match child.kind() {
+            "variable_name" if !found_var => {
+                name = child.utf8_text(source).unwrap_or("").to_string();
+                var_end = child.end_byte();
+                found_var = true;
+            }
+            "regex" if found_var => {
+                if first_regex_start == 0 {
+                    first_regex_start = child.start_byte();
+                }
+                regex_texts.push(child.utf8_text(source).unwrap_or("").to_string());
+            }
+            "word" if found_var && !regex_texts.is_empty() => {
+                // flags node after the last /
+                flags_text = child.utf8_text(source).unwrap_or("").to_string();
+            }
+            _ => {}
+        }
+    }
+    if found_var && first_regex_start > var_end {
+        let gap = std::str::from_utf8(&source[var_end..first_regex_start]).unwrap_or("");
+        if gap.starts_with(":s/") {
+            // It's a sed expression: ${var:s/pattern/replacement/flags}
+            let pattern = regex_texts.first().cloned().unwrap_or_default();
+            let replacement = regex_texts.get(1).cloned().unwrap_or_default();
+            let is_global = flags_text.contains('g');
+            // Build operand as pattern\0replacement (null-separated, like ${var/pat/rep})
+            let combined = format!("{}\0{}", pattern, replacement);
+            let op = if is_global { "//" } else { "/" };
+            return Some(ExprKind::ParameterExpansion(ParameterExpansion {
+                name,
+                operator: Some(op.to_string()),
+                operand: Some(Box::new(Expr {
+                    kind: ExprKind::Literal(combined),
+                    span: Span::from_node(node),
+                })),
+            }));
+        }
+    }
+    None
 }
