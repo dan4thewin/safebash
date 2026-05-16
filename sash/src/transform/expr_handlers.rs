@@ -471,100 +471,7 @@ fn lower_arith_binop(
     let r_is_simple = rhs.chars().all(|c| c.is_alphanumeric() || c == '_');
 
     match (l_const, r_const) {
-        (Ok(l), Ok(r)) => {
-            // Constant fold
-            let result = match op {
-                ArithOp::Add => l + r,
-                ArithOp::Sub => l - r,
-                ArithOp::Mul => l * r,
-                ArithOp::Div => {
-                    if r != 0 {
-                        l / r
-                    } else {
-                        return SsaValue::ArithBinOp {
-                            left: Box::new(SsaValue::Expr(l.to_string())),
-                            op: ArithOp::Div,
-                            right: Box::new(SsaValue::Expr(r.to_string())),
-                        };
-                    }
-                }
-                ArithOp::Mod => {
-                    if r != 0 {
-                        l % r
-                    } else {
-                        return SsaValue::ArithBinOp {
-                            left: Box::new(SsaValue::Expr(l.to_string())),
-                            op: ArithOp::Mod,
-                            right: Box::new(SsaValue::Expr(r.to_string())),
-                        };
-                    }
-                }
-                ArithOp::Eq => {
-                    if l == r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Ne => {
-                    if l != r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Lt => {
-                    if l < r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Le => {
-                    if l <= r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Gt => {
-                    if l > r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Ge => {
-                    if l >= r {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::And => {
-                    if l != 0 && r != 0 {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Or => {
-                    if l != 0 || r != 0 {
-                        1
-                    } else {
-                        0
-                    }
-                }
-                ArithOp::Not => 0, // shouldn't appear as binary
-                ArithOp::Shl => l << r,
-                ArithOp::Shr => l >> r,
-                ArithOp::BitAnd => l & r,
-                ArithOp::BitOr => l | r,
-                ArithOp::BitXor => l ^ r,
-                ArithOp::Pow => l.pow(r as u32),
-            };
-            return SsaValue::Expr(result.to_string());
-        }
+        (Ok(l), Ok(r)) => lower_arith_both_literal(l, r, op, lhs, rhs, state),
         (Err(_), Ok(operand)) => {
             if l_is_simple {
                 // DD#58: check if lhs is a known int function
@@ -640,4 +547,107 @@ fn lower_arith_binop(
             };
         }
     }
+}
+
+/// Both operands are numeric literals — try constant folding or emit binop.
+fn lower_arith_both_literal(
+    l: i64,
+    r: i64,
+    op: ArithOp,
+    lhs: &str,
+    rhs: &str,
+    state: &VersionState,
+) -> SsaValue {
+    // Constant fold
+    let result = match op {
+        ArithOp::Add => l + r,
+        ArithOp::Sub => l - r,
+        ArithOp::Mul => l * r,
+        ArithOp::Div => {
+            if r != 0 {
+                l / r
+            } else {
+                return SsaValue::ArithBinOp {
+                    left: Box::new(SsaValue::Expr(l.to_string())),
+                    op: ArithOp::Div,
+                    right: Box::new(SsaValue::Expr(r.to_string())),
+                };
+            }
+        }
+        ArithOp::Mod => {
+            if r != 0 {
+                l % r
+            } else {
+                return SsaValue::ArithBinOp {
+                    left: Box::new(SsaValue::Expr(l.to_string())),
+                    op: ArithOp::Mod,
+                    right: Box::new(SsaValue::Expr(r.to_string())),
+                };
+            }
+        }
+        ArithOp::Eq => {
+            if l == r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Ne => {
+            if l != r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Lt => {
+            if l < r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Le => {
+            if l <= r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Gt => {
+            if l > r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Ge => {
+            if l >= r {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::And => {
+            if l != 0 && r != 0 {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Or => {
+            if l != 0 || r != 0 {
+                1
+            } else {
+                0
+            }
+        }
+        ArithOp::Not => 0, // shouldn't appear as binary
+        ArithOp::Shl => l << r,
+        ArithOp::Shr => l >> r,
+        ArithOp::BitAnd => l & r,
+        ArithOp::BitOr => l | r,
+        ArithOp::BitXor => l ^ r,
+        ArithOp::Pow => l.pow(r as u32),
+    };
+    return SsaValue::Expr(result.to_string());
 }
