@@ -23,7 +23,6 @@ use cranelift_object::{ObjectBuilder, ObjectModule};
 
 use crate::ssa::*;
 
-use super::dispatch::lower_inst;
 use super::redirects::SavedFd;
 use super::types::InstCtx;
 
@@ -222,8 +221,7 @@ pub fn compile_ssa(
                 if block_terminated {
                     break;
                 }
-                block_terminated = lower_inst(
-                    inst,
+                block_terminated = inst.emit(
                     &mut builder,
                     &mut module,
                     &mut InstCtx {
