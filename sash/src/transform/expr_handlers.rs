@@ -10,150 +10,12 @@ use crate::ssa::*;
 pub(super) fn handle_arithmetic_expansion(s: &str, expr: &Expr, state: &VersionState) -> SsaValue {
     let trimmed = s.trim();
     // Empty expression: $(()) → 0
-    if trimmed.is_empty() {
-        return SsaValue::Expr("0".to_string());
-    }
-    // DD#58: look up arithmetic placeholder from preprocessor
-    if trimmed.starts_with("__ARITH_") && trimmed.ends_with("__") {
-        if let Some(original) = crate::lookup_arith(trimmed) {
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(original),
-                span: expr.span,
-            };
-            return expr_to_value(&e, state);
-        }
-    }
-    // Base literal: N#digits → evaluate at compile time
-    if let Some(hash_pos) = trimmed.find('#') {
-        let base_str = &trimmed[..hash_pos];
-        let digits = &trimmed[hash_pos + 1..];
-        if let Ok(base) = base_str.parse::<u32>() {
-            if (2..=64).contains(&base) && !digits.is_empty() {
-                let val = digits.chars().fold(0i64, |acc, c| {
-                    let d = match c {
-                        '0'..='9' => c as i64 - '0' as i64,
-                        'a'..='z' => c as i64 - 'a' as i64 + 10,
-                        'A'..='Z' => c as i64 - 'A' as i64 + 36,
-                        '@' => 62,
-                        '_' => 63,
-                        _ => 0,
-                    };
-                    acc * base as i64 + d
-                });
-                return SsaValue::Expr(val.to_string());
-            }
-        }
-    }
-    // Hex literal: 0x... or 0X...
-    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
-        if let Ok(v) = i64::from_str_radix(&trimmed[2..], 16) {
-            return SsaValue::Expr(v.to_string());
-        }
-    }
-    // Octal literal: 0... (but not just "0")
-    if trimmed.starts_with('0')
-        && trimmed.len() > 1
-        && trimmed[1..].chars().all(|c| ('0'..='7').contains(&c))
-    {
-        if let Ok(v) = i64::from_str_radix(&trimmed[1..], 8) {
-            return SsaValue::Expr(v.to_string());
-        }
-    }
-    // Bare number: $((7)) or $((-7)) or $((+1)) → literal
-    if let Ok(v) = trimmed.parse::<i64>() {
-        return SsaValue::Expr(v.to_string());
-    }
-    // $-prefixed variable: $(($x)) or $(($1)) → variable lookup
-    if trimmed.starts_with('$') {
-        let varname = trimmed.trim_start_matches('$');
-        if varname.chars().all(|c| c.is_alphanumeric() || c == '_') && !varname.is_empty() {
-            return SsaValue::ArithBinOp {
-                left: Box::new(SsaValue::Var(state.lookup(varname))),
-                op: ArithOp::Add,
-                right: Box::new(SsaValue::Expr("0".to_string())),
-            };
-        }
-    }
-    // DD#58: Bare function name in arithmetic → int function call
-    if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
-        && !trimmed.is_empty()
-        && state.function_int_typed.contains(trimmed)
-    {
-        return SsaValue::IntFuncCall {
-            name: trimmed.to_string(),
-            args: vec![],
-        };
-    }
-    // DD#58: Sexpr call (name args...) in arithmetic context
-    if trimmed.starts_with('(') && trimmed.ends_with(')') {
-        let inner = trimmed[1..trimmed.len() - 1].trim();
-        if let Some(call) = try_parse_sexpr(inner, expr.span, state) {
-            return call;
-        }
-    }
-    // Bare variable: $((y)) → force arithmetic interpretation (empty/non-numeric → 0)
-    if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
-        return SsaValue::ArithBinOp {
-            left: Box::new(SsaValue::Var(state.lookup(trimmed))),
-            op: ArithOp::Add,
-            right: Box::new(SsaValue::Expr("0".to_string())),
-        };
+    if let Some(val) = try_parse_arith_literal(trimmed, expr, state) {
+        return val;
     }
     // Unary plus: $((+x)) → strip plus
-    if let Some(rest) = trimmed.strip_prefix('+') {
-        let inner = rest.trim();
-        if !inner.is_empty() {
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
-                span: expr.span,
-            };
-            return expr_to_value(&e, state);
-        }
-    }
-    // Unary bitwise NOT: $((~expr)) → compute inline
-    if let Some(rest) = trimmed.strip_prefix('~') {
-        let inner = rest.trim();
-        if !inner.is_empty() {
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
-                span: expr.span,
-            };
-            let inner_val = expr_to_value(&e, state);
-            // Constant fold if possible
-            if let SsaValue::Expr(ref s) = inner_val {
-                if let Ok(v) = s.parse::<i64>() {
-                    return SsaValue::Expr((!v).to_string());
-                }
-            }
-            // Runtime: XOR with -1
-            return SsaValue::ArithBinOp {
-                left: Box::new(inner_val),
-                op: ArithOp::BitXor,
-                right: Box::new(SsaValue::Expr((-1i64).to_string())),
-            };
-        }
-    }
-    // Unary logical NOT: $((! expr)) → compute inline
-    if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
-        let inner = trimmed[1..].trim();
-        if !inner.is_empty() {
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
-                span: expr.span,
-            };
-            let inner_val = expr_to_value(&e, state);
-            if let SsaValue::Expr(ref s) = inner_val {
-                if let Ok(v) = s.parse::<i64>() {
-                    return SsaValue::Expr(if v == 0 { "1" } else { "0" }.to_string());
-                }
-            }
-            // Runtime: compare with 0
-            return SsaValue::ArithBinOp {
-                left: Box::new(inner_val),
-                op: ArithOp::Eq,
-                right: Box::new(SsaValue::Expr("0".to_string())),
-            };
-        }
+    if let Some(val) = try_parse_arith_unary(trimmed, expr, state) {
+        return val;
     }
     // Arithmetic assignment: var = expr → assign var, return value
     if let Some(eq_pos) = trimmed.find('=') {
@@ -270,6 +132,160 @@ pub(super) fn handle_arithmetic_expansion(s: &str, expr: &Expr, state: &VersionS
     }
     // Fallback: treat as literal string
     SsaValue::Expr(format!("$(({}))", s))
+}
+
+/// Try to parse arithmetic as a literal (number, hex, octal, base, variable lookup, function call).
+fn try_parse_arith_literal(trimmed: &str, expr: &Expr, state: &VersionState) -> Option<SsaValue> {
+    if trimmed.is_empty() {
+        return Some(SsaValue::Expr("0".to_string()));
+    }
+    // DD#58: look up arithmetic placeholder from preprocessor
+    if trimmed.starts_with("__ARITH_") && trimmed.ends_with("__") {
+        if let Some(original) = crate::lookup_arith(trimmed) {
+            let e = Expr {
+                kind: ExprKind::ArithmeticExpansion(original),
+                span: expr.span,
+            };
+            return Some(expr_to_value(&e, state));
+        }
+    }
+    // Base literal: N#digits → evaluate at compile time
+    if let Some(hash_pos) = trimmed.find('#') {
+        let base_str = &trimmed[..hash_pos];
+        let digits = &trimmed[hash_pos + 1..];
+        if let Ok(base) = base_str.parse::<u32>() {
+            if (2..=64).contains(&base) && !digits.is_empty() {
+                let val = digits.chars().fold(0i64, |acc, c| {
+                    let d = match c {
+                        '0'..='9' => c as i64 - '0' as i64,
+                        'a'..='z' => c as i64 - 'a' as i64 + 10,
+                        'A'..='Z' => c as i64 - 'A' as i64 + 36,
+                        '@' => 62,
+                        '_' => 63,
+                        _ => 0,
+                    };
+                    acc * base as i64 + d
+                });
+                return Some(SsaValue::Expr(val.to_string()));
+            }
+        }
+    }
+    // Hex literal: 0x... or 0X...
+    if trimmed.starts_with("0x") || trimmed.starts_with("0X") {
+        if let Ok(v) = i64::from_str_radix(&trimmed[2..], 16) {
+            return Some(SsaValue::Expr(v.to_string()));
+        }
+    }
+    // Octal literal: 0... (but not just "0")
+    if trimmed.starts_with('0')
+        && trimmed.len() > 1
+        && trimmed[1..].chars().all(|c| ('0'..='7').contains(&c))
+    {
+        if let Ok(v) = i64::from_str_radix(&trimmed[1..], 8) {
+            return Some(SsaValue::Expr(v.to_string()));
+        }
+    }
+    // Bare number: $((7)) or $((-7)) or $((+1)) → literal
+    if let Ok(v) = trimmed.parse::<i64>() {
+        return Some(SsaValue::Expr(v.to_string()));
+    }
+    // $-prefixed variable: $(($x)) or $(($1)) → variable lookup
+    if trimmed.starts_with('$') {
+        let varname = trimmed.trim_start_matches('$');
+        if varname.chars().all(|c| c.is_alphanumeric() || c == '_') && !varname.is_empty() {
+            return Some(SsaValue::ArithBinOp {
+                left: Box::new(SsaValue::Var(state.lookup(varname))),
+                op: ArithOp::Add,
+                right: Box::new(SsaValue::Expr("0".to_string())),
+            });
+        }
+    }
+    // DD#58: Bare function name in arithmetic → int function call
+    if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_')
+        && !trimmed.is_empty()
+        && state.function_int_typed.contains(trimmed)
+    {
+        return Some(SsaValue::IntFuncCall {
+            name: trimmed.to_string(),
+            args: vec![],
+        });
+    }
+    // DD#58: Sexpr call (name args...) in arithmetic context
+    if trimmed.starts_with('(') && trimmed.ends_with(')') {
+        let inner = trimmed[1..trimmed.len() - 1].trim();
+        if let Some(call) = try_parse_sexpr(inner, expr.span, state) {
+            return Some(call);
+        }
+    }
+    // Bare variable: $((y)) → force arithmetic interpretation (empty/non-numeric → 0)
+    if trimmed.chars().all(|c| c.is_alphanumeric() || c == '_') && !trimmed.is_empty() {
+        return Some(SsaValue::ArithBinOp {
+            left: Box::new(SsaValue::Var(state.lookup(trimmed))),
+            op: ArithOp::Add,
+            right: Box::new(SsaValue::Expr("0".to_string())),
+        });
+    }
+    None
+}
+
+/// Try to parse arithmetic as a unary operator (+, ~, !).
+fn try_parse_arith_unary(trimmed: &str, expr: &Expr, state: &VersionState) -> Option<SsaValue> {
+    if let Some(rest) = trimmed.strip_prefix('+') {
+        let inner = rest.trim();
+        if !inner.is_empty() {
+            let e = Expr {
+                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                span: expr.span,
+            };
+            return Some(expr_to_value(&e, state));
+        }
+    }
+    // Unary bitwise NOT: $((~expr)) → compute inline
+    if let Some(rest) = trimmed.strip_prefix('~') {
+        let inner = rest.trim();
+        if !inner.is_empty() {
+            let e = Expr {
+                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                span: expr.span,
+            };
+            let inner_val = expr_to_value(&e, state);
+            // Constant fold if possible
+            if let SsaValue::Expr(ref s) = inner_val {
+                if let Ok(v) = s.parse::<i64>() {
+                    return Some(SsaValue::Expr((!v).to_string()));
+                }
+            }
+            // Runtime: XOR with -1
+            return Some(SsaValue::ArithBinOp {
+                left: Box::new(inner_val),
+                op: ArithOp::BitXor,
+                right: Box::new(SsaValue::Expr((-1i64).to_string())),
+            });
+        }
+    }
+    // Unary logical NOT: $((! expr)) → compute inline
+    if trimmed.starts_with('!') && !trimmed.starts_with("!=") {
+        let inner = trimmed[1..].trim();
+        if !inner.is_empty() {
+            let e = Expr {
+                kind: ExprKind::ArithmeticExpansion(inner.to_string()),
+                span: expr.span,
+            };
+            let inner_val = expr_to_value(&e, state);
+            if let SsaValue::Expr(ref s) = inner_val {
+                if let Ok(v) = s.parse::<i64>() {
+                    return Some(SsaValue::Expr(if v == 0 { "1" } else { "0" }.to_string()));
+                }
+            }
+            // Runtime: compare with 0
+            return Some(SsaValue::ArithBinOp {
+                left: Box::new(inner_val),
+                op: ArithOp::Eq,
+                right: Box::new(SsaValue::Expr("0".to_string())),
+            });
+        }
+    }
+    None
 }
 
 /// Handle the catch-all arm — primarily CommandSubstitution → FuncCall/CmdSubst.
