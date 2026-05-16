@@ -35,52 +35,7 @@ pub(super) fn lower_one(
             super::stmt_handlers::handle_assignment(a, stmt, ssa, state, block)
         }
 
-        StmtKind::Declaration(d) => {
-            let is_array = d.flags.contains(&"-a".to_string());
-            let is_assoc = d.flags.contains(&"-A".to_string());
-            for a in &d.assignments {
-                // Bare `declare var` (no =value) — don't reset existing variable
-                let is_bare = matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty())
-                    && !is_array
-                    && !is_assoc;
-                if is_bare && state.lookup(&a.name).version > 0 {
-                    // Variable already defined — bare declare is a no-op
-                    continue;
-                }
-                let val =
-                    if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
-                        // Bare declaration like `array arr` or `map m` — empty table
-                        if is_assoc {
-                            state.assoc_arrays.insert(a.name.clone());
-                            state.collections.insert(a.name.clone());
-                            SsaValue::AssocArray(vec![])
-                        } else {
-                            state.collections.insert(a.name.clone());
-                            SsaValue::IndexedArray(vec![])
-                        }
-                    } else {
-                        let val = expr_to_value(&a.value, state);
-                        let val = lift_int_func_calls(val, ssa, state, &mut block);
-                        if matches!(&val, SsaValue::AssocArray(_)) {
-                            state.assoc_arrays.insert(a.name.clone());
-                        }
-                        if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
-                            state.collections.insert(a.name.clone());
-                        }
-                        val
-                    };
-                let target = state.define(&a.name);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target: target.clone(),
-                    value: val.clone(),
-                });
-
-                if d.keyword == crate::ir::DeclKeyword::Readonly {
-                    state.readonly_vars.insert(a.name.clone());
-                }
-            }
-            block
-        }
+        StmtKind::Declaration(d) => lower_declaration_stmt(d, ssa, state, block),
 
         StmtKind::Command(c) => super::stmt_handlers::handle_command(c, stmt, ssa, state, block),
 
@@ -117,83 +72,7 @@ pub(super) fn lower_one(
         StmtKind::For(f) => lower_for(f, ssa, state, block),
 
         StmtKind::Pipeline(p) => super::stmt_handlers::handle_pipeline(p, stmt, ssa, state, block),
-        StmtKind::List(l) => {
-            match l.op {
-                ListOp::And => {
-                    // left && right: run left, skip right if left failed
-                    state.in_condition += 1;
-                    block = lower_one(&l.left, ssa, state, block);
-                    state.in_condition -= 1;
-                    let right_block = ssa.new_block("and.right");
-                    let merge_block = ssa.new_block("and.merge");
-                    ssa.block_mut(block).terminator = Terminator::Branch {
-                        condition: block.to_string(),
-                        true_block: right_block,
-                        false_block: merge_block,
-                    };
-                    let right_end = lower_one(&l.right, ssa, state, right_block);
-                    ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
-                    merge_block
-                }
-                ListOp::Or => {
-                    // left || right: run left, skip right if left succeeded
-                    state.in_condition += 1;
-                    block = lower_one(&l.left, ssa, state, block);
-                    state.in_condition -= 1;
-                    let right_block = ssa.new_block("or.right");
-                    let merge_block = ssa.new_block("or.merge");
-                    ssa.block_mut(block).terminator = Terminator::Branch {
-                        condition: block.to_string(),
-                        true_block: merge_block,  // success → skip right
-                        false_block: right_block, // failure → run right
-                    };
-                    let right_end = lower_one(&l.right, ssa, state, right_block);
-                    // DD#55: if the right side completes, the || list succeeded;
-                    // reset exit status to 0 so the program doesn't exit with
-                    // the left side's failure status.
-                    let zero_ref = state.define("?");
-                    ssa.block_mut(right_end).insts.push(SsaInst::Assign {
-                        target: zero_ref,
-                        value: SsaValue::Literal("0".to_string()),
-                    });
-                    ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
-                    merge_block
-                }
-                ListOp::Background => {
-                    // cmd & — fork, child runs cmd, parent continues
-                    let child_block = ssa.new_block("bg.child");
-                    let parent_block = ssa.new_block("bg.parent");
-
-                    // Fork
-                    ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__subshell".to_string(),
-                        args: vec![],
-                        redirects: vec![],
-                        checked: true,
-                    });
-                    ssa.block_mut(block).terminator = Terminator::Branch {
-                        condition: "__fork_pid".to_string(),
-                        true_block: parent_block, // parent continues
-                        false_block: child_block, // child runs command
-                    };
-
-                    // Store fork pid in $! variable
-                    let bg_target = state.define("!");
-                    ssa.block_mut(parent_block).insts.push(SsaInst::Command {
-                        name: "__store_bg_pid".to_string(),
-                        args: vec![SsaValue::Var(bg_target)],
-                        redirects: vec![],
-                        checked: true,
-                    });
-
-                    // Child: run the command then _exit
-                    let child_end = lower_one(&l.left, ssa, state, child_block);
-                    ssa.block_mut(child_end).terminator = Terminator::Return;
-
-                    parent_block
-                }
-            }
-        }
+        StmtKind::List(l) => lower_list_stmt(l, stmt, ssa, state, block),
 
         StmtKind::Function(f) => {
             // DD#56: END block — store body for end_block, don't emit as function
@@ -327,46 +206,7 @@ pub(super) fn lower_one(
             }
         }
 
-        StmtKind::Subshell(s) => {
-            // Subshell: fork child, run body in child, wait in parent.
-            // Child gets its own memory space — modifications don't propagate.
-            let child_block = ssa.new_block("subshell");
-            let after_block = ssa.new_block("subshell_done");
-
-            // Emit fork — codegen stores pid in test_result_var
-            ssa.block_mut(block).insts.push(SsaInst::Command {
-                name: "__subshell".to_string(),
-                args: vec![],
-                redirects: vec![],
-                checked: true,
-            });
-            // Branch: parent (pid>0) → after, child (pid==0) → body
-            ssa.block_mut(block).terminator = Terminator::Branch {
-                condition: "__fork_pid".to_string(),
-                true_block: after_block,
-                false_block: child_block,
-            };
-
-            // Parent: wait for child at start of after_block
-            ssa.block_mut(after_block).insts.push(SsaInst::Command {
-                name: "__subshell_wait".to_string(),
-                args: vec![],
-                redirects: vec![],
-                checked: true,
-            });
-
-            // Snapshot SSA state — child modifications don't affect parent
-            let snap = state.snapshot();
-
-            // Child: run body then _exit(0)
-            let body_exit = lower_stmts(&s.body, ssa, state, child_block);
-            ssa.block_mut(body_exit).terminator = Terminator::Return;
-
-            // Restore parent's SSA versions
-            state.restore(&snap);
-
-            after_block
-        }
+        StmtKind::Subshell(s) => lower_subshell_stmt(s, ssa, state, block),
 
         StmtKind::Group(g) => lower_stmts(&g.body, ssa, state, block),
 
@@ -404,4 +244,184 @@ pub(super) fn lower_one(
             result_block
         }
     }
+}
+
+fn lower_declaration_stmt(
+    d: &Declaration,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    let is_array = d.flags.contains(&"-a".to_string());
+    let is_assoc = d.flags.contains(&"-A".to_string());
+    for a in &d.assignments {
+        // Bare `declare var` (no =value) — don't reset existing variable
+        let is_bare =
+            matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty()) && !is_array && !is_assoc;
+        if is_bare && state.lookup(&a.name).version > 0 {
+            // Variable already defined — bare declare is a no-op
+            continue;
+        }
+        let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
+            // Bare declaration like `array arr` or `map m` — empty table
+            if is_assoc {
+                state.assoc_arrays.insert(a.name.clone());
+                state.collections.insert(a.name.clone());
+                SsaValue::AssocArray(vec![])
+            } else {
+                state.collections.insert(a.name.clone());
+                SsaValue::IndexedArray(vec![])
+            }
+        } else {
+            let val = expr_to_value(&a.value, state);
+            let val = lift_int_func_calls(val, ssa, state, &mut block);
+            if matches!(&val, SsaValue::AssocArray(_)) {
+                state.assoc_arrays.insert(a.name.clone());
+            }
+            if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
+                state.collections.insert(a.name.clone());
+            }
+            val
+        };
+        let target = state.define(&a.name);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: target.clone(),
+            value: val.clone(),
+        });
+
+        if d.keyword == crate::ir::DeclKeyword::Readonly {
+            state.readonly_vars.insert(a.name.clone());
+        }
+    }
+    block
+}
+
+fn lower_list_stmt(
+    l: &List,
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    match l.op {
+        ListOp::And => {
+            // left && right: run left, skip right if left failed
+            state.in_condition += 1;
+            block = lower_one(&l.left, ssa, state, block);
+            state.in_condition -= 1;
+            let right_block = ssa.new_block("and.right");
+            let merge_block = ssa.new_block("and.merge");
+            ssa.block_mut(block).terminator = Terminator::Branch {
+                condition: block.to_string(),
+                true_block: right_block,
+                false_block: merge_block,
+            };
+            let right_end = lower_one(&l.right, ssa, state, right_block);
+            ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
+            merge_block
+        }
+        ListOp::Or => {
+            // left || right: run left, skip right if left succeeded
+            state.in_condition += 1;
+            block = lower_one(&l.left, ssa, state, block);
+            state.in_condition -= 1;
+            let right_block = ssa.new_block("or.right");
+            let merge_block = ssa.new_block("or.merge");
+            ssa.block_mut(block).terminator = Terminator::Branch {
+                condition: block.to_string(),
+                true_block: merge_block,  // success → skip right
+                false_block: right_block, // failure → run right
+            };
+            let right_end = lower_one(&l.right, ssa, state, right_block);
+            // DD#55: if the right side completes, the || list succeeded;
+            // reset exit status to 0 so the program doesn't exit with
+            // the left side's failure status.
+            let zero_ref = state.define("?");
+            ssa.block_mut(right_end).insts.push(SsaInst::Assign {
+                target: zero_ref,
+                value: SsaValue::Literal("0".to_string()),
+            });
+            ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
+            merge_block
+        }
+        ListOp::Background => {
+            // cmd & — fork, child runs cmd, parent continues
+            let child_block = ssa.new_block("bg.child");
+            let parent_block = ssa.new_block("bg.parent");
+
+            // Fork
+            ssa.block_mut(block).insts.push(SsaInst::Command {
+                name: "__subshell".to_string(),
+                args: vec![],
+                redirects: vec![],
+                checked: true,
+            });
+            ssa.block_mut(block).terminator = Terminator::Branch {
+                condition: "__fork_pid".to_string(),
+                true_block: parent_block, // parent continues
+                false_block: child_block, // child runs command
+            };
+
+            // Store fork pid in $! variable
+            let bg_target = state.define("!");
+            ssa.block_mut(parent_block).insts.push(SsaInst::Command {
+                name: "__store_bg_pid".to_string(),
+                args: vec![SsaValue::Var(bg_target)],
+                redirects: vec![],
+                checked: true,
+            });
+
+            // Child: run the command then _exit
+            let child_end = lower_one(&l.left, ssa, state, child_block);
+            ssa.block_mut(child_end).terminator = Terminator::Return;
+
+            parent_block
+        }
+    }
+}
+
+fn lower_subshell_stmt(
+    s: &Subshell,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    // Subshell: fork child, run body in child, wait in parent.
+    // Child gets its own memory space — modifications don't propagate.
+    let child_block = ssa.new_block("subshell");
+    let after_block = ssa.new_block("subshell_done");
+
+    // Emit fork — codegen stores pid in test_result_var
+    ssa.block_mut(block).insts.push(SsaInst::Command {
+        name: "__subshell".to_string(),
+        args: vec![],
+        redirects: vec![],
+        checked: true,
+    });
+    // Branch: parent (pid>0) → after, child (pid==0) → body
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        condition: "__fork_pid".to_string(),
+        true_block: after_block,
+        false_block: child_block,
+    };
+
+    // Parent: wait for child at start of after_block
+    ssa.block_mut(after_block).insts.push(SsaInst::Command {
+        name: "__subshell_wait".to_string(),
+        args: vec![],
+        redirects: vec![],
+        checked: true,
+    });
+
+    // Snapshot SSA state — child modifications don't affect parent
+    let snap = state.snapshot();
+
+    // Child: run body then _exit(0)
+    let body_exit = lower_stmts(&s.body, ssa, state, child_block);
+    ssa.block_mut(body_exit).terminator = Terminator::Return;
+
+    // Restore parent's SSA versions
+    state.restore(&snap);
+
+    after_block
 }
