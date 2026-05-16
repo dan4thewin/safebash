@@ -12,87 +12,7 @@ use tree_sitter::Node;
 pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
     let span = Span::from_node(node);
     let kind = match node.kind() {
-        "word" | "extglob_pattern" => {
-            let text = node.utf8_text(source).unwrap_or("").trim().to_string();
-            if text.starts_with("~/") {
-                // Tilde expansion: ~/foo → $HOME/foo
-                ExprKind::Concat(vec![
-                    Expr {
-                        kind: ExprKind::SimpleExpansion("HOME".to_string()),
-                        span,
-                    },
-                    Expr {
-                        kind: ExprKind::Literal(text[1..].to_string()),
-                        span,
-                    },
-                ])
-            } else if text == "~" {
-                ExprKind::SimpleExpansion("HOME".to_string())
-            } else if text.starts_with('@') && text.len() > 1 {
-                // Sash-native: @arr → all array elements (DD#41)
-                let name = text[1..].to_string();
-                ExprKind::ParameterExpansion(ParameterExpansion {
-                    name,
-                    operator: Some("arrvals".to_string()),
-                    operand: None,
-                })
-            } else if node.named_child_count() > 0 && {
-                // Only enter expansion path if children are actual expansions
-                let mut has_expansion = false;
-                let mut cursor_check = node.walk();
-                for child in node.named_children(&mut cursor_check) {
-                    match child.kind() {
-                        "simple_expansion" | "expansion" | "command_substitution" => {
-                            has_expansion = true;
-                            break;
-                        }
-                        _ => {}
-                    }
-                }
-                has_expansion
-            } {
-                // Word contains expansions (e.g., ${var} in [[ =~ ]] context)
-                // Build parts like lower_string
-                let mut parts = Vec::new();
-                let content_start = node.start_byte();
-                let content_end = node.end_byte();
-                let mut last_end = content_start;
-                let mut cursor2 = node.walk();
-                for child in node.children(&mut cursor2) {
-                    if !child.is_named() {
-                        continue;
-                    }
-                    let cs = child.start_byte();
-                    if cs > last_end {
-                        let gap = std::str::from_utf8(&source[last_end..cs]).unwrap_or("");
-                        if !gap.is_empty() {
-                            parts.push(Expr {
-                                kind: ExprKind::Literal(gap.to_string()),
-                                span,
-                            });
-                        }
-                    }
-                    parts.push(lower_expr(child, source));
-                    last_end = child.end_byte();
-                }
-                if last_end < content_end {
-                    let gap = std::str::from_utf8(&source[last_end..content_end]).unwrap_or("");
-                    if !gap.is_empty() {
-                        parts.push(Expr {
-                            kind: ExprKind::Literal(gap.to_string()),
-                            span,
-                        });
-                    }
-                }
-                if parts.len() == 1 {
-                    parts.into_iter().next().unwrap().kind
-                } else {
-                    ExprKind::Concat(parts)
-                }
-            } else {
-                ExprKind::Literal(text)
-            }
-        }
+        "word" | "extglob_pattern" => lower_word(node, source, span),
 
         "string" => lower_string(node, source),
 
@@ -213,43 +133,7 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
             }
         }
 
-        "arithmetic_expansion" => {
-            // DD#58: If arithmetic contains ERROR nodes (e.g., sexpr syntax),
-            // fall back to raw text so the transform text parser can handle it.
-            if has_error_descendant(node) {
-                let text = node.utf8_text(source).unwrap_or("$((0))");
-                let inner = text
-                    .strip_prefix("$((")
-                    .unwrap_or(text)
-                    .strip_suffix("))")
-                    .unwrap_or(text)
-                    .trim()
-                    .to_string();
-                ExprKind::ArithmeticExpansion(inner)
-            } else {
-                // Walk tree-sitter's AST instead of text-parsing
-                // For comma operator: multiple named children — use the last one
-                let count = node.named_child_count();
-                if count > 1 {
-                    // Comma operator: $((a, b, c)) → evaluate all, return last
-                    let last = node.named_child(count - 1).unwrap();
-                    lower_arith_expr_to_exprkind(last, source)
-                } else if let Some(expr_node) = node.named_child(0) {
-                    lower_arith_expr_to_exprkind(expr_node, source)
-                } else {
-                    // Fallback: extract text
-                    let text = node.utf8_text(source).unwrap_or("$((??))");
-                    let inner = text
-                        .strip_prefix("$((")
-                        .unwrap_or(text)
-                        .strip_suffix("))")
-                        .unwrap_or(text)
-                        .trim()
-                        .to_string();
-                    ExprKind::ArithmeticExpansion(inner)
-                }
-            } // end if has_error_descendant else
-        }
+        "arithmetic_expansion" => lower_arithmetic_expansion(node, source, span),
 
         "concatenation" => {
             let mut parts = Vec::new();
@@ -330,6 +214,128 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
     };
 
     Expr { kind, span }
+}
+
+fn lower_arithmetic_expansion(node: Node, source: &[u8], span: Span) -> ExprKind {
+    use crate::emit_source::record_coercion;
+    // DD#58: If arithmetic contains ERROR nodes (e.g., sexpr syntax),
+    // fall back to raw text so the transform text parser can handle it.
+    if has_error_descendant(node) {
+        let text = node.utf8_text(source).unwrap_or("$((0))");
+        let inner = text
+            .strip_prefix("$((")
+            .unwrap_or(text)
+            .strip_suffix("))")
+            .unwrap_or(text)
+            .trim()
+            .to_string();
+        ExprKind::ArithmeticExpansion(inner)
+    } else {
+        // Walk tree-sitter's AST instead of text-parsing
+        // For comma operator: multiple named children — use the last one
+        let count = node.named_child_count();
+        if count > 1 {
+            // Comma operator: $((a, b, c)) → evaluate all, return last
+            let last = node.named_child(count - 1).unwrap();
+            lower_arith_expr_to_exprkind(last, source)
+        } else if let Some(expr_node) = node.named_child(0) {
+            lower_arith_expr_to_exprkind(expr_node, source)
+        } else {
+            // Fallback: extract text
+            let text = node.utf8_text(source).unwrap_or("$((??))");
+            let inner = text
+                .strip_prefix("$((")
+                .unwrap_or(text)
+                .strip_suffix("))")
+                .unwrap_or(text)
+                .trim()
+                .to_string();
+            ExprKind::ArithmeticExpansion(inner)
+        }
+    } // end if has_error_descendant else
+}
+
+fn lower_word(node: Node, source: &[u8], span: Span) -> ExprKind {
+    use super::helpers::has_error_descendant;
+    let text = node.utf8_text(source).unwrap_or("").trim().to_string();
+    if text.starts_with("~/") {
+        // Tilde expansion: ~/foo → $HOME/foo
+        ExprKind::Concat(vec![
+            Expr {
+                kind: ExprKind::SimpleExpansion("HOME".to_string()),
+                span,
+            },
+            Expr {
+                kind: ExprKind::Literal(text[1..].to_string()),
+                span,
+            },
+        ])
+    } else if text == "~" {
+        ExprKind::SimpleExpansion("HOME".to_string())
+    } else if text.starts_with('@') && text.len() > 1 {
+        // Sash-native: @arr → all array elements (DD#41)
+        let name = text[1..].to_string();
+        ExprKind::ParameterExpansion(ParameterExpansion {
+            name,
+            operator: Some("arrvals".to_string()),
+            operand: None,
+        })
+    } else if node.named_child_count() > 0 && {
+        // Only enter expansion path if children are actual expansions
+        let mut has_expansion = false;
+        let mut cursor_check = node.walk();
+        for child in node.named_children(&mut cursor_check) {
+            match child.kind() {
+                "simple_expansion" | "expansion" | "command_substitution" => {
+                    has_expansion = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+        has_expansion
+    } {
+        // Word contains expansions (e.g., ${var} in [[ =~ ]] context)
+        // Build parts like lower_string
+        let mut parts = Vec::new();
+        let content_start = node.start_byte();
+        let content_end = node.end_byte();
+        let mut last_end = content_start;
+        let mut cursor2 = node.walk();
+        for child in node.children(&mut cursor2) {
+            if !child.is_named() {
+                continue;
+            }
+            let cs = child.start_byte();
+            if cs > last_end {
+                let gap = std::str::from_utf8(&source[last_end..cs]).unwrap_or("");
+                if !gap.is_empty() {
+                    parts.push(Expr {
+                        kind: ExprKind::Literal(gap.to_string()),
+                        span,
+                    });
+                }
+            }
+            parts.push(lower_expr(child, source));
+            last_end = child.end_byte();
+        }
+        if last_end < content_end {
+            let gap = std::str::from_utf8(&source[last_end..content_end]).unwrap_or("");
+            if !gap.is_empty() {
+                parts.push(Expr {
+                    kind: ExprKind::Literal(gap.to_string()),
+                    span,
+                });
+            }
+        }
+        if parts.len() == 1 {
+            parts.into_iter().next().unwrap().kind
+        } else {
+            ExprKind::Concat(parts)
+        }
+    } else {
+        ExprKind::Literal(text)
+    }
 }
 
 fn lower_regex_node(node: Node, source: &[u8], span: Span) -> ExprKind {
