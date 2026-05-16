@@ -48,138 +48,11 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
 
         "expansion" => lower_parameter_expansion(node, source),
 
-        "command_substitution" => {
-            // DD#55: $(status) → $? and $(getcpid) → $!
-            // Check for single bare command that is a sash special form
-            let inner_stmts: Vec<_> = node
-                .children(&mut node.walk())
-                .filter(|c| c.is_named())
-                .collect();
-            if inner_stmts.len() == 1 && inner_stmts[0].kind() == "command" {
-                let cmd_node = inner_stmts[0];
-                let cmd_name_node = cmd_node.child_by_field_name("name");
-                let has_args = cmd_node
-                    .children(&mut cmd_node.walk())
-                    .filter(|c| c.is_named() && c.kind() != "command_name")
-                    .count()
-                    > 0;
-                if !has_args {
-                    if let Some(name_node) = cmd_name_node {
-                        let name = name_node.utf8_text(source).unwrap_or("");
-                        if name == "status" {
-                            let span = Span::from_node(node);
-                            return Expr {
-                                kind: ExprKind::SimpleExpansion("?".to_string()),
-                                span,
-                            };
-                        }
-                        if name == "getcpid" {
-                            let span = Span::from_node(node);
-                            return Expr {
-                                kind: ExprKind::SimpleExpansion("!".to_string()),
-                                span,
-                            };
-                        }
-                    }
-                }
-            }
-            let mut stmts = Vec::new();
-            let mut is_file_slurp = false;
-            let mut slurp_path = String::new();
-            for child in node.children(&mut node.walk()) {
-                if child.kind() == "file_redirect" {
-                    // Check for $(<file) — file slurp pattern
-                    let mut has_read = false;
-                    let mut path = String::new();
-                    let mut rc = child.walk();
-                    for rchild in child.children(&mut rc) {
-                        if rchild.kind() == "<" {
-                            has_read = true;
-                        }
-                        if rchild.kind() == "word"
-                            || rchild.kind() == "string"
-                            || rchild.kind() == "concatenation"
-                        {
-                            path = rchild.utf8_text(source).unwrap_or("").to_string();
-                        }
-                    }
-                    if has_read && !path.is_empty() {
-                        is_file_slurp = true;
-                        slurp_path = path;
-                    }
-                } else if child.is_named() {
-                    if let Some(s) = lower_statement(child, source) {
-                        stmts.push(s);
-                    }
-                }
-            }
-            if is_file_slurp && stmts.is_empty() {
-                // $(<file) → CommandSubstitution with a single `cat file` command
-                ExprKind::CommandSubstitution(vec![Statement {
-                    kind: StmtKind::Command(Command {
-                        name: Expr {
-                            kind: ExprKind::Literal("cat".to_string()),
-                            span: Span { line: 0, col: 0 },
-                        },
-                        args: vec![Expr {
-                            kind: ExprKind::Literal(slurp_path),
-                            span: Span { line: 0, col: 0 },
-                        }],
-                    }),
-                    span: Span { line: 0, col: 0 },
-                }])
-            } else {
-                ExprKind::CommandSubstitution(stmts)
-            }
-        }
+        "command_substitution" => lower_command_sub(node, source, span).kind,
 
         "arithmetic_expansion" => lower_arithmetic_expansion(node, source, span),
 
-        "concatenation" => {
-            let mut parts = Vec::new();
-            for child in node.children(&mut node.walk()) {
-                if child.is_named() {
-                    parts.push(lower_expr(child, source));
-                }
-            }
-            // Sash-native: $arr[i] → Subscript (DD#41)
-            // CST: concatenation(simple_expansion($arr), word([), number(i), word(]))
-            // or:  concatenation(simple_expansion($arr), word([i]))
-            let full_text = node.utf8_text(source).unwrap_or("");
-            if parts.len() >= 2 {
-                if let ExprKind::SimpleExpansion(ref name) = parts[0].kind {
-                    // Check if remaining text after $name is [index]
-                    let after_expansion = &full_text[name.len() + 1..]; // skip $name
-                    if after_expansion.starts_with('[') && after_expansion.ends_with(']') {
-                        let idx = &after_expansion[1..after_expansion.len() - 1];
-                        let index_expr = if idx == "@" || idx == "*" {
-                            // $arr[@] → all values
-                            return Expr {
-                                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                                    name: name.clone(),
-                                    operator: Some("arrvals".to_string()),
-                                    operand: None,
-                                }),
-                                span,
-                            };
-                        } else {
-                            Expr {
-                                kind: ExprKind::Literal(idx.to_string()),
-                                span,
-                            }
-                        };
-                        return Expr {
-                            kind: ExprKind::Subscript {
-                                name: name.clone(),
-                                index: Box::new(index_expr),
-                            },
-                            span,
-                        };
-                    }
-                }
-            }
-            ExprKind::Concat(parts)
-        }
+        "concatenation" => lower_concatenation(node, source, span).kind,
 
         "array" => {
             let mut elems = Vec::new();
@@ -214,6 +87,55 @@ pub(super) fn lower_expr(node: Node, source: &[u8]) -> Expr {
     };
 
     Expr { kind, span }
+}
+
+fn lower_concatenation(node: Node, source: &[u8], span: Span) -> Expr {
+    let mut parts = Vec::new();
+    for child in node.children(&mut node.walk()) {
+        if child.is_named() {
+            parts.push(lower_expr(child, source));
+        }
+    }
+    // Sash-native: $arr[i] → Subscript (DD#41)
+    // CST: concatenation(simple_expansion($arr), word([), number(i), word(]))
+    // or:  concatenation(simple_expansion($arr), word([i]))
+    let full_text = node.utf8_text(source).unwrap_or("");
+    if parts.len() >= 2 {
+        if let ExprKind::SimpleExpansion(ref name) = parts[0].kind {
+            // Check if remaining text after $name is [index]
+            let after_expansion = &full_text[name.len() + 1..]; // skip $name
+            if after_expansion.starts_with('[') && after_expansion.ends_with(']') {
+                let idx = &after_expansion[1..after_expansion.len() - 1];
+                let index_expr = if idx == "@" || idx == "*" {
+                    // $arr[@] → all values
+                    return Expr {
+                        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+                            name: name.clone(),
+                            operator: Some("arrvals".to_string()),
+                            operand: None,
+                        }),
+                        span,
+                    };
+                } else {
+                    Expr {
+                        kind: ExprKind::Literal(idx.to_string()),
+                        span,
+                    }
+                };
+                return Expr {
+                    kind: ExprKind::Subscript {
+                        name: name.clone(),
+                        index: Box::new(index_expr),
+                    },
+                    span,
+                };
+            }
+        }
+    }
+    Expr {
+        kind: ExprKind::Concat(parts),
+        span,
+    }
 }
 
 fn lower_arithmetic_expansion(node: Node, source: &[u8], span: Span) -> ExprKind {
@@ -1250,4 +1172,93 @@ fn prescan_regex(node: Node, source: &[u8]) -> Option<ExprKind> {
         }
     }
     None
+}
+
+fn lower_command_sub(node: Node, source: &[u8], span: Span) -> Expr {
+    use super::statements::lower_statement;
+    // DD#55: $(status) → $? and $(getcpid) → $!
+    // Check for single bare command that is a sash special form
+    let inner_stmts: Vec<_> = node
+        .children(&mut node.walk())
+        .filter(|c| c.is_named())
+        .collect();
+    if inner_stmts.len() == 1 && inner_stmts[0].kind() == "command" {
+        let cmd_node = inner_stmts[0];
+        let cmd_name_node = cmd_node.child_by_field_name("name");
+        let has_args = cmd_node
+            .children(&mut cmd_node.walk())
+            .filter(|c| c.is_named() && c.kind() != "command_name")
+            .count()
+            > 0;
+        if !has_args {
+            if let Some(name_node) = cmd_name_node {
+                let name = name_node.utf8_text(source).unwrap_or("");
+                if name == "status" {
+                    let span = Span::from_node(node);
+                    return Expr {
+                        kind: ExprKind::SimpleExpansion("?".to_string()),
+                        span,
+                    };
+                }
+                if name == "getcpid" {
+                    let span = Span::from_node(node);
+                    return Expr {
+                        kind: ExprKind::SimpleExpansion("!".to_string()),
+                        span,
+                    };
+                }
+            }
+        }
+    }
+    let mut stmts = Vec::new();
+    let mut is_file_slurp = false;
+    let mut slurp_path = String::new();
+    for child in node.children(&mut node.walk()) {
+        if child.kind() == "file_redirect" {
+            // Check for $(<file) — file slurp pattern
+            let mut has_read = false;
+            let mut path = String::new();
+            let mut rc = child.walk();
+            for rchild in child.children(&mut rc) {
+                if rchild.kind() == "<" {
+                    has_read = true;
+                }
+                if rchild.kind() == "word"
+                    || rchild.kind() == "string"
+                    || rchild.kind() == "concatenation"
+                {
+                    path = rchild.utf8_text(source).unwrap_or("").to_string();
+                }
+            }
+            if has_read && !path.is_empty() {
+                is_file_slurp = true;
+                slurp_path = path;
+            }
+        } else if child.is_named() {
+            if let Some(s) = lower_statement(child, source) {
+                stmts.push(s);
+            }
+        }
+    }
+    Expr {
+        kind: if is_file_slurp && stmts.is_empty() {
+            // $(<file) → CommandSubstitution with a single `cat file` command
+            ExprKind::CommandSubstitution(vec![Statement {
+                kind: StmtKind::Command(Command {
+                    name: Expr {
+                        kind: ExprKind::Literal("cat".to_string()),
+                        span: Span { line: 0, col: 0 },
+                    },
+                    args: vec![Expr {
+                        kind: ExprKind::Literal(slurp_path),
+                        span: Span { line: 0, col: 0 },
+                    }],
+                }),
+                span: Span { line: 0, col: 0 },
+            }])
+        } else {
+            ExprKind::CommandSubstitution(stmts)
+        },
+        span,
+    }
 }
