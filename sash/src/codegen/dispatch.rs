@@ -56,32 +56,7 @@ impl SsaInst {
                 redirects,
                 ..
             } if name == "echo" => {
-                let restore = emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
-                );
-                lower_echo(
-                    args,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    space_id,
-                    nl_id,
-                    Some(exit_status_var),
-                );
-                emit_restore(restore, builder, module, externs);
-                // echo always succeeds — set test_result for && / || chains
-                let one = builder.ins().iconst(I64, 1);
-                builder.def_var(test_result_var, one);
-                let zero = builder.ins().iconst(I64, 0);
-                builder.def_var(exit_status_var, zero);
+                return self.emit_echo(args, redirects, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "[[" => {
                 // Legacy path — should not be reached now that transform
@@ -102,31 +77,7 @@ impl SsaInst {
                 builder.def_var(exit_status_var, new_es);
             }
             SsaInst::Command { name, args, .. } if name == "__let_exit" => {
-                // let builtin: exit status 0 if value != 0, 1 if value == 0
-                if let Some(SsaValue::Var(vr)) = args.first() {
-                    let key = format!("{}_{}", vr.name, vr.version);
-                    let int_val = if let Some(slot) = vars.get(&key) {
-                        if slot.is_int() {
-                            builder.use_var(*slot.as_int())
-                        } else {
-                            let ptr = builder.use_var(slot.str_ptr());
-                            let len = builder.use_var(slot.str_len());
-                            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                            builder.inst_results(call)[0]
-                        }
-                    } else {
-                        builder.ins().iconst(I64, 0)
-                    };
-                    let zero = builder.ins().iconst(I64, 0);
-                    let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
-                    let one = builder.ins().iconst(I64, 1);
-                    let es = builder.ins().select(is_zero, one, zero);
-                    builder.def_var(exit_status_var, es);
-                    // Also set test_result_var for branch terminators (if/while)
-                    let tr = builder.ins().select(is_zero, zero, one);
-                    builder.def_var(test_result_var, tr);
-                }
+                return self.emit_let_exit(args, builder, module, ctx);
             }
             SsaInst::Command { name, .. } if name == "__subshell" => {
                 // Fork: pid = sash_fork(). Store pid in test_result_var
@@ -166,24 +117,7 @@ impl SsaInst {
                 }
             }
             SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
-                // Store fork pid (test_result_var) into $! variable
-                if let Some(SsaValue::Var(vr)) = args.first() {
-                    let pid = builder.use_var(test_result_var);
-                    // Convert pid to string via itoa
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                    let str_ptr = builder.inst_results(call)[0];
-                    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-                    let sv = &vars[&vr.display()];
-                    builder.def_var(sv.str_ptr(), str_ptr);
-                    builder.def_var(sv.str_len(), str_len);
-                }
+                return self.emit_store_bg_pid(args, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "__trap_signal" => {
                 // trap '' SIG or trap - SIG: call sash_trap(signum, handler)
@@ -209,31 +143,7 @@ impl SsaInst {
                 }
             }
             SsaInst::Command { name, args, .. } if name == "__table_delete" => {
-                // unset map[key] → sash_table_delete(table_ptr, key_ptr, key_len)
-                if args.len() >= 2 {
-                    let (tbl_ptr, _) = lower_value(
-                        &args[0],
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                        Some(exit_status_var),
-                    );
-                    let (key_ptr, key_len) = lower_value(
-                        &args[1],
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                        Some(exit_status_var),
-                    );
-                    let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
-                    builder.ins().call(del_ref, &[tbl_ptr, key_ptr, key_len]);
-                }
+                return self.emit_table_delete(args, builder, module, ctx);
             }
             SsaInst::Command { name, .. } if name == ":" || name == "true" || name == "false" => {
                 let val = if name == "false" { 0i64 } else { 1i64 };
@@ -246,32 +156,7 @@ impl SsaInst {
                 builder.def_var(exit_status_var, es);
             }
             SsaInst::Command { name, args, .. } if name == "exit" => {
-                // exit N — get the exit code from first arg, default 0
-                let code = if let Some(SsaValue::Literal(s)) = args.first() {
-                    s.parse::<i64>().unwrap_or(0)
-                } else {
-                    0
-                };
-                let code_val = builder.ins().iconst(I64, code);
-                // DD#56: if END block exists and we're NOT inside it, jump to END
-                if let Some(end_cl) = end_cl_block {
-                    if let Some(end_id) = program.end_block {
-                        if ssa_id < end_id {
-                            builder.def_var(exit_status_var, code_val);
-                            builder.ins().jump(end_cl, &[]);
-                            return true;
-                        }
-                    }
-                }
-                // Direct exit (no END block, or inside END block)
-                // Inside END: also update saved_end_status_var so Return uses it
-                builder.def_var(saved_end_status_var, code_val);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[code_val]);
-                builder
-                    .ins()
-                    .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                return true; // block is terminated
+                return self.emit_exit(args, builder, module, ctx);
             }
             SsaInst::Command {
                 name,
@@ -285,28 +170,7 @@ impl SsaInst {
                 return super::inst_handlers::handle_cd(args, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "pwd" => {
-                // pwd — getcwd, write to stdout
-                let len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let len_addr = builder.ins().stack_addr(I64, len_slot, 0);
-                let getcwd_ref = module.declare_func_in_func(externs.getcwd, builder.func);
-                let call = builder.ins().call(getcwd_ref, &[len_addr]);
-                let cwd_ptr = builder.inst_results(call)[0];
-                let cwd_len = builder.ins().stack_load(I64, len_slot, 0);
-                let stdout = builder.ins().iconst(I64, 1);
-                let write_ref = module.declare_func_in_func(externs.write, builder.func);
-                builder.ins().call(write_ref, &[stdout, cwd_ptr, cwd_len]);
-                // Write newline
-                let nl_id = literals.get("\n").expect("newline literal");
-                let nl_gv = module.declare_data_in_func(*nl_id, builder.func);
-                let nl_ptr = builder.ins().global_value(I64, nl_gv);
-                let nl_len = builder.ins().iconst(I64, 1);
-                builder.ins().call(write_ref, &[stdout, nl_ptr, nl_len]);
-                let zero = builder.ins().iconst(I64, 0);
-                builder.def_var(exit_status_var, zero);
+                return self.emit_pwd(args, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "wait" => {
                 return self.emit_wait(args, builder, module, ctx);
@@ -364,34 +228,7 @@ impl SsaInst {
                 );
             }
             SsaInst::ReadArray { array, fd, delim } => {
-                // Slurp all input from fd, then split by delimiter into indexed array
-                let array_key = format!("{}_0", array);
-                let sv = vars.get(&array_key).unwrap_or_else(|| {
-                    vars.keys()
-                        .find(|k| k.starts_with(&format!("{}_", array)))
-                        .and_then(|k| vars.get(k))
-                        .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-                });
-                let table_ptr = builder.use_var(sv.str_ptr());
-
-                let fd_val = if *fd == -1 {
-                    builder.use_var(pipe_read_fd_var)
-                } else {
-                    builder.ins().iconst(I64, *fd)
-                };
-
-                // Read all data from fd
-                let read_all_ref = module.declare_func_in_func(externs.read_all, builder.func);
-                let call = builder.ins().call(read_all_ref, &[fd_val]);
-                let data_ptr = builder.inst_results(call)[0];
-                let data_len = builder.inst_results(call)[1];
-
-                // Split by delimiter into array
-                let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
-                let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
-                builder
-                    .ins()
-                    .call(split_ref, &[data_ptr, data_len, delim_val, table_ptr]);
+                return self.emit_read_array(array, fd, delim, builder, module, ctx);
             }
             SsaInst::CaptureStart => {
                 // Call sash_capture_start() → (saved_fd, pipe_read_fd)
@@ -404,24 +241,7 @@ impl SsaInst {
                 builder.def_var(capture_pipe_var, pipe_rd);
             }
             SsaInst::CaptureEnd { target } => {
-                // Call sash_capture_end(saved_fd, pipe_read_fd) → (ptr, len)
-                let saved = builder.use_var(capture_saved_var);
-                let pipe_rd = builder.use_var(capture_pipe_var);
-                let cap_ref = module.declare_func_in_func(externs.capture_end, builder.func);
-                let call = builder.ins().call(cap_ref, &[saved, pipe_rd]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.inst_results(call)[1];
-                let sv = &vars[&target.display()];
-                if sv.is_int() {
-                    // Int var: atoi the captured string
-                    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                    let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
-                    let int_val = builder.inst_results(atoi_call)[0];
-                    builder.def_var(*sv.as_int(), int_val);
-                } else {
-                    builder.def_var(sv.str_ptr(), ptr);
-                    builder.def_var(sv.str_len(), len);
-                }
+                return self.emit_capture_end(target, builder, module, ctx);
             }
             SsaInst::Test(test_expr) => {
                 let result = lower_test_expr(
@@ -442,44 +262,7 @@ impl SsaInst {
                 redirects,
                 ..
             } => {
-                // Set up redirects (e.g. herestring <<< "text")
-                let saved = emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
-                );
-                // fd=-1 is sentinel for "use captured pipe fd"
-                let fd_val = if *fd == -1 {
-                    builder.use_var(pipe_read_fd_var)
-                } else {
-                    builder.ins().iconst(I64, *fd)
-                };
-                let (ptr, len) = if let Some(d) = delim {
-                    let read_delim_ref =
-                        module.declare_func_in_func(externs.read_delim, builder.func);
-                    let delim_val = builder.ins().iconst(I64, *d as i64);
-                    let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                } else {
-                    let read_line_ref =
-                        module.declare_func_in_func(externs.read_line, builder.func);
-                    let call = builder.ins().call(read_line_ref, &[fd_val]);
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                };
-                let sv = &vars[&target.display()];
-                builder.def_var(sv.str_ptr(), ptr);
-                builder.def_var(sv.str_len(), len);
-                // Set test_result: 1 if we got data (len > 0), 0 if EOF
-                let zero = builder.ins().iconst(I64, 0);
-                let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
-                let result = builder.ins().uextend(I64, got_data);
-                builder.def_var(test_result_var, result);
-                // Restore redirects
-                emit_restore(saved, builder, module, externs);
+                return self.emit_readline(target, fd, delim, redirects, builder, module, ctx);
             }
             SsaInst::ReadLineMulti {
                 targets,
@@ -1036,6 +819,378 @@ impl SsaInst {
         builder
             .ins()
             .call(set_ref, &[table_ptr, kp, kl, val_ptr, val_len]);
+        false
+    }
+
+    fn emit_readline(
+        &self,
+        target: &VarRef,
+        fd: &i64,
+        delim: &Option<u8>,
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let pipe_read_fd_var = ctx.pipe_read_fd_var;
+        let redirect_stack = &mut *ctx.redirect_stack;
+        // Set up redirects (e.g. herestring <<< "text")
+        let saved = emit_redirects(
+            redirects,
+            builder,
+            module,
+            externs,
+            literals,
+            vars,
+            Some(exit_status_var),
+        );
+        // fd=-1 is sentinel for "use captured pipe fd"
+        let fd_val = if *fd == -1 {
+            builder.use_var(pipe_read_fd_var)
+        } else {
+            builder.ins().iconst(I64, *fd)
+        };
+        let (ptr, len) = if let Some(d) = delim {
+            let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
+            let delim_val = builder.ins().iconst(I64, *d as i64);
+            let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
+            (builder.inst_results(call)[0], builder.inst_results(call)[1])
+        } else {
+            let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
+            let call = builder.ins().call(read_line_ref, &[fd_val]);
+            (builder.inst_results(call)[0], builder.inst_results(call)[1])
+        };
+        let sv = &vars[&target.display()];
+        builder.def_var(sv.str_ptr(), ptr);
+        builder.def_var(sv.str_len(), len);
+        // Set test_result: 1 if we got data (len > 0), 0 if EOF
+        let zero = builder.ins().iconst(I64, 0);
+        let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
+        let result = builder.ins().uextend(I64, got_data);
+        builder.def_var(test_result_var, result);
+        // Restore redirects
+        emit_restore(saved, builder, module, externs);
+        false
+    }
+
+    fn emit_echo(
+        &self,
+        args: &[SsaValue],
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let space_id = ctx.space_id;
+        let nl_id = ctx.nl_id;
+        let redirect_stack = &mut *ctx.redirect_stack;
+        let func_constants = ctx.func_constants;
+        let restore = emit_redirects(
+            redirects,
+            builder,
+            module,
+            externs,
+            literals,
+            vars,
+            Some(exit_status_var),
+        );
+        lower_echo(
+            args,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            space_id,
+            nl_id,
+            Some(exit_status_var),
+        );
+        emit_restore(restore, builder, module, externs);
+        // echo always succeeds — set test_result for && / || chains
+        let one = builder.ins().iconst(I64, 1);
+        builder.def_var(test_result_var, one);
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(exit_status_var, zero);
+        false
+    }
+
+    fn emit_let_exit(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let func_constants = ctx.func_constants;
+        // let builtin: exit status 0 if value != 0, 1 if value == 0
+        if let Some(SsaValue::Var(vr)) = args.first() {
+            let key = format!("{}_{}", vr.name, vr.version);
+            let int_val = if let Some(slot) = vars.get(&key) {
+                if slot.is_int() {
+                    builder.use_var(*slot.as_int())
+                } else {
+                    let ptr = builder.use_var(slot.str_ptr());
+                    let len = builder.use_var(slot.str_len());
+                    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                    let call = builder.ins().call(atoi_ref, &[ptr, len]);
+                    builder.inst_results(call)[0]
+                }
+            } else {
+                builder.ins().iconst(I64, 0)
+            };
+            let zero = builder.ins().iconst(I64, 0);
+            let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
+            let one = builder.ins().iconst(I64, 1);
+            let es = builder.ins().select(is_zero, one, zero);
+            builder.def_var(exit_status_var, es);
+            // Also set test_result_var for branch terminators (if/while)
+            let tr = builder.ins().select(is_zero, zero, one);
+            builder.def_var(test_result_var, tr);
+        }
+        false
+    }
+
+    fn emit_store_bg_pid(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let test_result_var = ctx.test_result_var;
+        let externs = ctx.externs;
+        let literals = ctx.literals;
+        // Store fork pid (test_result_var) into $! variable
+        if let Some(SsaValue::Var(vr)) = args.first() {
+            let pid = builder.use_var(test_result_var);
+            // Convert pid to string via itoa
+            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+            let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+            let call = builder.ins().call(itoa_ref, &[pid, out_addr]);
+            let str_ptr = builder.inst_results(call)[0];
+            let str_len = builder.ins().stack_load(I64, out_slot, 0);
+            let sv = &vars[&vr.display()];
+            builder.def_var(sv.str_ptr(), str_ptr);
+            builder.def_var(sv.str_len(), str_len);
+        }
+        false
+    }
+
+    fn emit_table_delete(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let func_constants = ctx.func_constants;
+        // unset map[key] → sash_table_delete(table_ptr, key_ptr, key_len)
+        if args.len() >= 2 {
+            let (tbl_ptr, _) = lower_value(
+                &args[0],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                Some(exit_status_var),
+            );
+            let (key_ptr, key_len) = lower_value(
+                &args[1],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                Some(exit_status_var),
+            );
+            let del_ref = module.declare_func_in_func(externs.table_delete, builder.func);
+            builder.ins().call(del_ref, &[tbl_ptr, key_ptr, key_len]);
+        }
+        false
+    }
+
+    fn emit_exit(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let func_constants = ctx.func_constants;
+        let end_cl_block = ctx.end_cl_block;
+        let saved_end_status_var = ctx.saved_end_status_var;
+        let program = ctx.program;
+        let ssa_id = ctx.ssa_id;
+        // exit N — get the exit code from first arg, default 0
+        let code = if let Some(SsaValue::Literal(s)) = args.first() {
+            s.parse::<i64>().unwrap_or(0)
+        } else {
+            0
+        };
+        let code_val = builder.ins().iconst(I64, code);
+        // DD#56: if END block exists and we're NOT inside it, jump to END
+        if let Some(end_cl) = end_cl_block {
+            if let Some(end_id) = program.end_block {
+                if ssa_id < end_id {
+                    builder.def_var(exit_status_var, code_val);
+                    builder.ins().jump(end_cl, &[]);
+                    return true;
+                }
+            }
+        }
+        // Direct exit (no END block, or inside END block)
+        // Inside END: also update saved_end_status_var so Return uses it
+        builder.def_var(saved_end_status_var, code_val);
+        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+        builder.ins().call(exit_ref, &[code_val]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+        return true; // block is terminated
+    }
+
+    fn emit_pwd(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let func_constants = ctx.func_constants;
+        // pwd — getcwd, write to stdout
+        let len_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        let len_addr = builder.ins().stack_addr(I64, len_slot, 0);
+        let getcwd_ref = module.declare_func_in_func(externs.getcwd, builder.func);
+        let call = builder.ins().call(getcwd_ref, &[len_addr]);
+        let cwd_ptr = builder.inst_results(call)[0];
+        let cwd_len = builder.ins().stack_load(I64, len_slot, 0);
+        let stdout = builder.ins().iconst(I64, 1);
+        let write_ref = module.declare_func_in_func(externs.write, builder.func);
+        builder.ins().call(write_ref, &[stdout, cwd_ptr, cwd_len]);
+        // Write newline
+        let nl_id = literals.get("\n").expect("newline literal");
+        let nl_gv = module.declare_data_in_func(*nl_id, builder.func);
+        let nl_ptr = builder.ins().global_value(I64, nl_gv);
+        let nl_len = builder.ins().iconst(I64, 1);
+        builder.ins().call(write_ref, &[stdout, nl_ptr, nl_len]);
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(exit_status_var, zero);
+        false
+    }
+
+    fn emit_read_array(
+        &self,
+        array: &str,
+        fd: &i64,
+        delim: &Option<u8>,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let pipe_read_fd_var = ctx.pipe_read_fd_var;
+        let func_constants = ctx.func_constants;
+        // Slurp all input from fd, then split by delimiter into indexed array
+        let array_key = format!("{}_0", array);
+        let sv = vars.get(&array_key).unwrap_or_else(|| {
+            vars.keys()
+                .find(|k| k.starts_with(&format!("{}_", array)))
+                .and_then(|k| vars.get(k))
+                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
+        });
+        let table_ptr = builder.use_var(sv.str_ptr());
+
+        let fd_val = if *fd == -1 {
+            builder.use_var(pipe_read_fd_var)
+        } else {
+            builder.ins().iconst(I64, *fd)
+        };
+
+        // Read all data from fd
+        let read_all_ref = module.declare_func_in_func(externs.read_all, builder.func);
+        let call = builder.ins().call(read_all_ref, &[fd_val]);
+        let data_ptr = builder.inst_results(call)[0];
+        let data_len = builder.inst_results(call)[1];
+
+        // Split by delimiter into array
+        let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
+        let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
+        builder
+            .ins()
+            .call(split_ref, &[data_ptr, data_len, delim_val, table_ptr]);
+        false
+    }
+
+    fn emit_capture_end(
+        &self,
+        target: &VarRef,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let externs = ctx.externs;
+        let capture_saved_var = ctx.capture_saved_var;
+        let capture_pipe_var = ctx.capture_pipe_var;
+        // Call sash_capture_end(saved_fd, pipe_read_fd) → (ptr, len)
+        let saved = builder.use_var(capture_saved_var);
+        let pipe_rd = builder.use_var(capture_pipe_var);
+        let cap_ref = module.declare_func_in_func(externs.capture_end, builder.func);
+        let call = builder.ins().call(cap_ref, &[saved, pipe_rd]);
+        let ptr = builder.inst_results(call)[0];
+        let len = builder.inst_results(call)[1];
+        let sv = &vars[&target.display()];
+        if sv.is_int() {
+            // Int var: atoi the captured string
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
+            let int_val = builder.inst_results(atoi_call)[0];
+            builder.def_var(*sv.as_int(), int_val);
+        } else {
+            builder.def_var(sv.str_ptr(), ptr);
+            builder.def_var(sv.str_len(), len);
+        }
         false
     }
 }
