@@ -279,141 +279,7 @@ impl SsaInst {
                 redirects,
                 ..
             } if name == "exec" => {
-                // exec with no args = standalone redirects only (fd manipulation)
-                if args.is_empty() {
-                    if !redirects.is_empty() {
-                        emit_redirects(
-                            redirects,
-                            builder,
-                            module,
-                            externs,
-                            literals,
-                            vars,
-                            Some(exit_status_var),
-                        );
-                    }
-                    let zero = builder.ins().iconst(I64, 0);
-                    builder.def_var(exit_status_var, zero);
-                } else {
-                    // exec cmd args... — replace process (no fork)
-                    // Check if any arg is $@ — if so, we need a dynamic-size argv
-                    let has_dollar_at = args.iter().any(|a| {
-                        if let SsaValue::Var(vref) = a {
-                            vref.name == "@"
-                        } else {
-                            false
-                        }
-                    });
-                    if has_dollar_at {
-                        // Build prefix array (args before $@) on the stack, null-terminated
-                        let prefix_args: Vec<_> = args
-                            .iter()
-                            .filter(|a| {
-                                if let SsaValue::Var(vref) = a {
-                                    vref.name != "@"
-                                } else {
-                                    true
-                                }
-                            })
-                            .collect();
-                        let prefix_size = ((prefix_args.len() + 1) * 8) as u32;
-                        let prefix_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            prefix_size,
-                            3,
-                        ));
-                        for (i, arg_val) in prefix_args.iter().enumerate() {
-                            let (ptr, _len) = lower_value(
-                                arg_val,
-                                builder,
-                                module,
-                                vars,
-                                literals,
-                                func_constants,
-                                externs,
-                                Some(exit_status_var),
-                            );
-                            builder.ins().stack_store(ptr, prefix_slot, (i * 8) as i32);
-                        }
-                        let null = builder.ins().iconst(I64, 0);
-                        builder.ins().stack_store(
-                            null,
-                            prefix_slot,
-                            (prefix_args.len() * 8) as i32,
-                        );
-                        let prefix_addr = builder.ins().stack_addr(I64, prefix_slot, 0);
-                        // Load argv and argc
-                        let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-                        let argv_ptr = builder.ins().global_value(I64, argv_gv);
-                        let argv_val = builder.ins().load(I64, MemFlags::new(), argv_ptr, 0);
-                        let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-                        let argc_ptr = builder.ins().global_value(I64, argc_gv);
-                        let argc_val_exec = builder.ins().load(I64, MemFlags::new(), argc_ptr, 0);
-                        // Call sash_splice_argv(prefix, argv, argc) -> merged argv
-                        let splice_ref =
-                            module.declare_func_in_func(externs.splice_argv, builder.func);
-                        let call = builder
-                            .ins()
-                            .call(splice_ref, &[prefix_addr, argv_val, argc_val_exec]);
-                        let merged_argv = builder.inst_results(call)[0];
-                        // Load envp
-                        let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
-                        let envp_ptr = builder.ins().global_value(I64, envp_gv);
-                        let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
-                        // exec(merged_argv, envp)
-                        let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
-                        builder.ins().call(exec_ref, &[merged_argv, envp_val]);
-                        let code = builder.ins().iconst(I64, 127);
-                        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                        builder.ins().call(exit_ref, &[code]);
-                        builder
-                            .ins()
-                            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                        return true;
-                    }
-                    // Static argv path (no $@)
-                    let argc = args.len();
-                    let argv_size = ((argc + 1) * 8) as u32;
-                    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        argv_size,
-                        3,
-                    ));
-                    for (i, arg_val) in args.iter().enumerate() {
-                        let (ptr, _len) = lower_value(
-                            arg_val,
-                            builder,
-                            module,
-                            vars,
-                            literals,
-                            func_constants,
-                            externs,
-                            Some(exit_status_var),
-                        );
-                        builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
-                    }
-                    // Null terminator
-                    let null = builder.ins().iconst(I64, 0);
-                    builder
-                        .ins()
-                        .stack_store(null, argv_slot, (argc * 8) as i32);
-                    let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
-                    // Load envp
-                    let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
-                    let envp_ptr = builder.ins().global_value(I64, envp_gv);
-                    let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
-                    // exec(argv, envp) — does not return on success
-                    let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
-                    builder.ins().call(exec_ref, &[argv_addr, envp_val]);
-                    // If exec fails, exit 127
-                    let code = builder.ins().iconst(I64, 127);
-                    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                    builder.ins().call(exit_ref, &[code]);
-                    builder
-                        .ins()
-                        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                    return true;
-                }
+                return self.emit_exec(name, args, redirects, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "cd" => {
                 return super::inst_handlers::handle_cd(args, builder, module, ctx);
@@ -443,52 +309,7 @@ impl SsaInst {
                 builder.def_var(exit_status_var, zero);
             }
             SsaInst::Command { name, args, .. } if name == "wait" => {
-                // wait [pid] — wait for specific pid or last bg job
-                let pid = if let Some(arg) = args.first() {
-                    let (ptr, len) = lower_value(
-                        arg,
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                        Some(exit_status_var),
-                    );
-                    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                    builder.inst_results(call)[0]
-                } else {
-                    // No arg: wait for $! — look up the "!" variable
-                    let key = vars.keys().find(|k| {
-                        let base = if let Some(idx) = k.rfind('_') {
-                            let suffix = &k[idx + 1..];
-                            if suffix.chars().all(|c| c.is_ascii_digit()) {
-                                &k[..idx]
-                            } else {
-                                k.as_str()
-                            }
-                        } else {
-                            k.as_str()
-                        };
-                        base == "!"
-                    });
-                    if let Some(k) = key.cloned() {
-                        let sv = &vars[&k];
-                        let (ptr, len) =
-                            (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()));
-                        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                        let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                        builder.inst_results(call)[0]
-                    } else {
-                        // No $! variable — wait for pid 0 (wait any child)
-                        builder.ins().iconst(I64, 0)
-                    }
-                };
-                let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
-                let call = builder.ins().call(wait_ref, &[pid]);
-                let status = builder.inst_results(call)[0];
-                builder.def_var(exit_status_var, status);
+                return self.emit_wait(args, builder, module, ctx);
             }
             SsaInst::Command { name, args, .. } if name == "shift" => {
                 return super::inst_handlers::handle_shift(args, builder, module, ctx);
@@ -499,68 +320,7 @@ impl SsaInst {
                 redirects,
                 ..
             } if name == "command" => {
-                // DD#23: `command -v` is rejected by the validator. If we reach here,
-                // it's `command [-p] <cmd>` — just run the command, bypassing functions.
-                let restore = emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
-                );
-                let mut cmd_start = 0;
-                for (i, arg) in args.iter().enumerate() {
-                    if let SsaValue::Literal(s) = arg {
-                        match s.as_str() {
-                            "-p" | "--" => {
-                                cmd_start = i + 1;
-                            }
-                            _ => {
-                                cmd_start = i;
-                                break;
-                            }
-                        }
-                    } else {
-                        cmd_start = i;
-                        break;
-                    }
-                }
-                if cmd_start < args.len() {
-                    if let SsaValue::Literal(real_name) = &args[cmd_start] {
-                        let real_args = args[cmd_start + 1..].to_vec();
-                        lower_exec(
-                            real_name,
-                            &real_args,
-                            builder,
-                            module,
-                            vars,
-                            literals,
-                            externs,
-                            test_result_var,
-                            exit_status_var,
-                        );
-                    } else {
-                        let real_name_str = match &args[cmd_start] {
-                            SsaValue::Literal(s) => s.clone(),
-                            _ => "command".to_string(),
-                        };
-                        let real_args = args[cmd_start + 1..].to_vec();
-                        lower_exec(
-                            &real_name_str,
-                            &real_args,
-                            builder,
-                            module,
-                            vars,
-                            literals,
-                            externs,
-                            test_result_var,
-                            exit_status_var,
-                        );
-                    }
-                }
-                emit_restore(restore, builder, module, externs);
+                return self.emit_command_builtin(name, args, redirects, builder, module, ctx);
             }
             SsaInst::Command {
                 name,
@@ -591,43 +351,7 @@ impl SsaInst {
                 );
             }
             SsaInst::ArrayAppend { array, value } => {
-                let array_key = format!("{}_0", array);
-                let sv = vars.get(&array_key).unwrap_or_else(|| {
-                    vars.keys()
-                        .find(|k| k.starts_with(&format!("{}_", array)))
-                        .and_then(|k| vars.get(k))
-                        .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-                });
-                let table_ptr = builder.use_var(sv.str_ptr());
-
-                // Get current length as the next integer key
-                let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-                let call = builder.ins().call(len_ref, &[table_ptr]);
-                let next_idx = builder.inst_results(call)[0];
-
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                builder.ins().stack_store(next_idx, idx_slot, 0);
-                let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-                let kl = builder.ins().iconst(I64, 8);
-
-                let (val_ptr, val_len) = lower_value(
-                    value,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    Some(exit_status_var),
-                );
-                let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-                builder
-                    .ins()
-                    .call(set_ref, &[table_ptr, kp, kl, val_ptr, val_len]);
+                return self.emit_array_append(array, value, builder, module, ctx);
             }
             SsaInst::Mapfile {
                 array,
@@ -765,82 +489,9 @@ impl SsaInst {
                 field_sep,
                 ..
             } => {
-                let saved = emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
+                return self.emit_readline_multi(
+                    targets, fd, delim, redirects, field_sep, builder, module, ctx,
                 );
-                let fd_val = if *fd == -1 {
-                    builder.use_var(pipe_read_fd_var)
-                } else {
-                    builder.ins().iconst(I64, *fd)
-                };
-                let (line_ptr, line_len) = if let Some(d) = delim {
-                    let read_delim_ref =
-                        module.declare_func_in_func(externs.read_delim, builder.func);
-                    let delim_val = builder.ins().iconst(I64, *d as i64);
-                    let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                } else {
-                    let read_line_ref =
-                        module.declare_func_in_func(externs.read_line, builder.func);
-                    let call = builder.ins().call(read_line_ref, &[fd_val]);
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                };
-
-                let zero = builder.ins().iconst(I64, 0);
-                let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, line_len, zero);
-                let result = builder.ins().uextend(I64, got_data);
-                builder.def_var(test_result_var, result);
-
-                let split_ref = module.declare_func_in_func(externs.split_first_word, builder.func);
-                let split_field_ref =
-                    module.declare_func_in_func(externs.split_field, builder.func);
-                let mut cur_ptr = line_ptr;
-                let mut cur_len = line_len;
-
-                for (i, target) in targets.iter().enumerate() {
-                    let sv = &vars[&target.display()];
-                    if i == targets.len() - 1 {
-                        builder.def_var(sv.str_ptr(), cur_ptr);
-                        builder.def_var(sv.str_len(), cur_len);
-                    } else {
-                        let rest_ptr_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            8,
-                            3,
-                        ));
-                        let rest_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                            StackSlotKind::ExplicitSlot,
-                            8,
-                            3,
-                        ));
-                        let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
-                        let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
-                        let (word_ptr, word_len) = if let Some(sep) = field_sep {
-                            let delim_val = builder.ins().iconst(I64, *sep as i64);
-                            let call = builder.ins().call(
-                                split_field_ref,
-                                &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr],
-                            );
-                            (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                        } else {
-                            let call = builder
-                                .ins()
-                                .call(split_ref, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
-                            (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                        };
-                        builder.def_var(sv.str_ptr(), word_ptr);
-                        builder.def_var(sv.str_len(), word_len);
-                        cur_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
-                        cur_len = builder.ins().stack_load(I64, rest_len_slot, 0);
-                    }
-                }
-                emit_restore(saved, builder, module, externs);
             }
             SsaInst::Pipeline {
                 stages,
@@ -861,70 +512,530 @@ impl SsaInst {
                 target,
                 test,
             } => {
-                // Runtime bless enforcement: evaluate test on source, abort if false.
-                // On pass, copy source value to target (new clean SSA version).
-                let result = lower_test_expr(
-                    test,
+                return self.emit_bless(source, target, test, builder, module, ctx);
+            }
+        }
+        false // block not terminated
+    }
+
+    fn emit_exec(
+        &self,
+        name: &str,
+        args: &[SsaValue],
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let redirect_stack = &mut *ctx.redirect_stack;
+        let func_constants = ctx.func_constants;
+        // exec with no args = standalone redirects only (fd manipulation)
+        if args.is_empty() {
+            if !redirects.is_empty() {
+                emit_redirects(
+                    redirects,
+                    builder,
+                    module,
+                    externs,
+                    literals,
+                    vars,
+                    Some(exit_status_var),
+                );
+            }
+            let zero = builder.ins().iconst(I64, 0);
+            builder.def_var(exit_status_var, zero);
+        } else {
+            // exec cmd args... — replace process (no fork)
+            // Check if any arg is $@ — if so, we need a dynamic-size argv
+            let has_dollar_at = args.iter().any(|a| {
+                if let SsaValue::Var(vref) = a {
+                    vref.name == "@"
+                } else {
+                    false
+                }
+            });
+            if has_dollar_at {
+                // Build prefix array (args before $@) on the stack, null-terminated
+                let prefix_args: Vec<_> = args
+                    .iter()
+                    .filter(|a| {
+                        if let SsaValue::Var(vref) = a {
+                            vref.name != "@"
+                        } else {
+                            true
+                        }
+                    })
+                    .collect();
+                let prefix_size = ((prefix_args.len() + 1) * 8) as u32;
+                let prefix_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    prefix_size,
+                    3,
+                ));
+                for (i, arg_val) in prefix_args.iter().enumerate() {
+                    let (ptr, _len) = lower_value(
+                        arg_val,
+                        builder,
+                        module,
+                        vars,
+                        literals,
+                        func_constants,
+                        externs,
+                        Some(exit_status_var),
+                    );
+                    builder.ins().stack_store(ptr, prefix_slot, (i * 8) as i32);
+                }
+                let null = builder.ins().iconst(I64, 0);
+                builder
+                    .ins()
+                    .stack_store(null, prefix_slot, (prefix_args.len() * 8) as i32);
+                let prefix_addr = builder.ins().stack_addr(I64, prefix_slot, 0);
+                // Load argv and argc
+                let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
+                let argv_ptr = builder.ins().global_value(I64, argv_gv);
+                let argv_val = builder.ins().load(I64, MemFlags::new(), argv_ptr, 0);
+                let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
+                let argc_ptr = builder.ins().global_value(I64, argc_gv);
+                let argc_val_exec = builder.ins().load(I64, MemFlags::new(), argc_ptr, 0);
+                // Call sash_splice_argv(prefix, argv, argc) -> merged argv
+                let splice_ref = module.declare_func_in_func(externs.splice_argv, builder.func);
+                let call = builder
+                    .ins()
+                    .call(splice_ref, &[prefix_addr, argv_val, argc_val_exec]);
+                let merged_argv = builder.inst_results(call)[0];
+                // Load envp
+                let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
+                let envp_ptr = builder.ins().global_value(I64, envp_gv);
+                let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
+                // exec(merged_argv, envp)
+                let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
+                builder.ins().call(exec_ref, &[merged_argv, envp_val]);
+                let code = builder.ins().iconst(I64, 127);
+                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+                builder.ins().call(exit_ref, &[code]);
+                builder
+                    .ins()
+                    .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+                return true;
+            }
+            // Static argv path (no $@)
+            let argc = args.len();
+            let argv_size = ((argc + 1) * 8) as u32;
+            let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                argv_size,
+                3,
+            ));
+            for (i, arg_val) in args.iter().enumerate() {
+                let (ptr, _len) = lower_value(
+                    arg_val,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    func_constants,
+                    externs,
+                    Some(exit_status_var),
+                );
+                builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
+            }
+            // Null terminator
+            let null = builder.ins().iconst(I64, 0);
+            builder
+                .ins()
+                .stack_store(null, argv_slot, (argc * 8) as i32);
+            let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
+            // Load envp
+            let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
+            let envp_ptr = builder.ins().global_value(I64, envp_gv);
+            let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
+            // exec(argv, envp) — does not return on success
+            let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
+            builder.ins().call(exec_ref, &[argv_addr, envp_val]);
+            // If exec fails, exit 127
+            let code = builder.ins().iconst(I64, 127);
+            let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+            builder.ins().call(exit_ref, &[code]);
+            builder
+                .ins()
+                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+            return true;
+        }
+        false
+    }
+
+    fn emit_readline_multi(
+        &self,
+        targets: &[VarRef],
+        fd: &i64,
+        delim: &Option<u8>,
+        redirects: &[crate::ir::Redirect],
+        field_sep: &Option<u8>,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let pipe_read_fd_var = ctx.pipe_read_fd_var;
+        let redirect_stack = &mut *ctx.redirect_stack;
+        let saved = emit_redirects(
+            redirects,
+            builder,
+            module,
+            externs,
+            literals,
+            vars,
+            Some(exit_status_var),
+        );
+        let fd_val = if *fd == -1 {
+            builder.use_var(pipe_read_fd_var)
+        } else {
+            builder.ins().iconst(I64, *fd)
+        };
+        let (line_ptr, line_len) = if let Some(d) = delim {
+            let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
+            let delim_val = builder.ins().iconst(I64, *d as i64);
+            let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
+            (builder.inst_results(call)[0], builder.inst_results(call)[1])
+        } else {
+            let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
+            let call = builder.ins().call(read_line_ref, &[fd_val]);
+            (builder.inst_results(call)[0], builder.inst_results(call)[1])
+        };
+
+        let zero = builder.ins().iconst(I64, 0);
+        let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, line_len, zero);
+        let result = builder.ins().uextend(I64, got_data);
+        builder.def_var(test_result_var, result);
+
+        let split_ref = module.declare_func_in_func(externs.split_first_word, builder.func);
+        let split_field_ref = module.declare_func_in_func(externs.split_field, builder.func);
+        let mut cur_ptr = line_ptr;
+        let mut cur_len = line_len;
+
+        for (i, target) in targets.iter().enumerate() {
+            let sv = &vars[&target.display()];
+            if i == targets.len() - 1 {
+                builder.def_var(sv.str_ptr(), cur_ptr);
+                builder.def_var(sv.str_len(), cur_len);
+            } else {
+                let rest_ptr_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
+                ));
+                let rest_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                    StackSlotKind::ExplicitSlot,
+                    8,
+                    3,
+                ));
+                let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
+                let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
+                let (word_ptr, word_len) = if let Some(sep) = field_sep {
+                    let delim_val = builder.ins().iconst(I64, *sep as i64);
+                    let call = builder.ins().call(
+                        split_field_ref,
+                        &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr],
+                    );
+                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+                } else {
+                    let call = builder
+                        .ins()
+                        .call(split_ref, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
+                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+                };
+                builder.def_var(sv.str_ptr(), word_ptr);
+                builder.def_var(sv.str_len(), word_len);
+                cur_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
+                cur_len = builder.ins().stack_load(I64, rest_len_slot, 0);
+            }
+        }
+        emit_restore(saved, builder, module, externs);
+        false
+    }
+
+    /// TRUST: bless is the ONLY mechanism to move tainted → clean.
+    fn emit_bless(
+        &self,
+        source: &VarRef,
+        target: &VarRef,
+        test: &crate::ir::TestExpr,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let end_cl_block = ctx.end_cl_block;
+        let func_constants = ctx.func_constants;
+        // Runtime bless enforcement: evaluate test on source, abort if false.
+        // On pass, copy source value to target (new clean SSA version).
+        let result = lower_test_expr(
+            test,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            Some(exit_status_var),
+        );
+        let pass_block = builder.create_block();
+        let fail_block = builder.create_block();
+        let zero = builder.ins().iconst(I64, 0);
+        let is_pass = builder.ins().icmp(IntCC::NotEqual, result, zero);
+        builder
+            .ins()
+            .brif(is_pass, pass_block, &[], fail_block, &[]);
+
+        builder.switch_to_block(fail_block);
+        builder.seal_block(fail_block);
+        // Write "bless: validation failed\n" to stderr, then exit(1)
+        let msg = "bless: validation failed\n";
+        let msg_id = literals[msg];
+        let msg_gv = module.declare_data_in_func(msg_id, builder.func);
+        let msg_ptr = builder.ins().global_value(I64, msg_gv);
+        let msg_len = builder.ins().iconst(I64, msg.len() as i64);
+        let fd_2 = builder.ins().iconst(I64, 2); // stderr
+        let write_ref = module.declare_func_in_func(externs.write, builder.func);
+        builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
+        let one = builder.ins().iconst(I64, 1);
+        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+        builder.ins().call(exit_ref, &[one]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+        builder.switch_to_block(pass_block);
+        builder.seal_block(pass_block);
+
+        // Copy source value to target — target is the new clean SSA version
+        let src_key = format!("{}_{}", source.name, source.version);
+        if let Some(slot) = vars.get(src_key.as_str()).cloned() {
+            let tgt_key = format!("{}_{}", target.name, target.version);
+            match slot {
+                VarSlot::Str { ptr, len } => {
+                    let p = builder.use_var(ptr);
+                    let l = builder.use_var(len);
+                    let tp = builder.declare_var(I64);
+                    let tl = builder.declare_var(I64);
+                    builder.def_var(tp, p);
+                    builder.def_var(tl, l);
+                    vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
+                }
+                VarSlot::Int(v) => {
+                    let val = builder.use_var(v);
+                    let tv = builder.declare_var(I64);
+                    builder.def_var(tv, val);
+                    vars.insert(tgt_key, VarSlot::Int(tv));
+                }
+            }
+        }
+        false
+    }
+
+    fn emit_wait(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let func_constants = ctx.func_constants;
+        // wait [pid] — wait for specific pid or last bg job
+        let pid = if let Some(arg) = args.first() {
+            let (ptr, len) = lower_value(
+                arg,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                Some(exit_status_var),
+            );
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call = builder.ins().call(atoi_ref, &[ptr, len]);
+            builder.inst_results(call)[0]
+        } else {
+            // No arg: wait for $! — look up the "!" variable
+            let key = vars.keys().find(|k| {
+                let base = if let Some(idx) = k.rfind('_') {
+                    let suffix = &k[idx + 1..];
+                    if suffix.chars().all(|c| c.is_ascii_digit()) {
+                        &k[..idx]
+                    } else {
+                        k.as_str()
+                    }
+                } else {
+                    k.as_str()
+                };
+                base == "!"
+            });
+            if let Some(k) = key.cloned() {
+                let sv = &vars[&k];
+                let (ptr, len) = (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()));
+                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                let call = builder.ins().call(atoi_ref, &[ptr, len]);
+                builder.inst_results(call)[0]
+            } else {
+                // No $! variable — wait for pid 0 (wait any child)
+                builder.ins().iconst(I64, 0)
+            }
+        };
+        let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
+        let call = builder.ins().call(wait_ref, &[pid]);
+        let status = builder.inst_results(call)[0];
+        builder.def_var(exit_status_var, status);
+        false
+    }
+
+    fn emit_command_builtin(
+        &self,
+        name: &str,
+        args: &[SsaValue],
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+        let func_constants = ctx.func_constants;
+        let end_cl_block = ctx.end_cl_block;
+        let program = ctx.program;
+        let ssa_id = ctx.ssa_id;
+        let redirect_stack = &mut *ctx.redirect_stack;
+        // DD#23: `command -v` is rejected by the validator. If we reach here,
+        // it's `command [-p] <cmd>` — just run the command, bypassing functions.
+        let restore = emit_redirects(
+            redirects,
+            builder,
+            module,
+            externs,
+            literals,
+            vars,
+            Some(exit_status_var),
+        );
+        let mut cmd_start = 0;
+        for (i, arg) in args.iter().enumerate() {
+            if let SsaValue::Literal(s) = arg {
+                match s.as_str() {
+                    "-p" | "--" => {
+                        cmd_start = i + 1;
+                    }
+                    _ => {
+                        cmd_start = i;
+                        break;
+                    }
+                }
+            } else {
+                cmd_start = i;
+                break;
+            }
+        }
+        if cmd_start < args.len() {
+            if let SsaValue::Literal(real_name) = &args[cmd_start] {
+                let real_args = args[cmd_start + 1..].to_vec();
+                lower_exec(
+                    real_name,
+                    &real_args,
                     builder,
                     module,
                     vars,
                     literals,
                     externs,
-                    Some(exit_status_var),
+                    test_result_var,
+                    exit_status_var,
                 );
-                let pass_block = builder.create_block();
-                let fail_block = builder.create_block();
-                let zero = builder.ins().iconst(I64, 0);
-                let is_pass = builder.ins().icmp(IntCC::NotEqual, result, zero);
-                builder
-                    .ins()
-                    .brif(is_pass, pass_block, &[], fail_block, &[]);
-
-                builder.switch_to_block(fail_block);
-                builder.seal_block(fail_block);
-                // Write "bless: validation failed\n" to stderr, then exit(1)
-                let msg = "bless: validation failed\n";
-                let msg_id = literals[msg];
-                let msg_gv = module.declare_data_in_func(msg_id, builder.func);
-                let msg_ptr = builder.ins().global_value(I64, msg_gv);
-                let msg_len = builder.ins().iconst(I64, msg.len() as i64);
-                let fd_2 = builder.ins().iconst(I64, 2); // stderr
-                let write_ref = module.declare_func_in_func(externs.write, builder.func);
-                builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
-                let one = builder.ins().iconst(I64, 1);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[one]);
-                builder
-                    .ins()
-                    .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-
-                builder.switch_to_block(pass_block);
-                builder.seal_block(pass_block);
-
-                // Copy source value to target — target is the new clean SSA version
-                let src_key = format!("{}_{}", source.name, source.version);
-                if let Some(slot) = vars.get(src_key.as_str()).cloned() {
-                    let tgt_key = format!("{}_{}", target.name, target.version);
-                    match slot {
-                        VarSlot::Str { ptr, len } => {
-                            let p = builder.use_var(ptr);
-                            let l = builder.use_var(len);
-                            let tp = builder.declare_var(I64);
-                            let tl = builder.declare_var(I64);
-                            builder.def_var(tp, p);
-                            builder.def_var(tl, l);
-                            vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
-                        }
-                        VarSlot::Int(v) => {
-                            let val = builder.use_var(v);
-                            let tv = builder.declare_var(I64);
-                            builder.def_var(tv, val);
-                            vars.insert(tgt_key, VarSlot::Int(tv));
-                        }
-                    }
-                }
+            } else {
+                let real_name_str = match &args[cmd_start] {
+                    SsaValue::Literal(s) => s.clone(),
+                    _ => "command".to_string(),
+                };
+                let real_args = args[cmd_start + 1..].to_vec();
+                lower_exec(
+                    &real_name_str,
+                    &real_args,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    test_result_var,
+                    exit_status_var,
+                );
             }
         }
-        false // block not terminated
+        emit_restore(restore, builder, module, externs);
+        false
+    }
+
+    fn emit_array_append(
+        &self,
+        array: &str,
+        value: &SsaValue,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let func_constants = ctx.func_constants;
+        let array_key = format!("{}_0", array);
+        let sv = vars.get(&array_key).unwrap_or_else(|| {
+            vars.keys()
+                .find(|k| k.starts_with(&format!("{}_", array)))
+                .and_then(|k| vars.get(k))
+                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
+        });
+        let table_ptr = builder.use_var(sv.str_ptr());
+
+        // Get current length as the next integer key
+        let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+        let call = builder.ins().call(len_ref, &[table_ptr]);
+        let next_idx = builder.inst_results(call)[0];
+
+        let idx_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        builder.ins().stack_store(next_idx, idx_slot, 0);
+        let kp = builder.ins().stack_addr(I64, idx_slot, 0);
+        let kl = builder.ins().iconst(I64, 8);
+
+        let (val_ptr, val_len) = lower_value(
+            value,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            Some(exit_status_var),
+        );
+        let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+        builder
+            .ins()
+            .call(set_ref, &[table_ptr, kp, kl, val_ptr, val_len]);
+        false
     }
 }
