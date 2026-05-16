@@ -933,192 +933,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                 format!("(string {})", ps.join(" "))
             }
         }
-        ExprKind::ParameterExpansion(pe) => {
-            if let Some(op) = &pe.operator {
-                let var_ref = if ctx.is_declared(&pe.name) {
-                    pe.name.clone()
-                } else {
-                    format!("(or (os/getenv \"{}\") \"\")", pe.name)
-                };
-                match op.as_str() {
-                    ":-" => {
-                        let default = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| emit_expr_inline(o, ctx))
-                            .unwrap_or_else(|| "\"\"".to_string());
-                        if ctx.is_declared(&pe.name) {
-                            // (if (= (length var) 0) default var)
-                            format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
-                        } else {
-                            format!("(or (os/getenv \"{}\") {})", pe.name, default)
-                        }
-                    }
-                    "%%" => {
-                        // Longest suffix strip: ${x%%pat}
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if operand.ends_with('*') {
-                            // pat is lit* — match lit at start, strip from there
-                            let lit = &operand[..operand.len() - 1];
-                            format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
-                                var_ref, lit)
-                        } else if let Some(lit) = operand.strip_prefix('*') {
-                            // pat is *lit — match lit, strip from first occurrence onward
-                            format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
-                                var_ref, lit)
-                        } else {
-                            // Literal suffix — strip if present at end
-                            format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
-                                var_ref, operand)
-                        }
-                    }
-                    "%" => {
-                        // Shortest suffix strip: ${x%pat}
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if operand.ends_with('*') {
-                            // pat is lit* — match lit at end, strip from last occurrence
-                            let lit = &operand[..operand.len() - 1];
-                            format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
-                                var_ref, lit)
-                        } else if let Some(lit) = operand.strip_prefix('*') {
-                            // pat is *lit — match lit, strip from last occurrence onward
-                            format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
-                                var_ref, lit)
-                        } else {
-                            // Literal suffix
-                            format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
-                                var_ref, operand)
-                        }
-                    }
-                    "##" => {
-                        // Longest prefix strip: ${x##pat}
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if let Some(lit) = operand.strip_prefix('*') {
-                            // pat is *lit — match lit at end, strip up through last occurrence
-                            format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
-                                var_ref, lit, lit)
-                        } else if operand.ends_with('*') {
-                            // pat is lit* — match lit, strip up through last occurrence
-                            let lit = &operand[..operand.len() - 1];
-                            format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
-                                var_ref, lit, lit)
-                        } else {
-                            // Literal prefix
-                            format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
-                                var_ref, operand)
-                        }
-                    }
-                    "#" => {
-                        // Shortest prefix strip: ${x#pat}
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if let Some(lit) = operand.strip_prefix('*') {
-                            // pat is *lit — match lit, skip past first occurrence
-                            format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
-                                var_ref, lit, lit)
-                        } else if operand.ends_with('*') {
-                            // pat is lit* — match lit, skip past first occurrence
-                            let lit = &operand[..operand.len() - 1];
-                            format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
-                                var_ref, lit, lit)
-                        } else {
-                            // Literal prefix
-                            format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
-                                var_ref, operand)
-                        }
-                    }
-                    "^^" => {
-                        format!("(string/ascii-upper {})", var_ref)
-                    }
-                    ",," => {
-                        format!("(string/ascii-lower {})", var_ref)
-                    }
-                    "^" => {
-                        // Capitalize first char
-                        format!("(string (string/ascii-upper (string/slice {} 0 1)) (string/slice {} 1))", var_ref, var_ref)
-                    }
-                    "," => {
-                        // Lowercase first char
-                        format!("(string (string/ascii-lower (string/slice {} 0 1)) (string/slice {} 1))", var_ref, var_ref)
-                    }
-                    "strlen" => {
-                        format!("(string (length {}))", var_ref)
-                    }
-                    "arrlen" => {
-                        format!("(string (length {}))", var_ref)
-                    }
-                    "substring" => {
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if let Some((off, len)) = operand.split_once(':') {
-                            let off_n: i64 = off.parse().unwrap_or(0);
-                            let len_n: i64 = len.parse().unwrap_or(-1);
-                            if len_n < 0 {
-                                // Negative length: trim from end
-                                format!(
-                                    "(string/slice {} {} (+ (length {}) {}))",
-                                    var_ref, off_n, var_ref, len_n
-                                )
-                            } else {
-                                format!("(string/slice {} {} {})", var_ref, off_n, off_n + len_n)
-                            }
-                        } else {
-                            let off_n: i64 = operand.parse().unwrap_or(0);
-                            format!("(string/slice {} {})", var_ref, off_n)
-                        }
-                    }
-                    "/" => {
-                        // First match replace
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if let Some((pat, rep)) = operand.split_once('\0') {
-                            format!("(string/replace \"{}\" \"{}\" {})", pat, rep, var_ref)
-                        } else {
-                            var_ref
-                        }
-                    }
-                    "//" => {
-                        // Global replace
-                        let operand = pe
-                            .operand
-                            .as_ref()
-                            .map(|o| expr_to_literal(o))
-                            .unwrap_or_default();
-                        if let Some((pat, rep)) = operand.split_once('\0') {
-                            format!("(string/replace-all \"{}\" \"{}\" {})", pat, rep, var_ref)
-                        } else {
-                            var_ref
-                        }
-                    }
-                    _ => var_ref,
-                }
-            } else if ctx.is_declared(&pe.name) {
-                pe.name.clone()
-            } else {
-                format!("(or (os/getenv \"{}\") \"\")", pe.name)
-            }
-        }
+        ExprKind::ParameterExpansion(pe) => emit_param_expansion_inline(pe, ctx),
         ExprKind::CommandSubstitution(stmts) => {
             // $(cmd) → capture stdout
             if let Some(stmt) = stmts.first() {
@@ -1175,6 +990,203 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
             };
             emit_test_expr(&wrapper, ctx)
         }
+    }
+}
+
+fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
+    if let Some(op) = &pe.operator {
+        let var_ref = if ctx.is_declared(&pe.name) {
+            pe.name.clone()
+        } else {
+            format!("(or (os/getenv \"{}\") \"\")", pe.name)
+        };
+        match op.as_str() {
+            ":-" => {
+                let default = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| emit_expr_inline(o, ctx))
+                    .unwrap_or_else(|| "\"\"".to_string());
+                if ctx.is_declared(&pe.name) {
+                    // (if (= (length var) 0) default var)
+                    format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
+                } else {
+                    format!("(or (os/getenv \"{}\") {})", pe.name, default)
+                }
+            }
+            "%%" => {
+                // Longest suffix strip: ${x%%pat}
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if operand.ends_with('*') {
+                    // pat is lit* — match lit at start, strip from there
+                    let lit = &operand[..operand.len() - 1];
+                    format!(
+                        "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
+                        var_ref, lit
+                    )
+                } else if let Some(lit) = operand.strip_prefix('*') {
+                    // pat is *lit — match lit, strip from first occurrence onward
+                    format!(
+                        "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
+                        var_ref, lit
+                    )
+                } else {
+                    // Literal suffix — strip if present at end
+                    format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
+                        var_ref, operand)
+                }
+            }
+            "%" => {
+                // Shortest suffix strip: ${x%pat}
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if operand.ends_with('*') {
+                    // pat is lit* — match lit at end, strip from last occurrence
+                    let lit = &operand[..operand.len() - 1];
+                    format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
+                        var_ref, lit)
+                } else if let Some(lit) = operand.strip_prefix('*') {
+                    // pat is *lit — match lit, strip from last occurrence onward
+                    format!("(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
+                        var_ref, lit)
+                } else {
+                    // Literal suffix
+                    format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
+                        var_ref, operand)
+                }
+            }
+            "##" => {
+                // Longest prefix strip: ${x##pat}
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if let Some(lit) = operand.strip_prefix('*') {
+                    // pat is *lit — match lit at end, strip up through last occurrence
+                    format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
+                        var_ref, lit, lit)
+                } else if operand.ends_with('*') {
+                    // pat is lit* — match lit, strip up through last occurrence
+                    let lit = &operand[..operand.len() - 1];
+                    format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
+                        var_ref, lit, lit)
+                } else {
+                    // Literal prefix
+                    format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
+                        var_ref, operand)
+                }
+            }
+            "#" => {
+                // Shortest prefix strip: ${x#pat}
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if let Some(lit) = operand.strip_prefix('*') {
+                    // pat is *lit — match lit, skip past first occurrence
+                    format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
+                        var_ref, lit, lit)
+                } else if operand.ends_with('*') {
+                    // pat is lit* — match lit, skip past first occurrence
+                    let lit = &operand[..operand.len() - 1];
+                    format!("(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
+                        var_ref, lit, lit)
+                } else {
+                    // Literal prefix
+                    format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
+                        var_ref, operand)
+                }
+            }
+            "^^" => {
+                format!("(string/ascii-upper {})", var_ref)
+            }
+            ",," => {
+                format!("(string/ascii-lower {})", var_ref)
+            }
+            "^" => {
+                // Capitalize first char
+                format!(
+                    "(string (string/ascii-upper (string/slice {} 0 1)) (string/slice {} 1))",
+                    var_ref, var_ref
+                )
+            }
+            "," => {
+                // Lowercase first char
+                format!(
+                    "(string (string/ascii-lower (string/slice {} 0 1)) (string/slice {} 1))",
+                    var_ref, var_ref
+                )
+            }
+            "strlen" => {
+                format!("(string (length {}))", var_ref)
+            }
+            "arrlen" => {
+                format!("(string (length {}))", var_ref)
+            }
+            "substring" => {
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if let Some((off, len)) = operand.split_once(':') {
+                    let off_n: i64 = off.parse().unwrap_or(0);
+                    let len_n: i64 = len.parse().unwrap_or(-1);
+                    if len_n < 0 {
+                        // Negative length: trim from end
+                        format!(
+                            "(string/slice {} {} (+ (length {}) {}))",
+                            var_ref, off_n, var_ref, len_n
+                        )
+                    } else {
+                        format!("(string/slice {} {} {})", var_ref, off_n, off_n + len_n)
+                    }
+                } else {
+                    let off_n: i64 = operand.parse().unwrap_or(0);
+                    format!("(string/slice {} {})", var_ref, off_n)
+                }
+            }
+            "/" => {
+                // First match replace
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if let Some((pat, rep)) = operand.split_once('\0') {
+                    format!("(string/replace \"{}\" \"{}\" {})", pat, rep, var_ref)
+                } else {
+                    var_ref
+                }
+            }
+            "//" => {
+                // Global replace
+                let operand = pe
+                    .operand
+                    .as_ref()
+                    .map(|o| expr_to_literal(o))
+                    .unwrap_or_default();
+                if let Some((pat, rep)) = operand.split_once('\0') {
+                    format!("(string/replace-all \"{}\" \"{}\" {})", pat, rep, var_ref)
+                } else {
+                    var_ref
+                }
+            }
+            _ => var_ref,
+        }
+    } else if ctx.is_declared(&pe.name) {
+        pe.name.clone()
+    } else {
+        format!("(or (os/getenv \"{}\") \"\")", pe.name)
     }
 }
 
