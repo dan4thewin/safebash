@@ -5,7 +5,6 @@
 //! functions — can be called by the compiled binary.
 
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::InstBuilder;
 use cranelift_codegen::ir::{AbiParam, Signature};
 use cranelift_codegen::isa::CallConv;
 use cranelift_module::{DataDescription, Linkage, Module};
@@ -654,7 +653,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_read_all", Linkage::Import, &read_all_sig)
         .expect("declare");
 
-    let externs = ExternFuncs {
+    ExternFuncs {
         write: write_func,
         exit: exit_func,
         run: run_func,
@@ -728,17 +727,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         itod: itod_func,
         signum: signum_data,
         trace_flag: trace_flag_data,
-    };
-    externs
+    }
 }
 
 /// Intern all string literals used by the SSA program into the object module.
 /// Returns a map from string content to DataId.
 pub(super) fn intern_literals(
-    mut module: &mut ObjectModule,
+    module: &mut ObjectModule,
     program: &SsaProgram,
     func_constants: &HashMap<String, String>,
-    bash_source: Option<&str>,
+    _bash_source: Option<&str>,
     trace: bool,
 ) -> (
     HashMap<String, cranelift_module::DataId>,
@@ -763,9 +761,9 @@ pub(super) fn intern_literals(
         data_id
     };
 
-    let space_id = intern(&mut module, " ");
-    let nl_id = intern(&mut module, "\n");
-    let _empty_id = intern(&mut module, ""); // for argv bounds check
+    let space_id = intern(module, " ");
+    let nl_id = intern(module, "\n");
+    let _empty_id = intern(module, ""); // for argv bounds check
 
     // Pre-intern all string literals in the program
     fn intern_value(
@@ -907,7 +905,7 @@ pub(super) fn intern_literals(
         for inst in &block.insts {
             match inst {
                 SsaInst::Assign { value, .. } => {
-                    intern_value(&mut module, &mut intern, value);
+                    intern_value(module, &mut intern, value);
                 }
                 SsaInst::Command {
                     name,
@@ -916,45 +914,45 @@ pub(super) fn intern_literals(
                     ..
                 } => {
                     if name != "[[" {
-                        intern(&mut module, name);
+                        intern(module, name);
                     }
                     for a in args {
-                        intern_value(&mut module, &mut intern, a);
+                        intern_value(module, &mut intern, a);
                     }
                     for r in redirects {
-                        intern_ir_expr(&mut module, &mut intern, &r.target);
+                        intern_ir_expr(module, &mut intern, &r.target);
                     }
                 }
                 SsaInst::Test(test_expr) => {
-                    intern_test_expr(&mut module, &mut intern, test_expr);
+                    intern_test_expr(module, &mut intern, test_expr);
                 }
 
                 SsaInst::Pipeline { stages, .. } => {
                     for (name, args, redirects) in stages {
-                        intern(&mut module, name);
+                        intern(module, name);
                         for a in args {
-                            intern_value(&mut module, &mut intern, a);
+                            intern_value(module, &mut intern, a);
                         }
                         for r in redirects {
-                            intern_ir_expr(&mut module, &mut intern, &r.target);
+                            intern_ir_expr(module, &mut intern, &r.target);
                         }
                     }
                 }
                 SsaInst::SubscriptAssign { index, value, .. } => {
-                    intern_value(&mut module, &mut intern, index);
-                    intern_value(&mut module, &mut intern, value);
+                    intern_value(module, &mut intern, index);
+                    intern_value(module, &mut intern, value);
                 }
                 SsaInst::ArrayAppend { value, .. } => {
-                    intern_value(&mut module, &mut intern, value);
+                    intern_value(module, &mut intern, value);
                 }
                 SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
                     for r in redirects {
-                        intern_ir_expr(&mut module, &mut intern, &r.target);
+                        intern_ir_expr(module, &mut intern, &r.target);
                     }
                 }
                 SsaInst::Bless { test, .. } => {
-                    intern_test_expr(&mut module, &mut intern, test);
-                    intern(&mut module, "bless: validation failed\n");
+                    intern_test_expr(module, &mut intern, test);
+                    intern(module, "bless: validation failed\n");
                 }
                 _ => {}
             }
@@ -963,7 +961,7 @@ pub(super) fn intern_literals(
 
     // Intern constant-folded function outputs
     for s in func_constants.values() {
-        intern(&mut module, s);
+        intern(module, s);
     }
 
     // DD#32: intern branch trace messages
@@ -977,8 +975,8 @@ pub(super) fn intern_literals(
                 } => {
                     let true_label = program.block(*true_block).label.as_str();
                     let false_label = program.block(*false_block).label.as_str();
-                    intern(&mut module, &format!("+ branch \u{2192} {}\n", true_label));
-                    intern(&mut module, &format!("+ branch \u{2192} {}\n", false_label));
+                    intern(module, &format!("+ branch \u{2192} {}\n", true_label));
+                    intern(module, &format!("+ branch \u{2192} {}\n", false_label));
                 }
                 crate::ssa::Terminator::Loop {
                     body_block,
@@ -987,8 +985,8 @@ pub(super) fn intern_literals(
                 } => {
                     let body_label = program.block(*body_block).label.as_str();
                     let exit_label = program.block(*exit_block).label.as_str();
-                    intern(&mut module, &format!("+ loop \u{2192} {}\n", body_label));
-                    intern(&mut module, &format!("+ loop \u{2192} {}\n", exit_label));
+                    intern(module, &format!("+ loop \u{2192} {}\n", body_label));
+                    intern(module, &format!("+ loop \u{2192} {}\n", exit_label));
                 }
                 _ => {}
             }
@@ -1168,6 +1166,7 @@ pub(super) fn allocate_variables(
 
 /// Initialize positional parameters ($1-$9, $@, $#, $0, $$, $?, $!) from argv.
 /// Scans the SSA to determine which positionals are referenced.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn init_positional_params(
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,
@@ -1175,10 +1174,10 @@ pub(super) fn init_positional_params(
     externs: &ExternFuncs,
     vars: &mut std::collections::HashMap<String, super::types::VarSlot>,
     literals: &mut std::collections::HashMap<String, cranelift_module::DataId>,
-    reachable: &std::collections::HashSet<usize>,
-    space_id: cranelift_module::DataId,
+    _reachable: &std::collections::HashSet<usize>,
+    _space_id: cranelift_module::DataId,
     exit_status_var: cranelift_frontend::Variable,
-    test_result_var: cranelift_frontend::Variable,
+    _test_result_var: cranelift_frontend::Variable,
 ) {
     use super::redirects::scan_redirect_for_vars;
     use super::types::VarSlot;

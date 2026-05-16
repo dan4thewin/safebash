@@ -1,23 +1,20 @@
 //! Command-specific handlers extracted from handle_command.
 
 use super::expressions::{expr_to_string, expr_to_value};
-use super::functions::{
-    collect_local_vars, collect_max_positional, collect_returns, lift_int_func_calls,
-};
-use super::helpers::insert_phis_two_branch;
+use super::functions::{collect_local_vars, collect_max_positional};
 use super::resolution::resolve_pipeline_command;
-use super::statements::{lower_one, lower_stmts};
+use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
 
 /// Handle `read` command — emit ReadLine/ReadLineMulti instructions.
 pub(super) fn handle_read(
-    name: &str,
+    _name: &str,
     c: &Command,
     stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
     // Parse flags: -d DELIM (record delimiter), -f DELIM (field separator), -a ARR
@@ -104,7 +101,6 @@ pub(super) fn handle_read(
             field_sep,
         });
     }
-    return block;
     block
 }
 
@@ -112,10 +108,10 @@ pub(super) fn handle_read(
 pub(super) fn handle_trap(
     name: &str,
     c: &Command,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // trap 'body' SIGNAL
     // For EXIT: record body, emit before all Return terminators
@@ -169,24 +165,24 @@ pub(super) fn handle_trap(
     }
     // Unsupported trap form — emit as regular command
     let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
-    let resolved = resolve_pipeline_command(&name);
+    let resolved = resolve_pipeline_command(name);
     ssa.block_mut(block).insts.push(SsaInst::Command {
         name: resolved,
         args,
         redirects: vec![],
         checked: true,
     });
-    return block;
+    block
 }
 
 /// Handle `signal` command — emit signal configuration instructions.
 pub(super) fn handle_signal(
-    name: &str,
+    _name: &str,
     c: &Command,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // signal N DISPOSITION
     // N is a signal number (int literal)
@@ -243,17 +239,17 @@ pub(super) fn handle_signal(
             }
         }
     }
-    return block;
+    block
 }
 
 /// Handle `unset` command — clear variable or array.
 pub(super) fn handle_unset(
-    name: &str,
+    _name: &str,
     c: &Command,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // unset map[key] → sash_table_delete
     // unset var → assign empty string (simulates unset)
@@ -308,7 +304,7 @@ pub(super) fn handle_unset(
             }
         }
     }
-    return block;
+    block
 }
 
 /// Handle function call (inline expansion) or external command emit.
@@ -319,10 +315,10 @@ pub(super) fn handle_unset(
 pub(super) fn handle_function_call_or_command(
     name: &str,
     c: &Command,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // Check if this is a known function call → inline expansion
     // DD#18: try local function first (__local__name), only if in scope

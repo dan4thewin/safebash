@@ -1,20 +1,20 @@
 //! Extracted handlers for large SsaValue match arms in lower_value.
 
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::types::{I64, I8};
+use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind, TrapCode};
 use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-use super::arithmetic::emit_arith_op;
 use super::redirects::emit_redirects;
 use super::types::{ExternFuncs, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
 /// Handle SsaValue::ParamExpansion — ${var:op:operand} forms.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_param_expansion(
     var: &VarRef,
     operator: &str,
@@ -23,9 +23,9 @@ pub(super) fn handle_param_expansion(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
+    _func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
+    _exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     // glob: arr=(*.sh) → sash_glob(".", pattern)
     if operator == "glob" {
@@ -576,6 +576,7 @@ pub(super) fn handle_param_expansion(
 /// Handle SsaValue::CmdSubst — command substitution $(cmd args...).
 ///
 /// TRUST: Command names are resolved at compile time. Builtins (echo, printf)
+#[allow(clippy::too_many_arguments)]
 /// are handled inline without fork. External commands use fork/exec.
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],

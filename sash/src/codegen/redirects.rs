@@ -2,16 +2,13 @@
 //!
 //! SECURITY: Only fd manipulation via dup/dup2/close. No filename globbing.
 
-use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::InstBuilder;
 use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_module::{Linkage, Module};
+use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::lower_value;
-use crate::ssa::*;
 
 pub(super) struct SavedFd {
     pub(super) original_fd: i64, // the fd that was redirected (e.g. 1, 2)

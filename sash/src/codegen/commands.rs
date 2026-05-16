@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::doc_lazy_continuation)]
+#![allow(clippy::too_many_arguments)]
 //! Builtin command code generation: echo, exec.
 //!
 //! TRUST: lower_exec is the path to fork/exec. Command names are SSA
@@ -13,7 +15,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{lower_expr_value_as_int, lower_value};
+use super::values::lower_value;
 use crate::ssa::*;
 
 pub(super) fn lower_echo(
@@ -98,7 +100,6 @@ pub(super) fn lower_echo(
 /// concatenations thereof. No shell interpretation (no word splitting,
 /// no globbing, no metacharacter expansion).
 #[allow(clippy::too_many_arguments)]
-
 pub(super) fn lower_exec(
     name: &str,
     args: &[SsaValue],

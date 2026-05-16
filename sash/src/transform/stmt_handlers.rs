@@ -1,12 +1,8 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::control_flow::{lower_for, lower_if, lower_while};
 use super::expressions::{expr_to_string, expr_to_value};
-use super::functions::{
-    collect_local_vars, collect_max_positional, collect_returns, lift_int_func_calls,
-};
-use super::helpers::insert_phis_two_branch;
-use super::pipelines::{lower_for_array, lower_for_dollar_at, lower_pipe_while_read};
+use super::functions::{collect_local_vars, lift_int_func_calls};
+use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts};
 use crate::ir::*;
@@ -318,7 +314,7 @@ pub(super) fn handle_command(
 /// Handle StmtKind::Pipeline — multi-command pipe chains.
 pub(super) fn handle_pipeline(
     p: &Pipeline,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     mut block: BlockId,

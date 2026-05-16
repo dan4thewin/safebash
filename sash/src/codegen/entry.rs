@@ -12,34 +12,20 @@
 use std::collections::HashMap;
 
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::types::{I64, I8};
-use cranelift_codegen::ir::{
-    instructions::BlockArg, AbiParam, Function, InstBuilder, MemFlags, Signature, StackSlotData,
-    StackSlotKind, TrapCode, UserFuncName,
-};
+use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::{Function, InstBuilder, MemFlags, Signature, UserFuncName};
 use cranelift_codegen::isa::CallConv;
 use cranelift_codegen::settings;
 use cranelift_codegen::verifier::verify_function;
-use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{default_libcall_names, DataDescription, Linkage, Module};
+use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext};
+use cranelift_module::{default_libcall_names, Linkage, Module};
 use cranelift_object::{ObjectBuilder, ObjectModule};
 
-use crate::ir::TestExpr;
 use crate::ssa::*;
 
-use super::arithmetic::emit_arith_op;
-use super::commands::{lower_echo, lower_exec};
 use super::dispatch::lower_inst;
-use super::redirects::{
-    emit_redirects, emit_restore, ir_expr_to_ssa_value, lower_ir_redirect_expr,
-    scan_redirect_for_vars, SavedFd,
-};
-use super::tests::{emit_string_eq, lower_test_expr};
-use super::types::{ExternFuncs, InstCtx, VarSlot};
-use super::values::{
-    emit_strlen, lower_expr_value, lower_expr_value_as_int, lower_value, lower_value_as_int,
-    scan_test_for_vars, scan_value_for_vars,
-};
+use super::redirects::SavedFd;
+use super::types::InstCtx;
 
 /// Compile sash source to a native object file.
 ///
@@ -178,7 +164,7 @@ pub fn compile_ssa(
         let mut builder = FunctionBuilder::new(&mut func, &mut fbc);
 
         let fs = super::setup::allocate_variables(&mut builder, program, &reachable);
-        let mut cl_blocks = fs.cl_blocks;
+        let cl_blocks = fs.cl_blocks;
         let mut vars = fs.vars;
         let test_result_var = fs.test_result_var;
         let exit_status_var = fs.exit_status_var;

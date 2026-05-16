@@ -4,8 +4,6 @@
 //! This is where taint originates — $(getenv), $(argv), command
 //! substitution all produce tainted SsaValues.
 
-use super::helpers::parse_arith_binop;
-use super::resolution::try_parse_sexpr;
 use crate::ir::*;
 use crate::ssa::*;
 

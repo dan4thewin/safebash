@@ -4,12 +4,8 @@
 //! SECURITY: This is where commands become SsaInst::Command with resolved names.
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
-use super::expressions::{expr_to_string, expr_to_value};
-use super::functions::{
-    collect_local_vars, collect_max_positional, collect_returns, lift_int_func_calls,
-};
-use super::pipelines::lower_pipe_while_read;
-use super::resolution::resolve_pipeline_command;
+use super::expressions::expr_to_value;
+use super::functions::{collect_returns, lift_int_func_calls};
 use crate::ir::*;
 use crate::ssa::*;
 

@@ -12,9 +12,8 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{lower_expr_value, lower_expr_value_as_int, lower_value};
+use super::values::{lower_expr_value, lower_expr_value_as_int};
 use crate::ir::TestExpr;
-use crate::ssa::*;
 
 pub(super) fn emit_string_eq(
     builder: &mut FunctionBuilder,

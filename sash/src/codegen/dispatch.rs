@@ -6,25 +6,16 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind, TrapCode};
-use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind};
+use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
-use std::collections::HashMap;
 
-use super::arithmetic::emit_arith_op;
 use super::commands::{lower_echo, lower_exec};
-use super::redirects::{
-    emit_redirects, emit_restore, ir_expr_to_ssa_value, lower_ir_redirect_expr,
-    scan_redirect_for_vars, SavedFd,
-};
-use super::tests::{emit_string_eq, lower_test_expr};
-use super::types::{ExternFuncs, InstCtx, VarSlot};
-use super::values::{
-    emit_strlen, lower_expr_value, lower_expr_value_as_int, lower_value, lower_value_as_int,
-    scan_test_for_vars, scan_value_for_vars,
-};
-use crate::ir::TestExpr;
+use super::redirects::{emit_redirects, emit_restore};
+use super::tests::lower_test_expr;
+use super::types::{InstCtx, VarSlot};
+use super::values::lower_value;
 use crate::ssa::*;
 
 pub(super) fn lower_inst(
@@ -49,7 +40,7 @@ pub(super) fn lower_inst(
     let program = ctx.program;
     let ssa_id = ctx.ssa_id;
     let saved_end_status_var = ctx.saved_end_status_var;
-    let cl_blocks = ctx.cl_blocks;
+    let _cl_blocks = ctx.cl_blocks;
     let _trace = ctx.trace;
     match inst {
         SsaInst::Assign { target, value } => {

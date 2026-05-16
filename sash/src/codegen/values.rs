@@ -4,16 +4,14 @@
 //! variables become register loads, concatenations call sash_concat.
 
 use cranelift_codegen::ir::condcodes::IntCC;
-use cranelift_codegen::ir::instructions::BlockArg;
-use cranelift_codegen::ir::types::{I64, I8};
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind, TrapCode};
+use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::arithmetic::emit_arith_op;
-use super::redirects::emit_redirects;
 use super::types::{ExternFuncs, VarSlot};
 use super::value_handlers::{handle_cmdsub, handle_param_expansion};
 use crate::ir::TestExpr;
@@ -248,7 +246,6 @@ pub(super) fn lower_expr_value(
 
 /// Lower an IR Expr to an i64 value for numeric contexts.
 /// Int vars are loaded directly; string vars go through atoi.
-
 pub(super) fn lower_expr_value_as_int(
     expr: &crate::ir::Expr,
     builder: &mut FunctionBuilder,
@@ -334,7 +331,6 @@ pub(super) fn lower_expr_value_as_int(
 }
 
 #[allow(clippy::too_many_arguments)]
-
 pub(super) fn lower_value(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
@@ -845,7 +841,6 @@ pub(super) fn lower_value(
 }
 
 /// Emit Cranelift instructions for an ArithOp on two i64 values.
-
 pub(super) fn lower_value_as_int(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
@@ -970,7 +965,6 @@ pub(super) fn lower_value_as_int(
 }
 
 /// Scan an SsaValue for variable references that might be positional or env vars
-
 pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
     match val {
         SsaValue::Var(vref) if vref.version == 0 => {

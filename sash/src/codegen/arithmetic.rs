@@ -2,11 +2,10 @@
 //!
 //! SECURITY: Overflow traps (DD#25). Division by zero traps.
 
-use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::{instructions::BlockArg, InstBuilder};
 use cranelift_frontend::{FunctionBuilder, Variable};
-use cranelift_module::{DataDescription, Linkage, Module};
+use cranelift_module::{DataDescription, Module};
 use cranelift_object::ObjectModule;
 
 use super::types::ExternFuncs;
