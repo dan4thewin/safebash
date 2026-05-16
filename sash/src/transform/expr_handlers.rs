@@ -263,208 +263,10 @@ pub(super) fn handle_arithmetic_expansion(s: &str, expr: &Expr, state: &VersionS
             };
         }
     }
-    // Parse "lhs OP rhs" — handles both "i + 1" and "i+1" and "$i+1"
+    // Parse "lhs OP rhs"
     let (lhs, op_parsed, rhs): (&str, Option<ArithOp>, &str) = parse_arith_binop(trimmed);
     if let Some(op) = op_parsed {
-        let lhs_was_var = lhs.starts_with('$');
-        let rhs_was_var = rhs.starts_with('$');
-        let lhs = lhs.trim_start_matches('$');
-        let rhs = rhs.trim_start_matches('$');
-
-        // Helper: convert an arithmetic sub-expression string to SsaValue
-        let to_val = |s: &str| -> SsaValue {
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(s.to_string()),
-                span: expr.span,
-            };
-            expr_to_value(&e, state)
-        };
-
-        let l_const = if lhs_was_var {
-            Err(std::num::IntErrorKind::InvalidDigit)
-        } else {
-            lhs.parse::<i64>().map_err(|e| *e.kind())
-        };
-        let r_const = if rhs_was_var {
-            Err(std::num::IntErrorKind::InvalidDigit)
-        } else {
-            rhs.parse::<i64>().map_err(|e| *e.kind())
-        };
-
-        // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
-        let l_is_simple = lhs.chars().all(|c| c.is_alphanumeric() || c == '_');
-        let r_is_simple = rhs.chars().all(|c| c.is_alphanumeric() || c == '_');
-
-        match (l_const, r_const) {
-            (Ok(l), Ok(r)) => {
-                // Constant fold
-                let result = match op {
-                    ArithOp::Add => l + r,
-                    ArithOp::Sub => l - r,
-                    ArithOp::Mul => l * r,
-                    ArithOp::Div => {
-                        if r != 0 {
-                            l / r
-                        } else {
-                            return SsaValue::ArithBinOp {
-                                left: Box::new(SsaValue::Expr(l.to_string())),
-                                op: ArithOp::Div,
-                                right: Box::new(SsaValue::Expr(r.to_string())),
-                            };
-                        }
-                    }
-                    ArithOp::Mod => {
-                        if r != 0 {
-                            l % r
-                        } else {
-                            return SsaValue::ArithBinOp {
-                                left: Box::new(SsaValue::Expr(l.to_string())),
-                                op: ArithOp::Mod,
-                                right: Box::new(SsaValue::Expr(r.to_string())),
-                            };
-                        }
-                    }
-                    ArithOp::Eq => {
-                        if l == r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Ne => {
-                        if l != r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Lt => {
-                        if l < r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Le => {
-                        if l <= r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Gt => {
-                        if l > r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Ge => {
-                        if l >= r {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::And => {
-                        if l != 0 && r != 0 {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Or => {
-                        if l != 0 || r != 0 {
-                            1
-                        } else {
-                            0
-                        }
-                    }
-                    ArithOp::Not => 0, // shouldn't appear as binary
-                    ArithOp::Shl => l << r,
-                    ArithOp::Shr => l >> r,
-                    ArithOp::BitAnd => l & r,
-                    ArithOp::BitOr => l | r,
-                    ArithOp::BitXor => l ^ r,
-                    ArithOp::Pow => l.pow(r as u32),
-                };
-                return SsaValue::Expr(result.to_string());
-            }
-            (Err(_), Ok(operand)) => {
-                if l_is_simple {
-                    // DD#58: check if lhs is a known int function
-                    if state.function_int_typed.contains(lhs) {
-                        return SsaValue::ArithBinOp {
-                            left: Box::new(SsaValue::IntFuncCall {
-                                name: lhs.to_string(),
-                                args: vec![],
-                            }),
-                            op,
-                            right: Box::new(SsaValue::Expr(operand.to_string())),
-                        };
-                    }
-                    return SsaValue::ArithExpr {
-                        var: state.lookup(lhs),
-                        op,
-                        operand,
-                    };
-                } else {
-                    return SsaValue::ArithBinOp {
-                        left: Box::new(to_val(lhs)),
-                        op,
-                        right: Box::new(SsaValue::Expr(operand.to_string())),
-                    };
-                }
-            }
-            (Ok(l_val), Err(_)) => {
-                if r_is_simple {
-                    match op {
-                        ArithOp::Add
-                        | ArithOp::Mul
-                        | ArithOp::Eq
-                        | ArithOp::Ne
-                        | ArithOp::And
-                        | ArithOp::Or => {
-                            return SsaValue::ArithExpr {
-                                var: state.lookup(rhs),
-                                op,
-                                operand: l_val,
-                            };
-                        }
-                        _ => {
-                            return SsaValue::ArithBinOp {
-                                left: Box::new(SsaValue::Expr(l_val.to_string())),
-                                op,
-                                right: Box::new(SsaValue::Var(state.lookup(rhs))),
-                            };
-                        }
-                    }
-                } else {
-                    return SsaValue::ArithBinOp {
-                        left: Box::new(SsaValue::Expr(l_val.to_string())),
-                        op,
-                        right: Box::new(to_val(rhs)),
-                    };
-                }
-            }
-            (Err(_), Err(_)) => {
-                let left = if l_is_simple {
-                    SsaValue::Var(state.lookup(lhs))
-                } else {
-                    to_val(lhs)
-                };
-                let right = if r_is_simple {
-                    SsaValue::Var(state.lookup(rhs))
-                } else {
-                    to_val(rhs)
-                };
-                return SsaValue::ArithBinOp {
-                    left: Box::new(left),
-                    op,
-                    right: Box::new(right),
-                };
-            }
-        }
+        return lower_arith_binop(lhs, op, rhs, s, expr, state);
     }
     // Fallback: treat as literal string
     SsaValue::Expr(format!("$(({}))", s))
@@ -612,4 +414,214 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         }
     }
     SsaValue::Expr(expr_to_string(expr))
+}
+
+/// Lower a binary arithmetic expression given parsed components.
+fn lower_arith_binop(
+    lhs: &str,
+    op: ArithOp,
+    rhs: &str,
+    s: &str,
+    expr: &Expr,
+    state: &VersionState,
+) -> SsaValue {
+    let lhs_was_var = lhs.starts_with('$');
+    let rhs_was_var = rhs.starts_with('$');
+    let lhs = lhs.trim_start_matches('$');
+    let rhs = rhs.trim_start_matches('$');
+
+    // Helper: convert an arithmetic sub-expression string to SsaValue
+    let to_val = |s: &str| -> SsaValue {
+        let e = Expr {
+            kind: ExprKind::ArithmeticExpansion(s.to_string()),
+            span: expr.span,
+        };
+        expr_to_value(&e, state)
+    };
+
+    let l_const = if lhs_was_var {
+        Err(std::num::IntErrorKind::InvalidDigit)
+    } else {
+        lhs.parse::<i64>().map_err(|e| *e.kind())
+    };
+    let r_const = if rhs_was_var {
+        Err(std::num::IntErrorKind::InvalidDigit)
+    } else {
+        rhs.parse::<i64>().map_err(|e| *e.kind())
+    };
+
+    // Check if lhs/rhs are complex (contain operators/parens) — if so, recurse
+    let l_is_simple = lhs.chars().all(|c| c.is_alphanumeric() || c == '_');
+    let r_is_simple = rhs.chars().all(|c| c.is_alphanumeric() || c == '_');
+
+    match (l_const, r_const) {
+        (Ok(l), Ok(r)) => {
+            // Constant fold
+            let result = match op {
+                ArithOp::Add => l + r,
+                ArithOp::Sub => l - r,
+                ArithOp::Mul => l * r,
+                ArithOp::Div => {
+                    if r != 0 {
+                        l / r
+                    } else {
+                        return SsaValue::ArithBinOp {
+                            left: Box::new(SsaValue::Expr(l.to_string())),
+                            op: ArithOp::Div,
+                            right: Box::new(SsaValue::Expr(r.to_string())),
+                        };
+                    }
+                }
+                ArithOp::Mod => {
+                    if r != 0 {
+                        l % r
+                    } else {
+                        return SsaValue::ArithBinOp {
+                            left: Box::new(SsaValue::Expr(l.to_string())),
+                            op: ArithOp::Mod,
+                            right: Box::new(SsaValue::Expr(r.to_string())),
+                        };
+                    }
+                }
+                ArithOp::Eq => {
+                    if l == r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Ne => {
+                    if l != r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Lt => {
+                    if l < r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Le => {
+                    if l <= r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Gt => {
+                    if l > r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Ge => {
+                    if l >= r {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::And => {
+                    if l != 0 && r != 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Or => {
+                    if l != 0 || r != 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
+                ArithOp::Not => 0, // shouldn't appear as binary
+                ArithOp::Shl => l << r,
+                ArithOp::Shr => l >> r,
+                ArithOp::BitAnd => l & r,
+                ArithOp::BitOr => l | r,
+                ArithOp::BitXor => l ^ r,
+                ArithOp::Pow => l.pow(r as u32),
+            };
+            return SsaValue::Expr(result.to_string());
+        }
+        (Err(_), Ok(operand)) => {
+            if l_is_simple {
+                // DD#58: check if lhs is a known int function
+                if state.function_int_typed.contains(lhs) {
+                    return SsaValue::ArithBinOp {
+                        left: Box::new(SsaValue::IntFuncCall {
+                            name: lhs.to_string(),
+                            args: vec![],
+                        }),
+                        op,
+                        right: Box::new(SsaValue::Expr(operand.to_string())),
+                    };
+                }
+                return SsaValue::ArithExpr {
+                    var: state.lookup(lhs),
+                    op,
+                    operand,
+                };
+            } else {
+                return SsaValue::ArithBinOp {
+                    left: Box::new(to_val(lhs)),
+                    op,
+                    right: Box::new(SsaValue::Expr(operand.to_string())),
+                };
+            }
+        }
+        (Ok(l_val), Err(_)) => {
+            if r_is_simple {
+                match op {
+                    ArithOp::Add
+                    | ArithOp::Mul
+                    | ArithOp::Eq
+                    | ArithOp::Ne
+                    | ArithOp::And
+                    | ArithOp::Or => {
+                        return SsaValue::ArithExpr {
+                            var: state.lookup(rhs),
+                            op,
+                            operand: l_val,
+                        };
+                    }
+                    _ => {
+                        return SsaValue::ArithBinOp {
+                            left: Box::new(SsaValue::Expr(l_val.to_string())),
+                            op,
+                            right: Box::new(SsaValue::Var(state.lookup(rhs))),
+                        };
+                    }
+                }
+            } else {
+                return SsaValue::ArithBinOp {
+                    left: Box::new(SsaValue::Expr(l_val.to_string())),
+                    op,
+                    right: Box::new(to_val(rhs)),
+                };
+            }
+        }
+        (Err(_), Err(_)) => {
+            let left = if l_is_simple {
+                SsaValue::Var(state.lookup(lhs))
+            } else {
+                to_val(lhs)
+            };
+            let right = if r_is_simple {
+                SsaValue::Var(state.lookup(rhs))
+            } else {
+                to_val(rhs)
+            };
+            return SsaValue::ArithBinOp {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
+        }
+    }
 }
