@@ -1,4 +1,4 @@
-// verification line
+//! Instruction dispatch: routes each SsaInst to its handler.
 //!
 //! SECURITY: This is the complete list of instructions the codegen handles.
 //! A reviewer can verify: every SsaInst variant is accounted for.
