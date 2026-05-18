@@ -88,5 +88,8 @@ pub(super) fn node_text_trimmed(node: Node, source: &[u8]) -> String {
 
 /// Get trimmed text of a node with a custom fallback for parse failure.
 pub(super) fn node_text_or(node: Node, source: &[u8], fallback: &str) -> String {
-    node.utf8_text(source).unwrap_or(fallback).trim().to_string()
+    node.utf8_text(source)
+        .unwrap_or(fallback)
+        .trim()
+        .to_string()
 }

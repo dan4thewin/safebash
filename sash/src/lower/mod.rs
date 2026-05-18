@@ -29,13 +29,44 @@ pub fn lower_program(root: Node, source: &[u8]) -> Program {
 /// Lower a body (sequence of statements) from a CST node.
 pub fn lower_body(node: Node, source: &[u8]) -> Vec<Statement> {
     let mut stmts = Vec::new();
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
+    let children: Vec<Node> = node.children(&mut node.walk()).collect();
+    let mut i = 0;
+    while i < children.len() {
+        let child = children[i];
         if child.kind() == "comment" || child.kind() == "\n" {
+            i += 1;
             continue;
         }
-        if let Some(stmt) = statements::lower_statement(child, source) {
-            stmts.push(stmt);
+        // Check if next sibling is "&" (background operator)
+        let is_background = i + 1 < children.len() && children[i + 1].kind() == "&";
+        if let Some(s) = statements::lower_statement(child, source) {
+            if is_background {
+                // Wrap in a List with Background op
+                let bg = Statement {
+                    kind: StmtKind::List(List {
+                        op: ListOp::Background,
+                        left: Box::new(s),
+                        right: Box::new(Statement {
+                            kind: StmtKind::Command(Command {
+                                name: Expr {
+                                    kind: ExprKind::Literal("true".to_string()),
+                                    span: Span::from_node(child),
+                                },
+                                args: vec![],
+                            }),
+                            span: Span::from_node(child),
+                        }),
+                    }),
+                    span: Span::from_node(child),
+                };
+                stmts.push(bg);
+                i += 2; // skip the "&"
+            } else {
+                stmts.push(s);
+                i += 1;
+            }
+        } else {
+            i += 1;
         }
     }
     stmts
