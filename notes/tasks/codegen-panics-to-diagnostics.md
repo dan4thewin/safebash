@@ -1,5 +1,5 @@
 title: Convert codegen panics to diagnostics
-status: ready
+status: done
 depends: []
 gates:
   - tests

@@ -1,13 +1,11 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5004: process substitution <(...) / >(...) is not allowed.
 pub struct ProcessSubstitution;
 
 impl Rule for ProcessSubstitution {
-    fn name(&self) -> &'static str { "process-substitution" }
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["process_substitution"]
     }
@@ -17,7 +15,10 @@ impl Rule for ProcessSubstitution {
         vec![Diagnostic::error(
             node,
             "SB5004",
-            format!("process substitution {} is not allowed in the safe subset", text),
+            format!(
+                "process substitution {} is not allowed in the safe subset",
+                text
+            ),
         )]
     }
 }

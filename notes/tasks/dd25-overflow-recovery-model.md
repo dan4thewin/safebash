@@ -1,7 +1,7 @@
 title: DD#25 — decide overflow recovery model
-status: ready
+status: done
 depends: []
-gates: []
+gates: [25.2, 25.3]
 
 DD#25 says integers trap on overflow. DD#55 defines the error model
 (implicit checks, `-` suppression, abort on failure).

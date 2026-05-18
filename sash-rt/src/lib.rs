@@ -92,6 +92,10 @@ pub static mut sash_envp: *const *const u8 = core::ptr::null();
 pub static mut sash_argc: i64 = 0;
 #[no_mangle]
 pub static mut sash_argv: *const *const u8 = core::ptr::null();
+#[no_mangle]
+pub static mut sash_signum: i64 = 0;
+#[no_mangle]
+pub static mut sash_trace_flag: i64 = 0;
 
 // ═══════════════════════════════════════════════════════════════
 // Safe inner functions — no raw pointers, no unsafe
@@ -141,30 +145,7 @@ unsafe fn cstr_bytes(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, cstr_len(p))
 }
 
-unsafe fn find_path(envp: *const *const u8) -> &'static [u8] {
-    if envp.is_null() {
-        return b"/usr/bin:/bin";
-    }
-    let mut i = 0;
-    loop {
-        let entry = *envp.add(i);
-        if entry.is_null() {
-            break;
-        }
-        let bytes = cstr_bytes(entry);
-        if bytes.len() >= 5
-            && bytes[0] == b'P'
-            && bytes[1] == b'A'
-            && bytes[2] == b'T'
-            && bytes[3] == b'H'
-            && bytes[4] == b'='
-        {
-            return &bytes[5..];
-        }
-        i += 1;
-    }
-    b"/usr/bin:/bin"
-}
+
 
 /// Fork. Returns child pid in parent, 0 in child, -1 on error.
 #[no_mangle]
@@ -176,7 +157,7 @@ pub extern "C" fn sash_fork() -> i64 {
     }
 }
 
-/// Exec with PATH lookup. Does not return on success.
+/// Exec with absolute path only (DD#23). Does not return on success.
 #[no_mangle]
 pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> ! {
     unsafe {
@@ -189,33 +170,16 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
         let has_slash = cmd_bytes.iter().any(|&b| b == b'/');
         let cmd_cstr = core::ffi::CStr::from_ptr(cmd as *const i8);
 
-        if has_slash {
-            let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
+        if !has_slash {
+            // DD#23: sash never walks PATH. The compiler resolves all
+            // commands to absolute paths. A bare name here is a bug.
+            let msg = b"sash: bug: bare command passed to sash_exec (expected absolute path)\n";
+            let fd = BorrowedFd::borrow_raw(2);
+            let _ = rustix::io::write(fd, msg);
             rustix::runtime::exit_group(127);
         }
 
-        let path_env = find_path(envp);
-        let mut buf = [0u8; 4096];
-        let mut pos = 0;
-        while pos <= path_env.len() {
-            let mut end = pos;
-            while end < path_env.len() && path_env[end] != b':' {
-                end += 1;
-            }
-            let dir = &path_env[pos..end];
-            pos = end + 1;
-            if dir.is_empty() { continue; }
-            let total = dir.len() + 1 + cmd_bytes.len() + 1;
-            if total > buf.len() { continue; }
-            buf[..dir.len()].copy_from_slice(dir);
-            buf[dir.len()] = b'/';
-            buf[dir.len() + 1..dir.len() + 1 + cmd_bytes.len()].copy_from_slice(cmd_bytes);
-            buf[dir.len() + 1 + cmd_bytes.len()] = 0;
-            let path_cstr = core::ffi::CStr::from_ptr(buf.as_ptr() as *const i8);
-            if rustix::fs::access(path_cstr, rustix::fs::Access::EXEC_OK).is_ok() {
-                let _ = rustix::runtime::execve(path_cstr, argv, envp);
-            }
-        }
+        let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
         rustix::runtime::exit_group(127);
     }
 }
@@ -389,6 +353,80 @@ pub extern "C" fn sash_getenv(
 }
 
 // ═══════════════════════════════════════════════════════════════
+// sash_argv_get
+// ═══════════════════════════════════════════════════════════════
+
+/// Get positional parameter by 1-based index.
+/// Panics (aborts) if index is out of range.
+#[no_mangle]
+pub extern "C" fn sash_argv_get(
+    idx: i64,
+    out_len: *mut i64,
+) -> *const u8 {
+    let argc = unsafe { sash_argc };
+    // idx is 1-based positional ($1..$N), argv[0] is program name
+    if idx < 1 || idx >= argc {
+        sash_panic_argv(idx, argc);
+    }
+    let argv = unsafe { sash_argv };
+    let ptr = unsafe { *argv.add(idx as usize) };
+    let len = unsafe { strlen(ptr) };
+    unsafe { *out_len = len as i64 };
+    ptr
+}
+
+#[cold]
+#[inline(never)]
+fn sash_panic_argv(idx: i64, argc: i64) -> ! {
+    // argc includes $0, so available range is 1..argc-1
+    let max = argc - 1;
+    let mut buf = [0u8; 128];
+    let msg = b"sash: argv index out of range (requested ";
+    let mut pos = msg.len();
+    buf[..pos].copy_from_slice(msg);
+    pos += write_i64(&mut buf[pos..], idx);
+    let mid = b", have 1..";
+    buf[pos..pos + mid.len()].copy_from_slice(mid);
+    pos += mid.len();
+    pos += write_i64(&mut buf[pos..], max);
+    buf[pos] = b')';
+    pos += 1;
+    buf[pos] = b'\n';
+    pos += 1;
+    sash_write(2, buf.as_ptr(), pos as i64);
+    sash_exit(1);
+}
+
+/// Write an i64 into a byte buffer, return number of bytes written.
+fn write_i64(buf: &mut [u8], mut val: i64) -> usize {
+    if val == 0 {
+        buf[0] = b'0';
+        return 1;
+    }
+    let negative = val < 0;
+    if negative {
+        val = val.wrapping_neg();
+    }
+    let mut tmp = [0u8; 20];
+    let mut i = 0;
+    while val > 0 {
+        tmp[i] = b'0' + (val % 10) as u8;
+        val /= 10;
+        i += 1;
+    }
+    let mut pos = 0;
+    if negative {
+        buf[pos] = b'-';
+        pos += 1;
+    }
+    for j in (0..i).rev() {
+        buf[pos] = tmp[j];
+        pos += 1;
+    }
+    pos
+}
+
+// ═══════════════════════════════════════════════════════════════
 // sash_capture
 // ═══════════════════════════════════════════════════════════════
 
@@ -466,6 +504,31 @@ pub unsafe extern "C" fn sash_init_heap() {
     sash_heap_init(ptr as *mut u8, HEAP_SIZE);
 }
 
+/// DD#32: check SASH_TRACE env var at startup
+#[no_mangle]
+pub extern "C" fn sash_trace_init() {
+    let envp = unsafe { sash_envp };
+    if envp.is_null() { return; }
+    let mut i = 0;
+    loop {
+        let entry = unsafe { *envp.add(i) };
+        if entry.is_null() { break; }
+        let prefix = b"SASH_TRACE=";
+        let mut matches = true;
+        for (j, &b) in prefix.iter().enumerate() {
+            if unsafe { *entry.add(j) } != b { matches = false; break; }
+        }
+        if matches {
+            let val = unsafe { *entry.add(prefix.len()) };
+            if val != b'0' && val != 0 {
+                unsafe { sash_trace_flag = 1; }
+            }
+            return;
+        }
+        i += 1;
+    }
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
     sash_malloc(n)
@@ -503,6 +566,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "lea rax, [rsp + rdi*8 + 16]",
         "mov [rip + sash_envp], rax",
         "call sash_init_heap",
+        "call sash_trace_init",
         "call main",
         "mov rdi, rax",
         "mov eax, 60",
@@ -610,59 +674,6 @@ pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {
     buf
 }
 
-/// Evaluate a simple arithmetic expression.
-#[no_mangle]
-pub extern "C" fn sash_arith_eval(var_val: i64, op: u8, operand: i64) -> i64 {
-    arith_eval_inner(var_val, op, operand)
-}
-
-// ═══════════════════════════════════════════════════════════════
-// sash_setenv
-// ═══════════════════════════════════════════════════════════════
-
-#[no_mangle]
-pub unsafe extern "C" fn sash_setenv(
-    name_ptr: *const u8, name_len: i64,
-    val_ptr: *const u8, val_len: i64,
-) {
-    let nlen = name_len as usize;
-    let vlen = val_len as usize;
-    let entry_len = nlen + 1 + vlen;
-    let entry = sash_alloc(entry_len + 1);
-    core::ptr::copy_nonoverlapping(name_ptr, entry, nlen);
-    *entry.add(nlen) = b'=';
-    core::ptr::copy_nonoverlapping(val_ptr, entry.add(nlen + 1), vlen);
-    *entry.add(entry_len) = 0;
-
-    let name_slice = core::slice::from_raw_parts(name_ptr, nlen);
-
-    let envp = sash_envp;
-    if envp.is_null() { return; }
-    let mut count = 0usize;
-    let mut found: Option<usize> = None;
-    loop {
-        let e = *envp.add(count);
-        if e.is_null() { break; }
-        let elen = strlen(e);
-        let eslice = core::slice::from_raw_parts(e, elen);
-        if found.is_none() && elen > nlen && eslice[nlen] == b'=' && &eslice[..nlen] == name_slice {
-            found = Some(count);
-        }
-        count += 1;
-    }
-
-    if let Some(idx) = found {
-        let envp_mut = envp as *mut *const u8;
-        *envp_mut.add(idx) = entry;
-    } else {
-        let new_envp = sash_alloc((count + 2) * 8) as *mut *const u8;
-        core::ptr::copy_nonoverlapping(envp, new_envp, count);
-        *new_envp.add(count) = entry;
-        *new_envp.add(count + 1) = core::ptr::null();
-        sash_envp = new_envp;
-    }
-}
-
 // ═══════════════════════════════════════════════════════════════
 // sash_join_args
 // ═══════════════════════════════════════════════════════════════
@@ -730,15 +741,6 @@ pub extern "C" fn sash_dup(fd: i64) -> i64 {
     }
 }
 
-/// Compare two length-prefixed strings for equality.
-#[no_mangle]
-pub extern "C" fn sash_streq(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64 {
-    if l1 != l2 { return 0; }
-    let a = unsafe { core::slice::from_raw_parts(p1, l1 as usize) };
-    let b = unsafe { core::slice::from_raw_parts(p2, l2 as usize) };
-    if streq_inner(a, b) { 1 } else { 0 }
-}
-
 /// Lexicographic string comparison. Returns <0, 0, or >0.
 #[no_mangle]
 pub extern "C" fn sash_strcmp(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64 {
@@ -780,102 +782,29 @@ pub extern "C" fn sash_assoc_lookup(
 pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let mut buf = [0u8; 4096];
     let mut total = 0usize;
+    let mut got_newline = false;
     loop {
         if total >= buf.len() { break; }
         let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
         match n {
             Ok(0) => break,
             Ok(1) => {
-                if buf[total] == b'\n' { break; }
+                if buf[total] == b'\n' { got_newline = true; break; }
                 total += 1;
             }
             _ => break,
         }
     }
-    if total == 0 {
+    if total == 0 && !got_newline {
+        // True EOF
         return (core::ptr::null_mut(), 0);
     }
-    let ptr = unsafe { sash_alloc(total) };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    // Empty line (got_newline with total=0) or normal line
+    let ptr = unsafe { sash_alloc(core::cmp::max(total, 1)) };
+    if total > 0 {
+        unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    }
     (ptr, total)
-}
-
-// ═══════════════════════════════════════════════════════════════
-// sash_source_kvp
-// ═══════════════════════════════════════════════════════════════
-
-#[no_mangle]
-pub unsafe extern "C" fn sash_source_kvp(path: *const u8, path_len: i64) -> i64 {
-    let path_slice = core::slice::from_raw_parts(path, path_len as usize);
-    let mut path_buf = [0u8; 4096];
-    if path_len as usize >= path_buf.len() {
-        return 1;
-    }
-    path_buf[..path_len as usize].copy_from_slice(path_slice);
-    path_buf[path_len as usize] = 0;
-
-    let fd: i64;
-    core::arch::asm!(
-        "syscall",
-        in("rax") 2_i64,
-        in("rdi") path_buf.as_ptr(),
-        in("rsi") 0_i64,
-        in("rdx") 0_i64,
-        lateout("rax") fd,
-        out("rcx") _,
-        out("r11") _,
-    );
-    if fd < 0 {
-        return 1;
-    }
-
-    let mut buf = [0u8; 65536];
-    let mut total = 0usize;
-    loop {
-        let n = sash_read(fd, buf[total..].as_mut_ptr(), (buf.len() - total) as i64);
-        if n <= 0 { break; }
-        total += n as usize;
-    }
-    sash_close(fd);
-
-    let content = &buf[..total];
-    let mut pos = 0;
-    while pos < total {
-        let mut eol = pos;
-        while eol < total && content[eol] != b'\n' {
-            eol += 1;
-        }
-        let line = &content[pos..eol];
-        pos = eol + 1;
-
-        let trimmed = {
-            let mut s = 0;
-            while s < line.len() && (line[s] == b' ' || line[s] == b'\t') {
-                s += 1;
-            }
-            &line[s..]
-        };
-        if trimmed.is_empty() || trimmed[0] == b'#' {
-            continue;
-        }
-
-        let mut eq = 0;
-        while eq < trimmed.len() && trimmed[eq] != b'=' {
-            eq += 1;
-        }
-        if eq >= trimmed.len() {
-            sash_write(2, b"sash: bad line in config: ".as_ptr(), 26);
-            sash_write(2, trimmed.as_ptr(), trimmed.len() as i64);
-            sash_write(2, b"\n".as_ptr(), 1);
-            sash_exit(1);
-        }
-
-        let key = &trimmed[..eq];
-        let val = &trimmed[eq + 1..];
-        sash_setenv(key.as_ptr(), key.len() as i64, val.as_ptr(), val.len() as i64);
-    }
-
-    0
 }
 
 /// Redirect fd to a file, path given as (ptr, len).
@@ -1240,6 +1169,7 @@ extern "C" {
 }
 
 /// Match a string against a regex pattern.
+
 /// Returns 1 if matched, 0 if not.
 /// pattern and str must be null-terminated.
 #[no_mangle]
@@ -1767,82 +1697,19 @@ pub extern "C" fn sash_tolower_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u
     s_len
 }
 
-/// command -v: check if a command exists in PATH.
-/// Prints the path if found, returns 0 on success, 1 on failure.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_command_v(name_ptr: *const u8, name_len: i64) -> i64 {
-    if name_ptr.is_null() || name_len <= 0 { return 1; }
-    let name = unsafe { core::slice::from_raw_parts(name_ptr, name_len as usize) };
-
-    // Builtins: bash reports just the name, not a PATH lookup
-    const BUILTINS: &[&[u8]] = &[
-        b"echo", b"printf", b"cd", b"pwd", b"test", b"[", b"true", b"false",
-        b"read", b"declare", b"local", b"unset", b"shift", b"return", b"exit",
-        b"type", b"source", b".", b"eval", b"exec", b"export", b"readonly",
-        b"set", b"trap", b"wait", b"break", b"continue", b"let", b"mapfile",
-        b"readarray", b"command", b"builtin", b"getopts", b"hash", b"help",
-        b"jobs", b"kill", b"logout", b"popd", b"pushd", b"dirs", b"shopt",
-        b"enable", b"complete", b"compgen", b"compopt", b"alias", b"unalias",
-        b"bind", b"caller", b"coproc", b"disown", b"fc", b"fg", b"bg",
-        b"history", b"suspend", b"times", b"ulimit", b"umask",
-    ];
-    for &builtin in BUILTINS {
-        if name == builtin {
-            let fd1 = unsafe { rustix::fd::BorrowedFd::borrow_raw(1) };
-            let _ = rustix::io::write(fd1, name);
-            let _ = rustix::io::write(fd1, b"\n");
-            return 0;
-        }
-    }
-
-    // External command: search PATH
-    
-    // Use raw getenv via syscall... actually, use our existing sash_getenv pattern
-    // For simplicity, read /proc/self/environ or just use the C getenv pattern
-    // Actually let's do the simple thing: iterate PATH entries
-    
-    // We need the PATH value. Let's use a static buffer approach.
-    extern "C" { fn sash_getenv(name_ptr: *const u8, name_len: i64, out_len: *mut i64) -> *const u8; }
-    let mut path_len: i64 = 0;
-    let path_ptr = unsafe { sash_getenv(b"PATH".as_ptr(), 4, &mut path_len) };
-    if path_ptr.is_null() || path_len <= 0 { return 1; }
-    let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
-    
-    let mut buf = [0u8; 4096];
-    // Split PATH on ':'
-    let mut start = 0;
-    loop {
-        let end = path[start..].iter().position(|&b| b == b':').map(|p| start + p).unwrap_or(path.len());
-        let dir = &path[start..end];
-        let total = dir.len() + 1 + name.len();
-        if total < buf.len() - 1 {
-            buf[..dir.len()].copy_from_slice(dir);
-            buf[dir.len()] = b'/';
-            buf[dir.len()+1..dir.len()+1+name.len()].copy_from_slice(name);
-            buf[total] = 0;
-            let cpath = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
-            // Check if file exists and is executable
-            match rustix::fs::access(cpath, rustix::fs::Access::EXEC_OK) {
-                Ok(()) => {
-                    // Print the path
-                    let _ = rustix::io::write(unsafe { rustix::fd::BorrowedFd::borrow_raw(1) }, &buf[..total]);
-                    let _ = rustix::io::write(unsafe { rustix::fd::BorrowedFd::borrow_raw(1) }, b"\n");
-                    return 0;
-                }
-                Err(_) => {}
-            }
-        }
-        if end >= path.len() { break; }
-        start = end + 1;
-    }
-    1
-}
-
 
 /// Get process ID.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_getpid() -> i64 {
     rustix::process::getpid().as_raw_nonzero().get() as i64
+}
+
+#[no_mangle]
+pub extern "C" fn sash_getppid() -> i64 {
+    match rustix::process::getppid() {
+        Some(pid) => pid.as_raw_nonzero().get() as i64,
+        None => 0, // init process has no parent
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1881,6 +1748,36 @@ pub unsafe extern "C" fn sash_split_first_word(
     *rest_ptr_out = ptr.add(rest_offset);
     *rest_len_out = (s.len() - rest_offset) as i64;
     (word_ptr, word_len)
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_split_field — split on a specific delimiter byte (DD#22 -f flag)
+// ═══════════════════════════════════════════════════════════════
+
+#[no_mangle]
+pub unsafe extern "C" fn sash_split_field(
+    ptr: *const u8,
+    len: i64,
+    delim: i64,
+    rest_ptr_out: *mut *const u8,
+    rest_len_out: *mut i64,
+) -> (*const u8, i64) {
+    if ptr.is_null() || len <= 0 {
+        *rest_ptr_out = ptr;
+        *rest_len_out = 0;
+        return (ptr, 0);
+    }
+    let s = core::slice::from_raw_parts(ptr, len as usize);
+    let delim_byte = delim as u8;
+    // Find first occurrence of delimiter
+    let field_end = s.iter().position(|&b| b == delim_byte).unwrap_or(s.len());
+    let field_ptr = ptr;
+    let field_len = field_end as i64;
+    // Rest starts after the delimiter
+    let rest_offset = if field_end < s.len() { field_end + 1 } else { s.len() };
+    *rest_ptr_out = ptr.add(rest_offset);
+    *rest_len_out = (s.len() - rest_offset) as i64;
+    (field_ptr, field_len)
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -2047,6 +1944,61 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
         );
     }
     if ret < 0 { -1 } else { 0 }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// sash_signal_flag
+// ═══════════════════════════════════════════════════════════════
+
+/// Register a FLAG handler for the given signal.
+/// When the signal arrives, sash_signum is set to the signal number.
+/// Program continues — no check points, zero overhead.
+#[no_mangle]
+pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
+    use core::mem;
+
+    #[repr(C)]
+    struct KernelSigaction {
+        sa_handler: u64,
+        sa_flags: u64,
+        sa_restorer: u64,
+        sa_mask: [u64; 16],
+    }
+
+    let mut act: KernelSigaction = unsafe { mem::zeroed() };
+    act.sa_handler = sash_flag_handler as u64;
+    // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
+    act.sa_flags = 0x04000000 | 0x10000000;
+    #[allow(clippy::fn_to_numeric_cast)]
+    { act.sa_restorer = sash_flag_restorer as u64; }
+
+    let ret: i64;
+    unsafe {
+        core::arch::asm!(
+            "syscall",
+            in("rax") 13i64,           // __NR_rt_sigaction
+            in("rdi") signum_val,
+            in("rsi") &act as *const _ as i64,
+            in("rdx") 0i64,           // NULL oldact
+            in("r10") 8i64,           // sigsetsize
+            lateout("rax") ret,
+            lateout("rcx") _,
+            lateout("r11") _,
+        );
+    }
+    if ret < 0 { -1 } else { 0 }
+}
+
+extern "C" fn sash_flag_handler(sig: i32) {
+    unsafe { sash_signum = sig as i64; }
+}
+
+#[unsafe(naked)]
+extern "C" fn sash_flag_restorer() {
+    core::arch::naked_asm!(
+        "mov rax, 15",  // __NR_rt_sigreturn
+        "syscall",
+    );
 }
 
 // ── Directory reading (glob support) ─────────────────────────
@@ -2345,6 +2297,8 @@ pub extern "C" fn sash_fnmatch(
     if fnmatch_impl(pat, s) { 1 } else { 0 }
 }
 
+/// Glob match with only `*` as a glob operator.
+/// `?`, `[...]`, `\\` are rejected at compile time (SB5006).
 fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
     let mut px = 0;
     let mut sx = 0;
@@ -2353,50 +2307,17 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
 
     while px < pat.len() || sx < s.len() {
         if px < pat.len() {
-            match pat[px] {
-                b'*' => {
-                    // * matches zero or more chars — remember backtrack point
-                    next_px = px;
-                    next_sx = sx + 1;
-                    px += 1;
-                    continue;
-                }
-                b'?' => {
-                    if sx < s.len() {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
-                b'\\' => {
-                    px += 1;
-                    if px < pat.len() && sx < s.len() && pat[px] == s[sx] {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
-                b'[' => {
-                    if sx < s.len() {
-                        if let Some((matched, end)) = match_bracket(&pat[px..], s[sx]) {
-                            if matched {
-                                px += end;
-                                sx += 1;
-                                continue;
-                            }
-                        }
-                    }
-                }
-                c => {
-                    if sx < s.len() && c == s[sx] {
-                        px += 1;
-                        sx += 1;
-                        continue;
-                    }
-                }
+            if pat[px] == b'*' {
+                next_px = px;
+                next_sx = sx + 1;
+                px += 1;
+                continue;
+            } else if sx < s.len() && pat[px] == s[sx] {
+                px += 1;
+                sx += 1;
+                continue;
             }
         }
-        // No match — try backtracking to last *
         if next_sx > 0 && next_sx <= s.len() {
             px = next_px + 1;
             sx = next_sx;
@@ -2408,193 +2329,4 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
     true
 }
 
-/// Match a bracket expression [abc], [a-z], [!abc], [^abc].
-/// Returns (matched, bytes_consumed_from_pattern) or None on malformed.
-fn match_bracket(pat: &[u8], ch: u8) -> Option<(bool, usize)> {
-    let mut i = 1; // skip '['
-    let negate = if i < pat.len() && (pat[i] == b'!' || pat[i] == b'^') {
-        i += 1;
-        true
-    } else {
-        false
-    };
-    // ] at first position is literal
-    if i < pat.len() && pat[i] == b']' {
-        i += 1;
-    }
-    let mut matched = false;
-    while i < pat.len() && pat[i] != b']' {
-        // POSIX character class [:alpha:], [:digit:], etc.
-        if pat[i] == b'[' && i + 1 < pat.len() && pat[i + 1] == b':' {
-            // Find closing :]
-            let start = i + 2;
-            let mut end = start;
-            while end + 1 < pat.len() && !(pat[end] == b':' && pat[end + 1] == b']') {
-                end += 1;
-            }
-            if end + 1 < pat.len() && pat[end] == b':' && pat[end + 1] == b']' {
-                let class = &pat[start..end];
-                let class_match = match class {
-                    b"alpha" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z'),
-                    b"digit" => ch >= b'0' && ch <= b'9',
-                    b"alnum" => (ch >= b'a' && ch <= b'z') || (ch >= b'A' && ch <= b'Z') || (ch >= b'0' && ch <= b'9'),
-                    b"upper" => ch >= b'A' && ch <= b'Z',
-                    b"lower" => ch >= b'a' && ch <= b'z',
-                    b"space" => ch == b' ' || ch == b'\t' || ch == b'\n' || ch == b'\r' || ch == 0x0b || ch == 0x0c,
-                    b"blank" => ch == b' ' || ch == b'\t',
-                    b"print" | b"graph" => ch >= 0x20 && ch <= 0x7e,
-                    b"cntrl" => ch < 0x20 || ch == 0x7f,
-                    b"punct" => (ch >= b'!' && ch <= b'/') || (ch >= b':' && ch <= b'@') || (ch >= b'[' && ch <= b'`') || (ch >= b'{' && ch <= b'~'),
-                    b"xdigit" => (ch >= b'0' && ch <= b'9') || (ch >= b'a' && ch <= b'f') || (ch >= b'A' && ch <= b'F'),
-                    b"ascii" => ch <= 0x7f,
-                    _ => false,
-                };
-                if class_match { matched = true; }
-                i = end + 2; // skip past :]
-                continue;
-            }
-        }
-        let lo = pat[i];
-        if i + 2 < pat.len() && pat[i + 1] == b'-' && pat[i + 2] != b']' {
-            let hi = pat[i + 2];
-            if ch >= lo && ch <= hi {
-                matched = true;
-            }
-            i += 3;
-        } else {
-            if ch == lo {
-                matched = true;
-            }
-            i += 1;
-        }
-    }
-    if i < pat.len() && pat[i] == b']' {
-        i += 1; // consume ']'
-        Some((if negate { !matched } else { matched }, i))
-    } else {
-        None // malformed — no closing ]
-    }
-}
 
-
-/// Shell-quote a string: wraps in single quotes, escaping embedded quotes.
-/// Dead code — kept for potential future printf %q implementation.
-/// Returns length written to out_ptr.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_shell_quote(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len < 0 {
-        // Empty string → ''
-        unsafe {
-            *out_ptr = b'\'';
-            *out_ptr.add(1) = b'\'';
-        }
-        return 2;
-    }
-    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
-    let mut i = 0usize;
-    unsafe { *out_ptr.add(i) = b'\''; }
-    i += 1;
-    for &b in s {
-        if b == b'\'' {
-            // End quote, escaped quote, start quote: '\''
-            unsafe {
-                *out_ptr.add(i) = b'\'';
-                *out_ptr.add(i + 1) = b'\\';
-                *out_ptr.add(i + 2) = b'\'';
-                *out_ptr.add(i + 3) = b'\'';
-            }
-            i += 4;
-        } else {
-            unsafe { *out_ptr.add(i) = b; }
-            i += 1;
-        }
-    }
-    unsafe { *out_ptr.add(i) = b'\''; }
-    i += 1;
-    i as i64
-}
-
-/// Expand escape sequences in a string: \n → newline, \t → tab, etc.
-/// Dead code — kept for potential future use.
-/// Returns length written to out_ptr.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_expand_escapes(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
-    let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
-    let mut i = 0usize;
-    let mut o = 0usize;
-    while i < s.len() {
-        if s[i] == b'\\' && i + 1 < s.len() {
-            let c = match s[i + 1] {
-                b'n' => b'\n',
-                b't' => b'\t',
-                b'r' => b'\r',
-                b'a' => 0x07,
-                b'b' => 0x08,
-                b'e' | b'E' => 0x1b,
-                b'f' => 0x0c,
-                b'v' => 0x0b,
-                b'\\' => b'\\',
-                b'\'' => b'\'',
-                b'"' => b'"',
-                other => {
-                    // Unknown escape — pass through literally
-                    unsafe { *out_ptr.add(o) = b'\\'; }
-                    o += 1;
-                    unsafe { *out_ptr.add(o) = other; }
-                    o += 1;
-                    i += 2;
-                    continue;
-                }
-            };
-            unsafe { *out_ptr.add(o) = c; }
-            o += 1;
-            i += 2;
-        } else {
-            unsafe { *out_ptr.add(o) = s[i]; }
-            o += 1;
-            i += 1;
-        }
-    }
-    o as i64
-}
-
-/// $RANDOM — return a pseudo-random number 0-32767 as a string.
-/// Uses getrandom syscall for seed, simple LCG for speed.
-#[unsafe(no_mangle)]
-pub extern "C" fn sash_random() -> (*mut u8, usize) {
-    use core::sync::atomic::{AtomicU32, Ordering};
-    static SEED: AtomicU32 = AtomicU32::new(0);
-
-    let mut s = SEED.load(Ordering::Relaxed);
-    if s == 0 {
-        // Initialize from getrandom
-        let mut buf = [0u8; 4];
-        let _ = rustix::rand::getrandom(&mut buf, rustix::rand::GetRandomFlags::empty());
-        s = u32::from_ne_bytes(buf);
-        if s == 0 { s = 1; }
-    }
-    // LCG step
-    s = s.wrapping_mul(1103515245).wrapping_add(12345);
-    SEED.store(s, Ordering::Relaxed);
-    let val = (s >> 16) & 0x7FFF;
-
-    // itoa
-    let mut tmp = [0u8; 6];
-    let mut n = val;
-    let mut i = tmp.len();
-    if n == 0 {
-        i -= 1;
-        tmp[i] = b'0';
-    } else {
-        while n > 0 {
-            i -= 1;
-            tmp[i] = b'0' + (n % 10) as u8;
-            n /= 10;
-        }
-    }
-    let len = tmp.len() - i;
-    let ptr = unsafe { sash_alloc(len) };
-    unsafe { core::ptr::copy_nonoverlapping(tmp[i..].as_ptr(), ptr, len); }
-    (ptr, len)
-}

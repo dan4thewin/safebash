@@ -1,8 +1,10 @@
 title: Reject globstar ** pattern (DD#20)
-status: ready
+status: done
 severity: correctness
 depends: []
-gates:
+gates: [20.5]
+example: check (sash/src/rules/process_substitution.rs)
+index_keyword: glob
   - tests
   - commit
 

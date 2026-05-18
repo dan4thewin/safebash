@@ -1,7 +1,8 @@
 title: Subshell decomposition — lowerer should coerce to sash primitives
-status: ready
+status: done
 depends: dd38-subshell-coercion-docs
 severity: correctness
+gates: [38.4, 38.5]
 
 Currently the lowerer emits `StmtKind::Subshell` and transform/codegen
 implement it as fork/wait. DD#38 says bash-mode subshells should be

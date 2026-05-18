@@ -1,6 +1,6 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB4015: Reject ${var@X} parameter transformations.
 /// The safe subset uses ^^/^/,,/, for case conversion.
@@ -8,8 +8,6 @@ use crate::rule::Rule;
 pub struct ParamTransform;
 
 impl Rule for ParamTransform {
-    fn name(&self) -> &'static str { "param-transform" }
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["expansion"]
     }
@@ -20,7 +18,12 @@ impl Rule for ParamTransform {
         if let Some(at_pos) = text.rfind('@') {
             let after = &text[at_pos + 1..];
             let after = after.trim_end_matches('}');
-            if after.len() == 1 && after.chars().next().map_or(false, |c| c.is_ascii_alphabetic()) {
+            if after.len() == 1
+                && after
+                    .chars()
+                    .next()
+                    .is_some_and(|c| c.is_ascii_alphabetic())
+            {
                 // Make sure this isn't an array @-subscript like ${arr[@]}
                 if !text.contains("[@]") && !text.contains("[@}") {
                     return vec![Diagnostic::error(

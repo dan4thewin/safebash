@@ -1,8 +1,10 @@
 title: Remove PATH walk from sash_exec
-status: ready
+status: done
 severity: security
 depends: []
-gates:
+gates: [23.5]
+example: sash-rt/src/lib.rs:sash_exec
+index_keyword: find_path
   - tests
   - commit
 

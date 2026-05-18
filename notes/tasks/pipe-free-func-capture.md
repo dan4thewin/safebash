@@ -1,7 +1,7 @@
 title: Pipe-free user-function capture
-status: ready
+status: done
 depends: []
-gates:
+gates: [17.1, 17.2]
   - tests
   - commit
 

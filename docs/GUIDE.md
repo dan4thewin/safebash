@@ -54,6 +54,28 @@ tamper-evident.
 
 ---
 
+## Two-Tool Model (DD#57)
+
+The toolchain splits concerns between two binaries:
+
+- **sash** — the compiler. Accepts only sash-native syntax. Validates,
+  type-checks, and compiles to static ELF. Never transforms source.
+- **sash-convert** — the converter. Accepts Bash and produces sash-native
+  source with mechanical coercions, MANUAL annotations for constructs
+  needing human review, and CHECK/BLESS hints.
+
+The split enforces a clean boundary: sash-convert is a best-effort
+transformation tool; sash is a sound compiler. A script that compiles
+with sash is safe by construction. A script that only passes through
+sash-convert still needs human review.
+
+Typical workflow:
+```
+bash script.bash → sash-convert → script.sh (review) → sash → binary
+```
+
+---
+
 ## Repository Structure
 
 ```
@@ -83,11 +105,18 @@ safebash/
 │       ├── e2e_tests.rs      — end-to-end compilation and execution
 │       ├── janet_tests.rs    — Janet round-trip
 │       └── oracle_tests.rs   — oracle validation
+├── sash-convert/          — Bash → sash-native converter
+│   └── src/
+│       ├── main.rs        — CLI entry point
+│       └── convert.rs     — CST-walking conversion engine
 ├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
-│   └── src/lib.rs         — ~2500 lines
-├── docs/                   — Design docs (GUIDE, JOURNAL, SUBSET, TODO, TIMELINE)
+│   └── src/lib.rs         — ~2300 lines
+├── sash-expand/           — Expansion utilities
+├── docs/                  — Design docs (GUIDE, SUBSET, TIMELINE)
+├── notes/                 — iwe knowledge graph (journal, decisions, tasks)
 ├── audit/                 — Adversarial review results
 │   └── run-1/             — 5 models, 3 passes, remediation done
+├── spec/                  — Spec test suite (236 passing)
 ├── contrib/               — Vendored: plan9port-regexp, freertos-heap4
 ├── suites/                — brush/oils test runners
 ├── exp/                   — Git submodule (safebash-exp, optional)
@@ -317,7 +346,7 @@ Supports `${var:s/re/str/flags}` syntax (DD#39).
 
 ### Process management
 
-`sash_exec` — PATH lookup, fork/exec. `sash_capture_start`/
+`sash_exec` — execve with absolute path (no PATH walk; DD#23). `sash_capture_start`/
 `sash_capture_end` — command substitution via pipe + fork.
 
 ### Environment

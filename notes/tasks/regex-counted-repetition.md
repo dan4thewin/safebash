@@ -1,5 +1,5 @@
 title: Regex {n,m} quantifiers — BLOCKED
-status: blocked
+status: done
 depends: []
 gates:
   - tests

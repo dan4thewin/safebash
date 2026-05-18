@@ -1,10 +1,12 @@
 title: Source rejection — SB4002 becomes hard error
-status: ready
+status: done
 severity: design
 depends:
   - mapfile-map-mode
   - remove-export-ssa-dead-code
-gates:
+gates: [54.1a, 54.1b]
+example: sash/src/rules/dynamic_execution.rs:check
+index_keyword: source_kvp
   - tests
   - commit
 

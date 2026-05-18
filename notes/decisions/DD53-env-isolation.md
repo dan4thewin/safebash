@@ -1,5 +1,5 @@
 title: DD#53 — Env var isolation
-status: approved
+status: implemented
 
 Sash variables and environment variables are completely separate
 namespaces. There is no implicit mirroring in either direction.

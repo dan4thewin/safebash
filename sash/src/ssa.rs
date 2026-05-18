@@ -15,8 +15,7 @@
 ///   2. Compute dominance frontiers
 ///   3. Insert phi nodes at dominance frontiers
 ///   4. Rename variables with version numbers
-
-use std::collections::{HashMap, HashSet, BTreeMap};
+use std::collections::{BTreeMap, HashMap};
 
 /// A unique identifier for a basic block.
 pub type BlockId = usize;
@@ -32,11 +31,19 @@ pub struct VarRef {
 
 impl VarRef {
     pub fn new(name: &str, version: u32) -> Self {
-        Self { name: name.to_string(), version, var_type: crate::ir::VarType::String }
+        Self {
+            name: name.to_string(),
+            version,
+            var_type: crate::ir::VarType::String,
+        }
     }
 
     pub fn new_typed(name: &str, version: u32, var_type: crate::ir::VarType) -> Self {
-        Self { name: name.to_string(), version, var_type }
+        Self {
+            name: name.to_string(),
+            version,
+            var_type,
+        }
     }
 
     pub fn display(&self) -> String {
@@ -55,33 +62,30 @@ pub struct PhiNode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaInst {
     /// x_n = value
-    Assign {
-        target: VarRef,
-        value: SsaValue,
-    },
+    Assign { target: VarRef, value: SsaValue },
     /// A command (no variable defined)
     Command {
         name: String,
         args: Vec<SsaValue>,
         redirects: Vec<crate::ir::Redirect>,
+        /// If true, nonzero exit status aborts the program (DD#55).
+        /// False for commands in condition position (if/while/&&/||).
+        checked: bool,
     },
     /// Test expression from [[ ]]. Preserved through SSA so codegen
     /// can emit inline comparisons instead of shelling out.
     Test(crate::ir::TestExpr),
-    /// export VAR=value — assign + push to environment
-    Export {
-        target: VarRef,
-        value: SsaValue,
-        name: String,  // original bash variable name (for setenv)
-    },
+
     /// phi node
     Phi(PhiNode),
     /// read -r line: reads one line from fd, assigns to target, sets __read_eof
     ReadLine {
         target: VarRef,
-        fd: i64,  // 0 = stdin
-        delim: Option<u8>,  // None = newline (default), Some(byte) = custom delimiter
+        fd: i64,           // 0 = stdin
+        delim: Option<u8>, // None = newline (default), Some(byte) = custom delimiter
         redirects: Vec<crate::ir::Redirect>,
+        /// True when read is in a lastpipe position with clean producer stages
+        clean_pipe: bool,
     },
     /// read -r var1 var2 ... varN: read line, split on whitespace into N vars
     /// Last var gets the remainder.
@@ -90,6 +94,10 @@ pub enum SsaInst {
         fd: i64,
         delim: Option<u8>,
         redirects: Vec<crate::ir::Redirect>,
+        /// True when read is in a lastpipe position with clean producer stages
+        clean_pipe: bool,
+        /// DD#22: field separator byte (-f flag). None = whitespace split.
+        field_sep: Option<u8>,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {
@@ -99,14 +107,14 @@ pub enum SsaInst {
         is_integer_key: bool,
     },
     /// arr+=(val) — append to indexed array
-    ArrayAppend {
-        array: String,
-        value: SsaValue,
-    },
+    ArrayAppend { array: String, value: SsaValue },
     /// mapfile -t arr — read all lines from fd into indexed array
     Mapfile {
         array: String,
         fd: i64,
+        /// DD#36: map mode — split lines on separator, populate as key=value
+        map_mode: bool,
+        separator: char,
     },
     /// Read a line, split by delimiter, store into indexed array
     ReadArray {
@@ -117,14 +125,14 @@ pub enum SsaInst {
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
     /// End capturing, assign captured output to target
-    CaptureEnd {
-        target: VarRef,
-    },
+    CaptureEnd { target: VarRef },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
         /// If true, the last pipe read fd is saved for a subsequent while-read loop
         capture_read_fd: bool,
+        /// DD#55: if true, nonzero aggregate status aborts
+        checked: bool,
     },
     /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
@@ -138,10 +146,25 @@ pub enum SsaInst {
 /// Arithmetic operators for $(( )) and (( )) contexts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ArithOp {
-    Add, Sub, Mul, Div, Mod,
-    Eq, Ne, Lt, Le, Gt, Ge,
-    And, Or, Not,
-    Shl, Shr, BitAnd, BitOr, BitXor,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    Not,
+    Shl,
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
     Pow,
 }
 
@@ -173,31 +196,50 @@ impl ArithOp {
 
     pub fn as_u8(self) -> u8 {
         match self {
-            ArithOp::Add => b'+', ArithOp::Sub => b'-',
-            ArithOp::Mul => b'*', ArithOp::Div => b'/',
+            ArithOp::Add => b'+',
+            ArithOp::Sub => b'-',
+            ArithOp::Mul => b'*',
+            ArithOp::Div => b'/',
             ArithOp::Mod => b'%',
-            ArithOp::Eq => 1, ArithOp::Ne => 2,
-            ArithOp::Lt => 3, ArithOp::Le => 4,
-            ArithOp::Gt => 5, ArithOp::Ge => 6,
-            ArithOp::And => 7, ArithOp::Or => 8,
+            ArithOp::Eq => 1,
+            ArithOp::Ne => 2,
+            ArithOp::Lt => 3,
+            ArithOp::Le => 4,
+            ArithOp::Gt => 5,
+            ArithOp::Ge => 6,
+            ArithOp::And => 7,
+            ArithOp::Or => 8,
             ArithOp::Not => 9,
-            ArithOp::Shl => 10, ArithOp::Shr => 11,
-            ArithOp::BitAnd => 12, ArithOp::BitOr => 13, ArithOp::BitXor => 14,
+            ArithOp::Shl => 10,
+            ArithOp::Shr => 11,
+            ArithOp::BitAnd => 12,
+            ArithOp::BitOr => 13,
+            ArithOp::BitXor => 14,
             ArithOp::Pow => 15,
         }
     }
 
     pub fn display(&self) -> &'static str {
         match self {
-            ArithOp::Add => "+", ArithOp::Sub => "-",
-            ArithOp::Mul => "*", ArithOp::Div => "/", ArithOp::Mod => "%",
-            ArithOp::Eq => "==", ArithOp::Ne => "!=",
-            ArithOp::Lt => "<", ArithOp::Le => "<=",
-            ArithOp::Gt => ">", ArithOp::Ge => ">=",
-            ArithOp::And => "&&", ArithOp::Or => "||",
+            ArithOp::Add => "+",
+            ArithOp::Sub => "-",
+            ArithOp::Mul => "*",
+            ArithOp::Div => "/",
+            ArithOp::Mod => "%",
+            ArithOp::Eq => "==",
+            ArithOp::Ne => "!=",
+            ArithOp::Lt => "<",
+            ArithOp::Le => "<=",
+            ArithOp::Gt => ">",
+            ArithOp::Ge => ">=",
+            ArithOp::And => "&&",
+            ArithOp::Or => "||",
             ArithOp::Not => "!",
-            ArithOp::Shl => "<<", ArithOp::Shr => ">>",
-            ArithOp::BitAnd => "&", ArithOp::BitOr => "|", ArithOp::BitXor => "^",
+            ArithOp::Shl => "<<",
+            ArithOp::Shr => ">>",
+            ArithOp::BitAnd => "&",
+            ArithOp::BitOr => "|",
+            ArithOp::BitXor => "^",
             ArithOp::Pow => "**",
         }
     }
@@ -213,9 +255,18 @@ pub enum SsaValue {
     Expr(String),
     /// Call an elidable function, capture its output as a string.
     FuncCall(String),
+    /// DD#58: Call a -> int function in arithmetic context.
+    /// Produces an integer return value, not stdout.
+    IntFuncCall {
+        name: String,
+        args: Vec<SsaValue>,
+    },
     /// Runtime command substitution: fork/exec, capture stdout.
     /// Carries the command name and arguments as expressions.
-    CmdSubst { argv: Vec<SsaValue>, redirects: Vec<crate::ir::Redirect> },
+    CmdSubst {
+        argv: Vec<SsaValue>,
+        redirects: Vec<crate::ir::Redirect>,
+    },
     /// Concatenation of multiple values (from double-quoted strings
     /// with mixed literal and variable parts).
     Concat(Vec<SsaValue>),
@@ -245,7 +296,7 @@ pub enum SsaValue {
     Subscript {
         array: String,
         index: Box<SsaValue>,
-        is_integer_key: bool,   // true = indexed array (key is raw i64 bytes)
+        is_integer_key: bool, // true = indexed array (key is raw i64 bytes)
     },
     /// Positional parameter by index: argv[i+1] (for dynamic for loops)
     ArgvIndex(VarRef),
@@ -309,6 +360,12 @@ pub enum Terminator {
 pub struct SsaProgram {
     pub blocks: BTreeMap<BlockId, BasicBlock>,
     pub entry: BlockId,
+    /// DD#56: dedicated END block — all exit paths goto here
+    pub end_block: Option<BlockId>,
+    /// DD#56: signals with EXIT disposition (check points inserted)
+    pub exiting_signals: std::collections::HashSet<i64>,
+    /// DD#14: compound pipeline stage entry blocks (reachable roots)
+    pub compound_pipeline_blocks: Vec<BlockId>,
     next_block_id: usize,
 }
 
@@ -317,6 +374,9 @@ impl SsaProgram {
         Self {
             blocks: BTreeMap::new(),
             entry: 0,
+            end_block: None,
+            exiting_signals: std::collections::HashSet::new(),
+            compound_pipeline_blocks: Vec::new(),
             next_block_id: 0,
         }
     }
@@ -324,13 +384,16 @@ impl SsaProgram {
     pub fn new_block(&mut self, label: &str) -> BlockId {
         let id = self.next_block_id;
         self.next_block_id += 1;
-        self.blocks.insert(id, BasicBlock {
+        self.blocks.insert(
             id,
-            label: label.to_string(),
-            phis: Vec::new(),
-            insts: Vec::new(),
-            terminator: Terminator::Return,
-        });
+            BasicBlock {
+                id,
+                label: label.to_string(),
+                phis: Vec::new(),
+                insts: Vec::new(),
+                terminator: Terminator::Return,
+            },
+        );
         id
     }
 
@@ -348,12 +411,20 @@ impl SsaProgram {
         for (id, block) in &self.blocks {
             match &block.terminator {
                 Terminator::Goto(dest) if *dest == target => preds.push(*id),
-                Terminator::Branch { true_block, false_block, .. } => {
+                Terminator::Branch {
+                    true_block,
+                    false_block,
+                    ..
+                } => {
                     if *true_block == target || *false_block == target {
                         preds.push(*id);
                     }
                 }
-                Terminator::Loop { body_block, exit_block, .. } => {
+                Terminator::Loop {
+                    body_block,
+                    exit_block,
+                    ..
+                } => {
                     if *body_block == target || *exit_block == target {
                         preds.push(*id);
                     }
@@ -368,16 +439,32 @@ impl SsaProgram {
     pub fn reachable(&self) -> std::collections::HashSet<BlockId> {
         let mut visited = std::collections::HashSet::new();
         let mut stack = vec![0usize];
+        // Also include compound pipeline blocks as roots
+        for &b in &self.compound_pipeline_blocks {
+            stack.push(b);
+        }
         while let Some(id) = stack.pop() {
-            if !visited.insert(id) { continue; }
+            if !visited.insert(id) {
+                continue;
+            }
             if let Some(block) = self.blocks.get(&id) {
                 match &block.terminator {
-                    Terminator::Goto(dest) => { stack.push(*dest); }
-                    Terminator::Branch { true_block, false_block, .. } => {
+                    Terminator::Goto(dest) => {
+                        stack.push(*dest);
+                    }
+                    Terminator::Branch {
+                        true_block,
+                        false_block,
+                        ..
+                    } => {
                         stack.push(*true_block);
                         stack.push(*false_block);
                     }
-                    Terminator::Loop { body_block, exit_block, .. } => {
+                    Terminator::Loop {
+                        body_block,
+                        exit_block,
+                        ..
+                    } => {
                         stack.push(*body_block);
                         stack.push(*exit_block);
                     }
@@ -406,48 +493,51 @@ pub struct VersionState {
     pub type_map: HashMap<String, crate::ir::VarType>,
     /// Variables known to be associative arrays (vs indexed).
     pub assoc_arrays: std::collections::HashSet<String>,
+    /// Variables known to be any collection (array or map) — for unset semantics.
+    pub collections: std::collections::HashSet<String>,
     /// Variables declared readonly — error on reassignment.
     pub readonly_vars: std::collections::HashSet<String>,
+    /// DD#18: local functions currently in scope during inline expansion.
+    pub local_fn_scope: std::collections::HashSet<String>,
     /// Loop context stack: (header_block, exit_block) for break/continue.
     pub loop_stack: Vec<(usize, usize)>,
     /// Return target block for `return` in inlined functions.
     pub return_target: Option<usize>,
+    /// Functions that have return statements (non-void).
+    pub function_non_void: std::collections::HashSet<String>,
+    /// Functions declared with `-> int` return type.
+    pub function_int_typed: std::collections::HashSet<String>,
+    /// Depth counter for condition position (if/while condition, LHS of &&/||).
+    pub in_condition: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
+    /// Signals registered with EXIT disposition (compiler inserts check points).
+    pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
     pub diagnostics: Vec<String>,
 }
 
 impl VersionState {
-    pub fn new() -> Self {
-        Self {
-            current: HashMap::new(),
-            counter: HashMap::new(),
-            known_functions: std::collections::HashSet::new(),
-            function_bodies: HashMap::new(),
-            function_redirects: HashMap::new(),
-            type_map: HashMap::new(),
-            assoc_arrays: std::collections::HashSet::new(),
-            readonly_vars: std::collections::HashSet::new(),
-            loop_stack: Vec::new(),
-            return_target: None,
-            exit_trap: None, diagnostics: Vec::new(),
-        }
-    }
-
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
         Self {
             current: HashMap::new(),
             counter: HashMap::new(),
             known_functions: std::collections::HashSet::new(),
             function_bodies: HashMap::new(),
+            function_non_void: std::collections::HashSet::new(),
+            function_int_typed: std::collections::HashSet::new(),
+            in_condition: 0,
             function_redirects: HashMap::new(),
             type_map,
             assoc_arrays: std::collections::HashSet::new(),
+            collections: std::collections::HashSet::new(),
             readonly_vars: std::collections::HashSet::new(),
+            local_fn_scope: std::collections::HashSet::new(),
             loop_stack: Vec::new(),
             return_target: None,
-            exit_trap: None, diagnostics: Vec::new(),
+            exit_trap: None,
+            exiting_signals: std::collections::HashSet::new(),
+            diagnostics: Vec::new(),
         }
     }
 
@@ -461,14 +551,22 @@ impl VersionState {
         *next += 1;
         let version = *next;
         self.current.insert(name.to_string(), version);
-        let vtype = self.type_map.get(name).copied().unwrap_or(crate::ir::VarType::String);
+        let vtype = self
+            .type_map
+            .get(name)
+            .copied()
+            .unwrap_or(crate::ir::VarType::String);
         VarRef::new_typed(name, version, vtype)
     }
 
     /// Look up the current version of a variable.
     pub fn lookup(&self, name: &str) -> VarRef {
         let version = self.current.get(name).copied().unwrap_or(0);
-        let vtype = self.type_map.get(name).copied().unwrap_or(crate::ir::VarType::String);
+        let vtype = self
+            .type_map
+            .get(name)
+            .copied()
+            .unwrap_or(crate::ir::VarType::String);
         VarRef::new_typed(name, version, vtype)
     }
 
@@ -482,10 +580,5 @@ impl VersionState {
     /// never repeat across branches.
     pub fn restore(&mut self, snap: &HashMap<String, u32>) {
         self.current = snap.clone();
-    }
-
-    /// Get all variable names that have been defined.
-    pub fn defined_vars(&self) -> HashSet<String> {
-        self.current.keys().cloned().collect()
     }
 }

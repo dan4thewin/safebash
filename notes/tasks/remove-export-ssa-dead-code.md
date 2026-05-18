@@ -1,5 +1,5 @@
 title: Remove SsaInst::Export and sash_setenv — dead code
-status: ready
+status: done
 severity: cleanup
 depends:
   - remove-implicit-env-fallback

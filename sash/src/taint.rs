@@ -1,6 +1,6 @@
+use crate::diagnostic::Diagnostic;
 use std::collections::HashMap;
 use tree_sitter::Node;
-use crate::diagnostic::Diagnostic;
 
 /// Taint status of a variable.
 #[derive(Debug, Clone, PartialEq)]
@@ -39,17 +39,6 @@ pub struct TaintTracker {
     function_free_reads: HashMap<String, Vec<String>>,
     /// Are we inside a bless expression? If so, which variable?
     bless_context: Option<String>,
-    /// Auto-blessed variables: name → (pattern, description, source line)
-    auto_blessed: Vec<AutoBless>,
-}
-
-/// Record of a variable auto-blessed via known_externals.
-#[derive(Clone, Debug)]
-pub struct AutoBless {
-    pub var_name: String,
-    pub pattern: String,
-    pub description: String,
-    pub line: usize,
 }
 
 impl TaintTracker {
@@ -60,7 +49,6 @@ impl TaintTracker {
             functions: std::collections::HashSet::new(),
             function_free_reads: HashMap::new(),
             bless_context: None,
-            auto_blessed: Vec::new(),
         }
     }
 
@@ -89,7 +77,16 @@ impl TaintTracker {
     pub fn is_tainted(&self, name: &str) -> bool {
         match self.vars.get(name) {
             Some(TaintStatus::Tainted) => true,
-            None => !self.is_special_var(name) && !self.declared.contains(name),
+            // DD#53: undeclared variables are empty strings in sash (no env fallback).
+            // Positional params ($1-$9, $@, $*) are tainted — they come from argv.
+            // Everything else undeclared is clean (empty string).
+            None => {
+                // Positional params
+                matches!(
+                    name,
+                    "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "@" | "*"
+                ) && !self.declared.contains(name)
+            }
             _ => false,
         }
     }
@@ -99,31 +96,12 @@ impl TaintTracker {
         self.bless_context.as_deref() == Some(name)
     }
 
-    /// Special variables that are always clean.
-    fn is_special_var(&self, name: &str) -> bool {
-        matches!(name, "0" | "#" | "?" | "$" | "LINENO" | "PIPESTATUS"
-            | "BASHPID" | "BASH_SUBSHELL" | "SHLVL" | "PPID" | "UID" | "EUID"
-            | "GROUPS" | "HOSTNAME" | "HOSTTYPE" | "MACHTYPE" | "OSTYPE"
-            | "SHELLOPTS" | "BASHOPTS" | "BASH_VERSION" | "BASH_VERSINFO"
-            | "SECONDS" | "RANDOM" | "SRANDOM" | "EPOCHSECONDS" | "EPOCHREALTIME"
-            | "IFS" | "OLDPWD" | "_"
-            | "HOME" | "PWD" | "PATH" | "USER" | "LOGNAME" | "SHELL"
-            | "TMPDIR" | "LANG" | "LC_ALL" | "LC_CTYPE" | "TERM" | "DISPLAY"
-            | "XDG_RUNTIME_DIR" | "XDG_DATA_HOME" | "XDG_CONFIG_HOME"
-            | "XDG_CACHE_HOME" | "XDG_STATE_HOME")
-    }
-
     /// Run taint analysis on the full program.
     /// Returns diagnostics for tainted variable reads.
     pub fn analyze(&mut self, root: Node, source: &[u8]) -> Vec<Diagnostic> {
         let mut diags = Vec::new();
         self.walk_program(root, source, &mut diags);
         diags
-    }
-
-    /// Return auto-blessed variables and their patterns (for --emit-source).
-    pub fn auto_blessed(&self) -> &[AutoBless] {
-        &self.auto_blessed
     }
 
     fn walk_program(&mut self, node: Node, source: &[u8], diags: &mut Vec<Diagnostic>) {
@@ -172,15 +150,18 @@ impl TaintTracker {
                         let mut has_tainted_source = false;
                         let mut _has_expansion = false;
                         for child in node.children(&mut node.walk()) {
-                            if child.kind() == "word" || child.kind() == "string"
+                            if child.kind() == "word"
+                                || child.kind() == "string"
                                 || child.kind() == "concatenation"
                                 || child.kind() == "simple_expansion"
-                                || child.kind() == "expansion" {
+                                || child.kind() == "expansion"
+                            {
                                 // Check if this word references tainted vars
                                 if self.expr_has_tainted_read(child, source) {
                                     has_tainted_source = true;
                                 }
-                                if child.kind() == "simple_expansion" || child.kind() == "expansion" {
+                                if child.kind() == "simple_expansion" || child.kind() == "expansion"
+                                {
                                     _has_expansion = true;
                                 }
                             }
@@ -222,14 +203,76 @@ impl TaintTracker {
                     self.check_arith_reads(child, source, diags);
                 }
             }
-            "pipeline" | "list" | "redirected_statement" => {
+            "pipeline" => {
+                // Lastpipe: if the last command is `read -r var`, check if
+                // all preceding stages produce clean data (builtins with literal args).
+                // If so, mark the read targets as clean instead of tainted.
+                let children: Vec<_> = node
+                    .children(&mut node.walk())
+                    .filter(|c| c.kind() == "command")
+                    .collect();
+                if children.len() >= 2 {
+                    let last = children[children.len() - 1];
+                    let last_name = last
+                        .child_by_field_name("name")
+                        .and_then(|n| n.child(0))
+                        .and_then(|n| n.utf8_text(source).ok())
+                        .unwrap_or("");
+                    if last_name == "read" {
+                        // Check if all preceding stages are clean (no tainted expansions)
+                        let producers_clean = children[..children.len() - 1].iter().all(|cmd| {
+                            // All arguments must be literals or clean expansions
+                            !cmd.children(&mut cmd.walk()).any(|c| {
+                                c.kind() != "command_name" && self.expr_has_tainted_read(c, source)
+                            })
+                        });
+                        if producers_clean {
+                            // Walk producer stages normally
+                            for child in &children[..children.len() - 1] {
+                                self.walk_statement(*child, source, diags);
+                            }
+                            // Mark read targets as clean (pipe source is clean)
+                            for child in last.children(&mut last.walk()) {
+                                if child.kind() == "word" {
+                                    let text = child.utf8_text(source).unwrap_or("");
+                                    if !text.starts_with('-') {
+                                        self.mark_declared(text);
+                                        self.mark_clean(text);
+                                    }
+                                }
+                            }
+                            // Also walk any pipe operator children ("|")
+                            // No further action needed — we handled all commands
+                        } else {
+                            // Tainted pipe source — normal taint for read
+                            for child in node.children(&mut node.walk()) {
+                                self.walk_statement(child, source, diags);
+                            }
+                        }
+                    } else {
+                        for child in node.children(&mut node.walk()) {
+                            self.walk_statement(child, source, diags);
+                        }
+                    }
+                } else {
+                    for child in node.children(&mut node.walk()) {
+                        self.walk_statement(child, source, diags);
+                    }
+                }
+            }
+            "list" | "redirected_statement" | "negated_command" | "suppressed_command" => {
                 for child in node.children(&mut node.walk()) {
                     self.walk_statement(child, source, diags);
                 }
             }
             "case_statement" => {
                 for child in node.children(&mut node.walk()) {
-                    if child.kind() == "word" || child.kind() == "simple_expansion" || child.kind() == "expansion" || child.kind() == "string" || child.kind() == "concatenation" {
+                    if child.kind() == "word"
+                        || child.kind() == "simple_expansion"
+                        || child.kind() == "expansion"
+                        || child.kind() == "string"
+                        || child.kind() == "concatenation"
+                    {
                         // The case value expression — check for tainted reads
                         self.check_expr_reads(child, source, diags);
                     } else if child.kind() == "case_item" {
@@ -237,8 +280,8 @@ impl TaintTracker {
                         for item_child in child.children(&mut child.walk()) {
                             match item_child.kind() {
                                 // Pattern expressions
-                                "word" | "simple_expansion" | "expansion"
-                                | "string" | "concatenation" => {
+                                "word" | "simple_expansion" | "expansion" | "string"
+                                | "concatenation" => {
                                     self.check_expr_reads(item_child, source, diags);
                                 }
                                 _ => {
@@ -257,7 +300,8 @@ impl TaintTracker {
 
     fn handle_assignment(&mut self, node: Node, source: &[u8], _diags: &mut Vec<Diagnostic>) {
         // variable_assignment: name=value
-        let name = node.child_by_field_name("name")
+        let name = node
+            .child_by_field_name("name")
             .and_then(|n| n.utf8_text(source).ok())
             .unwrap_or("");
         self.mark_declared(name);
@@ -267,16 +311,7 @@ impl TaintTracker {
         // is allowed. The var inherits the taint status. No diagnostic here.
         if let Some(value) = node.child_by_field_name("value") {
             if self.expr_is_tainted(value, source) {
-                // Before marking tainted, check if the RHS is a known-safe command.
-                if let Some(auto) = self.check_known_external(value, source, name) {
-                    // Known command/env var — auto-bless with the known pattern.
-                    let mut ab = auto;
-                    ab.line = node.start_position().row + 1;
-                    self.auto_blessed.push(ab);
-                    self.mark_blessed(name);
-                } else {
-                    self.mark_tainted(name);
-                }
+                self.mark_tainted(name);
             } else {
                 self.mark_clean(name);
             }
@@ -375,7 +410,10 @@ impl TaintTracker {
             diags.push(Diagnostic::error(
                 node,
                 "SB4011",
-                format!("bless: variable '{}' is already clean — bless is unnecessary", var_name),
+                format!(
+                    "bless: variable '{}' is already clean — bless is unnecessary",
+                    var_name
+                ),
             ));
             return;
         }
@@ -395,24 +433,69 @@ impl TaintTracker {
             diags.push(Diagnostic::error(
                 node,
                 "SB4013",
-                format!("bless: expected [[ test expression, got '{}'", first_arg_text),
+                format!(
+                    "bless: expected [[ test expression, got '{}'",
+                    first_arg_text
+                ),
             ));
             return;
         }
 
         // T2: Require test expression to reference the blessed variable
-        let test_text = args[1..].iter()
+        let test_text = args[1..]
+            .iter()
             .map(|a| a.utf8_text(source).unwrap_or(""))
             .collect::<Vec<_>>()
             .join(" ");
         let var_ref = format!("${}", var_name);
-        if !test_text.contains(&var_ref) {
+        let var_ref_brace = format!("${{{}[", var_name);
+        if !test_text.contains(&var_ref) && !test_text.contains(&var_ref_brace) {
             diags.push(Diagnostic::error(
                 node,
                 "SB4012",
-                format!("bless: test expression does not reference ${}  — tautological bless", var_name),
+                format!(
+                    "bless: test expression does not reference ${}  — tautological bless",
+                    var_name
+                ),
             ));
             return;
+        }
+
+        // T2b: Anti-tautology — $VAR must NOT appear on RHS of binary operator
+        // Collect tokens between [[ and ]]
+        let tokens: Vec<&str> = args[1..]
+            .iter()
+            .map(|a| a.utf8_text(source).unwrap_or(""))
+            .filter(|t| *t != "[[" && *t != "]]")
+            .collect();
+        let binary_ops = [
+            "==", "=", "!=", "=~", "-eq", "-ne", "-lt", "-le", "-gt", "-ge", "<", ">",
+        ];
+        // Find binary operator position and check RHS
+        for (i, tok) in tokens.iter().enumerate() {
+            if binary_ops.contains(tok) && i + 1 < tokens.len() {
+                let rhs = tokens[i + 1];
+                if rhs.contains(&var_ref) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4012",
+                        format!(
+                            "bless: ${} appears on RHS of test operator — anti-tautology check",
+                            var_name
+                        ),
+                    ));
+                    return;
+                }
+                // Also check: $VAR must be on LHS
+                if i == 0 || !tokens[i - 1].contains(&var_ref) {
+                    diags.push(Diagnostic::error(
+                        node,
+                        "SB4012",
+                        format!("bless: ${} must appear on LHS of test operator", var_name),
+                    ));
+                    return;
+                }
+            }
         }
 
         // Enter bless context — reads of var_name are allowed inside
@@ -543,15 +626,34 @@ impl TaintTracker {
     }
 
     /// Collect variable names read in a subtree that are not in `locals`.
-    fn collect_free_reads(&self, node: Node, source: &[u8],
-                          outer_declared: &std::collections::HashSet<String>,
-                          reads: &mut Vec<String>) {
+    fn collect_free_reads(
+        &self,
+        node: Node,
+        source: &[u8],
+        outer_declared: &std::collections::HashSet<String>,
+        reads: &mut Vec<String>,
+    ) {
         match node.kind() {
             "simple_expansion" => {
                 let var_name = self.extract_var_name(node, source);
                 // Skip positionals and special vars
                 if !var_name.is_empty()
-                    && !matches!(var_name.as_str(), "1"|"2"|"3"|"4"|"5"|"6"|"7"|"8"|"9"|"@"|"*"|"#"|"?"|"0")
+                    && !matches!(
+                        var_name.as_str(),
+                        "1" | "2"
+                            | "3"
+                            | "4"
+                            | "5"
+                            | "6"
+                            | "7"
+                            | "8"
+                            | "9"
+                            | "@"
+                            | "*"
+                            | "#"
+                            | "?"
+                            | "0"
+                    )
                     && outer_declared.contains(&var_name)
                     && !reads.contains(&var_name)
                 {
@@ -586,39 +688,52 @@ impl TaintTracker {
             "expansion" => {
                 // ${var...} — check primary var AND operand subtrees
                 let var_name = self.extract_expansion_var(node, source);
-                if self.is_tainted(&var_name) { return true; }
+                if self.is_tainted(&var_name) {
+                    return true;
+                }
                 // Check operands (e.g. ${safe:-$tainted})
                 for child in node.children(&mut node.walk()) {
-                    if self.expr_is_tainted(child, source) { return true; }
+                    if self.expr_is_tainted(child, source) {
+                        return true;
+                    }
                 }
                 false
             }
             "command_substitution" => {
-                // $(cmd) — tainted if external command output
-                // Clean if: known-safe builtin, or user-defined function
-                let inner_cmd = self.get_cmd_subst_name(node, source);
-                if matches!(inner_cmd.as_str(),
-                    "len" | "keys" | "join" | "epochseconds") {
-                    return false; // known safe builtins, clean output
+                // $(cmd) — all external command output is tainted.
+                // Only sash builtins and user functions produce clean output.
+                let inner_cmd = Self::extract_cmd_subst_name(node, source);
+                // Internal builtins — pure computation, always clean
+                if matches!(
+                    inner_cmd.as_str(),
+                    "len"
+                        | "keys"
+                        | "join"
+                        | "epochseconds"
+                        | "random"
+                        | "argc"
+                        | "getpid"
+                        | "getppid"
+                        | "getcpid"
+                        | "getcwd"
+                        | "status"
+                        | "signum"
+                        | "dtoi"
+                        | "itod"
+                ) {
+                    return false;
                 }
-                if matches!(inner_cmd.as_str(), "getenv" | "argv") {
-                    return true; // explicitly tainted sources
-                }
-                if self.functions.contains(&inner_cmd) {
-                    return false; // user-defined function — clean by DD#24
-                }
-                // Bash builtins that produce deterministic output from
-                // their arguments — if all args are clean, result is clean.
-                if matches!(inner_cmd.as_str(),
-                    "echo" | "printf" | "true" | "false" | "test" | "["
-                    | "pwd" | "basename" | "dirname" | "type" | "command"
-                    | "seq" | "wc" | "tr" | "cat" | "head" | "tail"
-                    | "sort" | "uniq" | "cut" | "rev" | "tee") {
-                    // Check all args are clean
+                // Sash builtins that format their args — clean if args clean
+                if matches!(inner_cmd.as_str(), "echo" | "printf" | "pwd") {
                     let args_clean = self.cmdsub_args_clean(node, source);
                     return !args_clean;
                 }
-                true // unknown external command — tainted
+                // User-defined functions — clean by DD#24
+                if self.functions.contains(&inner_cmd) {
+                    return false;
+                }
+                // Everything else (external commands, getenv, argv) — tainted
+                true
             }
             "string" => {
                 // "..." — check all interpolated expansions
@@ -655,7 +770,10 @@ impl TaintTracker {
                     diags.push(Diagnostic::error(
                         node,
                         "SB4020",
-                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                        format!(
+                            "use of tainted variable '{}' — validate with `bless {} [[ ... ]]`",
+                            var_name, var_name
+                        ),
                     ));
                 }
             }
@@ -665,7 +783,10 @@ impl TaintTracker {
                     diags.push(Diagnostic::error(
                         node,
                         "SB4020",
-                        format!("use of tainted variable '{}' — validate with `bless {} [[ ... ]]`", var_name, var_name),
+                        format!(
+                            "use of tainted variable '{}' — validate with `bless {} [[ ... ]]`",
+                            var_name, var_name
+                        ),
                     ));
                 }
                 // T5: recurse into ALL children (subscript, operands like :-$x, :+$x)
@@ -704,7 +825,9 @@ impl TaintTracker {
             if child.kind() == "variable_name" {
                 let var_name = child.utf8_text(source).unwrap_or("").to_string();
                 // tree-sitter mis-parses numeric literals as variable_name in arithmetic
-                if var_name.chars().all(|c| c.is_ascii_digit()) { continue; }
+                if var_name.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
                 if self.is_tainted(&var_name) && !self.in_bless_for(&var_name) {
                     diags.push(Diagnostic::error(
                         child,
@@ -723,8 +846,12 @@ impl TaintTracker {
         for child in node.children(&mut node.walk()) {
             if child.kind() == "variable_name" {
                 let var_name = child.utf8_text(source).unwrap_or("");
-                if var_name.chars().all(|c| c.is_ascii_digit()) { continue; }
-                if self.is_tainted(var_name) { return true; }
+                if var_name.chars().all(|c| c.is_ascii_digit()) {
+                    continue;
+                }
+                if self.is_tainted(var_name) {
+                    return true;
+                }
             } else if self.arith_subtree_has_tainted_var(child, source) {
                 return true;
             }
@@ -764,82 +891,6 @@ impl TaintTracker {
         String::new()
     }
 
-    /// Get the command name inside a command_substitution $(cmd ...).
-    fn get_cmd_subst_name(&self, node: Node, source: &[u8]) -> String {
-        for child in node.children(&mut node.walk()) {
-            if child.kind() == "command" {
-                if let Some(name_node) = child.child_by_field_name("name") {
-                    if let Some(word) = name_node.child(0) {
-                        return word.utf8_text(source).unwrap_or("").to_string();
-                    }
-                }
-            }
-        }
-        String::new()
-    }
-
-    /// Get command arguments inside a command_substitution $(cmd arg1 arg2 ...).
-    fn get_cmd_subst_args(&self, node: Node, source: &[u8]) -> Vec<String> {
-        let mut args = Vec::new();
-        for child in node.children(&mut node.walk()) {
-            if child.kind() == "command" {
-                let mut skip_name = true;
-                for arg in child.children(&mut child.walk()) {
-                    if arg.kind() == "command_name" {
-                        skip_name = false;
-                        continue;
-                    }
-                    if skip_name { continue; }
-                    if arg.kind() == "word" || arg.kind() == "string"
-                        || arg.kind() == "raw_string" || arg.kind() == "string_content" {
-                        if let Ok(text) = arg.utf8_text(source) {
-                            args.push(text.trim_matches('"').trim_matches('\'').to_string());
-                        }
-                    }
-                }
-            }
-        }
-        args
-    }
-
-    /// Check if a value node is a known-safe external (getenv of known var,
-    /// or command substitution of known command). Returns AutoBless info if so.
-    fn check_known_external(&self, node: Node, source: &[u8], var_name: &str) -> Option<AutoBless> {
-        use crate::known_externals::{lookup_env_var, lookup_command};
-
-        match node.kind() {
-            "command_substitution" => {
-                let cmd_name = self.get_cmd_subst_name(node, source);
-                let args = self.get_cmd_subst_args(node, source);
-
-                // $(getenv HOME) → check known env vars
-                if cmd_name == "getenv" && !args.is_empty() {
-                    if let Some(known) = lookup_env_var(&args[0]) {
-                        return Some(AutoBless {
-                            var_name: var_name.to_string(),
-                            pattern: known.pattern.to_string(),
-                            description: known.description.to_string(),
-                            line: 0,
-                        });
-                    }
-                }
-
-                // $(hostname), $(date +%Y-%m-%d), etc. → check known commands
-                if let Some(known) = lookup_command(&cmd_name, &args) {
-                    return Some(AutoBless {
-                        var_name: var_name.to_string(),
-                        pattern: known.pattern.to_string(),
-                        description: known.description.to_string(),
-                        line: 0,
-                    });
-                }
-
-                None
-            }
-            _ => None,
-        }
-    }
-
     /// Check if an expression contains reads of tainted variables (no diagnostics).
     fn expr_has_tainted_read(&self, node: Node, source: &[u8]) -> bool {
         match node.kind() {
@@ -866,15 +917,59 @@ impl TaintTracker {
     /// Check if all argument expressions inside a command_substitution are clean.
     fn cmdsub_args_clean(&self, node: Node, source: &[u8]) -> bool {
         for child in node.children(&mut node.walk()) {
-            if child.kind() == "command" {
+            let cmd_node = if child.kind() == "command" {
+                Some(child)
+            } else if child.kind() == "suppressed_command" {
+                child
+                    .children(&mut child.walk())
+                    .find(|c| c.kind() == "command")
+            } else {
+                None
+            };
+            if let Some(cmd) = cmd_node {
                 let mut past_name = false;
-                for arg in child.children(&mut child.walk()) {
-                    if arg.kind() == "command_name" { past_name = true; continue; }
-                    if !past_name { continue; }
-                    if self.expr_is_tainted(arg, source) { return false; }
+                for arg in cmd.children(&mut cmd.walk()) {
+                    if arg.kind() == "command_name" {
+                        past_name = true;
+                        continue;
+                    }
+                    if !past_name {
+                        continue;
+                    }
+                    if self.expr_is_tainted(arg, source) {
+                        return false;
+                    }
                 }
             }
         }
         true
+    }
+}
+
+impl TaintTracker {
+    /// Extract command name from inside a command_substitution node.
+    fn extract_cmd_subst_name(node: Node, source: &[u8]) -> String {
+        for child in node.children(&mut node.walk()) {
+            // Direct command or command inside suppressed_command (- cmd)
+            let cmd_node = if child.kind() == "command" {
+                Some(child)
+            } else if child.kind() == "suppressed_command" {
+                child
+                    .children(&mut child.walk())
+                    .find(|c| c.kind() == "command")
+            } else {
+                None
+            };
+            if let Some(cmd) = cmd_node {
+                if let Some(name_node) = cmd.child_by_field_name("name") {
+                    if let Some(word) = name_node.child(0) {
+                        let full = word.utf8_text(source).unwrap_or("");
+                        // Strip path to get basename
+                        return full.rsplit('/').next().unwrap_or(full).to_string();
+                    }
+                }
+            }
+        }
+        String::new()
     }
 }

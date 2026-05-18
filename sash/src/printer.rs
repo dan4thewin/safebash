@@ -1,3 +1,4 @@
+use crate::ir::*;
 /// IR pretty-printer.
 ///
 /// Renders the safebash IR as indented text for visual verification
@@ -5,9 +6,7 @@
 ///   - Deterministic (same IR always produces same text)
 ///   - Readable (clear nesting, minimal noise)
 ///   - Diffable (one concept per line where practical)
-
 use std::fmt::Write;
-use crate::ir::*;
 
 /// Pretty-print a Program to a string.
 pub fn print_program(program: &Program) -> String {
@@ -200,6 +199,11 @@ fn print_stmt(out: &mut String, stmt: &Statement, depth: usize) {
             indent(out, depth);
             writeln!(out, "}}").unwrap();
         }
+        StmtKind::Suppressed(inner) => {
+            indent(out, depth);
+            write!(out, "- ").unwrap();
+            print_stmt(out, inner, depth);
+        }
     }
 }
 
@@ -286,7 +290,9 @@ fn print_expr(out: &mut String, expr: &Expr) {
         ExprKind::AssocArray(pairs) => {
             out.push('(');
             for (i, (k, v)) in pairs.iter().enumerate() {
-                if i > 0 { out.push(' '); }
+                if i > 0 {
+                    out.push(' ');
+                }
                 out.push('[');
                 out.push_str(k);
                 out.push_str("]=");

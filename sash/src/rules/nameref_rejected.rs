@@ -1,13 +1,11 @@
-use tree_sitter::Node;
 use crate::diagnostic::Diagnostic;
 use crate::rule::Rule;
+use tree_sitter::Node;
 
 /// SB5003: declare -n / local -n / typeset -n (nameref) is not allowed.
 pub struct NamerefRejected;
 
 impl Rule for NamerefRejected {
-    fn name(&self) -> &'static str { "nameref-rejected" }
-
     fn node_kinds(&self) -> &'static [&'static str] {
         &["declaration_command"]
     }
@@ -21,7 +19,8 @@ impl Rule for NamerefRejected {
                     return vec![Diagnostic::error(
                         node,
                         "SB5003",
-                        "nameref (declare -n / local -n) is not allowed in the safe subset".to_string(),
+                        "nameref (declare -n / local -n) is not allowed in the safe subset"
+                            .to_string(),
                     )];
                 }
             }

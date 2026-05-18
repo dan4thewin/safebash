@@ -95,3 +95,13 @@
 [047-session-codegen-brush](journal/047-session-codegen-brush)
 
 [048-session-env-isolation](journal/048-session-env-isolation)
+
+[049-session-source-redesign](journal/049-session-source-redesign)
+
+[050-session-error-model](journal/050-session-error-model)
+
+[051-split-converter-compiler](journal/051-split-converter-compiler)
+
+[052-session-int-capture-syntax](journal/052-session-int-capture-syntax)
+
+[053-monitoring-postmortem](journal/053-monitoring-postmortem)

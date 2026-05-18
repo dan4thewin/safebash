@@ -1,8 +1,10 @@
 title: DD#49 — bless test anti-tautology check
-status: ready
+status: done
 depends: []
-gates:
+gates: [24.10, 24.11, 24.16]
   - tests
+example: check_taint (sash/src/taint.rs)
+index_keyword: bless
   - commit
 
 SB4012 currently checks that `$VAR` appears somewhere in the bless

@@ -1,7 +1,20 @@
-/// SSA taint verification pass.
-///
-/// This is the "airbag" — a post-transform safety check that verifies
-/// the CST taint analyzer didn't miss anything. If this pass finds a
+//! SSA taint verification pass.
+//!
+//! SECURITY: This is the final taint gate before codegen. It operates on
+//! the SSA (after all transformations) and verifies that no tainted value
+//! reaches a position where it would be executed or written unsanitized.
+//!
+//! This is the "airbag" — a post-transform safety check that verifies
+//! the CST taint analyzer didn't miss anything. If this pass finds a
+//! tainted value in a sensitive position, it's an Internal Compiler Error
+//! (the CST analyzer should have caught it first).
+//!
+//! A reviewer should verify:
+//! 1. Every SsaInst that USES a value checks taint (not just the ones that define)
+//! 2. The taint propagation rules match the CST analyzer's rules
+//! 3. `bless` is the ONLY way to move from Tainted → Clean
+
+use crate::ssa::*;
 /// tainted value reaching a use site, that's a bug in the CST analyzer.
 ///
 /// The pass walks all SSA instructions and classifies each VarRef version
@@ -12,9 +25,7 @@
 ///   - phi → tainted if any incoming is tainted (conservative)
 ///   - copy of tainted → tainted
 ///   - arithmetic on tainted → tainted
-
 use std::collections::HashMap;
-use crate::ssa::*;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Taint {
@@ -29,15 +40,12 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     let mut errors = Vec::new();
 
     // Special variables are inherently clean — they aren't external data
-    for sv in &["?", "!", "$", "#", "0", "-", "_", "LINENO", "RANDOM",
-                "SECONDS", "BASHPID", "BASH_SUBSHELL", "PIPESTATUS"] {
-        // Version 0 is always the initial (unassigned) version
+    // In sash, there are no magic variables. PID/status/etc are builtins.
+    // Only $? and $! survive as sugar — and $? is scoped per DD#55.
+    // $$ (PID), $# (argc), $0 (argv 0) are process metadata — clean.
+    // These will eventually be desugared to builtins in the lowerer.
+    for sv in &["?", "!", "$", "#", "0"] {
         taint.insert(format!("{}_0", sv), Taint::Clean);
-    }
-
-    // Known env vars at version 0 are auto-blessed (clean)
-    for kev in crate::known_externals::KNOWN_ENV_VARS {
-        taint.insert(format!("{}_0", kev.name), Taint::Clean);
     }
 
     // Positional params at version 0 are clean — either program argv
@@ -57,7 +65,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
     }
 
     // Phase 1: classify every defined VarRef
-    for (_id, block) in &program.blocks {
+    for block in program.blocks.values() {
         // Phi nodes — optimistic: default to clean, will be corrected
         // by iteration if any incoming is tainted. Since the CST pass
         // is the authority, false-clean here just means we don't catch
@@ -66,10 +74,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
             let key = var_key(&phi.target);
             let t = phi.sources.iter().any(|(_bid, vref)| {
                 // Only check sources that are already classified
-                match taint.get(&var_key(vref)) {
-                    Some(&Taint::Tainted) => true,
-                    _ => false,
-                }
+                matches!(taint.get(&var_key(vref)), Some(&Taint::Tainted))
             });
             taint.insert(key, if t { Taint::Tainted } else { Taint::Clean });
         }
@@ -84,25 +89,25 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                     // Bless produces a clean version
                     taint.insert(var_key(target), Taint::Clean);
                 }
-                SsaInst::ReadLine { target, redirects, .. } => {
+                SsaInst::ReadLine { target, redirects, clean_pipe, .. } => {
                     // Read from herestring/heredoc of literal data is clean
                     let is_herestring = redirects.iter().any(|r| {
                         r.op == crate::ir::RedirectOp::HereString
                             || r.op == crate::ir::RedirectOp::HereDoc
                     });
-                    if is_herestring {
+                    if is_herestring || *clean_pipe {
                         taint.insert(var_key(target), Taint::Clean);
                     } else {
                         taint.insert(var_key(target), Taint::Tainted);
                     }
                 }
-                SsaInst::ReadLineMulti { targets, redirects, .. } => {
+                SsaInst::ReadLineMulti { targets, redirects, clean_pipe, .. } => {
                     let is_herestring = redirects.iter().any(|r| {
                         r.op == crate::ir::RedirectOp::HereString
                             || r.op == crate::ir::RedirectOp::HereDoc
                     });
                     for t in targets {
-                        taint.insert(var_key(t), if is_herestring { Taint::Clean } else { Taint::Tainted });
+                        taint.insert(var_key(t), if is_herestring || *clean_pipe { Taint::Clean } else { Taint::Tainted });
                     }
                 }
                 SsaInst::CaptureEnd { target } => {
@@ -118,10 +123,7 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
                     // already rejected it. Making this clean avoids false ICEs
                     // for user-func captures which are the common case.
                 }
-                SsaInst::Export { target, value, .. } => {
-                    let t = value_is_tainted(value, &taint, &user_functions);
-                    taint.insert(var_key(target), t);
-                }
+
                 // Instructions that don't define a VarRef
                 SsaInst::Command { .. }
                 | SsaInst::Test(_)
@@ -138,40 +140,64 @@ pub fn verify_ssa_taint(program: &SsaProgram) -> Vec<String> {
 
     // Phase 2: check uses — any instruction reading a tainted VarRef
     // in a position that would produce output or side effects is a bug.
-    for (_id, block) in &program.blocks {
+    for block in program.blocks.values() {
         for inst in &block.insts {
             match inst {
                 SsaInst::Command { name, args, .. } => {
                     // Commands that produce output (echo, printf, etc.)
                     // or execute externals — reading tainted args is a bug.
-                    if name == "bless" { continue; }
+                    if name == "bless" {
+                        continue;
+                    }
                     for arg in args {
-                        check_value_use(arg, &taint, &mut errors,
-                            &format!("argument to command '{}'", name));
+                        check_value_use(
+                            arg,
+                            &taint,
+                            &mut errors,
+                            &format!("argument to command '{}'", name),
+                        );
                     }
                 }
                 SsaInst::Pipeline { stages, .. } => {
                     for (name, args, _) in stages {
                         for arg in args {
-                            check_value_use(arg, &taint, &mut errors,
-                                &format!("argument in pipeline stage '{}'", name));
+                            check_value_use(
+                                arg,
+                                &taint,
+                                &mut errors,
+                                &format!("argument in pipeline stage '{}'", name),
+                            );
                         }
                     }
                 }
-                SsaInst::SubscriptAssign { index, value, array, .. } => {
-                    check_value_use(index, &taint, &mut errors,
-                        &format!("subscript index of '{}'", array));
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("subscript value of '{}'", array));
+                SsaInst::SubscriptAssign {
+                    index,
+                    value,
+                    array,
+                    ..
+                } => {
+                    check_value_use(
+                        index,
+                        &taint,
+                        &mut errors,
+                        &format!("subscript index of '{}'", array),
+                    );
+                    check_value_use(
+                        value,
+                        &taint,
+                        &mut errors,
+                        &format!("subscript value of '{}'", array),
+                    );
                 }
                 SsaInst::ArrayAppend { value, array, .. } => {
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("array append to '{}'", array));
+                    check_value_use(
+                        value,
+                        &taint,
+                        &mut errors,
+                        &format!("array append to '{}'", array),
+                    );
                 }
-                SsaInst::Export { value, name, .. } => {
-                    check_value_use(value, &taint, &mut errors,
-                        &format!("export of '{}'", name));
-                }
+
                 // Assign, Bless, ReadLine, etc. — definitions, not uses
                 _ => {}
             }
@@ -189,59 +215,60 @@ fn is_tainted(taint: &HashMap<String, Taint>, vref: &VarRef) -> bool {
     match taint.get(&var_key(vref)) {
         Some(&Taint::Tainted) => true,
         Some(&Taint::Clean) => false,
-        None => true, // unknown = tainted (conservative)
+        None => false, // DD#53: unknown vars are empty strings, not tainted
     }
 }
 
-fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
-                    user_functions: &std::collections::HashSet<String>) -> Taint {
+fn value_is_tainted(
+    value: &SsaValue,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
     match value {
         SsaValue::Literal(_) => Taint::Clean,
         SsaValue::Var(vref) => {
-            if is_tainted(taint, vref) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, vref) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::Expr(_) => Taint::Clean, // string expressions from lowerer
         SsaValue::FuncCall(_) => Taint::Clean, // elidable user functions
+        SsaValue::IntFuncCall { .. } => Taint::Clean, // int functions return clean integers
         SsaValue::CmdSubst { argv, .. } => {
-            // Check if this is getenv/argv (tainted) or user func/known external (clean)
+            // All command substitution output is tainted unless it's a known-clean builtin.
+            // External command output (including getenv) requires explicit bless.
             if let Some(SsaValue::Literal(cmd)) = argv.first() {
-                match cmd.as_str() {
-                    "getenv" | "argv" => {
-                        // getenv of a known env var is auto-blessed (clean)
-                        if cmd == "getenv" {
-                            if let Some(SsaValue::Literal(var_name)) = argv.get(1) {
-                                if crate::known_externals::lookup_env_var(var_name).is_some() {
-                                    return Taint::Clean;
-                                }
+                // Strip path to get basename (e.g., /bin/echo → echo)
+                let basename = cmd.rsplit('/').next().unwrap_or(cmd);
+                match basename {
+                    "getenv" | "argv" => Taint::Tainted,
+                    // Known-safe internal builtins (pure computation, no external data)
+                    "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid"
+                    | "getppid" | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => {
+                        Taint::Clean
+                    }
+                    _ => {
+                        // Sash builtins that produce output from their args:
+                        // if all args are clean, output is clean (pure computation).
+                        if matches!(basename, "echo" | "printf" | "pwd") {
+                            let args_clean = argv[1..].iter().all(|a| {
+                                value_is_tainted(a, taint, user_functions) != Taint::Tainted
+                            });
+                            if args_clean {
+                                return Taint::Clean;
                             }
                         }
-                        Taint::Tainted
-                    }
-                    // Known-safe builtins
-                    "len" | "keys" | "join" | "epochseconds" => Taint::Clean,
-                    _ => {
-                        // Known-safe bash builtins — if all args are clean, result is clean
-                        if matches!(cmd.as_str(),
-                            "echo" | "printf" | "true" | "false" | "test" | "["
-                            | "pwd" | "basename" | "dirname" | "type" | "command"
-                            | "seq" | "wc" | "tr" | "cat" | "head" | "tail"
-                            | "sort" | "uniq" | "cut" | "rev" | "tee") {
-                            let args_clean = argv[1..].iter()
-                                .all(|a| value_is_tainted(a, taint, user_functions) != Taint::Tainted);
-                            if args_clean { return Taint::Clean; }
-                        }
                         // User-defined functions are clean by DD#24
-                        if user_functions.contains(cmd.as_str()) {
+                        if user_functions.contains(cmd.as_str())
+                            || user_functions.contains(basename)
+                        {
                             return Taint::Clean;
                         }
-                        // Known-safe externals (auto-bless) — e.g. hostname, whoami, date
-                        let args: Vec<String> = argv[1..].iter()
-                            .filter_map(|a| if let SsaValue::Literal(s) = a { Some(s.clone()) } else { None })
-                            .collect();
-                        if crate::known_externals::lookup_command(cmd, &args).is_some() {
-                            return Taint::Clean;
-                        }
-                        Taint::Tainted // unknown external command
+                        // Everything else (external commands) is tainted.
+                        // Explicit `bless` is required — no auto-bless.
+                        Taint::Tainted
                     }
                 }
             } else {
@@ -249,46 +276,69 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
             }
         }
         SsaValue::Concat(parts) => {
-            if parts.iter().any(|p| value_is_tainted(p, taint, user_functions) == Taint::Tainted) {
+            if parts
+                .iter()
+                .any(|p| value_is_tainted(p, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::ArithExpr { var, .. } => {
-            if is_tainted(taint, var) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, var) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::ArithBinOp { left, right, .. } => {
             if value_is_tainted(left, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(right, taint, user_functions) == Taint::Tainted {
+                || value_is_tainted(right, taint, user_functions) == Taint::Tainted
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::ParamExpansion { var, .. } => {
-            if is_tainted(taint, var) { Taint::Tainted } else { Taint::Clean }
+            if is_tainted(taint, var) {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            }
         }
         SsaValue::Subscript { .. } => Taint::Clean, // array access — taint is on the array
-        SsaValue::ArgvIndex(_) => Taint::Tainted, // program argv — tainted
+        SsaValue::ArgvIndex(_) => Taint::Tainted,   // program argv — tainted
         SsaValue::IndexedArray(elems) => {
-            if elems.iter().any(|e| value_is_tainted(e, taint, user_functions) == Taint::Tainted) {
+            if elems
+                .iter()
+                .any(|e| value_is_tainted(e, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
         SsaValue::AssocArray(pairs) => {
-            if pairs.iter().any(|(_, v)| value_is_tainted(v, taint, user_functions) == Taint::Tainted) {
+            if pairs
+                .iter()
+                .any(|(_, v)| value_is_tainted(v, taint, user_functions) == Taint::Tainted)
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
             }
         }
-        SsaValue::Ternary { cond, true_val, false_val } => {
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
             if value_is_tainted(cond, taint, user_functions) == Taint::Tainted
                 || value_is_tainted(true_val, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(false_val, taint, user_functions) == Taint::Tainted {
+                || value_is_tainted(false_val, taint, user_functions) == Taint::Tainted
+            {
                 Taint::Tainted
             } else {
                 Taint::Clean
@@ -298,8 +348,12 @@ fn value_is_tainted(value: &SsaValue, taint: &HashMap<String, Taint>,
     }
 }
 
-fn check_value_use(value: &SsaValue, taint: &HashMap<String, Taint>,
-                   errors: &mut Vec<String>, context: &str) {
+fn check_value_use(
+    value: &SsaValue,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+    context: &str,
+) {
     match value {
         SsaValue::Var(vref) => {
             if is_tainted(taint, vref) {

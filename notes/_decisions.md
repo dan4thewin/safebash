@@ -81,3 +81,13 @@
 [DD52-reject-param-transform](decisions/DD52-reject-param-transform)
 
 [DD53-env-isolation](decisions/DD53-env-isolation)
+
+[DD54-source-pipeline](decisions/DD54-source-pipeline)
+
+[DD55-error-model](decisions/DD55-error-model)
+
+[DD56-signal-trap](decisions/DD56-signal-trap)
+
+[DD57-split-converter-compiler](decisions/DD57-split-converter-compiler)
+
+[DD58-int-function-capture](decisions/DD58-int-function-capture)

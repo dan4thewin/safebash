@@ -1,8 +1,8 @@
 title: DD#56 — implement signum keyword
-status: ready
+status: done
 depends: []
 severity: feature
-gates:
+gates: [56.3]
   - tests
   - commit
 

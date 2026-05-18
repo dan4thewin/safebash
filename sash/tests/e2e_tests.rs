@@ -39,9 +39,14 @@ fn bash_output(script: &str) -> String {
 fn compile_and_run(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    assert!(
+        out.status.success(),
+        "compile failed for {}: {}",
+        name,
+        stderr
+    );
     let run = Command::new(&bin).output().expect("run failed");
     String::from_utf8_lossy(&run.stdout).to_string()
 }
@@ -50,11 +55,18 @@ fn compile_and_run(name: &str, script: &str) -> String {
 fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(out.status.success(), "compile failed for {}: {}", name, stderr);
+    assert!(
+        out.status.success(),
+        "compile failed for {}: {}",
+        name,
+        stderr
+    );
     let mut cmd = Command::new(&bin);
-    for (k, v) in env { cmd.env(k, v); }
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
     let run = cmd.output().expect("run failed");
     String::from_utf8_lossy(&run.stdout).to_string()
 }
@@ -63,30 +75,20 @@ fn compile_and_run_env(name: &str, script: &str, env: &[(&str, &str)]) -> String
 fn compile_expect_fail(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}_fail", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
-    assert!(!out.status.success(), "expected compile failure for {}", name);
+    let out = sash_cmd(&["-o", &bin, &src]);
+    assert!(
+        !out.status.success(),
+        "expected compile failure for {}",
+        name
+    );
     String::from_utf8_lossy(&out.stderr).to_string()
-}
-
-/// Run --emit-source on a script, return stdout
-fn emit_source(name: &str, script: &str) -> String {
-    let src = write_tmp(&format!("{}.sh", name), script);
-    let out = sash_cmd(&["--nolint", "--emit-source", &src]);
-    String::from_utf8_lossy(&out.stdout).to_string()
-}
-
-/// Run --emit-source --annotate on a script, return stdout
-fn emit_annotated(name: &str, script: &str) -> String {
-    let src = write_tmp(&format!("{}.sh", name), script);
-    let out = sash_cmd(&["--nolint", "--emit-source", "--annotate", &src]);
-    String::from_utf8_lossy(&out.stdout).to_string()
 }
 
 /// Compile, then extract .sash_source from binary
 fn extract_source(name: &str, script: &str) -> String {
     let src = write_tmp(&format!("{}.sh", name), script);
     let bin = format!("/tmp/sash_e2e_{}", name);
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
+    let out = sash_cmd(&["-o", &bin, &src]);
     assert!(out.status.success(), "compile failed for {}", name);
     let ext = sash_cmd(&["--extract", &bin]);
     String::from_utf8_lossy(&ext.stdout).to_string()
@@ -117,8 +119,8 @@ fn pos_arithmetic() {
 #[test]
 fn pos_if_else() {
     let script = r#"#!/bin/bash
-x=5
-if [[ $x -gt 3 ]]; then
+int x=5
+if (( x > 3 )); then
     echo big
 else
     echo small
@@ -130,8 +132,8 @@ fi
 #[test]
 fn pos_while_loop() {
     let script = r#"#!/bin/bash
-i=0
-while [[ $i -lt 5 ]]; do
+int i=0
+while (( i < 5 )); do
     echo $i
     (( i = i + 1 ))
 done
@@ -255,13 +257,13 @@ fn pos_command_substitution() {
 
 #[test]
 fn pos_pipeline() {
-    let script = "#!/bin/bash\necho hello world | tr ' ' '\\n'";
+    let script = "#!/bin/bash\necho hello world | /usr/bin/tr ' ' '\\n'";
     assert_eq!(compile_and_run("pipe", script), "hello\nworld\n");
 }
 
 #[test]
 fn pos_heredoc() {
-    let script = "#!/bin/bash\ncat <<EOF\nhello\nworld\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello\nworld\nEOF";
     assert_eq!(compile_and_run("heredoc", script), "hello\nworld\n");
 }
 
@@ -295,13 +297,13 @@ fn pos_exit_status() {
 
 #[test]
 fn pos_declare_int() {
-    let script = "#!/bin/bash\ndeclare -i x=5\nx+=3\necho $x";
+    let script = "#!/bin/bash\nint x=5\n(( x += 3 ))\necho $x";
     assert_eq!(compile_and_run("decl_int", script), "8\n");
 }
 
 #[test]
 fn pos_int_keyword() {
-    let script = "#!/bin/bash\nint x=5\nx+=3\necho $x";
+    let script = "#!/bin/bash\nint x=5\n(( x += 3 ))\necho $x";
     assert_eq!(compile_and_run("int_kw", script), "8\n");
 }
 
@@ -364,9 +366,9 @@ fn pos_test_string_ops() {
 #[test]
 fn pos_test_numeric_ops() {
     let script = r#"#!/bin/bash
-[[ 5 -gt 3 ]] && echo gt
-[[ 3 -eq 3 ]] && echo eq
-[[ 2 -lt 3 ]] && echo lt
+if (( 5 > 3 )); then echo gt; fi
+if (( 3 == 3 )); then echo eq; fi
+if (( 2 < 3 )); then echo lt; fi
 "#;
     assert_eq!(compile_and_run("test_num", script), "gt\neq\nlt\n");
 }
@@ -403,21 +405,33 @@ fn pos_lowercase() {
 fn neg_export_rejected() {
     let script = "#!/bin/bash\nexport FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("export", script);
-    assert!(stderr.contains("SB5001"), "expected SB5001 export rejection, got: {}", stderr);
+    assert!(
+        stderr.contains("SB5001"),
+        "expected SB5001 export rejection, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn neg_tainted_env_var() {
     let script = "#!/bin/bash\nx=$(getenv CUSTOM_VAR)\necho $x";
     let stderr = compile_expect_fail("taint_env", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 taint error, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 taint error, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn neg_tainted_argv() {
     let script = "#!/bin/bash\necho $1";
     let stderr = compile_expect_fail("taint_argv", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 taint error, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 taint error, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -426,119 +440,25 @@ fn neg_tainted_env_inside_function_body() {
     // of whether it appears at the top level or inside a function body.
     // getenv inside a function body must still produce a tainted value
     // and reject downstream unblessed use.
-    let script = "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
+    let script =
+        "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
     let stderr = compile_expect_fail("taint_in_fn_body", script);
-    assert!(stderr.contains("SB4020"),
-        "expected SB4020 for tainted getenv inside function body, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 for tainted getenv inside function body, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn neg_eval_rejected() {
     let script = "#!/bin/bash\neval echo hello";
     let stderr = compile_expect_fail("eval", script);
-    assert!(stderr.contains("SB4001"), "expected SB4001 eval rejection, got: {}", stderr);
-}
-
-// ═══════════════════════════════════════════════════════════════
-// COERCION TESTS — --emit-source output
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn coerce_declare_i_to_int() {
-    let script = "#!/bin/bash\ndeclare -i x=5\necho $x";
-    let out = emit_source("coerce_int", script);
-    assert!(out.contains("int x=5"), "expected 'int x=5', got:\n{}", out);
-    assert!(!out.contains("declare"), "should not contain 'declare'");
-}
-
-#[test]
-fn coerce_declare_a_to_array() {
-    let script = "#!/bin/bash\ndeclare -a arr=(1 2 3)";
-    let out = emit_source("coerce_arr", script);
-    assert!(out.contains("array arr=(1 2 3)"), "expected 'array', got:\n{}", out);
-}
-
-#[test]
-fn coerce_declare_A_to_map() {
-    let script = "#!/bin/bash\ndeclare -A m=([a]=1)";
-    let out = emit_source("coerce_map", script);
-    assert!(out.contains("map m=([a]=1)"), "expected 'map', got:\n{}", out);
-}
-
-#[test]
-fn coerce_readonly_to_const() {
-    let script = "#!/bin/bash\nreadonly msg=hello";
-    let out = emit_source("coerce_const", script);
-    assert!(out.contains("const msg=hello"), "expected 'const', got:\n{}", out);
-}
-
-#[test]
-fn coerce_declare_ri_to_const_int() {
-    let script = "#!/bin/bash\ndeclare -ri x=5";
-    let out = emit_source("coerce_ri", script);
-    assert!(out.contains("const int x=5"), "expected 'const int', got:\n{}", out);
-}
-
-#[test]
-fn coerce_let_to_arith() {
-    let script = "#!/bin/bash\nlet \"x=3+4\"";
-    let out = emit_source("coerce_let", script);
-    assert!(out.contains("(( x=3+4 ))"), "expected '(( x=3+4 ))', got:\n{}", out);
-}
-
-#[test]
-fn coerce_local_i_to_local_int() {
-    let script = "#!/bin/bash\nf() { local -i x=5; echo $x; }\nf";
-    let out = emit_source("coerce_local_int", script);
-    assert!(out.contains("local int x=5"), "expected 'local int', got:\n{}", out);
-}
-
-#[test]
-fn coerce_typeset_stripped() {
-    let script = "#!/bin/bash\ntypeset x=hello";
-    let out = emit_source("coerce_typeset", script);
-    assert!(!out.contains("typeset"), "should not contain 'typeset'");
-}
-
-#[test]
-fn coerce_native_unchanged() {
-    let script = "#!/bin/bash\nint x=5\nconst msg=hello\narray arr=(1 2 3)";
-    let out = emit_source("coerce_native", script);
-    assert!(out.contains("int x=5"), "int should pass through");
-    assert!(out.contains("const msg=hello"), "const should pass through");
-    assert!(out.contains("array arr=(1 2 3)"), "array should pass through");
-}
-
-// ═══════════════════════════════════════════════════════════════
-// ANNOTATION TESTS — --emit-source --annotate shows # was: comments
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn annotate_declare_i() {
-    let script = "#!/bin/bash\ndeclare -i x=5";
-    let out = emit_annotated("ann_int", script);
-    assert!(out.contains("# was: declare -i x=5"), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_readonly() {
-    let script = "#!/bin/bash\nreadonly msg=hello";
-    let out = emit_annotated("ann_const", script);
-    assert!(out.contains("# was: readonly msg=hello"), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_let() {
-    let script = "#!/bin/bash\nlet \"x=1\"";
-    let out = emit_annotated("ann_let", script);
-    assert!(out.contains("# was: let \"x=1\""), "expected annotation, got:\n{}", out);
-}
-
-#[test]
-fn annotate_native_no_annotation() {
-    let script = "#!/bin/bash\nint x=5\nconst msg=hello";
-    let out = emit_annotated("ann_native", script);
-    assert!(!out.contains("# was:"), "native syntax should have no annotations, got:\n{}", out);
+    assert!(
+        stderr.contains("SB4001"),
+        "expected SB4001 eval rejection, got: {}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -549,15 +469,23 @@ fn annotate_native_no_annotation() {
 fn extract_recovers_source() {
     let script = "#!/bin/bash\necho hello";
     let extracted = extract_source("extract", script);
-    assert!(extracted.contains("echo hello"), "expected source in .sash_source, got:\n{}", extracted);
+    assert!(
+        extracted.contains("echo hello"),
+        "expected source in .sash_source, got:\n{}",
+        extracted
+    );
 }
 
 #[test]
 fn extract_coerced_source() {
-    let script = "#!/bin/bash\ndeclare -i x=5\necho $x";
+    let script = "#!/bin/bash\nint x=5\necho $x";
     let extracted = extract_source("extract_coerce", script);
-    // The .sash_source should contain the coerced form
-    assert!(extracted.contains("int x=5"), "expected coerced source, got:\n{}", extracted);
+    // The .sash_source should contain the source
+    assert!(
+        extracted.contains("int x=5"),
+        "expected source with int, got:\n{}",
+        extracted
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -566,26 +494,42 @@ fn extract_coerced_source() {
 
 #[test]
 fn sample_gg_rejects_export() {
-    let script = std::fs::read_to_string(format!("{}/../../bash-samples/gg", env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_default();
-    if script.is_empty() { return; } // skip if not available
+    let script = std::fs::read_to_string(format!(
+        "{}/../../bash-samples/gg",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap_or_default();
+    if script.is_empty() {
+        return;
+    } // skip if not available
     let src = write_tmp("gg.sh", &script);
     let out = sash_cmd(&["-o", "/tmp/sash_e2e_gg", &src]);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    assert!(stderr.contains("SB5001") || stderr.contains("SB4020"),
-        "gg should fail with export or taint error, got:\n{}", stderr);
+    assert!(
+        stderr.contains("SB5001") || stderr.contains("SB4020"),
+        "gg should fail with export or taint error, got:\n{}",
+        stderr
+    );
 }
 
 #[test]
 fn sample_kh_taint_error() {
-    let script = std::fs::read_to_string(format!("{}/../../bash-samples/kh", env!("CARGO_MANIFEST_DIR")))
-        .unwrap_or_default();
-    if script.is_empty() { return; }
+    let script = std::fs::read_to_string(format!(
+        "{}/../../bash-samples/kh",
+        env!("CARGO_MANIFEST_DIR")
+    ))
+    .unwrap_or_default();
+    if script.is_empty() {
+        return;
+    }
     let src = write_tmp("kh.sh", &script);
     let out = sash_cmd(&["-o", "/tmp/sash_e2e_kh", &src]);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    assert!(stderr.contains("SB4020"),
-        "kh should fail with taint error, got:\n{}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "kh should fail with taint error, got:\n{}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -618,14 +562,22 @@ fn pos_sed_in_assignment() {
 fn neg_tainted_all_args() {
     let script = "#!/bin/bash\necho \"$@\"";
     let stderr = compile_expect_fail("taint_at", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 for $@, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 for $@, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn neg_export_declare_x() {
     let script = "#!/bin/bash\ndeclare -x FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("decl_x", script);
-    assert!(stderr.contains("SB5001"), "expected SB5001 for declare -x, got: {}", stderr);
+    assert!(
+        stderr.contains("SB5001"),
+        "expected SB5001 for declare -x, got: {}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -705,11 +657,17 @@ foo onearg
 "#;
     let src = write_tmp("func_unbound_pos.sh", script);
     let bin = "/tmp/sash_e2e_func_unbound_pos".to_string();
-    let out = sash_cmd(&["--nolint", "-o", &bin, &src]);
-    assert!(!out.status.success(), "expected compile failure for out-of-range $2");
+    let out = sash_cmd(&["-o", &bin, &src]);
+    assert!(
+        !out.status.success(),
+        "expected compile failure for out-of-range $2"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.contains("reads $2") || stderr.contains("out-of-range"),
-        "expected out-of-range positional diagnostic, got: {}", stderr);
+    assert!(
+        stderr.contains("reads $2") || stderr.contains("out-of-range"),
+        "expected out-of-range positional diagnostic, got: {}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -719,15 +677,18 @@ foo onearg
 #[test]
 fn pos_if_in_while() {
     let script = r#"#!/bin/bash
-i=0
-while [[ $i -lt 6 ]]; do
+int i=0
+while (( i < 6 )); do
     if [[ $i == "0" ]] || [[ $i == "2" ]] || [[ $i == "4" ]]; then
         echo "even $i"
     fi
     (( i = i + 1 ))
 done
 "#;
-    assert_eq!(compile_and_run("if_while", script), "even 0\neven 2\neven 4\n");
+    assert_eq!(
+        compile_and_run("if_while", script),
+        "even 0\neven 2\neven 4\n"
+    );
 }
 
 #[test]
@@ -754,7 +715,10 @@ for x in apple banana cherry; do
     esac
 done
 "#;
-    assert_eq!(compile_and_run("case_for", script), "fruit1\nfruit2\nother\n");
+    assert_eq!(
+        compile_and_run("case_for", script),
+        "fruit1\nfruit2\nother\n"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -763,19 +727,22 @@ done
 
 #[test]
 fn pos_heredoc_with_vars() {
-    let script = "#!/bin/bash\nname=world\ncat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
-    assert_eq!(compile_and_run("hd_vars", script), "hello world\ngoodbye world\n");
+    let script = "#!/bin/bash\nname=world\n/bin/cat <<ENDTAG\nhello $name\ngoodbye $name\nENDTAG";
+    assert_eq!(
+        compile_and_run("hd_vars", script),
+        "hello world\ngoodbye world\n"
+    );
 }
 
 #[test]
 fn pos_heredoc_literal() {
-    let script = "#!/bin/bash\ncat <<'EOF'\nhello $name\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<'EOF'\nhello $name\nEOF";
     assert_eq!(compile_and_run("hd_literal", script), "hello $name\n");
 }
 
 #[test]
 fn pos_heredoc_tab_strip() {
-    let script = "#!/bin/bash\ncat <<-EOF\n\t\thello\n\t\tworld\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<-EOF\n\t\thello\n\t\tworld\nEOF";
     assert_eq!(compile_and_run("hd_tabs", script), "hello\nworld\n");
 }
 
@@ -823,7 +790,10 @@ x=$(getenv MY_VAL)
 bless x [[ $x =~ ^[0-9]+$ ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run_env("bless_ok", script, &[("MY_VAL", "42")]), "42\n");
+    assert_eq!(
+        compile_and_run_env("bless_ok", script, &[("MY_VAL", "42")]),
+        "42\n"
+    );
 }
 
 #[test]
@@ -833,14 +803,21 @@ x=$(getenv MY_VAL)
 bless x [[ -n $x ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run_env("bless_default", script, &[("MY_VAL", "hello")]), "hello\n");
+    assert_eq!(
+        compile_and_run_env("bless_default", script, &[("MY_VAL", "hello")]),
+        "hello\n"
+    );
 }
 
 #[test]
 fn neg_cmdsub_tainted() {
     let script = "#!/bin/bash\nx=$(curl http://example.com)\necho $x";
     let stderr = compile_expect_fail("cmdsub_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 for tainted cmdsub, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 for tainted cmdsub, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -853,7 +830,11 @@ x=$(curl http://other.com)
 echo $x
 "#;
     let stderr = compile_expect_fail("retaint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 after re-taint, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 after re-taint, got: {}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -867,7 +848,10 @@ x=$(getenv MY_VAL)
 bless x [[ -n $x ]]
 echo $x
 "#;
-    assert_eq!(compile_and_run_env("cmdsub_bless", script, &[("MY_VAL", "hello world")]), "hello world\n");
+    assert_eq!(
+        compile_and_run_env("cmdsub_bless", script, &[("MY_VAL", "hello world")]),
+        "hello world\n"
+    );
 }
 
 #[test]
@@ -878,7 +862,10 @@ n=$(getenv MY_VAL)
 bless n [[ $n =~ ^[0-9]+$ ]]
 echo $(( n + 10 ))
 "#;
-    assert_eq!(compile_and_run_env("cmdsub_arith", script, &[("MY_VAL", "5")]), "15\n");
+    assert_eq!(
+        compile_and_run_env("cmdsub_arith", script, &[("MY_VAL", "5")]),
+        "15\n"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -924,8 +911,8 @@ fn pos_c_style_for() {
 #[test]
 fn pos_until_loop() {
     let script = r#"#!/bin/bash
-i=0
-until [[ $i -ge 3 ]]; do
+int i=0
+while (( i < 3 )); do
     echo $i
     (( i = i + 1 ))
 done
@@ -967,17 +954,25 @@ fn pos_alternate_value() {
 
 #[test]
 fn neg_heredoc_cmdsub() {
-    let script = "#!/bin/bash\ncat <<EOF\nhello $(hostname)\nEOF";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello $(/bin/hostname)\nEOF";
     let stderr = compile_expect_fail("hd_cmdsub", script);
-    assert!(stderr.contains("SB5002"), "expected SB5002 for $(cmd) in heredoc, got: {}", stderr);
+    assert!(
+        stderr.contains("SB5002"),
+        "expected SB5002 for $(cmd) in heredoc, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn pos_heredoc_blessed_var() {
     // cat /etc/hostname is auto-blessed via known_externals
-    let script = "#!/bin/bash\nh=$(cat /etc/hostname)\ncat <<EOF\nhello $h\nEOF";
+    let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\n/bin/cat <<EOF\nhello $h\nEOF";
     let output = compile_and_run("hd_blessed", script);
-    assert!(output.starts_with("hello "), "expected 'hello <hostname>', got: {}", output);
+    assert!(
+        output.starts_with("hello "),
+        "expected 'hello <hostname>', got: {}",
+        output
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -996,9 +991,10 @@ fn pos_herestring_read_multi() {
 
 #[test]
 fn pos_bless_regex_validation() {
-    // cat /etc/hostname is auto-blessed via known_externals — no manual bless needed
+    // Explicit bless required — no auto-bless in compiler
     let script = r#"#!/bin/bash
-n=$(cat /etc/hostname)
+n=$(/bin/cat /etc/hostname)
+bless n [[ $n =~ ^[a-zA-Z0-9]+$ ]]
 echo $n
 "#;
     let output = compile_and_run("bless_regex", script);
@@ -1008,7 +1004,10 @@ echo $n
 #[test]
 fn pos_bless_numeric_check() {
     let script = "#!/bin/bash\nx=$(getenv MY_VAL)\nbless x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
-    assert_eq!(compile_and_run_env("bless_num", script, &[("MY_VAL", "42")]), "50\n");
+    assert_eq!(
+        compile_and_run_env("bless_num", script, &[("MY_VAL", "42")]),
+        "50\n"
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1017,28 +1016,33 @@ fn pos_bless_numeric_check() {
 
 #[test]
 fn pos_auto_bless_hostname() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
+    // Explicit bless required — no auto-bless in compiler
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_hostname", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
 fn pos_auto_bless_whoami() {
-    let script = "#!/bin/bash\nu=$(whoami)\necho $u";
+    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho $u";
     let output = compile_and_run("auto_whoami", script);
     assert!(!output.is_empty(), "expected username output");
 }
 
 #[test]
 fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(date +%Y-%m-%d)\necho $d";
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ $d =~ ^\\d\\d\\d\\d\\-\\d\\d\\-\\d\\d$ ]]\necho $d";
     let output = compile_and_run("auto_date", script);
-    assert!(output.trim().len() == 10, "expected YYYY-MM-DD, got: {}", output);
+    assert!(
+        output.trim().len() == 10,
+        "expected YYYY-MM-DD, got: {}",
+        output
+    );
 }
 
 #[test]
 fn pos_auto_bless_nproc() {
-    let script = "#!/bin/bash\nn=$(nproc)\necho $n";
+    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\nbless n [[ $n =~ ^[0-9]+$ ]]\necho $n";
     let output = compile_and_run("auto_nproc", script);
     let n: u32 = output.trim().parse().expect("expected numeric nproc");
     assert!(n > 0, "expected positive nproc");
@@ -1046,55 +1050,32 @@ fn pos_auto_bless_nproc() {
 
 #[test]
 fn pos_auto_bless_cat_hostname() {
-    let script = "#!/bin/bash\nh=$(cat /etc/hostname)\necho $h";
+    let script =
+        "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_cat_hostname", script);
     assert!(!output.is_empty(), "expected hostname from /etc/hostname");
 }
 
 #[test]
 fn pos_auto_bless_multiple() {
-    let script = "#!/bin/bash\nh=$(hostname)\nu=$(whoami)\necho \"$h $u\"";
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho \"$h $u\"";
     let output = compile_and_run("auto_multi", script);
-    assert!(output.contains(' '), "expected 'host user', got: {}", output);
+    assert!(
+        output.contains(' '),
+        "expected 'host user', got: {}",
+        output
+    );
 }
 
 #[test]
 fn neg_unknown_cmd_still_tainted() {
     let script = "#!/bin/bash\nx=$(some_unknown_cmd)\necho $x";
     let stderr = compile_expect_fail("unknown_taint", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020 for unknown cmd, got: {}", stderr);
-}
-
-#[test]
-fn emit_auto_bless_line() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
-    let src = emit_source("auto_bless_emit", script);
-    assert!(src.contains("bless h"), "expected bless line in emitted source: {}", src);
-    assert!(src.contains("[a-zA-Z0-9._-]"), "expected hostname pattern: {}", src);
-}
-
-#[test]
-fn emit_auto_bless_annotated() {
-    let script = "#!/bin/bash\nh=$(hostname)\necho $h";
-    let src = emit_annotated("auto_bless_annot", script);
-    assert!(src.contains("# auto: system hostname"), "expected auto annotation: {}", src);
-}
-
-#[test]
-fn emit_auto_bless_date_pattern() {
-    let script = "#!/bin/bash\nd=$(date +%Y-%m-%d)\necho $d";
-    let src = emit_source("auto_date_emit", script);
-    assert!(src.contains("bless d"), "expected bless d line: {}", src);
-    assert!(src.contains("[0-9]{4}-[0-9]{2}-[0-9]{2}"), "expected date pattern: {}", src);
-}
-
-#[test]
-fn emit_no_auto_bless_for_unknown() {
-    // Unknown command: no auto-bless line should appear
-    // (will have taint error on stderr but emit-source still runs)
-    let script = "#!/bin/bash\nx=$(curl http://example.com)\necho $x";
-    let src = emit_source("no_auto_unknown", script);
-    assert!(!src.contains("bless x"), "should NOT have auto-bless for curl: {}", src);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020 for unknown cmd, got: {}",
+        stderr
+    );
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1102,7 +1083,6 @@ fn emit_no_auto_bless_for_unknown() {
 // Each test: (1) original fails with correct code, (2) native compiles,
 // (3) native output matches bash.
 // ═══════════════════════════════════════════════════════════════
-
 
 #[test]
 fn brush_arith_quoted() {
@@ -1149,8 +1129,8 @@ fn brush_let_clean() {
 
 #[test]
 fn brush_home_clean() {
-    // $HOME is a known env var — should be auto-clean
-    let script = "#!/bin/bash\necho $HOME";
+    // $HOME requires getenv — no implicit env access (DD#53)
+    let script = "#!/bin/bash\nx=$(getenv HOME)\nbless x [[ -n $x ]]\necho $x";
     let sash_out = compile_and_run("brush_home_clean", script);
     let bash_out = bash_output("echo $HOME");
     assert_eq!(sash_out, bash_out);
@@ -1158,17 +1138,19 @@ fn brush_home_clean() {
 
 #[test]
 fn brush_pwd_clean() {
-    // $PWD is a known env var — should be auto-clean
-    let script = "#!/bin/bash\necho $PWD";
+    // $PWD requires getenv — no implicit env access (DD#53)
+    let script = "#!/bin/bash\nx=$(getenv PWD)\nbless x [[ $x =~ ^/ ]]\necho $x";
     let sash_out = compile_and_run("brush_pwd_clean", script);
     assert!(!sash_out.is_empty(), "PWD should produce output");
 }
 
 #[test]
 fn brush_path_check() {
-    // $PATH is known — if/then with -z test
+    // $PATH requires getenv — no implicit env access (DD#53)
     let script = r#"#!/bin/bash
-if [[ -z "$PATH" ]]; then
+x=$(getenv PATH)
+bless x [[ -n $x ]]
+if [[ -z "$x" ]]; then
   echo "PATH is not set or is empty"
 else
   echo "PATH is set and non-empty"
@@ -1193,7 +1175,11 @@ fn brush_getenv_bless_native() {
     // Step 1: without bless, fails
     let raw = "#!/bin/bash\nx=$(getenv MY_VAR)\necho $x";
     let stderr = compile_expect_fail("brush_getenv_raw", raw);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 
     // Step 2: with bless, compiles and output matches
     let blessed = r#"#!/bin/bash
@@ -1210,21 +1196,26 @@ fn brush_curl_tainted() {
     // curl output is correctly tainted — verify diagnostic
     let script = "#!/bin/bash\nx=$(curl http://evil.com)\necho $x";
     let stderr = compile_expect_fail("brush_curl", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4020"),
+        "expected SB4020, got: {}",
+        stderr
+    );
 }
 
 #[test]
 fn brush_undefined_var() {
-    // Undefined vars are tainted by default
+    // DD#53: Undefined vars are empty strings (not env lookups, not tainted).
+    // They compile and produce empty output.
     let script = "#!/bin/bash\necho ${undefined}";
-    let stderr = compile_expect_fail("brush_undefined", script);
-    assert!(stderr.contains("SB4020"), "expected SB4020, got: {}", stderr);
+    let out = compile_and_run_env("brush_undefined", script, &[]);
+    assert_eq!(out, "\n", "undefined var should expand to empty string");
 }
 
 #[test]
 fn brush_heredoc_clean() {
     // Heredoc with no cmdsub — content is clean
-    let script = "#!/bin/bash\ncat <<EOF\nhello world\nEOF\n";
+    let script = "#!/bin/bash\n/bin/cat <<EOF\nhello world\nEOF\n";
     let sash_out = compile_and_run("brush_heredoc_clean", script);
     assert_eq!(sash_out, "hello world\n");
 }
@@ -1232,9 +1223,13 @@ fn brush_heredoc_clean() {
 #[test]
 fn brush_heredoc_cmdsub_rejected() {
     // Heredoc with command substitution — SB5002
-    let script = "#!/bin/bash\ncat <<END\n$(echo hi)\nEND\n";
+    let script = "#!/bin/bash\n/bin/cat <<END\n$(echo hi)\nEND\n";
     let stderr = compile_expect_fail("brush_heredoc_cmdsub", script);
-    assert!(stderr.contains("SB5002"), "expected SB5002, got: {}", stderr);
+    assert!(
+        stderr.contains("SB5002"),
+        "expected SB5002, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -1242,7 +1237,11 @@ fn brush_indirect_rejected() {
     // ${!ref} — SB4003
     let script = "#!/bin/bash\nvar=hello\nref=var\necho ${!ref}";
     let stderr = compile_expect_fail("brush_indirect", script);
-    assert!(stderr.contains("SB4003"), "expected SB4003, got: {}", stderr);
+    assert!(
+        stderr.contains("SB4003"),
+        "expected SB4003, got: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -1250,5 +1249,137 @@ fn brush_export_rejected() {
     // export — SB5001
     let script = "#!/bin/bash\nexport MY_VAR=hello";
     let stderr = compile_expect_fail("brush_export", script);
-    assert!(stderr.contains("SB5001"), "expected SB5001, got: {}", stderr);
+    assert!(
+        stderr.contains("SB5001"),
+        "expected SB5001, got: {}",
+        stderr
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// EXTGLOB REJECTION (SB5005 — DD#20/DD#39)
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn neg_extglob_at() {
+    let script = "#!/bin/bash\ncase x in @(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_at", script);
+    assert!(
+        stderr.contains("SB5005"),
+        "expected SB5005 for @(), got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn neg_extglob_plus() {
+    let script = "#!/bin/bash\ncase x in +(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_plus", script);
+    assert!(
+        stderr.contains("SB5005"),
+        "expected SB5005 for +(), got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn neg_extglob_question() {
+    let script = "#!/bin/bash\ncase x in ?(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_q", script);
+    assert!(
+        stderr.contains("SB5005"),
+        "expected SB5005 for ?(), got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn neg_extglob_bang() {
+    let script = "#!/bin/bash\ncase x in !(a|b)) echo match;; esac";
+    let stderr = compile_expect_fail("extglob_bang", script);
+    assert!(
+        stderr.contains("SB5005"),
+        "expected SB5005 for !(), got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn pos_case_bare_star() {
+    // bare * in case should NOT trigger SB5005
+    let script = "#!/bin/bash\ncase hello in *) echo matched;; esac";
+    assert_eq!(compile_and_run("case_star", script), "matched\n");
+}
+
+#[test]
+fn neg_source_dot_rejected() {
+    let script = "#!/bin/bash\n. ./file.sh";
+    let stderr = compile_expect_fail("source_dot", script);
+    assert!(
+        stderr.contains("SB4002"),
+        "expected SB4002 for '.', got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn neg_source_keyword_rejected() {
+    let script = "#!/bin/bash\nsource ./file.sh";
+    let stderr = compile_expect_fail("source_kw", script);
+    assert!(
+        stderr.contains("SB4002"),
+        "expected SB4002 for 'source', got: {}",
+        stderr
+    );
+}
+
+// ── DD#55: suppress prefix (- cmd) ──────────────────────────
+
+#[test]
+fn pos_suppress_prefix_false() {
+    // - /bin/false; echo ok → should succeed, echo ok
+    let script = "#!/bin/bash\n- /bin/false; echo ok";
+    assert_eq!(compile_and_run("suppress_false", script), "ok\n");
+}
+
+#[test]
+fn pos_suppress_pipeline_segment() {
+    // - /bin/false | /bin/true → suppressed first segment, pipeline succeeds
+    let script = "#!/bin/bash\n- /bin/false | /bin/true";
+    // Should compile and run with exit 0
+    let src = write_tmp("suppress_pipe.sh", script);
+    let bin = "/tmp/sash_e2e_suppress_pipe";
+    let out = sash_cmd(&["-o", bin, &src]);
+    assert!(
+        out.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(bin).output().expect("run failed");
+    assert!(
+        run.status.success(),
+        "expected exit 0, got {:?}",
+        run.status
+    );
+}
+
+#[test]
+fn neg_unsuppressed_false_aborts() {
+    // /bin/false; echo should_not_reach → binary should abort (nonzero exit)
+    let script = "#!/bin/bash\n/bin/false\necho should_not_reach";
+    let src = write_tmp("unsup_false.sh", script);
+    let bin = "/tmp/sash_e2e_unsup_false";
+    let out = sash_cmd(&["-o", bin, &src]);
+    assert!(
+        out.status.success(),
+        "compile failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(bin).output().expect("run failed");
+    assert!(!run.status.success(), "expected nonzero exit");
+    let stdout = String::from_utf8_lossy(&run.stdout);
+    assert!(
+        !stdout.contains("should_not_reach"),
+        "should not reach after /bin/false"
+    );
 }

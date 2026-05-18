@@ -127,20 +127,22 @@ Updated existing task with all new rules.
 
 ## DD#56 — Signal and trap model (new DD)
 
-All traps are flag-setting. Runtime sets `signum` (int global,
-keyword like `argv`/`getenv`) on signal arrival. Two forms:
+All signal handling is flag-based. Runtime sets `signum` (int global,
+keyword like `argv`/`getenv`) on signal arrival. `signal` builtin
+configures disposition:
 
-- `trap : SIG` — flag only, programmer polls, zero overhead
-- `trap exit SIG` — flag + compiler inserts checks before external
-  commands, function calls/returns, loop tops → jumps to EXIT block
+- `signal SIG IGN` — OS masks signal (SIG_IGN), invisible
+- `signal SIG DFL` — restore kernel default
+- `signal SIG FLAG` — flag only, programmer polls, zero overhead
+- `signal SIG EXIT` — flag + compiler inserts checks → jumps to END
 
-EXIT block is universal cleanup. Programmer dispatches with
-`case $(signum)`. Signal 0 = normal exit.
+END block is a top-level declaration (exactly one). Universal cleanup.
+Programmer dispatches with `case $(signum)`. Signal 0 = normal exit.
 
-Traps can change mid-program (`:` → `exit` or vice versa).
+Dispositions can change mid-program (`FLAG` → `EXIT` or vice versa).
 
 Four implementation tasks: signum keyword, flag traps, exiting
-traps, EXIT block rework.
+traps, END block rework.
 
 ### BUG — EXIT trap wrong scope
 

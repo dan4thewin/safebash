@@ -1,9 +1,9 @@
 title: DD#55 — implement `-` error suppression prefix
-status: ready
+status: done
 depends:
   - dd55-implicit-exit-checks
 severity: feature
-gates:
+gates: [55.4, 55.9, 55.11]
   - tests
   - commit
 

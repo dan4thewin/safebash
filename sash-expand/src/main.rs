@@ -54,7 +54,12 @@ fn main() {
         let eq_pos = match trimmed.find('=') {
             Some(p) => p,
             None => {
-                eprintln!("sash-expand: {}:{}: not a KEY=VALUE line: {}", path, lineno + 1, trimmed);
+                eprintln!(
+                    "sash-expand: {}:{}: not a KEY=VALUE line: {}",
+                    path,
+                    lineno + 1,
+                    trimmed
+                );
                 process::exit(1);
             }
         };
@@ -63,7 +68,9 @@ fn main() {
         let raw_val = &trimmed[eq_pos + 1..];
 
         // Validate key: must be [A-Za-z_][A-Za-z0-9_]*
-        if key.is_empty() || !key.chars().next().unwrap().is_ascii_alphabetic() && key.as_bytes()[0] != b'_' {
+        if key.is_empty()
+            || !key.chars().next().unwrap().is_ascii_alphabetic() && key.as_bytes()[0] != b'_'
+        {
             eprintln!("sash-expand: {}:{}: invalid key: {}", path, lineno + 1, key);
             process::exit(1);
         }
@@ -136,7 +143,9 @@ fn expand_value(
                 // Simple $VAR
                 let start = i + 1;
                 let mut end = start;
-                while end < bytes.len() && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_') {
+                while end < bytes.len()
+                    && (bytes[end].is_ascii_alphanumeric() || bytes[end] == b'_')
+                {
                     end += 1;
                 }
                 let name = &s[start..end];
@@ -166,7 +175,10 @@ fn expand_braced(inner: &str, vars: &HashMap<String, String>) -> Result<String, 
         return Err(format!("indirect expansion not allowed: ${{{}}}", inner));
     }
     if inner.contains("$(") || inner.contains('`') {
-        return Err(format!("command substitution not allowed in expansion: ${{{}}}", inner));
+        return Err(format!(
+            "command substitution not allowed in expansion: ${{{}}}",
+            inner
+        ));
     }
 
     // ${VAR:-default}
@@ -174,7 +186,9 @@ fn expand_braced(inner: &str, vars: &HashMap<String, String>) -> Result<String, 
         let name = &inner[..pos];
         let default = &inner[pos + 2..];
         let val = vars.get(name).filter(|v| !v.is_empty());
-        return Ok(val.map(|s| s.clone()).unwrap_or_else(|| default.to_string()));
+        return Ok(val
+            .map(|s| s.clone())
+            .unwrap_or_else(|| default.to_string()));
     }
 
     // ${VAR:+alternate}
@@ -182,7 +196,11 @@ fn expand_braced(inner: &str, vars: &HashMap<String, String>) -> Result<String, 
         let name = &inner[..pos];
         let alt = &inner[pos + 2..];
         let val = vars.get(name).filter(|v| !v.is_empty());
-        return Ok(if val.is_some() { alt.to_string() } else { String::new() });
+        return Ok(if val.is_some() {
+            alt.to_string()
+        } else {
+            String::new()
+        });
     }
 
     // ${VAR%%pat} — longest suffix

@@ -1,7 +1,8 @@
 title: DD#31 — enforce disjoint (( )) contexts
-status: ready
+status: done
 depends: dd31-reject-mutation-in-expr
 severity: correctness
+gates: [31.1a, 31.1b, 31.1c, 31.2, 31.3a, 31.3b, 31.3c, 31.4a, 31.4b, 31.4c, 31.7, 31.10, 31.11, 31.13, 31.14]
 
 Issues in lower_arithmetic_command:
 

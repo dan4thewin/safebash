@@ -1,5 +1,5 @@
 title: DD#32 — implement SASH_TRACE runtime trace
-status: ready
+status: done
 depends: []
 gates:
   - tests

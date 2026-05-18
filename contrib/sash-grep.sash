@@ -1,0 +1,14 @@
+#!/usr/bin/env sash
+# sash-grep: minimal grep in sash-native
+# Usage: sash-grep <pattern>
+# Reads stdin, prints lines matching pattern.
+
+pat=$(argv 1)
+bless pat [[ $pat =~ ^.+$ ]]
+
+while read line; do
+  bless line [[ $line =~ ^.*$ ]]
+  if [[ $line =~ $pat ]]; then
+    echo $line
+  fi
+done

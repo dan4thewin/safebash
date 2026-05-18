@@ -1,8 +1,10 @@
 title: Remove command -v runtime implementation
-status: ready
+status: done
 severity: cleanup
 depends: []
-gates:
+gates: [23.3]
+example: sash/src/rules/process_substitution.rs:check
+index_keyword: command_v
   - tests
   - commit
 

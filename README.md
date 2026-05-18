@@ -6,13 +6,25 @@ difficult to analyze — eval, indirect expansion, implicit
 environment mutation, word splitting — and adds a taint model that
 tracks external input from entry to use.
 
+The toolchain has two binaries:
+
+- **sash** — the compiler. Validates, type-checks, and compiles
+  sash-native source to static ELF binaries.
+- **sash-convert** — the converter. Transforms existing Bash scripts
+  into sash-native source (mechanical coercions, annotations, bless hints).
+
 The compiler is also a specification. What sash accepts defines the
 safe subset. What it rejects gets a diagnostic with a code,
 an explanation, and a suggested fix.
 
 ```
-bash source → tree-sitter parse → validate + taint → lower → type check
-    → SSA → constant fold → Cranelift codegen → ld → static binary
+bash source → sash-convert → sash-native source → sash → static binary
+```
+
+Or for scripts already written in sash-native:
+
+```
+sash-native source → sash → static binary
 ```
 
 Output binaries are static ELF linked against sash-rt. No libc.
@@ -25,14 +37,21 @@ Output binaries are static ELF linked against sash-rt. No libc.
 # Build runtime and compiler
 cd sash-rt && cargo build --release && cd ..
 cd sash && cargo build --release && cd ..
+cd sash-convert && cargo build --release && cd ..
 
-# Compile a script
+# Convert a Bash script to sash-native
+sash-convert script.bash -o script.sh
+
+# Compile a sash-native script
 sash script.sh -o binary
 ./binary
 
-# Show coerced source
-sash --emit-source script.sh
-sash --emit-source --annotate script.sh   # adds "# was:" comments
+# Show dependency manifest
+sash --manifest script.sh
+
+# Cross-compile with sysroot
+sash --sysroot=/mnt/target script.sh
+sash --sysroot=rootfs.squashfs script.sh
 
 # Extract source from a compiled binary
 sash --extract binary
@@ -102,9 +121,19 @@ assignments and rejects use of tainted values in sensitive positions.
 `declare -i` → `int`, `declare -a` → `array`, `declare -A` → `map`,
 `readonly` → `const`, `let` → `(( ))`.
 
-### Source Emitter
-`--emit-source` shows the coerced sash-native source.
-`--annotate` adds `# was:` comments showing original constructs.
+### Source Conversion (sash-convert)
+`sash-convert script.bash -o script.sh` transforms Bash to sash-native:
+- Mechanical coercions (`declare -i` → `int`, `readonly` → `const`, etc.)
+- `MANUAL` annotations for constructs needing human review
+- `CHECK` hints for taint and safety
+- `--annotate` adds `# was:` comments showing original constructs
+
+### Compiler Modes (sash)
+`--ir` shows the intermediate representation.
+`--ssa` shows the SSA form.
+`--manifest` lists all external command dependencies.
+`--sysroot=<path>` resolves commands against a target filesystem.
+`--trace` enables runtime command tracing.
 `--extract` recovers source from compiled binaries.
 Every binary embeds source in a `.sash_source` ELF section.
 
@@ -138,14 +167,18 @@ mk testall    # run everything
 ## Repo Structure
 
 ```
-sash/          compiler
-sash-rt/       runtime library (#![no_std], rustix, no libc)
-docs/           JOURNAL.md, GUIDE.md, SUBSET.md, TODO.md, TIMELINE.md
-audit/         adversarial review results (5 models, 3 passes)
-contrib/       vendored deps (plan9port-regexp, freertos-heap4)
-suites/        brush/oils test runners and results
-exp/           git submodule (safebash-exp, optional, pre-alpha experiments)
-mkfile         build system (Plan 9 mk, not make)
+sash/           compiler (validates, type-checks, compiles to native)
+sash-convert/   converter (bash → sash-native source transformation)
+sash-rt/        runtime library (#![no_std], rustix, no libc)
+sash-expand/    expansion utilities
+docs/           GUIDE.md, SUBSET.md, TIMELINE.md
+notes/          iwe knowledge graph (journal, decisions, tasks, status)
+audit/          adversarial review results (5 models, 3 passes)
+contrib/        vendored deps (plan9port-regexp, freertos-heap4)
+suites/         brush/oils test runners and results
+spec/           spec test suite (236 passing)
+exp/            git submodule (safebash-exp, optional, pre-alpha experiments)
+mkfile          build system (Plan 9 mk, not make)
 ```
 
 ---
@@ -183,7 +216,6 @@ mkfile         build system (Plan 9 mk, not make)
 
 - **Binary signing** — sign AOT artifacts, integrate with IPE/fs-verity
 - **JIT + REPL** — Cranelift JIT for interactive execution
-- **sash-expand** — safe source-level replacement tool
 
 ---
 

@@ -1,8 +1,8 @@
 title: Precompile literal regex patterns at runtime init
-status: ready
+status: done
 depends:
   - dd39-compiletime-regex-validation
-gates:
+gates: [39.9]
   - tests
   - commit
 

@@ -1,17 +1,24 @@
 setup() {
     local id=$1
     trace=.trace/$(date +%a)/"$id"
-    find ${trace%/*} -maxdepth 0 -mtime +1 -exec rm -r {} + 2>&- || :
-    mkdir -p ${trace%/*}
-    exec 3>&1 >> $trace 2>&1 4>>${SPEC_TSV:-spec.tsv}
+    find "${trace%/*}" -maxdepth 0 -mtime +1 -exec rm -r {} + 2>&- || :
+    mkdir -p "${trace%/*}"
+    exec 3>&1 >> "$trace" 2>&1
+    [[ ${SPEC_TSV:-} ]] && exec 4>> "$SPEC_TSV"
     PS4='+$LINENO: '
     set -x
     date
 
+    # Ensure sash/sash-convert are on PATH even after cd to tmpdir
+    if [[ ":$PATH:" != *"/target/"* ]]; then
+        PATH="$PATH:$(cd "$(dirname "${BASH_SOURCE[0]}")" && realpath ../target/release)"
+    fi
+
     local dir
     dir=$(mktemp -d)
+    # shellcheck disable=SC2064 # single quotes - false positive
     trap "rm -r '$dir'" EXIT
-    cd $dir
+    cd "$dir"
     declare -gi index=0 fail=0
     declare -g rc out err
 }
@@ -26,23 +33,54 @@ tally() {
 
 run_sash() {
     rc=-1 out="" err=""
-    sash -c "$1" > out 2> err
+    local src=$1; shift
+    sash -c "$src" -o ./test_bin 2> err.raw
+    rc=$?
+    if [[ $rc = 0 ]]; then
+        # Compilation succeeded — run the binary
+        out=$(./test_bin "$@" 2>/dev/null)
+        rc=$?
+        rm -f ./test_bin
+        err=""
+    else
+        out=""
+        # Keep only diagnostic lines (error/warning from compiler)
+        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:' err.raw | grep -v 'static binary' || true)
+    fi
+    rm -f err.raw
+}
+
+run_convert() {
+    rc=-1 out="" err=""
+    printf '%s\n' "$1" > .input.sh
+    sash-convert .input.sh > out 2> err
+    rc=$?
+    out=$(<out)
+    err=$(<err)
+}
+
+run_convert_annotate() {
+    rc=-1 out="" err=""
+    printf '%s\n' "$1" > .input.sh
+    sash-convert --annotate .input.sh > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)
 }
 
 chk() {
+    # shellcheck disable=SC2319 # assign $? - false positive
     local -i last_rc=$? expect=${2:-0}
-    local id=$1 msg
+    local id=$1 msg status
     (( index++ ))
     if (( last_rc == expect )); then
-        msg="ok"
+        msg="ok" status="passing"
     else
-        msg="not ok"
+        msg="not ok" status="failing"
         (( fail++ ))
     fi
     echo "$msg $index" >&3
-    printf '%s\t%s\t' "$id" "$msg" >&4
+    [[ ${SPEC_TSV:-} ]] || return
+    printf '%s\t%s\t' "$id" "$status" >&4
     date -u -Iseconds | sed 's/+.*/Z/' >&4
 }

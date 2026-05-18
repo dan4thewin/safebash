@@ -219,7 +219,7 @@ handled).
 | Code | Construct | Reason |
 |------|-----------|--------|
 | SB4001 | `eval` | Dynamic code execution |
-| SB4002 | `source` / `.` | Would need safe loader |
+| SB4002 | `source` / `.` | Use `sash-expand file \| mapfile -m var` + `bless` instead |
 | SB5001 | `export` / `declare -x` | Use `FOO=bar cmd` instead |
 | SB5002 | `$(cmd)` inside heredoc bodies | Extract to variable, bless, then reference |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |
@@ -306,7 +306,8 @@ stores a tainted element; subsequent reads of that element (including
 
 ## Coercions
 
-Coercions are silent transformations visible via `--emit-source`.
+Coercions are transformations applied by `sash-convert` when
+converting Bash to sash-native source.
 
 | Input | Output |
 |-------|--------|

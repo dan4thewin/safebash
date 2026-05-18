@@ -43,6 +43,66 @@ static	void	pushand(Reinst*, Reinst*);
 static	void	pushator(int);
 static	void	evaluntil(int);
 static	int	bldcclass(void);
+static	int	bldshortclass(Rune);
+
+static int rep_min, rep_max; /* {n,m} repetition counts */
+static void rcerror(char *);
+
+/*
+ * Parse {n} or {n,m} at current exprp position.
+ * exprp points to the '{'. On success, advances exprp past '}'.
+ * Returns 1 on success, 0 if not a valid counted repetition.
+ */
+static int
+parsecounted(void)
+{
+	char *p = exprp;
+	int n = 0, m = 0;
+	int have_n = 0;
+
+	if(*p != '{')
+		return 0;
+	p++;
+	if(*p >= '0' && *p <= '9'){
+		have_n = 1;
+		while(*p >= '0' && *p <= '9')
+			n = n*10 + (*p++ - '0');
+		if(n > 32){
+			rcerror("repetition count too large");
+			return 0;
+		}
+	}
+	if(*p == '}' && have_n){
+		rep_min = n;
+		rep_max = n;
+		exprp = p+1;
+		return 1;
+	}
+	if(*p != ',')
+		return 0;
+	p++;
+	if(*p == '}' && have_n){
+		/* {n,} — unbounded */
+		rep_min = n;
+		rep_max = -1; /* sentinel for unbounded */
+		exprp = p+1;
+		return 1;
+	}
+	if(!(*p >= '0' && *p <= '9'))
+		return 0;
+	while(*p >= '0' && *p <= '9')
+		m = m*10 + (*p++ - '0');
+	if(*p != '}')
+		return 0;
+	if(m > 32 || m < n){
+		rcerror("invalid repetition range");
+		return 0;
+	}
+	rep_min = n;
+	rep_max = m;
+	exprp = p+1;
+	return 1;
+}
 
 static jmp_buf regkaboom;
 
@@ -346,6 +406,48 @@ nextc(Rune *rp)
 	return 0;
 }
 
+/*
+ * Build a character class from shorthand escape sequences.
+ * \d [0-9], \w [0-9A-Za-z_], \s [\t-\r ].
+ * Uppercase inverts (NCCLASS).
+ * Returns CCLASS/NCCLASS token type, or 0 if not a shorthand.
+ */
+static int
+bldshortclass(Rune c)
+{
+	Rune *p;
+	int type = CCLASS;
+
+	if(c < 'a') {
+		type = NCCLASS;
+		c += 'a' - 'A';
+	}
+
+	yyclassp = newclass();
+	p = yyclassp->spans;
+
+	switch(c){
+	case 'd':
+		*p++ = '0'; *p++ = '9';
+		break;
+	case 'w':
+		*p++ = '0'; *p++ = '9';
+		*p++ = 'A'; *p++ = 'Z';
+		*p++ = '_'; *p++ = '_';
+		*p++ = 'a'; *p++ = 'z';
+		break;
+	case 's':
+		*p++ = '\t'; *p++ = '\r';
+		*p++ = ' ';  *p++ = ' ';
+		break;
+	default:
+		return 0;
+	}
+	yyclassp->end = p;
+	return type;
+}
+
+
 static	int
 lex(int literal, int dot_type)
 {
@@ -355,6 +457,11 @@ lex(int literal, int dot_type)
 	if(literal || quoted){
 		if(yyrune == 0)
 			return END;
+		if(quoted){
+			int t = bldshortclass(yyrune);
+			if(t)
+				return t;
+		}
 		return RUNE;
 	}
 
@@ -381,6 +488,16 @@ lex(int literal, int dot_type)
 		return EOL;
 	case '[':
 		return bldcclass();
+	case '{':
+		/* Counted repetition {n,m} — handled by main loop re-lex */
+		if(lastwasand){
+			exprp--; /* back up to point at '{' */
+			if(parsecounted())
+				return COUNTED;
+			exprp++; /* restore */
+		}
+		rcerror("invalid '{' — use \\{ for literal or {n,m} for repetition");
+		return END;
 	}
 	return RUNE;
 }
@@ -428,6 +545,30 @@ bldcclass(void)
 				return 0;
 			}
 			*(ep-1) = rune;
+		} else if(quoted && ep < &r[NCCRUNE-6]) {
+			/* expand shorthand classes inside [] */
+			switch(rune){
+			case 'd':
+				*ep++ = '0'; *ep++ = '9';
+				break;
+			case 'w':
+				*ep++ = '0'; *ep++ = '9';
+				*ep++ = 'A'; *ep++ = 'Z';
+				*ep++ = '_'; *ep++ = '_';
+				*ep++ = 'a'; *ep++ = 'z';
+				break;
+			case 's':
+				*ep++ = '\t'; *ep++ = '\r';
+				*ep++ = ' ';  *ep++ = ' ';
+				break;
+			case 'D': case 'W': case 'S':
+				rcerror("negated shorthand \\D/\\W/\\S not supported inside []");
+				return 0;
+			default:
+				*ep++ = rune;
+				*ep++ = rune;
+				break;
+			}
 		} else {
 			*ep++ = rune;
 			*ep++ = rune;
@@ -508,11 +649,64 @@ regcomp1(char *s, int literal, int dot_type)
 
 	/* Start with a low priority operator to prime parser */
 	pushator(START-1);
-	while((token = lex(literal, dot_type)) != END){
-		if((token&0300) == OPERATOR)
+	{
+	char *prev_atom_start = exprp;
+	while(1){
+		char *atom_start = exprp; /* source pos before this lex */
+		token = lex(literal, dot_type);
+		if(token == END)
+			break;
+		if(token == COUNTED){
+			/* DD#39: {n,m} counted repetition.
+			 * Re-lex the preceding atom for additional copies.
+			 * prev_atom_start points to where the preceding atom started.
+			 */
+			int i;
+			char *after_count = exprp; /* past the } */
+			if(rep_min == 0){
+				operator(QUEST); /* make existing copy optional */
+				for(i = 1; i < rep_max; i++){
+					exprp = prev_atom_start;
+					token = lex(literal, dot_type);
+					operand(token);
+					operator(QUEST);
+				}
+			} else {
+				for(i = 1; i < rep_min; i++){
+					exprp = prev_atom_start;
+					token = lex(literal, dot_type);
+					operand(token);
+				}
+				if(rep_max == -1){
+					/* {n,} unbounded: last copy gets PLUS */
+					if(rep_min <= 1){
+						/* {1,} == PLUS on existing atom */
+						operator(PLUS);
+					} else {
+						/* already emitted n copies; make last one PLUS */
+						/* Re-lex one more copy with STAR */
+						exprp = prev_atom_start;
+						token = lex(literal, dot_type);
+						operand(token);
+						operator(STAR);
+					}
+				} else {
+					for(i = 0; i < rep_max - rep_min; i++){
+						exprp = prev_atom_start;
+						token = lex(literal, dot_type);
+						operand(token);
+						operator(QUEST);
+					}
+				}
+			}
+			exprp = after_count;
+		} else if((token&0300) == OPERATOR)
 			operator(token);
 		else
 			operand(token);
+		if((token&0300) != OPERATOR)
+			prev_atom_start = atom_start;
+	}
 	}
 
 	/* Close with a low priority operator */

@@ -1,8 +1,10 @@
 title: DD#46 — reject top-level positional params in sash-native
-status: ready
+status: done
 depends: []
-gates:
+gates: [46.1, 46.2, 46.4]
   - tests
+example: lower_value (sash/src/transform.rs)
+index_keyword: positional
   - commit
 
 `$1`–`$N`, `$@`, `$*` at top level should be a compile error in

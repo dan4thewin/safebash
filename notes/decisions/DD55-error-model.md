@@ -1,5 +1,5 @@
 title: DD#55 — Implicit Exit Checks and Error Handling Model
-status: designed
+status: implemented
 
 No `set -e` at runtime. The compiler inserts implicit exit checks on
 every operation that can fail at runtime. Failure = nonzero exit or
@@ -40,7 +40,11 @@ Three patterns for a command that can fail:
 
 `$?` is scoped to the handling expression (`||` RHS, `if`/`while`
 body), not available as a general-purpose variable in subsequent
-statements.
+statements. Furthermore, `$?` (or `$(status)`) is only valid as the
+**first expression evaluated** in the handling branch — once another
+command executes, the status is consumed and unavailable. This
+prevents stale-status bugs where `$?` refers to something other
+than the command that caused entry to the branch.
 
 ## `local` declarations
 
