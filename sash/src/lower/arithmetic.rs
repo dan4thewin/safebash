@@ -494,15 +494,15 @@ pub(super) fn lower_arith_expr_to_exprkind(node: Node, source: &[u8]) -> ExprKin
             }
         }
         "unary_expression" => {
-            let text = super::helpers::node_text_trimmed(node, source);
+            let text = super::helpers::node_text_or(node, source, "0");
             ExprKind::ArithmeticExpansion(text)
         }
         "ternary_expression" => {
-            let text = super::helpers::node_text_trimmed(node, source);
+            let text = super::helpers::node_text_or(node, source, "0");
             ExprKind::ArithmeticExpansion(text)
         }
         "number" | "variable_name" | "word" => {
-            let text = super::helpers::node_text_trimmed(node, source);
+            let text = super::helpers::node_text_or(node, source, "0");
             let text = text.trim_start_matches('$').to_string();
             ExprKind::ArithmeticExpansion(text)
         }
@@ -512,7 +512,7 @@ pub(super) fn lower_arith_expr_to_exprkind(node: Node, source: &[u8]) -> ExprKin
             ExprKind::ArithmeticExpansion(text)
         }
         _ => {
-            let text = super::helpers::node_text_trimmed(node, source);
+            let text = super::helpers::node_text_or(node, source, "0");
             ExprKind::ArithmeticExpansion(text)
         }
     }
@@ -561,7 +561,7 @@ fn arith_node_to_string(node: Node, source: &[u8]) -> String {
         }
         "unary_expression" => {
             // e.g. -x, !x
-            super::helpers::node_text_trimmed(node, source)
+            super::helpers::node_text_or(node, source, "0")
         }
         "number" => node.utf8_text(source).unwrap_or("0").to_string(),
         "variable_name" | "word" => node
@@ -579,6 +579,6 @@ fn arith_node_to_string(node: Node, source: &[u8]) -> String {
                 format!("${}", text)
             }
         }
-        _ => super::helpers::node_text_trimmed(node, source),
+        _ => super::helpers::node_text_or(node, source, "0"),
     }
 }
