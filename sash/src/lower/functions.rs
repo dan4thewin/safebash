@@ -29,6 +29,7 @@ pub(super) fn lower_function(node: Node, source: &[u8]) -> Function {
         name,
         return_type,
         body,
+        is_local: false,
     }
 }
 

@@ -14,6 +14,7 @@ target-lexicon = "0.13"
 tree-sitter = "0.25"
 tree-sitter-bash = { path = "/home/dangood/src/tree-sitter-bash-safebash" }
 rustix = { version = "1.1", features = ["process", "runtime", "stdio", "fs"] }
+logos = "0.16.1"
 
 [build-dependencies]
 cc = "1"

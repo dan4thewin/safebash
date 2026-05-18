@@ -23,7 +23,10 @@ use tree_sitter::Node;
 /// Lower an entire program (root node) into IR.
 pub fn lower_program(root: Node, source: &[u8]) -> Program {
     let stmts = lower_body(root, source);
-    Program { statements: stmts }
+    Program {
+        statements: stmts,
+        end_block: None,
+    }
 }
 
 /// Lower a body (sequence of statements) from a CST node.

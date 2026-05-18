@@ -481,7 +481,7 @@ pub(super) fn handle_function_call_or_command(
     })
     .collect();
     ssa.block_mut(block).insts.push(SsaInst::Command {
-        name: name.to_string(),
+        name: resolve_pipeline_command(name),
         args,
         redirects: Vec::new(),
         checked: true,

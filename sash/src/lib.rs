@@ -3,6 +3,7 @@ pub mod emit_janet;
 pub mod ir;
 pub mod lower;
 pub mod oracle;
+pub mod parse;
 
 // Internal modules — not used outside the crate
 pub mod codegen;
@@ -21,6 +22,11 @@ pub mod type_check;
 pub(crate) mod validator;
 
 pub fn parse(source: &str) -> tree_sitter::Tree {
+    parse_bash(source)
+}
+
+/// Parse bash source using tree-sitter (for sash-convert and taint).
+pub fn parse_bash(source: &str) -> tree_sitter::Tree {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_bash::LANGUAGE.into())
@@ -356,6 +362,7 @@ pub fn cli_main(args: Vec<String>) {
         }
     };
 
+
     // Read source
     let source = if let Some(src) = inline_source {
         src.to_string()
@@ -369,22 +376,12 @@ pub fn cli_main(args: Vec<String>) {
         }
     };
 
-    // DD#58: preprocess sexpr syntax in arithmetic before parsing
-    let (source, arith_map) = preprocess_arithmetic(&source);
-    set_arith_map(arith_map);
-
     // DD#23: --sysroot=<path> for cross-compilation path resolution
     for flag in &flags {
         if let Some(path) = flag.strip_prefix("--sysroot=") {
             set_sysroot(path.to_string());
         }
     }
-
-    // DD#56: preprocess END { ... } → fn __sash_end__ { ... }
-    let source = preprocess_end_block(&source);
-
-    // DD#18: preprocess local fn name { ... } → fn __local__name { ... }
-    let source = preprocess_local_fn(&source);
 
     // DD#57: reject converter flags
     for flag in &flags {
@@ -397,28 +394,61 @@ pub fn cli_main(args: Vec<String>) {
         }
     }
 
-    // Parse
-    let tree = parse(&source);
+    // Parse with new hand-written parser
+    let (program, parse_diags) = match parse::parse(&source) {
+        Ok(result) => result,
+        Err(diags) => {
+            for d in &diags {
+                let prefix = match d.severity {
+                    diagnostic::Severity::Error => "error",
+                    diagnostic::Severity::Deferred => "deferred",
+                };
+                eprintln!(
+                    "{}:{}:{}: {} [{}] {}",
+                    input, d.line, d.col, prefix, d.code, d.message
+                );
+            }
+            std::process::exit(1);
+        }
+    };
 
-    // Subset gate + taint tracking
+    // Emit non-fatal parse diagnostics
+    for d in &parse_diags {
+        let prefix = match d.severity {
+            diagnostic::Severity::Error => "error",
+            diagnostic::Severity::Deferred => "deferred",
+        };
+        eprintln!(
+            "{}:{}:{}: {} [{}] {}",
+            input, d.line, d.col, prefix, d.code, d.message
+        );
+    }
+
+    // Taint tracking (still uses tree-sitter CST)
     {
+        let (ts_source, arith_map) = preprocess_arithmetic(&source);
+        set_arith_map(arith_map);
+        let ts_source = preprocess_end_block(&ts_source);
+        let ts_source = preprocess_local_fn(&ts_source);
+        let tree = parse_bash(&ts_source);
+
+        // Validator rules (rejected vars, command resolution, etc.)
         let all_rules = rules::all_rules();
-        let mut diags = validator::validate(tree.root_node(), source.as_bytes(), &all_rules);
+        let mut diags = validator::validate(tree.root_node(), ts_source.as_bytes(), &all_rules);
 
+        // Taint tracking
         let mut tracker = taint::TaintTracker::new();
-        diags.extend(tracker.analyze(tree.root_node(), source.as_bytes()));
+        diags.extend(tracker.analyze(tree.root_node(), ts_source.as_bytes()));
 
-        diags.sort_by_key(|d| (d.line, d.col));
-
-        let mut has_error = false;
+        let mut has_taint_error = false;
         for d in &diags {
             let prefix = match d.severity {
                 diagnostic::Severity::Error => {
-                    has_error = true;
+                    has_taint_error = true;
                     "error"
                 }
                 diagnostic::Severity::Deferred => {
-                    has_error = true;
+                    has_taint_error = true;
                     "deferred"
                 }
             };
@@ -427,14 +457,11 @@ pub fn cli_main(args: Vec<String>) {
                 input, d.line, d.col, prefix, d.code, d.message
             );
         }
-        if has_error {
+        if has_taint_error {
             std::process::exit(1);
         }
     }
 
-    // Lower to IR
-    emit_source::clear_coercions();
-    let program = lower::lower_program(tree.root_node(), source.as_bytes());
     if flags.contains(&"--ir") {
         let ir = printer::print_program(&program);
         print!("{}", ir);
@@ -456,39 +483,16 @@ pub fn cli_main(args: Vec<String>) {
         let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let builtins: std::collections::HashSet<&str> = [
-            "echo",
-            "true",
-            "false",
-            ":",
-            "exit",
-            "cd",
-            "pwd",
-            "wait",
-            "shift",
-            "read",
-            "exec",
-            "command",
-            "[[",
-            "__redirect_push",
-            "__redirect_pop",
-            "__store_bg_pid",
-            "__subshell_wait",
-            "__table_delete",
-            "printf",
-            "signal",
-        ]
-        .iter()
-        .copied()
-        .collect();
+            "echo", "true", "false", ":", "exit", "cd", "pwd", "wait",
+            "shift", "read", "exec", "command", "[[",
+            "__redirect_push", "__redirect_pop", "__store_bg_pid",
+            "__subshell_wait", "__table_delete", "printf", "signal",
+        ].iter().copied().collect();
         let path_var = std::env::var("PATH").unwrap_or_default();
         let sysroot = get_sysroot();
         let resolve = |name: &str| -> Option<String> {
-            if name.starts_with('/') {
-                return Some(name.to_string());
-            }
-            if builtins.contains(name) {
-                return None;
-            }
+            if name.starts_with('/') { return Some(name.to_string()); }
+            if builtins.contains(name) { return None; }
             for dir in path_var.split(':') {
                 let target_path = format!("{}/{}", dir, name);
                 let exists = if let Some(ref sr) = sysroot {
@@ -496,31 +500,23 @@ pub fn cli_main(args: Vec<String>) {
                 } else {
                     std::path::Path::new(&target_path).is_file()
                 };
-                if exists {
-                    return Some(target_path);
-                }
+                if exists { return Some(target_path); }
             }
-            Some(name.to_string()) // unresolved — still a dependency
+            Some(name.to_string())
         };
         for block in ssa.blocks.values() {
             for inst in &block.insts {
                 if let ssa::SsaInst::Command { name, .. } = inst {
-                    if let Some(path) = resolve(name) {
-                        deps.insert(path);
-                    }
+                    if let Some(path) = resolve(name) { deps.insert(path); }
                 }
                 if let ssa::SsaInst::Pipeline { stages, .. } = inst {
                     for (name, _, _) in stages {
-                        if let Some(path) = resolve(name) {
-                            deps.insert(path);
-                        }
+                        if let Some(path) = resolve(name) { deps.insert(path); }
                     }
                 }
             }
         }
-        for dep in &deps {
-            println!("{}", dep);
-        }
+        for dep in &deps { println!("{}", dep); }
         return;
     }
 
@@ -539,13 +535,9 @@ pub fn cli_main(args: Vec<String>) {
 
     let obj_path = format!("{}.o", output);
 
-    // Build SSA for the taint verification pass
-    let tree2 = parse(&source);
-    let program2 = lower::lower_program(tree2.root_node(), source.as_bytes());
-    let type_map2 = type_check::infer_types(&program2);
-
-    // DD#30: strict type checking
-    let type_errors = type_check::type_check(&program2);
+    // Type checking
+    let type_map = type_check::infer_types(&program);
+    let type_errors = type_check::type_check(&program);
     if !type_errors.is_empty() {
         for te in &type_errors {
             eprintln!(
@@ -556,8 +548,9 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    let (ssa2, _) = transform::ir_to_ssa_typed(&program2, type_map2);
-    let taint_ices = ssa_taint::verify_ssa_taint(&ssa2);
+    // SSA taint verification
+    let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
+    let taint_ices = ssa_taint::verify_ssa_taint(&ssa);
     if !taint_ices.is_empty() {
         for ice in &taint_ices {
             eprintln!("{}: {}", input, ice);

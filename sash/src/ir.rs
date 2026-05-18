@@ -19,6 +19,10 @@ pub struct Span {
 }
 
 impl Span {
+    pub fn new(line: usize, col: usize) -> Self {
+        Self { line, col }
+    }
+
     pub fn from_node(node: tree_sitter::Node) -> Self {
         Self {
             line: node.start_position().row + 1,
@@ -31,6 +35,8 @@ impl Span {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub statements: Vec<Statement>,
+    /// DD#56: dedicated END block (parsed as first-class syntax).
+    pub end_block: Option<Vec<Statement>>,
 }
 
 /// A statement in the script.
@@ -187,6 +193,8 @@ pub struct Function {
     pub name: String,
     pub return_type: VarType,
     pub body: Vec<Statement>,
+    /// DD#18: local fn — scoped to enclosing function.
+    pub is_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

@@ -36,21 +36,21 @@ use super::types::InstCtx;
 /// rather than stacktraces — codegen should never panic on validated input.
 pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8>, Vec<String>> {
     let _trace = enable_trace;
-    // DD#58: preprocess sexpr syntax in arithmetic
-    // (arith_map may already be set by main.rs — only preprocess if not)
-    let source = {
-        let existing = crate::ARITH_MAP.lock().unwrap();
-        if existing.is_some() {
-            bash_source.to_string()
-        } else {
-            drop(existing);
-            let (preprocessed, arith_map) = crate::preprocess_arithmetic(bash_source);
-            crate::set_arith_map(arith_map);
-            preprocessed
+
+    // New parser: parse source directly to IR
+    let (program, parse_diags) = crate::parse::parse(bash_source).map_err(|diags| {
+        diags.iter().map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message)).collect::<Vec<_>>()
+    })?;
+
+    if !parse_diags.is_empty() {
+        let errors: Vec<String> = parse_diags.iter()
+            .map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message))
+            .collect();
+        if parse_diags.iter().any(|d| d.severity == crate::diagnostic::Severity::Error) {
+            return Err(errors);
         }
-    };
-    let tree = crate::parse(&source);
-    let program = crate::lower::lower_program(tree.root_node(), source.as_bytes());
+    }
+
     let type_map = crate::type_check::infer_types(&program);
     let (ssa, diags): (crate::ssa::SsaProgram, Vec<String>) =
         crate::transform::ir_to_ssa_typed(&program, type_map);

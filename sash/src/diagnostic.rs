@@ -37,4 +37,24 @@ impl Diagnostic {
             message,
         }
     }
+
+    pub fn error_at(line: usize, col: usize, code: &'static str, message: String) -> Self {
+        Self {
+            line,
+            col,
+            code,
+            severity: Severity::Error,
+            message,
+        }
+    }
+
+    pub fn deferred_at(line: usize, col: usize, code: &'static str, message: String) -> Self {
+        Self {
+            line,
+            col,
+            code,
+            severity: Severity::Deferred,
+            message,
+        }
+    }
 }
