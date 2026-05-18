@@ -469,46 +469,26 @@ pub(super) fn lower_test_command(node: Node, source: &[u8]) -> ExprKind {
 
 /// Lower a test expression node recursively.
 fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
+    use super::helpers::{field_expr, field_text, operand_after_operator, placeholder_expr};
+
     match node.kind() {
         "unary_expression" => {
-            let op = node
-                .child_by_field_name("operator")
-                .and_then(|n| n.utf8_text(source).ok())
-                .unwrap_or("?")
-                .to_string();
+            let op = field_text(node, "operator", source);
             if op == "!" {
-                // [[ ! expr ]] — negation: operand is itself a test expression
-                // The "!" is the operator (unnamed or field), inner expr is first named child after it
-                let inner = node
-                    .children(&mut node.walk())
-                    .filter(|c| c.is_named() && c.kind() != "test_operator")
-                    .find(|c| {
-                        c.start_byte()
-                            > node
-                                .child_by_field_name("operator")
-                                .map(|n| n.end_byte())
-                                .unwrap_or(0)
-                    })
+                let inner = operand_after_operator(node, source)
                     .map(|c| lower_test_expr(c, source))
                     .unwrap_or_else(|| TestExpr::Unary {
                         op: "?".to_string(),
-                        operand: Box::new(Expr {
-                            kind: ExprKind::Literal("?".to_string()),
-                            span: Span::from_node(node),
-                        }),
+                        operand: Box::new(placeholder_expr(node)),
                     });
                 TestExpr::Not(Box::new(inner))
             } else {
-                // -z, -n, -f, etc. — standard unary test
                 let operand = node
                     .children(&mut node.walk())
                     .filter(|c| c.is_named())
                     .nth(1)
                     .map(|c| lower_expr(c, source))
-                    .unwrap_or_else(|| Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    });
+                    .unwrap_or_else(|| placeholder_expr(node));
                 TestExpr::Unary {
                     op,
                     operand: Box::new(operand),
@@ -516,48 +496,23 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
             }
         }
         "binary_expression" => {
-            // Check if left side is a negation: [[ ! expr == expr ]] means !(expr == expr)
             let left_node = node.child_by_field_name("left");
             let is_negated_binary = left_node
                 .map(|n| {
                     n.kind() == "unary_expression"
                         && n.child_by_field_name("operator")
                             .and_then(|o| o.utf8_text(source).ok())
-                            .map(|o| o == "!")
-                            .unwrap_or(false)
+                            == Some("!")
                 })
                 .unwrap_or(false);
 
             if is_negated_binary {
-                // Extract the real left operand from inside the unary_expression
                 let left_unary = left_node.unwrap();
-                let real_left = left_unary
-                    .children(&mut left_unary.walk())
-                    .filter(|c| c.is_named() && c.kind() != "test_operator")
-                    .find(|c| {
-                        c.start_byte()
-                            > left_unary
-                                .child_by_field_name("operator")
-                                .map(|n| n.end_byte())
-                                .unwrap_or(0)
-                    })
+                let real_left = operand_after_operator(left_unary, source)
                     .map(|c| lower_expr(c, source))
-                    .unwrap_or_else(|| Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(left_unary),
-                    });
-                let op = node
-                    .child_by_field_name("operator")
-                    .and_then(|n| n.utf8_text(source).ok())
-                    .unwrap_or("?")
-                    .to_string();
-                let right = node
-                    .child_by_field_name("right")
-                    .map(|n| lower_expr(n, source))
-                    .unwrap_or_else(|| Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    });
+                    .unwrap_or_else(|| placeholder_expr(left_unary));
+                let op = field_text(node, "operator", source);
+                let right = field_expr(node, "right", source);
                 let inner = TestExpr::Binary {
                     left: Box::new(real_left),
                     op,
@@ -565,25 +520,9 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
                 };
                 TestExpr::Not(Box::new(inner))
             } else {
-                let left = left_node
-                    .map(|n| lower_expr(n, source))
-                    .unwrap_or_else(|| Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    });
-                let op = node
-                    .child_by_field_name("operator")
-                    .and_then(|n| n.utf8_text(source).ok())
-                    .unwrap_or("?")
-                    .to_string();
-                let right = node
-                    .child_by_field_name("right")
-                    .map(|n| lower_expr(n, source))
-                    .unwrap_or_else(|| Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    });
-                // Handle && and || as And/Or, not binary operators
+                let left = field_expr(node, "left", source);
+                let op = field_text(node, "operator", source);
+                let right = field_expr(node, "right", source);
                 if op == "&&" {
                     let left_te = lower_test_expr(left_node.unwrap(), source);
                     let right_te = node
@@ -591,10 +530,7 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
                         .map(|n| lower_test_expr(n, source))
                         .unwrap_or_else(|| TestExpr::Unary {
                             op: "?".to_string(),
-                            operand: Box::new(Expr {
-                                kind: ExprKind::Literal("?".to_string()),
-                                span: Span::from_node(node),
-                            }),
+                            operand: Box::new(placeholder_expr(node)),
                         });
                     TestExpr::And(Box::new(left_te), Box::new(right_te))
                 } else if op == "||" {
@@ -604,10 +540,7 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
                         .map(|n| lower_test_expr(n, source))
                         .unwrap_or_else(|| TestExpr::Unary {
                             op: "?".to_string(),
-                            operand: Box::new(Expr {
-                                kind: ExprKind::Literal("?".to_string()),
-                                span: Span::from_node(node),
-                            }),
+                            operand: Box::new(placeholder_expr(node)),
                         });
                     TestExpr::Or(Box::new(left_te), Box::new(right_te))
                 } else {
@@ -620,17 +553,13 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
             }
         }
         "negation_expression" => {
-            // [[ ! expr ]] → Not(inner)
             let inner = node
                 .children(&mut node.walk())
-                .find(|c| c.is_named() && c.kind() != "!")
+                .find(|c| c.is_named())
                 .map(|c| lower_test_expr(c, source))
                 .unwrap_or_else(|| TestExpr::Unary {
                     op: "?".to_string(),
-                    operand: Box::new(Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    }),
+                    operand: Box::new(placeholder_expr(node)),
                 });
             TestExpr::Not(Box::new(inner))
         }
@@ -641,22 +570,15 @@ fn lower_test_expr(node: Node, source: &[u8]) -> TestExpr {
                 .map(|c| lower_test_expr(c, source))
                 .unwrap_or_else(|| TestExpr::Unary {
                     op: "?".to_string(),
-                    operand: Box::new(Expr {
-                        kind: ExprKind::Literal("?".to_string()),
-                        span: Span::from_node(node),
-                    }),
+                    operand: Box::new(placeholder_expr(node)),
                 });
-            TestExpr::Paren(Box::new(inner))
+            inner
         }
         _ => {
-            // Fallback — wrap as unary with the full text
-            let text = node.utf8_text(source).unwrap_or("?").to_string();
+            let expr = lower_expr(node, source);
             TestExpr::Unary {
-                op: "?".to_string(),
-                operand: Box::new(Expr {
-                    kind: ExprKind::Literal(text),
-                    span: Span::from_node(node),
-                }),
+                op: "-n".to_string(),
+                operand: Box::new(expr),
             }
         }
     }
