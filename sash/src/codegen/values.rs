@@ -75,22 +75,8 @@ pub(super) fn lower_expr_value(
             }
             // Search vars map for the highest version of this variable
             // This finds phi-merged versions (x_3) as well as regular ones (x_1)
-            let mut best_key = None;
-            let mut best_ver: Option<u32> = None;
-            for key in vars.keys() {
-                if let Some(rest) = key.strip_prefix(name.as_str()) {
-                    if let Some(ver_str) = rest.strip_prefix('_') {
-                        if let Ok(v) = ver_str.parse::<u32>() {
-                            if best_ver.is_none() || v > best_ver.unwrap() {
-                                best_ver = Some(v);
-                                best_key = Some(key.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(key) = best_key {
-                let sv = &vars[&key];
+            if let Some(sv) = super::types::find_var_slot(vars, name.as_str()) {
+                let sv = *sv;
                 if sv.is_int() {
                     let int_val = builder.use_var(*sv.as_int());
                     let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
@@ -258,22 +244,8 @@ pub(super) fn lower_expr_value_as_int(
         crate::ir::ExprKind::Literal(s) => builder.ins().iconst(I64, s.parse::<i64>().unwrap_or(0)),
         crate::ir::ExprKind::SimpleExpansion(name) => {
             // Find highest version of this variable
-            let mut best_key = None;
-            let mut best_ver: Option<u32> = None;
-            for key in vars.keys() {
-                if let Some(rest) = key.strip_prefix(name.as_str()) {
-                    if let Some(ver_str) = rest.strip_prefix('_') {
-                        if let Ok(v) = ver_str.parse::<u32>() {
-                            if best_ver.is_none() || v > best_ver.unwrap() {
-                                best_ver = Some(v);
-                                best_key = Some(key.clone());
-                            }
-                        }
-                    }
-                }
-            }
-            if let Some(key) = best_key {
-                let sv = &vars[&key];
+            if let Some(sv) = super::types::find_var_slot(vars, name.as_str()) {
+                let sv = *sv;
                 if sv.is_int() {
                     builder.use_var(*sv.as_int())
                 } else {
@@ -291,24 +263,7 @@ pub(super) fn lower_expr_value_as_int(
             // Fallback: lower as string, atoi
             // Special case: ParameterExpansion (e.g., arrlen) — route through SSA value lowering
             if let crate::ir::ExprKind::ParameterExpansion(pe) = &expr.kind {
-                let var = {
-                    // Find highest version of this variable
-                    let mut best_key = None;
-                    let mut best_ver: Option<u32> = None;
-                    for key in vars.keys() {
-                        if let Some(rest) = key.strip_prefix(pe.name.as_str()) {
-                            if let Some(ver_str) = rest.strip_prefix('_') {
-                                if let Ok(v) = ver_str.parse::<u32>() {
-                                    if best_ver.is_none() || v > best_ver.unwrap() {
-                                        best_ver = Some(v);
-                                        best_key = Some(key.clone());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    best_key
-                };
+                let var = super::types::find_var_key(vars, pe.name.as_str());
                 if let Some(ref op) = pe.operator {
                     if op == "arrlen" {
                         if let Some(key) = var {

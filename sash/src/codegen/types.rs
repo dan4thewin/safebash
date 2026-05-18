@@ -158,3 +158,58 @@ pub(super) struct FuncState {
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
 }
+
+/// Find the VarSlot for the highest-versioned variable with the given base name.
+pub(super) fn find_var_slot<'a>(
+    vars: &'a std::collections::HashMap<String, VarSlot>,
+    name: &str,
+) -> Option<&'a VarSlot> {
+    let mut best_key: Option<&String> = None;
+    let mut best_ver: Option<u32> = None;
+    for key in vars.keys() {
+        if let Some(rest) = key.strip_prefix(name) {
+            if let Some(ver_str) = rest.strip_prefix('_') {
+                if let Ok(v) = ver_str.parse::<u32>() {
+                    if best_ver.is_none() || v > best_ver.unwrap() {
+                        best_ver = Some(v);
+                        best_key = Some(key);
+                    }
+                }
+            }
+        }
+    }
+    best_key.and_then(|k| vars.get(k))
+}
+
+/// Find the VarSlot for an array (any versioned key starting with "name_").
+pub(super) fn find_array_slot<'a>(
+    vars: &'a std::collections::HashMap<String, VarSlot>,
+    array: &str,
+) -> Option<&'a VarSlot> {
+    let prefix = format!("{}_", array);
+    vars.keys()
+        .find(|k| k.starts_with(&prefix))
+        .and_then(|k| vars.get(k))
+}
+
+/// Find the key of the highest-versioned variable with the given base name.
+pub(super) fn find_var_key(
+    vars: &std::collections::HashMap<String, VarSlot>,
+    name: &str,
+) -> Option<String> {
+    let mut best_key: Option<&String> = None;
+    let mut best_ver: Option<u32> = None;
+    for key in vars.keys() {
+        if let Some(rest) = key.strip_prefix(name) {
+            if let Some(ver_str) = rest.strip_prefix('_') {
+                if let Ok(v) = ver_str.parse::<u32>() {
+                    if best_ver.is_none() || v > best_ver.unwrap() {
+                        best_ver = Some(v);
+                        best_key = Some(key);
+                    }
+                }
+            }
+        }
+    }
+    best_key.cloned()
+}

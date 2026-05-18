@@ -75,3 +75,13 @@ pub(super) fn placeholder_expr(node: Node) -> Expr {
         span: Span::from_node(node),
     }
 }
+
+/// Get the text content of a node, or fallback if missing/invalid.
+pub(super) fn node_text(node: Node, source: &[u8]) -> String {
+    node.utf8_text(source).unwrap_or("").to_string()
+}
+
+/// Get the trimmed text content of a node.
+pub(super) fn node_text_trimmed(node: Node, source: &[u8]) -> String {
+    node.utf8_text(source).unwrap_or("").trim().to_string()
+}

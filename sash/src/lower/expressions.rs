@@ -179,7 +179,7 @@ fn lower_arithmetic_expansion(node: Node, source: &[u8], span: Span) -> ExprKind
 
 fn lower_word(node: Node, source: &[u8], span: Span) -> ExprKind {
     use super::helpers::has_error_descendant;
-    let text = node.utf8_text(source).unwrap_or("").trim().to_string();
+    let text = super::helpers::node_text_trimmed(node, source);
     if text.starts_with("~/") {
         // Tilde expansion: ~/foo → $HOME/foo
         ExprKind::Concat(vec![

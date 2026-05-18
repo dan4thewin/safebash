@@ -494,15 +494,15 @@ pub(super) fn lower_arith_expr_to_exprkind(node: Node, source: &[u8]) -> ExprKin
             }
         }
         "unary_expression" => {
-            let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
+            let text = super::helpers::node_text_trimmed(node, source);
             ExprKind::ArithmeticExpansion(text)
         }
         "ternary_expression" => {
-            let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
+            let text = super::helpers::node_text_trimmed(node, source);
             ExprKind::ArithmeticExpansion(text)
         }
         "number" | "variable_name" | "word" => {
-            let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
+            let text = super::helpers::node_text_trimmed(node, source);
             let text = text.trim_start_matches('$').to_string();
             ExprKind::ArithmeticExpansion(text)
         }
@@ -512,7 +512,7 @@ pub(super) fn lower_arith_expr_to_exprkind(node: Node, source: &[u8]) -> ExprKin
             ExprKind::ArithmeticExpansion(text)
         }
         _ => {
-            let text = node.utf8_text(source).unwrap_or("0").trim().to_string();
+            let text = super::helpers::node_text_trimmed(node, source);
             ExprKind::ArithmeticExpansion(text)
         }
     }
@@ -561,7 +561,7 @@ fn arith_node_to_string(node: Node, source: &[u8]) -> String {
         }
         "unary_expression" => {
             // e.g. -x, !x
-            node.utf8_text(source).unwrap_or("0").trim().to_string()
+            super::helpers::node_text_trimmed(node, source)
         }
         "number" => node.utf8_text(source).unwrap_or("0").to_string(),
         "variable_name" | "word" => node
@@ -579,6 +579,6 @@ fn arith_node_to_string(node: Node, source: &[u8]) -> String {
                 format!("${}", text)
             }
         }
-        _ => node.utf8_text(source).unwrap_or("0").trim().to_string(),
+        _ => super::helpers::node_text_trimmed(node, source),
     }
 }
