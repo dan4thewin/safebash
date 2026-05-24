@@ -353,3 +353,237 @@ whitespace).
 
 This was a significant debugging session — the `-n` flag issue affected
 ~20 tests before it was identified as a tokenization problem.
+
+---
+
+## Addendum: Revisiting the Dash token decision (2026-05-24)
+
+DG identified two legitimate structural uses of `-`:
+
+1. **Subtraction/negation** in arithmetic: `$(( x - 1 ))`, `$(( -x ))`
+2. **Error suppression prefix**: `- cmd` (equivalent to `cmd || :`)
+
+Neither is "part of a word." The decision to eliminate `Tok::Dash`
+entirely and treat `-` as a word character was solving the wrong
+problem. The real issue was the scanner not using adjacency to
+distinguish the cases.
+
+### Correct design
+
+- **Standalone `-`** (whitespace/terminator after) → `Tok::Dash`
+- **`-` adjacent to alphanumeric** (`-n`, `-f`) → part of `Word("-n")`
+
+Adjacency tracking already exists for exactly this kind of
+distinction. The scanner should emit `Tok::Dash` when `-` is
+followed by whitespace or a terminator. When `-` is immediately
+followed by a letter/digit (no gap), `scan_word` absorbs it.
+
+Then:
+- `- cmd` → `Dash`, `Word("cmd")` → parser sees suppression prefix
+- `echo -n` → `Word("echo")`, `Word("-n")` → normal flag
+- `$(( x - 1 ))` → Pratt parser sees `Dash` as minus operator
+
+### Disposition
+
+Restore `Tok::Dash` with adjacency-based emission. Remove the
+`Word("-")` detection hack in the parser.
+
+---
+
+## Addendum: Revisiting the logos decision (2026-05-24)
+
+DG raised the question: was the job too big for logos, and if so, why
+didn't planning catch it?
+
+### What logos would cover
+
+The `next_token` function's top-level `match b` dispatch — ~400 lines
+that match fixed byte patterns to tokens (`;;`, `|`, `||`, `&&`, `>`,
+`>>`, `>&`, `(`, `)`, `{`, `}`, `[[`, `]]`, keywords, etc.). This is
+mechanical longest-match logic. Logos handles it declaratively in ~60
+lines of annotated enum.
+
+### What logos cannot cover (stays hand-written regardless)
+
+| Function | Lines | Why hand-written |
+|----------|-------|------------------|
+| `scan_dollar` | ~100 | Mode-dependent: `$((` vs `$(` vs `${` vs `$var` |
+| `scan_double_quoted` | ~215 | Recursive sub-tokenization inside strings |
+| `scan_brace_expansion` | ~60 | Nested `${var:op}` with balanced-brace counting |
+| `scan_single_quoted` | ~20 | Trivial, but logos can't handle it mid-word |
+| `scan_ansi_c_quoted` | ~75 | Escape sequence interpretation |
+| `scan_word` | ~100 | Context-dependent termination |
+| Adjacency tracking | ~30 | `last_end` vs `start` comparison |
+| `skip_whitespace` + heredoc | ~50 | |
+
+That's ~650 lines of irreducibly hand-written context-sensitive scanning.
+
+### The real comparison
+
+| Approach | Lines | Where correctness risk lives |
+|----------|-------|------------------------------|
+| Pure hand-written (current) | 1433 | Everywhere — fixed tokens, string interp, adjacency |
+| Logos hybrid | ~750-850 | Only in the hand-written part (string interp, adjacency, dollar) |
+
+### What logos buys
+
+- ~600 fewer hand-written lines
+- Fixed-token matching is *provably correct* (DFA, no bugs possible in
+  `;;` vs `;` vs `;&` matching)
+- Token enum is self-documenting (regex attrs show exactly what each
+  token matches)
+- Adding/changing fixed tokens is a one-line declarative change
+
+### What logos doesn't buy
+
+- The hard bugs (string interpolation, adjacency, dollar-expansion)
+  stay in hand-written code either way
+- No reduction in *conceptual* complexity — still need mode switching
+
+### Assessment
+
+Logos shifts ~400-600 lines of low-risk-but-non-zero-risk code into a
+provably-correct declarative form. It doesn't touch the hard parts.
+The maintenance improvement is real but modest — you'd still have 750+
+lines of stateful hand-written scanner.
+
+The stronger argument for logos isn't correctness or maintenance — it's
+**legibility as specification**. A logos enum reads as a grammar
+fragment. The current `match b` dispatch reads as implementation. For a
+project where security matters and auditors need to verify behavior,
+declarative > imperative.
+
+### Planning gap
+
+Planning should have asked: "what percentage of the scanner is fixed-token
+matching vs context-sensitive?" The answer (~55% fixed / 45%
+context-sensitive) leads naturally to "logos for the fixed part,
+hand-written for the rest" as the obvious hybrid. The task spec said
+"logos" without specifying the boundary, which gave room to conclude
+"logos can't do it all, so I'll do it all by hand."
+
+### Disposition
+
+Open question: retrofit logos for the fixed-token layer, or accept the
+current scanner. The technical risk is low either way — the hard bugs
+live elsewhere. The legibility/auditability argument favors logos.
+
+---
+
+## Addendum: Revisiting the raw-text arithmetic decision (2026-05-24)
+
+DG's assessment: lazy and short-sighted.
+
+### The problem
+
+The new parser collects arithmetic as an opaque string and hands it to
+the transform layer's text-based parser. This means:
+
+1. Arithmetic isn't structurally represented in the IR — it's a blob
+   of text that a later stage must re-parse
+2. Error reporting is degraded (no source spans inside arithmetic)
+3. Test 58.3 fails precisely because the transform's text parser
+   can't handle compound expressions like `(add 3 4) + (add 1 2)`
+4. The entire point of the parser migration was to own the parse —
+   leaving arithmetic as "collect text, parse later" contradicts that
+
+### What should have happened
+
+A Pratt parser for arithmetic expressions, producing structured AST
+nodes (BinOp, UnaryOp, Ternary, FuncCall, VarRef, Literal) with
+spans. This is ~200-400 lines of well-understood code (Pratt parsing
+is mechanical once you have the precedence table). The transform
+then receives structured arithmetic instead of re-parsing text.
+
+### What this means for the existing transform arithmetic parser
+
+It becomes dead code once the Pratt parser is in place. The
+transform's job changes from "parse arithmetic text" to "lower
+structured arithmetic AST to SSA" — which is simpler and more
+reliable.
+
+### Disposition
+
+Arithmetic must be properly parsed. Add a Pratt parser to
+`parse/arith.rs` that produces structured IR. Remove the
+transform's text-based arithmetic re-parsing once migrated.
+
+---
+
+## Addendum: Revisiting the two-parse architecture (2026-05-24)
+
+DG's question: if we have sufficient spec tests, why is rewriting
+the validator rules risky? Are the tests insufficient?
+
+### Test coverage for validator rules
+
+19 rules, each producing specific error codes (SB5001, SB5002, etc.).
+Existing test coverage:
+- 42 taint spec tests
+- 44 validator-error assertions in brush_compat_tests
+- 29 rejection assertions in e2e_tests
+- 26 total error-path assertions across all test files
+
+For 19 rules, that's reasonable coverage. If a rewritten rule stops
+rejecting what it should, a test fails. If it produces the wrong
+error code, a test fails.
+
+### Why the "risk" argument doesn't hold
+
+The AI framed the rewrite as risky to justify deferral. But:
+
+1. If the tests are sufficient to validate rule behavior, the
+   rewrite is safe — tests catch regressions.
+2. If the tests are insufficient, the two-parser state is ALSO
+   unsafe — you can't verify that the two parsers agree.
+3. The "risk" argument cuts both ways. Two parsers with divergent
+   truth is itself a correctness risk.
+
+The real reason for deferral was effort avoidance: ~1500 lines of
+straightforward but tedious rule reimplementation. The task spec
+said "big bang" precisely to prevent this half-state.
+
+### The correct approach
+
+1. If test coverage is insufficient for any rule, add tests first
+2. Then rewrite rules against the new parser's IR
+3. No intermediate two-parser state
+
+### Disposition
+
+Tree-sitter must be removed from the compile path entirely.
+Rewrite validator rules as IR walkers. If test coverage for any
+rule is thin, add tests before rewriting that rule. The two-parse
+architecture is not an acceptable resting state.
+
+---
+
+## Addendum: Revisiting the old lower/ module (2026-05-24)
+
+The old `lower/` module (7 files, 3094 lines) was kept alive
+because `oracle_tests.rs` and `emit_janet.rs` tests import
+`sash::lower::lower_program` directly.
+
+### The janet backend's purpose
+
+Janet output is a debugging oracle. When compiled code diverges
+from expected behavior, the janet interpretation provides an
+independent check on where the expectation went wrong. It hasn't
+been needed yet but is infrastructure for the long tail.
+
+### Why janet must use the new parser's IR
+
+If the point is to verify *the compiler's interpretation of the
+source*, janet must read the same IR that codegen reads — the new
+parser's output. Otherwise you're comparing two different parsers'
+interpretations, and a disagreement tells you nothing about which
+is wrong.
+
+Keeping janet on the old tree-sitter→lower pipeline would make it
+a comparison of two parsers, not a debugging tool for the compiler.
+
+### Disposition
+
+Rewire `emit_janet.rs` to accept IR from `parse::parse()`. Rewire
+oracle tests likewise. Then delete the old `lower/` module. No
+reason to keep 3094 lines of dead pipeline.
