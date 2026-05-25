@@ -5,172 +5,130 @@ modified: 2026-05-24
 
 # DD Candidates
 
-Design decisions made or surfaced during the parser migration
-(2026-05-24 session). Some are implemented, some need formal DDs.
+Design decisions made during the parser migration (2026-05-24).
+Cross-referenced against existing DDs below.
 
 ---
 
-## Compound-command postfix operators (IMPLEMENTED)
+## NEEDS FORMAL DD: Compound-command postfix operators
 
-**Decision**: All postfix operators on compound commands are rejected
+No existing DD covers this. New restriction.
+
+**Decision**: All postfix operators on compound commands rejected
 (SB4021-4024): redirects, pipes, &&, ||, &.
 
 **Sash idiom**: Wrap in a function for composition.
 
-**Error codes**: SB4021 (redirects), SB4022 (pipes), SB4023 (&&/||),
-SB4024 (&).
-
-**Spec tests**: 14.4-14.6 rewritten to expect rejection.
-
-**Converter task**: `notes/tasks/converter-compound-postfix.md` —
-converter must rewrite these patterns to function-wrapped form.
+**Converter task**: `notes/tasks/converter-compound-postfix.md`
 
 ---
 
-## Heredocs removed from language (IMPLEMENTED)
+## CONTRADICTS DD#01-09: Heredocs removed entirely
 
-**Decision**: Heredocs (`<<` / `<<-`) are not part of sash. Rejected
-at scanner level with SB5002.
+DD#01-09 item 5 says "Reject $(cmd) in heredoc body" — implying
+heredocs exist but can't contain command substitution.
 
-**Alternative**: Use herestrings (`<<<`) for single-line input, or
-variables for multi-line content.
+**Our decision**: Heredocs (`<<` / `<<-`) removed from the language
+entirely (SB5002). Stricter than the original DD.
 
-**Rationale**: Heredocs complicate parsing (multi-line delimiter
-tracking), encourage embedding untrusted data inline, and the
-content undergoes expansion which is a taint risk.
+**Rationale**: Heredocs complicate parsing, encourage inline
+untrusted data, and the safe alternative (herestrings, variables)
+is sufficient.
+
+**Action**: Update DD#01-09 item 5 to reflect full heredoc removal.
 
 ---
 
-## Backslash is literal in unquoted context (IMPLEMENTED)
+## NEEDS FORMAL DD: Backslash literal in unquoted context
 
-**Decision**: Backslash (`\`) in unquoted words is a literal character,
-not an escape. Escape sequences only apply inside double-quoted strings
-and `$'...'` ANSI-C strings.
+No existing DD covers this.
+
+**Decision**: `\` in unquoted words is literal, not escape. Escape
+sequences only in `"..."` and `$'...'`.
 
 **Rationale**: Sash eliminates word splitting and restricts globbing.
-The cases where unquoted backslash escaping is needed in bash (escaping
-spaces, `$`, glob characters) don't exist in sash. Making `\` literal
-simplifies the language and allows regex patterns (`\d`, `\w`, `\s`) to
-pass through naturally.
-
-**Impact**: `\n` in unquoted context is the two characters `\` and `n`,
-not a newline. Use `$'\n'` or `"...\n..."` for actual escape sequences.
+Unquoted backslash escaping has no use case. Making `\` literal
+allows regex patterns to pass through naturally.
 
 ---
 
-## Braces only meaningful at statement boundaries
+## CLARIFIES DD#38: Braces at statement boundaries
 
-**Question**: Where are `{` and `}` meaningful in sash?
+DD#38 rejects subshells. Groups (`{ ... }`) remain for error
+handler blocks (`cmd || { ... }`).
 
-**Current answer**: Function bodies (`fn name { ... }`) and groups
-in error-handler context (`cmd || { ... }`). No brace expansion.
-
-**Open question**: Are groups (`{ ... }`) needed at all? They serve
-as multi-statement error handlers in `cmd || { s=$(status); handle; }`.
-Without groups, every handler would need a named function. DG
-described them as "conceptually anonymous functions immediately invoked."
-
-**Status**: Groups remain. The scanner emits `Tok::LBrace` and
-`Tok::RBrace` unconditionally. Inside `[[ =~ regex ]]`, braces in
-patterns are handled by `parse_regex_rhs` which collects them as
-literal characters.
+**Open question**: Are groups needed, or should all multi-statement
+handlers use named functions?
 
 ---
 
-## Taint rule: source determines taint, not command (IMPLEMENTED)
+## REFINES DD#24: Pipeline taint (exec boundary)
 
-**Decision**: Taint is determined by the data source. External sources
-(wherever there is an exec, a file read, or an env var read) are
-ALWAYS tainted.
+DD#24 says "read from any pipe" is tainted. Our implementation
+refines: pipe from a sash builtin (no exec) is CLEAN. Only pipe
+from a command that execs is tainted.
 
-- Pipe from builtin (echo, true — no exec) → clean
-- Pipe from external command (printf, /bin/anything — execs) → tainted
-- `$(getenv NAME)` → tainted (env var read)
-- `$(argv N)` → tainted (external input)
-- `$(/bin/cmd)` → tainted (exec)
-- `$(user_func)` → clean (no exec, sash-internal)
-- `read x <<< "literal"` → clean (no external source)
-- `read x` (from stdin) → tainted (external source)
+**Rationale**: `echo "hello" | read x` compiles to an internal
+buffer (no real pipe, no exec). The data never leaves the process.
+Only exec boundaries introduce external data.
 
-**Key principle**: A pipe from a forked child that does NOT exec
-would not be tainted. But any command that execs produces tainted
-data.
-
-**Builtin list**: echo, true, false, :, read, mapfile, bless, getenv,
-argv, argc, shift, unset, [[, trap, signal, wait, kill, signum, cd,
-status, getpid, getppid, getcpid, getcwd, epochseconds, dtoi, itod.
-
-**NOT builtins** (require exec): printf, cat, grep, sed, awk, wc, etc.
+**Action**: Add clarification to DD#24 that pipe taint depends on
+whether the source execs, not merely that a pipe syntax is used.
 
 ---
 
-## $? state machine (IMPLEMENTED)
+## ALREADY IN DD#55: $? state machine
 
-**Decision**: `$?` / `$(status)` follows a state machine:
+DD#55 already documents: "$? is only valid as the first expression
+evaluated in the handling branch." Our implementation matches.
 
-- **Undefined**: no preceding command, or consumed → use is error
-- **Available**: set after any non-suppressed command executes
-- **Consumed**: after a statement uses `$?`, resets to undefined
-
-In handling branches (`||` right side, `if`/`else` bodies): the
-inherited status is available only for the first statement. After
-any other statement executes in the branch, the original status
-is gone.
-
-```bash
-cmd || { s=$(status); ... }   # s gets cmd's status
-cmd || { echo x; s=$(status) }  # ERROR: status consumed by echo
-
-if cmd; then
-    echo $?    # valid — first statement gets cmd's status
-    echo $?    # ERROR — consumed
-fi
-```
-
-**Rationale**: Prevents stale-status bugs where `$?` refers to
-something other than the intended command.
+No action needed — DD#55 is authoritative.
 
 ---
 
-## Bless: variable must be LHS (IMPLEMENTED)
+## ALREADY IN DD#24: Bless LHS rule
 
-**Decision**: In `bless x [[ condition ]]`, the blessed variable must
-appear as the LHS (subject) of the binary test expression.
+DD#24 already says: "$VAR must appear on the LHS of the test operator."
+Our implementation matches.
 
-- Valid: `bless x [[ $x =~ ^pattern$ ]]`
-- Valid: `bless x [[ -n $x ]]`
-- Invalid: `bless x [[ "foo" = $x ]]` (variable on RHS = pattern injection risk)
-- Invalid: `bless x [[ 1 -eq 1 ]]` (condition doesn't reference variable)
+No action needed — DD#24 is authoritative.
 
 ---
 
-## printf is not a builtin (IMPLEMENTED)
+## NEEDS DOCUMENTATION: Builtin list
 
-**Decision**: `printf` is not a sash builtin. It resolves to
-`/usr/bin/printf` via PATH and requires exec.
+No existing DD enumerates what's a builtin vs what execs.
 
-**Impact**: `printf ... | read x` produces tainted data (external
-source). Use `echo` for clean pipe sources.
+**Builtins** (no exec, inline): echo, true, false, :, read, mapfile,
+bless, getenv, argv, argc, shift, unset, [[, trap, signal, wait,
+kill, signum, cd, status, getpid, getppid, getcpid, getcwd,
+epochseconds, dtoi, itod.
 
----
+**NOT builtins** (resolve via PATH, exec): printf, cat, grep, sed,
+awk, wc, sort, head, tail, tee, date, hostname, etc.
 
-## DD#31 comma expressions in conditions (IMPLEMENTED)
-
-**Decision**: `(( x=1, x > 0 ))` in if/while is valid per DD#31.
-Non-final parts are mutations (validated as statement context), final
-part is comparison (validated as condition context).
-
-**Implementation**: When a Group in condition context has a trailing
-ArithTest, earlier statements are validated as non-condition (the
-mutation part of the desugared comma expression).
+**Reserved words** (parsed as syntax, not commands): if, then, else,
+elif, fi, while, until, do, done, for, in, case, esac, fn, function,
+local, int, const, array, map, bless, signal, end, return, break,
+continue.
 
 ---
 
-## Runtime regex abort per DD#55 (IMPLEMENTED)
+## ALREADY IN DD#31: Comma expressions in conditions
 
-**Decision**: Invalid regex at runtime (dynamic pattern that fails
-regcomp) causes program abort with exit code 2. Per DD#55: "Runtime
-calls that can fail on data abort."
+DD#31 fully documents this. Our implementation matches.
 
-Literal regex patterns are validated at compile time (SB5023).
-Dynamic patterns (containing $variables) defer validation to runtime.
+No action needed.
+
+---
+
+## REFINES DD#39/DD#55: Runtime regex abort
+
+DD#39 says "regcomp9 failure prints error to stderr."
+DD#55 says "runtime calls that can fail on data" are checked.
+
+**Our refinement**: regcomp9 failure now exits with code 2 (hard
+abort), consistent with DD#55's error model. Previously it printed
+the error but returned "no match" and continued.
+
+**Action**: Note in DD#39 that runtime regex failure is a hard abort.
