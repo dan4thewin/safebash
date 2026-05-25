@@ -547,31 +547,43 @@ fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     let mut dq_available = false; // $? not available at start
 
     for stmt in stmts {
-        // Check if this statement uses $?
-        let mut uses_dq = Vec::new();
-        find_dollar_question(stmt, &mut uses_dq);
-
-        if !dq_available {
-            for span in &uses_dq {
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5012",
-                    "$? is not available here — no preceding command".to_string(),
-                ));
-            }
-        }
+        // Check if this statement uses $? in invalid context
+        check_dq_in_stmt(stmt, dq_available, diags);
 
         // Update state: was this a suppressed command?
         if is_suppressed(stmt) {
             dq_available = false; // $? not available after - cmd
-        } else if is_command_like(stmt) {
+        } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
             dq_available = true;
         }
         // Recurse into compound statements
-        match &stmt.kind {
-            StmtKind::Function(f) => {
-                check_dollar_question(&f.body, diags);
+        if let StmtKind::Function(f) = &stmt.kind {
+            check_dollar_question(&f.body, diags);
+        }
+    }
+}
+
+/// Check $? usage within a single statement, respecting context.
+fn check_dq_in_stmt(stmt: &Statement, dq_available: bool, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::List(l) => {
+            // In cmd || handler / cmd && handler, $? is available in the right branch
+            // because the left branch IS a preceding command
+            check_dq_in_stmt(&l.left, dq_available, diags);
+            // Right side of || or && always has $? available (left side was a command)
+            check_dq_in_stmt(&l.right, true, diags);
+        }
+        _ => {
+            if !dq_available {
+                let mut uses = Vec::new();
+                find_dollar_question(stmt, &mut uses);
+                for span in uses {
+                    diags.push(Diagnostic::error_at(
+                        span.line, span.col, "SB5012",
+                        "$? is not available here — no preceding command".to_string(),
+                    ));
+                }
             }
-            _ => {}
         }
     }
 }
@@ -595,6 +607,15 @@ fn is_command_like(stmt: &Statement) -> bool {
         StmtKind::Command(_) | StmtKind::Pipeline(_)
         | StmtKind::List(_) | StmtKind::ArithTest(_)
     )
+}
+
+fn is_assignment_from_arith(stmt: &Statement) -> bool {
+    // (( x = ... )) lowers to Assignment with Arithmetic value
+    if let StmtKind::Assignment(a) = &stmt.kind {
+        matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_))
+    } else {
+        false
+    }
 }
 
 // ── Taint tracking ──────────────────────────────────────────────────
