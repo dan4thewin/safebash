@@ -548,6 +548,23 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
+/// Like taint_stmt but doesn't mark read/mapfile as tainted
+/// (for pipeline stages where input comes from sash code).
+fn taint_stmt_no_read_taint(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        let name = expr_literal_str(&c.name);
+        if name == "read" || name == "mapfile" {
+            // Don't taint, but still check args for existing taint
+            check_expr_taint(&c.name, tainted, diags);
+            for arg in &c.args {
+                check_expr_taint(arg, tainted, diags);
+            }
+            return;
+        }
+    }
+    taint_stmt(stmt, tainted, diags);
+}
+
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
@@ -629,7 +646,16 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             // For now, don't recurse into function bodies during top-level taint
         }
         StmtKind::Pipeline(p) => {
-            for s in &p.commands { taint_stmt(s, tainted, diags); }
+            // In pipelines, read/mapfile receives from sash-controlled code
+            // Don't taint pipeline-internal reads
+            for (i, s) in p.commands.iter().enumerate() {
+                if i > 0 {
+                    // Non-first stages: read from pipe is clean
+                    taint_stmt_no_read_taint(s, tainted, diags);
+                } else {
+                    taint_stmt(s, tainted, diags);
+                }
+            }
         }
         StmtKind::Redirected(r) => {
             // Check if this is `read x <<< "literal"` — clean read
