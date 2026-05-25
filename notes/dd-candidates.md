@@ -79,18 +79,22 @@ literal characters.
 
 ## Taint rule: source determines taint, not command (IMPLEMENTED)
 
-**Decision**: Taint is determined by the data source, not the
-receiving command.
+**Decision**: Taint is determined by the data source. External sources
+(wherever there is an exec, a file read, or an env var read) are
+ALWAYS tainted.
 
-- External sources (exec, file read, env var read) → tainted
-- Sash-internal sources (builtins, no exec) → clean
-- Pipe from builtin (echo, true) → clean
-- Pipe from external command (printf, /bin/anything) → clean
-  ONLY IF no exec occurs in the source
+- Pipe from builtin (echo, true — no exec) → clean
+- Pipe from external command (printf, /bin/anything — execs) → tainted
+- `$(getenv NAME)` → tainted (env var read)
+- `$(argv N)` → tainted (external input)
+- `$(/bin/cmd)` → tainted (exec)
+- `$(user_func)` → clean (no exec, sash-internal)
+- `read x <<< "literal"` → clean (no external source)
+- `read x` (from stdin) → tainted (external source)
 
-**Key distinction**: `echo "hello" | read x` is clean (echo is builtin,
-no exec). `printf "k=v\n" | mapfile -m m` is tainted (printf is not
-a builtin, it execs).
+**Key principle**: A pipe from a forked child that does NOT exec
+would not be tainted. But any command that execs produces tainted
+data.
 
 **Builtin list**: echo, true, false, :, read, mapfile, bless, getenv,
 argv, argc, shift, unset, [[, trap, signal, wait, kill, signum, cd,
