@@ -19,3 +19,13 @@ init and reused at every match site.
 
 Dynamic patterns (containing `$var`) are compiled at runtime; `regcomp9`
 failure prints an error to stderr.
+
+## Clarification (2026-05-24): Runtime regex abort
+
+When a dynamic pattern (containing $variables) fails regcomp9 at
+runtime, the program aborts with exit code 2. This is consistent
+with DD#55's error model: runtime calls that can fail on data are
+checked, and failure = abort.
+
+Literal patterns are validated at compile time (SB5023) and cannot
+fail at runtime.

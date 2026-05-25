@@ -119,3 +119,40 @@ run_sash 'map m; printf "k=v\n" | mapfile -m m; echo ${m[k]}'
 set -e
 tally
 
+
+# ── Additional coverage (2026-05-24) ──
+
+# 39.9 backslash literal in unquoted word
+run_sash 'x="\d+"; echo $x'
+[[ $rc = 0 && $out = '\d+' && -z $err ]]; chk 39.9
+
+# 39.10 backslash in regex pattern
+run_sash 'x="abc123"; [[ $x =~ \w+ ]] && echo yes'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 39.10
+
+# 22.12 echo|read is clean (builtin pipe, no exec)
+run_sash 'echo "clean" | read x; echo $x'
+[[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
+
+# 22.13 printf|mapfile is tainted (printf execs)
+run_sash 'array arr; printf "x\n" | mapfile -t arr; echo ${arr[0]}'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 22.13
+
+# 14.7 && on compound command rejected (SB4023)
+run_sash 'if true; then echo x; fi && echo y'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 14.7
+
+# 14.8 || on compound command rejected (SB4023)
+run_sash 'for x in a b; do echo $x; done || echo fail'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 14.8
+
+# 14.9 & on compound command rejected (SB4024)
+run_sash 'while false; do echo x; done &'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 14.9
+
+# 5.2 plain heredoc (no cmdsub) rejected
+run_sash '/bin/cat <<EOF
+hello
+EOF'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 5.2
+

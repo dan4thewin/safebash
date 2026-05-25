@@ -12,3 +12,10 @@ Early unnumbered decisions establishing the safebash subset:
 7. Reject `select`, coproc — out of scope
 8. JIT coerce — designed, not built
 9. Reject `set -e`/`set -u` as runtime — baked into compiler semantics
+
+## Amendment (2026-05-24): Heredocs removed entirely
+
+Item 5 originally said "Reject $(cmd) in heredoc body." The parser
+migration removed heredocs entirely from the language (SB5002).
+Heredocs (`<<` / `<<-`) are rejected at the scanner level. Use
+herestrings (`<<<`) or variables instead.

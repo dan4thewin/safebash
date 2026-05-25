@@ -100,3 +100,17 @@ variables and 25 commands with conservative regex patterns.
 Arrays and maps: each element carries its own taint by the same
 rules as a scalar. Reads of tainted elements (including `join`,
 iteration, subscript) are rejected unless blessed.
+
+## Clarification (2026-05-24): Pipeline taint and exec boundary
+
+"Read from pipe" taint depends on whether the pipe SOURCE execs:
+
+- `echo "hello" | read x` → clean (echo is a builtin, no exec,
+  compiles to internal buffer)
+- `printf "k=v\n" | mapfile -m m` → tainted (printf execs)
+- `/bin/cmd | read x` → tainted (absolute path, execs)
+- `user_func | read x` → clean (sash function, no exec)
+
+The principle: taint comes from exec boundaries (fork+exec), file
+reads, and env var reads. A pipe from code that runs inline within
+the sash process is not an external source.
