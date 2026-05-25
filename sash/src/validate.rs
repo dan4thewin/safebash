@@ -321,10 +321,9 @@ fn expr_references_var(expr: &Expr, var: &str) -> bool {
 
 fn test_references_var(test: &TestExpr, var: &str) -> bool {
     match test {
+        // For binary tests, variable MUST be the LHS
+        TestExpr::Binary { left, .. } => expr_references_var(left, var),
         TestExpr::Unary { operand, .. } => expr_references_var(operand, var),
-        TestExpr::Binary { left, right, .. } => {
-            expr_references_var(left, var) || expr_references_var(right, var)
-        }
         TestExpr::Not(inner) => test_references_var(inner, var),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             test_references_var(l, var) || test_references_var(r, var)
