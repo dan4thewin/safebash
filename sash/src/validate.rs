@@ -857,6 +857,16 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
     match &stmt.kind {
         StmtKind::Command(c) => {
             let name = expr_literal_str(&c.name);
+            // Skip regex mutations (var =~ s/pat/rep/ → Command{name=var, args=["s/..."]})
+            if c.args.len() == 1 {
+                if let ExprKind::Literal(s) = &c.args[0].kind {
+                    if s.starts_with("s/") { return; }
+                }
+            }
+            // Also skip the old two-arg form
+            if c.args.first().map_or(false, |a| expr_literal_str(a) == "=~") {
+                return;
+            }
             if !name.is_empty() && !is_valid_command(name, funcs) {
                 diags.push(Diagnostic::error_at(
                     stmt.span.line, stmt.span.col, "SB5011",

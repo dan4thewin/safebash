@@ -1188,7 +1188,8 @@ pub unsafe extern "C" fn sash_regex_match(
 
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
-        return 0;
+        // Invalid regex is a runtime error — exit with failure
+        sash_exit(2);
     }
     // Resub is 4 pointers per entry, 10 entries = 320 bytes on 64-bit
     let mut resub = [0u8; 320];

@@ -852,7 +852,12 @@ fn parse_test_primary(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Dia
         Tok::Word(w) if is_binary_test_op(w) => {
             let op = w.clone();
             scanner.next();
-            let right = parse_test_operand(scanner, span)?;
+            let right = if op == "=~" {
+                // Regex RHS: collect raw text until ]] (braces, parens are literal)
+                parse_regex_rhs(scanner, span)?
+            } else {
+                parse_test_operand(scanner, span)?
+            };
             Ok(TestExpr::Binary {
                 left: Box::new(left),
                 op,
@@ -929,6 +934,36 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
         return Err(parse_error(span, "SB4014", "expected operand in test expression".to_string()));
     }
     parse_expr(scanner)
+}
+
+/// Parse regex RHS in [[ =~ pattern ]]: collect tokens as literal until ]]
+fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
+    let mut pattern = String::new();
+    loop {
+        if scanner.at_eof() { break; }
+        match &scanner.peek().token {
+            Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr => break,
+            Tok::Newline => break,
+            Tok::Word(w) => { pattern.push_str(w); scanner.next(); }
+            Tok::LBrace => { pattern.push('{'); scanner.next(); }
+            Tok::RBrace => { pattern.push('}'); scanner.next(); }
+            Tok::LParen => { pattern.push('('); scanner.next(); }
+            Tok::RParen => { pattern.push(')'); scanner.next(); }
+            Tok::Pipe => { pattern.push('|'); scanner.next(); }
+            Tok::Bang => { pattern.push('!'); scanner.next(); }
+            Tok::Dash => { pattern.push('-'); scanner.next(); }
+            Tok::Dollar(v) => { pattern.push('$'); pattern.push_str(v); scanner.next(); }
+            Tok::Eq => { pattern.push('='); scanner.next(); }
+            _ => { scanner.next(); }
+        }
+    }
+    if pattern.is_empty() {
+        return Err(parse_error(span, "SB4014", "expected regex pattern after =~".to_string()));
+    }
+    Ok(Expr {
+        kind: ExprKind::Literal(pattern),
+        span,
+    })
 }
 
 fn is_unary_test_op(op: &str) -> bool {
@@ -1063,6 +1098,18 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
         return parse_assignment(scanner, span);
     }
 
+    // Check for regex mutation: var =~ s/pat/rep/
+    if let Tok::Word(ref w) = scanner.peek().token {
+        let w = w.clone();
+        if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+            if let Tok::Word(ref next_w) = scanner.peek_n(1).token {
+                if next_w == "=~" {
+                    return parse_regex_mutation(scanner, span, &w);
+                }
+            }
+        }
+    }
+
     // It's a simple command
     parse_command(scanner, span)
 }
@@ -1141,6 +1188,41 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
             index,
             op,
             value,
+        }),
+        span,
+    }))
+}
+
+/// Parse regex mutation: var =~ s/pat/rep/ or var =~ s/pat/rep/flags
+fn parse_regex_mutation(scanner: &mut Scanner, span: Span, var_name: &str) -> Result<Option<Statement>, Diagnostic> {
+    scanner.next(); // consume variable name
+    scanner.next(); // consume =~
+    // Collect the regex expression (s/pat/rep/ or s/pat/rep/flags)
+    let regex_expr = if let Tok::Word(ref w) = scanner.peek().token {
+        let w = w.clone();
+        scanner.next();
+        w
+    } else {
+        // Try to collect from multiple adjacent tokens
+        let mut s = String::new();
+        while !scanner.at_eof() && !matches!(scanner.peek().token,
+            Tok::Semi | Tok::Newline | Tok::Pipe | Tok::AndAnd | Tok::OrOr | Tok::Eof) {
+            if !s.is_empty() && !scanner.next_is_adjacent() { break; }
+            match &scanner.peek().token {
+                Tok::Word(w) => { s.push_str(w); scanner.next(); }
+                _ => break,
+            }
+        }
+        s
+    };
+    // Emit as Command { name: var, args: [regex] } — transform recognizes
+    // this pattern: command name is variable, single arg starts with s/
+    Ok(Some(Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr { kind: ExprKind::Literal(var_name.to_string()), span },
+            args: vec![
+                Expr { kind: ExprKind::Literal(regex_expr), span },
+            ],
         }),
         span,
     }))

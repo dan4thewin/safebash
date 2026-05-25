@@ -361,6 +361,41 @@ impl Scanner {
         &self.source
     }
 
+    /// Read raw source text from current position until a stop condition.
+    /// Skips any peeked tokens and reads directly from source bytes.
+    /// Used for regex patterns where backslashes must be preserved.
+    pub fn read_raw_until_bracket_close(&mut self) -> String {
+        // Discard any peeked tokens — we're taking over raw reading
+        self.peeked.clear();
+        // Skip leading whitespace
+        while self.pos < self.source.len() && matches!(self.source[self.pos], b' ' | b'\t') {
+            self.pos += 1;
+        }
+        let start = self.pos;
+        // Read until ]] (with whitespace before it)
+        while self.pos < self.source.len() {
+            if self.pos + 1 < self.source.len()
+                && self.source[self.pos] == b']'
+                && self.source[self.pos + 1] == b']'
+            {
+                break;
+            }
+            // Also stop at && || newline
+            if self.source[self.pos] == b'\n' { break; }
+            if self.pos + 1 < self.source.len() {
+                if (self.source[self.pos] == b'&' && self.source[self.pos + 1] == b'&')
+                    || (self.source[self.pos] == b'|' && self.source[self.pos + 1] == b'|')
+                {
+                    break;
+                }
+            }
+            self.pos += 1;
+        }
+        let raw = String::from_utf8_lossy(&self.source[start..self.pos]).to_string();
+        self.last_end = self.pos;
+        raw.trim_end().to_string()
+    }
+
     /// Compute (line, col) from byte offset. Both 1-based.
     pub fn line_col(&self, offset: usize) -> (usize, usize) {
         let mut line = 1;
@@ -1361,14 +1396,6 @@ impl Scanner {
                 // Word-breaking characters
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}'
                 | b'<' | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
-                b'\\' => {
-                    // Escape next character
-                    self.pos += 1;
-                    if self.pos < self.source.len() {
-                        word.push(self.source[self.pos] as char);
-                        self.pos += 1;
-                    }
-                }
                 b'=' => {
                     // = breaks a word IFF we're at word start scanning an assignment
                     // We need to emit the word accumulated so far, then emit = separately
