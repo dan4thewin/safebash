@@ -91,6 +91,7 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
         }
         ExprKind::SimpleExpansion(var) => env.var_type(var),
         ExprKind::ArithmeticExpansion(_) => VarType::Int,
+        ExprKind::Arithmetic(_) => VarType::Int,
         ExprKind::CommandSubstitution(parts) => {
             // $(func ...) — check if func is int
             if let Some(first) = parts.first() {

@@ -1,39 +1,862 @@
 //! Arithmetic expression parsing: Pratt parser for $(( )) and (( )).
 //!
-//! Handles binary operators with precedence, unary operators,
-//! ternary (? :), and sexpr function calls (name args...).
+//! Produces structured `ir::ArithExpr` nodes with correct precedence.
+//! Handles: binary ops (15 levels), unary prefix/postfix, ternary,
+//! assignment, compound assignment, comma, and DD#58 sexpr calls.
 
-use crate::ir::*;
 use crate::diagnostic::Diagnostic;
+use crate::ir::*;
 use super::lexer::{Scanner, Tok};
-use super::expr::span_from;
-use super::error::parse_error;
+
+/// Create a parse error diagnostic for arithmetic expressions.
+fn arith_error(span: Span, message: String) -> Diagnostic {
+    Diagnostic::error_at(span.line, span.col, "SB4020", message)
+}
+
+// ── Public API ─────────────────────────────────────────────────────────
 
 /// Parse arithmetic expansion: content between $(( and ))
-/// Returns an Expr with ArithmeticExpansion kind.
+/// Returns an Expr with Arithmetic kind.
 pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let content = collect_arith_content(scanner)?;
+    let expr = parse_arith_str(&content, span)?;
     Ok(Expr {
-        kind: ExprKind::ArithmeticExpansion(content.trim().to_string()),
+        kind: ExprKind::Arithmetic(Box::new(expr)),
         span,
     })
 }
 
 /// Parse an arithmetic command: (( expr )) as a statement.
-/// Returns the content string for the transform pipeline to handle.
-pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<String, Diagnostic> {
+/// Returns a structured ArithExpr for the caller to classify and lower.
+pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExpr, Diagnostic> {
+    let content = collect_arith_content(scanner)?;
+    parse_arith_str(&content, span)
+}
+
+/// Parse an arithmetic string (already extracted from delimiters).
+/// This is the entry point for the Pratt parser.
+pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic> {
+    let trimmed = input.trim();
+    if trimmed.is_empty() {
+        return Ok(ArithExpr::Literal(0));
+    }
+    let tokens = tokenize_arith(trimmed);
+    let mut parser = ArithParser { tokens, pos: 0, span };
+    let expr = parser.parse_expr(0)?;
+    // Handle comma operator at top level
+    if parser.peek() == Some(&ATok::Comma) {
+        let mut exprs = vec![expr];
+        while parser.peek() == Some(&ATok::Comma) {
+            parser.advance();
+            exprs.push(parser.parse_expr(0)?);
+        }
+        Ok(ArithExpr::Comma(exprs))
+    } else {
+        Ok(expr)
+    }
+}
+
+/// Classify an arithmetic expression as mutation vs. comparison/test.
+pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
+    match expr {
+        ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. }
+        | ArithExpr::PreIncDec { .. }
+        | ArithExpr::PostIncDec { .. } => ArithKind::Mutation,
+        ArithExpr::Comma(exprs) => {
+            // If any part is a mutation, the whole thing is
+            if exprs.iter().any(|e| classify_arith_expr(e) == ArithKind::Mutation) {
+                ArithKind::Mutation
+            } else {
+                ArithKind::Test
+            }
+        }
+        ArithExpr::BinOp { op, .. } => match op {
+            IrArithOp::Eq | IrArithOp::Ne | IrArithOp::Lt
+            | IrArithOp::Le | IrArithOp::Gt | IrArithOp::Ge
+            | IrArithOp::And | IrArithOp::Or => ArithKind::Comparison,
+            _ => ArithKind::Test,
+        },
+        _ => ArithKind::Test,
+    }
+}
+
+/// Lower an arithmetic command (( expr )) to an IR Statement.
+pub fn lower_arith_command(expr: ArithExpr, span: Span) -> Statement {
+    let kind = classify_arith_expr(&expr);
+    match kind {
+        ArithKind::Mutation => lower_arith_mutation_structured(&expr, span),
+        ArithKind::Comparison | ArithKind::Test => lower_arith_test_structured(&expr, span),
+    }
+}
+
+/// Lower a C-style for loop: for (( init; cond; update )); do body; done
+pub fn lower_c_style_for(init: &str, cond: &str, update: &str, body: Vec<Statement>, span: Span) -> Statement {
+    // Init
+    let mut init_stmts = Vec::new();
+    let init_trimmed = init.trim();
+    if !init_trimmed.is_empty() {
+        if let Ok(expr) = parse_arith_str(init_trimmed, span) {
+            init_stmts.push(lower_arith_command(expr, span));
+        }
+    }
+
+    // Condition
+    let cond_trimmed = cond.trim();
+    let condition = if cond_trimmed.is_empty() {
+        vec![Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr { kind: ExprKind::Literal("true".to_string()), span },
+                args: vec![],
+            }),
+            span,
+        }]
+    } else if let Ok(expr) = parse_arith_str(cond_trimmed, span) {
+        vec![lower_arith_test_structured(&expr, span)]
+    } else {
+        vec![Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr { kind: ExprKind::Literal("true".to_string()), span },
+                args: vec![],
+            }),
+            span,
+        }]
+    };
+
+    // Update
+    let mut loop_body = body;
+    let update_trimmed = update.trim();
+    if !update_trimmed.is_empty() {
+        if let Ok(expr) = parse_arith_str(update_trimmed, span) {
+            loop_body.push(lower_arith_command(expr, span));
+        }
+    }
+
+    let while_stmt = Statement {
+        kind: StmtKind::While(While {
+            condition,
+            body: loop_body,
+            until: false,
+        }),
+        span,
+    };
+
+    let mut group_body = init_stmts;
+    group_body.push(while_stmt);
+    Statement {
+        kind: StmtKind::Group(Group { body: group_body }),
+        span,
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArithKind {
+    Mutation,
+    Comparison,
+    Test,
+}
+
+// ── Arithmetic tokenizer ──────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq)]
+enum ATok {
+    Num(i64),
+    Var(String),
+    DollarVar(String),
+    // Operators (ordered by length for tokenization)
+    PlusPlus,
+    MinusMinus,
+    StarStar,  // **
+    LtLt,      // <<
+    GtGt,      // >>
+    LtEq,      // <=
+    GtEq,      // >=
+    EqEq,      // ==
+    BangEq,    // !=
+    AmpAmp,    // &&
+    PipePipe,  // ||
+    PlusEq,    // +=
+    MinusEq,   // -=
+    StarEq,    // *=
+    SlashEq,   // /=
+    PercentEq, // %=
+    AmpEq,     // &=
+    PipeEq,    // |=
+    CaretEq,   // ^=
+    LtLtEq,    // <<=
+    GtGtEq,    // >>=
+    Plus,
+    Minus,
+    Star,
+    Slash,
+    Percent,
+    Lt,
+    Gt,
+    Amp,
+    Pipe,
+    Caret,
+    Tilde,
+    Bang,
+    Eq,        // = (assignment)
+    Question,
+    Colon,
+    Comma,
+    LParen,
+    RParen,
+}
+
+fn tokenize_arith(input: &str) -> Vec<ATok> {
+    let bytes = input.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        // Skip whitespace
+        if bytes[i].is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+
+        // Numbers (decimal, hex, octal, base#digits)
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            // Hex: 0x...
+            if bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X') {
+                i += 2;
+                while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
+                    i += 1;
+                }
+                let s = &input[start..i];
+                let val = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
+                tokens.push(ATok::Num(val));
+            }
+            // Octal: 0...
+            else if bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+                i += 1;
+                while i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
+                    i += 1;
+                }
+                let s = &input[start + 1..i];
+                let val = i64::from_str_radix(s, 8).unwrap_or(0);
+                tokens.push(ATok::Num(val));
+            } else {
+                // Decimal or base#digits
+                while i < bytes.len() && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i < bytes.len() && bytes[i] == b'#' {
+                    // Base literal: base#digits
+                    let base: u32 = input[start..i].parse().unwrap_or(10);
+                    i += 1; // skip #
+                    let digit_start = i;
+                    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'@') {
+                        i += 1;
+                    }
+                    let digits = &input[digit_start..i];
+                    let val = digits.chars().fold(0i64, |acc, c| {
+                        let d = match c {
+                            '0'..='9' => c as i64 - '0' as i64,
+                            'a'..='z' => c as i64 - 'a' as i64 + 10,
+                            'A'..='Z' => c as i64 - 'A' as i64 + 36,
+                            '@' => 62,
+                            '_' => 63,
+                            _ => 0,
+                        };
+                        acc * base as i64 + d
+                    });
+                    tokens.push(ATok::Num(val));
+                } else {
+                    let val: i64 = input[start..i].parse().unwrap_or(0);
+                    tokens.push(ATok::Num(val));
+                }
+            }
+            continue;
+        }
+
+        // $-prefixed variable
+        if bytes[i] == b'$' {
+            i += 1;
+            let start = i;
+            if i < bytes.len() && bytes[i] == b'{' {
+                // ${var} — extract name
+                i += 1;
+                let name_start = i;
+                while i < bytes.len() && bytes[i] != b'}' {
+                    i += 1;
+                }
+                let name = input[name_start..i].to_string();
+                if i < bytes.len() { i += 1; } // skip }
+                tokens.push(ATok::DollarVar(name));
+            } else {
+                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                    i += 1;
+                }
+                let name = input[start..i].to_string();
+                tokens.push(ATok::DollarVar(name));
+            }
+            continue;
+        }
+
+        // Variable names (alphanumeric + underscore, starting with alpha/_)
+        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+            let start = i;
+            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
+                i += 1;
+            }
+            tokens.push(ATok::Var(input[start..i].to_string()));
+            continue;
+        }
+
+        // Multi-char operators (try longest first)
+        if i + 2 < bytes.len() {
+            let three = &input[i..i + 3];
+            match three {
+                "<<=" => { tokens.push(ATok::LtLtEq); i += 3; continue; }
+                ">>=" => { tokens.push(ATok::GtGtEq); i += 3; continue; }
+                _ => {}
+            }
+        }
+        if i + 1 < bytes.len() {
+            let two = &input[i..i + 2];
+            match two {
+                "++" => { tokens.push(ATok::PlusPlus); i += 2; continue; }
+                "--" => { tokens.push(ATok::MinusMinus); i += 2; continue; }
+                "**" => { tokens.push(ATok::StarStar); i += 2; continue; }
+                "<<" => { tokens.push(ATok::LtLt); i += 2; continue; }
+                ">>" => { tokens.push(ATok::GtGt); i += 2; continue; }
+                "<=" => { tokens.push(ATok::LtEq); i += 2; continue; }
+                ">=" => { tokens.push(ATok::GtEq); i += 2; continue; }
+                "==" => { tokens.push(ATok::EqEq); i += 2; continue; }
+                "!=" => { tokens.push(ATok::BangEq); i += 2; continue; }
+                "&&" => { tokens.push(ATok::AmpAmp); i += 2; continue; }
+                "||" => { tokens.push(ATok::PipePipe); i += 2; continue; }
+                "+=" => { tokens.push(ATok::PlusEq); i += 2; continue; }
+                "-=" => { tokens.push(ATok::MinusEq); i += 2; continue; }
+                "*=" => { tokens.push(ATok::StarEq); i += 2; continue; }
+                "/=" => { tokens.push(ATok::SlashEq); i += 2; continue; }
+                "%=" => { tokens.push(ATok::PercentEq); i += 2; continue; }
+                "&=" => { tokens.push(ATok::AmpEq); i += 2; continue; }
+                "|=" => { tokens.push(ATok::PipeEq); i += 2; continue; }
+                "^=" => { tokens.push(ATok::CaretEq); i += 2; continue; }
+                _ => {}
+            }
+        }
+
+        // Single-char operators
+        let tok = match bytes[i] {
+            b'+' => ATok::Plus,
+            b'-' => ATok::Minus,
+            b'*' => ATok::Star,
+            b'/' => ATok::Slash,
+            b'%' => ATok::Percent,
+            b'<' => ATok::Lt,
+            b'>' => ATok::Gt,
+            b'&' => ATok::Amp,
+            b'|' => ATok::Pipe,
+            b'^' => ATok::Caret,
+            b'~' => ATok::Tilde,
+            b'!' => ATok::Bang,
+            b'=' => ATok::Eq,
+            b'?' => ATok::Question,
+            b':' => ATok::Colon,
+            b',' => ATok::Comma,
+            b'(' => ATok::LParen,
+            b')' => ATok::RParen,
+            _ => { i += 1; continue; } // skip unknown
+        };
+        tokens.push(tok);
+        i += 1;
+    }
+
+    tokens
+}
+
+// ── Pratt parser ──────────────────────────────────────────────────────
+
+struct ArithParser {
+    tokens: Vec<ATok>,
+    pos: usize,
+    span: Span,
+}
+
+impl ArithParser {
+    fn peek(&self) -> Option<&ATok> {
+        self.tokens.get(self.pos)
+    }
+
+    fn advance(&mut self) -> Option<&ATok> {
+        let tok = self.tokens.get(self.pos);
+        self.pos += 1;
+        tok
+    }
+
+    fn expect(&mut self, expected: &ATok) -> Result<(), Diagnostic> {
+        if self.peek() == Some(expected) {
+            self.advance();
+            Ok(())
+        } else {
+            Err(arith_error(
+                self.span,
+                format!("expected {:?} in arithmetic expression", expected),
+            ))
+        }
+    }
+
+    /// Parse an expression with given minimum binding power.
+    fn parse_expr(&mut self, min_bp: u8) -> Result<ArithExpr, Diagnostic> {
+        // Prefix / atom
+        let mut lhs = self.parse_prefix()?;
+
+        loop {
+            // Postfix: ++ and --
+            if let Some(tok) = self.peek() {
+                match tok {
+                    ATok::PlusPlus => {
+                        if let ArithExpr::Var(name) = &lhs {
+                            let name = name.clone();
+                            self.advance();
+                            lhs = ArithExpr::PostIncDec { var: name, inc: true };
+                            continue;
+                        }
+                        // Not a variable, treat ++ as end of expression
+                        break;
+                    }
+                    ATok::MinusMinus => {
+                        if let ArithExpr::Var(name) = &lhs {
+                            let name = name.clone();
+                            self.advance();
+                            lhs = ArithExpr::PostIncDec { var: name, inc: false };
+                            continue;
+                        }
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Assignment operators (right-associative, lowest precedence above comma)
+            if let Some(tok) = self.peek() {
+                if let ArithExpr::Var(name) = &lhs {
+                    let assign_op = match tok {
+                        ATok::Eq => Some(None),
+                        ATok::PlusEq => Some(Some(IrArithOp::Add)),
+                        ATok::MinusEq => Some(Some(IrArithOp::Sub)),
+                        ATok::StarEq => Some(Some(IrArithOp::Mul)),
+                        ATok::SlashEq => Some(Some(IrArithOp::Div)),
+                        ATok::PercentEq => Some(Some(IrArithOp::Mod)),
+                        ATok::AmpEq => Some(Some(IrArithOp::BitAnd)),
+                        ATok::PipeEq => Some(Some(IrArithOp::BitOr)),
+                        ATok::CaretEq => Some(Some(IrArithOp::BitXor)),
+                        ATok::LtLtEq => Some(Some(IrArithOp::Shl)),
+                        ATok::GtGtEq => Some(Some(IrArithOp::Shr)),
+                        _ => None,
+                    };
+                    if let Some(op) = assign_op {
+                        let name = name.clone();
+                        self.advance();
+                        let rhs = self.parse_expr(1)?; // right-associative
+                        lhs = match op {
+                            None => ArithExpr::Assign { var: name, value: Box::new(rhs) },
+                            Some(op) => ArithExpr::CompoundAssign { var: name, op, value: Box::new(rhs) },
+                        };
+                        continue;
+                    }
+                }
+            }
+
+            // Ternary: ? : (binding power 2)
+            if self.peek() == Some(&ATok::Question) {
+                if min_bp > 2 {
+                    break;
+                }
+                self.advance();
+                let true_val = self.parse_expr(0)?;
+                self.expect(&ATok::Colon)?;
+                let false_val = self.parse_expr(2)?; // right-associative
+                lhs = ArithExpr::Ternary {
+                    cond: Box::new(lhs),
+                    true_val: Box::new(true_val),
+                    false_val: Box::new(false_val),
+                };
+                continue;
+            }
+
+            // Binary operators
+            let (op, bp) = match self.peek() {
+                Some(ATok::PipePipe) => (IrArithOp::Or, (3, 4)),
+                Some(ATok::AmpAmp) => (IrArithOp::And, (5, 6)),
+                Some(ATok::Pipe) => (IrArithOp::BitOr, (7, 8)),
+                Some(ATok::Caret) => (IrArithOp::BitXor, (9, 10)),
+                Some(ATok::Amp) => (IrArithOp::BitAnd, (11, 12)),
+                Some(ATok::EqEq) => (IrArithOp::Eq, (13, 14)),
+                Some(ATok::BangEq) => (IrArithOp::Ne, (13, 14)),
+                Some(ATok::Lt) => (IrArithOp::Lt, (15, 16)),
+                Some(ATok::LtEq) => (IrArithOp::Le, (15, 16)),
+                Some(ATok::Gt) => (IrArithOp::Gt, (15, 16)),
+                Some(ATok::GtEq) => (IrArithOp::Ge, (15, 16)),
+                Some(ATok::LtLt) => (IrArithOp::Shl, (17, 18)),
+                Some(ATok::GtGt) => (IrArithOp::Shr, (17, 18)),
+                Some(ATok::Plus) => (IrArithOp::Add, (19, 20)),
+                Some(ATok::Minus) => (IrArithOp::Sub, (19, 20)),
+                Some(ATok::Star) => (IrArithOp::Mul, (21, 22)),
+                Some(ATok::Slash) => (IrArithOp::Div, (21, 22)),
+                Some(ATok::Percent) => (IrArithOp::Mod, (21, 22)),
+                Some(ATok::StarStar) => (IrArithOp::Pow, (24, 23)), // right-associative
+                _ => break,
+            };
+
+            let (l_bp, r_bp) = bp;
+            if l_bp < min_bp {
+                break;
+            }
+            self.advance();
+            let rhs = self.parse_expr(r_bp)?;
+            lhs = ArithExpr::BinOp {
+                left: Box::new(lhs),
+                op,
+                right: Box::new(rhs),
+            };
+        }
+
+        Ok(lhs)
+    }
+
+    /// Parse prefix expressions and atoms.
+    fn parse_prefix(&mut self) -> Result<ArithExpr, Diagnostic> {
+        match self.peek().cloned() {
+            Some(ATok::Num(n)) => {
+                self.advance();
+                Ok(ArithExpr::Literal(n))
+            }
+            Some(ATok::Var(name)) => {
+                self.advance();
+                Ok(ArithExpr::Var(name))
+            }
+            Some(ATok::DollarVar(name)) => {
+                self.advance();
+                Ok(ArithExpr::DollarVar(name))
+            }
+            Some(ATok::PlusPlus) => {
+                self.advance();
+                if let Some(ATok::Var(name)) = self.peek().cloned() {
+                    self.advance();
+                    Ok(ArithExpr::PreIncDec { var: name, inc: true })
+                } else {
+                    Err(arith_error(self.span, "expected variable after ++".to_string()))
+                }
+            }
+            Some(ATok::MinusMinus) => {
+                self.advance();
+                if let Some(ATok::Var(name)) = self.peek().cloned() {
+                    self.advance();
+                    Ok(ArithExpr::PreIncDec { var: name, inc: false })
+                } else {
+                    Err(arith_error(self.span, "expected variable after --".to_string()))
+                }
+            }
+            Some(ATok::Minus) => {
+                self.advance();
+                let operand = self.parse_expr(25)?; // unary binds tighter than binary
+                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Neg, operand: Box::new(operand) })
+            }
+            Some(ATok::Plus) => {
+                self.advance();
+                let operand = self.parse_expr(25)?;
+                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Pos, operand: Box::new(operand) })
+            }
+            Some(ATok::Bang) => {
+                self.advance();
+                let operand = self.parse_expr(25)?;
+                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Not, operand: Box::new(operand) })
+            }
+            Some(ATok::Tilde) => {
+                self.advance();
+                let operand = self.parse_expr(25)?;
+                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::BitNot, operand: Box::new(operand) })
+            }
+            Some(ATok::LParen) => {
+                self.advance();
+                // DD#58: Check if this is a sexpr function call: (name args...)
+                if let Some(ATok::Var(name)) = self.peek().cloned() {
+                    // Could be (name ...) sexpr or (expr) grouping
+                    // Peek ahead: if next after name is a number, var, $var, or (
+                    // then it's a function call. If it's an operator or ), it's grouping.
+                    let saved_pos = self.pos;
+                    self.advance(); // consume name
+                    if self.peek() == Some(&ATok::RParen) {
+                        // (name) — zero-arg function call
+                        self.advance();
+                        return Ok(ArithExpr::FuncCall { name, args: vec![] });
+                    }
+                    if self.is_func_arg_start() {
+                        // (name expr...) — function call with args
+                        let mut args = Vec::new();
+                        while self.peek() != Some(&ATok::RParen) && self.peek().is_some() {
+                            args.push(self.parse_expr(0)?);
+                        }
+                        self.expect(&ATok::RParen)?;
+                        return Ok(ArithExpr::FuncCall { name, args });
+                    }
+                    // Not a function call — restore and parse as grouping
+                    self.pos = saved_pos;
+                }
+                let expr = self.parse_expr(0)?;
+                self.expect(&ATok::RParen)?;
+                Ok(ArithExpr::Paren(Box::new(expr)))
+            }
+            Some(_) => {
+                // Unknown token — try to recover
+                self.advance();
+                Ok(ArithExpr::Literal(0))
+            }
+            None => Ok(ArithExpr::Literal(0)),
+        }
+    }
+
+    /// Check if current token could start a function argument (for sexpr detection).
+    /// More restrictive than is_expr_start: excludes binary operators that
+    /// would indicate this is grouping, not a function call.
+    fn is_func_arg_start(&self) -> bool {
+        matches!(self.peek(), Some(
+            ATok::Num(_) | ATok::Var(_) | ATok::DollarVar(_)
+            | ATok::LParen
+        ))
+    }
+}
+
+// ── Lowering helpers ──────────────────────────────────────────────────
+
+/// Lower a mutation arithmetic expression to a Statement.
+fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
+    match expr {
+        ArithExpr::Assign { var, value } => Statement {
+            kind: StmtKind::Assignment(Assignment {
+                name: var.clone(),
+                index: None,
+                op: AssignOp::Set,
+                value: Expr {
+                    kind: ExprKind::ArithmeticExpansion(arith_expr_to_text(value)),
+                    span,
+                },
+            }),
+            span,
+        },
+        ArithExpr::CompoundAssign { var, op, value } => {
+            let text = format!("{} {} {}", var, match op {
+                IrArithOp::Add => "+", IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*", IrArithOp::Div => "/",
+                IrArithOp::Mod => "%", _ => "+",
+            }, arith_expr_to_text(value));
+            Statement {
+                kind: StmtKind::Assignment(Assignment {
+                    name: var.clone(),
+                    index: None,
+                    op: AssignOp::Set,
+                    value: Expr {
+                        kind: ExprKind::ArithmeticExpansion(text),
+                        span,
+                    },
+                }),
+                span,
+            }
+        }
+        ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
+            let op_str = if *inc { "+" } else { "-" };
+            let text = format!("{} {} 1", var, op_str);
+            Statement {
+                kind: StmtKind::Assignment(Assignment {
+                    name: var.clone(),
+                    index: None,
+                    op: AssignOp::Set,
+                    value: Expr {
+                        kind: ExprKind::ArithmeticExpansion(text),
+                        span,
+                    },
+                }),
+                span,
+            }
+        }
+        ArithExpr::Comma(exprs) => {
+            let stmts: Vec<Statement> = exprs
+                .iter()
+                .map(|e| lower_arith_command(e.clone(), span))
+                .collect();
+            Statement {
+                kind: StmtKind::Group(Group { body: stmts }),
+                span,
+            }
+        }
+        _ => {
+            // Fallback: emit as let command
+            let text = arith_expr_to_text(expr);
+            Statement {
+                kind: StmtKind::Command(Command {
+                    name: Expr { kind: ExprKind::Literal("let".to_string()), span },
+                    args: vec![Expr {
+                        kind: ExprKind::Literal(text),
+                        span,
+                    }],
+                }),
+                span,
+            }
+        }
+    }
+}
+
+/// Lower a test/comparison arithmetic expression to a Statement.
+fn lower_arith_test_structured(expr: &ArithExpr, span: Span) -> Statement {
+    // For comparisons, emit as [[ $left -OP $right ]] directly
+    if let ArithExpr::BinOp { left, op, right } = expr {
+        let test_op = match op {
+            IrArithOp::Lt => Some("-lt"),
+            IrArithOp::Le => Some("-le"),
+            IrArithOp::Gt => Some("-gt"),
+            IrArithOp::Ge => Some("-ge"),
+            IrArithOp::Eq => Some("-eq"),
+            IrArithOp::Ne => Some("-ne"),
+            _ => None,
+        };
+        if let Some(op_str) = test_op {
+            return Statement {
+                kind: StmtKind::Command(Command {
+                    name: Expr { kind: ExprKind::Literal("[[".to_string()), span },
+                    args: vec![Expr {
+                        kind: ExprKind::Test(TestExpr::Binary {
+                            left: Box::new(arith_to_test_operand(left, span)),
+                            op: op_str.to_string(),
+                            right: Box::new(arith_to_test_operand(right, span)),
+                        }),
+                        span,
+                    }],
+                }),
+                span,
+            };
+        }
+    }
+    // Bare expression or non-comparison: [[ $((expr)) -ne 0 ]]
+    let text = arith_expr_to_text(expr);
+    Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr { kind: ExprKind::Literal("[[".to_string()), span },
+            args: vec![Expr {
+                kind: ExprKind::Test(TestExpr::Binary {
+                    left: Box::new(Expr {
+                        kind: ExprKind::ArithmeticExpansion(text),
+                        span,
+                    }),
+                    op: "-ne".to_string(),
+                    right: Box::new(Expr {
+                        kind: ExprKind::Literal("0".to_string()),
+                        span,
+                    }),
+                }),
+                span,
+            }],
+        }),
+        span,
+    }
+}
+
+/// Convert an ArithExpr to a test operand expression.
+fn arith_to_test_operand(expr: &ArithExpr, span: Span) -> Expr {
+    match expr {
+        ArithExpr::Literal(n) => Expr {
+            kind: ExprKind::Literal(n.to_string()),
+            span,
+        },
+        ArithExpr::Var(name) => Expr {
+            kind: ExprKind::SimpleExpansion(name.clone()),
+            span,
+        },
+        ArithExpr::DollarVar(name) => Expr {
+            kind: ExprKind::SimpleExpansion(name.clone()),
+            span,
+        },
+        _ => {
+            // Complex sub-expression: emit as $((text))
+            let text = arith_expr_to_text(expr);
+            Expr {
+                kind: ExprKind::ArithmeticExpansion(text),
+                span,
+            }
+        }
+    }
+}
+
+/// Stringify an ArithExpr back to text (for compatibility with transform's
+/// text-based arithmetic handling in let commands and conditions).
+fn arith_expr_to_text(expr: &ArithExpr) -> String {
+    match expr {
+        ArithExpr::Literal(n) => n.to_string(),
+        ArithExpr::Var(name) => name.clone(),
+        ArithExpr::DollarVar(name) => format!("${}", name),
+        ArithExpr::BinOp { left, op, right } => {
+            let op_str = match op {
+                IrArithOp::Add => "+", IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*", IrArithOp::Div => "/",
+                IrArithOp::Mod => "%", IrArithOp::Pow => "**",
+                IrArithOp::Eq => "==", IrArithOp::Ne => "!=",
+                IrArithOp::Lt => "<", IrArithOp::Le => "<=",
+                IrArithOp::Gt => ">", IrArithOp::Ge => ">=",
+                IrArithOp::And => "&&", IrArithOp::Or => "||",
+                IrArithOp::Shl => "<<", IrArithOp::Shr => ">>",
+                IrArithOp::BitAnd => "&", IrArithOp::BitOr => "|",
+                IrArithOp::BitXor => "^",
+            };
+            format!("{} {} {}", arith_expr_to_text(left), op_str, arith_expr_to_text(right))
+        }
+        ArithExpr::UnaryOp { op, operand } => {
+            let op_str = match op {
+                IrUnaryArithOp::Neg => "-", IrUnaryArithOp::Pos => "+",
+                IrUnaryArithOp::Not => "!", IrUnaryArithOp::BitNot => "~",
+            };
+            format!("{}{}", op_str, arith_expr_to_text(operand))
+        }
+        ArithExpr::PreIncDec { var, inc } => {
+            format!("{}{}", if *inc { "++" } else { "--" }, var)
+        }
+        ArithExpr::PostIncDec { var, inc } => {
+            format!("{}{}", var, if *inc { "++" } else { "--" })
+        }
+        ArithExpr::Assign { var, value } => {
+            format!("{} = {}", var, arith_expr_to_text(value))
+        }
+        ArithExpr::CompoundAssign { var, op, value } => {
+            let op_str = match op {
+                IrArithOp::Add => "+=", IrArithOp::Sub => "-=",
+                IrArithOp::Mul => "*=", IrArithOp::Div => "/=",
+                IrArithOp::Mod => "%=", _ => "?=",
+            };
+            format!("{} {} {}", var, op_str, arith_expr_to_text(value))
+        }
+        ArithExpr::Ternary { cond, true_val, false_val } => {
+            format!("{} ? {} : {}", arith_expr_to_text(cond),
+                arith_expr_to_text(true_val), arith_expr_to_text(false_val))
+        }
+        ArithExpr::Comma(exprs) => {
+            exprs.iter().map(arith_expr_to_text).collect::<Vec<_>>().join(", ")
+        }
+        ArithExpr::FuncCall { name, args } => {
+            let arg_strs: Vec<String> = args.iter().map(arith_expr_to_text).collect();
+            format!("({} {})", name, arg_strs.join(" "))
+        }
+        ArithExpr::Paren(inner) => format!("({})", arith_expr_to_text(inner)),
+    }
+}
+
+// ── Content collection ────────────────────────────────────────────────
+
+/// Collect raw arithmetic content as a string (for C-style for loops
+/// where we need to split on `;` before parsing).
+pub fn collect_arith_content_raw(scanner: &mut Scanner) -> Result<String, Diagnostic> {
     collect_arith_content(scanner)
 }
 
 /// Collect raw content between the opening (( or $(( and closing )).
 /// Respects nesting of (( )) and ( ).
 fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
-    // We need to collect tokens until we find the matching ))
-    // But we can't just count parens because the lexer may have split things up.
-    // Instead, collect raw source bytes from current position to matching )).
-    // Actually, we're working with the token stream. Let's collect text from tokens.
     let mut content = String::new();
-    let mut depth = 1i32; // we're inside one level of (( already
+    let mut depth = 1i32;
 
     loop {
         if scanner.at_eof() {
@@ -65,8 +888,6 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
                 scanner.next();
             }
             Tok::RParen => {
-                // Single ) — check if next is also )
-                let sp = tok.span;
                 scanner.next();
                 if matches!(scanner.peek().token, Tok::RParen) {
                     depth -= 1;
@@ -80,11 +901,9 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
                 }
             }
             _ => {
-                // Reconstruct text from token
                 let text = tok_to_text(&tok.token);
                 content.push_str(&text);
                 scanner.next();
-                // Add space after if needed
                 if !matches!(scanner.peek().token,
                     Tok::DblParenClose | Tok::RParen | Tok::Semi | Tok::Newline | Tok::Eof
                     | Tok::DblParen | Tok::LParen
@@ -121,7 +940,7 @@ fn tok_to_text(tok: &Tok) -> String {
         Tok::Semi => ";".to_string(),
         Tok::Newline => " ".to_string(),
         Tok::SingleQuoted(s) => format!("'{}'", s),
-        Tok::DoubleQuoted(_) => "\"...\"".to_string(), // shouldn't appear in arith
+        Tok::DoubleQuoted(_) => "\"...\"".to_string(),
         Tok::LParen => "(".to_string(),
         Tok::RParen => ")".to_string(),
         Tok::DblParen => "((".to_string(),
@@ -129,424 +948,4 @@ fn tok_to_text(tok: &Tok) -> String {
         Tok::Comment(_) => String::new(),
         _ => String::new(),
     }
-}
-
-/// Classify an arithmetic expression as mutation vs. comparison/test.
-/// Used by the parser to decide how to lower (( expr )).
-pub fn classify_arith(content: &str) -> ArithKind {
-    let trimmed = content.trim();
-
-    // Check for assignment operators: =, +=, -=, *=, /=, %=
-    // But not ==, !=, <=, >=
-    let bytes = trimmed.as_bytes();
-    let mut i = 0;
-    let mut has_comparison = false;
-    let mut has_assignment = false;
-    let mut has_incdec = false;
-
-    while i < bytes.len() {
-        match bytes[i] {
-            b'+' if i + 1 < bytes.len() && bytes[i + 1] == b'+' => {
-                has_incdec = true;
-                i += 2;
-            }
-            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'-' => {
-                has_incdec = true;
-                i += 2;
-            }
-            b'+' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_assignment = true;
-                i += 2;
-            }
-            b'-' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_assignment = true;
-                i += 2;
-            }
-            b'*' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_assignment = true;
-                i += 2;
-            }
-            b'/' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_assignment = true;
-                i += 2;
-            }
-            b'%' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_assignment = true;
-                i += 2;
-            }
-            b'=' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_comparison = true;
-                i += 2;
-            }
-            b'!' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_comparison = true;
-                i += 2;
-            }
-            b'<' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_comparison = true;
-                i += 2;
-            }
-            b'>' if i + 1 < bytes.len() && bytes[i + 1] == b'=' => {
-                has_comparison = true;
-                i += 2;
-            }
-            b'<' => {
-                has_comparison = true;
-                i += 1;
-            }
-            b'>' => {
-                has_comparison = true;
-                i += 1;
-            }
-            b'=' => {
-                has_assignment = true;
-                i += 1;
-            }
-            _ => {
-                i += 1;
-            }
-        }
-    }
-
-    if has_assignment || has_incdec {
-        ArithKind::Mutation
-    } else if has_comparison {
-        ArithKind::Comparison
-    } else {
-        // Bare expression like (( x )) or (( 5 )) — used as test
-        ArithKind::Test
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum ArithKind {
-    Mutation,    // x=5, x+=3, x++
-    Comparison,  // x > 0, x == 5
-    Test,        // bare expression (( x ))
-}
-
-/// Lower an arithmetic command (( expr )) to an IR Statement.
-/// Dispatches based on whether it's mutation, comparison, or bare test.
-pub fn lower_arith_command(content: &str, span: Span) -> Statement {
-    let trimmed = content.trim();
-
-    // Handle comma operator: a, b, c → Group of individual expressions
-    if trimmed.contains(',') && !trimmed.contains(",,") {
-        let parts: Vec<&str> = trimmed.split(',').collect();
-        if parts.len() > 1 {
-            let stmts: Vec<Statement> = parts
-                .iter()
-                .map(|p| lower_arith_command(p, span))
-                .collect();
-            return Statement {
-                kind: StmtKind::Group(Group { body: stmts }),
-                span,
-            };
-        }
-    }
-
-    let kind = classify_arith(trimmed);
-    match kind {
-        ArithKind::Mutation => lower_arith_mutation(trimmed, span),
-        ArithKind::Comparison | ArithKind::Test => lower_arith_test(trimmed, span),
-    }
-}
-
-fn lower_arith_mutation(content: &str, span: Span) -> Statement {
-    let trimmed = content.trim();
-
-    // x++ / x--
-    if trimmed.ends_with("++") {
-        let var = trimmed[..trimmed.len() - 2].trim();
-        return Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.to_string(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(format!("{} + 1", var)),
-                    span,
-                },
-            }),
-            span,
-        };
-    }
-    if trimmed.ends_with("--") {
-        let var = trimmed[..trimmed.len() - 2].trim();
-        return Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.to_string(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(format!("{} - 1", var)),
-                    span,
-                },
-            }),
-            span,
-        };
-    }
-    // ++x / --x
-    if trimmed.starts_with("++") {
-        let var = trimmed[2..].trim();
-        return Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.to_string(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(format!("{} + 1", var)),
-                    span,
-                },
-            }),
-            span,
-        };
-    }
-    if trimmed.starts_with("--") && !trimmed.starts_with("---") {
-        let var = trimmed[2..].trim();
-        return Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.to_string(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(format!("{} - 1", var)),
-                    span,
-                },
-            }),
-            span,
-        };
-    }
-
-    // Compound assignment: x += expr, x -= expr, x *= expr, x /= expr, x %= expr
-    for (op_tok, arith_op) in &[("+=", "+"), ("-=", "-"), ("*=", "*"), ("/=", "/"), ("%=", "%")] {
-        if let Some(pos) = trimmed.find(op_tok) {
-            let var = trimmed[..pos].trim();
-            let rhs = trimmed[pos + op_tok.len()..].trim();
-            return Statement {
-                kind: StmtKind::Assignment(Assignment {
-                    name: var.to_string(),
-                    index: None,
-                    op: AssignOp::Set,
-                    value: Expr {
-                        kind: ExprKind::ArithmeticExpansion(format!("{} {} {}", var, arith_op, rhs)),
-                        span,
-                    },
-                }),
-                span,
-            };
-        }
-    }
-
-    // Simple assignment: x = expr (but not ==)
-    if let Some(pos) = find_assignment_eq(trimmed) {
-        let var = trimmed[..pos].trim();
-        let rhs = trimmed[pos + 1..].trim();
-        return Statement {
-            kind: StmtKind::Assignment(Assignment {
-                name: var.to_string(),
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(rhs.to_string()),
-                    span,
-                },
-            }),
-            span,
-        };
-    }
-
-    // Fallback: emit as let command
-    Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal("let".to_string()),
-                span,
-            },
-            args: vec![Expr {
-                kind: ExprKind::Literal(trimmed.to_string()),
-                span,
-            }],
-        }),
-        span,
-    }
-}
-
-fn lower_arith_test(content: &str, span: Span) -> Statement {
-    let trimmed = content.trim();
-
-    // Emit as [[ arith_expr -ne 0 ]] test
-    let test_val = if trimmed.chars().all(|c| c.is_ascii_digit())
-        || (trimmed.starts_with('-') && trimmed[1..].chars().all(|c| c.is_ascii_digit()))
-    {
-        // Literal number
-        ExprKind::Literal(trimmed.to_string())
-    } else if trimmed.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') && !trimmed.is_empty()
-        && trimmed.as_bytes()[0].is_ascii_alphabetic()
-    {
-        // Simple variable name
-        ExprKind::SimpleExpansion(trimmed.to_string())
-    } else {
-        // Complex expression — emit as ArithmeticExpansion
-        ExprKind::ArithmeticExpansion(trimmed.to_string())
-    };
-
-    // For comparisons with explicit operators, emit directly as let
-    let kind = classify_arith(trimmed);
-    if kind == ArithKind::Comparison {
-        return Statement {
-            kind: StmtKind::Command(Command {
-                name: Expr {
-                    kind: ExprKind::Literal("let".to_string()),
-                    span,
-                },
-                args: vec![Expr {
-                    kind: ExprKind::Literal(trimmed.to_string()),
-                    span,
-                }],
-            }),
-            span,
-        };
-    }
-
-    Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal("[[".to_string()),
-                span,
-            },
-            args: vec![Expr {
-                kind: ExprKind::Test(TestExpr::Binary {
-                    left: Box::new(Expr {
-                        kind: test_val,
-                        span,
-                    }),
-                    op: "-ne".to_string(),
-                    right: Box::new(Expr {
-                        kind: ExprKind::Literal("0".to_string()),
-                        span,
-                    }),
-                }),
-                span,
-            }],
-        }),
-        span,
-    }
-}
-
-/// Find = that is an assignment (not == or !=, <=, >=, +=, -=, *=, /=, %=)
-fn find_assignment_eq(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'=' {
-            // Not preceded by !, <, >, +, -, *, /, %
-            let prev_ok = i == 0 || !matches!(bytes[i - 1], b'!' | b'<' | b'>' | b'+' | b'-' | b'*' | b'/' | b'%');
-            // Not followed by =
-            let next_ok = i + 1 >= bytes.len() || bytes[i + 1] != b'=';
-            if prev_ok && next_ok {
-                return Some(i);
-            }
-        }
-        i += 1;
-    }
-    None
-}
-
-/// Lower a C-style for loop: for (( init; cond; update )); do body; done
-pub fn lower_c_style_for(init: &str, cond: &str, update: &str, body: Vec<Statement>, span: Span) -> Statement {
-    // Init
-    let mut init_stmts = Vec::new();
-    let init_trimmed = init.trim();
-    if !init_trimmed.is_empty() {
-        init_stmts.push(lower_arith_mutation(init_trimmed, span));
-    }
-
-    // Condition → [[ ]]
-    let cond_trimmed = cond.trim();
-    let condition = if cond_trimmed.is_empty() {
-        vec![Statement {
-            kind: StmtKind::Command(Command {
-                name: Expr {
-                    kind: ExprKind::Literal("true".to_string()),
-                    span,
-                },
-                args: vec![],
-            }),
-            span,
-        }]
-    } else {
-        vec![lower_arith_cond(cond_trimmed, span)]
-    };
-
-    // Update
-    let mut loop_body = body;
-    let update_trimmed = update.trim();
-    if !update_trimmed.is_empty() {
-        loop_body.push(lower_arith_mutation(update_trimmed, span));
-    }
-
-    let while_stmt = Statement {
-        kind: StmtKind::While(While {
-            condition,
-            body: loop_body,
-            until: false,
-        }),
-        span,
-    };
-
-    let mut group_body = init_stmts;
-    group_body.push(while_stmt);
-    Statement {
-        kind: StmtKind::Group(Group { body: group_body }),
-        span,
-    }
-}
-
-/// Lower an arithmetic condition for C-style for loops.
-fn lower_arith_cond(content: &str, span: Span) -> Statement {
-    // Parse comparison operators
-    let ops = [("<=", "-le"), (">=", "-ge"), ("==", "-eq"), ("!=", "-ne"), ("<", "-lt"), (">", "-gt")];
-    for (op_str, test_op) in ops {
-        if let Some(pos) = content.find(op_str) {
-            // Make sure we don't match <= when looking for <
-            if op_str.len() == 1 {
-                // Single char op — ensure not part of <=, >=, etc.
-                if pos + 1 < content.len() && content.as_bytes()[pos + 1] == b'=' {
-                    continue;
-                }
-                if pos > 0 && (content.as_bytes()[pos - 1] == b'!' || content.as_bytes()[pos - 1] == b'<' || content.as_bytes()[pos - 1] == b'>') {
-                    continue;
-                }
-            }
-            let left = content[..pos].trim();
-            let right = content[pos + op_str.len()..].trim();
-            return Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr {
-                        kind: ExprKind::Literal("[[".to_string()),
-                        span,
-                    },
-                    args: vec![Expr {
-                        kind: ExprKind::Test(TestExpr::Binary {
-                            left: Box::new(Expr {
-                                kind: ExprKind::SimpleExpansion(left.to_string()),
-                                span,
-                            }),
-                            op: test_op.to_string(),
-                            right: Box::new(Expr {
-                                kind: ExprKind::Literal(right.to_string()),
-                                span,
-                            }),
-                        }),
-                        span,
-                    }],
-                }),
-                span,
-            };
-        }
-    }
-
-    // Fallback: use -ne 0 test
-    lower_arith_test(content, span)
 }

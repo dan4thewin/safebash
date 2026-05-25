@@ -958,6 +958,10 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
         ExprKind::ArithmeticExpansion(s) => {
             format!("(string ({}))", bash_arith_to_janet(s))
         }
+        ExprKind::Arithmetic(a) => {
+            // Fallback: stringify the structured arith expr for janet
+            format!("(string ({}))", arith_expr_to_janet(a))
+        }
         ExprKind::Concat(parts) => {
             let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
             format!("(string {})", ps.join(" "))
@@ -1296,5 +1300,79 @@ fn expr_to_literal(expr: &Expr) -> String {
         ExprKind::SimpleExpansion(var) => format!("${}", var),
         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => expr_to_literal(&parts[0]),
         _ => "?".to_string(),
+    }
+}
+
+/// Convert a structured ArithExpr to Janet code.
+fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
+    use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
+    match expr {
+        ArithExpr::Literal(n) => n.to_string(),
+        ArithExpr::Var(name) => name.clone(),
+        ArithExpr::DollarVar(name) => name.clone(),
+        ArithExpr::BinOp { left, op, right } => {
+            let op_str = match op {
+                IrArithOp::Add => "+",
+                IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*",
+                IrArithOp::Div => "/",
+                IrArithOp::Mod => "%",
+                IrArithOp::Pow => "math/pow",
+                IrArithOp::Eq => "=",
+                IrArithOp::Ne => "not=",
+                IrArithOp::Lt => "<",
+                IrArithOp::Le => "<=",
+                IrArithOp::Gt => ">",
+                IrArithOp::Ge => ">=",
+                IrArithOp::And => "and",
+                IrArithOp::Or => "or",
+                IrArithOp::Shl => "blshift",
+                IrArithOp::Shr => "brshift",
+                IrArithOp::BitAnd => "band",
+                IrArithOp::BitOr => "bor",
+                IrArithOp::BitXor => "bxor",
+            };
+            format!("({} {} {})", op_str, arith_expr_to_janet(left), arith_expr_to_janet(right))
+        }
+        ArithExpr::UnaryOp { op, operand } => {
+            let op_str = match op {
+                IrUnaryArithOp::Neg => "-",
+                IrUnaryArithOp::Pos => "+",
+                IrUnaryArithOp::Not => "not",
+                IrUnaryArithOp::BitNot => "bnot",
+            };
+            format!("({} {})", op_str, arith_expr_to_janet(operand))
+        }
+        ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
+            if *inc { format!("(+ {} 1)", var) } else { format!("(- {} 1)", var) }
+        }
+        ArithExpr::Assign { var, value } => {
+            format!("(set {} {})", var, arith_expr_to_janet(value))
+        }
+        ArithExpr::CompoundAssign { var, op, value } => {
+            let op_str = match op {
+                IrArithOp::Add => "+", IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*", IrArithOp::Div => "/",
+                IrArithOp::Mod => "%", _ => "?",
+            };
+            format!("(set {} ({} {} {}))", var, op_str, var, arith_expr_to_janet(value))
+        }
+        ArithExpr::Ternary { cond, true_val, false_val } => {
+            format!("(if {} {} {})", arith_expr_to_janet(cond),
+                arith_expr_to_janet(true_val), arith_expr_to_janet(false_val))
+        }
+        ArithExpr::Comma(exprs) => {
+            let parts: Vec<String> = exprs.iter().map(|e| arith_expr_to_janet(e)).collect();
+            format!("(do {})", parts.join(" "))
+        }
+        ArithExpr::FuncCall { name, args } => {
+            let arg_strs: Vec<String> = args.iter().map(|a| arith_expr_to_janet(a)).collect();
+            if arg_strs.is_empty() {
+                format!("({})", name)
+            } else {
+                format!("({} {})", name, arg_strs.join(" "))
+            }
+        }
+        ArithExpr::Paren(inner) => arith_expr_to_janet(inner),
     }
 }

@@ -278,7 +278,10 @@ pub enum ExprKind {
     /// $(command)
     CommandSubstitution(Vec<Statement>),
 
-    /// $((expr))
+    /// $((expr)) — structured arithmetic expression
+    Arithmetic(Box<ArithExpr>),
+
+    /// $((expr)) — raw text (legacy, used by old lower/ module)
     ArithmeticExpansion(String),
 
     /// Concatenation of adjacent expressions: "$var"/path
@@ -319,4 +322,98 @@ pub enum TestExpr {
     Or(Box<TestExpr>, Box<TestExpr>),
     /// ( expr ) — grouping
     Paren(Box<TestExpr>),
+}
+
+// ── Arithmetic expressions ─────────────────────────────────────────────
+
+/// Structured arithmetic expression produced by the Pratt parser.
+#[derive(Debug, Clone, PartialEq)]
+pub enum ArithExpr {
+    /// Integer literal: 0, 42, 0xFF, 0o17, 2#101
+    Literal(i64),
+    /// Variable reference: x, count (bare name in arithmetic context)
+    Var(String),
+    /// $var or $1 — explicit dollar-prefixed variable
+    DollarVar(String),
+    /// Binary operation: left op right
+    BinOp {
+        left: Box<ArithExpr>,
+        op: IrArithOp,
+        right: Box<ArithExpr>,
+    },
+    /// Unary prefix: -x, +x, !x, ~x
+    UnaryOp {
+        op: IrUnaryArithOp,
+        operand: Box<ArithExpr>,
+    },
+    /// Post-increment/decrement: x++, x--
+    PostIncDec {
+        var: String,
+        inc: bool, // true = ++, false = --
+    },
+    /// Pre-increment/decrement: ++x, --x
+    PreIncDec {
+        var: String,
+        inc: bool,
+    },
+    /// Assignment: var = expr
+    Assign {
+        var: String,
+        value: Box<ArithExpr>,
+    },
+    /// Compound assignment: var += expr, var -= expr, etc.
+    CompoundAssign {
+        var: String,
+        op: IrArithOp,
+        value: Box<ArithExpr>,
+    },
+    /// Ternary: cond ? true_val : false_val
+    Ternary {
+        cond: Box<ArithExpr>,
+        true_val: Box<ArithExpr>,
+        false_val: Box<ArithExpr>,
+    },
+    /// Comma operator: expr, expr, ...
+    Comma(Vec<ArithExpr>),
+    /// Function call (DD#58 sexpr): (name arg1 arg2 ...)
+    FuncCall {
+        name: String,
+        args: Vec<ArithExpr>,
+    },
+    /// Parenthesized grouping
+    Paren(Box<ArithExpr>),
+}
+
+/// Binary arithmetic operators (IR level).
+/// Mirrors ssa::ArithOp but lives in the IR for clean layering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrArithOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Mod,
+    Pow,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    And,
+    Or,
+    Shl,
+    Shr,
+    BitAnd,
+    BitOr,
+    BitXor,
+}
+
+/// Unary arithmetic operators.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IrUnaryArithOp {
+    Neg,    // -
+    Pos,    // +
+    Not,    // !
+    BitNot, // ~
 }

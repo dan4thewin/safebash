@@ -272,6 +272,11 @@ fn print_expr(out: &mut String, expr: &Expr) {
         ExprKind::ArithmeticExpansion(s) => {
             write!(out, "$(({}))", s).unwrap();
         }
+        ExprKind::Arithmetic(a) => {
+            out.push_str("$((");
+            print_arith_expr(out, a);
+            out.push_str("))");
+        }
         ExprKind::Concat(parts) => {
             for part in parts {
                 print_expr(out, part);
@@ -429,5 +434,91 @@ fn redirect_op(op: &RedirectOp) -> &'static str {
         RedirectOp::ReadWrite => "<>",
         RedirectOp::HereDoc => "<<",
         RedirectOp::HereString => "<<<",
+    }
+}
+
+fn print_arith_expr(out: &mut String, expr: &crate::ir::ArithExpr) {
+    use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
+    match expr {
+        ArithExpr::Literal(n) => write!(out, "{}", n).unwrap(),
+        ArithExpr::Var(name) => out.push_str(name),
+        ArithExpr::DollarVar(name) => write!(out, "${}", name).unwrap(),
+        ArithExpr::BinOp { left, op, right } => {
+            print_arith_expr(out, left);
+            let op_str = match op {
+                IrArithOp::Add => " + ", IrArithOp::Sub => " - ",
+                IrArithOp::Mul => " * ", IrArithOp::Div => " / ",
+                IrArithOp::Mod => " % ", IrArithOp::Pow => " ** ",
+                IrArithOp::Eq => " == ", IrArithOp::Ne => " != ",
+                IrArithOp::Lt => " < ", IrArithOp::Le => " <= ",
+                IrArithOp::Gt => " > ", IrArithOp::Ge => " >= ",
+                IrArithOp::And => " && ", IrArithOp::Or => " || ",
+                IrArithOp::Shl => " << ", IrArithOp::Shr => " >> ",
+                IrArithOp::BitAnd => " & ", IrArithOp::BitOr => " | ",
+                IrArithOp::BitXor => " ^ ",
+            };
+            out.push_str(op_str);
+            print_arith_expr(out, right);
+        }
+        ArithExpr::UnaryOp { op, operand } => {
+            let op_str = match op {
+                IrUnaryArithOp::Neg => "-",
+                IrUnaryArithOp::Pos => "+",
+                IrUnaryArithOp::Not => "!",
+                IrUnaryArithOp::BitNot => "~",
+            };
+            out.push_str(op_str);
+            print_arith_expr(out, operand);
+        }
+        ArithExpr::PreIncDec { var, inc } => {
+            out.push_str(if *inc { "++" } else { "--" });
+            out.push_str(var);
+        }
+        ArithExpr::PostIncDec { var, inc } => {
+            out.push_str(var);
+            out.push_str(if *inc { "++" } else { "--" });
+        }
+        ArithExpr::Assign { var, value } => {
+            out.push_str(var);
+            out.push_str(" = ");
+            print_arith_expr(out, value);
+        }
+        ArithExpr::CompoundAssign { var, op, value } => {
+            out.push_str(var);
+            let op_str = match op {
+                IrArithOp::Add => " += ", IrArithOp::Sub => " -= ",
+                IrArithOp::Mul => " *= ", IrArithOp::Div => " /= ",
+                IrArithOp::Mod => " %= ", _ => " ?= ",
+            };
+            out.push_str(op_str);
+            print_arith_expr(out, value);
+        }
+        ArithExpr::Ternary { cond, true_val, false_val } => {
+            print_arith_expr(out, cond);
+            out.push_str(" ? ");
+            print_arith_expr(out, true_val);
+            out.push_str(" : ");
+            print_arith_expr(out, false_val);
+        }
+        ArithExpr::Comma(exprs) => {
+            for (i, e) in exprs.iter().enumerate() {
+                if i > 0 { out.push_str(", "); }
+                print_arith_expr(out, e);
+            }
+        }
+        ArithExpr::FuncCall { name, args } => {
+            out.push('(');
+            out.push_str(name);
+            for a in args {
+                out.push(' ');
+                print_arith_expr(out, a);
+            }
+            out.push(')');
+        }
+        ArithExpr::Paren(inner) => {
+            out.push('(');
+            print_arith_expr(out, inner);
+            out.push(')');
+        }
     }
 }

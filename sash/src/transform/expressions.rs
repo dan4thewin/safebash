@@ -24,6 +24,9 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
         ExprKind::ArithmeticExpansion(s) => {
             super::expr_handlers::handle_arithmetic_expansion(s, expr, state)
         }
+        ExprKind::Arithmetic(a) => {
+            super::expr_handlers::handle_structured_arithmetic(a, expr, state)
+        }
         ExprKind::ParameterExpansion(pe) => {
             let var = state.lookup(&pe.name);
             if let Some(ref op) = pe.operator {
@@ -159,6 +162,7 @@ pub(super) fn expr_to_string(expr: &Expr) -> String {
         }
         ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
         ExprKind::ArithmeticExpansion(e) => format!("$(({}))", e),
+        ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
         ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
         ExprKind::Array(elems) => {
             let inner: Vec<String> = elems.iter().map(expr_to_string).collect();

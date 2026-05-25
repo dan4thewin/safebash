@@ -7,7 +7,7 @@ use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 use super::lexer::{Scanner, Tok, SpannedToken, StringPart};
 use super::expr::{parse_expr, parse_word, parse_array_literal, span_from, string_parts_to_exprs, parse_sub_script, parse_command_substitution};
-use super::arith::{parse_arith_command, lower_arith_command, classify_arith, ArithKind, lower_c_style_for};
+use super::arith::{parse_arith_command, lower_arith_command, lower_c_style_for, collect_arith_content_raw};
 use super::error::{parse_error, parse_deferred};
 
 /// Parse sash-native source into IR.
@@ -272,9 +272,8 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
 fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
     scanner.next(); // consume ((
 
-    // Collect init; cond; update between (( and ))
-    // Split on ; to get three parts
-    let content = parse_arith_command(scanner, span)?;
+    // Collect raw content for init; cond; update — split on ;
+    let content = collect_arith_content_raw(scanner)?;
 
     // Split on ';' — should give us 3 parts
     let parts: Vec<&str> = content.splitn(3, ';').collect();
@@ -650,8 +649,8 @@ fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume ((
 
-    let content = parse_arith_command(scanner, span)?;
-    let stmt = lower_arith_command(&content, span);
+    let expr = parse_arith_command(scanner, span)?;
+    let stmt = lower_arith_command(expr, span);
     Ok(Some(stmt))
 }
 
