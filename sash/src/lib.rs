@@ -11,28 +11,11 @@ pub(crate) mod diagnostic;
 pub(crate) mod emit_source;
 pub(crate) mod printer;
 pub(crate) mod regex_validate;
-pub(crate) mod rule;
-pub(crate) mod rules;
 pub(crate) mod ssa;
 pub(crate) mod ssa_printer;
 pub(crate) mod ssa_taint;
-pub(crate) mod taint;
 pub(crate) mod transform;
 pub mod type_check;
-pub(crate) mod validator;
-
-pub fn parse(source: &str) -> tree_sitter::Tree {
-    parse_bash(source)
-}
-
-/// Parse bash source using tree-sitter (for sash-convert and taint).
-pub fn parse_bash(source: &str) -> tree_sitter::Tree {
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(&tree_sitter_bash::LANGUAGE.into())
-        .expect("Error loading Bash grammar");
-    parser.parse(source, None).expect("Failed to parse")
-}
 
 /// DD#56: Preprocess END { ... } into fn __sash_end__ { ... }
 /// so tree-sitter parses it as a function definition.
@@ -424,43 +407,8 @@ pub fn cli_main(args: Vec<String>) {
         );
     }
 
-    // Taint tracking (still uses tree-sitter CST)
-    {
-        let (ts_source, arith_map) = preprocess_arithmetic(&source);
-        set_arith_map(arith_map);
-        let ts_source = preprocess_end_block(&ts_source);
-        let ts_source = preprocess_local_fn(&ts_source);
-        let tree = parse_bash(&ts_source);
-
-        // Validator rules (rejected vars, command resolution, etc.)
-        let all_rules = rules::all_rules();
-        let mut diags = validator::validate(tree.root_node(), ts_source.as_bytes(), &all_rules);
-
-        // Taint tracking
-        let mut tracker = taint::TaintTracker::new();
-        diags.extend(tracker.analyze(tree.root_node(), ts_source.as_bytes()));
-
-        let mut has_taint_error = false;
-        for d in &diags {
-            let prefix = match d.severity {
-                diagnostic::Severity::Error => {
-                    has_taint_error = true;
-                    "error"
-                }
-                diagnostic::Severity::Deferred => {
-                    has_taint_error = true;
-                    "deferred"
-                }
-            };
-            eprintln!(
-                "{}:{}:{}: {} [{}] {}",
-                input, d.line, d.col, prefix, d.code, d.message
-            );
-        }
-        if has_taint_error {
-            std::process::exit(1);
-        }
-    }
+    // TODO: Validator rules and taint tracking will be reimplemented
+    // as IR walkers. Tree-sitter removed.
 
     if flags.contains(&"--ir") {
         let ir = printer::print_program(&program);
