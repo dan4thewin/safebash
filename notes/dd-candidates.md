@@ -112,9 +112,20 @@ status, getpid, getppid, getcpid, getcwd, epochseconds, dtoi, itod.
 - **Available**: set after any non-suppressed command executes
 - **Consumed**: after a statement uses `$?`, resets to undefined
 
-In `||` branches: inherited status available only for the first
-statement. After any other statement executes in the branch, the
-original status is gone.
+In handling branches (`||` right side, `if`/`else` bodies): the
+inherited status is available only for the first statement. After
+any other statement executes in the branch, the original status
+is gone.
+
+```bash
+cmd || { s=$(status); ... }   # s gets cmd's status
+cmd || { echo x; s=$(status) }  # ERROR: status consumed by echo
+
+if cmd; then
+    echo $?    # valid — first statement gets cmd's status
+    echo $?    # ERROR — consumed
+fi
+```
 
 **Rationale**: Prevents stale-status bugs where `$?` refers to
 something other than the intended command.
