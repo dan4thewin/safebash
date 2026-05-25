@@ -76,8 +76,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // (DD#31 comma pattern is handled at the Group level)
             if in_condition {
                 if matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
-                    diags.push(Diagnostic::error_at(
-                        stmt.span.line, stmt.span.col, "SB5007",
+                    diags.push(Diagnostic::error_span(stmt.span, "SB5007",
                         format!("mutation {} = ... not allowed in condition (( )) expression context — use (( )) statement instead", a.name),
                     ));
                 }
@@ -104,8 +103,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
                 check_unquoted_glob(w, diags);
                 // SB5009: unquoted $var in for-loop words implies word splitting
                 if let ExprKind::SimpleExpansion(var) = &w.kind {
-                    diags.push(Diagnostic::error_at(
-                        w.span.line, w.span.col, "SB5009",
+                    diags.push(Diagnostic::error_span(w.span, "SB5009",
                         format!("unquoted ${} in for-loop would word-split — quote it or use an array", var),
                     ));
                 }
@@ -169,8 +167,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB5002: heredocs rejected
     if name == "__HEREDOC__" {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB5002",
+        diags.push(Diagnostic::error_span(span, "SB5002",
             "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
         ));
         return;
@@ -178,8 +175,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     for arg in &c.args {
         if let ExprKind::Literal(s) = &arg.kind {
             if s == "__HEREDOC__" {
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5002",
+                diags.push(Diagnostic::error_span(span, "SB5002",
                     "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
                 ));
                 return;
@@ -189,16 +185,14 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB5001: export rejected
     if name == "export" {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB5001",
+        diags.push(Diagnostic::error_span(span, "SB5001",
             "'export' is not allowed — use int/const/array/map instead".to_string(),
         ));
     } else if name == "declare" {
         for arg in &c.args {
             let s = expr_literal_str(arg);
             if s == "-x" || s.contains('x') && s.starts_with('-') {
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5001",
+                diags.push(Diagnostic::error_span(span, "SB5001",
                     "'declare -x' is not allowed — use int/const/array/map instead".to_string(),
                 ));
             }
@@ -207,16 +201,14 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB4001: dynamic execution rejected
     if name == "eval" || name == "source" || name == "." || name == "command" {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB4001",
+        diags.push(Diagnostic::error_span(span, "SB4001",
             format!("'{}' is not allowed in sash", name),
         ));
     }
 
     // Coproc rejected
     if name == "coproc" {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB4001",
+        diags.push(Diagnostic::error_span(span, "SB4001",
             "'coproc' is not allowed in sash".to_string(),
         ));
     }
@@ -237,8 +229,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5001: export/declare -x
     if matches!(d.keyword, DeclKeyword::Export) {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB5001",
+        diags.push(Diagnostic::error_span(span, "SB5001",
             "'export' is not allowed — use int/const/array/map instead".to_string(),
         ));
     }
@@ -247,8 +238,7 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
 fn validate_assignment(a: &Assignment, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5009: IFS assignment rejected
     if a.name == "IFS" {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB5009",
+        diags.push(Diagnostic::error_span(span, "SB5009",
             "IFS does not exist in sash — word splitting is eliminated by design".to_string(),
         ));
     }
@@ -262,8 +252,7 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
         ExprKind::Literal(s) => {
             // SB5006: ** globstar is always rejected (even quoted, it's never valid)
             if s.contains("**") {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5006",
+                diags.push(Diagnostic::error_span(expr.span, "SB5006",
                     format!("** globstar is not supported in sash — only * is allowed: {}", s),
                 ));
             }
@@ -311,16 +300,14 @@ fn validate_var_name(var: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5017: Rejected vars
     for (name, msg) in REJECTED_VARS {
         if var == *name {
-            diags.push(Diagnostic::error_at(
-                span.line, span.col, "SB5017", msg.to_string(),
+            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string(),
             ));
             return;
         }
     }
     for (name, msg) in REJECTED_POSITIONAL {
         if var == *name {
-            diags.push(Diagnostic::error_at(
-                span.line, span.col, "SB5017", msg.to_string(),
+            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string(),
             ));
             return;
         }
@@ -328,8 +315,7 @@ fn validate_var_name(var: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5018: Bare env vars
     for name in ENV_VARS {
         if var == *name {
-            diags.push(Diagnostic::error_at(
-                span.line, span.col, "SB5018",
+            diags.push(Diagnostic::error_span(span, "SB5018",
                 format!("${} is not available directly — use $(getenv {})", name, name),
             ));
             return;
@@ -381,8 +367,7 @@ fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>)
             if let ExprKind::Literal(pattern) = &right.kind {
                 if !pattern.contains('$') {
                     if let Err(msg) = crate::regex_validate::validate_regex(pattern) {
-                        diags.push(Diagnostic::error_at(
-                            span.line, span.col, "SB5023",
+                        diags.push(Diagnostic::error_span(span, "SB5023",
                             format!("invalid regex pattern: {}", msg),
                         ));
                     }
@@ -399,8 +384,7 @@ fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
             const NUMERIC_OPS: &[&str] = &["-gt", "-lt", "-ge", "-le", "-eq", "-ne"];
             if NUMERIC_OPS.contains(&op.as_str()) {
                 let span = left.span;
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5019",
+                diags.push(Diagnostic::error_span(span, "SB5019",
                     format!("'{}' is a numeric operator — use (( )) for arithmetic comparisons, not [[ ]]", op),
                 ));
             }
@@ -429,8 +413,7 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
 
     // Prefix ++/-- always rejected
     if let ArithExpr::PreIncDec { var, .. } = expr {
-        diags.push(Diagnostic::error_at(
-            span.line, span.col, "SB5007",
+        diags.push(Diagnostic::error_span(span, "SB5007",
             format!("prefix ++{} is not allowed — use postfix ({}++) or (( {} += 1 )) instead", var, var, var),
         ));
         return;
@@ -447,8 +430,7 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
                     let k = classify_arith_expr(e);
                     if k != ArithKind::Mutation {
                         let desc = arith_brief(e);
-                        diags.push(Diagnostic::error_at(
-                            span.line, span.col, "SB5007",
+                        diags.push(Diagnostic::error_span(span, "SB5007",
                             format!("non-final comma expression {} must be a mutation", desc),
                         ));
                     }
@@ -457,8 +439,7 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
                 let last_kind = classify_arith_expr(last);
                 if last_kind == ArithKind::Mutation {
                     let desc = arith_brief(last);
-                    diags.push(Diagnostic::error_at(
-                        span.line, span.col, "SB5007",
+                    diags.push(Diagnostic::error_span(span, "SB5007",
                         format!("final comma expression {} must be a comparison in condition context", desc),
                     ));
                 }
@@ -468,8 +449,7 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
         // In condition: mutations rejected
         if kind == ArithKind::Mutation {
             let desc = arith_brief(expr);
-            diags.push(Diagnostic::error_at(
-                span.line, span.col, "SB5007",
+            diags.push(Diagnostic::error_span(span, "SB5007",
                 format!("mutation {} not allowed in condition (( )) expression context — use (( )) statement instead", desc),
             ));
         }
@@ -479,8 +459,7 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
             // Only reject if it's actually a comparison (has comparison op)
             if kind == ArithKind::Comparison {
                 let desc = arith_brief(expr);
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5007",
+                diags.push(Diagnostic::error_span(span, "SB5007",
                     format!("comparison {} as bare statement has no effect — use in if/while condition", desc),
                 ));
             }
@@ -497,8 +476,7 @@ fn check_arith_nested_mutation(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
             // Check if RHS has side effects
             if has_mutation(value) {
                 let desc = arith_brief(value);
-                diags.push(Diagnostic::error_at(
-                    span.line, span.col, "SB5007",
+                diags.push(Diagnostic::error_span(span, "SB5007",
                     format!("mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc),
                 ));
             }
@@ -552,13 +530,11 @@ fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
         ExprKind::Literal(s) => {
             if s.contains('?') {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5006",
+                diags.push(Diagnostic::error_span(expr.span, "SB5006",
                     format!("? glob is not supported in sash — only * is allowed: {}", s),
                 ));
             } else if s.contains('[') && s.contains(']') {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5006",
+                diags.push(Diagnostic::error_span(expr.span, "SB5006",
                     format!("[...] glob is not supported in sash — only * is allowed: {}", s),
                 ));
             }
@@ -567,13 +543,11 @@ fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
             for p in parts {
                 if let ExprKind::Literal(s) = &p.kind {
                     if s.contains('?') {
-                        diags.push(Diagnostic::error_at(
-                            p.span.line, p.span.col, "SB5006",
+                        diags.push(Diagnostic::error_span(p.span, "SB5006",
                             format!("? glob is not supported in sash — only * is allowed: {}", s),
                         ));
                     } else if s.contains('[') && s.contains(']') {
-                        diags.push(Diagnostic::error_at(
-                            p.span.line, p.span.col, "SB5006",
+                        diags.push(Diagnostic::error_span(p.span, "SB5006",
                             format!("[...] glob is not supported in sash — only * is allowed: {}", s),
                         ));
                     }
@@ -762,8 +736,7 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
                     let mut spans = Vec::new();
                     find_dollar_question(stmt, &mut spans);
                     for span in spans {
-                        diags.push(Diagnostic::error_at(
-                            span.line, span.col, "SB5012",
+                        diags.push(Diagnostic::error_span(span, "SB5012",
                             "$? is not available here — no preceding command".to_string(),
                         ));
                     }
@@ -927,8 +900,7 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
                 return;
             }
             if !name.is_empty() && !is_valid_command(name, funcs) {
-                diags.push(Diagnostic::error_at(
-                    stmt.span.line, stmt.span.col, "SB5011",
+                diags.push(Diagnostic::error_span(stmt.span, "SB5011",
                     format!("command '{}' not found — use absolute path or define as function", name),
                 ));
             }
@@ -1117,8 +1089,7 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
                             }
                         }
                         if !references_var && !condition_args.is_empty() {
-                            diags.push(Diagnostic::error_at(
-                                stmt.span.line, stmt.span.col, "SB5020",
+                            diags.push(Diagnostic::error_span(stmt.span, "SB5020",
                                 format!("bless condition must validate ${} — condition doesn't reference the variable", var),
                             ));
                         } else {
@@ -1255,24 +1226,21 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => {
             if tainted.contains(var.as_str()) {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5020",
+                diags.push(Diagnostic::error_span(expr.span, "SB5020",
                     format!("tainted variable ${} used without bless", var),
                 ));
             }
         }
         ExprKind::ParameterExpansion(pe) => {
             if tainted.contains(pe.name.as_str()) {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5020",
+                diags.push(Diagnostic::error_span(expr.span, "SB5020",
                     format!("tainted variable ${{{} ...}} used without bless", pe.name),
                 ));
             }
         }
         ExprKind::Subscript { name, .. } => {
             if tainted.contains(name.as_str()) {
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5020",
+                diags.push(Diagnostic::error_span(expr.span, "SB5020",
                     format!("tainted array ${{{}[...]}} used without bless", name),
                 ));
             }

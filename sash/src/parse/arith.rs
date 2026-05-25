@@ -203,23 +203,11 @@ pub fn lower_c_style_for(init: &str, cond: &str, update: &str, body: Vec<Stateme
     // Condition
     let cond_trimmed = cond.trim();
     let condition = if cond_trimmed.is_empty() {
-        vec![Statement {
-            kind: StmtKind::Command(Command {
-                name: Expr { kind: ExprKind::Literal("true".to_string()), span },
-                args: vec![],
-            }),
-            span,
-        }]
+        vec![Statement::true_cmd(span)]
     } else if let Ok(expr) = parse_arith_str(cond_trimmed, span) {
         vec![lower_arith_test_structured(&expr, span)]
     } else {
-        vec![Statement {
-            kind: StmtKind::Command(Command {
-                name: Expr { kind: ExprKind::Literal("true".to_string()), span },
-                args: vec![],
-            }),
-            span,
-        }]
+        vec![Statement::true_cmd(span)]
     };
 
     // Update

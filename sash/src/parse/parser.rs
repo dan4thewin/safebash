@@ -1103,7 +1103,7 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
             let w = w.clone();
             let next = scanner.peek_n(1);
             matches!(next.token, Tok::Eq | Tok::PlusAssign)
-                && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
+                && is_identifier_or_subscript(&w)
         }
         _ => false,
     };
@@ -1115,7 +1115,7 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
     // Check for regex mutation: var =~ s/pat/rep/
     if let Tok::Word(ref w) = scanner.peek().token {
         let w = w.clone();
-        if w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        if is_identifier(&w) {
             if let Tok::Word(ref next_w) = scanner.peek_n(1).token {
                 if next_w == "=~" {
                     return parse_regex_mutation(scanner, span, &w);
@@ -1267,7 +1267,7 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
             }
 
             // File descriptor before redirect: 2>, 1>, etc.
-            Tok::Word(w) if w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()) => {
+            Tok::Word(w) if is_fd_number(w) => {
                 let w = w.clone();
                 // Check if next token is a redirect operator
                 let next = scanner.peek_n(1);
@@ -1326,7 +1326,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
             | Tok::AmpGt | Tok::HereString => {
                 redirects.push(parse_redirect(scanner, stmt.span)?);
             }
-            Tok::Word(ref w) if w.len() <= 2 && w.chars().all(|c| c.is_ascii_digit()) => {
+            Tok::Word(ref w) if is_fd_number(w) => {
                 let next = scanner.peek_n(1).token.clone();
                 if matches!(next, Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt) {
                     let fd: u32 = w.parse().unwrap_or(0);
@@ -1389,13 +1389,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
             let span = result.span;
             scanner.next();
             skip_terminators(scanner);
-            let right = parse_statement(scanner)?.unwrap_or(Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr { kind: ExprKind::Literal("true".to_string()), span },
-                    args: vec![],
-                }),
-                span,
-            });
+            let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
             result = Statement {
                 kind: StmtKind::List(List {
                     op: ListOp::And,
@@ -1409,13 +1403,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
             let span = result.span;
             scanner.next();
             skip_terminators(scanner);
-            let right = parse_statement(scanner)?.unwrap_or(Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr { kind: ExprKind::Literal("true".to_string()), span },
-                    args: vec![],
-                }),
-                span,
-            });
+            let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
             result = Statement {
                 kind: StmtKind::List(List {
                     op: ListOp::Or,
@@ -1432,13 +1420,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
                 kind: StmtKind::List(List {
                     op: ListOp::Background,
                     left: Box::new(result),
-                    right: Box::new(Statement {
-                        kind: StmtKind::Command(Command {
-                            name: Expr { kind: ExprKind::Literal("true".to_string()), span },
-                            args: vec![],
-                        }),
-                        span,
-                    }),
+                    right: Box::new(Statement::true_cmd(span)),
                 }),
                 span,
             };
@@ -1509,6 +1491,21 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
 }
 
 // ── Helpers ──────────────────────────────────────────────────
+
+/// A word that is a valid identifier: [a-zA-Z_][a-zA-Z0-9_]*
+fn is_identifier(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A word that is a valid identifier or subscript: name or name[idx]
+fn is_identifier_or_subscript(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
+}
+
+/// A word that looks like a file descriptor number (1-2 digits).
+fn is_fd_number(s: &str) -> bool {
+    s.len() <= 2 && !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
 
 fn expect(scanner: &mut Scanner, expected: &Tok, span: Span, msg: &str) -> Result<(), Diagnostic> {
     skip_terminators(scanner);

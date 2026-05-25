@@ -58,14 +58,7 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                         span,
                     });
                 } else if w.starts_with('@') && w.len() > 1 {
-                    parts.push(Expr {
-                        kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                            name: w[1..].to_string(),
-                            operator: Some("arrvals".to_string()),
-                            operand: None,
-                        }),
-                        span,
-                    });
+                    parts.push(Expr::param(&w[1..], Some("arrvals"), None, span));
                 } else {
                     parts.push(Expr {
                         kind: ExprKind::Literal(w),
@@ -118,14 +111,7 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                             let rest = w[close + 1..].to_string();
                             scanner.next();
                             if idx == "@" || idx == "*" {
-                                parts.push(Expr {
-                                    kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                                        name: name.clone(),
-                                        operator: Some("arrvals".to_string()),
-                                        operand: None,
-                                    }),
-                                    span,
-                                });
+                                parts.push(Expr::param(name.clone(), Some("arrvals"), None, span));
                             } else {
                                 parts.push(Expr {
                                     kind: ExprKind::Subscript {
@@ -254,14 +240,7 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner
                                 let idx = &lit[1..close];
                                 let rest = &lit[close + 1..];
                                 if idx == "@" || idx == "*" {
-                                    result.push(Expr {
-                                        kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                                            name: name.clone(),
-                                            operator: Some("arrvals".to_string()),
-                                            operand: None,
-                                        }),
-                                        span,
-                                    });
+                                    result.push(Expr::param(name.clone(), Some("arrvals"), None, span));
                                 } else {
                                     result.push(Expr {
                                         kind: ExprKind::Subscript {
@@ -345,23 +324,9 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         let rest = &content[1..];
         if rest.contains("[@]") || rest.contains("[*]") {
             let name = rest.split('[').next().unwrap_or(rest);
-            return Expr {
-                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                    name: name.to_string(),
-                    operator: Some("arrlen".to_string()),
-                    operand: None,
-                }),
-                span,
-            };
+            return Expr::param(name, Some("arrlen"), None, span);
         }
-        return Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: rest.to_string(),
-                operator: Some("strlen".to_string()),
-                operand: None,
-            }),
-            span,
-        };
+        return Expr::param(rest, Some("strlen"), None, span);
     }
 
     // ${!var[@]} — all keys
@@ -369,23 +334,9 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         let rest = &content[1..];
         if rest.contains("[@]") || rest.contains("[*]") {
             let name = rest.split('[').next().unwrap_or(rest);
-            return Expr {
-                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                    name: name.to_string(),
-                    operator: Some("arrkeys".to_string()),
-                    operand: None,
-                }),
-                span,
-            };
+            return Expr::param(name, Some("arrkeys"), None, span);
         }
-        return Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: rest.to_string(),
-                operator: Some("!".to_string()),
-                operand: None,
-            }),
-            span,
-        };
+        return Expr::param(rest, Some("!"), None, span);
     }
 
     // Find the variable name
@@ -398,14 +349,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     let name = &content[..name_end];
 
     if name_end >= bytes.len() {
-        return Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: name.to_string(),
-                operator: None,
-                operand: None,
-            }),
-            span,
-        };
+        return Expr::param(name, None, None, span);
     }
 
     // ${var[...]} — subscript
@@ -420,14 +364,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
                         return op_result;
                     }
                 }
-                return Expr {
-                    kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                        name: name.to_string(),
-                        operator: Some("arrvals".to_string()),
-                        operand: None,
-                    }),
-                    span,
-                };
+                return Expr::param(name, Some("arrvals"), None, span);
             }
 
             return Expr {
@@ -500,14 +437,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         let after = &rest[at_pos + 1..];
         if after.len() == 1 && after.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
             if !rest.contains("[@]") && !rest.contains("[@") {
-                return Expr {
-                    kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                        name: name.to_string(),
-                        operator: Some(format!("@{}", after)),
-                        operand: None,
-                    }),
-                    span,
-                };
+                return Expr::param(name, Some(&format!("@{}", after)), None, span);
             }
         }
     }
@@ -558,14 +488,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         };
     }
 
-    Expr {
-        kind: ExprKind::ParameterExpansion(ParameterExpansion {
-            name: name.to_string(),
-            operator: None,
-            operand: None,
-        }),
-        span,
-    }
+    Expr::param(name, None, None, span)
 }
 
 fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr> {

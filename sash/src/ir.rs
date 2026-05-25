@@ -25,6 +25,42 @@ impl Span {
 
 }
 
+impl Expr {
+    /// Shorthand: literal string expression.
+    pub fn literal(s: impl Into<String>, span: Span) -> Self {
+        Self { kind: ExprKind::Literal(s.into()), span }
+    }
+
+    /// Shorthand: simple variable expansion ($var).
+    pub fn expansion(name: impl Into<String>, span: Span) -> Self {
+        Self { kind: ExprKind::SimpleExpansion(name.into()), span }
+    }
+
+    /// Shorthand: parameter expansion with operator.
+    pub fn param(name: impl Into<String>, operator: Option<&str>, operand: Option<Box<Expr>>, span: Span) -> Self {
+        Self {
+            kind: ExprKind::ParameterExpansion(ParameterExpansion {
+                name: name.into(),
+                operator: operator.map(|s| s.to_string()),
+                operand,
+            }),
+            span,
+        }
+    }
+}
+
+impl Statement {
+    /// Shorthand: a simple command with name and args.
+    pub fn command(name: Expr, args: Vec<Expr>, span: Span) -> Self {
+        Self { kind: StmtKind::Command(Command { name, args }), span }
+    }
+
+    /// Shorthand: the `true` builtin (used as placeholder in list ops).
+    pub fn true_cmd(span: Span) -> Self {
+        Self::command(Expr::literal("true", span), vec![], span)
+    }
+}
+
 /// A complete script — a sequence of statements.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
