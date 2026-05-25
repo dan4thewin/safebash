@@ -669,19 +669,11 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
                     args: vec![],
                 };
             }
-            // Bare variable in arithmetic → force integer (add 0)
-            SsaValue::ArithBinOp {
-                left: Box::new(SsaValue::Var(state.lookup(name))),
-                op: ArithOp::Add,
-                right: Box::new(SsaValue::Expr("0".to_string())),
-            }
+            // Variable in arithmetic context — direct reference
+            SsaValue::Var(state.lookup(name))
         }
         ArithExpr::DollarVar(name) => {
-            SsaValue::ArithBinOp {
-                left: Box::new(SsaValue::Var(state.lookup(name))),
-                op: ArithOp::Add,
-                right: Box::new(SsaValue::Expr("0".to_string())),
-            }
+            SsaValue::Var(state.lookup(name))
         }
         ArithExpr::BinOp { left, op, right } => {
             let l = arith_to_ssa(left, expr, state);
