@@ -1,10 +1,31 @@
 //! IR-based validation rules.
 //!
-//! Walks the parsed IR and rejects unsafe constructs.
-//! Replaces the old tree-sitter-based validator.
+//! Walks the parsed IR and rejects unsafe constructs. This is the
+//! second-pass gate (after parse-time rejections in parse/).
+//!
+//! Two independent analyses:
+//!   1. **Structural validation** — walks IR checking rule violations:
+//!      SB5001 (export), SB5006 (globs), SB5007 (arith mutations),
+//!      SB5009 (IFS/word-split), SB5011 (command resolution),
+//!      SB5012 ($? state machine), SB5017/5018 (rejected/env vars),
+//!      SB5019 (numeric test ops), SB5023 (regex validation)
+//!   2. **Taint tracking** (`check_taint`) — forward dataflow:
+//!      sources (getenv, argv, external commands, stdin read) →
+//!      propagation → use-site rejection → bless removes taint
+//!
+//! SECURITY: This module + parse/ are the complete validation surface.
+//! Together they guarantee: no tainted data reaches execution without
+//! bless, no dynamic dispatch, no unknown commands, no rejected vars.
+//!
+//! Trust model:
+//!   - Parser guarantees: only recognized syntax reaches IR
+//!   - Validator guarantees: only safe *semantics* reach transform/codegen
+//!   - If both pass with zero diagnostics, the program is in the safe subset
 
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
+
+// ── Entry point ────────────────────────────────────────────────────
 
 /// Run all validation rules on a parsed program.
 /// Returns diagnostics for any violations found.
@@ -38,6 +59,8 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     }
     diags
 }
+
+// ── Statement-level validation ─────────────────────────────────────
 
 fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     validate_stmt_ctx(stmt, diags, false);
@@ -138,6 +161,8 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
     // Validate all expressions in the statement
     walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
 }
+
+// ── SB5001/SB5002/SB4001: command-level rejections ─────────────
 
 fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let name = expr_literal_str(&c.name);
@@ -390,10 +415,15 @@ fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+// ── SB5007: arithmetic context validation ───────────────────────
+//
+// Rules:
+//   - In condition (if/while): mutations are rejected
+//   - As bare statement: comparisons are rejected (no-op)
+//   - Prefix ++/-- always rejected (use postfix or explicit)
+//   - DD#31: comma expressions allowed if non-final=mutation, final=comparison
+
 /// SB5007: validate arithmetic expression in context.
-/// - In condition (if/while): mutations are rejected
-/// - As bare statement: comparisons are rejected (no-op)
-/// - Prefix ++/-- always rejected (use postfix or explicit)
 fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diags: &mut Vec<Diagnostic>) {
     use crate::parse::{classify_arith_expr, ArithKind};
 
@@ -662,7 +692,11 @@ fn walk_test_expr(t: &TestExpr, f: &mut impl FnMut(&Expr, Span)) {
     }
 }
 
-// ── SB5012: $? availability ───────────────────────────────────
+// ── SB5012: $? availability state machine ─────────────────────
+//
+// States: Undefined → Available (after non-suppressed command) → Undefined (consumed)
+// In || branches: inherited status available only for first statement.
+// SECURITY: prevents use-after-consume and uninitialized $? reads.
 
 /// $? state machine: undefined → available (after command) → undefined (consumed)
 #[derive(Clone, Copy, PartialEq)]
@@ -959,7 +993,21 @@ fn resolve_on_path(name: &str) -> bool {
     false
 }
 
-// ── Taint tracking ──────────────────────────────────────────────────
+// ── Taint tracking (SB5020) ───────────────────────────────────────
+//
+// Forward dataflow analysis: track which variables hold tainted data.
+// A variable is tainted if its value came from:
+//   - $(getenv NAME), $(argv N)  — external input
+//   - $(/absolute/path ...)      — external command output
+//   - read from stdin (no herestring)
+// A variable is clean if:
+//   - assigned from literals, arithmetic, clean variables
+//   - read from herestring (<<<) — data came from sash code
+//   - function parameters ($1-$9) inside function bodies
+//   - bless explicitly removes taint after validation
+//
+// SECURITY: This is definition-based, NOT name-based. There is no
+// "clean list" of variable names. Taint flows through assignment.
 
 use std::collections::HashSet;
 

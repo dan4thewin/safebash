@@ -1,9 +1,22 @@
 //! Lexer for sash-native syntax.
 //!
-//! Hand-written scanner with adjacency tracking.
-//! Tokens are designed for sash-native (not bash): int, const, array, map,
-//! bless, signal, END, fn, local fn are first-class keywords.
-//! Heredocs are rejected. Backticks are rejected. Single brackets are rejected.
+//! Hand-written scanner with adjacency tracking. Produces `SpannedToken`
+//! on demand — no intermediate token array, no lookahead limit.
+//!
+//! Design:
+//!   - Tokens are designed for sash-native (not bash): int, const, array, map,
+//!     bless, signal, END, fn, local fn are first-class keywords.
+//!   - Heredocs are rejected at the scanner level (emits __HEREDOC__ sentinel).
+//!   - Backticks are rejected (emits `backtick` sentinel for error reporting).
+//!   - Single brackets `[` are NOT operators — they appear only inside words
+//!     (array subscripts, case patterns). Only `[[` is a token.
+//!   - Adjacency tracking: `next_is_adjacent()` lets the parser decide whether
+//!     to concatenate tokens (e.g., `$foo"bar"` → single Concat expression).
+//!
+//! SECURITY: The scanner never silently drops input. Every byte becomes part
+//! of a token. Unknown sequences become Word tokens for the parser to reject.
+
+// ── Source spans ─────────────────────────────────────────────────────
 
 /// Source span for error reporting.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -19,8 +32,11 @@ pub struct SpannedToken {
     pub span: LexSpan,
 }
 
-/// High-level token type used by the parser.
-/// The Scanner converts logos Token + manual scanning into these.
+// ── Token types ──────────────────────────────────────────────────────
+
+/// High-level token type. The scanner produces these directly from source bytes.
+/// Grouped by category: keywords, operators, brackets, arithmetic, assignment,
+/// redirects, case terminators, literals, expansions.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     // Keywords
@@ -145,7 +161,10 @@ impl Tok {
     }
 }
 
+// ── String interpolation ─────────────────────────────────────────────
+
 /// Part of an interpolated double-quoted string.
+/// The scanner splits `"hello $name"` into [Literal("hello "), Variable("name")].
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
     Literal(String),
@@ -155,7 +174,12 @@ pub enum StringPart {
     ArithSub(String),      // $((...)) raw content
 }
 
+// ── Scanner ──────────────────────────────────────────────────────────
+
 /// Scanner: wraps the source and produces SpannedToken on demand.
+///
+/// Stateful: tracks byte position and last-consumed-end for adjacency.
+/// Peek buffer (FIFO) allows unbounded lookahead without rewinding.
 /// Handles strings, expansions, $(, $((, ((, and other multi-char tokens
 /// that logos can't handle well due to overlapping prefixes.
 pub struct Scanner {
@@ -287,6 +311,11 @@ impl Scanner {
             }
         }
     }
+
+    // ── Token dispatch ───────────────────────────────────────────────
+    //
+    // Main tokenization: dispatch on first byte to produce the next token.
+    // Longest-match: multi-char operators checked before single-char.
 
     fn next_token(&mut self) -> SpannedToken {
         self.skip_whitespace();
@@ -730,6 +759,8 @@ impl Scanner {
         self.source[self.pos..].starts_with(prefix)
     }
 
+    // ── Dollar expansions ─────────────────────────────────────────────
+
     /// Scan $...: $var, ${...}, $((, $(, $1, $@, $#, $?, $$, $!, $'...', $0
     fn scan_dollar(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // skip $
@@ -832,7 +863,10 @@ impl Scanner {
         }
     }
 
+    // ── String scanning ───────────────────────────────────────────────
+
     /// Scan ${...} — capture everything between { and matching }.
+    /// Handles nested braces, quoted strings, and backslash escapes.
     fn scan_brace_expansion(&mut self, start: usize) -> SpannedToken {
         let content_start = self.pos;
         let mut depth = 1i32;
@@ -1206,7 +1240,11 @@ impl Scanner {
         }
     }
 
+    // ── Word scanning ─────────────────────────────────────────────────
+
     /// Scan a bare word token.
+    /// Accumulates bytes until a word-breaking character, then checks
+    /// the result against the keyword table.
     fn scan_word(&mut self, start: usize) -> SpannedToken {
         let mut word = String::new();
 

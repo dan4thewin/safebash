@@ -1,7 +1,21 @@
 //! Recursive descent parser for sash-native syntax.
 //!
+//! Produces `ir::Program` directly from tokens — no intermediate CST.
+//! Parse-time rejections (SB4001–4024) emit diagnostics immediately.
+//! Unknown syntax is a hard error; recovery skips to next terminator.
+//!
 //! SECURITY: This is the parse-time gate. Every rejected construct
 //! produces a diagnostic with an SB* code. Unknown syntax is a hard error.
+//! No input can reach IR without passing through `parse_statement()`.
+//!
+//! Structure:
+//!   - `parse()` — top-level entry: statement loop with error recovery
+//!   - Control flow: parse_if, parse_while, parse_for, parse_case
+//!   - Declarations: parse_function, parse_local, parse_declaration
+//!   - Commands: parse_simple_or_assignment, parse_command
+//!   - Composition: maybe_wrap_redirects (pipes, list ops, redirects)
+//!   - Test expressions: parse_test_expr (recursive descent for [[ ]])
+//!   - Postfix rejection: SB4021–4024 on compound commands
 
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;

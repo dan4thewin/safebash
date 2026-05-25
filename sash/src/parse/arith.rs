@@ -3,6 +3,17 @@
 //! Produces structured `ir::ArithExpr` nodes with correct precedence.
 //! Handles: binary ops (15 levels), unary prefix/postfix, ternary,
 //! assignment, compound assignment, comma, and DD#58 sexpr calls.
+//!
+//! Three-phase design:
+//!   1. `tokenize_arith` — source string → ATok stream
+//!   2. `ArithParser::parse_expr` — Pratt parser with binding power table
+//!   3. `classify_arith_expr` + `lower_arith_command` — classify and lower
+//!      to IR statements (mutation vs. comparison vs. test)
+//!
+//! SECURITY: SB5007 enforcement starts here:
+//!   - `reject_prefix_incdec` — prefix ++/-- always rejected
+//!   - `reject_nested_mutation` — e.g. `x = y++` rejected
+//!   - Mutation in expression context ($(())) rejected at parse time
 
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;

@@ -6,6 +6,13 @@
 //! SECURITY: This module is the ONLY entry point from source text to IR.
 //! Every rejected construct produces a diagnostic with an SB* code.
 //! Unknown syntax is a hard error — nothing passes silently.
+//!
+//! Reading order:
+//!   1. `lexer.rs`  — byte-level scanner, tokenization, string interpolation
+//!   2. `parser.rs` — recursive descent: statements, control flow, compounds
+//!   3. `expr.rs`   — word/expression parsing, parameter expansion, command substitution
+//!   4. `arith.rs`  — Pratt parser for arithmetic expressions, classification, lowering
+//!   5. `error.rs`  — diagnostic constructors
 
 mod arith;
 mod error;

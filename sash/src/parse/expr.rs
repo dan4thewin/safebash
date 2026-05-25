@@ -1,9 +1,22 @@
 //! Expression parsing: words, strings, parameter expansions, command substitution.
+//!
+//! This module handles everything that produces a *value* in sash:
+//!   - Literals, single-quoted, double-quoted (with interpolation)
+//!   - $var, ${var...} parameter expansion (all operators: #, %, /, :, etc.)
+//!   - $(...) command substitution, $((...)) arithmetic expansion
+//!   - Array literals: =(a b c) and =([k]=v)
+//!   - Concatenation of adjacent tokens (no whitespace gap)
+//!
+//! SECURITY: Parameter expansion operators are parsed structurally here.
+//! The `!` (indirect) and `@X` (transform) operators are flagged for
+//! rejection by the post-parse `check_rejected()` pass in parser.rs.
 
 use crate::ir::*;
 use super::lexer::{Scanner, Tok, StringPart};
 use super::error::parse_error;
 use crate::diagnostic::Diagnostic;
+
+// ── Top-level expression parsing ───────────────────────────────────
 
 /// Parse a single word/expression that produces a value.
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
@@ -218,6 +231,8 @@ pub fn parse_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
     parse_expr(scanner)
 }
 
+// ── Double-quoted string interpolation ───────────────────────────
+
 /// Convert lexer StringParts to IR Exprs for double-quoted strings.
 pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner) -> Vec<Expr> {
     let mut result = Vec::new();
@@ -308,6 +323,18 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner
     }
     result
 }
+
+// ── Parameter expansion (${...}) ─────────────────────────────────
+//
+// Parses the content between ${ and }. Handles:
+//   ${#var}         → strlen
+//   ${!var[@]}      → arrkeys
+//   ${var[idx]}     → subscript
+//   ${var:s/re/r/}  → DD#39 sed expression
+//   ${var:off:len}  → substring
+//   ${var:-default} → standard operators
+//   ${var/pat/rep}  → substitution (glob → regex)
+//   ${var@X}        → rejected (SB4015)
 
 /// Parse ${...} content into an IR ParameterExpansion.
 pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
@@ -586,6 +613,8 @@ fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr>
     None
 }
 
+// ── Operator splitting ─────────────────────────────────────────────
+
 fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     let bytes = s.as_bytes();
     if bytes.is_empty() {
@@ -612,6 +641,8 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
 
     (None, None)
 }
+
+// ── Glob → regex conversion ─────────────────────────────────────────
 
 fn find_unescaped_slash(s: &str) -> Option<usize> {
     let bytes = s.as_bytes();
@@ -650,6 +681,8 @@ fn glob_to_regex(glob: &str) -> String {
     }
     re
 }
+
+// ── Command substitution ───────────────────────────────────────────
 
 /// Parse a sub-script (for command substitution or subshell contents).
 pub fn parse_sub_script(content: &str, span: Span) -> Vec<Statement> {
@@ -793,6 +826,8 @@ fn expect_rparen(scanner: &mut Scanner, span: Span) -> Result<(), Diagnostic> {
     }
 }
 
+// ── Array literals ─────────────────────────────────────────────────
+
 /// Parse an array literal after = in assignment: =(a b c) or =([k1]=v1 [k2]=v2)
 pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let mut elems = Vec::new();
@@ -870,6 +905,8 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
         })
     }
 }
+
+// ── Utilities ─────────────────────────────────────────────────────
 
 /// Compute an ir::Span from a byte offset using the scanner.
 pub fn span_from(scanner: &Scanner, offset: usize) -> Span {
