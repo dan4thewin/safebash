@@ -294,8 +294,12 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner
                 }
             }
             StringPart::ArithSub(content) => {
+                let arith = match super::arith::parse_arith_str(content.trim(), span) {
+                    Ok(expr) => expr,
+                    Err(_) => crate::ir::ArithExpr::Literal(0),
+                };
                 result.push(Expr {
-                    kind: ExprKind::ArithmeticExpansion(content.trim().to_string()),
+                    kind: ExprKind::Arithmetic(Box::new(arith)),
                     span,
                 });
             }

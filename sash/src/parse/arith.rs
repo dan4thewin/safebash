@@ -723,25 +723,25 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
                 index: None,
                 op: AssignOp::Set,
                 value: Expr {
-                    kind: ExprKind::ArithmeticExpansion(arith_expr_to_text(value)),
+                    kind: ExprKind::Arithmetic(Box::new(*value.clone())),
                     span,
                 },
             }),
             span,
         },
         ArithExpr::CompoundAssign { var, op, value } => {
-            let text = format!("{} {} {}", var, match op {
-                IrArithOp::Add => "+", IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*", IrArithOp::Div => "/",
-                IrArithOp::Mod => "%", _ => "+",
-            }, arith_expr_to_text(value));
+            let full_expr = ArithExpr::BinOp {
+                left: Box::new(ArithExpr::Var(var.clone())),
+                op: *op,
+                right: value.clone(),
+            };
             Statement {
                 kind: StmtKind::Assignment(Assignment {
                     name: var.clone(),
                     index: None,
                     op: AssignOp::Set,
                     value: Expr {
-                        kind: ExprKind::ArithmeticExpansion(text),
+                        kind: ExprKind::Arithmetic(Box::new(full_expr)),
                         span,
                     },
                 }),
@@ -749,15 +749,19 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
             }
         }
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
-            let op_str = if *inc { "+" } else { "-" };
-            let text = format!("{} {} 1", var, op_str);
+            let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
+            let full_expr = ArithExpr::BinOp {
+                left: Box::new(ArithExpr::Var(var.clone())),
+                op,
+                right: Box::new(ArithExpr::Literal(1)),
+            };
             Statement {
                 kind: StmtKind::Assignment(Assignment {
                     name: var.clone(),
                     index: None,
                     op: AssignOp::Set,
                     value: Expr {
-                        kind: ExprKind::ArithmeticExpansion(text),
+                        kind: ExprKind::Arithmetic(Box::new(full_expr)),
                         span,
                     },
                 }),
@@ -775,16 +779,9 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
             }
         }
         _ => {
-            // Fallback: emit as let command
-            let text = arith_expr_to_text(expr);
+            // Should not reach here for valid code (SB5007 rejects bare expressions)
             Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr { kind: ExprKind::Literal("let".to_string()), span },
-                    args: vec![Expr {
-                        kind: ExprKind::Literal(text),
-                        span,
-                    }],
-                }),
+                kind: StmtKind::ArithTest(Box::new(expr.clone())),
                 span,
             }
         }
