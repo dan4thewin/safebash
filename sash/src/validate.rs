@@ -50,6 +50,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
         StmtKind::Assignment(a) => {
             validate_assignment(a, stmt.span, diags);
             // SB5007: arithmetic assignment in condition context
+            // (DD#31 comma pattern is handled at the Group level)
             if in_condition {
                 if matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_)) {
                     diags.push(Diagnostic::error_at(
@@ -107,7 +108,20 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             validate_stmt_ctx(&l.right, diags, in_condition);
         }
         StmtKind::Group(g) => {
-            for s in &g.body { validate_stmt_ctx(s, diags, in_condition); }
+            // DD#31: comma expression desugars to Group with mutations then ArithTest.
+            // In condition context, if last is ArithTest, earlier stmts are the
+            // mutation part — validate them as NOT in condition.
+            if in_condition && g.body.last().map_or(false, |s| matches!(s.kind, StmtKind::ArithTest(_))) {
+                for (i, s) in g.body.iter().enumerate() {
+                    if i == g.body.len() - 1 {
+                        validate_stmt_ctx(s, diags, true); // final: condition
+                    } else {
+                        validate_stmt_ctx(s, diags, false); // non-final: statement
+                    }
+                }
+            } else {
+                for s in &g.body { validate_stmt_ctx(s, diags, in_condition); }
+            }
         }
         StmtKind::Subshell(s) => {
             for st in &s.body { validate_stmt_ctx(st, diags, in_condition); }
@@ -373,6 +387,33 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
 
     let kind = classify_arith_expr(expr);
     if in_condition {
+        // DD#31: comma expressions in conditions: non-final must be mutations,
+        // final must be comparison. This is valid.
+        if let ArithExpr::Comma(exprs) = expr {
+            if let Some((last, init)) = exprs.split_last() {
+                // Non-final must be mutations
+                for e in init {
+                    let k = classify_arith_expr(e);
+                    if k != ArithKind::Mutation {
+                        let desc = arith_brief(e);
+                        diags.push(Diagnostic::error_at(
+                            span.line, span.col, "SB5007",
+                            format!("non-final comma expression {} must be a mutation", desc),
+                        ));
+                    }
+                }
+                // Final must be comparison
+                let last_kind = classify_arith_expr(last);
+                if last_kind == ArithKind::Mutation {
+                    let desc = arith_brief(last);
+                    diags.push(Diagnostic::error_at(
+                        span.line, span.col, "SB5007",
+                        format!("final comma expression {} must be a comparison in condition context", desc),
+                    ));
+                }
+            }
+            return;
+        }
         // In condition: mutations rejected
         if kind == ArithKind::Mutation {
             let desc = arith_brief(expr);
