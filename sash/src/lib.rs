@@ -1,7 +1,6 @@
 // Modules used by tests (oracle_tests.rs) — must be pub
 pub mod emit_janet;
 pub mod ir;
-pub mod lower;
 pub mod oracle;
 pub mod parse;
 

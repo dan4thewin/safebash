@@ -1,13 +1,11 @@
 #[cfg(test)]
 mod tests {
     use sash::emit_janet::emit_janet;
-    use sash::lower::lower_program;
     use sash::oracle::{run_bash, run_janet_ok};
 
-    /// Parse bash, lower to IR, emit Janet, return Janet source.
+    /// Parse bash with new parser, emit Janet, return Janet source.
     fn to_janet(bash: &str) -> String {
-        let tree = sash::parse(bash);
-        let program = lower_program(tree.root_node(), bash.as_bytes());
+        let (program, _diags) = sash::parse::parse(bash).expect("parse failed");
         emit_janet(&program)
     }
 
@@ -310,8 +308,7 @@ mod tests {
     #[test]
     fn type_declare_int() {
         let src = "declare int x=5\necho $x";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         // Should lower successfully and produce the right output
         let janet = sash::emit_janet::emit_janet(&program);
         let out = sash::oracle::run_janet_ok(&janet).expect("janet failed");
@@ -322,8 +319,7 @@ mod tests {
     #[test]
     fn type_declare_dash_i() {
         let src = "declare -i x=5\necho $x";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let janet = sash::emit_janet::emit_janet(&program);
         let out = sash::oracle::run_janet_ok(&janet).expect("janet failed");
         assert_eq!(out.trim(), "5");
@@ -333,8 +329,7 @@ mod tests {
     #[test]
     fn type_local_int() {
         let src = "f() { local int x=42; echo $x; }\nf";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let janet = sash::emit_janet::emit_janet(&program);
         let out = sash::oracle::run_janet_ok(&janet).expect("janet failed");
         assert_eq!(out.trim(), "42");
@@ -344,8 +339,7 @@ mod tests {
     #[test]
     fn type_fn_keyword() {
         let src = "fn hello() { echo hi; }\nhello";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let janet = sash::emit_janet::emit_janet(&program);
         let out = sash::oracle::run_janet_ok(&janet).expect("janet failed");
         assert_eq!(out.trim(), "hi");
@@ -356,8 +350,7 @@ mod tests {
     fn type_fn_return_int() {
         use sash::ir::{StmtKind, VarType};
         let src = "get_port() -> int { return 8080; }";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let func = program
             .statements
             .iter()
@@ -378,8 +371,7 @@ mod tests {
     fn type_fn_keyword_return_int() {
         use sash::ir::{StmtKind, VarType};
         let src = "fn get_port() -> int { return 8080; }";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let func = program
             .statements
             .iter()
@@ -400,8 +392,7 @@ mod tests {
     fn type_fn_default_string() {
         use sash::ir::{StmtKind, VarType};
         let src = "hello() { echo hi; }";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
         let func = program
             .statements
             .iter()
@@ -422,8 +413,7 @@ mod tests {
     fn type_declaration_vartype() {
         use sash::ir::{StmtKind, VarType};
         let src = "declare int x=5\ndeclare y=hello";
-        let tree = sash::parse(src);
-        let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+        let (program, _) = sash::parse::parse(src).expect("parse failed");
 
         let decls: Vec<_> = program
             .statements
@@ -499,8 +489,7 @@ mod tests {
 // ── Phase 10c: Type checker (DD#16) ──────────────────────────
 
 fn check(src: &str) -> Vec<sash::type_check::TypeError> {
-    let tree = sash::parse(src);
-    let program = sash::lower::lower_program(tree.root_node(), src.as_bytes());
+    let (program, _) = sash::parse::parse(src).expect("parse failed");
     sash::type_check::type_check(&program)
 }
 

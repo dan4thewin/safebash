@@ -129,12 +129,10 @@ pub(super) fn handle_trap(
             } else {
                 &body_str
             };
-            let mut parser = tree_sitter::Parser::new();
-            parser
-                .set_language(&tree_sitter_bash::LANGUAGE.into())
-                .unwrap();
-            let tree = parser.parse(body_clean.as_bytes(), None).unwrap();
-            let trap_stmts = crate::lower::lower_body(tree.root_node(), body_clean.as_bytes());
+            let trap_stmts = match crate::parse::parse(body_clean) {
+                Ok((program, _)) => program.statements,
+                Err(_) => vec![],
+            };
             state.exit_trap = Some(trap_stmts);
             return block;
         } else if body_str.is_empty() || body_str == "''" || body_str == "\"\"" || body_str == "-" {

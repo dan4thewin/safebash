@@ -23,12 +23,6 @@ impl Span {
         Self { line, col }
     }
 
-    pub fn from_node(node: tree_sitter::Node) -> Self {
-        Self {
-            line: node.start_position().row + 1,
-            col: node.start_position().column + 1,
-        }
-    }
 }
 
 /// A complete script — a sequence of statements.
