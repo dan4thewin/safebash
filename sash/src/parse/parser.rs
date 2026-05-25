@@ -111,6 +111,7 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
         Tok::LBrace => parse_group(scanner),
         Tok::DblParen => parse_arith_stmt(scanner),
         Tok::Bang => parse_negated(scanner),
+        Tok::Dash => parse_suppressed(scanner),
         Tok::Word(ref w) if w == "-" => parse_suppressed(scanner),
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::Bless => parse_bless(scanner),

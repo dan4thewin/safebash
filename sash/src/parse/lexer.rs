@@ -837,6 +837,28 @@ impl Scanner {
                 }
             }
 
+            b'-' => {
+                // Standalone dash (followed by whitespace/terminator) → Tok::Dash
+                // Adjacent to alphanumeric (e.g. -n, -f) → part of word
+                let next = if self.pos + 1 < self.source.len() {
+                    self.source[self.pos + 1]
+                } else {
+                    b' ' // EOF counts as whitespace
+                };
+                if next == b' ' || next == b'\t' || next == b'\n'
+                    || next == b';' || next == b'|' || next == b'&'
+                    || next == b')' || next == b'}' || next == b'#'
+                {
+                    self.pos += 1;
+                    SpannedToken {
+                        token: Tok::Dash,
+                        span: LexSpan { start, end: self.pos },
+                    }
+                } else {
+                    self.scan_word(start)
+                }
+            }
+
             _ => self.scan_word(start),
         }
     }

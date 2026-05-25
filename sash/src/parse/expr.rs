@@ -185,6 +185,13 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                     span,
                 });
             }
+            Tok::Dash => {
+                scanner.next();
+                parts.push(Expr {
+                    kind: ExprKind::Literal("-".to_string()),
+                    span,
+                });
+            }
             _ => break,
         }
     }
