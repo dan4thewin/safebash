@@ -757,7 +757,7 @@ fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut V
 // ── SB5011: Command resolution ─────────────────────────────────
 
 const BUILTINS: &[&str] = &[
-    "echo", "printf", "true", "false", ":", "read", "mapfile",
+    "echo", "true", "false", ":", "read", "mapfile",
     "bless", "getenv", "argv", "trap", "exit", "return",
     "break", "continue", "shift", "set", "unset", "let",
     "test", "[[", "cd", "pwd", "wait", "kill",
@@ -896,8 +896,8 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 fn taint_stmt_no_read_taint(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
+        // read/mapfile from clean pipe source: don't taint
         if name == "read" || name == "mapfile" {
-            // Don't taint, but still check args for existing taint
             check_expr_taint(&c.name, tainted, diags);
             for arg in &c.args {
                 check_expr_taint(arg, tainted, diags);
@@ -906,6 +906,24 @@ fn taint_stmt_no_read_taint(stmt: &Statement, tainted: &mut HashSet<String>, dia
         }
     }
     taint_stmt(stmt, tainted, diags);
+}
+
+/// Check if a pipeline stage is an external source (execs).
+fn is_external_source(stmt: &Statement) -> bool {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            let name = expr_literal_str(&c.name);
+            // Absolute path = external
+            if name.starts_with('/') { return true; }
+            // PATH-resolved non-builtin = external
+            if !name.is_empty() && !BUILTINS.contains(&name) {
+                return true;
+            }
+            false
+        }
+        StmtKind::Redirected(r) => is_external_source(&r.body),
+        _ => false,
+    }
 }
 
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
@@ -1009,11 +1027,16 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             for s in &f.body { taint_stmt(s, &mut fn_tainted, diags); }
         }
         StmtKind::Pipeline(p) => {
-            // In pipelines, read/mapfile receives from sash-controlled code
-            // Don't taint pipeline-internal reads
+            // Pipeline taint: check if the first stage is an external command.
+            // If so, subsequent read/mapfile stages receive tainted data.
+            let first_is_external = if let Some(first) = p.commands.first() {
+                is_external_source(first)
+            } else {
+                false
+            };
             for (i, s) in p.commands.iter().enumerate() {
-                if i > 0 {
-                    // Non-first stages: read from pipe is clean
+                if i > 0 && !first_is_external {
+                    // Non-first stages with sash-internal source: read is clean
                     taint_stmt_no_read_taint(s, tainted, diags);
                 } else {
                     taint_stmt(s, tainted, diags);
