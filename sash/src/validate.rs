@@ -198,10 +198,12 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
 
     // SB5019: numeric test operators in [[ ]]
+    // SB5023: compile-time regex validation for literal patterns
     if name == "[[" {
         for arg in &c.args {
             if let ExprKind::Test(ref test) = arg.kind {
                 check_numeric_test_ops(test, diags);
+                check_regex_literal(test, span, diags);
             }
         }
     }
@@ -343,6 +345,25 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
             test_references_var(l, var) || test_references_var(r, var)
         }
         TestExpr::Paren(inner) => test_references_var(inner, var),
+    }
+}
+
+/// SB5023: validate literal regex patterns at compile time
+fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    if let TestExpr::Binary { op, right, .. } = test {
+        if op == "=~" {
+            // Only validate literal patterns (no variable interpolation)
+            if let ExprKind::Literal(pattern) = &right.kind {
+                if !pattern.contains('$') {
+                    if let Err(msg) = crate::regex_validate::validate_regex(pattern) {
+                        diags.push(Diagnostic::error_at(
+                            span.line, span.col, "SB5023",
+                            format!("invalid regex pattern: {}", msg),
+                        ));
+                    }
+                }
+            }
+        }
     }
 }
 
