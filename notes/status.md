@@ -5,51 +5,49 @@ modified: 2026-05-24
 
 ## Current branch: hand-parser
 
-## Spec status: 274 passing / 7 failing (spec.db)
+## Spec status: 253 passing / 29 failing (spec.db)
 
-### Session 2026-05-24 — completed
+### Session 2026-05-24 (continued) — tree-sitter removal
 
-**Postmortem review of parser migration decisions**
-- Reviewed all 7 decisions made during the parser migration session
-- Added addenda to notes/parser-migration-postmortem.md
-- Created notes/dd-candidates.md for compound-command redirect question
+**Tree-sitter dropped from compile path.** Single parser architecture:
+source → hand-written parser → IR → validate → transform → SSA → codegen
 
-**Phase 1: Pratt parser for arithmetic**
-- Structured ArithExpr AST in ir.rs (12 variants, 19 binary ops, 4 unary ops)
-- Separate arithmetic tokenizer + Pratt parser with correct precedence
-- Sexpr detection for DD#58 function calls: (name arg1 arg2)
-- Transform maps ArithExpr → SsaValue directly (no text re-parsing)
-- Eliminated stringify-then-reparse round-trip for mutations
-- Added StmtKind::ArithTest — arithmetic conditions without [[ ]] numeric ops
-  (aligns with SB5019 which rejects -gt/-lt/-eq/-ne in [[ ]])
+**New `validate.rs`** (IR-walking validator, ~530 lines):
+- SB5001: export rejected
+- SB5017/5018: rejected vars + bare env vars
+- SB5019: numeric test operators in [[ ]]
+- SB5006: restricted globs (**, ?, [...] in unquoted position)
+- SB4001: dynamic execution (eval, source, coproc)
+- SB5007: arithmetic mutation in conditions + bare comparisons
+- SB5009: IFS assignment
+- SB5020: taint tracking (getenv, argv, read, external commands)
 
-**Phase 2: Restore Tok::Dash with adjacency**
-- Scanner emits Tok::Dash when '-' followed by whitespace/terminator
-- Adjacent '-n', '-f' stay as Word("-n") via scan_word
-- Parser uses Tok::Dash for suppression prefix
-- Arithmetic subtraction handled by arithmetic tokenizer (ATok::Minus)
+**Taint system** — simple forward-pass:
+- Track tainted variable names in a HashSet
+- Sources: $(getenv), $(argv), read from stdin, /absolute/cmd
+- Clean: user function captures, read from herestring/heredoc,
+  pipeline-internal reads
+- bless removes taint
+- $1-$9 at top level implicitly tainted
 
-**Phase 3: Drop compound-command postfix operators**
-- All postfix operators on compound commands rejected (SB4021–SB4024)
-- Redirects, pipes, &&, ||, & on if/while/for/case/group
-- Sash idiom: wrap in a function for composition
-- Converter task filed for rewrite handling
-
-### Test suite (no unintended regressions)
-- codegen: 185/264 (5 fewer = intentional rejections)
+### Test suite
+- spec: 253/282 (was 274 with tree-sitter, dropped to 223, recovered to 253)
+- codegen: 185/264 (5 intentional rejections from compound redirects)
 - e2e: 97/124
 - oracle: 59/59
-- taint: 38/42
-- spec: 274/281
 
-### Remaining work (phases 4–7)
-- Phase 4: Rewrite 19 validator rules as IR walkers (~1600 lines)
-- Phase 5: Rewrite taint as IR walker (~975→200 lines)
-- Phase 6: Rewire janet + oracle tests to new parser, delete lower/ (3098 lines)
-- Phase 7: Remove tree-sitter dependency entirely
+### Remaining 29 failures
+- 7 pre-existing (21.2, 39.2, 39.5, 39.6, 39.7, 55.11 + one more)
+- 3 spec tests need rewriting (14.4-14.6: expect rejection now)
+- 5 taint edge cases (24.4, 24.10, 24.11, 24.16, 50.1)
+- 4 SB5007 edge cases (31.5, 31.6, 31.8, 31.11)
+- 5 $? rules (55.5, 55.6, 55.15, 55.17a, 55.17b)
+- 3 word-splitting/command-resolution (22.3, 22.11, 23.2, 23.3, 28.1)
+- 1 heredoc cmdsub (5.1)
 
-### 7 spec failures (unchanged)
-- 21.2, 55.11: Suppressed pipeline exit code
-- 39.2, 39.5: Regex mutation `x =~ s/pat/rep/`
-- 39.6, 39.7: Regex in `[[ =~ ]]` validation
-- 58.3: Sexpr arithmetic (nested function calls)
+### Architecture
+- Tree-sitter still in Cargo.toml (for lower/ module used by oracle_tests,
+  and trap handler in transform/cmd_handlers.rs)
+- Old validator/taint/rules modules still exist as source files but are
+  no longer compiled into the binary (removed from lib.rs mod list)
+- validate.rs is the single source of truth for validation
