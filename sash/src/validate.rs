@@ -542,47 +542,85 @@ fn walk_test_expr(t: &TestExpr, f: &mut impl FnMut(&Expr, Span)) {
 
 // ── SB5012: $? availability ───────────────────────────────────
 
-/// Check $? usage: only valid after a non-suppressed command.
+/// $? state machine: undefined → available (after command) → undefined (consumed)
+#[derive(Clone, Copy, PartialEq)]
+enum StatusState {
+    Undefined,
+    Available,
+}
+
+/// Check $? usage across a statement list.
 fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
-    let mut dq_available = false; // $? not available at start
-
+    let mut state = StatusState::Undefined;
     for stmt in stmts {
-        // Check if this statement uses $? in invalid context
-        check_dq_in_stmt(stmt, dq_available, diags);
-
-        // Update state: was this a suppressed command?
-        if is_suppressed(stmt) {
-            dq_available = false; // $? not available after - cmd
-        } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
-            dq_available = true;
-        }
-        // Recurse into compound statements
-        if let StmtKind::Function(f) = &stmt.kind {
-            check_dollar_question(&f.body, diags);
-        }
+        check_dq_stmt(stmt, &mut state, diags);
     }
 }
 
-/// Check $? usage within a single statement, respecting context.
-fn check_dq_in_stmt(stmt: &Statement, dq_available: bool, diags: &mut Vec<Diagnostic>) {
+fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::List(l) => {
-            // In cmd || handler / cmd && handler, $? is available in the right branch
-            // because the left branch IS a preceding command
-            check_dq_in_stmt(&l.left, dq_available, diags);
-            // Right side of || or && always has $? available (left side was a command)
-            check_dq_in_stmt(&l.right, true, diags);
+            // Left side executes normally
+            check_dq_stmt(&l.left, state, diags);
+            // Right side of || / &&: status is available ONLY for the first statement
+            let mut branch_state = StatusState::Available;
+            check_dq_stmt_branch(&l.right, &mut branch_state, diags);
+            // After the List, status is undefined
+            *state = StatusState::Undefined;
+        }
+        StmtKind::Group(g) => {
+            for s in &g.body {
+                check_dq_stmt(s, state, diags);
+            }
+        }
+        StmtKind::Function(f) => {
+            let mut fn_state = StatusState::Undefined;
+            for s in &f.body {
+                check_dq_stmt(s, &mut fn_state, diags);
+            }
+        }
+        StmtKind::If(i) => {
+            for s in &i.condition { check_dq_stmt(s, state, diags); }
+            let mut ts = *state;
+            for s in &i.then_body { check_dq_stmt(s, &mut ts, diags); }
+            for elif in &i.elif_clauses {
+                let mut es = *state;
+                for s in &elif.condition { check_dq_stmt(s, &mut es, diags); }
+                for s in &elif.body { check_dq_stmt(s, &mut es, diags); }
+            }
+            if let Some(ref eb) = i.else_body {
+                let mut es = *state;
+                for s in eb { check_dq_stmt(s, &mut es, diags); }
+            }
+            *state = StatusState::Undefined;
+        }
+        StmtKind::While(w) => {
+            for s in &w.condition { check_dq_stmt(s, state, diags); }
+            let mut bs = *state;
+            for s in &w.body { check_dq_stmt(s, &mut bs, diags); }
+            *state = StatusState::Undefined;
         }
         _ => {
-            if !dq_available {
-                let mut uses = Vec::new();
-                find_dollar_question(stmt, &mut uses);
-                for span in uses {
-                    diags.push(Diagnostic::error_at(
-                        span.line, span.col, "SB5012",
-                        "$? is not available here — no preceding command".to_string(),
-                    ));
+            // Check if this statement uses $?
+            if stmt_uses_status(stmt) {
+                if *state != StatusState::Available {
+                    let mut spans = Vec::new();
+                    find_dollar_question(stmt, &mut spans);
+                    for span in spans {
+                        diags.push(Diagnostic::error_at(
+                            span.line, span.col, "SB5012",
+                            "$? is not available here — no preceding command".to_string(),
+                        ));
+                    }
                 }
+                // Consumed: reset to undefined
+                *state = StatusState::Undefined;
+            }
+            // Update state based on what this statement does
+            if is_suppressed(stmt) {
+                *state = StatusState::Undefined;
+            } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
+                *state = StatusState::Available;
             }
         }
     }
@@ -598,6 +636,18 @@ fn find_dollar_question(stmt: &Statement, spans: &mut Vec<Span>) {
     });
 }
 
+fn stmt_uses_status(stmt: &Statement) -> bool {
+    let mut found = false;
+    walk_exprs_in_stmt(stmt, &mut |expr, _| {
+        if let ExprKind::SimpleExpansion(var) = &expr.kind {
+            if var == "?" {
+                found = true;
+            }
+        }
+    });
+    found
+}
+
 fn is_suppressed(stmt: &Statement) -> bool {
     matches!(&stmt.kind, StmtKind::Suppressed(_))
 }
@@ -610,13 +660,38 @@ fn is_command_like(stmt: &Statement) -> bool {
 }
 
 fn is_assignment_from_arith(stmt: &Statement) -> bool {
-    // (( x = ... )) lowers to Assignment with Arithmetic value
     if let StmtKind::Assignment(a) = &stmt.kind {
         matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_))
     } else {
         false
     }
 }
+
+/// In || branches, status is available only for the first statement.
+/// After that, the inherited status is gone.
+fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::Group(g) => {
+            // First statement gets the inherited status
+            // All subsequent statements: status is undefined
+            for (i, s) in g.body.iter().enumerate() {
+                if i == 0 {
+                    check_dq_stmt(s, state, diags);
+                } else {
+                    // After first statement, status from || is consumed
+                    let mut inner = StatusState::Undefined;
+                    check_dq_stmt(s, &mut inner, diags);
+                }
+            }
+            *state = StatusState::Undefined;
+        }
+        _ => {
+            // Single statement branch: normal check
+            check_dq_stmt(stmt, state, diags);
+        }
+    }
+}
+
 
 // ── Taint tracking ──────────────────────────────────────────────────
 
