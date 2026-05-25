@@ -52,7 +52,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // SB5007: arithmetic assignment in condition context
             // (DD#31 comma pattern is handled at the Group level)
             if in_condition {
-                if matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_)) {
+                if matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
                     diags.push(Diagnostic::error_at(
                         stmt.span.line, stmt.span.col, "SB5007",
                         format!("mutation {} = ... not allowed in condition (( )) expression context — use (( )) statement instead", a.name),
@@ -783,7 +783,7 @@ fn is_command_like(stmt: &Statement) -> bool {
 
 fn is_assignment_from_arith(stmt: &Statement) -> bool {
     if let StmtKind::Assignment(a) = &stmt.kind {
-        matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_))
+        matches!(&a.value.kind, ExprKind::Arithmetic(_))
     } else {
         false
     }

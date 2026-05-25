@@ -275,9 +275,6 @@ fn print_expr(out: &mut String, expr: &Expr) {
             print_inline_stmts(out, stmts);
             out.push(')');
         }
-        ExprKind::ArithmeticExpansion(s) => {
-            write!(out, "$(({}))", s).unwrap();
-        }
         ExprKind::Arithmetic(a) => {
             out.push_str("$((");
             print_arith_expr(out, a);

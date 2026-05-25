@@ -243,57 +243,6 @@ pub(super) fn handle_command(
     if name == "trap" {
         return super::cmd_handlers::handle_trap(&name, c, stmt, ssa, state, block);
     }
-    if name == "let" {
-        // let "expr" → evaluate arithmetic, set exit status
-        // Exit status: 0 if result != 0, 1 if result == 0
-        let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-        for arg in &args {
-            // Strip surrounding quotes if present
-            let expr_str = arg.trim_matches('"').trim_matches('\'').to_string();
-
-            // If it's an assignment (e.g. "x=10"), define the variable
-            if let Some(eq_pos) = expr_str.find('=') {
-                let var_name = &expr_str[..eq_pos];
-                let val_str = &expr_str[eq_pos + 1..];
-                if !var_name.is_empty() && var_name.chars().all(|c| c.is_alphanumeric() || c == '_')
-                {
-                    let val_expr = crate::ir::Expr {
-                        kind: ExprKind::ArithmeticExpansion(val_str.to_string()),
-                        span: Span { line: 0, col: 0 },
-                    };
-                    let val = expr_to_value(&val_expr, state);
-                    let val = lift_int_func_calls(val, ssa, state, &mut block);
-                    let target = state.define(var_name);
-                    ssa.block_mut(block)
-                        .insts
-                        .push(SsaInst::Assign { target, value: val });
-                    continue;
-                }
-            }
-
-            let expr = crate::ir::Expr {
-                kind: ExprKind::ArithmeticExpansion(expr_str),
-                span: Span { line: 0, col: 0 },
-            };
-            let val = expr_to_value(&expr, state);
-            let val = lift_int_func_calls(val, ssa, state, &mut block);
-            // We need to evaluate this and set exit status based on result
-            // For now, emit as a command that sets test_result
-            let target = state.define("__let_result");
-            let target_ref = target.clone();
-            ssa.block_mut(block)
-                .insts
-                .push(SsaInst::Assign { target, value: val });
-            // Set exit status: result != 0 → exit 0, result == 0 → exit 1
-            ssa.block_mut(block).insts.push(SsaInst::Command {
-                name: "__let_exit".to_string(),
-                args: vec![SsaValue::Var(target_ref)],
-                redirects: vec![],
-                checked: true,
-            });
-        }
-        return block;
-    }
 
     if name == "unset" {
         return super::cmd_handlers::handle_unset(&name, c, stmt, ssa, state, block);

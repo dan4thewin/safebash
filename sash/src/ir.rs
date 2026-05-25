@@ -279,9 +279,6 @@ pub enum ExprKind {
     /// $((expr)) — structured arithmetic expression
     Arithmetic(Box<ArithExpr>),
 
-    /// $((expr)) — raw text (legacy, used by old lower/ module)
-    ArithmeticExpansion(String),
-
     /// Concatenation of adjacent expressions: "$var"/path
     Concat(Vec<Expr>),
 

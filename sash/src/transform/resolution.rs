@@ -106,12 +106,13 @@ pub(super) fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec
             if let Some(call) = try_parse_sexpr(inner, span, state) {
                 args.push(call);
             } else {
-                // Arithmetic grouping: evaluate as arithmetic expression
-                let e = Expr {
-                    kind: ExprKind::ArithmeticExpansion(inner.to_string()),
-                    span,
-                };
-                args.push(expr_to_value(&e, state));
+                // Arithmetic grouping: parse as structured arithmetic
+                if let Ok(arith) = crate::parse::parse_arith_str(inner, span) {
+                    let e = Expr { kind: ExprKind::Arithmetic(Box::new(arith)), span };
+                    args.push(expr_to_value(&e, state));
+                } else {
+                    args.push(SsaValue::Expr(inner.to_string()));
+                }
             }
         } else {
             // Read until whitespace or paren
@@ -120,12 +121,13 @@ pub(super) fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec
                 i += 1;
             }
             let token = &s[start..i];
-            // Parse as arithmetic expression (number or variable)
-            let e = Expr {
-                kind: ExprKind::ArithmeticExpansion(token.to_string()),
-                span,
-            };
-            args.push(expr_to_value(&e, state));
+            // Parse as structured arithmetic
+            if let Ok(arith) = crate::parse::parse_arith_str(token, span) {
+                let e = Expr { kind: ExprKind::Arithmetic(Box::new(arith)), span };
+                args.push(expr_to_value(&e, state));
+            } else {
+                args.push(SsaValue::Expr(token.to_string()));
+            }
         }
     }
     args

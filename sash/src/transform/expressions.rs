@@ -21,9 +21,6 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
             SsaValue::Var(state.lookup(var))
         }
         ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
-        ExprKind::ArithmeticExpansion(s) => {
-            super::expr_handlers::handle_arithmetic_expansion(s, expr, state)
-        }
         ExprKind::Arithmetic(a) => {
             super::expr_handlers::handle_structured_arithmetic(a, expr, state)
         }
@@ -161,7 +158,7 @@ pub(super) fn expr_to_string(expr: &Expr) -> String {
             s
         }
         ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
-        ExprKind::ArithmeticExpansion(e) => format!("$(({}))", e),
+        ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
         ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
         ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
         ExprKind::Array(elems) => {

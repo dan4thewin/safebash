@@ -92,10 +92,6 @@ fn _expr_uses_args(expr: &Expr) -> bool {
         ExprKind::ParameterExpansion(pe) => {
             pe.name == "#" || pe.name == "@" || pe.name.parse::<u32>().is_ok()
         }
-        ExprKind::ArithmeticExpansion(s) => {
-            // Check if the arithmetic string references $1, $2, etc.
-            s.contains('$')
-        }
         ExprKind::Test(test) => _test_uses_args(test),
         _ => false,
     }
@@ -786,7 +782,6 @@ fn is_int_expr(expr: &Expr, ctx: &EmitCtx) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => ctx.is_int(var),
         ExprKind::Literal(s) => s.chars().all(|c| c.is_ascii_digit()),
-        ExprKind::ArithmeticExpansion(_) => true,
         _ => false,
     }
 }
@@ -901,7 +896,6 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
                 format!("(scan-number {})", emit_expr_inline(expr, ctx))
             }
         }
-        ExprKind::ArithmeticExpansion(_) => emit_expr_inline(expr, ctx),
         _ => format!("(scan-number {})", emit_expr_inline(expr, ctx)),
     }
 }
@@ -957,13 +951,9 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     );
                 }
             }
-            "\"\"".to_string()
-        }
-        ExprKind::ArithmeticExpansion(s) => {
-            format!("(string ({}))", bash_arith_to_janet(s))
+            "\"\"" .to_string()
         }
         ExprKind::Arithmetic(a) => {
-            // Fallback: stringify the structured arith expr for janet
             format!("(string ({}))", arith_expr_to_janet(a))
         }
         ExprKind::Concat(parts) => {
@@ -1199,75 +1189,6 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
 }
 
 /// Convert simple bash arithmetic to Janet.
-fn bash_arith_to_janet(s: &str) -> String {
-    let s = s.trim();
-    // Assignment: x = expr
-    if let Some((left, rest)) = s.split_once('=') {
-        if !left.ends_with('!') && !left.ends_with('<') && !left.ends_with('>') {
-            let var = left.trim();
-            let val = bash_arith_to_janet(rest.trim());
-            return format!("(set {} {})", var, val);
-        }
-    }
-    // Binary operators — check multi-char first
-    if let Some((left, rest)) = s.split_once('%') {
-        return format!(
-            "mod {} {}",
-            bash_arith_operand(left),
-            bash_arith_operand(rest)
-        );
-    }
-    if let Some((left, rest)) = s.split_once('+') {
-        format!(
-            "+ {} {}",
-            bash_arith_operand(left),
-            bash_arith_operand(rest)
-        )
-    } else if let Some((left, rest)) = s.split_once('-') {
-        let left = left.trim();
-        let rest = rest.trim();
-        if left.is_empty() {
-            // Unary minus
-            format!("(- 0 {})", bash_arith_operand(rest))
-        } else {
-            format!(
-                "- {} {}",
-                bash_arith_operand(left),
-                bash_arith_operand(rest)
-            )
-        }
-    } else if let Some((left, rest)) = s.split_once('*') {
-        format!(
-            "* {} {}",
-            bash_arith_operand(left),
-            bash_arith_operand(rest)
-        )
-    } else if let Some((left, rest)) = s.split_once('/') {
-        format!(
-            "div {} {}",
-            bash_arith_operand(left),
-            bash_arith_operand(rest)
-        )
-    } else {
-        bash_arith_operand(s)
-    }
-}
-
-fn bash_arith_operand(s: &str) -> String {
-    let s = s.trim();
-    if s.chars().all(|c| c.is_ascii_digit()) {
-        s.to_string()
-    } else if let Some(name) = s.strip_prefix('$') {
-        if let Ok(n) = name.parse::<u32>() {
-            let idx = n.saturating_sub(1) as usize;
-            format!("(scan-number (or (get _args {}) \"0\"))", idx)
-        } else {
-            format!("(scan-number {})", name)
-        }
-    } else {
-        format!("(scan-number {})", s)
-    }
-}
 
 /// Collect variable names assigned in a statement list.
 fn collect_assigned_vars(stmts: &[Statement], vars: &mut Vec<String>) {
