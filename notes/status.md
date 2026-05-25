@@ -5,49 +5,45 @@ modified: 2026-05-24
 
 ## Current branch: hand-parser
 
-## Spec status: 253 passing / 29 failing (spec.db)
+## Spec status: 267 passing / 15 failing (spec.db)
 
-### Session 2026-05-24 (continued) — tree-sitter removal
+### Session 2026-05-24 — tree-sitter removal complete
 
-**Tree-sitter dropped from compile path.** Single parser architecture:
-source → hand-written parser → IR → validate → transform → SSA → codegen
+**Tree-sitter removed from compile path.** Single parser architecture.
+Validation reimplemented as IR walker in validate.rs (~650 lines).
 
-**New `validate.rs`** (IR-walking validator, ~530 lines):
+**Rules implemented:**
 - SB5001: export rejected
 - SB5017/5018: rejected vars + bare env vars
 - SB5019: numeric test operators in [[ ]]
-- SB5006: restricted globs (**, ?, [...] in unquoted position)
-- SB4001: dynamic execution (eval, source, coproc)
-- SB5007: arithmetic mutation in conditions + bare comparisons
-- SB5009: IFS assignment
+- SB5006: restricted globs (**, ?, [...])
+- SB4001: dynamic execution (eval, source, coproc, command)
+- SB5007: arithmetic mutation in conditions + bare comparisons + prefix ++
+- SB5009: IFS + unquoted for-loop words
+- SB5012: $? status state machine (available/consumed/undefined)
 - SB5020: taint tracking (getenv, argv, read, external commands)
+- SB4021-4024: compound-command postfix operators (in parser)
 
-**Taint system** — simple forward-pass:
-- Track tainted variable names in a HashSet
-- Sources: $(getenv), $(argv), read from stdin, /absolute/cmd
-- Clean: user function captures, read from herestring/heredoc,
-  pipeline-internal reads
+**Taint system** — 140 lines, forward pass with HashSet:
+- Sources: $(getenv), $(argv), /absolute/cmd, read from stdin
+- Clean: user functions, herestring reads, pipeline-internal reads
 - bless removes taint
-- $1-$9 at top level implicitly tainted
+- Subscript/parameter expansion checked
 
-### Test suite
-- spec: 253/282 (was 274 with tree-sitter, dropped to 223, recovered to 253)
-- codegen: 185/264 (5 intentional rejections from compound redirects)
-- e2e: 97/124
-- oracle: 59/59
+**$? state machine** — clean model:
+- Undefined → Available (after non-suppressed command) → Undefined (consumed)
+- || branches: inherited status available only for first statement
 
-### Remaining 29 failures
-- 7 pre-existing (21.2, 39.2, 39.5, 39.6, 39.7, 55.11 + one more)
-- 3 spec tests need rewriting (14.4-14.6: expect rejection now)
-- 5 taint edge cases (24.4, 24.10, 24.11, 24.16, 50.1)
-- 4 SB5007 edge cases (31.5, 31.6, 31.8, 31.11)
-- 5 $? rules (55.5, 55.6, 55.15, 55.17a, 55.17b)
-- 3 word-splitting/command-resolution (22.3, 22.11, 23.2, 23.3, 28.1)
+### 15 remaining failures
+- 6 pre-existing (21.2, 39.2, 39.5, 39.6, 39.7, 55.11)
+- 4 bless-semantics edge cases (24.10, 24.11, 24.16, 50.1)
+- 1 DD question: comma expr in condition (31.11)
+- 1 command resolution (23.2)
 - 1 heredoc cmdsub (5.1)
+- 1 mapfile context (22.11)
+- 1 undefined 'cmd' in spec test (55.17a)
 
 ### Architecture
-- Tree-sitter still in Cargo.toml (for lower/ module used by oracle_tests,
-  and trap handler in transform/cmd_handlers.rs)
-- Old validator/taint/rules modules still exist as source files but are
-  no longer compiled into the binary (removed from lib.rs mod list)
-- validate.rs is the single source of truth for validation
+- validate.rs: ~650 lines (was ~1600 lines tree-sitter rules + 975 lines taint)
+- Tree-sitter still in Cargo.toml for lower/ (oracle tests) and trap handler
+- Old rule/rules/taint/validator .rs files still on disk, not compiled
