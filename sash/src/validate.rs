@@ -18,6 +18,11 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
             validate_stmt(stmt, &mut diags);
         }
     }
+    // SB5012: $? availability
+    check_dollar_question(&program.statements, &mut diags);
+    if let Some(ref end) = program.end_block {
+        check_dollar_question(end, &mut diags);
+    }
     diags
 }
 
@@ -535,6 +540,63 @@ fn walk_test_expr(t: &TestExpr, f: &mut impl FnMut(&Expr, Span)) {
     }
 }
 
+// ── SB5012: $? availability ───────────────────────────────────
+
+/// Check $? usage: only valid after a non-suppressed command.
+fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    let mut dq_available = false; // $? not available at start
+
+    for stmt in stmts {
+        // Check if this statement uses $?
+        let mut uses_dq = Vec::new();
+        find_dollar_question(stmt, &mut uses_dq);
+
+        if !dq_available {
+            for span in &uses_dq {
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5012",
+                    "$? is not available here — no preceding command".to_string(),
+                ));
+            }
+        }
+
+        // Update state: was this a suppressed command?
+        if is_suppressed(stmt) {
+            dq_available = false; // $? not available after - cmd
+        } else if is_command_like(stmt) {
+            dq_available = true;
+        }
+        // Recurse into compound statements
+        match &stmt.kind {
+            StmtKind::Function(f) => {
+                check_dollar_question(&f.body, diags);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn find_dollar_question(stmt: &Statement, spans: &mut Vec<Span>) {
+    walk_exprs_in_stmt(stmt, &mut |expr, _| {
+        if let ExprKind::SimpleExpansion(var) = &expr.kind {
+            if var == "?" {
+                spans.push(expr.span);
+            }
+        }
+    });
+}
+
+fn is_suppressed(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StmtKind::Suppressed(_))
+}
+
+fn is_command_like(stmt: &Statement) -> bool {
+    matches!(&stmt.kind,
+        StmtKind::Command(_) | StmtKind::Pipeline(_)
+        | StmtKind::List(_) | StmtKind::ArithTest(_)
+    )
+}
+
 // ── Taint tracking ──────────────────────────────────────────────────
 
 use std::collections::HashSet;
@@ -756,6 +818,14 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
                 diags.push(Diagnostic::error_at(
                     expr.span.line, expr.span.col, "SB5020",
                     format!("tainted variable ${{{} ...}} used without bless", pe.name),
+                ));
+            }
+        }
+        ExprKind::Subscript { name, .. } => {
+            if tainted.contains(name.as_str()) {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5020",
+                    format!("tainted array ${{{}[...]}} used without bless", name),
                 ));
             }
         }
