@@ -527,3 +527,211 @@ fn walk_test_expr(t: &TestExpr, f: &mut impl FnMut(&Expr, Span)) {
         TestExpr::Paren(inner) => walk_test_expr(inner, f),
     }
 }
+
+// ── Taint tracking ──────────────────────────────────────────────────
+
+use std::collections::HashSet;
+
+/// Run taint analysis: track which variables hold tainted data,
+/// reject any use of tainted variables outside bless expressions.
+pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
+    let mut tainted: HashSet<String> = HashSet::new();
+    let mut diags = Vec::new();
+    for stmt in &program.statements {
+        taint_stmt(stmt, &mut tainted, &mut diags);
+    }
+    if let Some(ref end) = program.end_block {
+        for stmt in end {
+            taint_stmt(stmt, &mut tainted, &mut diags);
+        }
+    }
+    diags
+}
+
+fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) => {
+            // Check if RHS is a taint source
+            if is_taint_source(&a.value) {
+                tainted.insert(a.name.clone());
+            } else if expr_uses_tainted(&a.value, tainted) {
+                // Propagation: y=$x where x is tainted → y tainted
+                tainted.insert(a.name.clone());
+            }
+        }
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments {
+                if is_taint_source(&a.value) {
+                    tainted.insert(a.name.clone());
+                } else if expr_uses_tainted(&a.value, tainted) {
+                    tainted.insert(a.name.clone());
+                }
+            }
+        }
+        StmtKind::Command(c) => {
+            let name = expr_literal_str(&c.name);
+            // read/mapfile produce tainted variables (when reading from stdin/pipe)
+            // But read from herestring (<<<) is clean
+            if name == "read" || name == "mapfile" {
+                // Check if this is inside a Redirected with herestring
+                // For now, mark read as tainted — herestring case handled
+                // by not reaching here (redirected commands are checked via
+                // the Redirected wrapper)
+                for arg in c.args.iter().rev() {
+                    let s = expr_literal_str(arg);
+                    if !s.starts_with('-') && !s.is_empty() {
+                        tainted.insert(s.to_string());
+                        break;
+                    }
+                }
+            } else if name == "bless" {
+                // bless removes taint — first arg is the variable
+                if let Some(arg) = c.args.first() {
+                    let var = expr_literal_str(arg);
+                    if !var.is_empty() {
+                        tainted.remove(var);
+                    }
+                }
+                return; // Don't check args of bless for taint
+            }
+            // Check all command arguments for tainted variable use
+            check_expr_taint(&c.name, tainted, diags);
+            for arg in &c.args {
+                check_expr_taint(arg, tainted, diags);
+            }
+        }
+        StmtKind::If(i) => {
+            for s in &i.condition { taint_stmt(s, tainted, diags); }
+            for s in &i.then_body { taint_stmt(s, tainted, diags); }
+            for elif in &i.elif_clauses {
+                for s in &elif.condition { taint_stmt(s, tainted, diags); }
+                for s in &elif.body { taint_stmt(s, tainted, diags); }
+            }
+            if let Some(ref else_body) = i.else_body {
+                for s in else_body { taint_stmt(s, tainted, diags); }
+            }
+        }
+        StmtKind::While(w) => {
+            for s in &w.condition { taint_stmt(s, tainted, diags); }
+            for s in &w.body { taint_stmt(s, tainted, diags); }
+        }
+        StmtKind::For(f) => {
+            for s in &f.body { taint_stmt(s, tainted, diags); }
+        }
+        StmtKind::Case(c) => {
+            check_expr_taint(&c.value, tainted, diags);
+            for item in &c.items {
+                for s in &item.body { taint_stmt(s, tainted, diags); }
+            }
+        }
+        StmtKind::Function(_) => {
+            // Functions are checked at call site (taint flows through args)
+            // For now, don't recurse into function bodies during top-level taint
+        }
+        StmtKind::Pipeline(p) => {
+            for s in &p.commands { taint_stmt(s, tainted, diags); }
+        }
+        StmtKind::Redirected(r) => {
+            // Check if this is `read x <<< "literal"` — clean read
+            if let StmtKind::Command(c) = &r.body.kind {
+                let name = expr_literal_str(&c.name);
+                if (name == "read" || name == "mapfile")
+                    && r.redirects.iter().any(|rd| matches!(rd.op, crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc))
+                {
+                    // Herestring/heredoc read — don't taint
+                    return;
+                }
+            }
+            taint_stmt(&r.body, tainted, diags);
+        }
+        StmtKind::List(l) => {
+            taint_stmt(&l.left, tainted, diags);
+            taint_stmt(&l.right, tainted, diags);
+        }
+        StmtKind::Group(g) => {
+            for s in &g.body { taint_stmt(s, tainted, diags); }
+        }
+        StmtKind::Subshell(s) => {
+            for st in &s.body { taint_stmt(st, tainted, diags); }
+        }
+        StmtKind::Suppressed(inner) => taint_stmt(inner, tainted, diags),
+        StmtKind::ArithTest(_) | StmtKind::Comment(_) => {}
+    }
+}
+
+/// Check if an expression is a taint source.
+fn is_taint_source(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) => {
+            if let Some(first) = stmts.first() {
+                if let StmtKind::Command(c) = &first.kind {
+                    let name = expr_literal_str(&c.name);
+                    // Explicit taint sources
+                    if name == "getenv" || name == "argv" {
+                        return true;
+                    }
+                    // External commands (absolute path) are taint sources
+                    if name.starts_with('/') {
+                        return true;
+                    }
+                    // Unknown commands that aren't user functions — we can't
+                    // know at this point if it's a user function without
+                    // tracking function definitions. Be conservative: only
+                    // mark as tainted if it's clearly external.
+                    return false;
+                }
+            }
+            false
+        }
+        _ => false,
+    }
+}
+
+/// Check if an expression uses any tainted variable.
+fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
+        ExprKind::ParameterExpansion(pe) => tainted.contains(pe.name.as_str()),
+        ExprKind::DoubleQuoted(parts) => parts.iter().any(|p| expr_uses_tainted(p, tainted)),
+        ExprKind::Concat(parts) => parts.iter().any(|p| expr_uses_tainted(p, tainted)),
+        _ => false,
+    }
+}
+
+/// Check an expression for tainted variable use, emitting diagnostics.
+fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(var) => {
+            if tainted.contains(var.as_str()) {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5020",
+                    format!("tainted variable ${} used without bless", var),
+                ));
+            }
+            // Also check positional params at top level
+            if var.len() == 1 && var.as_bytes()[0].is_ascii_digit() && var != "0" {
+                // $1-$9 at top level are tainted implicitly
+                // (they come from argv)
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5020",
+                    format!("${} is tainted (from argv) — use $(argv {}) and bless", var, var),
+                ));
+            }
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            if tainted.contains(pe.name.as_str()) {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5020",
+                    format!("tainted variable ${{{} ...}} used without bless", pe.name),
+                ));
+            }
+        }
+        ExprKind::DoubleQuoted(parts) => {
+            for p in parts { check_expr_taint(p, tainted, diags); }
+        }
+        ExprKind::Concat(parts) => {
+            for p in parts { check_expr_taint(p, tainted, diags); }
+        }
+        _ => {}
+    }
+}

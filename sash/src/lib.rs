@@ -412,8 +412,10 @@ pub fn cli_main(args: Vec<String>) {
     // as IR walkers. Tree-sitter removed.
     {
         let vdiags = validate::validate(&program);
-        if !vdiags.is_empty() {
-            for d in &vdiags {
+        let mut tdiags = validate::check_taint(&program);
+        tdiags.extend(vdiags);
+        if !tdiags.is_empty() {
+            for d in &tdiags {
                 let prefix = match d.severity {
                     diagnostic::Severity::Error => "error",
                     diagnostic::Severity::Deferred => "deferred",
