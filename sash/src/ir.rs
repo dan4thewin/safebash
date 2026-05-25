@@ -92,6 +92,10 @@ pub enum StmtKind {
 
     /// DD#55: `- cmd` — suppressed command (no implicit exit check)
     Suppressed(Box<Statement>),
+
+    /// (( expr )) used as a condition — arithmetic test.
+    /// Distinct from [[ ]] which is string/file tests only.
+    ArithTest(Box<ArithExpr>),
 }
 
 // ── Individual statement types ────────────────────────────────

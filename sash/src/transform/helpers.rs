@@ -131,6 +131,7 @@ pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shif
         StmtKind::Suppressed(inner) => {
             scan_expr_positionals_stmt(inner, max, shifts);
         }
+        StmtKind::ArithTest(_) => {}
     }
 }
 

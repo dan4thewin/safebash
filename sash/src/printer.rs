@@ -204,6 +204,12 @@ fn print_stmt(out: &mut String, stmt: &Statement, depth: usize) {
             write!(out, "- ").unwrap();
             print_stmt(out, inner, depth);
         }
+        StmtKind::ArithTest(expr) => {
+            indent(out, depth);
+            write!(out, "(( ").unwrap();
+            print_arith_expr(out, expr);
+            writeln!(out, " ))").unwrap();
+        }
     }
 }
 

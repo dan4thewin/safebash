@@ -345,6 +345,10 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
             indent(out, depth);
             writeln!(out, "  nil)").unwrap();
         }
+        StmtKind::ArithTest(expr) => {
+            indent(out, depth);
+            writeln!(out, "(not= 0 ({}))", arith_expr_to_janet(expr)).unwrap();
+        }
     }
 }
 

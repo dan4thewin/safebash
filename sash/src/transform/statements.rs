@@ -214,6 +214,30 @@ pub(super) fn lower_one(
 
         StmtKind::Comment(_) => block,
 
+        StmtKind::ArithTest(expr) => {
+            // (( expr )) as a condition: evaluate arithmetic, set exit
+            // status based on result (0 = true if nonzero, 1 = false if zero)
+            let ir_expr = crate::ir::Expr {
+                kind: crate::ir::ExprKind::Arithmetic(expr.clone()),
+                span: stmt.span,
+            };
+            let val = super::expressions::expr_to_value(&ir_expr, state);
+            let val = super::functions::lift_int_func_calls(val, ssa, state, &mut block);
+            // Emit as a test: compare result != 0
+            let target = state.define("__arith_test");
+            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                target: target.clone(),
+                value: val,
+            });
+            ssa.block_mut(block).insts.push(SsaInst::Command {
+                name: "__let_exit".to_string(),
+                args: vec![SsaValue::Var(target)],
+                redirects: vec![],
+                checked: true,
+            });
+            block
+        }
+
         StmtKind::Suppressed(inner) => {
             // DD#55: lower the inner statement, then mark the last
             // Command/Pipeline instruction as unchecked.

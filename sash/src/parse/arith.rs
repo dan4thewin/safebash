@@ -705,81 +705,9 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
 
 /// Lower a test/comparison arithmetic expression to a Statement.
 fn lower_arith_test_structured(expr: &ArithExpr, span: Span) -> Statement {
-    // For comparisons, emit as [[ $left -OP $right ]] directly
-    if let ArithExpr::BinOp { left, op, right } = expr {
-        let test_op = match op {
-            IrArithOp::Lt => Some("-lt"),
-            IrArithOp::Le => Some("-le"),
-            IrArithOp::Gt => Some("-gt"),
-            IrArithOp::Ge => Some("-ge"),
-            IrArithOp::Eq => Some("-eq"),
-            IrArithOp::Ne => Some("-ne"),
-            _ => None,
-        };
-        if let Some(op_str) = test_op {
-            return Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr { kind: ExprKind::Literal("[[".to_string()), span },
-                    args: vec![Expr {
-                        kind: ExprKind::Test(TestExpr::Binary {
-                            left: Box::new(arith_to_test_operand(left, span)),
-                            op: op_str.to_string(),
-                            right: Box::new(arith_to_test_operand(right, span)),
-                        }),
-                        span,
-                    }],
-                }),
-                span,
-            };
-        }
-    }
-    // Bare expression or non-comparison: [[ $((expr)) -ne 0 ]]
-    let text = arith_expr_to_text(expr);
     Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr { kind: ExprKind::Literal("[[".to_string()), span },
-            args: vec![Expr {
-                kind: ExprKind::Test(TestExpr::Binary {
-                    left: Box::new(Expr {
-                        kind: ExprKind::ArithmeticExpansion(text),
-                        span,
-                    }),
-                    op: "-ne".to_string(),
-                    right: Box::new(Expr {
-                        kind: ExprKind::Literal("0".to_string()),
-                        span,
-                    }),
-                }),
-                span,
-            }],
-        }),
+        kind: StmtKind::ArithTest(Box::new(expr.clone())),
         span,
-    }
-}
-
-/// Convert an ArithExpr to a test operand expression.
-fn arith_to_test_operand(expr: &ArithExpr, span: Span) -> Expr {
-    match expr {
-        ArithExpr::Literal(n) => Expr {
-            kind: ExprKind::Literal(n.to_string()),
-            span,
-        },
-        ArithExpr::Var(name) => Expr {
-            kind: ExprKind::SimpleExpansion(name.clone()),
-            span,
-        },
-        ArithExpr::DollarVar(name) => Expr {
-            kind: ExprKind::SimpleExpansion(name.clone()),
-            span,
-        },
-        _ => {
-            // Complex sub-expression: emit as $((text))
-            let text = arith_expr_to_text(expr);
-            Expr {
-                kind: ExprKind::ArithmeticExpansion(text),
-                span,
-            }
-        }
     }
 }
 

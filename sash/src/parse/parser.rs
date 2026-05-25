@@ -1534,5 +1534,6 @@ fn walk_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
         }
         StmtKind::Comment(_) => {}
         StmtKind::Suppressed(s) => walk_exprs(s, f),
+        StmtKind::ArithTest(_) => {} // ArithExpr has no Expr children
     }
 }
