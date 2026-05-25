@@ -137,9 +137,9 @@ run_sash 'export PATH=/usr/bin'
 run_sash '/usr/bin/env FOO=bar /bin/echo hello'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 53.6
 
-# 42.2 $0 rejected — use $(argv 0)
+# 53.10 $0 rejected — use $(argv 0)
 run_sash 'echo $0'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 42.2
+[[ $rc != 0 && -z $out && -n $err ]]; chk 53.10
 
 # 53.7 $RANDOM rejected
 run_sash 'echo $RANDOM'

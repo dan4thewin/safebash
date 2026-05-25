@@ -124,7 +124,7 @@ tally
 
 # 39.9 backslash literal in unquoted word
 run_sash 'x="\d+"; echo $x'
-[[ $rc = 0 && $out = '\d+' && -z $err ]]; chk 39.9
+[[ $rc = 0 && $out = '\d+' && -z $err ]]; chk 39.11
 
 # 39.10 backslash in regex pattern
 run_sash 'x="abc123"; [[ $x =~ \w+ ]] && echo yes'
