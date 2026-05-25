@@ -22,59 +22,80 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
 }
 
 fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    validate_stmt_ctx(stmt, diags, false);
+}
+
+fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition: bool) {
     match &stmt.kind {
         StmtKind::Command(c) => validate_command(c, stmt.span, diags),
         StmtKind::Declaration(d) => validate_declaration(d, stmt.span, diags),
-        StmtKind::Assignment(a) => validate_assignment(a, stmt.span, diags),
+        StmtKind::Assignment(a) => {
+            validate_assignment(a, stmt.span, diags);
+            // SB5007: arithmetic assignment in condition context
+            if in_condition {
+                if matches!(&a.value.kind, ExprKind::Arithmetic(_) | ExprKind::ArithmeticExpansion(_)) {
+                    diags.push(Diagnostic::error_at(
+                        stmt.span.line, stmt.span.col, "SB5007",
+                        format!("mutation {} = ... not allowed in condition (( )) expression context — use (( )) statement instead", a.name),
+                    ));
+                }
+            }
+        }
         StmtKind::If(i) => {
-            for s in &i.condition { validate_stmt(s, diags); }
-            for s in &i.then_body { validate_stmt(s, diags); }
+            for s in &i.condition { validate_stmt_ctx(s, diags, true); }
+            for s in &i.then_body { validate_stmt_ctx(s, diags, false); }
             for elif in &i.elif_clauses {
-                for s in &elif.condition { validate_stmt(s, diags); }
-                for s in &elif.body { validate_stmt(s, diags); }
+                for s in &elif.condition { validate_stmt_ctx(s, diags, true); }
+                for s in &elif.body { validate_stmt_ctx(s, diags, false); }
             }
             if let Some(ref else_body) = i.else_body {
-                for s in else_body { validate_stmt(s, diags); }
+                for s in else_body { validate_stmt_ctx(s, diags, false); }
             }
         }
         StmtKind::While(w) => {
-            for s in &w.condition { validate_stmt(s, diags); }
-            for s in &w.body { validate_stmt(s, diags); }
+            for s in &w.condition { validate_stmt_ctx(s, diags, true); }
+            for s in &w.body { validate_stmt_ctx(s, diags, false); }
         }
         StmtKind::For(f) => {
             // Check glob patterns in for-loop words
             for w in &f.words {
                 check_unquoted_glob(w, diags);
             }
-            for s in &f.body { validate_stmt(s, diags); }
+            for s in &f.body { validate_stmt_ctx(s, diags, false); }
         }
         StmtKind::Case(c) => {
             for item in &c.items {
-                for s in &item.body { validate_stmt(s, diags); }
+                for s in &item.body { validate_stmt_ctx(s, diags, false); }
             }
         }
         StmtKind::Function(f) => {
-            for s in &f.body { validate_stmt(s, diags); }
+            for s in &f.body { validate_stmt_ctx(s, diags, false); }
         }
         StmtKind::Pipeline(p) => {
-            for s in &p.commands { validate_stmt(s, diags); }
+            for s in &p.commands { validate_stmt_ctx(s, diags, in_condition); }
         }
         StmtKind::Redirected(r) => {
-            validate_stmt(&r.body, diags);
+            validate_stmt_ctx(&r.body, diags, in_condition);
         }
         StmtKind::List(l) => {
-            validate_stmt(&l.left, diags);
-            validate_stmt(&l.right, diags);
+            validate_stmt_ctx(&l.left, diags, in_condition);
+            validate_stmt_ctx(&l.right, diags, in_condition);
         }
         StmtKind::Group(g) => {
-            for s in &g.body { validate_stmt(s, diags); }
+            for s in &g.body { validate_stmt_ctx(s, diags, in_condition); }
         }
         StmtKind::Subshell(s) => {
-            for st in &s.body { validate_stmt(st, diags); }
+            for st in &s.body { validate_stmt_ctx(st, diags, in_condition); }
         }
-        StmtKind::Suppressed(inner) => validate_stmt(inner, diags),
-        StmtKind::ArithTest(_) | StmtKind::Comment(_) => {}
+        StmtKind::Suppressed(inner) => validate_stmt_ctx(inner, diags, in_condition),
+        StmtKind::ArithTest(expr) => {
+            // SB5007: check arithmetic in context
+            validate_arith_context(expr, stmt.span, in_condition, diags);
+        }
+        StmtKind::Comment(_) => {}
     }
+    // SB5007: ArithTest as bare statement (not in condition) is a no-op warning
+    // This is handled separately since we need condition context
     // Validate all expressions in the statement
     walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
 }
@@ -136,8 +157,14 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
     }
 }
 
-fn validate_assignment(_a: &Assignment, _span: Span, _diags: &mut Vec<Diagnostic>) {
-    // Future: taint checks on assignment values
+fn validate_assignment(a: &Assignment, span: Span, diags: &mut Vec<Diagnostic>) {
+    // SB5009: IFS assignment rejected
+    if a.name == "IFS" {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB5009",
+            "IFS does not exist in sash — word splitting is eliminated by design".to_string(),
+        ));
+    }
 }
 
 fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
@@ -253,6 +280,106 @@ fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
         }
         TestExpr::Paren(inner) => check_numeric_test_ops(inner, diags),
         _ => {}
+    }
+}
+
+/// SB5007: validate arithmetic expression in context.
+/// - In condition (if/while): mutations are rejected
+/// - As bare statement: comparisons are rejected (no-op)
+/// - Prefix ++/-- always rejected (use postfix or explicit)
+fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    use crate::parse::{classify_arith_expr, ArithKind};
+
+    // Prefix ++/-- always rejected
+    if let ArithExpr::PreIncDec { var, .. } = expr {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB5007",
+            format!("prefix ++{} is not allowed — use postfix ({}++) or (( {} += 1 )) instead", var, var, var),
+        ));
+        return;
+    }
+
+    let kind = classify_arith_expr(expr);
+    if in_condition {
+        // In condition: mutations rejected
+        if kind == ArithKind::Mutation {
+            let desc = arith_brief(expr);
+            diags.push(Diagnostic::error_at(
+                span.line, span.col, "SB5007",
+                format!("mutation {} not allowed in condition (( )) expression context — use (( )) statement instead", desc),
+            ));
+        }
+    } else {
+        // As bare statement: comparisons rejected (no-op)
+        if kind == ArithKind::Comparison || kind == ArithKind::Test {
+            // Only reject if it's actually a comparison (has comparison op)
+            if kind == ArithKind::Comparison {
+                let desc = arith_brief(expr);
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5007",
+                    format!("comparison {} as bare statement has no effect — use in if/while condition", desc),
+                ));
+            }
+        }
+        // Check for mutations in sub-expressions of statement context
+        check_arith_nested_mutation(expr, span, diags);
+    }
+}
+
+/// Check for nested mutations like `x = y++` in statement arithmetic
+fn check_arith_nested_mutation(expr: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    match expr {
+        ArithExpr::Assign { value, .. } => {
+            // Check if RHS has side effects
+            if has_mutation(value) {
+                let desc = arith_brief(value);
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5007",
+                    format!("mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc),
+                ));
+            }
+        }
+        _ => {}
+    }
+}
+
+fn has_mutation(expr: &ArithExpr) -> bool {
+    match expr {
+        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
+        | ArithExpr::Assign { .. } | ArithExpr::CompoundAssign { .. } => true,
+        ArithExpr::BinOp { left, right, .. } => has_mutation(left) || has_mutation(right),
+        ArithExpr::Paren(inner) => has_mutation(inner),
+        _ => false,
+    }
+}
+
+fn arith_brief(expr: &ArithExpr) -> String {
+    match expr {
+        ArithExpr::Assign { var, .. } => format!("{} = ...", var),
+        ArithExpr::CompoundAssign { var, op, .. } => {
+            let op_s = match op {
+                IrArithOp::Add => "+=", IrArithOp::Sub => "-=",
+                _ => "?=",
+            };
+            format!("{} {}", var, op_s)
+        }
+        ArithExpr::PostIncDec { var, inc } => {
+            format!("{}{}", var, if *inc { "++" } else { "--" })
+        }
+        ArithExpr::PreIncDec { var, inc } => {
+            format!("{}{}", if *inc { "++" } else { "--" }, var)
+        }
+        ArithExpr::BinOp { left, op, right } => {
+            format!("{} {} {}", arith_brief(left), match op {
+                IrArithOp::Gt => ">", IrArithOp::Lt => "<",
+                IrArithOp::Eq => "==", IrArithOp::Ne => "!=",
+                IrArithOp::Ge => ">=", IrArithOp::Le => "<=",
+                _ => "?",
+            }, arith_brief(right))
+        }
+        ArithExpr::Var(name) => name.clone(),
+        ArithExpr::Literal(n) => n.to_string(),
+        _ => "...".to_string(),
     }
 }
 

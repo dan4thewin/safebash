@@ -15,3 +15,4 @@ mod parser;
 mod tests;
 
 pub use parser::parse;
+pub use arith::{classify_arith_expr, ArithKind};
