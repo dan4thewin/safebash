@@ -128,6 +128,26 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
 fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let name = expr_literal_str(&c.name);
 
+    // SB5002: heredocs rejected
+    if name == "__HEREDOC__" {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB5002",
+            "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
+        ));
+        return;
+    }
+    for arg in &c.args {
+        if let ExprKind::Literal(s) = &arg.kind {
+            if s == "__HEREDOC__" {
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5002",
+                    "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
+                ));
+                return;
+            }
+        }
+    }
+
     // SB5001: export rejected
     if name == "export" {
         diags.push(Diagnostic::error_at(
@@ -161,6 +181,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
             "'coproc' is not allowed in sash".to_string(),
         ));
     }
+
 
     // SB5019: numeric test operators in [[ ]]
     if name == "[[" {

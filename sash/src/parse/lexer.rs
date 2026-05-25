@@ -673,11 +673,19 @@ impl Scanner {
                         },
                     }
                 } else if self.starts_with(b"<<") {
-                    // << is heredoc — reject at parse time
-                    // But we still need to tokenize it so the parser can give a good error
+                    // Heredocs are not supported in sash
+                    // Skip to end of line to avoid cascading errors
                     self.pos += 2;
+                    if self.pos < self.source.len() && self.source[self.pos] == b'-' {
+                        self.pos += 1;
+                    }
+                    // Skip delimiter word
+                    while self.pos < self.source.len() && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t') {
+                        self.pos += 1;
+                    }
+                    // Emit as a special word that the validator catches
                     SpannedToken {
-                        token: Tok::Word("<<".to_string()),
+                        token: Tok::Word("__HEREDOC__".to_string()),
                         span: LexSpan {
                             start,
                             end: self.pos,
