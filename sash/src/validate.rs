@@ -57,9 +57,16 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             for s in &w.body { validate_stmt_ctx(s, diags, false); }
         }
         StmtKind::For(f) => {
-            // Check glob patterns in for-loop words
+            // Check glob patterns and unquoted expansions in for-loop words
             for w in &f.words {
                 check_unquoted_glob(w, diags);
+                // SB5009: unquoted $var in for-loop words implies word splitting
+                if let ExprKind::SimpleExpansion(var) = &w.kind {
+                    diags.push(Diagnostic::error_at(
+                        w.span.line, w.span.col, "SB5009",
+                        format!("unquoted ${} in for-loop would word-split — quote it or use an array", var),
+                    ));
+                }
             }
             for s in &f.body { validate_stmt_ctx(s, diags, false); }
         }
@@ -122,10 +129,10 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     }
 
     // SB4001: dynamic execution rejected
-    if name == "eval" || name == "source" || name == "." {
+    if name == "eval" || name == "source" || name == "." || name == "command" {
         diags.push(Diagnostic::error_at(
             span.line, span.col, "SB4001",
-            format!("'{}' is not allowed — dynamic execution is unsafe", name),
+            format!("'{}' is not allowed in sash", name),
         ));
     }
 

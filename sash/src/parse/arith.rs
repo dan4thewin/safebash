@@ -20,6 +20,19 @@ fn arith_error(span: Span, message: String) -> Diagnostic {
 pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let content = collect_arith_content(scanner)?;
     let expr = parse_arith_str(&content, span)?;
+    // SB5007: reject mutations inside $(( ))
+    reject_prefix_incdec(&expr, span)?;
+    if let crate::ir::ArithExpr::Assign { var, .. } | crate::ir::ArithExpr::CompoundAssign { var, .. } = &expr {
+        return Err(arith_error(span, format!(
+            "mutation {} = ... not allowed in $(( )) expression context — use (( )) statement instead", var
+        )));
+    }
+    if let crate::ir::ArithExpr::PostIncDec { var, inc } = &expr {
+        let op = if *inc { "++" } else { "--" };
+        return Err(arith_error(span, format!(
+            "mutation {}{} not allowed in $(( )) expression context — use (( )) statement instead", var, op
+        )));
+    }
     Ok(Expr {
         kind: ExprKind::Arithmetic(Box::new(expr)),
         span,
@@ -30,7 +43,82 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
 /// Returns a structured ArithExpr for the caller to classify and lower.
 pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExpr, Diagnostic> {
     let content = collect_arith_content(scanner)?;
-    parse_arith_str(&content, span)
+    let expr = parse_arith_str(&content, span)?;
+    // SB5007: reject prefix ++/-- at parse time
+    reject_prefix_incdec(&expr, span)?;
+    // SB5007: reject nested mutations (e.g. x = y++)
+    reject_nested_mutation(&expr, span)?;
+    Ok(expr)
+}
+
+/// Reject prefix ++/-- anywhere in an arithmetic expression.
+fn reject_prefix_incdec(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> Result<(), Diagnostic> {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::PreIncDec { var, inc } => {
+            let op = if *inc { "++" } else { "--" };
+            Err(arith_error(span, format!(
+                "prefix {}{} is not allowed — use postfix ({}{}){}",
+                op, var, var, op,
+                if *inc { " or (( " } else { " or (( " }.to_string() + var +
+                if *inc { " += 1 )) instead" } else { " -= 1 )) instead" }
+            )))
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            reject_prefix_incdec(left, span)?;
+            reject_prefix_incdec(right, span)
+        }
+        ArithExpr::Assign { value, .. } => reject_prefix_incdec(value, span),
+        ArithExpr::CompoundAssign { value, .. } => reject_prefix_incdec(value, span),
+        ArithExpr::Comma(exprs) => {
+            for e in exprs { reject_prefix_incdec(e, span)?; }
+            Ok(())
+        }
+        ArithExpr::Paren(inner) => reject_prefix_incdec(inner, span),
+        _ => Ok(()),
+    }
+}
+
+/// Reject nested mutations: e.g. (( x = y++ )) has y++ inside assignment
+fn reject_nested_mutation(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> Result<(), Diagnostic> {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            if has_mutation_inner(value) {
+                let desc = brief_arith(value);
+                return Err(arith_error(span, format!(
+                    "mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc
+                )));
+            }
+            Ok(())
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs { reject_nested_mutation(e, span)?; }
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
+fn has_mutation_inner(expr: &crate::ir::ArithExpr) -> bool {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
+        | ArithExpr::Assign { .. } | ArithExpr::CompoundAssign { .. } => true,
+        ArithExpr::BinOp { left, right, .. } => has_mutation_inner(left) || has_mutation_inner(right),
+        ArithExpr::Paren(inner) => has_mutation_inner(inner),
+        _ => false,
+    }
+}
+
+fn brief_arith(expr: &crate::ir::ArithExpr) -> String {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::PostIncDec { var, inc } => format!("{}{}", var, if *inc { "++" } else { "--" }),
+        ArithExpr::PreIncDec { var, inc } => format!("{}{}", if *inc { "++" } else { "--" }, var),
+        ArithExpr::Assign { var, .. } => format!("{} = ...", var),
+        _ => "...".to_string(),
+    }
 }
 
 /// Parse an arithmetic string (already extracted from delimiters).
