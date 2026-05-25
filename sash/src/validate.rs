@@ -42,6 +42,10 @@ fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
             for s in &w.body { validate_stmt(s, diags); }
         }
         StmtKind::For(f) => {
+            // Check glob patterns in for-loop words
+            for w in &f.words {
+                check_unquoted_glob(w, diags);
+            }
             for s in &f.body { validate_stmt(s, diags); }
         }
         StmtKind::Case(c) => {
@@ -79,22 +83,44 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let name = expr_literal_str(&c.name);
 
     // SB5001: export rejected
-    if name == "export" || name == "declare" {
-        // Check for -x flag
-        if name == "export" {
-            diags.push(Diagnostic::error_at(
-                span.line, span.col, "SB5001",
-                "'export' is not allowed — use int/const/array/map instead".to_string(),
-            ));
-        } else {
-            // declare with -x
-            for arg in &c.args {
-                if expr_literal_str(&arg) == "-x" {
-                    diags.push(Diagnostic::error_at(
-                        span.line, span.col, "SB5001",
-                        "'declare -x' is not allowed — use int/const/array/map instead".to_string(),
-                    ));
-                }
+    if name == "export" {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB5001",
+            "'export' is not allowed — use int/const/array/map instead".to_string(),
+        ));
+    } else if name == "declare" {
+        for arg in &c.args {
+            let s = expr_literal_str(arg);
+            if s == "-x" || s.contains('x') && s.starts_with('-') {
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5001",
+                    "'declare -x' is not allowed — use int/const/array/map instead".to_string(),
+                ));
+            }
+        }
+    }
+
+    // SB4001: dynamic execution rejected
+    if name == "eval" || name == "source" || name == "." {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB4001",
+            format!("'{}' is not allowed — dynamic execution is unsafe", name),
+        ));
+    }
+
+    // Coproc rejected
+    if name == "coproc" {
+        diags.push(Diagnostic::error_at(
+            span.line, span.col, "SB4001",
+            "'coproc' is not allowed in sash".to_string(),
+        ));
+    }
+
+    // SB5019: numeric test operators in [[ ]]
+    if name == "[[" {
+        for arg in &c.args {
+            if let ExprKind::Test(ref test) = arg.kind {
+                check_numeric_test_ops(test, diags);
             }
         }
     }
@@ -118,6 +144,15 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => {
             validate_var_name(var, expr.span, diags);
+        }
+        ExprKind::Literal(s) => {
+            // SB5006: ** globstar is always rejected (even quoted, it's never valid)
+            if s.contains("**") {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5006",
+                    format!("** globstar is not supported in sash — only * is allowed: {}", s),
+                ));
+            }
         }
         _ => {}
     }
@@ -195,6 +230,66 @@ fn expr_literal_str(expr: &Expr) -> &str {
     match &expr.kind {
         ExprKind::Literal(s) => s.as_str(),
         _ => "",
+    }
+}
+
+/// SB5019: reject numeric comparison operators in [[ ]]
+fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match test {
+        TestExpr::Binary { left, op, right: _ } => {
+            const NUMERIC_OPS: &[&str] = &["-gt", "-lt", "-ge", "-le", "-eq", "-ne"];
+            if NUMERIC_OPS.contains(&op.as_str()) {
+                let span = left.span;
+                diags.push(Diagnostic::error_at(
+                    span.line, span.col, "SB5019",
+                    format!("'{}' is a numeric operator — use (( )) for arithmetic comparisons, not [[ ]]", op),
+                ));
+            }
+        }
+        TestExpr::Not(inner) => check_numeric_test_ops(inner, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_numeric_test_ops(l, diags);
+            check_numeric_test_ops(r, diags);
+        }
+        TestExpr::Paren(inner) => check_numeric_test_ops(inner, diags),
+        _ => {}
+    }
+}
+
+/// SB5006: check for ? and [...] glob in unquoted expressions
+fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Literal(s) => {
+            if s.contains('?') {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5006",
+                    format!("? glob is not supported in sash — only * is allowed: {}", s),
+                ));
+            } else if s.contains('[') && s.contains(']') {
+                diags.push(Diagnostic::error_at(
+                    expr.span.line, expr.span.col, "SB5006",
+                    format!("[...] glob is not supported in sash — only * is allowed: {}", s),
+                ));
+            }
+        }
+        ExprKind::Concat(parts) => {
+            for p in parts {
+                if let ExprKind::Literal(s) = &p.kind {
+                    if s.contains('?') {
+                        diags.push(Diagnostic::error_at(
+                            p.span.line, p.span.col, "SB5006",
+                            format!("? glob is not supported in sash — only * is allowed: {}", s),
+                        ));
+                    } else if s.contains('[') && s.contains(']') {
+                        diags.push(Diagnostic::error_at(
+                            p.span.line, p.span.col, "SB5006",
+                            format!("[...] glob is not supported in sash — only * is allowed: {}", s),
+                        ));
+                    }
+                }
+            }
+        }
+        _ => {}
     }
 }
 
