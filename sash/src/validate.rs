@@ -10,6 +10,14 @@ use crate::ir::*;
 /// Returns diagnostics for any violations found.
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
+
+    // Collect declared function names
+    let mut functions = HashSet::new();
+    collect_functions(&program.statements, &mut functions);
+    if let Some(ref end) = program.end_block {
+        collect_functions(end, &mut functions);
+    }
+
     for stmt in &program.statements {
         validate_stmt(stmt, &mut diags);
     }
@@ -17,6 +25,11 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
         for stmt in end {
             validate_stmt(stmt, &mut diags);
         }
+    }
+    // SB5011: command resolution
+    check_commands(&program.statements, &functions, &mut diags);
+    if let Some(ref end) = program.end_block {
+        check_commands(end, &functions, &mut diags);
     }
     // SB5012: $? availability
     check_dollar_question(&program.statements, &mut diags);
@@ -269,6 +282,33 @@ fn expr_literal_str(expr: &Expr) -> &str {
     match &expr.kind {
         ExprKind::Literal(s) => s.as_str(),
         _ => "",
+    }
+}
+
+/// Check if an expression tree references a specific variable name.
+fn expr_references_var(expr: &Expr, var: &str) -> bool {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(v) => v == var,
+        ExprKind::ParameterExpansion(pe) => pe.name == var,
+        ExprKind::DoubleQuoted(parts) => parts.iter().any(|p| expr_references_var(p, var)),
+        ExprKind::Concat(parts) => parts.iter().any(|p| expr_references_var(p, var)),
+        ExprKind::Test(t) => test_references_var(t, var),
+        ExprKind::Subscript { name, .. } => name == var,
+        _ => false,
+    }
+}
+
+fn test_references_var(test: &TestExpr, var: &str) -> bool {
+    match test {
+        TestExpr::Unary { operand, .. } => expr_references_var(operand, var),
+        TestExpr::Binary { left, right, .. } => {
+            expr_references_var(left, var) || expr_references_var(right, var)
+        }
+        TestExpr::Not(inner) => test_references_var(inner, var),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            test_references_var(l, var) || test_references_var(r, var)
+        }
+        TestExpr::Paren(inner) => test_references_var(inner, var),
     }
 }
 
@@ -693,6 +733,119 @@ fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut V
 }
 
 
+// ── SB5011: Command resolution ─────────────────────────────────
+
+const BUILTINS: &[&str] = &[
+    "echo", "printf", "true", "false", ":", "read", "mapfile",
+    "bless", "getenv", "argv", "trap", "exit", "return",
+    "break", "continue", "shift", "set", "unset", "let",
+    "test", "[[", "cd", "pwd", "wait", "kill",
+    "declare", "local", "export", "readonly",
+    "signal", "status",
+];
+
+fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Function(f) => {
+                funcs.insert(f.name.clone());
+                // Local functions have __local__ prefix; also register unprefixed
+                if let Some(short) = f.name.strip_prefix("__local__") {
+                    funcs.insert(short.to_string());
+                }
+                // Also collect nested (local) functions
+                collect_functions(&f.body, funcs);
+            }
+            StmtKind::If(i) => {
+                collect_functions(&i.then_body, funcs);
+                for elif in &i.elif_clauses { collect_functions(&elif.body, funcs); }
+                if let Some(ref eb) = i.else_body { collect_functions(eb, funcs); }
+            }
+            StmtKind::While(w) => collect_functions(&w.body, funcs),
+            StmtKind::For(f) => collect_functions(&f.body, funcs),
+            StmtKind::Group(g) => collect_functions(&g.body, funcs),
+            _ => {}
+        }
+    }
+}
+
+fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_cmd_in_stmt(stmt, funcs, diags);
+    }
+}
+
+fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            let name = expr_literal_str(&c.name);
+            if !name.is_empty() && !is_valid_command(name, funcs) {
+                diags.push(Diagnostic::error_at(
+                    stmt.span.line, stmt.span.col, "SB5011",
+                    format!("command '{}' not found — use absolute path or define as function", name),
+                ));
+            }
+        }
+        StmtKind::If(i) => {
+            check_commands(&i.condition, funcs, diags);
+            check_commands(&i.then_body, funcs, diags);
+            for elif in &i.elif_clauses {
+                check_commands(&elif.condition, funcs, diags);
+                check_commands(&elif.body, funcs, diags);
+            }
+            if let Some(ref eb) = i.else_body { check_commands(eb, funcs, diags); }
+        }
+        StmtKind::While(w) => {
+            check_commands(&w.condition, funcs, diags);
+            check_commands(&w.body, funcs, diags);
+        }
+        StmtKind::For(f) => check_commands(&f.body, funcs, diags),
+        StmtKind::Case(c) => {
+            for item in &c.items { check_commands(&item.body, funcs, diags); }
+        }
+        StmtKind::Function(f) => check_commands(&f.body, funcs, diags),
+        StmtKind::Pipeline(p) => {
+            for s in &p.commands { check_cmd_in_stmt(s, funcs, diags); }
+        }
+        StmtKind::Redirected(r) => check_cmd_in_stmt(&r.body, funcs, diags),
+        StmtKind::List(l) => {
+            check_cmd_in_stmt(&l.left, funcs, diags);
+            check_cmd_in_stmt(&l.right, funcs, diags);
+        }
+        StmtKind::Group(g) => check_commands(&g.body, funcs, diags),
+        StmtKind::Subshell(s) => check_commands(&s.body, funcs, diags),
+        StmtKind::Suppressed(inner) => check_cmd_in_stmt(inner, funcs, diags),
+        _ => {}
+    }
+}
+
+fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {
+    // Absolute path: always valid
+    if name.starts_with('/') { return true; }
+    // Builtin
+    if BUILTINS.contains(&name) { return true; }
+    // Declared function
+    if funcs.contains(name) { return true; }
+    // Glob pattern (e.g. /usr/bin/*) — not a command
+    if name.contains('*') { return true; }
+    // PATH-resolvable: check if command exists on system PATH
+    if resolve_on_path(name) { return true; }
+    false
+}
+
+fn resolve_on_path(name: &str) -> bool {
+    // Don't resolve names with special characters
+    if name.contains('/') || name.contains('$') { return false; }
+    let path = std::env::var("PATH").unwrap_or_default();
+    for dir in path.split(':') {
+        let full = format!("{}/{}", dir, name);
+        if std::path::Path::new(&full).exists() {
+            return true;
+        }
+    }
+    false
+}
+
 // ── Taint tracking ──────────────────────────────────────────────────
 
 use std::collections::HashSet;
@@ -701,6 +854,10 @@ use std::collections::HashSet;
 /// reject any use of tainted variables outside bless expressions.
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
+    // $1-$9 at top level are implicitly tainted (from argv)
+    for i in 1..=9 {
+        tainted.insert(i.to_string());
+    }
     let mut diags = Vec::new();
     for stmt in &program.statements {
         taint_stmt(stmt, &mut tainted, &mut diags);
@@ -771,7 +928,23 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
                 if let Some(arg) = c.args.first() {
                     let var = expr_literal_str(arg);
                     if !var.is_empty() {
-                        tainted.remove(var);
+                        // Check that the bless condition references the variable
+                        let condition_args = &c.args[1..];
+                        let mut references_var = false;
+                        for ca in condition_args {
+                            if expr_references_var(ca, var) {
+                                references_var = true;
+                                break;
+                            }
+                        }
+                        if !references_var && !condition_args.is_empty() {
+                            diags.push(Diagnostic::error_at(
+                                stmt.span.line, stmt.span.col, "SB5020",
+                                format!("bless condition must validate ${} — condition doesn't reference the variable", var),
+                            ));
+                        } else {
+                            tainted.remove(var);
+                        }
                     }
                 }
                 return; // Don't check args of bless for taint
@@ -806,9 +979,13 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
                 for s in &item.body { taint_stmt(s, tainted, diags); }
             }
         }
-        StmtKind::Function(_) => {
-            // Functions are checked at call site (taint flows through args)
-            // For now, don't recurse into function bodies during top-level taint
+        StmtKind::Function(f) => {
+            // Function body: $1-$9 are function args (clean), not top-level argv
+            let mut fn_tainted = tainted.clone();
+            for i in 1..=9 {
+                fn_tainted.remove(&i.to_string());
+            }
+            for s in &f.body { taint_stmt(s, &mut fn_tainted, diags); }
         }
         StmtKind::Pipeline(p) => {
             // In pipelines, read/mapfile receives from sash-controlled code
@@ -897,15 +1074,6 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
                 diags.push(Diagnostic::error_at(
                     expr.span.line, expr.span.col, "SB5020",
                     format!("tainted variable ${} used without bless", var),
-                ));
-            }
-            // Also check positional params at top level
-            if var.len() == 1 && var.as_bytes()[0].is_ascii_digit() && var != "0" {
-                // $1-$9 at top level are tainted implicitly
-                // (they come from argv)
-                diags.push(Diagnostic::error_at(
-                    expr.span.line, expr.span.col, "SB5020",
-                    format!("${} is tainted (from argv) — use $(argv {}) and bless", var, var),
                 ));
             }
         }
