@@ -269,6 +269,11 @@ pub(super) fn handle_pipeline(
         let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
         let call = builder.ins().call(wait_ref, &[pid]);
         let status = builder.inst_results(call)[0];
+        // DD#55: suppressed pipeline — skip first stage's exit status
+        // (suppression = "produced no exit status")
+        if i == 0 && !checked {
+            continue;
+        }
         // Update worst: if worst==0 && status!=0, worst=status
         let cur_worst = builder.use_var(worst_var);
         let zero = builder.ins().iconst(I64, 0);
