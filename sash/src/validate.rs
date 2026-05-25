@@ -757,12 +757,29 @@ fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut V
 // ── SB5011: Command resolution ─────────────────────────────────
 
 const BUILTINS: &[&str] = &[
-    "echo", "true", "false", ":", "read", "mapfile",
-    "bless", "getenv", "argv", "trap", "exit", "return",
-    "break", "continue", "shift", "set", "unset", "let",
-    "test", "[[", "cd", "pwd", "wait", "kill",
-    "declare", "local", "export", "readonly",
-    "signal", "status",
+    // Output
+    "echo",
+    // Control flow
+    "true", "false", ":", "exit", "return", "break", "continue",
+    // Input
+    "read", "mapfile",
+    // Taint
+    "bless", "getenv",
+    // Positional/args
+    "argv", "argc", "shift",
+    // Variables
+    "unset",
+    // Test
+    "[[",
+    // Process/signal
+    "trap", "signal", "wait", "kill", "signum",
+    // Filesystem
+    "cd",
+    // Introspection
+    "status", "getpid", "getppid", "getcpid", "getcwd",
+    "epochseconds",
+    // Conversion
+    "dtoi", "itod",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
