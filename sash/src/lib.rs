@@ -16,6 +16,7 @@ pub(crate) mod ssa_printer;
 pub(crate) mod ssa_taint;
 pub(crate) mod transform;
 pub mod type_check;
+pub(crate) mod validate;
 
 /// DD#56: Preprocess END { ... } into fn __sash_end__ { ... }
 /// so tree-sitter parses it as a function definition.
@@ -409,6 +410,22 @@ pub fn cli_main(args: Vec<String>) {
 
     // TODO: Validator rules and taint tracking will be reimplemented
     // as IR walkers. Tree-sitter removed.
+    {
+        let vdiags = validate::validate(&program);
+        if !vdiags.is_empty() {
+            for d in &vdiags {
+                let prefix = match d.severity {
+                    diagnostic::Severity::Error => "error",
+                    diagnostic::Severity::Deferred => "deferred",
+                };
+                eprintln!(
+                    "{}:{}:{}: {} [{}] {}",
+                    input, d.line, d.col, prefix, d.code, d.message
+                );
+            }
+            std::process::exit(1);
+        }
+    }
 
     if flags.contains(&"--ir") {
         let ir = printer::print_program(&program);
