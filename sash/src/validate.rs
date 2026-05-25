@@ -703,16 +703,15 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
         }
         StmtKind::If(i) => {
             for s in &i.condition { check_dq_stmt(s, state, diags); }
-            let mut ts = *state;
-            for s in &i.then_body { check_dq_stmt(s, &mut ts, diags); }
+            // then body: inherited status available for first statement only
+            check_dq_body_branch(&i.then_body, *state, diags);
             for elif in &i.elif_clauses {
                 let mut es = *state;
                 for s in &elif.condition { check_dq_stmt(s, &mut es, diags); }
-                for s in &elif.body { check_dq_stmt(s, &mut es, diags); }
+                check_dq_body_branch(&elif.body, es, diags);
             }
             if let Some(ref eb) = i.else_body {
-                let mut es = *state;
-                for s in eb { check_dq_stmt(s, &mut es, diags); }
+                check_dq_body_branch(eb, *state, diags);
             }
             *state = StatusState::Undefined;
         }
@@ -790,26 +789,31 @@ fn is_assignment_from_arith(stmt: &Statement) -> bool {
 }
 
 /// In || branches, status is available only for the first statement.
+/// In handling branches (||, if/else), inherited status available for first statement only.
 /// After that, the inherited status is gone.
 fn check_dq_stmt_branch(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Group(g) => {
-            // First statement gets the inherited status
-            // All subsequent statements: status is undefined
-            for (i, s) in g.body.iter().enumerate() {
-                if i == 0 {
-                    check_dq_stmt(s, state, diags);
-                } else {
-                    // After first statement, status from || is consumed
-                    let mut inner = StatusState::Undefined;
-                    check_dq_stmt(s, &mut inner, diags);
-                }
-            }
+            check_dq_body_branch(&g.body, *state, diags);
             *state = StatusState::Undefined;
         }
         _ => {
             // Single statement branch: normal check
             check_dq_stmt(stmt, state, diags);
+        }
+    }
+}
+
+/// Apply first-statement-only rule to a body (Vec<Statement>).
+fn check_dq_body_branch(stmts: &[Statement], state: StatusState, diags: &mut Vec<Diagnostic>) {
+    for (i, s) in stmts.iter().enumerate() {
+        if i == 0 {
+            let mut first_state = state;
+            check_dq_stmt(s, &mut first_state, diags);
+        } else {
+            // After first statement, inherited status is consumed
+            let mut inner = StatusState::Undefined;
+            check_dq_stmt(s, &mut inner, diags);
         }
     }
 }
