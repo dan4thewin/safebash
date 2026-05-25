@@ -118,11 +118,56 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
         _ => parse_simple_or_assignment(scanner),
     };
 
-    // Wrap with trailing redirects if present (for compound commands)
+    // Wrap with trailing redirects/pipes/list-ops if present
     match result {
-        Ok(Some(stmt)) => Ok(Some(maybe_wrap_redirects(scanner, stmt)?)),
+        Ok(Some(stmt)) => {
+            // Reject all postfix operators on compound commands.
+            // Sash idiom: wrap in a function for composition.
+            if is_compound(&stmt.kind) {
+                let next = scanner.peek().token.clone();
+                if matches!(next, Tok::Gt | Tok::DblGt | Tok::Lt | Tok::GtAmp
+                    | Tok::LtAmp | Tok::LtGt | Tok::AmpGt | Tok::HereString)
+                {
+                    return Err(parse_error(
+                        stmt.span,
+                        "SB4021",
+                        "redirects on compound commands are not supported — wrap in a function".to_string(),
+                    ));
+                }
+                if matches!(next, Tok::Pipe) {
+                    return Err(parse_error(
+                        stmt.span,
+                        "SB4022",
+                        "pipes on compound commands are not supported — wrap in a function".to_string(),
+                    ));
+                }
+                if matches!(next, Tok::AndAnd | Tok::OrOr) {
+                    return Err(parse_error(
+                        stmt.span,
+                        "SB4023",
+                        "&& / || on compound commands are not supported — wrap in a function".to_string(),
+                    ));
+                }
+                if matches!(next, Tok::Amp) {
+                    return Err(parse_error(
+                        stmt.span,
+                        "SB4024",
+                        "& on compound commands is not supported — wrap in a function".to_string(),
+                    ));
+                }
+                Ok(Some(stmt))
+            } else {
+                Ok(Some(maybe_wrap_redirects(scanner, stmt)?))
+            }
+        }
         other => other,
     }
+}
+
+/// Check if a statement kind is a compound command.
+fn is_compound(kind: &StmtKind) -> bool {
+    matches!(kind, StmtKind::If(_) | StmtKind::While(_) | StmtKind::For(_)
+        | StmtKind::Case(_) | StmtKind::Group(_))
 }
 
 /// Parse a list of statements until a stop token.
