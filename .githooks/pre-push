@@ -1,0 +1,43 @@
+#!/bin/bash
+# safebash pre-push hook.
+#
+# Report-only (printed, never block):
+#   - cargo llvm-cov summary
+#
+# Coverage lives here instead of pre-commit because it takes minutes.
+# Pushing is the latest natural gate before the rest of the world sees
+# the change.
+#
+# Bypass: SKIP_HOOKS=1 git push ...
+#         git push --no-verify ...
+
+set -eu
+
+if [ "${SKIP_HOOKS:-0}" = "1" ]; then
+    echo "pre-push: SKIP_HOOKS=1, skipping all checks" >&2
+    exit 0
+fi
+
+if [ "${SKIP_COVERAGE:-0}" = "1" ]; then
+    echo "pre-push: SKIP_COVERAGE=1, skipping coverage report" >&2
+    exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+gray()  { printf '\033[90m%s\033[0m\n' "$1"; }
+green() { printf '\033[32m%s\033[0m\n' "$1"; }
+
+if ! command -v cargo-llvm-cov >/dev/null 2>&1; then
+    gray "pre-push: cargo-llvm-cov not installed, skipping coverage"
+    exit 0
+fi
+
+gray "pre-push: cargo llvm-cov report (using last run's data)"
+gray "         set SKIP_COVERAGE=1 to skip"
+
+(cd sash && cargo llvm-cov report --release 2>/dev/null | tail -10 | sed 's/^/  /') || \
+    gray "  (no coverage data; run 'mk coverage' to populate)"
+
+green "pre-push: done"

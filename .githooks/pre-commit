@@ -1,0 +1,67 @@
+#!/bin/bash
+# safebash pre-commit hook.
+#
+# Enforced gates (block on failure):
+#   - cargo fmt --check (sash, sash-convert, sash-expand)
+#   - cargo clippy -D warnings (sash, sash-convert)
+#
+# Report-only gates (printed, never block):
+#   - contrib/cyclo.sh --top 10
+#
+# Bypass: SKIP_HOOKS=1 git commit ...     (skips all)
+#         git commit --no-verify ...      (skips all, hard escape)
+#
+# Set SKIP_COMPLEXITY=1 to skip just the report.
+
+set -eu
+
+if [ "${SKIP_HOOKS:-0}" = "1" ]; then
+    echo "pre-commit: SKIP_HOOKS=1, skipping all checks" >&2
+    exit 0
+fi
+
+repo_root="$(git rev-parse --show-toplevel)"
+cd "$repo_root"
+
+red()   { printf '\033[31m%s\033[0m\n' "$1"; }
+green() { printf '\033[32m%s\033[0m\n' "$1"; }
+gray()  { printf '\033[90m%s\033[0m\n' "$1"; }
+
+# --- fmt -------------------------------------------------------------
+gray "pre-commit: cargo fmt --check"
+fmt_failed=0
+for crate in sash sash-convert sash-expand; do
+    if [ -d "$crate" ]; then
+        if ! (cd "$crate" && cargo fmt --check >/dev/null 2>&1); then
+            red "  FAIL: $crate has unformatted code"
+            red "        run: (cd $crate && cargo fmt)"
+            fmt_failed=1
+        fi
+    fi
+done
+[ "$fmt_failed" -eq 0 ] && green "  ok"
+[ "$fmt_failed" -eq 0 ] || exit 1
+
+# --- lint ------------------------------------------------------------
+gray "pre-commit: cargo clippy -D warnings"
+lint_failed=0
+for crate in sash sash-convert; do
+    if [ -d "$crate" ]; then
+        if ! (cd "$crate" && cargo clippy --quiet -- -D warnings 2>&1 | tail -20 >/tmp/.pre-commit-clippy.$$); then
+            red "  FAIL: $crate has clippy warnings"
+            cat /tmp/.pre-commit-clippy.$$ >&2
+            lint_failed=1
+        fi
+        rm -f /tmp/.pre-commit-clippy.$$
+    fi
+done
+[ "$lint_failed" -eq 0 ] && green "  ok"
+[ "$lint_failed" -eq 0 ] || exit 1
+
+# --- complexity (report only) ----------------------------------------
+if [ "${SKIP_COMPLEXITY:-0}" != "1" ] && [ -x contrib/cyclo.sh ]; then
+    gray "pre-commit: complexity report (top 5, report-only)"
+    bash contrib/cyclo.sh sash/src --top 5 2>/dev/null | head -10 | sed 's/^/  /'
+fi
+
+green "pre-commit: all gates green"

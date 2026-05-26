@@ -10,7 +10,7 @@ build:V: $RT/target/release/libsash_rt.a
 $RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
-test:V: build regex-test sash-grep-test
+test:V: build regex-test sash-grep-test status
 	(cd $SASH && cargo test --release)
 	(cd $CONVERT && cargo test --release)
 	(cd sash-expand && cargo test --release)
@@ -51,5 +51,12 @@ coverage:V: build
 
 complexity:V:
 	bash contrib/cyclo.sh sash/src --top 20
+
+status:V:
+	bash contrib/status-update.sh
+
+install-hooks:V:
+	git config core.hooksPath .githooks
+	@echo "git hooks installed (.githooks/). To uninstall: git config --unset core.hooksPath"
 
 check:V: lint test complexity

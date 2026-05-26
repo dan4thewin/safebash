@@ -35,3 +35,5 @@ a.out
 spec/.trace/
 .agent-runs/
 .indexnudge-rust.db
+*.profraw
+notes/tmux-*.log
