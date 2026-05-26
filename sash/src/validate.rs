@@ -560,110 +560,7 @@ fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 
 /// Walk all expressions in a statement, passing each to the callback.
 fn walk_exprs_in_stmt(stmt: &Statement, f: &mut impl FnMut(&Expr, Span)) {
-    match &stmt.kind {
-        StmtKind::Assignment(a) => {
-            walk_expr(&a.value, f);
-            if let Some(ref idx) = a.index { walk_expr(idx, f); }
-        }
-        StmtKind::Declaration(d) => {
-            for a in &d.assignments {
-                walk_expr(&a.value, f);
-            }
-        }
-        StmtKind::Command(c) => {
-            walk_expr(&c.name, f);
-            for arg in &c.args { walk_expr(arg, f); }
-        }
-        StmtKind::If(i) => {
-            for s in &i.condition { walk_exprs_in_stmt(s, f); }
-            for s in &i.then_body { walk_exprs_in_stmt(s, f); }
-            for elif in &i.elif_clauses {
-                for s in &elif.condition { walk_exprs_in_stmt(s, f); }
-                for s in &elif.body { walk_exprs_in_stmt(s, f); }
-            }
-            if let Some(ref else_body) = i.else_body {
-                for s in else_body { walk_exprs_in_stmt(s, f); }
-            }
-        }
-        StmtKind::While(w) => {
-            for s in &w.condition { walk_exprs_in_stmt(s, f); }
-            for s in &w.body { walk_exprs_in_stmt(s, f); }
-        }
-        StmtKind::For(fv) => {
-            for w in &fv.words { walk_expr(w, f); }
-            for s in &fv.body { walk_exprs_in_stmt(s, f); }
-        }
-        StmtKind::Case(c) => {
-            walk_expr(&c.value, f);
-            for item in &c.items {
-                for s in &item.body { walk_exprs_in_stmt(s, f); }
-            }
-        }
-        StmtKind::Function(func) => {
-            for s in &func.body { walk_exprs_in_stmt(s, f); }
-        }
-        StmtKind::Pipeline(p) => {
-            for s in &p.commands { walk_exprs_in_stmt(s, f); }
-        }
-        StmtKind::Redirected(r) => {
-            walk_exprs_in_stmt(&r.body, f);
-        }
-        StmtKind::List(l) => {
-            walk_exprs_in_stmt(&l.left, f);
-            walk_exprs_in_stmt(&l.right, f);
-        }
-        StmtKind::Group(g) => {
-            for s in &g.body { walk_exprs_in_stmt(s, f); }
-        }
-        StmtKind::Subshell(s) => {
-            for st in &s.body { walk_exprs_in_stmt(st, f); }
-        }
-        StmtKind::Suppressed(inner) => walk_exprs_in_stmt(inner, f),
-        StmtKind::ArithTest(_) | StmtKind::Comment(_) => {}
-    }
-}
-
-fn walk_expr(expr: &Expr, f: &mut impl FnMut(&Expr, Span)) {
-    f(expr, expr.span);
-    match &expr.kind {
-        ExprKind::DoubleQuoted(parts) => {
-            for p in parts { walk_expr(p, f); }
-        }
-        ExprKind::Concat(parts) => {
-            for p in parts { walk_expr(p, f); }
-        }
-        ExprKind::Array(elems) => {
-            for e in elems { walk_expr(e, f); }
-        }
-        ExprKind::AssocArray(pairs) => {
-            for (_, v) in pairs { walk_expr(v, f); }
-        }
-        ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts { walk_exprs_in_stmt(s, f); }
-        }
-        ExprKind::ParameterExpansion(pe) => {
-            if let Some(ref operand) = pe.operand { walk_expr(operand, f); }
-        }
-        ExprKind::Test(t) => walk_test_expr(t, f),
-        ExprKind::Subscript { index, .. } => walk_expr(index, f),
-        _ => {}
-    }
-}
-
-fn walk_test_expr(t: &TestExpr, f: &mut impl FnMut(&Expr, Span)) {
-    match t {
-        TestExpr::Unary { operand, .. } => walk_expr(operand, f),
-        TestExpr::Binary { left, right, .. } => {
-            walk_expr(left, f);
-            walk_expr(right, f);
-        }
-        TestExpr::Not(inner) => walk_test_expr(inner, f),
-        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            walk_test_expr(l, f);
-            walk_test_expr(r, f);
-        }
-        TestExpr::Paren(inner) => walk_test_expr(inner, f),
-    }
+    crate::ir::walk_all_exprs(stmt, &mut |expr| f(expr, expr.span));
 }
 
 // ── SB5012: $? availability state machine ─────────────────────
@@ -905,36 +802,11 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
                 ));
             }
         }
-        StmtKind::If(i) => {
-            check_commands(&i.condition, funcs, diags);
-            check_commands(&i.then_body, funcs, diags);
-            for elif in &i.elif_clauses {
-                check_commands(&elif.condition, funcs, diags);
-                check_commands(&elif.body, funcs, diags);
+        _ => {
+            for body in stmt.child_bodies() {
+                check_commands(body, funcs, diags);
             }
-            if let Some(ref eb) = i.else_body { check_commands(eb, funcs, diags); }
         }
-        StmtKind::While(w) => {
-            check_commands(&w.condition, funcs, diags);
-            check_commands(&w.body, funcs, diags);
-        }
-        StmtKind::For(f) => check_commands(&f.body, funcs, diags),
-        StmtKind::Case(c) => {
-            for item in &c.items { check_commands(&item.body, funcs, diags); }
-        }
-        StmtKind::Function(f) => check_commands(&f.body, funcs, diags),
-        StmtKind::Pipeline(p) => {
-            for s in &p.commands { check_cmd_in_stmt(s, funcs, diags); }
-        }
-        StmtKind::Redirected(r) => check_cmd_in_stmt(&r.body, funcs, diags),
-        StmtKind::List(l) => {
-            check_cmd_in_stmt(&l.left, funcs, diags);
-            check_cmd_in_stmt(&l.right, funcs, diags);
-        }
-        StmtKind::Group(g) => check_commands(&g.body, funcs, diags),
-        StmtKind::Subshell(s) => check_commands(&s.body, funcs, diags),
-        StmtKind::Suppressed(inner) => check_cmd_in_stmt(inner, funcs, diags),
-        _ => {}
     }
 }
 
@@ -1041,11 +913,9 @@ fn is_external_source(stmt: &Statement) -> bool {
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
-            // Check if RHS is a taint source
             if is_taint_source(&a.value) {
                 tainted.insert(a.name.clone());
             } else if expr_uses_tainted(&a.value, tainted) {
-                // Propagation: y=$x where x is tainted → y tainted
                 tainted.insert(a.name.clone());
             }
         }
@@ -1058,77 +928,7 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
                 }
             }
         }
-        StmtKind::Command(c) => {
-            let name = expr_literal_str(&c.name);
-            // read/mapfile produce tainted variables (when reading from stdin/pipe)
-            // But read from herestring (<<<) is clean
-            if name == "read" || name == "mapfile" {
-                // Check if this is inside a Redirected with herestring
-                // For now, mark read as tainted — herestring case handled
-                // by not reaching here (redirected commands are checked via
-                // the Redirected wrapper)
-                for arg in c.args.iter().rev() {
-                    let s = expr_literal_str(arg);
-                    if !s.starts_with('-') && !s.is_empty() {
-                        tainted.insert(s.to_string());
-                        break;
-                    }
-                }
-            } else if name == "bless" {
-                // bless removes taint — first arg is the variable
-                if let Some(arg) = c.args.first() {
-                    let var = expr_literal_str(arg);
-                    if !var.is_empty() {
-                        // Check that the bless condition references the variable
-                        let condition_args = &c.args[1..];
-                        let mut references_var = false;
-                        for ca in condition_args {
-                            if expr_references_var(ca, var) {
-                                references_var = true;
-                                break;
-                            }
-                        }
-                        if !references_var && !condition_args.is_empty() {
-                            diags.push(Diagnostic::error_span(stmt.span, "SB5020",
-                                format!("bless condition must validate ${} — condition doesn't reference the variable", var),
-                            ));
-                        } else {
-                            tainted.remove(var);
-                        }
-                    }
-                }
-                return; // Don't check args of bless for taint
-            }
-            // Check all command arguments for tainted variable use
-            check_expr_taint(&c.name, tainted, diags);
-            for arg in &c.args {
-                check_expr_taint(arg, tainted, diags);
-            }
-        }
-        StmtKind::If(i) => {
-            for s in &i.condition { taint_stmt(s, tainted, diags); }
-            for s in &i.then_body { taint_stmt(s, tainted, diags); }
-            for elif in &i.elif_clauses {
-                for s in &elif.condition { taint_stmt(s, tainted, diags); }
-                for s in &elif.body { taint_stmt(s, tainted, diags); }
-            }
-            if let Some(ref else_body) = i.else_body {
-                for s in else_body { taint_stmt(s, tainted, diags); }
-            }
-        }
-        StmtKind::While(w) => {
-            for s in &w.condition { taint_stmt(s, tainted, diags); }
-            for s in &w.body { taint_stmt(s, tainted, diags); }
-        }
-        StmtKind::For(f) => {
-            for s in &f.body { taint_stmt(s, tainted, diags); }
-        }
-        StmtKind::Case(c) => {
-            check_expr_taint(&c.value, tainted, diags);
-            for item in &c.items {
-                for s in &item.body { taint_stmt(s, tainted, diags); }
-            }
-        }
+        StmtKind::Command(c) => taint_command(c, stmt.span, tainted, diags),
         StmtKind::Function(f) => {
             // Function body: $1-$9 are function args (clean), not top-level argv
             let mut fn_tainted = tainted.clone();
@@ -1138,16 +938,10 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             for s in &f.body { taint_stmt(s, &mut fn_tainted, diags); }
         }
         StmtKind::Pipeline(p) => {
-            // Pipeline taint: check if the first stage is an external command.
-            // If so, subsequent read/mapfile stages receive tainted data.
-            let first_is_external = if let Some(first) = p.commands.first() {
-                is_external_source(first)
-            } else {
-                false
-            };
+            // Pipeline taint: if first stage is external, subsequent reads are tainted.
+            let first_is_external = p.commands.first().map_or(false, is_external_source);
             for (i, s) in p.commands.iter().enumerate() {
                 if i > 0 && !first_is_external {
-                    // Non-first stages with sash-internal source: read is clean
                     taint_stmt_no_read_taint(s, tainted, diags);
                 } else {
                     taint_stmt(s, tainted, diags);
@@ -1155,30 +949,67 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             }
         }
         StmtKind::Redirected(r) => {
-            // Check if this is `read x <<< "literal"` — clean read
+            // `read x <<< "literal"` — clean read (herestring source is sash code)
             if let StmtKind::Command(c) = &r.body.kind {
                 let name = expr_literal_str(&c.name);
                 if (name == "read" || name == "mapfile")
                     && r.redirects.iter().any(|rd| matches!(rd.op, crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc))
                 {
-                    // Herestring/heredoc read — don't taint
                     return;
                 }
             }
             taint_stmt(&r.body, tainted, diags);
         }
-        StmtKind::List(l) => {
-            taint_stmt(&l.left, tainted, diags);
-            taint_stmt(&l.right, tainted, diags);
+        StmtKind::Case(c) => {
+            check_expr_taint(&c.value, tainted, diags);
+            for item in &c.items {
+                for s in &item.body { taint_stmt(s, tainted, diags); }
+            }
         }
-        StmtKind::Group(g) => {
-            for s in &g.body { taint_stmt(s, tainted, diags); }
+        _ => {
+            for body in stmt.child_bodies() {
+                for s in body { taint_stmt(s, tainted, diags); }
+            }
         }
-        StmtKind::Subshell(s) => {
-            for st in &s.body { taint_stmt(st, tainted, diags); }
+    }
+}
+
+/// Taint analysis for a command statement: read/mapfile/bless + general taint checking.
+fn taint_command(c: &Command, span: Span, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let name = expr_literal_str(&c.name);
+
+    // read/mapfile: mark target variable as tainted
+    if name == "read" || name == "mapfile" {
+        for arg in c.args.iter().rev() {
+            let s = expr_literal_str(arg);
+            if !s.starts_with('-') && !s.is_empty() {
+                tainted.insert(s.to_string());
+                break;
+            }
         }
-        StmtKind::Suppressed(inner) => taint_stmt(inner, tainted, diags),
-        StmtKind::ArithTest(_) | StmtKind::Comment(_) => {}
+    } else if name == "bless" {
+        // bless removes taint — first arg is the variable
+        if let Some(arg) = c.args.first() {
+            let var = expr_literal_str(arg);
+            if !var.is_empty() {
+                let condition_args = &c.args[1..];
+                let references_var = condition_args.iter().any(|ca| expr_references_var(ca, var));
+                if !references_var && !condition_args.is_empty() {
+                    diags.push(Diagnostic::error_span(span, "SB5020",
+                        format!("bless condition must validate ${} — condition doesn't reference the variable", var),
+                    ));
+                } else {
+                    tainted.remove(var);
+                }
+            }
+        }
+        return; // Don't check args of bless for taint
+    }
+
+    // Check all command arguments for tainted variable use
+    check_expr_taint(&c.name, tainted, diags);
+    for arg in &c.args {
+        check_expr_taint(arg, tainted, diags);
     }
 }
 

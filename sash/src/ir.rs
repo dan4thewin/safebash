@@ -59,6 +59,133 @@ impl Statement {
     pub fn true_cmd(span: Span) -> Self {
         Self::command(Expr::literal("true", span), vec![], span)
     }
+
+    /// Return all nested statement bodies (for generic recursion).
+    ///
+    /// This returns slices of child statements — NOT the statement itself.
+    /// Use this as a default recursion mechanism in analyses that only need
+    /// custom handling for specific StmtKind variants.
+    pub fn child_bodies(&self) -> Vec<&[Statement]> {
+        match &self.kind {
+            StmtKind::If(i) => {
+                let mut bodies: Vec<&[Statement]> = vec![&i.condition, &i.then_body];
+                for elif in &i.elif_clauses {
+                    bodies.push(&elif.condition);
+                    bodies.push(&elif.body);
+                }
+                if let Some(ref eb) = i.else_body {
+                    bodies.push(eb);
+                }
+                bodies
+            }
+            StmtKind::While(w) => vec![&w.condition, &w.body],
+            StmtKind::For(f) => vec![&f.body],
+            StmtKind::Case(c) => c.items.iter().map(|item| item.body.as_slice()).collect(),
+            StmtKind::Function(f) => vec![&f.body],
+            StmtKind::Pipeline(p) => vec![&p.commands],
+            StmtKind::Redirected(r) => vec![std::slice::from_ref(r.body.as_ref())],
+            StmtKind::List(l) => vec![
+                std::slice::from_ref(l.left.as_ref()),
+                std::slice::from_ref(l.right.as_ref()),
+            ],
+            StmtKind::Group(g) => vec![&g.body],
+            StmtKind::Subshell(s) => vec![&s.body],
+            StmtKind::Suppressed(inner) => vec![std::slice::from_ref(inner.as_ref())],
+            StmtKind::Assignment(_) | StmtKind::Declaration(_)
+            | StmtKind::Command(_) | StmtKind::Comment(_)
+            | StmtKind::ArithTest(_) => vec![],
+        }
+    }
+
+    /// Visit all expressions directly owned by this statement (non-recursive).
+    ///
+    /// Does NOT descend into child statements — use `child_bodies()` for that.
+    /// Visits: command names/args, assignment values/indices, declaration values,
+    /// for-loop words, case value/patterns, redirect targets.
+    pub fn direct_exprs(&self, f: &mut impl FnMut(&Expr)) {
+        match &self.kind {
+            StmtKind::Assignment(a) => {
+                f(&a.value);
+                if let Some(ref idx) = a.index { f(idx); }
+            }
+            StmtKind::Declaration(d) => {
+                for a in &d.assignments { f(&a.value); }
+            }
+            StmtKind::Command(c) => {
+                f(&c.name);
+                for arg in &c.args { f(arg); }
+            }
+            StmtKind::For(fo) => {
+                for w in &fo.words { f(w); }
+            }
+            StmtKind::Case(c) => {
+                f(&c.value);
+                for item in &c.items {
+                    for p in &item.patterns { f(p); }
+                }
+            }
+            StmtKind::Redirected(r) => {
+                for redir in &r.redirects { f(&redir.target); }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Recursively walk all expressions in a statement tree.
+///
+/// Visits every `Expr` node in the statement and all nested statements.
+/// The callback receives each expression (including sub-expressions
+/// inside DoubleQuoted, Concat, CommandSubstitution, etc.).
+pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
+    stmt.direct_exprs(&mut |expr| walk_expr_tree(expr, f));
+    for body in stmt.child_bodies() {
+        for s in body {
+            walk_all_exprs(s, f);
+        }
+    }
+}
+
+/// Walk an expression tree, visiting the node and all sub-expressions.
+pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
+    f(expr);
+    match &expr.kind {
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            for p in parts { walk_expr_tree(p, f); }
+        }
+        ExprKind::Array(elems) => {
+            for e in elems { walk_expr_tree(e, f); }
+        }
+        ExprKind::AssocArray(pairs) => {
+            for (_, v) in pairs { walk_expr_tree(v, f); }
+        }
+        ExprKind::CommandSubstitution(stmts) => {
+            for s in stmts { walk_all_exprs(s, f); }
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            if let Some(ref operand) = pe.operand { walk_expr_tree(operand, f); }
+        }
+        ExprKind::Test(t) => walk_test_exprs(t, f),
+        ExprKind::Subscript { index, .. } => walk_expr_tree(index, f),
+        _ => {}
+    }
+}
+
+/// Walk expressions inside a TestExpr.
+fn walk_test_exprs(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
+    match t {
+        TestExpr::Unary { operand, .. } => walk_expr_tree(operand, f),
+        TestExpr::Binary { left, right, .. } => {
+            walk_expr_tree(left, f);
+            walk_expr_tree(right, f);
+        }
+        TestExpr::Not(inner) => walk_test_exprs(inner, f),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            walk_test_exprs(l, f);
+            walk_test_exprs(r, f);
+        }
+        TestExpr::Paren(inner) => walk_test_exprs(inner, f),
+    }
 }
 
 /// A complete script — a sequence of statements.
