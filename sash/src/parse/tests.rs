@@ -68,3 +68,173 @@ mod test {
         assert!(matches!(p.statements[0].kind, StmtKind::Pipeline(_)));
     }
 }
+
+// ── Logos prototype equivalence tests ────────────────────────────────
+//
+// These tests are part of r47-decide-logos-vs-handroll (DD pending).
+// For each input, we walk both the hand-rolled scanner and the logos
+// recogniser through the substrings of the source that fall into the
+// logos-eligible subset (i.e., the "structural" tokens), and verify
+// that logos produces the same `Tok` value for every match.
+#[cfg(test)]
+mod logos_equivalence {
+    use crate::parse::logos_tokens::{to_tok, LogosTok};
+    use logos::Logos;
+
+    fn tokens_of(src: &str) -> Vec<(usize, usize, LogosTok)> {
+        let mut lex = LogosTok::lexer(src);
+        let mut out = Vec::new();
+        while let Some(Ok(tok)) = lex.next() {
+            let span = lex.span();
+            out.push((span.start, span.end, tok));
+        }
+        out
+    }
+
+    #[test]
+    fn keywords_recognized() {
+        let src = "if then else elif fi while until do done for in case esac fn function local int const array map bless END";
+        let toks = tokens_of(src);
+        let mut got: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
+        let expected = vec![
+            LogosTok::If,
+            LogosTok::Then,
+            LogosTok::Else,
+            LogosTok::Elif,
+            LogosTok::Fi,
+            LogosTok::While,
+            LogosTok::Until,
+            LogosTok::Do,
+            LogosTok::Done,
+            LogosTok::For,
+            LogosTok::In,
+            LogosTok::Case,
+            LogosTok::Esac,
+            LogosTok::Fn,
+            LogosTok::Function,
+            LogosTok::Local,
+            LogosTok::Int,
+            LogosTok::Const,
+            LogosTok::Array,
+            LogosTok::Map,
+            LogosTok::Bless,
+            LogosTok::End,
+        ];
+        got.retain(|t| !matches!(t, LogosTok::Newline));
+        assert_eq!(got, expected);
+    }
+
+    #[test]
+    fn operators_longest_match() {
+        // `&&` must beat `&`, `||` beats `|`, `>>` beats `>`, etc.
+        let cases = [
+            ("&&", LogosTok::AndAnd),
+            ("&", LogosTok::Amp),
+            ("||", LogosTok::OrOr),
+            ("|", LogosTok::Pipe),
+            (">>", LogosTok::DblGt),
+            (">&", LogosTok::GtAmp),
+            (">", LogosTok::Gt),
+            ("&>", LogosTok::AmpGt),
+            ("((", LogosTok::DblParen),
+            ("))", LogosTok::DblParenClose),
+            ("(", LogosTok::LParen),
+            (")", LogosTok::RParen),
+            ("{", LogosTok::LBrace),
+            ("}", LogosTok::RBrace),
+            ("[[", LogosTok::DblBracketOpen),
+            ("]]", LogosTok::DblBracketClose),
+            (";;&", LogosTok::DblSemiAmp),
+            (";;", LogosTok::DblSemi),
+            (";&", LogosTok::SemiAmp),
+            (";", LogosTok::Semi),
+            ("<<<", LogosTok::HereString),
+            ("+=", LogosTok::PlusAssign),
+            ("!", LogosTok::Bang),
+        ];
+        for (src, want) in cases {
+            let toks = tokens_of(src);
+            assert_eq!(toks.len(), 1, "input {:?} produced {:?}", src, toks);
+            assert_eq!(toks[0].2, want, "input {:?}", src);
+            assert_eq!(toks[0].0, 0);
+            assert_eq!(toks[0].1, src.len());
+        }
+    }
+
+    #[test]
+    fn comment_to_eol() {
+        let src = "# this is a comment\n";
+        let toks = tokens_of(src);
+        assert_eq!(toks.len(), 2);
+        assert_eq!(toks[0].2, LogosTok::Comment);
+        assert_eq!(toks[0].0, 0);
+        assert_eq!(toks[0].1, 19);
+        assert_eq!(toks[1].2, LogosTok::Newline);
+    }
+
+    #[test]
+    fn whitespace_skipped_continuations_swallowed() {
+        // \\<newline> is a line continuation: skipped silently.
+        let src = "if   \\\n then\n";
+        let toks = tokens_of(src);
+        let kinds: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
+        assert_eq!(kinds, vec![LogosTok::If, LogosTok::Then, LogosTok::Newline]);
+    }
+
+    #[test]
+    fn to_tok_maps_all_variants() {
+        // Walk every variant except Comment and verify to_tok returns Some.
+        let all = [
+            LogosTok::If,
+            LogosTok::Then,
+            LogosTok::Else,
+            LogosTok::Elif,
+            LogosTok::Fi,
+            LogosTok::While,
+            LogosTok::Until,
+            LogosTok::Do,
+            LogosTok::Done,
+            LogosTok::For,
+            LogosTok::In,
+            LogosTok::Case,
+            LogosTok::Esac,
+            LogosTok::Fn,
+            LogosTok::Function,
+            LogosTok::Local,
+            LogosTok::Int,
+            LogosTok::Const,
+            LogosTok::Array,
+            LogosTok::Map,
+            LogosTok::Bless,
+            LogosTok::End,
+            LogosTok::AndAnd,
+            LogosTok::OrOr,
+            LogosTok::AmpGt,
+            LogosTok::DblParen,
+            LogosTok::DblParenClose,
+            LogosTok::DblBracketOpen,
+            LogosTok::DblBracketClose,
+            LogosTok::DblSemiAmp,
+            LogosTok::SemiAmp,
+            LogosTok::DblSemi,
+            LogosTok::DblGt,
+            LogosTok::GtAmp,
+            LogosTok::HereString,
+            LogosTok::PlusAssign,
+            LogosTok::Pipe,
+            LogosTok::Amp,
+            LogosTok::Semi,
+            LogosTok::LParen,
+            LogosTok::RParen,
+            LogosTok::LBrace,
+            LogosTok::RBrace,
+            LogosTok::Bang,
+            LogosTok::Gt,
+            LogosTok::Newline,
+        ];
+        for t in all {
+            assert!(to_tok(t).is_some(), "to_tok({:?}) returned None", t);
+        }
+        assert!(to_tok(LogosTok::Comment).is_none());
+    }
+}

@@ -253,8 +253,15 @@ impl Scanner {
 
     // ── Token dispatch ───────────────────────────────────────────────
     //
-    // Main tokenization: dispatch on first byte to produce the next token.
-    // Longest-match: multi-char operators checked before single-char.
+    // Strategy: a small dispatch on the first byte separates the
+    // context-sensitive scan paths (strings, expansions, words,
+    // heredoc detection, dash/punct vs word) from the structural
+    // operators that go through a `logos`-generated DFA. The DFA
+    // handles longest-match for the operator and keyword families
+    // that have no contextual ambiguity (see logos_tokens.rs).
+    //
+    // r47-decide-logos-vs-handroll: kept hand-roll for `<` (heredoc),
+    // `-` (dash vs word), and the punct/word boundary cases.
 
     fn next_token(&mut self) -> SpannedToken {
         self.skip_whitespace();
@@ -270,448 +277,254 @@ impl Scanner {
         let b = self.source[self.pos];
 
         match b {
-            b'\n' => {
-                self.pos += 1;
-                SpannedToken {
-                    token: Tok::Newline,
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
+            // Context-sensitive: stateful scan paths
+            b'$' => self.scan_dollar(start),
+            b'\'' => self.scan_single_quoted(start),
+            b'"' => self.scan_double_quoted(start),
+            b'`' => self.scan_backtick(start),
+            b'<' => self.scan_lt(start),
+            b'-' => self.scan_dash_or_word(start),
+
+            // Word-boundary punctuation
+            b'!' => self.scan_bang_or_neq(start),
+            b'=' => self.scan_eq_punct(start),
+            b'+' => self.scan_plus_or_word(start),
+            b'[' => self.scan_lbracket(start),
+            b']' => self.scan_rbracket(start),
+
+            // Structural operators / comments / newline → logos
+            b'\n' | b'#' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'>' => {
+                self.scan_via_logos(start)
             }
 
-            b'#' => {
-                // Comment — consume until end of line
-                let end = self.source[self.pos..]
-                    .iter()
-                    .position(|&c| c == b'\n')
-                    .map(|p| self.pos + p)
-                    .unwrap_or(self.source.len());
-                let text = String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
+            // Default: word scan (carries keyword promotion)
+            _ => self.scan_word(start),
+        }
+    }
+
+    /// Run the `logos` DFA at the current position and emit the matched
+    /// token. The caller has already established that the first byte is
+    /// one of the "structural" bytes (no contextual ambiguity).
+    fn scan_via_logos(&mut self, start: usize) -> SpannedToken {
+        use super::logos_tokens::{to_tok, LogosTok};
+        use logos::Logos;
+
+        // Logos defaults to &str source; we hold bytes. The slice is
+        // ASCII for every structural-byte dispatch (newline, `#`, `;`,
+        // `|`, `&`, `(`, `)`, `{`, `}`, `>`) but comments may contain
+        // UTF-8 — we accept that by using lossy decoding here. The
+        // matched byte length is what counts; the comment payload is
+        // re-read from the original byte slice below.
+        let bytes_slice = &self.source[self.pos..];
+        let str_slice = match std::str::from_utf8(bytes_slice) {
+            Ok(s) => s,
+            Err(e) => {
+                // Truncate at the first invalid byte so logos sees a
+                // valid prefix. The remainder will be handled by the
+                // next dispatch (likely scan_word).
+                std::str::from_utf8(&bytes_slice[..e.valid_up_to()])
+                    .expect("checked prefix is valid UTF-8")
+            }
+        };
+        let mut lex = LogosTok::lexer(str_slice);
+        match lex.next() {
+            Some(Ok(lt)) => {
+                let len = lex.span().end;
+                let end = self.pos + len;
+                let token = if matches!(lt, LogosTok::Comment) {
+                    let text = String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
+                    Tok::Comment(text)
+                } else {
+                    to_tok(lt).expect("logos token without payload mapping")
+                };
                 self.pos = end;
                 SpannedToken {
-                    token: Tok::Comment(text),
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
+                    token,
+                    span: LexSpan { start, end },
                 }
             }
-
-            b';' => {
-                if self.pos + 2 < self.source.len()
-                    && self.source[self.pos + 1] == b';'
-                    && self.source[self.pos + 2] == b'&'
-                {
-                    self.pos += 3;
-                    SpannedToken {
-                        token: Tok::DblSemiAmp,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'&' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::SemiAmp,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b';' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblSemi,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Semi,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
+            _ => {
+                // Logos didn't match the dispatched byte. Fall back to
+                // word scan so the byte still becomes part of a token.
+                self.scan_word(start)
             }
+        }
+    }
 
-            b'|' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'|' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::OrOr,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Pipe,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
-            }
-
-            b'&' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'&' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::AndAnd,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'>' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::AmpGt,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Amp,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
-            }
-
-            b'(' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblParen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::LParen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
-            }
-
-            b')' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b')' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblParenClose,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::RParen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
-            }
-
-            b'{' => {
+    /// Scan `<<<` (HereString) / `<<` (heredoc sentinel, rejected) /
+    /// `<&` (LtAmp) / `<>` (LtGt) / `<` (Lt).
+    fn scan_lt(&mut self, start: usize) -> SpannedToken {
+        let token = if self.starts_with(b"<<<") {
+            self.pos += 3;
+            Tok::HereString
+        } else if self.starts_with(b"<<") {
+            // Heredocs are not supported in sash. Skip to end of
+            // delimiter word so we emit one sentinel for the validator.
+            self.pos += 2;
+            if self.pos < self.source.len() && self.source[self.pos] == b'-' {
                 self.pos += 1;
-                SpannedToken {
-                    token: Tok::LBrace,
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
             }
-
-            b'}' => {
+            while self.pos < self.source.len()
+                && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t')
+            {
                 self.pos += 1;
-                SpannedToken {
-                    token: Tok::RBrace,
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
             }
+            Tok::Word("__HEREDOC__".to_string())
+        } else if self.starts_with(b"<&") {
+            self.pos += 2;
+            Tok::LtAmp
+        } else if self.starts_with(b"<>") {
+            self.pos += 2;
+            Tok::LtGt
+        } else {
+            self.pos += 1;
+            Tok::Lt
+        };
+        SpannedToken {
+            token,
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
 
-            b'!' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::Word("!=".to_string()),
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Bang,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
+    /// Scan `-` standalone (Dash) vs `-flag` (word).
+    fn scan_dash_or_word(&mut self, start: usize) -> SpannedToken {
+        let next = self.source.get(self.pos + 1).copied().unwrap_or(b' ');
+        let is_terminator = matches!(
+            next,
+            b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b')' | b'}' | b'#'
+        );
+        if is_terminator {
+            self.pos += 1;
+            SpannedToken {
+                token: Tok::Dash,
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
+        } else {
+            self.scan_word(start)
+        }
+    }
 
-            b'<' => {
-                if self.starts_with(b"<<<") {
-                    self.pos += 3;
-                    SpannedToken {
-                        token: Tok::HereString,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.starts_with(b"<<") {
-                    // Heredocs are not supported in sash
-                    // Skip to end of line to avoid cascading errors
-                    self.pos += 2;
-                    if self.pos < self.source.len() && self.source[self.pos] == b'-' {
-                        self.pos += 1;
-                    }
-                    // Skip delimiter word
-                    while self.pos < self.source.len()
-                        && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t')
-                    {
-                        self.pos += 1;
-                    }
-                    // Emit as a special word that the validator catches
-                    SpannedToken {
-                        token: Tok::Word("__HEREDOC__".to_string()),
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.starts_with(b"<&") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::LtAmp,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.starts_with(b"<>") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::LtGt,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Lt,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
+    /// Scan `!` (Bang) vs `!=` (Word).
+    fn scan_bang_or_neq(&mut self, start: usize) -> SpannedToken {
+        if self.source.get(self.pos + 1) == Some(&b'=') {
+            self.pos += 2;
+            SpannedToken {
+                token: Tok::Word("!=".to_string()),
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
-
-            b'>' => {
-                if self.starts_with(b">&") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::GtAmp,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.starts_with(b">>") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblGt,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Gt,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
+        } else {
+            self.pos += 1;
+            SpannedToken {
+                token: Tok::Bang,
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
+        }
+    }
 
-            b'$' => self.scan_dollar(start),
-
-            b'\'' => self.scan_single_quoted(start),
-
-            b'"' => self.scan_double_quoted(start),
-
-            b'`' => {
-                // Backtick — rejected (SB5020)
-                // Consume until matching backtick or EOL for better error
+    /// Scan `=` (Eq) / `==` / `=~` (both Word).
+    fn scan_eq_punct(&mut self, start: usize) -> SpannedToken {
+        let token = match self.source.get(self.pos + 1) {
+            Some(&b'~') => {
+                self.pos += 2;
+                Tok::Word("=~".to_string())
+            }
+            Some(&b'=') => {
+                self.pos += 2;
+                Tok::Word("==".to_string())
+            }
+            _ => {
                 self.pos += 1;
-                while self.pos < self.source.len()
-                    && self.source[self.pos] != b'`'
-                    && self.source[self.pos] != b'\n'
-                {
-                    self.pos += 1;
-                }
-                if self.pos < self.source.len() && self.source[self.pos] == b'`' {
-                    self.pos += 1;
-                }
-                SpannedToken {
-                    token: Tok::Word("`backtick`".to_string()),
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
+                Tok::Eq
             }
+        };
+        SpannedToken {
+            token,
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
 
-            b'[' => {
-                if self.starts_with(b"[[") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblBracketOpen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    // [ is part of a word (array subscripts, case patterns)
-                    self.scan_word(start)
-                }
+    /// Scan `+=` (PlusAssign) vs `+` (word character).
+    fn scan_plus_or_word(&mut self, start: usize) -> SpannedToken {
+        if self.source.get(self.pos + 1) == Some(&b'=') {
+            self.pos += 2;
+            SpannedToken {
+                token: Tok::PlusAssign,
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
+        } else {
+            self.scan_word(start)
+        }
+    }
 
-            b']' => {
-                if self.starts_with(b"]]") {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DblBracketClose,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.scan_word(start)
-                }
+    /// `[[` is an operator, bare `[` is a word character.
+    fn scan_lbracket(&mut self, start: usize) -> SpannedToken {
+        if self.starts_with(b"[[") {
+            self.pos += 2;
+            SpannedToken {
+                token: Tok::DblBracketOpen,
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
+        } else {
+            self.scan_word(start)
+        }
+    }
 
-            b'=' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'~' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::Word("=~".to_string()),
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::Word("==".to_string()),
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Eq,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
+    /// `]]` is an operator, bare `]` is a word character.
+    fn scan_rbracket(&mut self, start: usize) -> SpannedToken {
+        if self.starts_with(b"]]") {
+            self.pos += 2;
+            SpannedToken {
+                token: Tok::DblBracketClose,
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
             }
+        } else {
+            self.scan_word(start)
+        }
+    }
 
-            b'+' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::PlusAssign,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.scan_word(start)
-                }
-            }
-
-            b'-' => {
-                // Standalone dash (followed by whitespace/terminator) → Tok::Dash
-                // Adjacent to alphanumeric (e.g. -n, -f) → part of word
-                let next = if self.pos + 1 < self.source.len() {
-                    self.source[self.pos + 1]
-                } else {
-                    b' ' // EOF counts as whitespace
-                };
-                if next == b' '
-                    || next == b'\t'
-                    || next == b'\n'
-                    || next == b';'
-                    || next == b'|'
-                    || next == b'&'
-                    || next == b')'
-                    || next == b'}'
-                    || next == b'#'
-                {
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::Dash,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    self.scan_word(start)
-                }
-            }
-
-            _ => self.scan_word(start),
+    /// Backticks are rejected (SB5020). Consume until matching backtick
+    /// or end-of-line so error reporting can show the offending span.
+    fn scan_backtick(&mut self, start: usize) -> SpannedToken {
+        self.pos += 1; // opening `
+        while self.pos < self.source.len()
+            && self.source[self.pos] != b'`'
+            && self.source[self.pos] != b'\n'
+        {
+            self.pos += 1;
+        }
+        if self.pos < self.source.len() && self.source[self.pos] == b'`' {
+            self.pos += 1;
+        }
+        SpannedToken {
+            token: Tok::Word("`backtick`".to_string()),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
         }
     }
 

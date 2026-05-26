@@ -5,6 +5,7 @@ kind: decision
 source: opus-47-review
 resolved: 2026-05-26
 resolution: Switch to logos on a new branch. If it goes well, cement in a DD.
+landed: 2026-05-27
 depends: []
 gates:
   - DD or journal entry
@@ -14,10 +15,24 @@ gates:
 > Make a new branch and switch to use logos — if it goes well, then
 > cement it into a DD.
 
-Trial first, formalize second. Tracked in
-[r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots)
-which becomes the implementation task. A new DD (DD#59 or next) lands
-only after the migration is proven on the branch.
+Trial done on branch `logos-lexer`. Outcome: it went well — see
+`DD59-logos-structural-lexer.md`. Logos owns the structural-operator
+subset (newline, `#`-comment, `;` family, `|` family, `&` family,
+`()`/`(())`, `{`/`}`, `>`/`>>`/`>&`). Hand-roll retains the
+value-bearing constructs (`$`, quotes, backtick rejection, `<`
+family incl. heredoc, dash/punct disambiguation, `[[`/`]]`,
+keyword promotion in `scan_word`).
+
+## Measured outcome
+
+- `Scanner::next_token` cyclomatic complexity: 78 → **15**.
+- Dispatch lines in `lexer.rs`: ~440 → ~250.
+- Spec gates: 285/285 unchanged.
+- Cargo lib unit tests: 12/12 (including 5 new `logos_equivalence`
+  tests).
+- Clippy `-D warnings` clean.
+- New module `sash/src/parse/logos_tokens.rs` (~190 lines, mostly
+  declarative enum + `to_tok` shim).
 
 The parser-migration-postmortem (addendum #2) closes with "open
 question: retrofit logos for the fixed-token layer, or accept the

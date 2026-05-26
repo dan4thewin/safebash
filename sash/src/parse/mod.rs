@@ -18,6 +18,7 @@ mod arith;
 mod error;
 mod expr;
 mod lexer;
+mod logos_tokens;
 mod parser;
 mod tests;
 

@@ -1,5 +1,5 @@
 title: Reduce parser-complexity hotspots (CC > 50)
-status: ready
+status: in-progress
 priority: P1
 kind: work
 source: opus-47-review
@@ -20,22 +20,33 @@ branch `logos-lexer` off `hand-parser`. If the migration is clean and
 gates stay green, write a DD capturing the choice (next in sequence
 after DD58).
 
-## Current hotspots
+## Progress (2026-05-27)
 
-`bash contrib/cyclo.sh sash/src --top 10` (2026-05-26):
+`next_token` migration landed. See `DD59-logos-structural-lexer.md`.
+
+- `Scanner::next_token` CC: **78 → 15** (target was ≤50).
+- Spec gates 285/285 unchanged; clippy clean; 12/12 lib unit tests.
+- New `sash/src/parse/logos_tokens.rs` with 5 equivalence tests.
+- Hand-roll boundary documented in the DD.
+
+Top-10 after `next_token` migration:
 
 ```
-88  tokenize_arith                sash/src/parse/arith.rs:295
-78  next_token                    sash/src/parse/lexer.rs:320
+88  tokenize_arith                sash/src/parse/arith.rs:336
 70  intern_literals               sash/src/codegen/setup.rs:735
-69  cli_main                      sash/src/lib.rs:280
-68  scan_double_quoted            sash/src/parse/lexer.rs:953
+69  cli_main                      sash/src/lib.rs:70
+68  scan_double_quoted            sash/src/parse/lexer.rs:727
 63  emit                          sash/src/codegen/dispatch.rs:25
 58  handle_param_expansion        sash/src/codegen/value_handlers.rs:18
 57  lower_one                     sash/src/transform/statements.rs:27
-54  parse_expr                    sash/src/parse/arith.rs:493
+54  parse_expr                    sash/src/parse/arith.rs:630
 54  handle_pipeline               sash/src/transform/stmt_handlers.rs:264
+48  to_tok                        sash/src/parse/logos_tokens.rs:139
 ```
+
+`to_tok` at CC 48 is declarative (one arm per variant), so it
+shouldn't count for review purposes — but flag it on the next pass
+if we ever exceed the threshold by more than a token or two.
 
 ## Targets in this task
 
@@ -45,8 +56,7 @@ the spec/test gates green:
 1. `tokenize_arith` (CC 88) — split the giant `match bytes[i]` by
    character class (numbers, dollar-prefixed, identifiers, operators,
    parens). Sub-helpers per class.
-2. `next_token` (CC 78) — depends on D1. If logos lands, this becomes
-   ~60% smaller automatically. If not, table-driven dispatch.
+2. ~~`next_token` (CC 78)~~ — **done** (DD#59).
 3. `scan_double_quoted` (CC 68) — extract the inner-token switch
    (`$var`, `${...}`, `$(...)`, `$((...))`) into per-form helpers.
 4. `intern_literals` (CC 70) — split by `SsaValue` variant. Today this

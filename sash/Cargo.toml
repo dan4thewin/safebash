@@ -12,6 +12,7 @@ cranelift-object = "0.130"
 object = "0.38"
 target-lexicon = "0.13"
 rustix = { version = "1.1", features = ["process", "runtime", "stdio", "fs"] }
+logos = "0.16"
 
 [build-dependencies]
 cc = "1"
