@@ -11,10 +11,10 @@
 //! The `!` (indirect) and `@X` (transform) operators are flagged for
 //! rejection by the post-parse `check_rejected()` pass in parser.rs.
 
-use crate::ir::*;
-use super::lexer::{Scanner, Tok, StringPart};
 use super::error::parse_error;
+use super::lexer::{Scanner, StringPart, Tok};
 use crate::diagnostic::Diagnostic;
+use crate::ir::*;
 
 // ── Top-level expression parsing ───────────────────────────────────
 
@@ -171,12 +171,28 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                 });
             }
             // Keywords that can appear as literal arguments
-            Tok::If | Tok::Then | Tok::Else | Tok::Elif | Tok::Fi
-            | Tok::While | Tok::Until | Tok::Do | Tok::Done
-            | Tok::For | Tok::In | Tok::Case | Tok::Esac
-            | Tok::Fn | Tok::Function | Tok::Local
-            | Tok::Int | Tok::Const | Tok::Array | Tok::Map
-            | Tok::Bless | Tok::End => {
+            Tok::If
+            | Tok::Then
+            | Tok::Else
+            | Tok::Elif
+            | Tok::Fi
+            | Tok::While
+            | Tok::Until
+            | Tok::Do
+            | Tok::Done
+            | Tok::For
+            | Tok::In
+            | Tok::Case
+            | Tok::Esac
+            | Tok::Fn
+            | Tok::Function
+            | Tok::Local
+            | Tok::Int
+            | Tok::Const
+            | Tok::Array
+            | Tok::Map
+            | Tok::Bless
+            | Tok::End => {
                 let text = keyword_to_str(&tok);
                 scanner.next();
                 parts.push(Expr {
@@ -240,7 +256,12 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner
                                 let idx = &lit[1..close];
                                 let rest = &lit[close + 1..];
                                 if idx == "@" || idx == "*" {
-                                    result.push(Expr::param(name.clone(), Some("arrvals"), None, span));
+                                    result.push(Expr::param(
+                                        name.clone(),
+                                        Some("arrvals"),
+                                        None,
+                                        span,
+                                    ));
                                 } else {
                                     result.push(Expr {
                                         kind: ExprKind::Subscript {
@@ -411,8 +432,11 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     }
 
     // ${var:offset} or ${var:offset:length} — substring
-    if rest.starts_with(':') && !rest.starts_with(":-") && !rest.starts_with(":+")
-        && !rest.starts_with(":=") && !rest.starts_with(":?")
+    if rest.starts_with(':')
+        && !rest.starts_with(":-")
+        && !rest.starts_with(":+")
+        && !rest.starts_with(":=")
+        && !rest.starts_with(":?")
     {
         let sub_content = &rest[1..];
         let first_ch = sub_content.as_bytes().first().copied().unwrap_or(0);
@@ -435,7 +459,12 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     // ${var@X} — parameter transform (rejected SB4015)
     if let Some(at_pos) = rest.rfind('@') {
         let after = &rest[at_pos + 1..];
-        if after.len() == 1 && after.chars().next().is_some_and(|c| c.is_ascii_alphabetic()) {
+        if after.len() == 1
+            && after
+                .chars()
+                .next()
+                .is_some_and(|c| c.is_ascii_alphabetic())
+        {
             if !rest.contains("[@]") && !rest.contains("[@") {
                 return Expr::param(name, Some(&format!("@{}", after)), None, span);
             }
@@ -544,11 +573,17 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
         return (None, None);
     }
 
-    let two_char_ops = &[":-", ":=", ":+", ":?", "##", "%%", "//", "/#", "/%", "^^", ",,"];
+    let two_char_ops = &[
+        ":-", ":=", ":+", ":?", "##", "%%", "//", "/#", "/%", "^^", ",,",
+    ];
     for op in two_char_ops {
         if s.starts_with(op) {
             let rest = &s[op.len()..];
-            let operand = if rest.is_empty() { None } else { Some(rest.to_string()) };
+            let operand = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            };
             return (Some(op.to_string()), operand);
         }
     }
@@ -557,7 +592,11 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     for op in one_char_ops {
         if s.starts_with(op) {
             let rest = &s[op.len()..];
-            let operand = if rest.is_empty() { None } else { Some(rest.to_string()) };
+            let operand = if rest.is_empty() {
+                None
+            } else {
+                Some(rest.to_string())
+            };
             return (Some(op.to_string()), operand);
         }
     }
@@ -628,10 +667,7 @@ pub fn parse_sub_script(content: &str, span: Span) -> Vec<Statement> {
 }
 
 /// Parse a command substitution after the opening $(
-pub fn parse_command_substitution(
-    scanner: &mut Scanner,
-    span: Span,
-) -> Result<Expr, Diagnostic> {
+pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     // Check for $(<file) file slurp
     if matches!(scanner.peek().token, Tok::Lt) {
         scanner.next();
@@ -685,7 +721,15 @@ pub fn parse_command_substitution(
                                 // Reconstruct as command
                                 let mut args = Vec::new();
                                 while !scanner.at_eof()
-                                    && !matches!(scanner.peek().token, Tok::RParen | Tok::Newline | Tok::Semi | Tok::Pipe | Tok::AndAnd | Tok::OrOr)
+                                    && !matches!(
+                                        scanner.peek().token,
+                                        Tok::RParen
+                                            | Tok::Newline
+                                            | Tok::Semi
+                                            | Tok::Pipe
+                                            | Tok::AndAnd
+                                            | Tok::OrOr
+                                    )
                                 {
                                     args.push(parse_expr(scanner)?);
                                 }
@@ -801,7 +845,7 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
                     let next_tok = scanner.peek_n(1).token.clone();
                     if matches!(next_tok, Tok::Eq) {
                         is_assoc = true;
-                        let key = w[1..w.len()-1].to_string();
+                        let key = w[1..w.len() - 1].to_string();
                         scanner.next(); // consume [key]
                         scanner.next(); // consume =
                         let val = parse_expr(scanner)?;

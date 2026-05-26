@@ -83,19 +83,33 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             }
         }
         StmtKind::If(i) => {
-            for s in &i.condition { validate_stmt_ctx(s, diags, true); }
-            for s in &i.then_body { validate_stmt_ctx(s, diags, false); }
+            for s in &i.condition {
+                validate_stmt_ctx(s, diags, true);
+            }
+            for s in &i.then_body {
+                validate_stmt_ctx(s, diags, false);
+            }
             for elif in &i.elif_clauses {
-                for s in &elif.condition { validate_stmt_ctx(s, diags, true); }
-                for s in &elif.body { validate_stmt_ctx(s, diags, false); }
+                for s in &elif.condition {
+                    validate_stmt_ctx(s, diags, true);
+                }
+                for s in &elif.body {
+                    validate_stmt_ctx(s, diags, false);
+                }
             }
             if let Some(ref else_body) = i.else_body {
-                for s in else_body { validate_stmt_ctx(s, diags, false); }
+                for s in else_body {
+                    validate_stmt_ctx(s, diags, false);
+                }
             }
         }
         StmtKind::While(w) => {
-            for s in &w.condition { validate_stmt_ctx(s, diags, true); }
-            for s in &w.body { validate_stmt_ctx(s, diags, false); }
+            for s in &w.condition {
+                validate_stmt_ctx(s, diags, true);
+            }
+            for s in &w.body {
+                validate_stmt_ctx(s, diags, false);
+            }
         }
         StmtKind::For(f) => {
             // Check glob patterns and unquoted expansions in for-loop words
@@ -103,23 +117,36 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
                 check_unquoted_glob(w, diags);
                 // SB5009: unquoted $var in for-loop words implies word splitting
                 if let ExprKind::SimpleExpansion(var) = &w.kind {
-                    diags.push(Diagnostic::error_span(w.span, "SB5009",
-                        format!("unquoted ${} in for-loop would word-split — quote it or use an array", var),
+                    diags.push(Diagnostic::error_span(
+                        w.span,
+                        "SB5009",
+                        format!(
+                            "unquoted ${} in for-loop would word-split — quote it or use an array",
+                            var
+                        ),
                     ));
                 }
             }
-            for s in &f.body { validate_stmt_ctx(s, diags, false); }
+            for s in &f.body {
+                validate_stmt_ctx(s, diags, false);
+            }
         }
         StmtKind::Case(c) => {
             for item in &c.items {
-                for s in &item.body { validate_stmt_ctx(s, diags, false); }
+                for s in &item.body {
+                    validate_stmt_ctx(s, diags, false);
+                }
             }
         }
         StmtKind::Function(f) => {
-            for s in &f.body { validate_stmt_ctx(s, diags, false); }
+            for s in &f.body {
+                validate_stmt_ctx(s, diags, false);
+            }
         }
         StmtKind::Pipeline(p) => {
-            for s in &p.commands { validate_stmt_ctx(s, diags, in_condition); }
+            for s in &p.commands {
+                validate_stmt_ctx(s, diags, in_condition);
+            }
         }
         StmtKind::Redirected(r) => {
             validate_stmt_ctx(&r.body, diags, in_condition);
@@ -132,7 +159,11 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // DD#31: comma expression desugars to Group with mutations then ArithTest.
             // In condition context, if last is ArithTest, earlier stmts are the
             // mutation part — validate them as NOT in condition.
-            if in_condition && g.body.last().map_or(false, |s| matches!(s.kind, StmtKind::ArithTest(_))) {
+            if in_condition
+                && g.body
+                    .last()
+                    .map_or(false, |s| matches!(s.kind, StmtKind::ArithTest(_)))
+            {
                 for (i, s) in g.body.iter().enumerate() {
                     if i == g.body.len() - 1 {
                         validate_stmt_ctx(s, diags, true); // final: condition
@@ -141,11 +172,15 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
                     }
                 }
             } else {
-                for s in &g.body { validate_stmt_ctx(s, diags, in_condition); }
+                for s in &g.body {
+                    validate_stmt_ctx(s, diags, in_condition);
+                }
             }
         }
         StmtKind::Subshell(s) => {
-            for st in &s.body { validate_stmt_ctx(st, diags, in_condition); }
+            for st in &s.body {
+                validate_stmt_ctx(st, diags, in_condition);
+            }
         }
         StmtKind::Suppressed(inner) => validate_stmt_ctx(inner, diags, in_condition),
         StmtKind::ArithTest(expr) => {
@@ -167,8 +202,11 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB5002: heredocs rejected
     if name == "__HEREDOC__" {
-        diags.push(Diagnostic::error_span(span, "SB5002",
-            "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5002",
+            "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables"
+                .to_string(),
         ));
         return;
     }
@@ -185,14 +223,18 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB5001: export rejected
     if name == "export" {
-        diags.push(Diagnostic::error_span(span, "SB5001",
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5001",
             "'export' is not allowed — use int/const/array/map instead".to_string(),
         ));
     } else if name == "declare" {
         for arg in &c.args {
             let s = expr_literal_str(arg);
             if s == "-x" || s.contains('x') && s.starts_with('-') {
-                diags.push(Diagnostic::error_span(span, "SB5001",
+                diags.push(Diagnostic::error_span(
+                    span,
+                    "SB5001",
                     "'declare -x' is not allowed — use int/const/array/map instead".to_string(),
                 ));
             }
@@ -201,18 +243,21 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 
     // SB4001: dynamic execution rejected
     if name == "eval" || name == "source" || name == "." || name == "command" {
-        diags.push(Diagnostic::error_span(span, "SB4001",
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4001",
             format!("'{}' is not allowed in sash", name),
         ));
     }
 
     // Coproc rejected
     if name == "coproc" {
-        diags.push(Diagnostic::error_span(span, "SB4001",
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4001",
             "'coproc' is not allowed in sash".to_string(),
         ));
     }
-
 
     // SB5019: numeric test operators in [[ ]]
     // SB5023: compile-time regex validation for literal patterns
@@ -229,7 +274,9 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
 fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5001: export/declare -x
     if matches!(d.keyword, DeclKeyword::Export) {
-        diags.push(Diagnostic::error_span(span, "SB5001",
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5001",
             "'export' is not allowed — use int/const/array/map instead".to_string(),
         ));
     }
@@ -238,7 +285,9 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
 fn validate_assignment(a: &Assignment, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5009: IFS assignment rejected
     if a.name == "IFS" {
-        diags.push(Diagnostic::error_span(span, "SB5009",
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5009",
             "IFS does not exist in sash — word splitting is eliminated by design".to_string(),
         ));
     }
@@ -252,8 +301,13 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
         ExprKind::Literal(s) => {
             // SB5006: ** globstar is always rejected (even quoted, it's never valid)
             if s.contains("**") {
-                diags.push(Diagnostic::error_span(expr.span, "SB5006",
-                    format!("** globstar is not supported in sash — only * is allowed: {}", s),
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5006",
+                    format!(
+                        "** globstar is not supported in sash — only * is allowed: {}",
+                        s
+                    ),
                 ));
             }
         }
@@ -277,46 +331,69 @@ const REJECTED_VARS: &[(&str, &str)] = &[
     ("MACHTYPE", "$MACHTYPE does not exist in sash"),
     ("OSTYPE", "$OSTYPE does not exist in sash"),
     ("HOSTTYPE", "$HOSTTYPE does not exist in sash"),
-    ("HOSTNAME", "$HOSTNAME does not exist in sash — use $(getenv HOSTNAME)"),
+    (
+        "HOSTNAME",
+        "$HOSTNAME does not exist in sash — use $(getenv HOSTNAME)",
+    ),
     ("SECONDS", "$SECONDS does not exist in sash"),
     ("EPOCHSECONDS", "$EPOCHSECONDS does not exist in sash"),
     ("EPOCHREALTIME", "$EPOCHREALTIME does not exist in sash"),
     ("SRANDOM", "$SRANDOM does not exist in sash"),
-    ("IFS", "IFS does not exist in sash — word splitting is eliminated by design"),
+    (
+        "IFS",
+        "IFS does not exist in sash — word splitting is eliminated by design",
+    ),
 ];
 
-const REJECTED_POSITIONAL: &[(&str, &str)] = &[
-    ("0", "$0 is not available in sash — use $(argv 0)"),
-];
+const REJECTED_POSITIONAL: &[(&str, &str)] =
+    &[("0", "$0 is not available in sash — use $(argv 0)")];
 
 /// SB5018: Bare env vars require $(getenv NAME)
 const ENV_VARS: &[&str] = &[
-    "HOME", "PATH", "USER", "SHELL", "TERM", "LANG", "LC_ALL",
-    "LC_CTYPE", "DISPLAY", "XDG_RUNTIME_DIR", "TMPDIR", "EDITOR",
-    "VISUAL", "PAGER", "LOGNAME", "MAIL", "PWD", "OLDPWD",
+    "HOME",
+    "PATH",
+    "USER",
+    "SHELL",
+    "TERM",
+    "LANG",
+    "LC_ALL",
+    "LC_CTYPE",
+    "DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "TMPDIR",
+    "EDITOR",
+    "VISUAL",
+    "PAGER",
+    "LOGNAME",
+    "MAIL",
+    "PWD",
+    "OLDPWD",
 ];
 
 fn validate_var_name(var: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     // SB5017: Rejected vars
     for (name, msg) in REJECTED_VARS {
         if var == *name {
-            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string(),
-            ));
+            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string()));
             return;
         }
     }
     for (name, msg) in REJECTED_POSITIONAL {
         if var == *name {
-            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string(),
-            ));
+            diags.push(Diagnostic::error_span(span, "SB5017", msg.to_string()));
             return;
         }
     }
     // SB5018: Bare env vars
     for name in ENV_VARS {
         if var == *name {
-            diags.push(Diagnostic::error_span(span, "SB5018",
-                format!("${} is not available directly — use $(getenv {})", name, name),
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5018",
+                format!(
+                    "${} is not available directly — use $(getenv {})",
+                    name, name
+                ),
             ));
             return;
         }
@@ -367,7 +444,9 @@ fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>)
             if let ExprKind::Literal(pattern) = &right.kind {
                 if !pattern.contains('$') {
                     if let Err(msg) = crate::regex_validate::validate_regex(pattern) {
-                        diags.push(Diagnostic::error_span(span, "SB5023",
+                        diags.push(Diagnostic::error_span(
+                            span,
+                            "SB5023",
                             format!("invalid regex pattern: {}", msg),
                         ));
                     }
@@ -408,13 +487,23 @@ fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
 //   - DD#31: comma expressions allowed if non-final=mutation, final=comparison
 
 /// SB5007: validate arithmetic expression in context.
-fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+fn validate_arith_context(
+    expr: &ArithExpr,
+    span: Span,
+    in_condition: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
     use crate::parse::{classify_arith_expr, ArithKind};
 
     // Prefix ++/-- always rejected
     if let ArithExpr::PreIncDec { var, .. } = expr {
-        diags.push(Diagnostic::error_span(span, "SB5007",
-            format!("prefix ++{} is not allowed — use postfix ({}++) or (( {} += 1 )) instead", var, var, var),
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5007",
+            format!(
+                "prefix ++{} is not allowed — use postfix ({}++) or (( {} += 1 )) instead",
+                var, var, var
+            ),
         ));
         return;
     }
@@ -430,7 +519,9 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
                     let k = classify_arith_expr(e);
                     if k != ArithKind::Mutation {
                         let desc = arith_brief(e);
-                        diags.push(Diagnostic::error_span(span, "SB5007",
+                        diags.push(Diagnostic::error_span(
+                            span,
+                            "SB5007",
                             format!("non-final comma expression {} must be a mutation", desc),
                         ));
                     }
@@ -439,8 +530,13 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
                 let last_kind = classify_arith_expr(last);
                 if last_kind == ArithKind::Mutation {
                     let desc = arith_brief(last);
-                    diags.push(Diagnostic::error_span(span, "SB5007",
-                        format!("final comma expression {} must be a comparison in condition context", desc),
+                    diags.push(Diagnostic::error_span(
+                        span,
+                        "SB5007",
+                        format!(
+                            "final comma expression {} must be a comparison in condition context",
+                            desc
+                        ),
                     ));
                 }
             }
@@ -459,8 +555,13 @@ fn validate_arith_context(expr: &ArithExpr, span: Span, in_condition: bool, diag
             // Only reject if it's actually a comparison (has comparison op)
             if kind == ArithKind::Comparison {
                 let desc = arith_brief(expr);
-                diags.push(Diagnostic::error_span(span, "SB5007",
-                    format!("comparison {} as bare statement has no effect — use in if/while condition", desc),
+                diags.push(Diagnostic::error_span(
+                    span,
+                    "SB5007",
+                    format!(
+                        "comparison {} as bare statement has no effect — use in if/while condition",
+                        desc
+                    ),
                 ));
             }
         }
@@ -487,8 +588,10 @@ fn check_arith_nested_mutation(expr: &ArithExpr, span: Span, diags: &mut Vec<Dia
 
 fn has_mutation(expr: &ArithExpr) -> bool {
     match expr {
-        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
-        | ArithExpr::Assign { .. } | ArithExpr::CompoundAssign { .. } => true,
+        ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. }
+        | ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. } => true,
         ArithExpr::BinOp { left, right, .. } => has_mutation(left) || has_mutation(right),
         ArithExpr::Paren(inner) => has_mutation(inner),
         _ => false,
@@ -500,7 +603,8 @@ fn arith_brief(expr: &ArithExpr) -> String {
         ArithExpr::Assign { var, .. } => format!("{} = ...", var),
         ArithExpr::CompoundAssign { var, op, .. } => {
             let op_s = match op {
-                IrArithOp::Add => "+=", IrArithOp::Sub => "-=",
+                IrArithOp::Add => "+=",
+                IrArithOp::Sub => "-=",
                 _ => "?=",
             };
             format!("{} {}", var, op_s)
@@ -512,12 +616,20 @@ fn arith_brief(expr: &ArithExpr) -> String {
             format!("{}{}", if *inc { "++" } else { "--" }, var)
         }
         ArithExpr::BinOp { left, op, right } => {
-            format!("{} {} {}", arith_brief(left), match op {
-                IrArithOp::Gt => ">", IrArithOp::Lt => "<",
-                IrArithOp::Eq => "==", IrArithOp::Ne => "!=",
-                IrArithOp::Ge => ">=", IrArithOp::Le => "<=",
-                _ => "?",
-            }, arith_brief(right))
+            format!(
+                "{} {} {}",
+                arith_brief(left),
+                match op {
+                    IrArithOp::Gt => ">",
+                    IrArithOp::Lt => "<",
+                    IrArithOp::Eq => "==",
+                    IrArithOp::Ne => "!=",
+                    IrArithOp::Ge => ">=",
+                    IrArithOp::Le => "<=",
+                    _ => "?",
+                },
+                arith_brief(right)
+            )
         }
         ArithExpr::Var(name) => name.clone(),
         ArithExpr::Literal(n) => n.to_string(),
@@ -530,12 +642,19 @@ fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
         ExprKind::Literal(s) => {
             if s.contains('?') {
-                diags.push(Diagnostic::error_span(expr.span, "SB5006",
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5006",
                     format!("? glob is not supported in sash — only * is allowed: {}", s),
                 ));
             } else if s.contains('[') && s.contains(']') {
-                diags.push(Diagnostic::error_span(expr.span, "SB5006",
-                    format!("[...] glob is not supported in sash — only * is allowed: {}", s),
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5006",
+                    format!(
+                        "[...] glob is not supported in sash — only * is allowed: {}",
+                        s
+                    ),
                 ));
             }
         }
@@ -543,12 +662,19 @@ fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
             for p in parts {
                 if let ExprKind::Literal(s) = &p.kind {
                     if s.contains('?') {
-                        diags.push(Diagnostic::error_span(p.span, "SB5006",
+                        diags.push(Diagnostic::error_span(
+                            p.span,
+                            "SB5006",
                             format!("? glob is not supported in sash — only * is allowed: {}", s),
                         ));
                     } else if s.contains('[') && s.contains(']') {
-                        diags.push(Diagnostic::error_span(p.span, "SB5006",
-                            format!("[...] glob is not supported in sash — only * is allowed: {}", s),
+                        diags.push(Diagnostic::error_span(
+                            p.span,
+                            "SB5006",
+                            format!(
+                                "[...] glob is not supported in sash — only * is allowed: {}",
+                                s
+                            ),
                         ));
                     }
                 }
@@ -607,12 +733,16 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
             }
         }
         StmtKind::If(i) => {
-            for s in &i.condition { check_dq_stmt(s, state, diags); }
+            for s in &i.condition {
+                check_dq_stmt(s, state, diags);
+            }
             // then body: inherited status available for first statement only
             check_dq_body_branch(&i.then_body, *state, diags);
             for elif in &i.elif_clauses {
                 let mut es = *state;
-                for s in &elif.condition { check_dq_stmt(s, &mut es, diags); }
+                for s in &elif.condition {
+                    check_dq_stmt(s, &mut es, diags);
+                }
                 check_dq_body_branch(&elif.body, es, diags);
             }
             if let Some(ref eb) = i.else_body {
@@ -621,9 +751,13 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
             *state = StatusState::Undefined;
         }
         StmtKind::While(w) => {
-            for s in &w.condition { check_dq_stmt(s, state, diags); }
+            for s in &w.condition {
+                check_dq_stmt(s, state, diags);
+            }
             let mut bs = *state;
-            for s in &w.body { check_dq_stmt(s, &mut bs, diags); }
+            for s in &w.body {
+                check_dq_stmt(s, &mut bs, diags);
+            }
             *state = StatusState::Undefined;
         }
         _ => {
@@ -633,7 +767,9 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
                     let mut spans = Vec::new();
                     find_dollar_question(stmt, &mut spans);
                     for span in spans {
-                        diags.push(Diagnostic::error_span(span, "SB5012",
+                        diags.push(Diagnostic::error_span(
+                            span,
+                            "SB5012",
                             "$? is not available here — no preceding command".to_string(),
                         ));
                     }
@@ -678,9 +814,9 @@ fn is_suppressed(stmt: &Statement) -> bool {
 }
 
 fn is_command_like(stmt: &Statement) -> bool {
-    matches!(&stmt.kind,
-        StmtKind::Command(_) | StmtKind::Pipeline(_)
-        | StmtKind::List(_) | StmtKind::ArithTest(_)
+    matches!(
+        &stmt.kind,
+        StmtKind::Command(_) | StmtKind::Pipeline(_) | StmtKind::List(_) | StmtKind::ArithTest(_)
     )
 }
 
@@ -722,33 +858,51 @@ fn check_dq_body_branch(stmts: &[Statement], state: StatusState, diags: &mut Vec
     }
 }
 
-
 // ── SB5011: Command resolution ─────────────────────────────────
 
 const BUILTINS: &[&str] = &[
     // Output
     "echo",
     // Control flow
-    "true", "false", ":", "exit", "return", "break", "continue",
+    "true",
+    "false",
+    ":",
+    "exit",
+    "return",
+    "break",
+    "continue",
     // Input
-    "read", "mapfile",
+    "read",
+    "mapfile",
     // Taint
-    "bless", "getenv",
+    "bless",
+    "getenv",
     // Positional/args
-    "argv", "argc", "shift",
+    "argv",
+    "argc",
+    "shift",
     // Variables
     "unset",
     // Test
     "[[",
     // Process/signal
-    "trap", "signal", "wait", "kill", "signum",
+    "trap",
+    "signal",
+    "wait",
+    "kill",
+    "signum",
     // Filesystem
     "cd",
     // Introspection
-    "status", "getpid", "getppid", "getcpid", "getcwd",
+    "status",
+    "getpid",
+    "getppid",
+    "getcpid",
+    "getcwd",
     "epochseconds",
     // Conversion
-    "dtoi", "itod",
+    "dtoi",
+    "itod",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
@@ -765,8 +919,12 @@ fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
             }
             StmtKind::If(i) => {
                 collect_functions(&i.then_body, funcs);
-                for elif in &i.elif_clauses { collect_functions(&elif.body, funcs); }
-                if let Some(ref eb) = i.else_body { collect_functions(eb, funcs); }
+                for elif in &i.elif_clauses {
+                    collect_functions(&elif.body, funcs);
+                }
+                if let Some(ref eb) = i.else_body {
+                    collect_functions(eb, funcs);
+                }
             }
             StmtKind::While(w) => collect_functions(&w.body, funcs),
             StmtKind::For(f) => collect_functions(&f.body, funcs),
@@ -789,16 +947,26 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
             // Skip regex mutations (var =~ s/pat/rep/ → Command{name=var, args=["s/..."]})
             if c.args.len() == 1 {
                 if let ExprKind::Literal(s) = &c.args[0].kind {
-                    if s.starts_with("s/") { return; }
+                    if s.starts_with("s/") {
+                        return;
+                    }
                 }
             }
             // Also skip the old two-arg form
-            if c.args.first().map_or(false, |a| expr_literal_str(a) == "=~") {
+            if c.args
+                .first()
+                .map_or(false, |a| expr_literal_str(a) == "=~")
+            {
                 return;
             }
             if !name.is_empty() && !is_valid_command(name, funcs) {
-                diags.push(Diagnostic::error_span(stmt.span, "SB5011",
-                    format!("command '{}' not found — use absolute path or define as function", name),
+                diags.push(Diagnostic::error_span(
+                    stmt.span,
+                    "SB5011",
+                    format!(
+                        "command '{}' not found — use absolute path or define as function",
+                        name
+                    ),
                 ));
             }
         }
@@ -812,21 +980,33 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
 
 fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {
     // Absolute path: always valid
-    if name.starts_with('/') { return true; }
+    if name.starts_with('/') {
+        return true;
+    }
     // Builtin
-    if BUILTINS.contains(&name) { return true; }
+    if BUILTINS.contains(&name) {
+        return true;
+    }
     // Declared function
-    if funcs.contains(name) { return true; }
+    if funcs.contains(name) {
+        return true;
+    }
     // Glob pattern (e.g. /usr/bin/*) — not a command
-    if name.contains('*') { return true; }
+    if name.contains('*') {
+        return true;
+    }
     // PATH-resolvable: check if command exists on system PATH
-    if resolve_on_path(name) { return true; }
+    if resolve_on_path(name) {
+        return true;
+    }
     false
 }
 
 fn resolve_on_path(name: &str) -> bool {
     // Don't resolve names with special characters
-    if name.contains('/') || name.contains('$') { return false; }
+    if name.contains('/') || name.contains('$') {
+        return false;
+    }
     let path = std::env::var("PATH").unwrap_or_default();
     for dir in path.split(':') {
         let full = format!("{}/{}", dir, name);
@@ -877,7 +1057,11 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 
 /// Like taint_stmt but doesn't mark read/mapfile as tainted
 /// (for pipeline stages where input comes from sash code).
-fn taint_stmt_no_read_taint(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn taint_stmt_no_read_taint(
+    stmt: &Statement,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
@@ -898,7 +1082,9 @@ fn is_external_source(stmt: &Statement) -> bool {
         StmtKind::Command(c) => {
             let name = expr_literal_str(&c.name);
             // Absolute path = external
-            if name.starts_with('/') { return true; }
+            if name.starts_with('/') {
+                return true;
+            }
             // PATH-resolved non-builtin = external
             if !name.is_empty() && !BUILTINS.contains(&name) {
                 return true;
@@ -935,7 +1121,9 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             for i in 1..=9 {
                 fn_tainted.remove(&i.to_string());
             }
-            for s in &f.body { taint_stmt(s, &mut fn_tainted, diags); }
+            for s in &f.body {
+                taint_stmt(s, &mut fn_tainted, diags);
+            }
         }
         StmtKind::Pipeline(p) => {
             // Pipeline taint: if first stage is external, subsequent reads are tainted.
@@ -953,7 +1141,12 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             if let StmtKind::Command(c) = &r.body.kind {
                 let name = expr_literal_str(&c.name);
                 if (name == "read" || name == "mapfile")
-                    && r.redirects.iter().any(|rd| matches!(rd.op, crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc))
+                    && r.redirects.iter().any(|rd| {
+                        matches!(
+                            rd.op,
+                            crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc
+                        )
+                    })
                 {
                     return;
                 }
@@ -963,19 +1156,28 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
         StmtKind::Case(c) => {
             check_expr_taint(&c.value, tainted, diags);
             for item in &c.items {
-                for s in &item.body { taint_stmt(s, tainted, diags); }
+                for s in &item.body {
+                    taint_stmt(s, tainted, diags);
+                }
             }
         }
         _ => {
             for body in stmt.child_bodies() {
-                for s in body { taint_stmt(s, tainted, diags); }
+                for s in body {
+                    taint_stmt(s, tainted, diags);
+                }
             }
         }
     }
 }
 
 /// Taint analysis for a command statement: read/mapfile/bless + general taint checking.
-fn taint_command(c: &Command, span: Span, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn taint_command(
+    c: &Command,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let name = expr_literal_str(&c.name);
 
     // read/mapfile: mark target variable as tainted
@@ -1057,30 +1259,40 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => {
             if tainted.contains(var.as_str()) {
-                diags.push(Diagnostic::error_span(expr.span, "SB5020",
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5020",
                     format!("tainted variable ${} used without bless", var),
                 ));
             }
         }
         ExprKind::ParameterExpansion(pe) => {
             if tainted.contains(pe.name.as_str()) {
-                diags.push(Diagnostic::error_span(expr.span, "SB5020",
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5020",
                     format!("tainted variable ${{{} ...}} used without bless", pe.name),
                 ));
             }
         }
         ExprKind::Subscript { name, .. } => {
             if tainted.contains(name.as_str()) {
-                diags.push(Diagnostic::error_span(expr.span, "SB5020",
+                diags.push(Diagnostic::error_span(
+                    expr.span,
+                    "SB5020",
                     format!("tainted array ${{{}[...]}} used without bless", name),
                 ));
             }
         }
         ExprKind::DoubleQuoted(parts) => {
-            for p in parts { check_expr_taint(p, tainted, diags); }
+            for p in parts {
+                check_expr_taint(p, tainted, diags);
+            }
         }
         ExprKind::Concat(parts) => {
-            for p in parts { check_expr_taint(p, tainted, diags); }
+            for p in parts {
+                check_expr_taint(p, tainted, diags);
+            }
         }
         _ => {}
     }

@@ -39,14 +39,21 @@ pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8
 
     // New parser: parse source directly to IR
     let (program, parse_diags) = crate::parse::parse(bash_source).map_err(|diags| {
-        diags.iter().map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message)).collect::<Vec<_>>()
+        diags
+            .iter()
+            .map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message))
+            .collect::<Vec<_>>()
     })?;
 
     if !parse_diags.is_empty() {
-        let errors: Vec<String> = parse_diags.iter()
+        let errors: Vec<String> = parse_diags
+            .iter()
             .map(|d| format!("{}:{}: [{}] {}", d.line, d.col, d.code, d.message))
             .collect();
-        if parse_diags.iter().any(|d| d.severity == crate::diagnostic::Severity::Error) {
+        if parse_diags
+            .iter()
+            .any(|d| d.severity == crate::diagnostic::Severity::Error)
+        {
             return Err(errors);
         }
     }

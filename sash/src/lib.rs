@@ -345,7 +345,6 @@ pub fn cli_main(args: Vec<String>) {
         }
     };
 
-
     // Read source
     let source = if let Some(src) = inline_source {
         src.to_string()
@@ -449,16 +448,39 @@ pub fn cli_main(args: Vec<String>) {
         let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
         let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
         let builtins: std::collections::HashSet<&str> = [
-            "echo", "true", "false", ":", "exit", "cd", "pwd", "wait",
-            "shift", "read", "exec", "command", "[[",
-            "__redirect_push", "__redirect_pop", "__store_bg_pid",
-            "__subshell_wait", "__table_delete", "printf", "signal",
-        ].iter().copied().collect();
+            "echo",
+            "true",
+            "false",
+            ":",
+            "exit",
+            "cd",
+            "pwd",
+            "wait",
+            "shift",
+            "read",
+            "exec",
+            "command",
+            "[[",
+            "__redirect_push",
+            "__redirect_pop",
+            "__store_bg_pid",
+            "__subshell_wait",
+            "__table_delete",
+            "printf",
+            "signal",
+        ]
+        .iter()
+        .copied()
+        .collect();
         let path_var = std::env::var("PATH").unwrap_or_default();
         let sysroot = get_sysroot();
         let resolve = |name: &str| -> Option<String> {
-            if name.starts_with('/') { return Some(name.to_string()); }
-            if builtins.contains(name) { return None; }
+            if name.starts_with('/') {
+                return Some(name.to_string());
+            }
+            if builtins.contains(name) {
+                return None;
+            }
             for dir in path_var.split(':') {
                 let target_path = format!("{}/{}", dir, name);
                 let exists = if let Some(ref sr) = sysroot {
@@ -466,23 +488,31 @@ pub fn cli_main(args: Vec<String>) {
                 } else {
                     std::path::Path::new(&target_path).is_file()
                 };
-                if exists { return Some(target_path); }
+                if exists {
+                    return Some(target_path);
+                }
             }
             Some(name.to_string())
         };
         for block in ssa.blocks.values() {
             for inst in &block.insts {
                 if let ssa::SsaInst::Command { name, .. } = inst {
-                    if let Some(path) = resolve(name) { deps.insert(path); }
+                    if let Some(path) = resolve(name) {
+                        deps.insert(path);
+                    }
                 }
                 if let ssa::SsaInst::Pipeline { stages, .. } = inst {
                     for (name, _, _) in stages {
-                        if let Some(path) = resolve(name) { deps.insert(path); }
+                        if let Some(path) = resolve(name) {
+                            deps.insert(path);
+                        }
                     }
                 }
             }
         }
-        for dep in &deps { println!("{}", dep); }
+        for dep in &deps {
+            println!("{}", dep);
+        }
         return;
     }
 

@@ -117,9 +117,9 @@ pub enum Tok {
     Number(String),                // numeric literal (kept as string)
 
     // Expansions (produced by scanner)
-    Dollar(String),          // $var, $1, $@, $#, $?, $$, $!
-    DollarBrace(String),     // ${...} raw content for sub-parsing
-    DollarParen,             // $( — start of command substitution
+    Dollar(String),      // $var, $1, $@, $#, $?, $$, $!
+    DollarBrace(String), // ${...} raw content for sub-parsing
+    DollarParen,         // $( — start of command substitution
 
     // File descriptor number before redirect
     FdNumber(u32),
@@ -168,10 +168,10 @@ impl Tok {
 #[derive(Debug, Clone, PartialEq)]
 pub enum StringPart {
     Literal(String),
-    Variable(String),      // $var
-    Expansion(String),     // ${...} raw content
-    CommandSub(String),    // $(...) raw content
-    ArithSub(String),      // $((...)) raw content
+    Variable(String),   // $var
+    Expansion(String),  // ${...} raw content
+    CommandSub(String), // $(...) raw content
+    ArithSub(String),   // $((...)) raw content
 }
 
 // ── Scanner ──────────────────────────────────────────────────────────
@@ -225,7 +225,9 @@ impl Scanner {
                 break;
             }
             // Also stop at && || newline
-            if self.source[self.pos] == b'\n' { break; }
+            if self.source[self.pos] == b'\n' {
+                break;
+            }
             if self.pos + 1 < self.source.len() {
                 if (self.source[self.pos] == b'&' && self.source[self.pos + 1] == b'&')
                     || (self.source[self.pos] == b'|' && self.source[self.pos + 1] == b'|')
@@ -349,8 +351,7 @@ impl Scanner {
                     .position(|&c| c == b'\n')
                     .map(|p| self.pos + p)
                     .unwrap_or(self.source.len());
-                let text =
-                    String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
+                let text = String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
                 self.pos = end;
                 SpannedToken {
                     token: Tok::Comment(text),
@@ -374,9 +375,7 @@ impl Scanner {
                             end: self.pos,
                         },
                     }
-                } else if self.pos + 1 < self.source.len()
-                    && self.source[self.pos + 1] == b'&'
-                {
+                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'&' {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::SemiAmp,
@@ -385,9 +384,7 @@ impl Scanner {
                             end: self.pos,
                         },
                     }
-                } else if self.pos + 1 < self.source.len()
-                    && self.source[self.pos + 1] == b';'
-                {
+                } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b';' {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::DblSemi,
@@ -532,7 +529,10 @@ impl Scanner {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::Word("!=".to_string()),
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 } else {
                     self.pos += 1;
@@ -564,7 +564,9 @@ impl Scanner {
                         self.pos += 1;
                     }
                     // Skip delimiter word
-                    while self.pos < self.source.len() && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t') {
+                    while self.pos < self.source.len()
+                        && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t')
+                    {
                         self.pos += 1;
                     }
                     // Emit as a special word that the validator catches
@@ -700,19 +702,28 @@ impl Scanner {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::Word("=~".to_string()),
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 } else if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::Word("==".to_string()),
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 } else {
                     self.pos += 1;
                     SpannedToken {
                         token: Tok::Eq,
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 }
             }
@@ -722,7 +733,10 @@ impl Scanner {
                     self.pos += 2;
                     SpannedToken {
                         token: Tok::PlusAssign,
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 } else {
                     self.scan_word(start)
@@ -737,14 +751,23 @@ impl Scanner {
                 } else {
                     b' ' // EOF counts as whitespace
                 };
-                if next == b' ' || next == b'\t' || next == b'\n'
-                    || next == b';' || next == b'|' || next == b'&'
-                    || next == b')' || next == b'}' || next == b'#'
+                if next == b' '
+                    || next == b'\t'
+                    || next == b'\n'
+                    || next == b';'
+                    || next == b'|'
+                    || next == b'&'
+                    || next == b')'
+                    || next == b'}'
+                    || next == b'#'
                 {
                     self.pos += 1;
                     SpannedToken {
                         token: Tok::Dash,
-                        span: LexSpan { start, end: self.pos },
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
                     }
                 } else {
                     self.scan_word(start)
@@ -840,8 +863,7 @@ impl Scanner {
                 {
                     self.pos += 1;
                 }
-                let name =
-                    String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string();
+                let name = String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string();
                 return SpannedToken {
                     token: Tok::Dollar(name),
                     span: LexSpan {
@@ -914,8 +936,7 @@ impl Scanner {
                 }
             }
         }
-        let content =
-            String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
+        let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
         if self.pos < self.source.len() {
             self.pos += 1; // skip closing }
         }
@@ -935,8 +956,7 @@ impl Scanner {
         while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
             self.pos += 1;
         }
-        let content =
-            String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
+        let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
         if self.pos < self.source.len() {
             self.pos += 1; // skip closing '
         }
@@ -997,38 +1017,49 @@ impl Scanner {
                             let mut depth = 1i32;
                             while self.pos < self.source.len() && depth > 0 {
                                 match self.source[self.pos] {
-                                    b'{' => { depth += 1; self.pos += 1; }
+                                    b'{' => {
+                                        depth += 1;
+                                        self.pos += 1;
+                                    }
                                     b'}' => {
                                         depth -= 1;
-                                        if depth > 0 { self.pos += 1; }
+                                        if depth > 0 {
+                                            self.pos += 1;
+                                        }
                                     }
                                     b'\'' => {
                                         self.pos += 1;
-                                        while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
+                                        while self.pos < self.source.len()
+                                            && self.source[self.pos] != b'\''
+                                        {
                                             self.pos += 1;
                                         }
-                                        if self.pos < self.source.len() { self.pos += 1; }
+                                        if self.pos < self.source.len() {
+                                            self.pos += 1;
+                                        }
                                     }
                                     b'"' => {
                                         // Nested " inside ${} — just skip
                                         self.pos += 1;
                                     }
-                                    b'\\' => { self.pos += 2; }
-                                    _ => { self.pos += 1; }
+                                    b'\\' => {
+                                        self.pos += 2;
+                                    }
+                                    _ => {
+                                        self.pos += 1;
+                                    }
                                 }
                             }
-                            let content = String::from_utf8_lossy(
-                                &self.source[inner_start..self.pos],
-                            )
-                            .to_string();
+                            let content =
+                                String::from_utf8_lossy(&self.source[inner_start..self.pos])
+                                    .to_string();
                             if self.pos < self.source.len() {
                                 self.pos += 1; // skip }
                             }
                             parts.push(StringPart::Expansion(content));
                         }
                         b'(' => {
-                            if self.pos + 1 < self.source.len()
-                                && self.source[self.pos + 1] == b'('
+                            if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'('
                             {
                                 // $((...))
                                 self.pos += 2;
@@ -1052,10 +1083,9 @@ impl Scanner {
                                         self.pos += 1;
                                     }
                                 }
-                                let content = String::from_utf8_lossy(
-                                    &self.source[inner_start..self.pos],
-                                )
-                                .to_string();
+                                let content =
+                                    String::from_utf8_lossy(&self.source[inner_start..self.pos])
+                                        .to_string();
                                 if self.pos + 1 < self.source.len() {
                                     self.pos += 2; // skip ))
                                 }
@@ -1067,33 +1097,49 @@ impl Scanner {
                                 let mut depth = 1i32;
                                 while self.pos < self.source.len() && depth > 0 {
                                     match self.source[self.pos] {
-                                        b'(' => { depth += 1; self.pos += 1; }
+                                        b'(' => {
+                                            depth += 1;
+                                            self.pos += 1;
+                                        }
                                         b')' => {
                                             depth -= 1;
-                                            if depth > 0 { self.pos += 1; }
+                                            if depth > 0 {
+                                                self.pos += 1;
+                                            }
                                         }
                                         b'\'' => {
                                             self.pos += 1;
-                                            while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
+                                            while self.pos < self.source.len()
+                                                && self.source[self.pos] != b'\''
+                                            {
                                                 self.pos += 1;
                                             }
-                                            if self.pos < self.source.len() { self.pos += 1; }
+                                            if self.pos < self.source.len() {
+                                                self.pos += 1;
+                                            }
                                         }
                                         b'"' => {
                                             self.pos += 1;
-                                            while self.pos < self.source.len() && self.source[self.pos] != b'"' {
-                                                if self.source[self.pos] == b'\\' { self.pos += 1; }
+                                            while self.pos < self.source.len()
+                                                && self.source[self.pos] != b'"'
+                                            {
+                                                if self.source[self.pos] == b'\\' {
+                                                    self.pos += 1;
+                                                }
                                                 self.pos += 1;
                                             }
-                                            if self.pos < self.source.len() { self.pos += 1; }
+                                            if self.pos < self.source.len() {
+                                                self.pos += 1;
+                                            }
                                         }
-                                        _ => { self.pos += 1; }
+                                        _ => {
+                                            self.pos += 1;
+                                        }
                                     }
                                 }
-                                let content = String::from_utf8_lossy(
-                                    &self.source[inner_start..self.pos],
-                                )
-                                .to_string();
+                                let content =
+                                    String::from_utf8_lossy(&self.source[inner_start..self.pos])
+                                        .to_string();
                                 if self.pos < self.source.len() {
                                     self.pos += 1; // skip )
                                 }
@@ -1108,10 +1154,8 @@ impl Scanner {
                             {
                                 self.pos += 1;
                             }
-                            let name = String::from_utf8_lossy(
-                                &self.source[name_start..self.pos],
-                            )
-                            .to_string();
+                            let name = String::from_utf8_lossy(&self.source[name_start..self.pos])
+                                .to_string();
                             parts.push(StringPart::Variable(name));
                         }
                         b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0'..=b'9' => {
@@ -1134,9 +1178,8 @@ impl Scanner {
                     while self.pos < self.source.len() && self.source[self.pos] != b'`' {
                         self.pos += 1;
                     }
-                    let content = String::from_utf8_lossy(
-                        &self.source[inner_start..self.pos],
-                    ).to_string();
+                    let content =
+                        String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
                     if self.pos < self.source.len() {
                         self.pos += 1; // skip closing `
                     }
@@ -1173,17 +1216,50 @@ impl Scanner {
             if self.source[self.pos] == b'\\' && self.pos + 1 < self.source.len() {
                 self.pos += 1;
                 match self.source[self.pos] {
-                    b'n' => { result.push('\n'); self.pos += 1; }
-                    b't' => { result.push('\t'); self.pos += 1; }
-                    b'r' => { result.push('\r'); self.pos += 1; }
-                    b'a' => { result.push('\x07'); self.pos += 1; }
-                    b'b' => { result.push('\x08'); self.pos += 1; }
-                    b'e' | b'E' => { result.push('\x1b'); self.pos += 1; }
-                    b'f' => { result.push('\x0c'); self.pos += 1; }
-                    b'v' => { result.push('\x0b'); self.pos += 1; }
-                    b'\\' => { result.push('\\'); self.pos += 1; }
-                    b'\'' => { result.push('\''); self.pos += 1; }
-                    b'"' => { result.push('"'); self.pos += 1; }
+                    b'n' => {
+                        result.push('\n');
+                        self.pos += 1;
+                    }
+                    b't' => {
+                        result.push('\t');
+                        self.pos += 1;
+                    }
+                    b'r' => {
+                        result.push('\r');
+                        self.pos += 1;
+                    }
+                    b'a' => {
+                        result.push('\x07');
+                        self.pos += 1;
+                    }
+                    b'b' => {
+                        result.push('\x08');
+                        self.pos += 1;
+                    }
+                    b'e' | b'E' => {
+                        result.push('\x1b');
+                        self.pos += 1;
+                    }
+                    b'f' => {
+                        result.push('\x0c');
+                        self.pos += 1;
+                    }
+                    b'v' => {
+                        result.push('\x0b');
+                        self.pos += 1;
+                    }
+                    b'\\' => {
+                        result.push('\\');
+                        self.pos += 1;
+                    }
+                    b'\'' => {
+                        result.push('\'');
+                        self.pos += 1;
+                    }
+                    b'"' => {
+                        result.push('"');
+                        self.pos += 1;
+                    }
                     b'0' => {
                         self.pos += 1;
                         let mut val = 0u8;
@@ -1252,8 +1328,8 @@ impl Scanner {
             let b = self.source[self.pos];
             match b {
                 // Word-breaking characters
-                b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}'
-                | b'<' | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
+                b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
+                | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
                 b'=' => {
                     // = breaks a word IFF we're at word start scanning an assignment
                     // We need to emit the word accumulated so far, then emit = separately
@@ -1261,7 +1337,10 @@ impl Scanner {
                         self.pos += 1;
                         return SpannedToken {
                             token: Tok::Eq,
-                            span: LexSpan { start, end: self.pos },
+                            span: LexSpan {
+                                start,
+                                end: self.pos,
+                            },
                         };
                     }
                     // Check if next char is = (== operator in test context)
@@ -1327,7 +1406,7 @@ impl Scanner {
             "return" => Tok::Word("return".to_string()),
             "break" => Tok::Word("break".to_string()),
             "continue" => Tok::Word("continue".to_string()),
-            "eval" => Tok::Word("eval".to_string()),   // keep as word for error reporting
+            "eval" => Tok::Word("eval".to_string()), // keep as word for error reporting
             "source" => Tok::Word("source".to_string()),
             "export" => Tok::Word("export".to_string()),
             "declare" => Tok::Word("declare".to_string()),

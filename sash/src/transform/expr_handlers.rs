@@ -1,6 +1,6 @@
 //! Handlers for expression evaluation in the transform.
 
-use super::expressions::{expr_to_value, expr_to_string};
+use super::expressions::{expr_to_string, expr_to_value};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -146,7 +146,11 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
     }
     SsaValue::Expr(expr_to_string(expr))
 }
-pub(super) fn handle_structured_arithmetic(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValue {
+pub(super) fn handle_structured_arithmetic(
+    arith: &ArithExpr,
+    expr: &Expr,
+    state: &VersionState,
+) -> SsaValue {
     arith_to_ssa(arith, expr, state)
 }
 
@@ -164,9 +168,7 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
             // Variable in arithmetic context — direct reference
             SsaValue::Var(state.lookup(name))
         }
-        ArithExpr::DollarVar(name) => {
-            SsaValue::Var(state.lookup(name))
-        }
+        ArithExpr::DollarVar(name) => SsaValue::Var(state.lookup(name)),
         ArithExpr::BinOp { left, op, right } => {
             let l = arith_to_ssa(left, expr, state);
             let r = arith_to_ssa(right, expr, state);
@@ -247,13 +249,15 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
                 right: Box::new(rhs),
             }
         }
-        ArithExpr::Ternary { cond, true_val, false_val } => {
-            SsaValue::Ternary {
-                cond: Box::new(arith_to_ssa(cond, expr, state)),
-                true_val: Box::new(arith_to_ssa(true_val, expr, state)),
-                false_val: Box::new(arith_to_ssa(false_val, expr, state)),
-            }
-        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => SsaValue::Ternary {
+            cond: Box::new(arith_to_ssa(cond, expr, state)),
+            true_val: Box::new(arith_to_ssa(true_val, expr, state)),
+            false_val: Box::new(arith_to_ssa(false_val, expr, state)),
+        },
         ArithExpr::Comma(exprs) => {
             // In expression context, comma returns the last value
             if let Some(last) = exprs.last() {
@@ -263,7 +267,8 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
             }
         }
         ArithExpr::FuncCall { name, args } => {
-            let ssa_args: Vec<SsaValue> = args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
+            let ssa_args: Vec<SsaValue> =
+                args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
             SsaValue::IntFuncCall {
                 name: name.clone(),
                 args: ssa_args,
@@ -303,8 +308,20 @@ fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> i64 {
         ArithOp::Add => l.wrapping_add(r),
         ArithOp::Sub => l.wrapping_sub(r),
         ArithOp::Mul => l.wrapping_mul(r),
-        ArithOp::Div => if r != 0 { l / r } else { 0 },
-        ArithOp::Mod => if r != 0 { l % r } else { 0 },
+        ArithOp::Div => {
+            if r != 0 {
+                l / r
+            } else {
+                0
+            }
+        }
+        ArithOp::Mod => {
+            if r != 0 {
+                l % r
+            } else {
+                0
+            }
+        }
         ArithOp::Eq => (l == r) as i64,
         ArithOp::Ne => (l != r) as i64,
         ArithOp::Lt => (l < r) as i64,

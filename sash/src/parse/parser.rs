@@ -17,12 +17,17 @@
 //!   - Test expressions: parse_test_expr (recursive descent for [[ ]])
 //!   - Postfix rejection: SB4021–4024 on compound commands
 
+use super::arith::{
+    collect_arith_content_raw, lower_arith_command, lower_c_style_for, parse_arith_command,
+};
+use super::error::{parse_deferred, parse_error};
+use super::expr::{
+    parse_array_literal, parse_command_substitution, parse_expr, parse_sub_script, parse_word,
+    span_from, string_parts_to_exprs,
+};
+use super::lexer::{Scanner, SpannedToken, StringPart, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
-use super::lexer::{Scanner, Tok, SpannedToken, StringPart};
-use super::expr::{parse_expr, parse_word, parse_array_literal, span_from, string_parts_to_exprs, parse_sub_script, parse_command_substitution};
-use super::arith::{parse_arith_command, lower_arith_command, lower_c_style_for, collect_arith_content_raw};
-use super::error::{parse_error, parse_deferred};
 
 /// Parse sash-native source into IR.
 /// Returns the program or a list of diagnostics on failure.
@@ -55,7 +60,9 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
 
     if !diags.is_empty() {
         // Check if all diagnostics are deferred — those aren't fatal at parse time
-        let has_errors = diags.iter().any(|d| d.severity == crate::diagnostic::Severity::Error);
+        let has_errors = diags
+            .iter()
+            .any(|d| d.severity == crate::diagnostic::Severity::Error);
         if has_errors {
             return Err(diags);
         }
@@ -139,27 +146,38 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
             // Sash idiom: wrap in a function for composition.
             if is_compound(&stmt.kind) {
                 let next = scanner.peek().token.clone();
-                if matches!(next, Tok::Gt | Tok::DblGt | Tok::Lt | Tok::GtAmp
-                    | Tok::LtAmp | Tok::LtGt | Tok::AmpGt | Tok::HereString)
-                {
+                if matches!(
+                    next,
+                    Tok::Gt
+                        | Tok::DblGt
+                        | Tok::Lt
+                        | Tok::GtAmp
+                        | Tok::LtAmp
+                        | Tok::LtGt
+                        | Tok::AmpGt
+                        | Tok::HereString
+                ) {
                     return Err(parse_error(
                         stmt.span,
                         "SB4021",
-                        "redirects on compound commands are not supported — wrap in a function".to_string(),
+                        "redirects on compound commands are not supported — wrap in a function"
+                            .to_string(),
                     ));
                 }
                 if matches!(next, Tok::Pipe) {
                     return Err(parse_error(
                         stmt.span,
                         "SB4022",
-                        "pipes on compound commands are not supported — wrap in a function".to_string(),
+                        "pipes on compound commands are not supported — wrap in a function"
+                            .to_string(),
                     ));
                 }
                 if matches!(next, Tok::AndAnd | Tok::OrOr) {
                     return Err(parse_error(
                         stmt.span,
                         "SB4023",
-                        "&& / || on compound commands are not supported — wrap in a function".to_string(),
+                        "&& / || on compound commands are not supported — wrap in a function"
+                            .to_string(),
                     ));
                 }
                 if matches!(next, Tok::Amp) {
@@ -180,15 +198,18 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
 
 /// Check if a statement kind is a compound command.
 fn is_compound(kind: &StmtKind) -> bool {
-    matches!(kind, StmtKind::If(_) | StmtKind::While(_) | StmtKind::For(_)
-        | StmtKind::Case(_) | StmtKind::Group(_))
+    matches!(
+        kind,
+        StmtKind::If(_)
+            | StmtKind::While(_)
+            | StmtKind::For(_)
+            | StmtKind::Case(_)
+            | StmtKind::Group(_)
+    )
 }
 
 /// Parse a list of statements until a stop token.
-fn parse_body_until(
-    scanner: &mut Scanner,
-    stop: &[Tok],
-) -> Result<Vec<Statement>, Diagnostic> {
+fn parse_body_until(scanner: &mut Scanner, stop: &[Tok]) -> Result<Vec<Statement>, Diagnostic> {
     let mut stmts = Vec::new();
     loop {
         skip_terminators(scanner);
@@ -303,7 +324,7 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let mut words = Vec::new();
     if matches!(scanner.peek().token, Tok::In) {
         scanner.next(); // consume 'in'
-        // Collect words until ; or newline or 'do'
+                        // Collect words until ; or newline or 'do'
         while !scanner.at_eof()
             && !matches!(
                 scanner.peek().token,
@@ -397,10 +418,18 @@ fn parse_case_item(scanner: &mut Scanner, span: Span) -> Result<CaseItem, Diagno
     }
 
     // Expect )
-    expect(scanner, &Tok::RParen, span, "expected ')' after case pattern")?;
+    expect(
+        scanner,
+        &Tok::RParen,
+        span,
+        "expected ')' after case pattern",
+    )?;
 
     // Parse body
-    let body = parse_body_until(scanner, &[Tok::DblSemi, Tok::SemiAmp, Tok::DblSemiAmp, Tok::Esac])?;
+    let body = parse_body_until(
+        scanner,
+        &[Tok::DblSemi, Tok::SemiAmp, Tok::DblSemiAmp, Tok::Esac],
+    )?;
 
     let mut fallthrough = false;
     let mut resume = false;
@@ -470,7 +499,12 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
 
     // Expect {
     skip_terminators(scanner);
-    expect(scanner, &Tok::LBrace, span, "expected '{' for function body")?;
+    expect(
+        scanner,
+        &Tok::LBrace,
+        span,
+        "expected '{' for function body",
+    )?;
     let body = parse_body_until(scanner, &[Tok::RBrace])?;
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
 
@@ -558,16 +592,31 @@ fn parse_local(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
 
 // ── declarations (int, const, array, map) ────────────────────
 
-fn parse_declaration(scanner: &mut Scanner, keyword: &str) -> Result<Option<Statement>, Diagnostic> {
+fn parse_declaration(
+    scanner: &mut Scanner,
+    keyword: &str,
+) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume keyword
 
     let (decl_keyword, var_type, mut flags) = match keyword {
         "int" => (DeclKeyword::Declare, VarType::Int, vec![]),
-        "const" => (DeclKeyword::Readonly, VarType::String, vec!["-r".to_string()]),
-        "array" => (DeclKeyword::Declare, VarType::String, vec!["-a".to_string()]),
-        "map" => (DeclKeyword::Declare, VarType::String, vec!["-A".to_string()]),
+        "const" => (
+            DeclKeyword::Readonly,
+            VarType::String,
+            vec!["-r".to_string()],
+        ),
+        "array" => (
+            DeclKeyword::Declare,
+            VarType::String,
+            vec!["-a".to_string()],
+        ),
+        "map" => (
+            DeclKeyword::Declare,
+            VarType::String,
+            vec!["-A".to_string()],
+        ),
         _ => (DeclKeyword::Declare, VarType::String, vec![]),
     };
 
@@ -753,8 +802,16 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
     // Peek ahead: if what follows looks like a command, treat - as suppression
     let next = scanner.peek_n(1);
     if next.token.is_word_like()
-        || matches!(next.token, Tok::If | Tok::While | Tok::For | Tok::Case
-            | Tok::DblBracketOpen | Tok::DblParen | Tok::LBrace)
+        || matches!(
+            next.token,
+            Tok::If
+                | Tok::While
+                | Tok::For
+                | Tok::Case
+                | Tok::DblBracketOpen
+                | Tok::DblParen
+                | Tok::LBrace
+        )
     {
         scanner.next(); // consume '-'
         if let Some(stmt) = parse_statement(scanner)? {
@@ -837,7 +894,12 @@ fn parse_test_primary(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Dia
     if matches!(scanner.peek().token, Tok::LParen) {
         scanner.next();
         let inner = parse_test_expr(scanner, span)?;
-        expect(scanner, &Tok::RParen, span, "expected ')' in test expression")?;
+        expect(
+            scanner,
+            &Tok::RParen,
+            span,
+            "expected ')' in test expression",
+        )?;
         return Ok(inner);
     }
 
@@ -945,7 +1007,11 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
         scanner.peek().token,
         Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr | Tok::RParen
     ) {
-        return Err(parse_error(span, "SB4014", "expected operand in test expression".to_string()));
+        return Err(parse_error(
+            span,
+            "SB4014",
+            "expected operand in test expression".to_string(),
+        ));
     }
     parse_expr(scanner)
 }
@@ -954,25 +1020,64 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
 fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let mut pattern = String::new();
     loop {
-        if scanner.at_eof() { break; }
+        if scanner.at_eof() {
+            break;
+        }
         match &scanner.peek().token {
             Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr => break,
             Tok::Newline => break,
-            Tok::Word(w) => { pattern.push_str(w); scanner.next(); }
-            Tok::LBrace => { pattern.push('{'); scanner.next(); }
-            Tok::RBrace => { pattern.push('}'); scanner.next(); }
-            Tok::LParen => { pattern.push('('); scanner.next(); }
-            Tok::RParen => { pattern.push(')'); scanner.next(); }
-            Tok::Pipe => { pattern.push('|'); scanner.next(); }
-            Tok::Bang => { pattern.push('!'); scanner.next(); }
-            Tok::Dash => { pattern.push('-'); scanner.next(); }
-            Tok::Dollar(v) => { pattern.push('$'); pattern.push_str(v); scanner.next(); }
-            Tok::Eq => { pattern.push('='); scanner.next(); }
-            _ => { scanner.next(); }
+            Tok::Word(w) => {
+                pattern.push_str(w);
+                scanner.next();
+            }
+            Tok::LBrace => {
+                pattern.push('{');
+                scanner.next();
+            }
+            Tok::RBrace => {
+                pattern.push('}');
+                scanner.next();
+            }
+            Tok::LParen => {
+                pattern.push('(');
+                scanner.next();
+            }
+            Tok::RParen => {
+                pattern.push(')');
+                scanner.next();
+            }
+            Tok::Pipe => {
+                pattern.push('|');
+                scanner.next();
+            }
+            Tok::Bang => {
+                pattern.push('!');
+                scanner.next();
+            }
+            Tok::Dash => {
+                pattern.push('-');
+                scanner.next();
+            }
+            Tok::Dollar(v) => {
+                pattern.push('$');
+                pattern.push_str(v);
+                scanner.next();
+            }
+            Tok::Eq => {
+                pattern.push('=');
+                scanner.next();
+            }
+            _ => {
+                scanner.next();
+            }
         }
     }
     if pattern.is_empty() {
-        return Err(parse_error(span, "SB4014", "expected regex pattern after =~".to_string()));
+        return Err(parse_error(
+            span,
+            "SB4014",
+            "expected regex pattern after =~".to_string(),
+        ));
     }
     Ok(Expr {
         kind: ExprKind::Literal(pattern),
@@ -983,9 +1088,27 @@ fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic
 fn is_unary_test_op(op: &str) -> bool {
     matches!(
         op,
-        "-f" | "-d" | "-e" | "-r" | "-w" | "-x" | "-s" | "-L" | "-h"
-            | "-n" | "-z" | "-b" | "-c" | "-p" | "-S" | "-t"
-            | "-O" | "-G" | "-N" | "-o" | "-v" | "-R"
+        "-f" | "-d"
+            | "-e"
+            | "-r"
+            | "-w"
+            | "-x"
+            | "-s"
+            | "-L"
+            | "-h"
+            | "-n"
+            | "-z"
+            | "-b"
+            | "-c"
+            | "-p"
+            | "-S"
+            | "-t"
+            | "-O"
+            | "-G"
+            | "-N"
+            | "-o"
+            | "-v"
+            | "-R"
             | "-a" // exists (deprecated but still works)
     )
 }
@@ -993,8 +1116,7 @@ fn is_unary_test_op(op: &str) -> bool {
 fn is_binary_test_op(op: &str) -> bool {
     matches!(
         op,
-        "==" | "!=" | "=~" | "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge"
-            | "-nt" | "-ot" | "-ef"
+        "==" | "!=" | "=~" | "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" | "-nt" | "-ot" | "-ef"
     )
 }
 
@@ -1013,7 +1135,12 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     if matches!(scanner.peek().token, Tok::DblBracketOpen) {
         scanner.next();
         let test_expr = parse_test_expr(scanner, span)?;
-        expect(scanner, &Tok::DblBracketClose, span, "expected ']]' in bless")?;
+        expect(
+            scanner,
+            &Tok::DblBracketClose,
+            span,
+            "expected ']]' in bless",
+        )?;
         args.push(Expr {
             kind: ExprKind::Test(test_expr),
             span,
@@ -1102,8 +1229,7 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
             // Check if next token is = or +=
             let w = w.clone();
             let next = scanner.peek_n(1);
-            matches!(next.token, Tok::Eq | Tok::PlusAssign)
-                && is_identifier_or_subscript(&w)
+            matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w)
         }
         _ => false,
     };
@@ -1132,7 +1258,13 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
     let name_tok = scanner.next();
     let raw_name = match name_tok.token {
         Tok::Word(w) => w,
-        _ => return Err(parse_error(span, "SB4014", "expected variable name".to_string())),
+        _ => {
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "expected variable name".to_string(),
+            ))
+        }
     };
 
     // Parse optional subscript: name[idx]
@@ -1208,10 +1340,14 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
 }
 
 /// Parse regex mutation: var =~ s/pat/rep/ or var =~ s/pat/rep/flags
-fn parse_regex_mutation(scanner: &mut Scanner, span: Span, var_name: &str) -> Result<Option<Statement>, Diagnostic> {
+fn parse_regex_mutation(
+    scanner: &mut Scanner,
+    span: Span,
+    var_name: &str,
+) -> Result<Option<Statement>, Diagnostic> {
     scanner.next(); // consume variable name
     scanner.next(); // consume =~
-    // Collect the regex expression (s/pat/rep/ or s/pat/rep/flags)
+                    // Collect the regex expression (s/pat/rep/ or s/pat/rep/flags)
     let regex_expr = if let Tok::Word(ref w) = scanner.peek().token {
         let w = w.clone();
         scanner.next();
@@ -1219,11 +1355,20 @@ fn parse_regex_mutation(scanner: &mut Scanner, span: Span, var_name: &str) -> Re
     } else {
         // Try to collect from multiple adjacent tokens
         let mut s = String::new();
-        while !scanner.at_eof() && !matches!(scanner.peek().token,
-            Tok::Semi | Tok::Newline | Tok::Pipe | Tok::AndAnd | Tok::OrOr | Tok::Eof) {
-            if !s.is_empty() && !scanner.next_is_adjacent() { break; }
+        while !scanner.at_eof()
+            && !matches!(
+                scanner.peek().token,
+                Tok::Semi | Tok::Newline | Tok::Pipe | Tok::AndAnd | Tok::OrOr | Tok::Eof
+            )
+        {
+            if !s.is_empty() && !scanner.next_is_adjacent() {
+                break;
+            }
             match &scanner.peek().token {
-                Tok::Word(w) => { s.push_str(w); scanner.next(); }
+                Tok::Word(w) => {
+                    s.push_str(w);
+                    scanner.next();
+                }
                 _ => break,
             }
         }
@@ -1233,10 +1378,14 @@ fn parse_regex_mutation(scanner: &mut Scanner, span: Span, var_name: &str) -> Re
     // this pattern: command name is variable, single arg starts with s/
     Ok(Some(Statement {
         kind: StmtKind::Command(Command {
-            name: Expr { kind: ExprKind::Literal(var_name.to_string()), span },
-            args: vec![
-                Expr { kind: ExprKind::Literal(regex_expr), span },
-            ],
+            name: Expr {
+                kind: ExprKind::Literal(var_name.to_string()),
+                span,
+            },
+            args: vec![Expr {
+                kind: ExprKind::Literal(regex_expr),
+                span,
+            }],
         }),
         span,
     }))
@@ -1256,13 +1405,29 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
         }
 
         match &scanner.peek().token {
-            Tok::Newline | Tok::Semi | Tok::Pipe | Tok::AndAnd | Tok::OrOr | Tok::Amp
-            | Tok::RParen | Tok::RBrace | Tok::DblSemi | Tok::SemiAmp | Tok::DblSemiAmp
-            | Tok::DblBracketClose | Tok::Eof => break,
+            Tok::Newline
+            | Tok::Semi
+            | Tok::Pipe
+            | Tok::AndAnd
+            | Tok::OrOr
+            | Tok::Amp
+            | Tok::RParen
+            | Tok::RBrace
+            | Tok::DblSemi
+            | Tok::SemiAmp
+            | Tok::DblSemiAmp
+            | Tok::DblBracketClose
+            | Tok::Eof => break,
 
             // Redirects
-            Tok::Gt | Tok::DblGt | Tok::Lt | Tok::GtAmp | Tok::LtAmp | Tok::LtGt
-            | Tok::AmpGt | Tok::HereString => {
+            Tok::Gt
+            | Tok::DblGt
+            | Tok::Lt
+            | Tok::GtAmp
+            | Tok::LtAmp
+            | Tok::LtGt
+            | Tok::AmpGt
+            | Tok::HereString => {
                 redirects.push(parse_redirect(scanner, span)?);
             }
 
@@ -1322,13 +1487,22 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
     loop {
         let tok = scanner.peek().token.clone();
         match tok {
-            Tok::Gt | Tok::DblGt | Tok::Lt | Tok::GtAmp | Tok::LtAmp | Tok::LtGt
-            | Tok::AmpGt | Tok::HereString => {
+            Tok::Gt
+            | Tok::DblGt
+            | Tok::Lt
+            | Tok::GtAmp
+            | Tok::LtAmp
+            | Tok::LtGt
+            | Tok::AmpGt
+            | Tok::HereString => {
                 redirects.push(parse_redirect(scanner, stmt.span)?);
             }
             Tok::Word(ref w) if is_fd_number(w) => {
                 let next = scanner.peek_n(1).token.clone();
-                if matches!(next, Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt) {
+                if matches!(
+                    next,
+                    Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
+                ) {
                     let fd: u32 = w.parse().unwrap_or(0);
                     scanner.next();
                     let mut redir = parse_redirect(scanner, stmt.span)?;
@@ -1482,7 +1656,11 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
             });
         }
         _ => {
-            return Err(parse_error(span, "SB4014", "expected redirect operator".to_string()));
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "expected redirect operator".to_string(),
+            ));
         }
     };
 
@@ -1499,7 +1677,9 @@ fn is_identifier(s: &str) -> bool {
 
 /// A word that is a valid identifier or subscript: name or name[idx]
 fn is_identifier_or_subscript(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
 }
 
 /// A word that looks like a file descriptor number (1-2 digits).
@@ -1525,8 +1705,7 @@ fn expect_word(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, D
             Ok(w)
         }
         // Some keywords can also be used as identifiers in certain contexts
-        Tok::In | Tok::Do | Tok::Done | Tok::Then | Tok::Fi
-        | Tok::Else | Tok::Elif | Tok::Esac => {
+        Tok::In | Tok::Do | Tok::Done | Tok::Then | Tok::Fi | Tok::Else | Tok::Elif | Tok::Esac => {
             let name = format!("{:?}", scanner.peek().token).to_lowercase();
             scanner.next();
             Ok(name)

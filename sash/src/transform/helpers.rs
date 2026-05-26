@@ -200,4 +200,3 @@ pub(super) fn scan_test_positionals(test: &TestExpr, max: &mut usize) {
         TestExpr::Paren(inner) => scan_test_positionals(inner, max),
     }
 }
-

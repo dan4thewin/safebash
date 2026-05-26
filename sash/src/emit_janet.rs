@@ -951,7 +951,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
                     );
                 }
             }
-            "\"\"" .to_string()
+            "\"\"".to_string()
         }
         ExprKind::Arithmetic(a) => {
             format!("(string ({}))", arith_expr_to_janet(a))
@@ -1257,7 +1257,12 @@ fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
                 IrArithOp::BitOr => "bor",
                 IrArithOp::BitXor => "bxor",
             };
-            format!("({} {} {})", op_str, arith_expr_to_janet(left), arith_expr_to_janet(right))
+            format!(
+                "({} {} {})",
+                op_str,
+                arith_expr_to_janet(left),
+                arith_expr_to_janet(right)
+            )
         }
         ArithExpr::UnaryOp { op, operand } => {
             let op_str = match op {
@@ -1269,22 +1274,43 @@ fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
             format!("({} {})", op_str, arith_expr_to_janet(operand))
         }
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
-            if *inc { format!("(+ {} 1)", var) } else { format!("(- {} 1)", var) }
+            if *inc {
+                format!("(+ {} 1)", var)
+            } else {
+                format!("(- {} 1)", var)
+            }
         }
         ArithExpr::Assign { var, value } => {
             format!("(set {} {})", var, arith_expr_to_janet(value))
         }
         ArithExpr::CompoundAssign { var, op, value } => {
             let op_str = match op {
-                IrArithOp::Add => "+", IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*", IrArithOp::Div => "/",
-                IrArithOp::Mod => "%", _ => "?",
+                IrArithOp::Add => "+",
+                IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*",
+                IrArithOp::Div => "/",
+                IrArithOp::Mod => "%",
+                _ => "?",
             };
-            format!("(set {} ({} {} {}))", var, op_str, var, arith_expr_to_janet(value))
+            format!(
+                "(set {} ({} {} {}))",
+                var,
+                op_str,
+                var,
+                arith_expr_to_janet(value)
+            )
         }
-        ArithExpr::Ternary { cond, true_val, false_val } => {
-            format!("(if {} {} {})", arith_expr_to_janet(cond),
-                arith_expr_to_janet(true_val), arith_expr_to_janet(false_val))
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            format!(
+                "(if {} {} {})",
+                arith_expr_to_janet(cond),
+                arith_expr_to_janet(true_val),
+                arith_expr_to_janet(false_val)
+            )
         }
         ArithExpr::Comma(exprs) => {
             let parts: Vec<String> = exprs.iter().map(|e| arith_expr_to_janet(e)).collect();

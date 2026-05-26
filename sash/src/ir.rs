@@ -22,22 +22,32 @@ impl Span {
     pub fn new(line: usize, col: usize) -> Self {
         Self { line, col }
     }
-
 }
 
 impl Expr {
     /// Shorthand: literal string expression.
     pub fn literal(s: impl Into<String>, span: Span) -> Self {
-        Self { kind: ExprKind::Literal(s.into()), span }
+        Self {
+            kind: ExprKind::Literal(s.into()),
+            span,
+        }
     }
 
     /// Shorthand: simple variable expansion ($var).
     pub fn expansion(name: impl Into<String>, span: Span) -> Self {
-        Self { kind: ExprKind::SimpleExpansion(name.into()), span }
+        Self {
+            kind: ExprKind::SimpleExpansion(name.into()),
+            span,
+        }
     }
 
     /// Shorthand: parameter expansion with operator.
-    pub fn param(name: impl Into<String>, operator: Option<&str>, operand: Option<Box<Expr>>, span: Span) -> Self {
+    pub fn param(
+        name: impl Into<String>,
+        operator: Option<&str>,
+        operand: Option<Box<Expr>>,
+        span: Span,
+    ) -> Self {
         Self {
             kind: ExprKind::ParameterExpansion(ParameterExpansion {
                 name: name.into(),
@@ -52,7 +62,10 @@ impl Expr {
 impl Statement {
     /// Shorthand: a simple command with name and args.
     pub fn command(name: Expr, args: Vec<Expr>, span: Span) -> Self {
-        Self { kind: StmtKind::Command(Command { name, args }), span }
+        Self {
+            kind: StmtKind::Command(Command { name, args }),
+            span,
+        }
     }
 
     /// Shorthand: the `true` builtin (used as placeholder in list ops).
@@ -91,8 +104,10 @@ impl Statement {
             StmtKind::Group(g) => vec![&g.body],
             StmtKind::Subshell(s) => vec![&s.body],
             StmtKind::Suppressed(inner) => vec![std::slice::from_ref(inner.as_ref())],
-            StmtKind::Assignment(_) | StmtKind::Declaration(_)
-            | StmtKind::Command(_) | StmtKind::Comment(_)
+            StmtKind::Assignment(_)
+            | StmtKind::Declaration(_)
+            | StmtKind::Command(_)
+            | StmtKind::Comment(_)
             | StmtKind::ArithTest(_) => vec![],
         }
     }
@@ -106,26 +121,38 @@ impl Statement {
         match &self.kind {
             StmtKind::Assignment(a) => {
                 f(&a.value);
-                if let Some(ref idx) = a.index { f(idx); }
+                if let Some(ref idx) = a.index {
+                    f(idx);
+                }
             }
             StmtKind::Declaration(d) => {
-                for a in &d.assignments { f(&a.value); }
+                for a in &d.assignments {
+                    f(&a.value);
+                }
             }
             StmtKind::Command(c) => {
                 f(&c.name);
-                for arg in &c.args { f(arg); }
+                for arg in &c.args {
+                    f(arg);
+                }
             }
             StmtKind::For(fo) => {
-                for w in &fo.words { f(w); }
+                for w in &fo.words {
+                    f(w);
+                }
             }
             StmtKind::Case(c) => {
                 f(&c.value);
                 for item in &c.items {
-                    for p in &item.patterns { f(p); }
+                    for p in &item.patterns {
+                        f(p);
+                    }
                 }
             }
             StmtKind::Redirected(r) => {
-                for redir in &r.redirects { f(&redir.target); }
+                for redir in &r.redirects {
+                    f(&redir.target);
+                }
             }
             _ => {}
         }
@@ -151,19 +178,29 @@ pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match &expr.kind {
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
-            for p in parts { walk_expr_tree(p, f); }
+            for p in parts {
+                walk_expr_tree(p, f);
+            }
         }
         ExprKind::Array(elems) => {
-            for e in elems { walk_expr_tree(e, f); }
+            for e in elems {
+                walk_expr_tree(e, f);
+            }
         }
         ExprKind::AssocArray(pairs) => {
-            for (_, v) in pairs { walk_expr_tree(v, f); }
+            for (_, v) in pairs {
+                walk_expr_tree(v, f);
+            }
         }
         ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts { walk_all_exprs(s, f); }
+            for s in stmts {
+                walk_all_exprs(s, f);
+            }
         }
         ExprKind::ParameterExpansion(pe) => {
-            if let Some(ref operand) = pe.operand { walk_expr_tree(operand, f); }
+            if let Some(ref operand) = pe.operand {
+                walk_expr_tree(operand, f);
+            }
         }
         ExprKind::Test(t) => walk_test_exprs(t, f),
         ExprKind::Subscript { index, .. } => walk_expr_tree(index, f),
@@ -510,15 +547,9 @@ pub enum ArithExpr {
         inc: bool, // true = ++, false = --
     },
     /// Pre-increment/decrement: ++x, --x
-    PreIncDec {
-        var: String,
-        inc: bool,
-    },
+    PreIncDec { var: String, inc: bool },
     /// Assignment: var = expr
-    Assign {
-        var: String,
-        value: Box<ArithExpr>,
-    },
+    Assign { var: String, value: Box<ArithExpr> },
     /// Compound assignment: var += expr, var -= expr, etc.
     CompoundAssign {
         var: String,
@@ -534,10 +565,7 @@ pub enum ArithExpr {
     /// Comma operator: expr, expr, ...
     Comma(Vec<ArithExpr>),
     /// Function call (DD#58 sexpr): (name arg1 arg2 ...)
-    FuncCall {
-        name: String,
-        args: Vec<ArithExpr>,
-    },
+    FuncCall { name: String, args: Vec<ArithExpr> },
     /// Parenthesized grouping
     Paren(Box<ArithExpr>),
 }

@@ -108,7 +108,10 @@ pub(super) fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec
             } else {
                 // Arithmetic grouping: parse as structured arithmetic
                 if let Ok(arith) = crate::parse::parse_arith_str(inner, span) {
-                    let e = Expr { kind: ExprKind::Arithmetic(Box::new(arith)), span };
+                    let e = Expr {
+                        kind: ExprKind::Arithmetic(Box::new(arith)),
+                        span,
+                    };
                     args.push(expr_to_value(&e, state));
                 } else {
                     args.push(SsaValue::Expr(inner.to_string()));
@@ -123,7 +126,10 @@ pub(super) fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec
             let token = &s[start..i];
             // Parse as structured arithmetic
             if let Ok(arith) = crate::parse::parse_arith_str(token, span) {
-                let e = Expr { kind: ExprKind::Arithmetic(Box::new(arith)), span };
+                let e = Expr {
+                    kind: ExprKind::Arithmetic(Box::new(arith)),
+                    span,
+                };
                 args.push(expr_to_value(&e, state));
             } else {
                 args.push(SsaValue::Expr(token.to_string()));

@@ -2,8 +2,8 @@
 
 #[cfg(test)]
 mod test {
-    use crate::parse::parser::parse;
     use crate::ir::*;
+    use crate::parse::parser::parse;
 
     fn parse_ok(source: &str) -> Program {
         let (program, diags) = parse(source).unwrap_or_else(|diags| {

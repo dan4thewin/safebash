@@ -15,9 +15,9 @@
 //!   - `reject_nested_mutation` — e.g. `x = y++` rejected
 //!   - Mutation in expression context ($(())) rejected at parse time
 
+use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
-use super::lexer::{Scanner, Tok};
 
 /// Create a parse error diagnostic for arithmetic expressions.
 fn arith_error(span: Span, message: String) -> Diagnostic {
@@ -33,7 +33,9 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
     let expr = parse_arith_str(&content, span)?;
     // SB5007: reject mutations inside $(( ))
     reject_prefix_incdec(&expr, span)?;
-    if let crate::ir::ArithExpr::Assign { var, .. } | crate::ir::ArithExpr::CompoundAssign { var, .. } = &expr {
+    if let crate::ir::ArithExpr::Assign { var, .. }
+    | crate::ir::ArithExpr::CompoundAssign { var, .. } = &expr
+    {
         return Err(arith_error(span, format!(
             "mutation {} = ... not allowed in $(( )) expression context — use (( )) statement instead", var
         )));
@@ -63,17 +65,31 @@ pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExp
 }
 
 /// Reject prefix ++/-- anywhere in an arithmetic expression.
-fn reject_prefix_incdec(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> Result<(), Diagnostic> {
+fn reject_prefix_incdec(
+    expr: &crate::ir::ArithExpr,
+    span: crate::ir::Span,
+) -> Result<(), Diagnostic> {
     use crate::ir::ArithExpr;
     match expr {
         ArithExpr::PreIncDec { var, inc } => {
             let op = if *inc { "++" } else { "--" };
-            Err(arith_error(span, format!(
-                "prefix {}{} is not allowed — use postfix ({}{}){}",
-                op, var, var, op,
-                if *inc { " or (( " } else { " or (( " }.to_string() + var +
-                if *inc { " += 1 )) instead" } else { " -= 1 )) instead" }
-            )))
+            Err(arith_error(
+                span,
+                format!(
+                    "prefix {}{} is not allowed — use postfix ({}{}){}",
+                    op,
+                    var,
+                    var,
+                    op,
+                    if *inc { " or (( " } else { " or (( " }.to_string()
+                        + var
+                        + if *inc {
+                            " += 1 )) instead"
+                        } else {
+                            " -= 1 )) instead"
+                        }
+                ),
+            ))
         }
         ArithExpr::BinOp { left, right, .. } => {
             reject_prefix_incdec(left, span)?;
@@ -82,7 +98,9 @@ fn reject_prefix_incdec(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> R
         ArithExpr::Assign { value, .. } => reject_prefix_incdec(value, span),
         ArithExpr::CompoundAssign { value, .. } => reject_prefix_incdec(value, span),
         ArithExpr::Comma(exprs) => {
-            for e in exprs { reject_prefix_incdec(e, span)?; }
+            for e in exprs {
+                reject_prefix_incdec(e, span)?;
+            }
             Ok(())
         }
         ArithExpr::Paren(inner) => reject_prefix_incdec(inner, span),
@@ -91,7 +109,10 @@ fn reject_prefix_incdec(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> R
 }
 
 /// Reject nested mutations: e.g. (( x = y++ )) has y++ inside assignment
-fn reject_nested_mutation(expr: &crate::ir::ArithExpr, span: crate::ir::Span) -> Result<(), Diagnostic> {
+fn reject_nested_mutation(
+    expr: &crate::ir::ArithExpr,
+    span: crate::ir::Span,
+) -> Result<(), Diagnostic> {
     use crate::ir::ArithExpr;
     match expr {
         ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
@@ -104,7 +125,9 @@ fn reject_nested_mutation(expr: &crate::ir::ArithExpr, span: crate::ir::Span) ->
             Ok(())
         }
         ArithExpr::Comma(exprs) => {
-            for e in exprs { reject_nested_mutation(e, span)?; }
+            for e in exprs {
+                reject_nested_mutation(e, span)?;
+            }
             Ok(())
         }
         _ => Ok(()),
@@ -114,9 +137,13 @@ fn reject_nested_mutation(expr: &crate::ir::ArithExpr, span: crate::ir::Span) ->
 fn has_mutation_inner(expr: &crate::ir::ArithExpr) -> bool {
     use crate::ir::ArithExpr;
     match expr {
-        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
-        | ArithExpr::Assign { .. } | ArithExpr::CompoundAssign { .. } => true,
-        ArithExpr::BinOp { left, right, .. } => has_mutation_inner(left) || has_mutation_inner(right),
+        ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. }
+        | ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. } => true,
+        ArithExpr::BinOp { left, right, .. } => {
+            has_mutation_inner(left) || has_mutation_inner(right)
+        }
         ArithExpr::Paren(inner) => has_mutation_inner(inner),
         _ => false,
     }
@@ -140,7 +167,11 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
         return Ok(ArithExpr::Literal(0));
     }
     let tokens = tokenize_arith(trimmed);
-    let mut parser = ArithParser { tokens, pos: 0, span };
+    let mut parser = ArithParser {
+        tokens,
+        pos: 0,
+        span,
+    };
     let expr = parser.parse_expr(0)?;
     // Handle comma operator at top level
     if parser.peek() == Some(&ATok::Comma) {
@@ -164,16 +195,24 @@ pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
         | ArithExpr::PostIncDec { .. } => ArithKind::Mutation,
         ArithExpr::Comma(exprs) => {
             // If any part is a mutation, the whole thing is
-            if exprs.iter().any(|e| classify_arith_expr(e) == ArithKind::Mutation) {
+            if exprs
+                .iter()
+                .any(|e| classify_arith_expr(e) == ArithKind::Mutation)
+            {
                 ArithKind::Mutation
             } else {
                 ArithKind::Test
             }
         }
         ArithExpr::BinOp { op, .. } => match op {
-            IrArithOp::Eq | IrArithOp::Ne | IrArithOp::Lt
-            | IrArithOp::Le | IrArithOp::Gt | IrArithOp::Ge
-            | IrArithOp::And | IrArithOp::Or => ArithKind::Comparison,
+            IrArithOp::Eq
+            | IrArithOp::Ne
+            | IrArithOp::Lt
+            | IrArithOp::Le
+            | IrArithOp::Gt
+            | IrArithOp::Ge
+            | IrArithOp::And
+            | IrArithOp::Or => ArithKind::Comparison,
             _ => ArithKind::Test,
         },
         _ => ArithKind::Test,
@@ -190,7 +229,13 @@ pub fn lower_arith_command(expr: ArithExpr, span: Span) -> Statement {
 }
 
 /// Lower a C-style for loop: for (( init; cond; update )); do body; done
-pub fn lower_c_style_for(init: &str, cond: &str, update: &str, body: Vec<Statement>, span: Span) -> Statement {
+pub fn lower_c_style_for(
+    init: &str,
+    cond: &str,
+    update: &str,
+    body: Vec<Statement>,
+    span: Span,
+) -> Statement {
     // Init
     let mut init_stmts = Vec::new();
     let init_trimmed = init.trim();
@@ -284,7 +329,7 @@ enum ATok {
     Caret,
     Tilde,
     Bang,
-    Eq,        // = (assignment)
+    Eq, // = (assignment)
     Question,
     Colon,
     Comma,
@@ -308,7 +353,10 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
         if bytes[i].is_ascii_digit() {
             let start = i;
             // Hex: 0x...
-            if bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X') {
+            if bytes[i] == b'0'
+                && i + 1 < bytes.len()
+                && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
+            {
                 i += 2;
                 while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
                     i += 1;
@@ -336,7 +384,11 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
                     let base: u32 = input[start..i].parse().unwrap_or(10);
                     i += 1; // skip #
                     let digit_start = i;
-                    while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_' || bytes[i] == b'@') {
+                    while i < bytes.len()
+                        && (bytes[i].is_ascii_alphanumeric()
+                            || bytes[i] == b'_'
+                            || bytes[i] == b'@')
+                    {
                         i += 1;
                     }
                     let digits = &input[digit_start..i];
@@ -372,7 +424,9 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
                     i += 1;
                 }
                 let name = input[name_start..i].to_string();
-                if i < bytes.len() { i += 1; } // skip }
+                if i < bytes.len() {
+                    i += 1;
+                } // skip }
                 tokens.push(ATok::DollarVar(name));
             } else {
                 while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
@@ -398,33 +452,117 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
         if i + 2 < bytes.len() {
             let three = &input[i..i + 3];
             match three {
-                "<<=" => { tokens.push(ATok::LtLtEq); i += 3; continue; }
-                ">>=" => { tokens.push(ATok::GtGtEq); i += 3; continue; }
+                "<<=" => {
+                    tokens.push(ATok::LtLtEq);
+                    i += 3;
+                    continue;
+                }
+                ">>=" => {
+                    tokens.push(ATok::GtGtEq);
+                    i += 3;
+                    continue;
+                }
                 _ => {}
             }
         }
         if i + 1 < bytes.len() {
             let two = &input[i..i + 2];
             match two {
-                "++" => { tokens.push(ATok::PlusPlus); i += 2; continue; }
-                "--" => { tokens.push(ATok::MinusMinus); i += 2; continue; }
-                "**" => { tokens.push(ATok::StarStar); i += 2; continue; }
-                "<<" => { tokens.push(ATok::LtLt); i += 2; continue; }
-                ">>" => { tokens.push(ATok::GtGt); i += 2; continue; }
-                "<=" => { tokens.push(ATok::LtEq); i += 2; continue; }
-                ">=" => { tokens.push(ATok::GtEq); i += 2; continue; }
-                "==" => { tokens.push(ATok::EqEq); i += 2; continue; }
-                "!=" => { tokens.push(ATok::BangEq); i += 2; continue; }
-                "&&" => { tokens.push(ATok::AmpAmp); i += 2; continue; }
-                "||" => { tokens.push(ATok::PipePipe); i += 2; continue; }
-                "+=" => { tokens.push(ATok::PlusEq); i += 2; continue; }
-                "-=" => { tokens.push(ATok::MinusEq); i += 2; continue; }
-                "*=" => { tokens.push(ATok::StarEq); i += 2; continue; }
-                "/=" => { tokens.push(ATok::SlashEq); i += 2; continue; }
-                "%=" => { tokens.push(ATok::PercentEq); i += 2; continue; }
-                "&=" => { tokens.push(ATok::AmpEq); i += 2; continue; }
-                "|=" => { tokens.push(ATok::PipeEq); i += 2; continue; }
-                "^=" => { tokens.push(ATok::CaretEq); i += 2; continue; }
+                "++" => {
+                    tokens.push(ATok::PlusPlus);
+                    i += 2;
+                    continue;
+                }
+                "--" => {
+                    tokens.push(ATok::MinusMinus);
+                    i += 2;
+                    continue;
+                }
+                "**" => {
+                    tokens.push(ATok::StarStar);
+                    i += 2;
+                    continue;
+                }
+                "<<" => {
+                    tokens.push(ATok::LtLt);
+                    i += 2;
+                    continue;
+                }
+                ">>" => {
+                    tokens.push(ATok::GtGt);
+                    i += 2;
+                    continue;
+                }
+                "<=" => {
+                    tokens.push(ATok::LtEq);
+                    i += 2;
+                    continue;
+                }
+                ">=" => {
+                    tokens.push(ATok::GtEq);
+                    i += 2;
+                    continue;
+                }
+                "==" => {
+                    tokens.push(ATok::EqEq);
+                    i += 2;
+                    continue;
+                }
+                "!=" => {
+                    tokens.push(ATok::BangEq);
+                    i += 2;
+                    continue;
+                }
+                "&&" => {
+                    tokens.push(ATok::AmpAmp);
+                    i += 2;
+                    continue;
+                }
+                "||" => {
+                    tokens.push(ATok::PipePipe);
+                    i += 2;
+                    continue;
+                }
+                "+=" => {
+                    tokens.push(ATok::PlusEq);
+                    i += 2;
+                    continue;
+                }
+                "-=" => {
+                    tokens.push(ATok::MinusEq);
+                    i += 2;
+                    continue;
+                }
+                "*=" => {
+                    tokens.push(ATok::StarEq);
+                    i += 2;
+                    continue;
+                }
+                "/=" => {
+                    tokens.push(ATok::SlashEq);
+                    i += 2;
+                    continue;
+                }
+                "%=" => {
+                    tokens.push(ATok::PercentEq);
+                    i += 2;
+                    continue;
+                }
+                "&=" => {
+                    tokens.push(ATok::AmpEq);
+                    i += 2;
+                    continue;
+                }
+                "|=" => {
+                    tokens.push(ATok::PipeEq);
+                    i += 2;
+                    continue;
+                }
+                "^=" => {
+                    tokens.push(ATok::CaretEq);
+                    i += 2;
+                    continue;
+                }
                 _ => {}
             }
         }
@@ -449,7 +587,10 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
             b',' => ATok::Comma,
             b'(' => ATok::LParen,
             b')' => ATok::RParen,
-            _ => { i += 1; continue; } // skip unknown
+            _ => {
+                i += 1;
+                continue;
+            } // skip unknown
         };
         tokens.push(tok);
         i += 1;
@@ -502,7 +643,10 @@ impl ArithParser {
                         if let ArithExpr::Var(name) = &lhs {
                             let name = name.clone();
                             self.advance();
-                            lhs = ArithExpr::PostIncDec { var: name, inc: true };
+                            lhs = ArithExpr::PostIncDec {
+                                var: name,
+                                inc: true,
+                            };
                             continue;
                         }
                         // Not a variable, treat ++ as end of expression
@@ -512,7 +656,10 @@ impl ArithParser {
                         if let ArithExpr::Var(name) = &lhs {
                             let name = name.clone();
                             self.advance();
-                            lhs = ArithExpr::PostIncDec { var: name, inc: false };
+                            lhs = ArithExpr::PostIncDec {
+                                var: name,
+                                inc: false,
+                            };
                             continue;
                         }
                         break;
@@ -543,8 +690,15 @@ impl ArithParser {
                         self.advance();
                         let rhs = self.parse_expr(1)?; // right-associative
                         lhs = match op {
-                            None => ArithExpr::Assign { var: name, value: Box::new(rhs) },
-                            Some(op) => ArithExpr::CompoundAssign { var: name, op, value: Box::new(rhs) },
+                            None => ArithExpr::Assign {
+                                var: name,
+                                value: Box::new(rhs),
+                            },
+                            Some(op) => ArithExpr::CompoundAssign {
+                                var: name,
+                                op,
+                                value: Box::new(rhs),
+                            },
                         };
                         continue;
                     }
@@ -627,39 +781,63 @@ impl ArithParser {
                 self.advance();
                 if let Some(ATok::Var(name)) = self.peek().cloned() {
                     self.advance();
-                    Ok(ArithExpr::PreIncDec { var: name, inc: true })
+                    Ok(ArithExpr::PreIncDec {
+                        var: name,
+                        inc: true,
+                    })
                 } else {
-                    Err(arith_error(self.span, "expected variable after ++".to_string()))
+                    Err(arith_error(
+                        self.span,
+                        "expected variable after ++".to_string(),
+                    ))
                 }
             }
             Some(ATok::MinusMinus) => {
                 self.advance();
                 if let Some(ATok::Var(name)) = self.peek().cloned() {
                     self.advance();
-                    Ok(ArithExpr::PreIncDec { var: name, inc: false })
+                    Ok(ArithExpr::PreIncDec {
+                        var: name,
+                        inc: false,
+                    })
                 } else {
-                    Err(arith_error(self.span, "expected variable after --".to_string()))
+                    Err(arith_error(
+                        self.span,
+                        "expected variable after --".to_string(),
+                    ))
                 }
             }
             Some(ATok::Minus) => {
                 self.advance();
                 let operand = self.parse_expr(25)?; // unary binds tighter than binary
-                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Neg, operand: Box::new(operand) })
+                Ok(ArithExpr::UnaryOp {
+                    op: IrUnaryArithOp::Neg,
+                    operand: Box::new(operand),
+                })
             }
             Some(ATok::Plus) => {
                 self.advance();
                 let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Pos, operand: Box::new(operand) })
+                Ok(ArithExpr::UnaryOp {
+                    op: IrUnaryArithOp::Pos,
+                    operand: Box::new(operand),
+                })
             }
             Some(ATok::Bang) => {
                 self.advance();
                 let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::Not, operand: Box::new(operand) })
+                Ok(ArithExpr::UnaryOp {
+                    op: IrUnaryArithOp::Not,
+                    operand: Box::new(operand),
+                })
             }
             Some(ATok::Tilde) => {
                 self.advance();
                 let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp { op: IrUnaryArithOp::BitNot, operand: Box::new(operand) })
+                Ok(ArithExpr::UnaryOp {
+                    op: IrUnaryArithOp::BitNot,
+                    operand: Box::new(operand),
+                })
             }
             Some(ATok::LParen) => {
                 self.advance();
@@ -704,10 +882,10 @@ impl ArithParser {
     /// More restrictive than is_expr_start: excludes binary operators that
     /// would indicate this is grouping, not a function call.
     fn is_func_arg_start(&self) -> bool {
-        matches!(self.peek(), Some(
-            ATok::Num(_) | ATok::Var(_) | ATok::DollarVar(_)
-            | ATok::LParen
-        ))
+        matches!(
+            self.peek(),
+            Some(ATok::Num(_) | ATok::Var(_) | ATok::DollarVar(_) | ATok::LParen)
+        )
     }
 }
 
@@ -804,23 +982,39 @@ fn arith_expr_to_text(expr: &ArithExpr) -> String {
         ArithExpr::DollarVar(name) => format!("${}", name),
         ArithExpr::BinOp { left, op, right } => {
             let op_str = match op {
-                IrArithOp::Add => "+", IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*", IrArithOp::Div => "/",
-                IrArithOp::Mod => "%", IrArithOp::Pow => "**",
-                IrArithOp::Eq => "==", IrArithOp::Ne => "!=",
-                IrArithOp::Lt => "<", IrArithOp::Le => "<=",
-                IrArithOp::Gt => ">", IrArithOp::Ge => ">=",
-                IrArithOp::And => "&&", IrArithOp::Or => "||",
-                IrArithOp::Shl => "<<", IrArithOp::Shr => ">>",
-                IrArithOp::BitAnd => "&", IrArithOp::BitOr => "|",
+                IrArithOp::Add => "+",
+                IrArithOp::Sub => "-",
+                IrArithOp::Mul => "*",
+                IrArithOp::Div => "/",
+                IrArithOp::Mod => "%",
+                IrArithOp::Pow => "**",
+                IrArithOp::Eq => "==",
+                IrArithOp::Ne => "!=",
+                IrArithOp::Lt => "<",
+                IrArithOp::Le => "<=",
+                IrArithOp::Gt => ">",
+                IrArithOp::Ge => ">=",
+                IrArithOp::And => "&&",
+                IrArithOp::Or => "||",
+                IrArithOp::Shl => "<<",
+                IrArithOp::Shr => ">>",
+                IrArithOp::BitAnd => "&",
+                IrArithOp::BitOr => "|",
                 IrArithOp::BitXor => "^",
             };
-            format!("{} {} {}", arith_expr_to_text(left), op_str, arith_expr_to_text(right))
+            format!(
+                "{} {} {}",
+                arith_expr_to_text(left),
+                op_str,
+                arith_expr_to_text(right)
+            )
         }
         ArithExpr::UnaryOp { op, operand } => {
             let op_str = match op {
-                IrUnaryArithOp::Neg => "-", IrUnaryArithOp::Pos => "+",
-                IrUnaryArithOp::Not => "!", IrUnaryArithOp::BitNot => "~",
+                IrUnaryArithOp::Neg => "-",
+                IrUnaryArithOp::Pos => "+",
+                IrUnaryArithOp::Not => "!",
+                IrUnaryArithOp::BitNot => "~",
             };
             format!("{}{}", op_str, arith_expr_to_text(operand))
         }
@@ -835,19 +1029,32 @@ fn arith_expr_to_text(expr: &ArithExpr) -> String {
         }
         ArithExpr::CompoundAssign { var, op, value } => {
             let op_str = match op {
-                IrArithOp::Add => "+=", IrArithOp::Sub => "-=",
-                IrArithOp::Mul => "*=", IrArithOp::Div => "/=",
-                IrArithOp::Mod => "%=", _ => "?=",
+                IrArithOp::Add => "+=",
+                IrArithOp::Sub => "-=",
+                IrArithOp::Mul => "*=",
+                IrArithOp::Div => "/=",
+                IrArithOp::Mod => "%=",
+                _ => "?=",
             };
             format!("{} {} {}", var, op_str, arith_expr_to_text(value))
         }
-        ArithExpr::Ternary { cond, true_val, false_val } => {
-            format!("{} ? {} : {}", arith_expr_to_text(cond),
-                arith_expr_to_text(true_val), arith_expr_to_text(false_val))
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            format!(
+                "{} ? {} : {}",
+                arith_expr_to_text(cond),
+                arith_expr_to_text(true_val),
+                arith_expr_to_text(false_val)
+            )
         }
-        ArithExpr::Comma(exprs) => {
-            exprs.iter().map(arith_expr_to_text).collect::<Vec<_>>().join(", ")
-        }
+        ArithExpr::Comma(exprs) => exprs
+            .iter()
+            .map(arith_expr_to_text)
+            .collect::<Vec<_>>()
+            .join(", "),
         ArithExpr::FuncCall { name, args } => {
             let arg_strs: Vec<String> = args.iter().map(arith_expr_to_text).collect();
             format!("({} {})", name, arg_strs.join(" "))
@@ -916,9 +1123,15 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
                 let text = tok_to_text(&tok.token);
                 content.push_str(&text);
                 scanner.next();
-                if !matches!(scanner.peek().token,
-                    Tok::DblParenClose | Tok::RParen | Tok::Semi | Tok::Newline | Tok::Eof
-                    | Tok::DblParen | Tok::LParen
+                if !matches!(
+                    scanner.peek().token,
+                    Tok::DblParenClose
+                        | Tok::RParen
+                        | Tok::Semi
+                        | Tok::Newline
+                        | Tok::Eof
+                        | Tok::DblParen
+                        | Tok::LParen
                 ) && !text.ends_with(' ')
                 {
                     content.push(' ');

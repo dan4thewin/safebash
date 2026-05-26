@@ -449,15 +449,24 @@ fn print_arith_expr(out: &mut String, expr: &crate::ir::ArithExpr) {
         ArithExpr::BinOp { left, op, right } => {
             print_arith_expr(out, left);
             let op_str = match op {
-                IrArithOp::Add => " + ", IrArithOp::Sub => " - ",
-                IrArithOp::Mul => " * ", IrArithOp::Div => " / ",
-                IrArithOp::Mod => " % ", IrArithOp::Pow => " ** ",
-                IrArithOp::Eq => " == ", IrArithOp::Ne => " != ",
-                IrArithOp::Lt => " < ", IrArithOp::Le => " <= ",
-                IrArithOp::Gt => " > ", IrArithOp::Ge => " >= ",
-                IrArithOp::And => " && ", IrArithOp::Or => " || ",
-                IrArithOp::Shl => " << ", IrArithOp::Shr => " >> ",
-                IrArithOp::BitAnd => " & ", IrArithOp::BitOr => " | ",
+                IrArithOp::Add => " + ",
+                IrArithOp::Sub => " - ",
+                IrArithOp::Mul => " * ",
+                IrArithOp::Div => " / ",
+                IrArithOp::Mod => " % ",
+                IrArithOp::Pow => " ** ",
+                IrArithOp::Eq => " == ",
+                IrArithOp::Ne => " != ",
+                IrArithOp::Lt => " < ",
+                IrArithOp::Le => " <= ",
+                IrArithOp::Gt => " > ",
+                IrArithOp::Ge => " >= ",
+                IrArithOp::And => " && ",
+                IrArithOp::Or => " || ",
+                IrArithOp::Shl => " << ",
+                IrArithOp::Shr => " >> ",
+                IrArithOp::BitAnd => " & ",
+                IrArithOp::BitOr => " | ",
                 IrArithOp::BitXor => " ^ ",
             };
             out.push_str(op_str);
@@ -489,14 +498,21 @@ fn print_arith_expr(out: &mut String, expr: &crate::ir::ArithExpr) {
         ArithExpr::CompoundAssign { var, op, value } => {
             out.push_str(var);
             let op_str = match op {
-                IrArithOp::Add => " += ", IrArithOp::Sub => " -= ",
-                IrArithOp::Mul => " *= ", IrArithOp::Div => " /= ",
-                IrArithOp::Mod => " %= ", _ => " ?= ",
+                IrArithOp::Add => " += ",
+                IrArithOp::Sub => " -= ",
+                IrArithOp::Mul => " *= ",
+                IrArithOp::Div => " /= ",
+                IrArithOp::Mod => " %= ",
+                _ => " ?= ",
             };
             out.push_str(op_str);
             print_arith_expr(out, value);
         }
-        ArithExpr::Ternary { cond, true_val, false_val } => {
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
             print_arith_expr(out, cond);
             out.push_str(" ? ");
             print_arith_expr(out, true_val);
@@ -505,7 +521,9 @@ fn print_arith_expr(out: &mut String, expr: &crate::ir::ArithExpr) {
         }
         ArithExpr::Comma(exprs) => {
             for (i, e) in exprs.iter().enumerate() {
-                if i > 0 { out.push_str(", "); }
+                if i > 0 {
+                    out.push_str(", ");
+                }
                 print_arith_expr(out, e);
             }
         }
