@@ -124,7 +124,7 @@ fn expand_value(
             if bytes[i + 1] == b'(' {
                 return Err(format!("command substitution not allowed: {}", s));
             }
-            if bytes[i + 1] == b'`' || (i + 1 < bytes.len() && bytes[i + 1] == b'`') {
+            if bytes[i + 1] == b'`' {
                 return Err(format!("backtick substitution not allowed: {}", s));
             }
 
@@ -186,9 +186,7 @@ fn expand_braced(inner: &str, vars: &HashMap<String, String>) -> Result<String, 
         let name = &inner[..pos];
         let default = &inner[pos + 2..];
         let val = vars.get(name).filter(|v| !v.is_empty());
-        return Ok(val
-            .map(|s| s.clone())
-            .unwrap_or_else(|| default.to_string()));
+        return Ok(val.cloned().unwrap_or_else(|| default.to_string()));
     }
 
     // ${VAR:+alternate}

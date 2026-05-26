@@ -66,14 +66,6 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                     });
                 }
             }
-            Tok::Number(ref n) => {
-                let n = n.clone();
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::Literal(n),
-                    span,
-                });
-            }
             Tok::SingleQuoted(ref s) => {
                 let s = s.clone();
                 scanner.next();
@@ -236,7 +228,7 @@ pub fn parse_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
 // ── Double-quoted string interpolation ───────────────────────────
 
 /// Convert lexer StringParts to IR Exprs for double-quoted strings.
-pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, scanner: &Scanner) -> Vec<Expr> {
+pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, _scanner: &Scanner) -> Vec<Expr> {
     let mut result = Vec::new();
     let mut i = 0;
     while i < parts.len() {
@@ -404,8 +396,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     let rest = &content[name_end..];
 
     // ${var:s/regex/replacement/flags} — DD#39 sed expression
-    if rest.starts_with(":s/") {
-        let sed_content = &rest[3..];
+    if let Some(sed_content) = rest.strip_prefix(":s/") {
         if let Some(slash_pos) = sed_content.find('/') {
             let pattern = &sed_content[..slash_pos];
             let after = &sed_content[slash_pos + 1..];
@@ -441,7 +432,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         let sub_content = &rest[1..];
         let first_ch = sub_content.as_bytes().first().copied().unwrap_or(0);
         if first_ch.is_ascii_digit() || first_ch == b'-' || first_ch == b'(' {
-            let cleaned = sub_content.replace('(', "").replace(')', "");
+            let cleaned = sub_content.replace(['(', ')'], "");
             return Expr {
                 kind: ExprKind::ParameterExpansion(ParameterExpansion {
                     name: name.to_string(),
@@ -464,48 +455,47 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
                 .chars()
                 .next()
                 .is_some_and(|c| c.is_ascii_alphabetic())
+            && !rest.contains("[@]")
+            && !rest.contains("[@")
         {
-            if !rest.contains("[@]") && !rest.contains("[@") {
-                return Expr::param(name, Some(&format!("@{}", after)), None, span);
-            }
+            return Expr::param(name, Some(&format!("@{}", after)), None, span);
         }
     }
 
     // Standard operators
     let (op, operand_str) = split_operator(rest);
     if let Some(op_str) = op {
-        let operand = if (op_str == "/" || op_str == "//" || op_str == "/#" || op_str == "/%")
-            && operand_str.is_some()
-        {
-            let raw = operand_str.unwrap();
-            if let Some(sep) = find_unescaped_slash(&raw) {
-                let pattern = &raw[..sep];
-                let replacement = &raw[sep + 1..];
-                let mut pat_regex = glob_to_regex(pattern);
-                if op_str == "/#" {
-                    pat_regex = format!("^{}", pat_regex);
+        let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
+        let operand = match (is_slash_op, operand_str.clone()) {
+            (true, Some(raw)) => {
+                if let Some(sep) = find_unescaped_slash(&raw) {
+                    let pattern = &raw[..sep];
+                    let replacement = &raw[sep + 1..];
+                    let mut pat_regex = glob_to_regex(pattern);
+                    if op_str == "/#" {
+                        pat_regex = format!("^{}", pat_regex);
+                    }
+                    if op_str == "/%" {
+                        pat_regex = format!("{}$", pat_regex);
+                    }
+                    Some(Box::new(Expr {
+                        kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
+                        span,
+                    }))
+                } else {
+                    let pat_regex = glob_to_regex(&raw);
+                    Some(Box::new(Expr {
+                        kind: ExprKind::Literal(format!("{}\0", pat_regex)),
+                        span,
+                    }))
                 }
-                if op_str == "/%" {
-                    pat_regex = format!("{}$", pat_regex);
-                }
-                Some(Box::new(Expr {
-                    kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
-                    span,
-                }))
-            } else {
-                let pat_regex = glob_to_regex(&raw);
-                Some(Box::new(Expr {
-                    kind: ExprKind::Literal(format!("{}\0", pat_regex)),
-                    span,
-                }))
             }
-        } else {
-            operand_str.map(|s| {
+            _ => operand_str.map(|s| {
                 Box::new(Expr {
                     kind: ExprKind::Literal(s),
                     span,
                 })
-            })
+            }),
         };
         return Expr {
             kind: ExprKind::ParameterExpansion(ParameterExpansion {
@@ -527,30 +517,31 @@ fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr>
             op_str.as_str(),
             "/" | "//" | "#" | "##" | "%" | "%%" | "^" | "^^" | "," | ",,"
         ) {
-            let operand = if (op_str == "/" || op_str == "//") && operand_str.is_some() {
-                let raw = operand_str.unwrap();
-                if let Some(sep) = find_unescaped_slash(&raw) {
-                    let pattern = &raw[..sep];
-                    let replacement = &raw[sep + 1..];
-                    let pat_regex = glob_to_regex(pattern);
-                    Some(Box::new(Expr {
-                        kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
-                        span,
-                    }))
-                } else {
-                    let pat_regex = glob_to_regex(&raw);
-                    Some(Box::new(Expr {
-                        kind: ExprKind::Literal(format!("{}\0", pat_regex)),
-                        span,
-                    }))
+            let is_slash_op = op_str == "/" || op_str == "//";
+            let operand = match (is_slash_op, operand_str.clone()) {
+                (true, Some(raw)) => {
+                    if let Some(sep) = find_unescaped_slash(&raw) {
+                        let pattern = &raw[..sep];
+                        let replacement = &raw[sep + 1..];
+                        let pat_regex = glob_to_regex(pattern);
+                        Some(Box::new(Expr {
+                            kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
+                            span,
+                        }))
+                    } else {
+                        let pat_regex = glob_to_regex(&raw);
+                        Some(Box::new(Expr {
+                            kind: ExprKind::Literal(format!("{}\0", pat_regex)),
+                            span,
+                        }))
+                    }
                 }
-            } else {
-                operand_str.map(|s| {
+                _ => operand_str.map(|s| {
                     Box::new(Expr {
                         kind: ExprKind::Literal(s),
                         span,
                     })
-                })
+                }),
             };
             return Some(Expr {
                 kind: ExprKind::ParameterExpansion(ParameterExpansion {
@@ -577,8 +568,7 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
         ":-", ":=", ":+", ":?", "##", "%%", "//", "/#", "/%", "^^", ",,",
     ];
     for op in two_char_ops {
-        if s.starts_with(op) {
-            let rest = &s[op.len()..];
+        if let Some(rest) = s.strip_prefix(op) {
             let operand = if rest.is_empty() {
                 None
             } else {
@@ -590,8 +580,7 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
 
     let one_char_ops = &["%", "#", "/", "^", ","];
     for op in one_char_ops {
-        if s.starts_with(op) {
-            let rest = &s[op.len()..];
+        if let Some(rest) = s.strip_prefix(op) {
             let operand = if rest.is_empty() {
                 None
             } else {
@@ -647,7 +636,7 @@ fn glob_to_regex(glob: &str) -> String {
 // ── Command substitution ───────────────────────────────────────────
 
 /// Parse a sub-script (for command substitution or subshell contents).
-pub fn parse_sub_script(content: &str, span: Span) -> Vec<Statement> {
+pub fn parse_sub_script(content: &str, _span: Span) -> Vec<Statement> {
     let mut sub_scanner = Scanner::new(content);
     let mut stmts = Vec::new();
     while !sub_scanner.at_eof() {

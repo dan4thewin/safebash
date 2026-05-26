@@ -57,6 +57,6 @@ status:V:
 
 install-hooks:V:
 	git config core.hooksPath .githooks
-	@echo "git hooks installed (.githooks/). To uninstall: git config --unset core.hooksPath"
+	echo "git hooks installed (.githooks/). To uninstall: git config --unset core.hooksPath"
 
 check:V: lint test complexity

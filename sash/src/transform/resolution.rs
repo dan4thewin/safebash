@@ -1,11 +1,7 @@
-//! Command resolution and sexpr parsing.
+//! Command resolution.
 //!
 //! TRUST: resolve_pipeline_command uses compile-time PATH resolution (DD#23).
 //! No runtime PATH lookup — the resolved absolute path is embedded in the binary.
-
-use super::expressions::expr_to_value;
-use crate::ir::*;
-use crate::ssa::*;
 
 pub(super) fn resolve_pipeline_command(name: &str) -> String {
     if name.contains('/') {
@@ -36,105 +32,4 @@ pub(super) fn resolve_command_path(name: &str) -> Option<String> {
         }
     }
     None
-}
-
-pub(super) fn try_parse_sexpr(inner: &str, span: Span, state: &VersionState) -> Option<SsaValue> {
-    let inner = inner.trim();
-    if inner.is_empty() {
-        return None;
-    }
-
-    // Extract the function name (first whitespace-delimited token)
-    let name_end = inner
-        .find(|c: char| c.is_whitespace())
-        .unwrap_or(inner.len());
-    let name = &inner[..name_end];
-
-    // Must be a known -> int function
-    if !state.function_int_typed.contains(name) {
-        return None;
-    }
-
-    // Parse arguments (space-separated, respecting nested parens)
-    let args_str = inner[name_end..].trim();
-    let args = if args_str.is_empty() {
-        vec![]
-    } else {
-        parse_sexpr_args(args_str, span, state)
-    };
-
-    Some(SsaValue::IntFuncCall {
-        name: name.to_string(),
-        args,
-    })
-}
-
-/// Parse space-separated arguments for a sexpr call, respecting nested parens.
-pub(super) fn parse_sexpr_args(s: &str, span: Span, state: &VersionState) -> Vec<SsaValue> {
-    let mut args = Vec::new();
-    let mut i = 0;
-    let bytes = s.as_bytes();
-    while i < bytes.len() {
-        // Skip whitespace
-        while i < bytes.len() && bytes[i].is_ascii_whitespace() {
-            i += 1;
-        }
-        if i >= bytes.len() {
-            break;
-        }
-
-        if bytes[i] == b'(' {
-            // Find matching close paren
-            let start = i;
-            let mut depth = 0;
-            while i < bytes.len() {
-                if bytes[i] == b'(' {
-                    depth += 1;
-                }
-                if bytes[i] == b')' {
-                    depth -= 1;
-                    if depth == 0 {
-                        i += 1;
-                        break;
-                    }
-                }
-                i += 1;
-            }
-            let token = s[start..i].trim();
-            // Try as nested sexpr
-            let inner = &token[1..token.len() - 1];
-            if let Some(call) = try_parse_sexpr(inner, span, state) {
-                args.push(call);
-            } else {
-                // Arithmetic grouping: parse as structured arithmetic
-                if let Ok(arith) = crate::parse::parse_arith_str(inner, span) {
-                    let e = Expr {
-                        kind: ExprKind::Arithmetic(Box::new(arith)),
-                        span,
-                    };
-                    args.push(expr_to_value(&e, state));
-                } else {
-                    args.push(SsaValue::Expr(inner.to_string()));
-                }
-            }
-        } else {
-            // Read until whitespace or paren
-            let start = i;
-            while i < bytes.len() && !bytes[i].is_ascii_whitespace() && bytes[i] != b'(' {
-                i += 1;
-            }
-            let token = &s[start..i];
-            // Parse as structured arithmetic
-            if let Ok(arith) = crate::parse::parse_arith_str(token, span) {
-                let e = Expr {
-                    kind: ExprKind::Arithmetic(Box::new(arith)),
-                    span,
-                };
-                args.push(expr_to_value(&e, state));
-            } else {
-                args.push(SsaValue::Expr(token.to_string()));
-            }
-        }
-    }
-    args
 }

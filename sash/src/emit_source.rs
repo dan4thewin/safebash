@@ -20,23 +20,6 @@ thread_local! {
     static COERCIONS: RefCell<Vec<Coercion>> = const { RefCell::new(Vec::new()) };
 }
 
-/// Record a coercion during lowering.
-pub fn record_coercion(start: usize, end: usize, replacement: String, original: String) {
-    COERCIONS.with(|c| {
-        c.borrow_mut().push(Coercion {
-            start,
-            end,
-            replacement,
-            original,
-        });
-    });
-}
-
-/// Clear all recorded coercions (call before lowering).
-pub fn clear_coercions() {
-    COERCIONS.with(|c| c.borrow_mut().clear());
-}
-
 /// Apply recorded coercions to original source, producing sash-native source.
 /// Annotates each coercion with `# was: <original>`.
 pub fn emit_source(source: &[u8], annotate: bool) -> String {

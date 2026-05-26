@@ -73,21 +73,16 @@ fn reject_prefix_incdec(
     match expr {
         ArithExpr::PreIncDec { var, inc } => {
             let op = if *inc { "++" } else { "--" };
+            let inc_dec_str = if *inc {
+                " += 1 )) instead"
+            } else {
+                " -= 1 )) instead"
+            };
             Err(arith_error(
                 span,
                 format!(
-                    "prefix {}{} is not allowed — use postfix ({}{}){}",
-                    op,
-                    var,
-                    var,
-                    op,
-                    if *inc { " or (( " } else { " or (( " }.to_string()
-                        + var
-                        + if *inc {
-                            " += 1 )) instead"
-                        } else {
-                            " -= 1 )) instead"
-                        }
+                    "prefix {}{} is not allowed — use postfix ({}{}) or (( {}{}",
+                    op, var, var, op, var, inc_dec_str
                 ),
             ))
         }
@@ -204,17 +199,18 @@ pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
                 ArithKind::Test
             }
         }
-        ArithExpr::BinOp { op, .. } => match op {
-            IrArithOp::Eq
-            | IrArithOp::Ne
-            | IrArithOp::Lt
-            | IrArithOp::Le
-            | IrArithOp::Gt
-            | IrArithOp::Ge
-            | IrArithOp::And
-            | IrArithOp::Or => ArithKind::Comparison,
-            _ => ArithKind::Test,
-        },
+        ArithExpr::BinOp {
+            op:
+                IrArithOp::Eq
+                | IrArithOp::Ne
+                | IrArithOp::Lt
+                | IrArithOp::Le
+                | IrArithOp::Gt
+                | IrArithOp::Ge
+                | IrArithOp::And
+                | IrArithOp::Or,
+            ..
+        } => ArithKind::Comparison,
         _ => ArithKind::Test,
     }
 }
@@ -973,96 +969,6 @@ fn lower_arith_test_structured(expr: &ArithExpr, span: Span) -> Statement {
     }
 }
 
-/// Stringify an ArithExpr back to text (for compatibility with transform's
-/// text-based arithmetic handling in let commands and conditions).
-fn arith_expr_to_text(expr: &ArithExpr) -> String {
-    match expr {
-        ArithExpr::Literal(n) => n.to_string(),
-        ArithExpr::Var(name) => name.clone(),
-        ArithExpr::DollarVar(name) => format!("${}", name),
-        ArithExpr::BinOp { left, op, right } => {
-            let op_str = match op {
-                IrArithOp::Add => "+",
-                IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*",
-                IrArithOp::Div => "/",
-                IrArithOp::Mod => "%",
-                IrArithOp::Pow => "**",
-                IrArithOp::Eq => "==",
-                IrArithOp::Ne => "!=",
-                IrArithOp::Lt => "<",
-                IrArithOp::Le => "<=",
-                IrArithOp::Gt => ">",
-                IrArithOp::Ge => ">=",
-                IrArithOp::And => "&&",
-                IrArithOp::Or => "||",
-                IrArithOp::Shl => "<<",
-                IrArithOp::Shr => ">>",
-                IrArithOp::BitAnd => "&",
-                IrArithOp::BitOr => "|",
-                IrArithOp::BitXor => "^",
-            };
-            format!(
-                "{} {} {}",
-                arith_expr_to_text(left),
-                op_str,
-                arith_expr_to_text(right)
-            )
-        }
-        ArithExpr::UnaryOp { op, operand } => {
-            let op_str = match op {
-                IrUnaryArithOp::Neg => "-",
-                IrUnaryArithOp::Pos => "+",
-                IrUnaryArithOp::Not => "!",
-                IrUnaryArithOp::BitNot => "~",
-            };
-            format!("{}{}", op_str, arith_expr_to_text(operand))
-        }
-        ArithExpr::PreIncDec { var, inc } => {
-            format!("{}{}", if *inc { "++" } else { "--" }, var)
-        }
-        ArithExpr::PostIncDec { var, inc } => {
-            format!("{}{}", var, if *inc { "++" } else { "--" })
-        }
-        ArithExpr::Assign { var, value } => {
-            format!("{} = {}", var, arith_expr_to_text(value))
-        }
-        ArithExpr::CompoundAssign { var, op, value } => {
-            let op_str = match op {
-                IrArithOp::Add => "+=",
-                IrArithOp::Sub => "-=",
-                IrArithOp::Mul => "*=",
-                IrArithOp::Div => "/=",
-                IrArithOp::Mod => "%=",
-                _ => "?=",
-            };
-            format!("{} {} {}", var, op_str, arith_expr_to_text(value))
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            format!(
-                "{} ? {} : {}",
-                arith_expr_to_text(cond),
-                arith_expr_to_text(true_val),
-                arith_expr_to_text(false_val)
-            )
-        }
-        ArithExpr::Comma(exprs) => exprs
-            .iter()
-            .map(arith_expr_to_text)
-            .collect::<Vec<_>>()
-            .join(", "),
-        ArithExpr::FuncCall { name, args } => {
-            let arg_strs: Vec<String> = args.iter().map(arith_expr_to_text).collect();
-            format!("({} {})", name, arg_strs.join(" "))
-        }
-        ArithExpr::Paren(inner) => format!("({})", arith_expr_to_text(inner)),
-    }
-}
-
 // ── Content collection ────────────────────────────────────────────────
 
 /// Collect raw arithmetic content as a string (for C-style for loops
@@ -1147,7 +1053,6 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
         Tok::Word(w) => w.clone(),
-        Tok::Number(n) => n.clone(),
         Tok::Dollar(v) => format!("${}", v),
         Tok::DollarBrace(c) => format!("${{{}}}", c),
         Tok::DollarParen => "$(".to_string(),

@@ -45,7 +45,7 @@ done
 # --- lint ------------------------------------------------------------
 gray "pre-commit: cargo clippy -D warnings"
 lint_failed=0
-for crate in sash sash-convert; do
+for crate in sash sash-convert sash-expand; do
     if [ -d "$crate" ]; then
         if ! (cd "$crate" && cargo clippy --quiet -- -D warnings 2>&1 | tail -20 >/tmp/.pre-commit-clippy.$$); then
             red "  FAIL: $crate has clippy warnings"

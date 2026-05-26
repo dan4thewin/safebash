@@ -161,6 +161,7 @@ pub(super) fn lower_test_expr(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_test_unary(
     op: &str,
     operand: &crate::ir::Expr,
@@ -313,6 +314,7 @@ fn lower_test_unary(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn lower_test_binary(
     left: &crate::ir::Expr,
     op: &str,

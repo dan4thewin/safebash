@@ -74,12 +74,10 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             validate_assignment(a, stmt.span, diags);
             // SB5007: arithmetic assignment in condition context
             // (DD#31 comma pattern is handled at the Group level)
-            if in_condition {
-                if matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
-                    diags.push(Diagnostic::error_span(stmt.span, "SB5007",
+            if in_condition && matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
+                diags.push(Diagnostic::error_span(stmt.span, "SB5007",
                         format!("mutation {} = ... not allowed in condition (( )) expression context — use (( )) statement instead", a.name),
                     ));
-                }
             }
         }
         StmtKind::If(i) => {
@@ -162,7 +160,7 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             if in_condition
                 && g.body
                     .last()
-                    .map_or(false, |s| matches!(s.kind, StmtKind::ArithTest(_)))
+                    .is_some_and(|s| matches!(s.kind, StmtKind::ArithTest(_)))
             {
                 for (i, s) in g.body.iter().enumerate() {
                     if i == g.body.len() - 1 {
@@ -572,17 +570,14 @@ fn validate_arith_context(
 
 /// Check for nested mutations like `x = y++` in statement arithmetic
 fn check_arith_nested_mutation(expr: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    match expr {
-        ArithExpr::Assign { value, .. } => {
-            // Check if RHS has side effects
-            if has_mutation(value) {
-                let desc = arith_brief(value);
-                diags.push(Diagnostic::error_span(span, "SB5007",
-                    format!("mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc),
-                ));
-            }
+    if let ArithExpr::Assign { value, .. } = expr {
+        // Check if RHS has side effects
+        if has_mutation(value) {
+            let desc = arith_brief(value);
+            diags.push(Diagnostic::error_span(span, "SB5007",
+                format!("mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc),
+            ));
         }
-        _ => {}
     }
 }
 
@@ -953,10 +948,7 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
                 }
             }
             // Also skip the old two-arg form
-            if c.args
-                .first()
-                .map_or(false, |a| expr_literal_str(a) == "=~")
-            {
+            if c.args.first().is_some_and(|a| expr_literal_str(a) == "=~") {
                 return;
             }
             if !name.is_empty() && !is_valid_command(name, funcs) {
@@ -1099,17 +1091,13 @@ fn is_external_source(stmt: &Statement) -> bool {
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
-            if is_taint_source(&a.value) {
-                tainted.insert(a.name.clone());
-            } else if expr_uses_tainted(&a.value, tainted) {
+            if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
                 tainted.insert(a.name.clone());
             }
         }
         StmtKind::Declaration(d) => {
             for a in &d.assignments {
-                if is_taint_source(&a.value) {
-                    tainted.insert(a.name.clone());
-                } else if expr_uses_tainted(&a.value, tainted) {
+                if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
                     tainted.insert(a.name.clone());
                 }
             }
@@ -1127,7 +1115,7 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
         }
         StmtKind::Pipeline(p) => {
             // Pipeline taint: if first stage is external, subsequent reads are tainted.
-            let first_is_external = p.commands.first().map_or(false, is_external_source);
+            let first_is_external = p.commands.first().is_some_and(is_external_source);
             for (i, s) in p.commands.iter().enumerate() {
                 if i > 0 && !first_is_external {
                     taint_stmt_no_read_taint(s, tainted, diags);

@@ -61,11 +61,7 @@ pub enum Tok {
     Array,
     Map,
     Bless,
-    Signal,
     End,
-    Return,
-    Break,
-    Continue,
 
     // Operators
     Pipe,
@@ -114,15 +110,11 @@ pub enum Tok {
     SingleQuoted(String),          // content without quotes
     DoubleQuoted(Vec<StringPart>), // interpolated parts
     AnsiCQuoted(String),           // $'...' → expanded string
-    Number(String),                // numeric literal (kept as string)
 
     // Expansions (produced by scanner)
     Dollar(String),      // $var, $1, $@, $#, $?, $$, $!
     DollarBrace(String), // ${...} raw content for sub-parsing
     DollarParen,         // $( — start of command substitution
-
-    // File descriptor number before redirect
-    FdNumber(u32),
 
     // Comments
     Comment(String),
@@ -131,19 +123,6 @@ pub enum Tok {
 }
 
 impl Tok {
-    /// Is this token a statement terminator?
-    pub fn is_terminator(&self) -> bool {
-        matches!(self, Tok::Semi | Tok::Newline | Tok::Eof)
-    }
-
-    /// Is this token a keyword that starts a compound command?
-    pub fn is_compound_start(&self) -> bool {
-        matches!(
-            self,
-            Tok::If | Tok::While | Tok::Until | Tok::For | Tok::Case | Tok::LBrace
-        )
-    }
-
     /// Could this token be a word in command position?
     pub fn is_word_like(&self) -> bool {
         matches!(
@@ -152,7 +131,6 @@ impl Tok {
                 | Tok::SingleQuoted(_)
                 | Tok::DoubleQuoted(_)
                 | Tok::AnsiCQuoted(_)
-                | Tok::Number(_)
                 | Tok::Dollar(_)
                 | Tok::DollarBrace(_)
                 | Tok::DollarParen
@@ -199,47 +177,6 @@ impl Scanner {
             peeked: Vec::new(),
             last_end: 0,
         }
-    }
-
-    pub fn source(&self) -> &[u8] {
-        &self.source
-    }
-
-    /// Read raw source text from current position until a stop condition.
-    /// Skips any peeked tokens and reads directly from source bytes.
-    /// Used for regex patterns where backslashes must be preserved.
-    pub fn read_raw_until_bracket_close(&mut self) -> String {
-        // Discard any peeked tokens — we're taking over raw reading
-        self.peeked.clear();
-        // Skip leading whitespace
-        while self.pos < self.source.len() && matches!(self.source[self.pos], b' ' | b'\t') {
-            self.pos += 1;
-        }
-        let start = self.pos;
-        // Read until ]] (with whitespace before it)
-        while self.pos < self.source.len() {
-            if self.pos + 1 < self.source.len()
-                && self.source[self.pos] == b']'
-                && self.source[self.pos + 1] == b']'
-            {
-                break;
-            }
-            // Also stop at && || newline
-            if self.source[self.pos] == b'\n' {
-                break;
-            }
-            if self.pos + 1 < self.source.len() {
-                if (self.source[self.pos] == b'&' && self.source[self.pos + 1] == b'&')
-                    || (self.source[self.pos] == b'|' && self.source[self.pos + 1] == b'|')
-                {
-                    break;
-                }
-            }
-            self.pos += 1;
-        }
-        let raw = String::from_utf8_lossy(&self.source[start..self.pos]).to_string();
-        self.last_end = self.pos;
-        raw.trim_end().to_string()
     }
 
     /// Compute (line, col) from byte offset. Both 1-based.
@@ -802,58 +739,58 @@ impl Scanner {
             b'\'' => {
                 // $'...' ANSI-C quoting
                 self.pos += 1; // skip '
-                return self.scan_ansi_c_quoted(start);
+                self.scan_ansi_c_quoted(start)
             }
             b'(' => {
                 if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
                     // $((
                     self.pos += 2;
-                    return SpannedToken {
+                    SpannedToken {
                         token: Tok::DollarDblParen,
                         span: LexSpan {
                             start,
                             end: self.pos,
                         },
-                    };
+                    }
                 } else {
                     // $(
                     self.pos += 1;
-                    return SpannedToken {
+                    SpannedToken {
                         token: Tok::DollarParen,
                         span: LexSpan {
                             start,
                             end: self.pos,
                         },
-                    };
+                    }
                 }
             }
             b'{' => {
                 // ${...}
                 self.pos += 1; // skip {
-                return self.scan_brace_expansion(start);
+                self.scan_brace_expansion(start)
             }
             b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0' => {
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                return SpannedToken {
+                SpannedToken {
                     token: Tok::Dollar(var),
                     span: LexSpan {
                         start,
                         end: self.pos,
                     },
-                };
+                }
             }
             b'1'..=b'9' => {
                 // Positional param — could be multi-digit in rare cases but bash only does single
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                return SpannedToken {
+                SpannedToken {
                     token: Tok::Dollar(var),
                     span: LexSpan {
                         start,
                         end: self.pos,
                     },
-                };
+                }
             }
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let name_start = self.pos;
@@ -864,23 +801,23 @@ impl Scanner {
                     self.pos += 1;
                 }
                 let name = String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string();
-                return SpannedToken {
+                SpannedToken {
                     token: Tok::Dollar(name),
                     span: LexSpan {
                         start,
                         end: self.pos,
                     },
-                };
+                }
             }
             _ => {
                 // Bare $ — treat as literal
-                return SpannedToken {
+                SpannedToken {
                     token: Tok::Word("$".to_string()),
                     span: LexSpan {
                         start,
                         end: self.pos,
                     },
-                };
+                }
             }
         }
     }

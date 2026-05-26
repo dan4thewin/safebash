@@ -504,7 +504,7 @@ fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize
     }
 }
 
-fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, stmt: &Statement, depth: usize) {
+fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
     let cmd_name = expr_to_literal(&c.name);
     indent(out, depth);
     match cmd_name.as_str() {
@@ -1188,8 +1188,6 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
     }
 }
 
-/// Convert simple bash arithmetic to Janet.
-
 /// Collect variable names assigned in a statement list.
 fn collect_assigned_vars(stmts: &[Statement], vars: &mut Vec<String>) {
     for stmt in stmts {
@@ -1313,11 +1311,11 @@ fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
             )
         }
         ArithExpr::Comma(exprs) => {
-            let parts: Vec<String> = exprs.iter().map(|e| arith_expr_to_janet(e)).collect();
+            let parts: Vec<String> = exprs.iter().map(arith_expr_to_janet).collect();
             format!("(do {})", parts.join(" "))
         }
         ArithExpr::FuncCall { name, args } => {
-            let arg_strs: Vec<String> = args.iter().map(|a| arith_expr_to_janet(a)).collect();
+            let arg_strs: Vec<String> = args.iter().map(arith_expr_to_janet).collect();
             if arg_strs.is_empty() {
                 format!("({})", name)
             } else {

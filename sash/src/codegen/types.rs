@@ -181,17 +181,6 @@ pub(super) fn find_var_slot<'a>(
     best_key.and_then(|k| vars.get(k))
 }
 
-/// Find the VarSlot for an array (any versioned key starting with "name_").
-pub(super) fn find_array_slot<'a>(
-    vars: &'a std::collections::HashMap<String, VarSlot>,
-    array: &str,
-) -> Option<&'a VarSlot> {
-    let prefix = format!("{}_", array);
-    vars.keys()
-        .find(|k| k.starts_with(&prefix))
-        .and_then(|k| vars.get(k))
-}
-
 /// Find the key of the highest-versioned variable with the given base name.
 pub(super) fn find_var_key(
     vars: &std::collections::HashMap<String, VarSlot>,

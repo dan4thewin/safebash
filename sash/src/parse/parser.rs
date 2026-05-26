@@ -20,12 +20,9 @@
 use super::arith::{
     collect_arith_content_raw, lower_arith_command, lower_c_style_for, parse_arith_command,
 };
-use super::error::{parse_deferred, parse_error};
-use super::expr::{
-    parse_array_literal, parse_command_substitution, parse_expr, parse_sub_script, parse_word,
-    span_from, string_parts_to_exprs,
-};
-use super::lexer::{Scanner, SpannedToken, StringPart, Tok};
+use super::error::parse_error;
+use super::expr::{parse_array_literal, parse_expr, parse_word, span_from};
+use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
 
@@ -35,7 +32,7 @@ pub fn parse(source: &str) -> Result<(Program, Vec<Diagnostic>), Vec<Diagnostic>
     let mut scanner = Scanner::new(source);
     let mut stmts = Vec::new();
     let mut diags = Vec::new();
-    let mut end_block: Option<Vec<Statement>> = None;
+    let end_block: Option<Vec<Statement>> = None;
 
     while !scanner.at_eof() {
         skip_terminators(&mut scanner);
@@ -600,7 +597,7 @@ fn parse_declaration(
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume keyword
 
-    let (decl_keyword, var_type, mut flags) = match keyword {
+    let (decl_keyword, var_type, flags) = match keyword {
         "int" => (DeclKeyword::Declare, VarType::Int, vec![]),
         "const" => (
             DeclKeyword::Readonly,
@@ -621,19 +618,17 @@ fn parse_declaration(
     };
 
     // For "const int x", handle additional type modifiers
-    if keyword == "const" {
-        if matches!(scanner.peek().token, Tok::Int) {
-            scanner.next();
-            return Ok(Some(Statement {
-                kind: StmtKind::Declaration(Declaration {
-                    keyword: DeclKeyword::Readonly,
-                    var_type: VarType::Int,
-                    flags: vec!["-r".to_string()],
-                    assignments: parse_declaration_assignments(scanner, span)?,
-                }),
-                span,
-            }));
-        }
+    if keyword == "const" && matches!(scanner.peek().token, Tok::Int) {
+        scanner.next();
+        return Ok(Some(Statement {
+            kind: StmtKind::Declaration(Declaration {
+                keyword: DeclKeyword::Readonly,
+                var_type: VarType::Int,
+                flags: vec!["-r".to_string()],
+                assignments: parse_declaration_assignments(scanner, span)?,
+            }),
+            span,
+        }));
     }
 
     let assignments = parse_declaration_assignments(scanner, span)?;

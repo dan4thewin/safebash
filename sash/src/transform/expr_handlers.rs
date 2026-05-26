@@ -154,6 +154,7 @@ pub(super) fn handle_structured_arithmetic(
     arith_to_ssa(arith, expr, state)
 }
 
+#[allow(clippy::only_used_in_recursion)]
 fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValue {
     match arith {
         ArithExpr::Literal(n) => SsaValue::Expr(n.to_string()),
@@ -237,7 +238,7 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
                 right: Box::new(SsaValue::Expr("1".to_string())),
             }
         }
-        ArithExpr::Assign { var, value } => {
+        ArithExpr::Assign { var: _, value } => {
             // In expression context, assignment returns the value
             arith_to_ssa(value, expr, state)
         }

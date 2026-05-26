@@ -13,14 +13,3 @@ pub fn parse_error(span: Span, code: &'static str, message: String) -> Diagnosti
         message,
     }
 }
-
-/// Create a deferred diagnostic from a span.
-pub fn parse_deferred(span: Span, code: &'static str, message: String) -> Diagnostic {
-    Diagnostic {
-        line: span.line,
-        col: span.col,
-        code,
-        severity: Severity::Deferred,
-        message,
-    }
-}

@@ -322,7 +322,7 @@ fn lower_declaration_stmt(
 
 fn lower_list_stmt(
     l: &List,
-    stmt: &Statement,
+    _stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     mut block: BlockId,
@@ -408,7 +408,7 @@ fn lower_subshell_stmt(
     s: &Subshell,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
     // Subshell: fork child, run body in child, wait in parent.
     // Child gets its own memory space — modifications don't propagate.

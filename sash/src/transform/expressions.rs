@@ -159,7 +159,6 @@ pub(super) fn expr_to_string(expr: &Expr) -> String {
         }
         ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
         ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
-        ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
         ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
         ExprKind::Array(elems) => {
             let inner: Vec<String> = elems.iter().map(expr_to_string).collect();
