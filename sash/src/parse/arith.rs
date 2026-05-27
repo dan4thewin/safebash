@@ -339,260 +339,219 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
     let mut i = 0;
 
     while i < bytes.len() {
-        // Skip whitespace
         if bytes[i].is_ascii_whitespace() {
             i += 1;
             continue;
         }
 
-        // Numbers (decimal, hex, octal, base#digits)
         if bytes[i].is_ascii_digit() {
-            let start = i;
-            // Hex: 0x...
-            if bytes[i] == b'0'
-                && i + 1 < bytes.len()
-                && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
-            {
-                i += 2;
-                while i < bytes.len() && bytes[i].is_ascii_hexdigit() {
-                    i += 1;
-                }
-                let s = &input[start..i];
-                let val = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
-                tokens.push(ATok::Num(val));
-            }
-            // Octal: 0...
-            else if bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
-                i += 1;
-                while i < bytes.len() && (b'0'..=b'7').contains(&bytes[i]) {
-                    i += 1;
-                }
-                let s = &input[start + 1..i];
-                let val = i64::from_str_radix(s, 8).unwrap_or(0);
-                tokens.push(ATok::Num(val));
-            } else {
-                // Decimal or base#digits
-                while i < bytes.len() && bytes[i].is_ascii_digit() {
-                    i += 1;
-                }
-                if i < bytes.len() && bytes[i] == b'#' {
-                    // Base literal: base#digits
-                    let base: u32 = input[start..i].parse().unwrap_or(10);
-                    i += 1; // skip #
-                    let digit_start = i;
-                    while i < bytes.len()
-                        && (bytes[i].is_ascii_alphanumeric()
-                            || bytes[i] == b'_'
-                            || bytes[i] == b'@')
-                    {
-                        i += 1;
-                    }
-                    let digits = &input[digit_start..i];
-                    let val = digits.chars().fold(0i64, |acc, c| {
-                        let d = match c {
-                            '0'..='9' => c as i64 - '0' as i64,
-                            'a'..='z' => c as i64 - 'a' as i64 + 10,
-                            'A'..='Z' => c as i64 - 'A' as i64 + 36,
-                            '@' => 62,
-                            '_' => 63,
-                            _ => 0,
-                        };
-                        acc * base as i64 + d
-                    });
-                    tokens.push(ATok::Num(val));
-                } else {
-                    let val: i64 = input[start..i].parse().unwrap_or(0);
-                    tokens.push(ATok::Num(val));
-                }
-            }
+            let (tok, ni) = scan_arith_number(input, bytes, i);
+            tokens.push(tok);
+            i = ni;
             continue;
         }
 
-        // $-prefixed variable
         if bytes[i] == b'$' {
-            i += 1;
-            let start = i;
-            if i < bytes.len() && bytes[i] == b'{' {
-                // ${var} — extract name
-                i += 1;
-                let name_start = i;
-                while i < bytes.len() && bytes[i] != b'}' {
-                    i += 1;
-                }
-                let name = input[name_start..i].to_string();
-                if i < bytes.len() {
-                    i += 1;
-                } // skip }
-                tokens.push(ATok::DollarVar(name));
-            } else {
-                while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                    i += 1;
-                }
-                let name = input[start..i].to_string();
-                tokens.push(ATok::DollarVar(name));
-            }
+            let (tok, ni) = scan_arith_dollar(input, bytes, i);
+            tokens.push(tok);
+            i = ni;
             continue;
         }
 
-        // Variable names (alphanumeric + underscore, starting with alpha/_)
         if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            let start = i;
-            while i < bytes.len() && (bytes[i].is_ascii_alphanumeric() || bytes[i] == b'_') {
-                i += 1;
-            }
-            tokens.push(ATok::Var(input[start..i].to_string()));
+            let (tok, ni) = scan_arith_ident(input, bytes, i);
+            tokens.push(tok);
+            i = ni;
             continue;
         }
 
-        // Multi-char operators (try longest first)
-        if i + 2 < bytes.len() {
-            let three = &input[i..i + 3];
-            match three {
-                "<<=" => {
-                    tokens.push(ATok::LtLtEq);
-                    i += 3;
-                    continue;
-                }
-                ">>=" => {
-                    tokens.push(ATok::GtGtEq);
-                    i += 3;
-                    continue;
-                }
-                _ => {}
+        // Longest-match operator family: 3-byte → 2-byte → 1-byte.
+        if i + 3 <= bytes.len() {
+            if let Some(t) = match_arith_op3(&bytes[i..i + 3]) {
+                tokens.push(t);
+                i += 3;
+                continue;
             }
         }
-        if i + 1 < bytes.len() {
-            let two = &input[i..i + 2];
-            match two {
-                "++" => {
-                    tokens.push(ATok::PlusPlus);
-                    i += 2;
-                    continue;
-                }
-                "--" => {
-                    tokens.push(ATok::MinusMinus);
-                    i += 2;
-                    continue;
-                }
-                "**" => {
-                    tokens.push(ATok::StarStar);
-                    i += 2;
-                    continue;
-                }
-                "<<" => {
-                    tokens.push(ATok::LtLt);
-                    i += 2;
-                    continue;
-                }
-                ">>" => {
-                    tokens.push(ATok::GtGt);
-                    i += 2;
-                    continue;
-                }
-                "<=" => {
-                    tokens.push(ATok::LtEq);
-                    i += 2;
-                    continue;
-                }
-                ">=" => {
-                    tokens.push(ATok::GtEq);
-                    i += 2;
-                    continue;
-                }
-                "==" => {
-                    tokens.push(ATok::EqEq);
-                    i += 2;
-                    continue;
-                }
-                "!=" => {
-                    tokens.push(ATok::BangEq);
-                    i += 2;
-                    continue;
-                }
-                "&&" => {
-                    tokens.push(ATok::AmpAmp);
-                    i += 2;
-                    continue;
-                }
-                "||" => {
-                    tokens.push(ATok::PipePipe);
-                    i += 2;
-                    continue;
-                }
-                "+=" => {
-                    tokens.push(ATok::PlusEq);
-                    i += 2;
-                    continue;
-                }
-                "-=" => {
-                    tokens.push(ATok::MinusEq);
-                    i += 2;
-                    continue;
-                }
-                "*=" => {
-                    tokens.push(ATok::StarEq);
-                    i += 2;
-                    continue;
-                }
-                "/=" => {
-                    tokens.push(ATok::SlashEq);
-                    i += 2;
-                    continue;
-                }
-                "%=" => {
-                    tokens.push(ATok::PercentEq);
-                    i += 2;
-                    continue;
-                }
-                "&=" => {
-                    tokens.push(ATok::AmpEq);
-                    i += 2;
-                    continue;
-                }
-                "|=" => {
-                    tokens.push(ATok::PipeEq);
-                    i += 2;
-                    continue;
-                }
-                "^=" => {
-                    tokens.push(ATok::CaretEq);
-                    i += 2;
-                    continue;
-                }
-                _ => {}
+        if i + 2 <= bytes.len() {
+            if let Some(t) = match_arith_op2(&bytes[i..i + 2]) {
+                tokens.push(t);
+                i += 2;
+                continue;
             }
+        }
+        if let Some(t) = match_arith_op1(bytes[i]) {
+            tokens.push(t);
+            i += 1;
+            continue;
         }
 
-        // Single-char operators
-        let tok = match bytes[i] {
-            b'+' => ATok::Plus,
-            b'-' => ATok::Minus,
-            b'*' => ATok::Star,
-            b'/' => ATok::Slash,
-            b'%' => ATok::Percent,
-            b'<' => ATok::Lt,
-            b'>' => ATok::Gt,
-            b'&' => ATok::Amp,
-            b'|' => ATok::Pipe,
-            b'^' => ATok::Caret,
-            b'~' => ATok::Tilde,
-            b'!' => ATok::Bang,
-            b'=' => ATok::Eq,
-            b'?' => ATok::Question,
-            b':' => ATok::Colon,
-            b',' => ATok::Comma,
-            b'(' => ATok::LParen,
-            b')' => ATok::RParen,
-            _ => {
-                i += 1;
-                continue;
-            } // skip unknown
-        };
-        tokens.push(tok);
+        // Unknown byte — silently skip (matches prior behaviour).
         i += 1;
     }
 
     tokens
+}
+
+/// Scan a number literal at `bytes[i..]`. Handles hex (`0x…`), octal
+/// (`0…`), arbitrary-base (`base#digits`), and decimal. Returns the
+/// recognised token and the byte index just past it.
+fn scan_arith_number(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
+    let start = i;
+
+    if bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X') {
+        let mut j = i + 2;
+        while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
+            j += 1;
+        }
+        let s = &input[start..j];
+        let val = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
+        return (ATok::Num(val), j);
+    }
+
+    if bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
+        let mut j = i + 1;
+        while j < bytes.len() && (b'0'..=b'7').contains(&bytes[j]) {
+            j += 1;
+        }
+        let s = &input[start + 1..j];
+        let val = i64::from_str_radix(s, 8).unwrap_or(0);
+        return (ATok::Num(val), j);
+    }
+
+    let mut j = i;
+    while j < bytes.len() && bytes[j].is_ascii_digit() {
+        j += 1;
+    }
+
+    if j < bytes.len() && bytes[j] == b'#' {
+        let base: u32 = input[start..j].parse().unwrap_or(10);
+        j += 1; // skip '#'
+        let digit_start = j;
+        while j < bytes.len()
+            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
+        {
+            j += 1;
+        }
+        let digits = &input[digit_start..j];
+        let val = parse_arith_base_digits(digits, base);
+        return (ATok::Num(val), j);
+    }
+
+    let val: i64 = input[start..j].parse().unwrap_or(0);
+    (ATok::Num(val), j)
+}
+
+/// Parse `base#digits` payload using bash's base-N digit encoding:
+/// 0-9, a-z (10-35), A-Z (36-61), `@` = 62, `_` = 63.
+fn parse_arith_base_digits(digits: &str, base: u32) -> i64 {
+    digits.chars().fold(0i64, |acc, c| {
+        let d = match c {
+            '0'..='9' => c as i64 - '0' as i64,
+            'a'..='z' => c as i64 - 'a' as i64 + 10,
+            'A'..='Z' => c as i64 - 'A' as i64 + 36,
+            '@' => 62,
+            '_' => 63,
+            _ => 0,
+        };
+        acc * base as i64 + d
+    })
+}
+
+/// Scan a `$`-prefixed variable: `$name` or `${name}`. Returns the
+/// token and the byte index just past it.
+fn scan_arith_dollar(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
+    let mut j = i + 1; // skip '$'
+    if j < bytes.len() && bytes[j] == b'{' {
+        j += 1; // skip '{'
+        let name_start = j;
+        while j < bytes.len() && bytes[j] != b'}' {
+            j += 1;
+        }
+        let name = input[name_start..j].to_string();
+        if j < bytes.len() {
+            j += 1; // skip '}'
+        }
+        (ATok::DollarVar(name), j)
+    } else {
+        let name_start = j;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            j += 1;
+        }
+        let name = input[name_start..j].to_string();
+        (ATok::DollarVar(name), j)
+    }
+}
+
+/// Scan a bare identifier: starts alpha/`_`, continues alphanumeric/`_`.
+fn scan_arith_ident(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
+    let start = i;
+    let mut j = i;
+    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    (ATok::Var(input[start..j].to_string()), j)
+}
+
+/// Match a three-byte arithmetic operator: `<<=` or `>>=`.
+fn match_arith_op3(s: &[u8]) -> Option<ATok> {
+    match s {
+        b"<<=" => Some(ATok::LtLtEq),
+        b">>=" => Some(ATok::GtGtEq),
+        _ => None,
+    }
+}
+
+/// Match a two-byte arithmetic operator (compound assignment, comparison,
+/// shift, increment/decrement, logical-and/or, exponent).
+fn match_arith_op2(s: &[u8]) -> Option<ATok> {
+    match s {
+        b"++" => Some(ATok::PlusPlus),
+        b"--" => Some(ATok::MinusMinus),
+        b"**" => Some(ATok::StarStar),
+        b"<<" => Some(ATok::LtLt),
+        b">>" => Some(ATok::GtGt),
+        b"<=" => Some(ATok::LtEq),
+        b">=" => Some(ATok::GtEq),
+        b"==" => Some(ATok::EqEq),
+        b"!=" => Some(ATok::BangEq),
+        b"&&" => Some(ATok::AmpAmp),
+        b"||" => Some(ATok::PipePipe),
+        b"+=" => Some(ATok::PlusEq),
+        b"-=" => Some(ATok::MinusEq),
+        b"*=" => Some(ATok::StarEq),
+        b"/=" => Some(ATok::SlashEq),
+        b"%=" => Some(ATok::PercentEq),
+        b"&=" => Some(ATok::AmpEq),
+        b"|=" => Some(ATok::PipeEq),
+        b"^=" => Some(ATok::CaretEq),
+        _ => None,
+    }
+}
+
+/// Match a single-byte arithmetic operator.
+fn match_arith_op1(b: u8) -> Option<ATok> {
+    match b {
+        b'+' => Some(ATok::Plus),
+        b'-' => Some(ATok::Minus),
+        b'*' => Some(ATok::Star),
+        b'/' => Some(ATok::Slash),
+        b'%' => Some(ATok::Percent),
+        b'<' => Some(ATok::Lt),
+        b'>' => Some(ATok::Gt),
+        b'&' => Some(ATok::Amp),
+        b'|' => Some(ATok::Pipe),
+        b'^' => Some(ATok::Caret),
+        b'~' => Some(ATok::Tilde),
+        b'!' => Some(ATok::Bang),
+        b'=' => Some(ATok::Eq),
+        b'?' => Some(ATok::Question),
+        b':' => Some(ATok::Colon),
+        b',' => Some(ATok::Comma),
+        b'(' => Some(ATok::LParen),
+        b')' => Some(ATok::RParen),
+        _ => None,
+    }
 }
 
 // ── Pratt parser ──────────────────────────────────────────────────────
