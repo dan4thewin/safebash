@@ -29,19 +29,27 @@ after DD58).
 - New `sash/src/parse/logos_tokens.rs` with 5 equivalence tests.
 - Hand-roll boundary documented in the DD.
 
-Top-10 after `next_token` migration:
+`tokenize_arith` split into per-class helpers (commit 23b1665).
+
+- `parse/arith.rs::tokenize_arith` CC: **88 → 12**.
+- Helpers: `scan_arith_number`, `parse_arith_base_digits`,
+  `scan_arith_dollar`, `scan_arith_ident`, `match_arith_op3`,
+  `match_arith_op2`, `match_arith_op1`. All ≤ 21.
+- Spec gates 285/285 unchanged; clippy clean.
+
+Top-10 after both refactors:
 
 ```
-88  tokenize_arith                sash/src/parse/arith.rs:336
 70  intern_literals               sash/src/codegen/setup.rs:735
 69  cli_main                      sash/src/lib.rs:70
-68  scan_double_quoted            sash/src/parse/lexer.rs:727
+68  scan_double_quoted            sash/src/parse/lexer.rs:723
 63  emit                          sash/src/codegen/dispatch.rs:25
 58  handle_param_expansion        sash/src/codegen/value_handlers.rs:18
 57  lower_one                     sash/src/transform/statements.rs:27
-54  parse_expr                    sash/src/parse/arith.rs:630
+54  parse_expr                    sash/src/parse/arith.rs:589
 54  handle_pipeline               sash/src/transform/stmt_handlers.rs:264
-48  to_tok                        sash/src/parse/logos_tokens.rs:139
+48  to_tok                        sash/src/parse/logos_tokens.rs:136
+48  print_arith_expr              sash/src/printer.rs:443
 ```
 
 `to_tok` at CC 48 is declarative (one arm per variant), so it
@@ -53,10 +61,8 @@ if we ever exceed the threshold by more than a token or two.
 Pick functions in this order; each should land in its own commit with
 the spec/test gates green:
 
-1. `tokenize_arith` (CC 88) — split the giant `match bytes[i]` by
-   character class (numbers, dollar-prefixed, identifiers, operators,
-   parens). Sub-helpers per class.
-2. ~~`next_token` (CC 78)~~ — **done** (DD#59).
+1. ~~`tokenize_arith` (CC 88)~~ — **done** (commit 23b1665, 88 → 12).
+2. ~~`next_token` (CC 78)~~ — **done** (DD#59, 78 → 15).
 3. `scan_double_quoted` (CC 68) — extract the inner-token switch
    (`$var`, `${...}`, `$(...)`, `$((...))`) into per-form helpers.
 4. `intern_literals` (CC 70) — split by `SsaValue` variant. Today this
