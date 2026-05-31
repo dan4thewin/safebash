@@ -587,80 +587,19 @@ impl ArithParser {
 
     /// Parse an expression with given minimum binding power.
     fn parse_expr(&mut self, min_bp: u8) -> Result<ArithExpr, Diagnostic> {
-        // Prefix / atom
         let mut lhs = self.parse_prefix()?;
 
         loop {
-            // Postfix: ++ and --
-            if let Some(tok) = self.peek() {
-                match tok {
-                    ATok::PlusPlus => {
-                        if let ArithExpr::Var(name) = &lhs {
-                            let name = name.clone();
-                            self.advance();
-                            lhs = ArithExpr::PostIncDec {
-                                var: name,
-                                inc: true,
-                            };
-                            continue;
-                        }
-                        // Not a variable, treat ++ as end of expression
-                        break;
-                    }
-                    ATok::MinusMinus => {
-                        if let ArithExpr::Var(name) = &lhs {
-                            let name = name.clone();
-                            self.advance();
-                            lhs = ArithExpr::PostIncDec {
-                                var: name,
-                                inc: false,
-                            };
-                            continue;
-                        }
-                        break;
-                    }
-                    _ => {}
-                }
+            if let Some(new_lhs) = self.try_postfix(&lhs) {
+                lhs = new_lhs;
+                continue;
             }
 
-            // Assignment operators (right-associative, lowest precedence above comma)
-            if let Some(tok) = self.peek() {
-                if let ArithExpr::Var(name) = &lhs {
-                    let assign_op = match tok {
-                        ATok::Eq => Some(None),
-                        ATok::PlusEq => Some(Some(IrArithOp::Add)),
-                        ATok::MinusEq => Some(Some(IrArithOp::Sub)),
-                        ATok::StarEq => Some(Some(IrArithOp::Mul)),
-                        ATok::SlashEq => Some(Some(IrArithOp::Div)),
-                        ATok::PercentEq => Some(Some(IrArithOp::Mod)),
-                        ATok::AmpEq => Some(Some(IrArithOp::BitAnd)),
-                        ATok::PipeEq => Some(Some(IrArithOp::BitOr)),
-                        ATok::CaretEq => Some(Some(IrArithOp::BitXor)),
-                        ATok::LtLtEq => Some(Some(IrArithOp::Shl)),
-                        ATok::GtGtEq => Some(Some(IrArithOp::Shr)),
-                        _ => None,
-                    };
-                    if let Some(op) = assign_op {
-                        let name = name.clone();
-                        self.advance();
-                        let rhs = self.parse_expr(1)?; // right-associative
-                        lhs = match op {
-                            None => ArithExpr::Assign {
-                                var: name,
-                                value: Box::new(rhs),
-                            },
-                            Some(op) => ArithExpr::CompoundAssign {
-                                var: name,
-                                op,
-                                value: Box::new(rhs),
-                            },
-                        };
-                        continue;
-                    }
-                }
+            if let Some(result) = self.try_assignment(&lhs)? {
+                lhs = result;
+                continue;
             }
 
-            // Ternary: ? : (binding power 2)
             if self.peek() == Some(&ATok::Question) {
                 if min_bp > 2 {
                     break;
@@ -677,31 +616,9 @@ impl ArithParser {
                 continue;
             }
 
-            // Binary operators
-            let (op, bp) = match self.peek() {
-                Some(ATok::PipePipe) => (IrArithOp::Or, (3, 4)),
-                Some(ATok::AmpAmp) => (IrArithOp::And, (5, 6)),
-                Some(ATok::Pipe) => (IrArithOp::BitOr, (7, 8)),
-                Some(ATok::Caret) => (IrArithOp::BitXor, (9, 10)),
-                Some(ATok::Amp) => (IrArithOp::BitAnd, (11, 12)),
-                Some(ATok::EqEq) => (IrArithOp::Eq, (13, 14)),
-                Some(ATok::BangEq) => (IrArithOp::Ne, (13, 14)),
-                Some(ATok::Lt) => (IrArithOp::Lt, (15, 16)),
-                Some(ATok::LtEq) => (IrArithOp::Le, (15, 16)),
-                Some(ATok::Gt) => (IrArithOp::Gt, (15, 16)),
-                Some(ATok::GtEq) => (IrArithOp::Ge, (15, 16)),
-                Some(ATok::LtLt) => (IrArithOp::Shl, (17, 18)),
-                Some(ATok::GtGt) => (IrArithOp::Shr, (17, 18)),
-                Some(ATok::Plus) => (IrArithOp::Add, (19, 20)),
-                Some(ATok::Minus) => (IrArithOp::Sub, (19, 20)),
-                Some(ATok::Star) => (IrArithOp::Mul, (21, 22)),
-                Some(ATok::Slash) => (IrArithOp::Div, (21, 22)),
-                Some(ATok::Percent) => (IrArithOp::Mod, (21, 22)),
-                Some(ATok::StarStar) => (IrArithOp::Pow, (24, 23)), // right-associative
-                _ => break,
+            let Some((op, (l_bp, r_bp))) = self.peek().and_then(binary_op_for) else {
+                break;
             };
-
-            let (l_bp, r_bp) = bp;
             if l_bp < min_bp {
                 break;
             }
@@ -715,6 +632,52 @@ impl ArithParser {
         }
 
         Ok(lhs)
+    }
+
+    /// Handle `var++` and `var--` postfix. Returns the new LHS if consumed.
+    fn try_postfix(&mut self, lhs: &ArithExpr) -> Option<ArithExpr> {
+        let inc = match self.peek()? {
+            ATok::PlusPlus => true,
+            ATok::MinusMinus => false,
+            _ => return None,
+        };
+        let ArithExpr::Var(name) = lhs else {
+            return None;
+        };
+        let name = name.clone();
+        self.advance();
+        Some(ArithExpr::PostIncDec { var: name, inc })
+    }
+
+    /// Handle assignment operators (`=`, `+=`, `-=`, ...). Returns the new
+    /// LHS if an assignment was consumed; `None` if the next token isn't an
+    /// assignment operator or LHS isn't a Var.
+    fn try_assignment(&mut self, lhs: &ArithExpr) -> Result<Option<ArithExpr>, Diagnostic> {
+        let ArithExpr::Var(name) = lhs else {
+            return Ok(None);
+        };
+        let Some(tok) = self.peek() else {
+            return Ok(None);
+        };
+        let assign_op = match assign_op_for(tok) {
+            Some(op) => op,
+            None => return Ok(None),
+        };
+        let name = name.clone();
+        self.advance();
+        let rhs = self.parse_expr(1)?; // right-associative
+        let new_lhs = match assign_op {
+            None => ArithExpr::Assign {
+                var: name,
+                value: Box::new(rhs),
+            },
+            Some(op) => ArithExpr::CompoundAssign {
+                var: name,
+                op,
+                value: Box::new(rhs),
+            },
+        };
+        Ok(Some(new_lhs))
     }
 
     /// Parse prefix expressions and atoms.
@@ -845,6 +808,53 @@ impl ArithParser {
 }
 
 // ── Lowering helpers ──────────────────────────────────────────────────
+
+/// Map a token to its binary operator + Pratt binding power.
+/// Returned tuple is `(op, (left_bp, right_bp))`.
+fn binary_op_for(tok: &ATok) -> Option<(IrArithOp, (u8, u8))> {
+    Some(match tok {
+        ATok::PipePipe => (IrArithOp::Or, (3, 4)),
+        ATok::AmpAmp => (IrArithOp::And, (5, 6)),
+        ATok::Pipe => (IrArithOp::BitOr, (7, 8)),
+        ATok::Caret => (IrArithOp::BitXor, (9, 10)),
+        ATok::Amp => (IrArithOp::BitAnd, (11, 12)),
+        ATok::EqEq => (IrArithOp::Eq, (13, 14)),
+        ATok::BangEq => (IrArithOp::Ne, (13, 14)),
+        ATok::Lt => (IrArithOp::Lt, (15, 16)),
+        ATok::LtEq => (IrArithOp::Le, (15, 16)),
+        ATok::Gt => (IrArithOp::Gt, (15, 16)),
+        ATok::GtEq => (IrArithOp::Ge, (15, 16)),
+        ATok::LtLt => (IrArithOp::Shl, (17, 18)),
+        ATok::GtGt => (IrArithOp::Shr, (17, 18)),
+        ATok::Plus => (IrArithOp::Add, (19, 20)),
+        ATok::Minus => (IrArithOp::Sub, (19, 20)),
+        ATok::Star => (IrArithOp::Mul, (21, 22)),
+        ATok::Slash => (IrArithOp::Div, (21, 22)),
+        ATok::Percent => (IrArithOp::Mod, (21, 22)),
+        ATok::StarStar => (IrArithOp::Pow, (24, 23)), // right-associative
+        _ => return None,
+    })
+}
+
+/// Map a token to its assignment operator. The outer Option distinguishes
+/// "not an assignment" from "is an assignment". The inner Option is the
+/// compound operator: `None` for plain `=`, `Some(op)` for `+=`, `*=`, etc.
+fn assign_op_for(tok: &ATok) -> Option<Option<IrArithOp>> {
+    Some(match tok {
+        ATok::Eq => None,
+        ATok::PlusEq => Some(IrArithOp::Add),
+        ATok::MinusEq => Some(IrArithOp::Sub),
+        ATok::StarEq => Some(IrArithOp::Mul),
+        ATok::SlashEq => Some(IrArithOp::Div),
+        ATok::PercentEq => Some(IrArithOp::Mod),
+        ATok::AmpEq => Some(IrArithOp::BitAnd),
+        ATok::PipeEq => Some(IrArithOp::BitOr),
+        ATok::CaretEq => Some(IrArithOp::BitXor),
+        ATok::LtLtEq => Some(IrArithOp::Shl),
+        ATok::GtGtEq => Some(IrArithOp::Shr),
+        _ => return None,
+    })
+}
 
 /// Lower a mutation arithmetic expression to a Statement.
 fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
