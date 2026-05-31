@@ -148,15 +148,14 @@ pub(super) fn handle_trap(
             };
             if signum > 0 {
                 let handler = if body_str == "-" { 0i64 } else { 1i64 }; // SIG_DFL=0, SIG_IGN=1
-                ssa.block_mut(block).insts.push(SsaInst::Command {
-                    name: "__trap_signal".to_string(),
-                    args: vec![
+                ssa.block_mut(block).insts.push(SsaInst::sigil(
+                    BuiltinCmd::TrapSignal,
+                    vec![
                         SsaValue::Literal(signum.to_string()),
                         SsaValue::Literal(handler.to_string()),
                     ],
-                    redirects: vec![],
-                    checked: true,
-                });
+                    true,
+                ));
             }
             return block;
         }
@@ -164,12 +163,9 @@ pub(super) fn handle_trap(
     // Unsupported trap form — emit as regular command
     let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
     let resolved = resolve_pipeline_command(name);
-    ssa.block_mut(block).insts.push(SsaInst::Command {
-        name: resolved,
-        args,
-        redirects: vec![],
-        checked: true,
-    });
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::command(resolved, args, vec![], true));
     block
 }
 
@@ -193,44 +189,40 @@ pub(super) fn handle_signal(
             match disposition.as_str() {
                 "IGN" => {
                     // SIG_IGN = 1
-                    ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__trap_signal".to_string(),
-                        args: vec![
+                    ssa.block_mut(block).insts.push(SsaInst::sigil(
+                        BuiltinCmd::TrapSignal,
+                        vec![
                             SsaValue::Literal(signum.to_string()),
                             SsaValue::Literal("1".to_string()),
                         ],
-                        redirects: vec![],
-                        checked: true,
-                    });
+                        true,
+                    ));
                 }
                 "DFL" => {
                     // SIG_DFL = 0
-                    ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__trap_signal".to_string(),
-                        args: vec![
+                    ssa.block_mut(block).insts.push(SsaInst::sigil(
+                        BuiltinCmd::TrapSignal,
+                        vec![
                             SsaValue::Literal(signum.to_string()),
                             SsaValue::Literal("0".to_string()),
                         ],
-                        redirects: vec![],
-                        checked: true,
-                    });
+                        true,
+                    ));
                 }
                 "FLAG" => {
-                    ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__signal_flag".to_string(),
-                        args: vec![SsaValue::Literal(signum.to_string())],
-                        redirects: vec![],
-                        checked: true,
-                    });
+                    ssa.block_mut(block).insts.push(SsaInst::sigil(
+                        BuiltinCmd::SignalFlag,
+                        vec![SsaValue::Literal(signum.to_string())],
+                        true,
+                    ));
                 }
                 "EXIT" => {
                     // Register FLAG handler + mark as exiting signal
-                    ssa.block_mut(block).insts.push(SsaInst::Command {
-                        name: "__signal_flag".to_string(),
-                        args: vec![SsaValue::Literal(signum.to_string())],
-                        redirects: vec![],
-                        checked: true,
-                    });
+                    ssa.block_mut(block).insts.push(SsaInst::sigil(
+                        BuiltinCmd::SignalFlag,
+                        vec![SsaValue::Literal(signum.to_string())],
+                        true,
+                    ));
                     state.exiting_signals.insert(signum);
                 }
                 _ => {}
@@ -277,12 +269,11 @@ pub(super) fn handle_unset(
             let key = full[bracket + 1..full.len() - 1].to_string();
             let arr_ref = state.lookup(arr_name);
             let key_val = SsaValue::Literal(key);
-            ssa.block_mut(block).insts.push(SsaInst::Command {
-                name: "__table_delete".to_string(),
-                args: vec![SsaValue::Var(arr_ref), key_val],
-                redirects: vec![],
-                checked: true,
-            });
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::TableDelete,
+                vec![SsaValue::Var(arr_ref), key_val],
+                true,
+            ));
         } else {
             // Plain variable unset
             if state.collections.contains(full) {
@@ -412,6 +403,7 @@ pub(super) fn handle_function_call_or_command(
         if !func_redirs.is_empty() {
             ssa.block_mut(call_block).insts.push(SsaInst::Command {
                 name: "__redirect_push".to_string(),
+                kind: BuiltinCmd::RedirectPush,
                 args: vec![],
                 redirects: func_redirs.clone(),
                 checked: true,
@@ -427,12 +419,11 @@ pub(super) fn handle_function_call_or_command(
 
         // Pop function-level redirects before leaving
         if !func_redirs.is_empty() {
-            ssa.block_mut(exit_block).insts.push(SsaInst::Command {
-                name: "__redirect_pop".to_string(),
-                args: vec![],
-                redirects: vec![],
-                checked: true,
-            });
+            ssa.block_mut(exit_block).insts.push(SsaInst::sigil(
+                BuiltinCmd::RedirectPop,
+                vec![],
+                true,
+            ));
         }
 
         // Normal fall-through also goes to restore block
@@ -479,11 +470,11 @@ pub(super) fn handle_function_call_or_command(
         v
     })
     .collect();
-    ssa.block_mut(block).insts.push(SsaInst::Command {
-        name: resolve_pipeline_command(name),
+    ssa.block_mut(block).insts.push(SsaInst::command(
+        resolve_pipeline_command(name),
         args,
-        redirects: Vec::new(),
-        checked: true,
-    });
+        Vec::new(),
+        true,
+    ));
     block
 }

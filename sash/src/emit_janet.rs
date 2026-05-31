@@ -20,6 +20,7 @@
 ///   $var                    x  (Janet variable reference)
 ///   "hello $var"            (string "hello " var)
 use crate::ir::*;
+use crate::ssa::BuiltinCmd;
 use std::fmt::Write;
 
 /// Emit a complete Janet program from an IR Program.
@@ -508,62 +509,37 @@ fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize
 
 fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
     let cmd_name = expr_to_literal(&c.name);
+    let kind = BuiltinCmd::from_name(&cmd_name);
     indent(out, depth);
-    match cmd_name.as_str() {
-        "echo" => {
-            // echo → (print ...)
-            if c.args.is_empty() {
-                writeln!(out, "(print)").unwrap();
-            } else {
-                let parts: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
-                if parts.len() == 1 {
-                    writeln!(out, "(print {})", parts[0]).unwrap();
-                } else {
-                    writeln!(out, "(print (string {}))", parts.join(" \" \" ")).unwrap();
-                }
-            }
-        }
-        "true" => {
+    match kind {
+        BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
+        BuiltinCmd::True => {
             writeln!(out, "(set __last_exit 0)").unwrap();
             writeln!(out, "true").unwrap();
         }
-        "false" => {
+        BuiltinCmd::False => {
             writeln!(out, "(set __last_exit 1)").unwrap();
             writeln!(out, "false").unwrap();
         }
-        "exit" => {
-            if let Some(code) = c.args.first() {
-                let code_str = emit_expr_inline(code, ctx);
-                // Strip quotes for numeric exit code
-                let code_val = code_str.trim_matches('"');
-                if code_val.chars().all(|c| c.is_ascii_digit() || c == '-') {
-                    writeln!(out, "(os/exit {})", code_val).unwrap();
-                } else {
-                    writeln!(out, "(os/exit (scan-number {}))", code_str).unwrap();
-                }
-            } else {
-                writeln!(out, "(os/exit 0)").unwrap();
-            }
-        }
-        "shift" => {
+        BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
+        BuiltinCmd::Shift => {
             writeln!(out, "(set _args (array/slice _args 1))").unwrap();
         }
-        "[[" => {
-            // Test command — emit the condition
+        BuiltinCmd::Test => {
             if let Some(arg) = c.args.first() {
                 write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
                 writeln!(out).unwrap();
             }
         }
-        "break" => {
+        BuiltinCmd::Break => {
             writeln!(out, "(break)").unwrap();
         }
-        "continue" => {
+        BuiltinCmd::Continue => {
             // Janet's (each) doesn't support continue; use (break) as approximation
             // TODO: restructure loop body with when/unless for real continue
             writeln!(out, "(break)").unwrap();
         }
-        "return" => {
+        BuiltinCmd::Return => {
             if let Some(code) = c.args.first() {
                 let val = emit_expr_inline(code, ctx);
                 writeln!(out, "(return {})", val).unwrap();
@@ -571,62 +547,15 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
                 writeln!(out, "(return)").unwrap();
             }
         }
-        "printf" => {
-            let args: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
-            if args.len() >= 2 {
-                writeln!(
-                    out,
-                    "(prin (string/format {} {}))",
-                    args[0],
-                    args[1..].join(" ")
-                )
-                .unwrap();
-            } else if args.len() == 1 {
-                writeln!(out, "(prin {})", args[0]).unwrap();
-            }
-        }
-        "cat" => {
-            if c.args.is_empty() {
-                writeln!(out, "(prin (file/read stdin :all))").unwrap();
-            } else {
-                let mut cmd_parts = vec!["\"cat\"".to_string()];
-                for arg in &c.args {
-                    cmd_parts.push(emit_expr_inline(arg, ctx));
-                }
-                writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
-            }
-        }
-        "read" => {
-            let var_name = c
-                .args
-                .iter()
-                .map(expr_to_literal)
-                .find(|a| !a.starts_with('-'))
-                .unwrap_or_else(|| "REPLY".to_string());
-            if !ctx.is_declared(&var_name) {
-                ctx.declare(&var_name);
-                writeln!(
-                    out,
-                    "(var {} (string/trimr (or (file/read stdin :line) \"\")))",
-                    var_name
-                )
-                .unwrap();
-            } else {
-                writeln!(
-                    out,
-                    "(set {} (string/trimr (or (file/read stdin :line) \"\")))",
-                    var_name
-                )
-                .unwrap();
-            }
-        }
-        "bless" => {
+        BuiltinCmd::Printf => emit_janet_printf(out, ctx, c),
+        BuiltinCmd::Read => emit_janet_read(out, ctx, c),
+        BuiltinCmd::Bless => {
             if !c.args.is_empty() {
                 let var_name = expr_to_literal(&c.args[0]);
                 writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
             }
         }
-        "unset" => {
+        BuiltinCmd::Unset => {
             for arg in &c.args {
                 let name = expr_to_literal(arg);
                 if ctx.is_declared(&name) {
@@ -634,10 +563,12 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
                 }
             }
         }
+        // `cat` is not a builtin — special-cased so we can shortcut
+        // stdin-only invocations to (file/read stdin :all).
+        _ if cmd_name == "cat" => emit_janet_cat(out, ctx, c),
         _ => {
             // Check if this is a known function call
             if ctx.is_function(&cmd_name) {
-                // Janet function call
                 let mut args_str = String::new();
                 for arg in &c.args {
                     args_str.push(' ');
@@ -653,6 +584,86 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
                 writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
             }
         }
+    }
+}
+
+fn emit_janet_echo(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if c.args.is_empty() {
+        writeln!(out, "(print)").unwrap();
+    } else {
+        let parts: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
+        if parts.len() == 1 {
+            writeln!(out, "(print {})", parts[0]).unwrap();
+        } else {
+            writeln!(out, "(print (string {}))", parts.join(" \" \" ")).unwrap();
+        }
+    }
+}
+
+fn emit_janet_exit(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if let Some(code) = c.args.first() {
+        let code_str = emit_expr_inline(code, ctx);
+        // Strip quotes for numeric exit code
+        let code_val = code_str.trim_matches('"');
+        if code_val.chars().all(|c| c.is_ascii_digit() || c == '-') {
+            writeln!(out, "(os/exit {})", code_val).unwrap();
+        } else {
+            writeln!(out, "(os/exit (scan-number {}))", code_str).unwrap();
+        }
+    } else {
+        writeln!(out, "(os/exit 0)").unwrap();
+    }
+}
+
+fn emit_janet_printf(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    let args: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
+    if args.len() >= 2 {
+        writeln!(
+            out,
+            "(prin (string/format {} {}))",
+            args[0],
+            args[1..].join(" ")
+        )
+        .unwrap();
+    } else if args.len() == 1 {
+        writeln!(out, "(prin {})", args[0]).unwrap();
+    }
+}
+
+fn emit_janet_read(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    let var_name = c
+        .args
+        .iter()
+        .map(expr_to_literal)
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "REPLY".to_string());
+    if !ctx.is_declared(&var_name) {
+        ctx.declare(&var_name);
+        writeln!(
+            out,
+            "(var {} (string/trimr (or (file/read stdin :line) \"\")))",
+            var_name
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            out,
+            "(set {} (string/trimr (or (file/read stdin :line) \"\")))",
+            var_name
+        )
+        .unwrap();
+    }
+}
+
+fn emit_janet_cat(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if c.args.is_empty() {
+        writeln!(out, "(prin (file/read stdin :all))").unwrap();
+    } else {
+        let mut cmd_parts = vec!["\"cat\"".to_string()];
+        for arg in &c.args {
+            cmd_parts.push(emit_expr_inline(arg, ctx));
+        }
+        writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
     }
 }
 

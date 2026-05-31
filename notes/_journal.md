@@ -105,3 +105,7 @@
 [052-session-int-capture-syntax](journal/052-session-int-capture-syntax)
 
 [053-monitoring-postmortem](journal/053-monitoring-postmortem)
+
+[054-session-dd55-suppress-prefix](journal/054-session-dd55-suppress-prefix)
+
+[055-session-logos-structural](journal/055-session-logos-structural)

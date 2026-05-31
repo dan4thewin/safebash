@@ -58,6 +58,152 @@ pub struct PhiNode {
     pub sources: Vec<(BlockId, VarRef)>,
 }
 
+/// Typed identification for command names appearing in
+/// `SsaInst::Command` (and at IR dispatch sites).
+///
+/// Replaces stringly-typed `if name == "echo"` chains across
+/// transform, codegen and emit_janet, and gives compile-time safety
+/// for compiler-internal sigils (variants whose canonical name starts
+/// with `__`). Use [`BuiltinCmd::from_name`] to classify a raw name;
+/// use [`BuiltinCmd::sigil_str`] for the round-trip back to the
+/// canonical sigil string used in `SsaInst::Command::name`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum BuiltinCmd {
+    // ─── Compiler-internal sigils (transform → codegen protocol) ───
+    /// Flip test_result_var and exit_status_var (post-`!`).
+    NegateTestResult,
+    /// Run a `let` expression for side-effects, propagate non-zero
+    /// exit per DD#55.
+    LetExit,
+    /// Fork point for `( ... )` subshell.
+    SubshellStart,
+    /// Reap the forked subshell child.
+    SubshellWait,
+    /// Push current fd state before a redirect.
+    RedirectPush,
+    /// Pop fd state after the redirected scope.
+    RedirectPop,
+    /// Capture the most recent background pid into a named variable.
+    StoreBgPid,
+    /// Install signal handler block.
+    TrapSignal,
+    /// Cooperative signal-flag check inserted at safe points.
+    SignalFlag,
+    /// `unset arr[key]` — codegen-time table deletion.
+    TableDelete,
+
+    // ─── Shell builtins recognized by codegen / emit_janet ───
+    Echo,
+    /// `[[ ... ]]` — recognized at IR level, becomes `SsaInst::Test`
+    /// in SSA. Only appears as a `Command` in legacy / fallback paths.
+    Test,
+    /// `:` — no-op.
+    Noop,
+    True,
+    False,
+    Exit,
+    Exec,
+    Cd,
+    Pwd,
+    Wait,
+    Shift,
+    /// `command` builtin (bypass function lookup).
+    CommandBuiltin,
+    /// `bless VAR [[ ... ]]` — recognized at IR level, becomes
+    /// `SsaInst::Bless` in SSA. Only appears as a `Command` in
+    /// fallback paths (no TestExpr arg).
+    Bless,
+    Read,
+    /// `mapfile` / `readarray` (same builtin).
+    Mapfile,
+    Break,
+    Continue,
+    Return,
+    Signal,
+    Trap,
+    Unset,
+    Printf,
+
+    // ─── Sash-native intrinsics ───
+    /// `$(len ...)` — string or array length.
+    Len,
+    /// `$(keys arr)` — associative-array key list.
+    Keys,
+    /// `$(join [sep] @arr)` — join elements.
+    Join,
+
+    /// Anything else: external command, user function call, dynamic
+    /// expansion. The raw name in `SsaInst::Command::name` is the
+    /// source of truth for these.
+    Other,
+}
+
+impl BuiltinCmd {
+    /// Classify a raw command name into a [`BuiltinCmd`] variant.
+    /// Unrecognized names map to [`BuiltinCmd::Other`].
+    // cyclo-allow: flat name → variant lookup; CC = arm count
+    pub fn from_name(name: &str) -> Self {
+        match name {
+            "__negate_test_result" => Self::NegateTestResult,
+            "__let_exit" => Self::LetExit,
+            "__subshell" => Self::SubshellStart,
+            "__subshell_wait" => Self::SubshellWait,
+            "__redirect_push" => Self::RedirectPush,
+            "__redirect_pop" => Self::RedirectPop,
+            "__store_bg_pid" => Self::StoreBgPid,
+            "__trap_signal" => Self::TrapSignal,
+            "__signal_flag" => Self::SignalFlag,
+            "__table_delete" => Self::TableDelete,
+            "echo" => Self::Echo,
+            "[[" => Self::Test,
+            ":" => Self::Noop,
+            "true" => Self::True,
+            "false" => Self::False,
+            "exit" => Self::Exit,
+            "exec" => Self::Exec,
+            "cd" => Self::Cd,
+            "pwd" => Self::Pwd,
+            "wait" => Self::Wait,
+            "shift" => Self::Shift,
+            "command" => Self::CommandBuiltin,
+            "bless" => Self::Bless,
+            "read" => Self::Read,
+            "mapfile" | "readarray" => Self::Mapfile,
+            "break" => Self::Break,
+            "continue" => Self::Continue,
+            "return" => Self::Return,
+            "signal" => Self::Signal,
+            "trap" => Self::Trap,
+            "unset" => Self::Unset,
+            "printf" => Self::Printf,
+            "len" => Self::Len,
+            "keys" => Self::Keys,
+            "join" => Self::Join,
+            _ => Self::Other,
+        }
+    }
+
+    /// Canonical sigil string for compiler-internal sigil variants.
+    /// Returns `None` for non-sigil variants (the raw name should be
+    /// used instead).
+    // cyclo-allow: flat variant → sigil string lookup; CC = arm count
+    pub fn sigil_str(self) -> Option<&'static str> {
+        Some(match self {
+            Self::NegateTestResult => "__negate_test_result",
+            Self::LetExit => "__let_exit",
+            Self::SubshellStart => "__subshell",
+            Self::SubshellWait => "__subshell_wait",
+            Self::RedirectPush => "__redirect_push",
+            Self::RedirectPop => "__redirect_pop",
+            Self::StoreBgPid => "__store_bg_pid",
+            Self::TrapSignal => "__trap_signal",
+            Self::SignalFlag => "__signal_flag",
+            Self::TableDelete => "__table_delete",
+            _ => return None,
+        })
+    }
+}
+
 /// An SSA instruction — a versioned wrapper around an IR operation.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaInst {
@@ -66,6 +212,13 @@ pub enum SsaInst {
     /// A command (no variable defined)
     Command {
         name: String,
+        /// Typed dispatch key. Populated from `name` at construction
+        /// time. Codegen and consumers match on this instead of
+        /// stringly-typed `name` checks. `name` stays for diagnostics
+        /// and printer output (and for the `Other` arm — external
+        /// commands and user functions where the name is the actual
+        /// program path).
+        kind: BuiltinCmd,
         args: Vec<SsaValue>,
         redirects: Vec<crate::ir::Redirect>,
         /// If true, nonzero exit status aborts the program (DD#55).
@@ -141,6 +294,46 @@ pub enum SsaInst {
         source: VarRef,
         test: crate::ir::TestExpr,
     },
+}
+
+impl SsaInst {
+    /// Construct an `SsaInst::Command` from a raw name, deriving
+    /// `kind` via [`BuiltinCmd::from_name`]. Use this everywhere
+    /// `SsaInst::Command { ... }` would otherwise be built so the
+    /// `kind` field stays in sync with `name`.
+    pub fn command(
+        name: impl Into<String>,
+        args: Vec<SsaValue>,
+        redirects: Vec<crate::ir::Redirect>,
+        checked: bool,
+    ) -> Self {
+        let name = name.into();
+        let kind = BuiltinCmd::from_name(&name);
+        SsaInst::Command {
+            name,
+            kind,
+            args,
+            redirects,
+            checked,
+        }
+    }
+
+    /// Construct an `SsaInst::Command` representing a compiler-internal
+    /// sigil. Panics if `kind` is not a sigil variant (one whose
+    /// [`BuiltinCmd::sigil_str`] returns `Some`).
+    pub fn sigil(kind: BuiltinCmd, args: Vec<SsaValue>, checked: bool) -> Self {
+        let name = kind
+            .sigil_str()
+            .expect("SsaInst::sigil requires a sigil variant")
+            .to_string();
+        SsaInst::Command {
+            name,
+            kind,
+            args,
+            redirects: vec![],
+            checked,
+        }
+    }
 }
 
 /// Arithmetic operators for $(( )) and (( )) contexts.

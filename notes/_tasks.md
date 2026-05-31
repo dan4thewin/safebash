@@ -1,5 +1,7 @@
 # tasks
 
+[align-parser-with-decisions](tasks/align-parser-with-decisions)
+
 [array-per-element-ops](tasks/array-per-element-ops)
 
 [audit-run3](tasks/audit-run3)
@@ -11,6 +13,8 @@
 [codegen-panics-to-diagnostics](tasks/codegen-panics-to-diagnostics)
 
 [compound-redirects](tasks/compound-redirects)
+
+[converter-compound-postfix](tasks/converter-compound-postfix)
 
 [dd12-string-runtime](tasks/dd12-string-runtime)
 
@@ -32,9 +36,15 @@
 
 [dd23-compile-time-resolve](tasks/dd23-compile-time-resolve)
 
+[dd23-dependency-manifest](tasks/dd23-dependency-manifest)
+
 [dd23-remove-command-v](tasks/dd23-remove-command-v)
 
 [dd23-remove-path-walk](tasks/dd23-remove-path-walk)
+
+[dd23-sysroot](tasks/dd23-sysroot)
+
+[dd23-sysroot-squashfs](tasks/dd23-sysroot-squashfs)
 
 [dd25-overflow-recovery-model](tasks/dd25-overflow-recovery-model)
 
@@ -106,6 +116,8 @@
 
 [fuzz-validator](tasks/fuzz-validator)
 
+[hand-written-parser](tasks/hand-written-parser)
+
 [heredoc-cmdsub](tasks/heredoc-cmdsub)
 
 [if-bless-conditional](tasks/if-bless-conditional)
@@ -122,17 +134,7 @@
 
 [pipe-free-func-capture](tasks/pipe-free-func-capture)
 
-[refine-unset-semantics](tasks/refine-unset-semantics)
-
-[regex-counted-repetition](tasks/regex-counted-repetition)
-
-[reject-extglob](tasks/reject-extglob)
-
-[reject-globstar](tasks/reject-globstar)
-
-[remove-export-ssa-dead-code](tasks/remove-export-ssa-dead-code)
-
-[remove-implicit-env-fallback](tasks/remove-implicit-env-fallback)
+[r47-abstraction-audit](tasks/r47-abstraction-audit)
 
 [r47-clean-repo-root](tasks/r47-clean-repo-root)
 
@@ -155,6 +157,18 @@
 [r47-status-md-from-spec-db](tasks/r47-status-md-from-spec-db)
 
 [r47-validate-rs-per-rule-tests](tasks/r47-validate-rs-per-rule-tests)
+
+[refine-unset-semantics](tasks/refine-unset-semantics)
+
+[regex-counted-repetition](tasks/regex-counted-repetition)
+
+[reject-extglob](tasks/reject-extglob)
+
+[reject-globstar](tasks/reject-globstar)
+
+[remove-export-ssa-dead-code](tasks/remove-export-ssa-dead-code)
+
+[remove-implicit-env-fallback](tasks/remove-implicit-env-fallback)
 
 [review-taint-clean-list](tasks/review-taint-clean-list)
 

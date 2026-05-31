@@ -158,6 +158,7 @@ pub(super) fn lower_one(
                 // Emit __redirect_push with redirect metadata
                 ssa.block_mut(block).insts.push(SsaInst::Command {
                     name: "__redirect_push".to_string(),
+                    kind: BuiltinCmd::RedirectPush,
                     args: vec![],
                     redirects: r.redirects.clone(),
                     checked: true,
@@ -165,6 +166,7 @@ pub(super) fn lower_one(
                 let result_block = lower_one(&r.body, ssa, state, block);
                 ssa.block_mut(result_block).insts.push(SsaInst::Command {
                     name: "__redirect_pop".to_string(),
+                    kind: BuiltinCmd::RedirectPop,
                     args: vec![],
                     redirects: r.redirects.clone(),
                     checked: true,
@@ -229,12 +231,11 @@ pub(super) fn lower_one(
                 target: target.clone(),
                 value: val,
             });
-            ssa.block_mut(block).insts.push(SsaInst::Command {
-                name: "__let_exit".to_string(),
-                args: vec![SsaValue::Var(target)],
-                redirects: vec![],
-                checked: true,
-            });
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::LetExit,
+                vec![SsaValue::Var(target)],
+                true,
+            ));
             block
         }
 
@@ -374,12 +375,11 @@ fn lower_list_stmt(
             let parent_block = ssa.new_block("bg.parent");
 
             // Fork
-            ssa.block_mut(block).insts.push(SsaInst::Command {
-                name: "__subshell".to_string(),
-                args: vec![],
-                redirects: vec![],
-                checked: true,
-            });
+            ssa.block_mut(block).insts.push(SsaInst::sigil(
+                BuiltinCmd::SubshellStart,
+                vec![],
+                true,
+            ));
             ssa.block_mut(block).terminator = Terminator::Branch {
                 condition: "__fork_pid".to_string(),
                 true_block: parent_block, // parent continues
@@ -388,12 +388,11 @@ fn lower_list_stmt(
 
             // Store fork pid in $! variable
             let bg_target = state.define("!");
-            ssa.block_mut(parent_block).insts.push(SsaInst::Command {
-                name: "__store_bg_pid".to_string(),
-                args: vec![SsaValue::Var(bg_target)],
-                redirects: vec![],
-                checked: true,
-            });
+            ssa.block_mut(parent_block).insts.push(SsaInst::sigil(
+                BuiltinCmd::StoreBgPid,
+                vec![SsaValue::Var(bg_target)],
+                true,
+            ));
 
             // Child: run the command then _exit
             let child_end = lower_one(&l.left, ssa, state, child_block);
@@ -416,12 +415,9 @@ fn lower_subshell_stmt(
     let after_block = ssa.new_block("subshell_done");
 
     // Emit fork — codegen stores pid in test_result_var
-    ssa.block_mut(block).insts.push(SsaInst::Command {
-        name: "__subshell".to_string(),
-        args: vec![],
-        redirects: vec![],
-        checked: true,
-    });
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::sigil(BuiltinCmd::SubshellStart, vec![], true));
     // Branch: parent (pid>0) → after, child (pid==0) → body
     ssa.block_mut(block).terminator = Terminator::Branch {
         condition: "__fork_pid".to_string(),
@@ -430,12 +426,9 @@ fn lower_subshell_stmt(
     };
 
     // Parent: wait for child at start of after_block
-    ssa.block_mut(after_block).insts.push(SsaInst::Command {
-        name: "__subshell_wait".to_string(),
-        args: vec![],
-        redirects: vec![],
-        checked: true,
-    });
+    ssa.block_mut(after_block)
+        .insts
+        .push(SsaInst::sigil(BuiltinCmd::SubshellWait, vec![], true));
 
     // Snapshot SSA state — child modifications don't affect parent
     let snap = state.snapshot();

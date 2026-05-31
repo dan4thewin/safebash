@@ -117,3 +117,7 @@ sash/src/printer.rs::print_expr  # ExprKind dispatcher, modest
 
 # type_check.rs
 sash/src/type_check.rs::infer_stmt  # StmtKind dispatcher; modest
+
+# ssa.rs
+sash/src/ssa.rs::from_name   # flat name → BuiltinCmd lookup table; CC = arm count
+sash/src/ssa.rs::sigil_str   # flat BuiltinCmd → sigil string lookup; CC = arm count

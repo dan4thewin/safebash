@@ -91,3 +91,5 @@
 [DD57-split-converter-compiler](decisions/DD57-split-converter-compiler)
 
 [DD58-int-function-capture](decisions/DD58-int-function-capture)
+
+[DD59-logos-structural-lexer](decisions/DD59-logos-structural-lexer)

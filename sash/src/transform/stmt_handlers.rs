@@ -23,62 +23,30 @@ pub(super) fn handle_command(
     mut block: BlockId,
 ) -> BlockId {
     let name = expr_to_string(&c.name);
+    let kind = BuiltinCmd::from_name(&name);
 
-    // bless VAR [[ test_expr ]] — runtime validation
-    if name == "bless" {
-        // First arg is variable name, remaining args should contain [[ test_expr ]]
-        if c.args.len() >= 2 {
-            let var_name = expr_to_string(&c.args[0]);
-            // Look for a TestExpr in the remaining args
-            for arg in &c.args[1..] {
+    // Builtins that always (or may) handle the statement themselves.
+    // Arms that may not handle it use `if let Some(b) = ... { return b; }`
+    // and otherwise fall through to the regex/general handling below.
+    match kind {
+        BuiltinCmd::Bless => return handle_bless_stmt(&name, c, ssa, state, block),
+        BuiltinCmd::Test => {
+            // Preserve TestExpr arg for codegen; if no TestExpr is
+            // attached we fall through to the general handler.
+            for arg in &c.args {
                 if let ExprKind::Test(test_expr) = &arg.kind {
-                    let source_ref = state.lookup(&var_name);
-                    let target_ref = state.define(&var_name);
-                    ssa.block_mut(block).insts.push(SsaInst::Bless {
-                        target: target_ref,
-                        source: source_ref,
-                        test: test_expr.clone(),
-                    });
+                    ssa.block_mut(block)
+                        .insts
+                        .push(SsaInst::Test(test_expr.clone()));
                     return block;
                 }
             }
         }
-        // If we couldn't find a TestExpr, emit as regular command (will be caught by taint checker)
-        let args: Vec<SsaValue> = c.args.iter().map(|a| {
-            let v = expr_to_value(a, state);
-            // DD#55: $(f) for -> int function is a type error
-            if let SsaValue::FuncCall(fname) = &v {
-                if state.function_int_typed.contains(fname.as_str()) {
-                    state.diagnostics.push(format!(
-                        "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                        a.span.line, a.span.col, fname, fname
-                    ));
-                }
-            }
-            v
-        }).collect();
-        ssa.block_mut(block).insts.push(SsaInst::Command {
-            name: name.clone(),
-            args,
-            redirects: vec![],
-            checked: true,
-        });
-        return block;
-    }
-
-    // If the command is [[ ]], preserve the TestExpr for codegen
-    if name == "[[" {
-        for arg in &c.args {
-            if let ExprKind::Test(test_expr) = &arg.kind {
-                ssa.block_mut(block)
-                    .insts
-                    .push(SsaInst::Test(test_expr.clone()));
-                return block;
-            }
-        }
+        _ => {}
     }
 
     // var =~ s/pattern/replacement/flags — regex mutation
+    // (single-arg commands only; not keyed on a builtin name)
     if c.args.len() == 1 {
         let arg_s = expr_to_string(&c.args[0]);
         if let Some(after_prefix) = arg_s.strip_prefix("s/") {
@@ -116,140 +84,34 @@ pub(super) fn handle_command(
         }
     }
 
-    // DD#48: shift — remap positional parameters
-    if name == "shift" {
-        let n = c
-            .args
-            .first()
-            .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
-            .unwrap_or(1);
-        // $1 ← $(1+n), $2 ← $(2+n), ..., $9 ← $(9+n) or ""
-        for i in 1..=9usize {
-            let src_idx = i + n;
-            let val = if src_idx <= 9 {
-                SsaValue::Var(state.lookup(&src_idx.to_string()))
-            } else {
-                SsaValue::Literal(String::new())
-            };
-            let target = state.define(&i.to_string());
-            ssa.block_mut(block)
-                .insts
-                .push(SsaInst::Assign { target, value: val });
-        }
-        // Decrement $#
-        let _argc_ref = state.lookup("#");
-        let new_argc = state.define("#");
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: new_argc,
-            value: SsaValue::Literal("__shift__".to_string()), // placeholder
-        });
-        return block;
-    }
-
-    // break → Goto(exit_block), continue → Goto(header_block)
-    if name == "break" {
-        let n = c
-            .args
-            .first()
-            .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
-            .unwrap_or(1);
-        let depth = state.loop_stack.len();
-        if n > 0 && depth > 0 {
-            let level = n.min(depth); // clamp to available depth
-            let (_header, exit) = state.loop_stack[depth - level];
-            ssa.block_mut(block).terminator = Terminator::Goto(exit);
-            let dead = ssa.new_block("after_break");
-            return dead;
-        }
-        return block;
-    }
-    if name == "continue" {
-        let n = c
-            .args
-            .first()
-            .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
-            .unwrap_or(1);
-        let depth = state.loop_stack.len();
-        if n > 0 && depth > 0 {
-            let level = n.min(depth); // clamp to available depth
-            let (header, _exit) = state.loop_stack[depth - level];
-            ssa.block_mut(block).terminator = Terminator::Goto(header);
-            let dead = ssa.new_block("after_continue");
-            return dead;
-        }
-        return block;
-    }
-    if name == "return" {
-        // return N — set $? to N (default 0), jump to function exit
-        let exit_val = if let Some(arg) = c.args.first() {
-            let val = expr_to_value(arg, state);
-            lift_int_func_calls(val, ssa, state, &mut block)
-        } else {
-            SsaValue::Literal("0".to_string())
-        };
-        // Set exit status variable
-        let es_var = state.define("?");
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: es_var,
-            value: exit_val,
-        });
-        if let Some(target) = state.return_target {
-            ssa.block_mut(block).terminator = Terminator::Goto(target);
-        } else {
-            // Top-level return acts like exit
-            ssa.block_mut(block).terminator = Terminator::Return;
-        }
-        let dead = ssa.new_block("after_return");
-        return dead;
-    }
-
-    // `mapfile -t arr` / `readarray -t arr` → Mapfile instruction
-    // `mapfile -m [-f SEP] map` → Mapfile in map mode
-    if name == "mapfile" || name == "readarray" {
-        let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-        let mut map_mode = false;
-        let mut separator = '=';
-        let mut i = 0;
-        while i < args.len() {
-            if args[i] == "-m" {
-                map_mode = true;
-            } else if args[i].starts_with("-f") {
-                // -f: or -f = or -f<char>
-                if args[i].len() > 2 {
-                    separator = args[i].chars().nth(2).unwrap_or('=');
-                } else if i + 1 < args.len() {
-                    separator = args[i + 1].chars().next().unwrap_or('=');
-                    i += 1;
-                }
+    // Builtins below this point all unconditionally consume the statement,
+    // so an early return is safe.
+    match kind {
+        BuiltinCmd::Shift => return handle_shift_stmt(c, ssa, state, block),
+        BuiltinCmd::Break => return handle_break_stmt(c, state, ssa, block),
+        BuiltinCmd::Continue => return handle_continue_stmt(c, state, ssa, block),
+        BuiltinCmd::Return => return handle_return_stmt(c, ssa, state, &mut block),
+        BuiltinCmd::Mapfile => {
+            if let Some(b) = try_handle_mapfile(c, ssa, block) {
+                return b;
             }
-            i += 1;
+            // else fall through (no array name found)
         }
-        let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-        if let Some(arr_name) = var_names.first() {
-            ssa.block_mut(block).insts.push(SsaInst::Mapfile {
-                array: arr_name.to_string(),
-                fd: 0,
-                map_mode,
-                separator,
-            });
-            return block;
+        BuiltinCmd::Signal => {
+            return super::cmd_handlers::handle_signal(&name, c, stmt, ssa, state, block);
         }
+        BuiltinCmd::Trap => {
+            return super::cmd_handlers::handle_trap(&name, c, stmt, ssa, state, block);
+        }
+        BuiltinCmd::Unset => {
+            return super::cmd_handlers::handle_unset(&name, c, stmt, ssa, state, block);
+        }
+        BuiltinCmd::Read => {
+            return super::cmd_handlers::handle_read(&name, c, stmt, ssa, state, block);
+        }
+        _ => {}
     }
 
-    // `read -r var` → ReadLine instruction (sets test_result for while-read)
-    if name == "signal" {
-        return super::cmd_handlers::handle_signal(&name, c, stmt, ssa, state, block);
-    }
-    if name == "trap" {
-        return super::cmd_handlers::handle_trap(&name, c, stmt, ssa, state, block);
-    }
-
-    if name == "unset" {
-        return super::cmd_handlers::handle_unset(&name, c, stmt, ssa, state, block);
-    }
-    if name == "read" {
-        return super::cmd_handlers::handle_read(&name, c, stmt, ssa, state, block);
-    }
     // DD#55/SB4016: bare call of non-void (-> int) function is error
     if state.function_non_void.contains(&name) && state.in_condition == 0 {
         state.diagnostics.push(format!(
@@ -258,6 +120,186 @@ pub(super) fn handle_command(
         ));
     }
     super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
+}
+
+fn handle_bless_stmt(
+    name: &str,
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    // First arg is variable name, remaining args should contain [[ test_expr ]]
+    if c.args.len() >= 2 {
+        let var_name = expr_to_string(&c.args[0]);
+        for arg in &c.args[1..] {
+            if let ExprKind::Test(test_expr) = &arg.kind {
+                let source_ref = state.lookup(&var_name);
+                let target_ref = state.define(&var_name);
+                ssa.block_mut(block).insts.push(SsaInst::Bless {
+                    target: target_ref,
+                    source: source_ref,
+                    test: test_expr.clone(),
+                });
+                return block;
+            }
+        }
+    }
+    // Fallback: no TestExpr — emit as regular command (caught by taint checker)
+    let args: Vec<SsaValue> = c
+        .args
+        .iter()
+        .map(|a| {
+            let v = expr_to_value(a, state);
+            // DD#55: $(f) for -> int function is a type error
+            if let SsaValue::FuncCall(fname) = &v {
+                if state.function_int_typed.contains(fname.as_str()) {
+                    state.diagnostics.push(format!(
+                        "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                        a.span.line, a.span.col, fname, fname
+                    ));
+                }
+            }
+            v
+        })
+        .collect();
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::command(name.to_string(), args, vec![], true));
+    block
+}
+
+fn handle_shift_stmt(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let n = c
+        .args
+        .first()
+        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+        .unwrap_or(1);
+    // $1 ← $(1+n), $2 ← $(2+n), ..., $9 ← $(9+n) or ""
+    for i in 1..=9usize {
+        let src_idx = i + n;
+        let val = if src_idx <= 9 {
+            SsaValue::Var(state.lookup(&src_idx.to_string()))
+        } else {
+            SsaValue::Literal(String::new())
+        };
+        let target = state.define(&i.to_string());
+        ssa.block_mut(block)
+            .insts
+            .push(SsaInst::Assign { target, value: val });
+    }
+    // Decrement $#
+    let _argc_ref = state.lookup("#");
+    let new_argc = state.define("#");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: new_argc,
+        value: SsaValue::Literal("__shift__".to_string()), // placeholder
+    });
+    block
+}
+
+fn handle_break_stmt(
+    c: &Command,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> BlockId {
+    let n = c
+        .args
+        .first()
+        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+        .unwrap_or(1);
+    let depth = state.loop_stack.len();
+    if n > 0 && depth > 0 {
+        let level = n.min(depth);
+        let (_header, exit) = state.loop_stack[depth - level];
+        ssa.block_mut(block).terminator = Terminator::Goto(exit);
+        return ssa.new_block("after_break");
+    }
+    block
+}
+
+fn handle_continue_stmt(
+    c: &Command,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> BlockId {
+    let n = c
+        .args
+        .first()
+        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
+        .unwrap_or(1);
+    let depth = state.loop_stack.len();
+    if n > 0 && depth > 0 {
+        let level = n.min(depth);
+        let (header, _exit) = state.loop_stack[depth - level];
+        ssa.block_mut(block).terminator = Terminator::Goto(header);
+        return ssa.new_block("after_continue");
+    }
+    block
+}
+
+fn handle_return_stmt(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> BlockId {
+    let exit_val = if let Some(arg) = c.args.first() {
+        let val = expr_to_value(arg, state);
+        lift_int_func_calls(val, ssa, state, block)
+    } else {
+        SsaValue::Literal("0".to_string())
+    };
+    let es_var = state.define("?");
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: es_var,
+        value: exit_val,
+    });
+    if let Some(target) = state.return_target {
+        ssa.block_mut(*block).terminator = Terminator::Goto(target);
+    } else {
+        ssa.block_mut(*block).terminator = Terminator::Return;
+    }
+    ssa.new_block("after_return")
+}
+
+/// `mapfile -t arr` / `readarray -t arr` → Mapfile instruction.
+/// Returns `None` if no array name is present (caller falls through to
+/// general command handling).
+fn try_handle_mapfile(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Option<BlockId> {
+    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
+    let mut map_mode = false;
+    let mut separator = '=';
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "-m" {
+            map_mode = true;
+        } else if args[i].starts_with("-f") {
+            if args[i].len() > 2 {
+                separator = args[i].chars().nth(2).unwrap_or('=');
+            } else if i + 1 < args.len() {
+                separator = args[i + 1].chars().next().unwrap_or('=');
+                i += 1;
+            }
+        }
+        i += 1;
+    }
+    let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
+    let arr_name = var_names.first()?;
+    ssa.block_mut(block).insts.push(SsaInst::Mapfile {
+        array: arr_name.to_string(),
+        fd: 0,
+        map_mode,
+        separator,
+    });
+    Some(block)
 }
 
 /// Handle StmtKind::Pipeline — multi-command pipe chains.
@@ -468,12 +510,9 @@ pub(super) fn handle_pipeline(
         }
     }
     if p.negated {
-        ssa.block_mut(block).insts.push(SsaInst::Command {
-            name: "__negate_test_result".to_string(),
-            args: vec![],
-            redirects: vec![],
-            checked: true,
-        });
+        ssa.block_mut(block)
+            .insts
+            .push(SsaInst::sigil(BuiltinCmd::NegateTestResult, vec![], true));
     }
     block
 }

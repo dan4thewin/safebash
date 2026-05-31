@@ -36,96 +36,25 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
                     if state.known_functions.contains(name.as_str()) {
                         return SsaValue::FuncCall(name.clone());
                     }
-                    // Sash-native builtins: len, keys (DD#41)
-                    if name == "len" {
-                        if let Some(arg) = c.args.first() {
-                            let arg_str = expr_to_string(arg);
-                            if let Some(var_name) = arg_str.strip_prefix('$') {
-                                // len $var → string length
-                                let v = state.lookup(var_name);
-                                return SsaValue::ParamExpansion {
-                                    var: v,
-                                    operator: "strlen".to_string(),
-                                    operand: String::new(),
-                                };
-                            } else {
-                                // len arr → array length
-                                let v = state.lookup(&arg_str);
-                                return SsaValue::ParamExpansion {
-                                    var: v,
-                                    operator: "arrlen".to_string(),
-                                    operand: String::new(),
-                                };
+                    // Sash-native builtins: len, keys, join (DD#41) and echo (DD#14)
+                    match BuiltinCmd::from_name(name) {
+                        BuiltinCmd::Len => {
+                            if let Some(v) = try_len_intrinsic(c, state) {
+                                return v;
                             }
                         }
-                    }
-                    if name == "keys" {
-                        if let Some(arg) = c.args.first() {
-                            let arg_str = expr_to_string(arg);
-                            let v = state.lookup(&arg_str);
-                            return SsaValue::ParamExpansion {
-                                var: v,
-                                operator: "arrkeys".to_string(),
-                                operand: String::new(),
-                            };
-                        }
-                    }
-                    if name == "join" {
-                        // join @arr → space-separated
-                        // join sep @arr → sep-separated
-                        let (sep, arr_expr) = if c.args.len() >= 2 {
-                            // Strip quotes from separator
-                            let sep_raw = match &c.args[0].kind {
-                                ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
-                                ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
-                                    match &parts[0].kind {
-                                        ExprKind::Literal(s) => s.clone(),
-                                        _ => expr_to_string(&c.args[0]),
-                                    }
-                                }
-                                _ => expr_to_string(&c.args[0]),
-                            };
-                            (sep_raw, &c.args[1])
-                        } else if c.args.len() == 1 {
-                            (" ".to_string(), &c.args[0])
-                        } else {
-                            panic!("ICE: join requires at least one argument");
-                        };
-                        // The array arg should be @arr → ParameterExpansion(arrvals)
-                        let arr_name = match &arr_expr.kind {
-                            ExprKind::ParameterExpansion(pe)
-                                if pe.operator.as_deref() == Some("arrvals") =>
-                            {
-                                pe.name.clone()
+                        BuiltinCmd::Keys => {
+                            if let Some(v) = try_keys_intrinsic(c, state) {
+                                return v;
                             }
-                            _ => expr_to_string(arr_expr),
-                        };
-                        let v = state.lookup(&arr_name);
-                        return SsaValue::ParamExpansion {
-                            var: v,
-                            operator: "arrjoin".to_string(),
-                            operand: sep,
-                        };
-                    }
-                }
-                // DD#14: $(echo args) — build inline as concat
-                if let ExprKind::Literal(name) = &c.name.kind {
-                    if name == "echo" {
-                        if c.args.is_empty() {
-                            return SsaValue::Literal(String::new());
                         }
-                        let mut parts: Vec<SsaValue> = Vec::new();
-                        for (i, arg) in c.args.iter().enumerate() {
-                            if i > 0 {
-                                parts.push(SsaValue::Literal(" ".to_string()));
-                            }
-                            parts.push(expr_to_value(arg, state));
+                        BuiltinCmd::Join => {
+                            return join_intrinsic(c, state);
                         }
-                        return if parts.len() == 1 {
-                            parts.remove(0)
-                        } else {
-                            SsaValue::Concat(parts)
-                        };
+                        BuiltinCmd::Echo => {
+                            return echo_concat(c, state);
+                        }
+                        _ => {}
                     }
                 }
 
@@ -145,6 +74,91 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         }
     }
     SsaValue::Expr(expr_to_string(expr))
+}
+
+fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+    let arg = c.args.first()?;
+    let arg_str = expr_to_string(arg);
+    if let Some(var_name) = arg_str.strip_prefix('$') {
+        // len $var → string length
+        let v = state.lookup(var_name);
+        Some(SsaValue::ParamExpansion {
+            var: v,
+            operator: "strlen".to_string(),
+            operand: String::new(),
+        })
+    } else {
+        // len arr → array length
+        let v = state.lookup(&arg_str);
+        Some(SsaValue::ParamExpansion {
+            var: v,
+            operator: "arrlen".to_string(),
+            operand: String::new(),
+        })
+    }
+}
+
+fn try_keys_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+    let arg = c.args.first()?;
+    let arg_str = expr_to_string(arg);
+    let v = state.lookup(&arg_str);
+    Some(SsaValue::ParamExpansion {
+        var: v,
+        operator: "arrkeys".to_string(),
+        operand: String::new(),
+    })
+}
+
+fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
+    // join @arr → space-separated
+    // join sep @arr → sep-separated
+    let (sep, arr_expr) = if c.args.len() >= 2 {
+        // Strip quotes from separator
+        let sep_raw = match &c.args[0].kind {
+            ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
+            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
+                ExprKind::Literal(s) => s.clone(),
+                _ => expr_to_string(&c.args[0]),
+            },
+            _ => expr_to_string(&c.args[0]),
+        };
+        (sep_raw, &c.args[1])
+    } else if c.args.len() == 1 {
+        (" ".to_string(), &c.args[0])
+    } else {
+        panic!("ICE: join requires at least one argument");
+    };
+    // The array arg should be @arr → ParameterExpansion(arrvals)
+    let arr_name = match &arr_expr.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            pe.name.clone()
+        }
+        _ => expr_to_string(arr_expr),
+    };
+    let v = state.lookup(&arr_name);
+    SsaValue::ParamExpansion {
+        var: v,
+        operator: "arrjoin".to_string(),
+        operand: sep,
+    }
+}
+
+fn echo_concat(c: &Command, state: &VersionState) -> SsaValue {
+    if c.args.is_empty() {
+        return SsaValue::Literal(String::new());
+    }
+    let mut parts: Vec<SsaValue> = Vec::new();
+    for (i, arg) in c.args.iter().enumerate() {
+        if i > 0 {
+            parts.push(SsaValue::Literal(" ".to_string()));
+        }
+        parts.push(expr_to_value(arg, state));
+    }
+    if parts.len() == 1 {
+        parts.remove(0)
+    } else {
+        SsaValue::Concat(parts)
+    }
 }
 pub(super) fn handle_structured_arithmetic(
     arith: &ArithExpr,
