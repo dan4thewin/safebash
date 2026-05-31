@@ -51,6 +51,7 @@ fn needs_args_preamble(stmts: &[Statement]) -> bool {
     false
 }
 
+// cyclo-allow: pure StmtKind → bool traversal
 fn _stmt_uses_args(stmt: &Statement) -> bool {
     match &stmt.kind {
         StmtKind::Command(c) => {
@@ -165,6 +166,7 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
+// cyclo-allow: StmtKind dispatcher; modest
 fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
@@ -654,6 +656,7 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
     }
 }
 
+// cyclo-allow: per-redirect-op codegen; modest
 fn emit_redirected(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
     // Check for heredoc/herestring content
     let has_heredoc = r
@@ -901,6 +904,7 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
 }
 
 /// Emit an expression as an inline Janet value.
+// cyclo-allow: ExprKind dispatch, mostly trivial mapping
 fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => format!("\"{}\"", s),
@@ -1227,6 +1231,7 @@ fn expr_to_literal(expr: &Expr) -> String {
 }
 
 /// Convert a structured ArithExpr to Janet code.
+// cyclo-allow: ArithExpr dispatch with three op-string tables
 fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
     use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
     match expr {

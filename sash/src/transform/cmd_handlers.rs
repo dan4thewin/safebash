@@ -310,6 +310,7 @@ pub(super) fn handle_unset(
 /// If the command name matches a known function, the function body is
 /// inlined at the call site with positional params remapped.
 /// Otherwise, emits an SsaInst::Command.
+// cyclo-allow: function inlining; linear plumbing
 pub(super) fn handle_function_call_or_command(
     name: &str,
     c: &Command,

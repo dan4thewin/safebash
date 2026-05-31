@@ -136,6 +136,7 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 }
 
 /// Convert an expression to a simple string representation.
+// cyclo-allow: pure ExprKind → String formatter
 pub(super) fn expr_to_string(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),

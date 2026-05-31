@@ -169,6 +169,7 @@ pub enum ArithOp {
 }
 
 impl ArithOp {
+    // cyclo-allow: 1:1 str → ArithOp
     pub fn from_str(s: &str) -> Option<ArithOp> {
         match s {
             "+" => Some(ArithOp::Add),
@@ -194,6 +195,7 @@ impl ArithOp {
         }
     }
 
+    // cyclo-allow: 1:1 ArithOp → byte
     pub fn as_u8(self) -> u8 {
         match self {
             ArithOp::Add => b'+',
@@ -219,6 +221,7 @@ impl ArithOp {
         }
     }
 
+    // cyclo-allow: 1:1 ArithOp → str
     pub fn display(&self) -> &'static str {
         match self {
             ArithOp::Add => "+",

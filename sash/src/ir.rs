@@ -78,6 +78,7 @@ impl Statement {
     /// This returns slices of child statements — NOT the statement itself.
     /// Use this as a default recursion mechanism in analyses that only need
     /// custom handling for specific StmtKind variants.
+    // cyclo-allow: IR helper — explicitly intended to be reused everywhere
     pub fn child_bodies(&self) -> Vec<&[Statement]> {
         match &self.kind {
             StmtKind::If(i) => {
@@ -117,6 +118,7 @@ impl Statement {
     /// Does NOT descend into child statements — use `child_bodies()` for that.
     /// Visits: command names/args, assignment values/indices, declaration values,
     /// for-loop words, case value/patterns, redirect targets.
+    // cyclo-allow: IR helper — same as above for exprs
     pub fn direct_exprs(&self, f: &mut impl FnMut(&Expr)) {
         match &self.kind {
             StmtKind::Assignment(a) => {

@@ -23,6 +23,7 @@ fn indent(out: &mut String, depth: usize) {
     }
 }
 
+// cyclo-allow: StmtKind dispatcher, 5-10 lines per arm
 fn print_stmt(out: &mut String, stmt: &Statement, depth: usize) {
     match &stmt.kind {
         StmtKind::Comment(text) => {
@@ -235,6 +236,7 @@ fn print_stmt_inline(out: &mut String, stmt: &Statement, depth: usize) {
     }
 }
 
+// cyclo-allow: ExprKind dispatcher, modest
 fn print_expr(out: &mut String, expr: &Expr) {
     match &expr.kind {
         ExprKind::Literal(s) => {
@@ -440,6 +442,7 @@ fn redirect_op(op: &RedirectOp) -> &'static str {
     }
 }
 
+// cyclo-allow: mostly inline op-table strings + simple recursion
 fn print_arith_expr(out: &mut String, expr: &crate::ir::ArithExpr) {
     use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
     match expr {

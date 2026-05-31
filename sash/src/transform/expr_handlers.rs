@@ -280,6 +280,7 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
 }
 
 /// Convert IR arithmetic op to SSA arithmetic op.
+// cyclo-allow: 1:1 IR → SSA op enum
 fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
     match op {
         IrArithOp::Add => ArithOp::Add,
@@ -304,6 +305,7 @@ fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
     }
 }
 
+// cyclo-allow: small ArithOp dispatcher, 1-3 lines per arm
 fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> i64 {
     match op {
         ArithOp::Add => l.wrapping_add(r),

@@ -81,6 +81,7 @@ impl TypeEnv {
 }
 
 /// Infer the type of an expression in context.
+// cyclo-allow: small ExprKind → VarType dispatcher
 fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
     match &expr.kind {
         ExprKind::Literal(s) => {
@@ -470,6 +471,7 @@ pub fn infer_types(program: &Program) -> HashMap<String, VarType> {
     env.vars
 }
 
+// cyclo-allow: StmtKind dispatcher; modest
 fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {

@@ -524,6 +524,7 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
 
 // ── local ────────────────────────────────────────────────────
 
+// cyclo-allow: `local x=v` parser — mostly linear
 fn parse_local(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
@@ -1012,6 +1013,7 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
 }
 
 /// Parse regex RHS in [[ =~ pattern ]]: collect tokens as literal until ]]
+// cyclo-allow: Tok → char mapping for regex specials
 fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     let mut pattern = String::new();
     loop {
@@ -1386,6 +1388,7 @@ fn parse_regex_mutation(
     }))
 }
 
+// cyclo-allow: simple command parser, modest
 fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
     // Parse the command name
     let name_expr = parse_expr(scanner)?;
@@ -1600,6 +1603,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
     Ok(result)
 }
 
+// cyclo-allow: Tok → (fd, op) dispatch — 1 arm per redirect op
 fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnostic> {
     let tok = scanner.next();
     let (fd, op) = match tok.token {

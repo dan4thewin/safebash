@@ -158,6 +158,7 @@ pub fn print_ssa(program: &SsaProgram) -> String {
     out
 }
 
+// cyclo-allow: SsaValue dispatcher, trivial formatting
 fn print_value(val: &SsaValue) -> String {
     match val {
         SsaValue::Literal(s) => format!("\"{}\"", s),

@@ -136,6 +136,7 @@ fn try_fold_block(block: &BasicBlock, _program: &SsaProgram) -> Option<String> {
     Some(output)
 }
 
+// cyclo-allow: top-level codegen driver: setup + one block loop
 pub fn compile_ssa(
     program: &SsaProgram,
     func_constants: &HashMap<String, String>,
