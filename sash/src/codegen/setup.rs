@@ -11,7 +11,7 @@ use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-use super::types::ExternFuncs;
+use super::types::{emit_int_to_str, ExternFuncs};
 use crate::ir::TestExpr;
 use crate::ssa::*;
 
@@ -1316,16 +1316,7 @@ pub(super) fn init_positional_params(
                 let one = builder.ins().iconst(I64, 1);
                 let count = builder.ins().isub(argc_val, one);
                 // Convert integer to string via sash_itoa
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call = builder.ins().call(itoa_ref, &[count, out_addr]);
-                let str_ptr = builder.inst_results(call)[0];
-                let str_len = builder.ins().stack_load(I64, out_slot, 0);
+                let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, count);
                 builder.def_var(sv.str_ptr(), str_ptr);
                 builder.def_var(sv.str_len(), str_len);
             } else if var_name == "@" {
@@ -1352,16 +1343,7 @@ pub(super) fn init_positional_params(
             } else if var_name == "?" {
                 // $? = exit status of last command, convert to string
                 let status = builder.use_var(exit_status_var);
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call = builder.ins().call(itoa_ref, &[status, out_addr]);
-                let str_ptr = builder.inst_results(call)[0];
-                let str_len = builder.ins().stack_load(I64, out_slot, 0);
+                let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, status);
                 builder.def_var(sv.str_ptr(), str_ptr);
                 builder.def_var(sv.str_len(), str_len);
             } else if var_name == "$" {
@@ -1369,16 +1351,7 @@ pub(super) fn init_positional_params(
                 let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
                 let call = builder.ins().call(getpid_ref, &[]);
                 let pid = builder.inst_results(call)[0];
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                let str_ptr = builder.inst_results(call2)[0];
-                let str_len = builder.ins().stack_load(I64, out_slot, 0);
+                let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, pid);
                 builder.def_var(sv.str_ptr(), str_ptr);
                 builder.def_var(sv.str_len(), str_len);
             } else {

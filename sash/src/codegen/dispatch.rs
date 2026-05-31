@@ -14,7 +14,7 @@ use cranelift_object::ObjectModule;
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore};
 use super::tests::lower_test_expr;
-use super::types::{InstCtx, VarSlot};
+use super::types::{emit_int_to_str, InstCtx, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
@@ -982,16 +982,7 @@ impl SsaInst {
         if let Some(SsaValue::Var(vr)) = args.first() {
             let pid = builder.use_var(test_result_var);
             // Convert pid to string via itoa
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-            let call = builder.ins().call(itoa_ref, &[pid, out_addr]);
-            let str_ptr = builder.inst_results(call)[0];
-            let str_len = builder.ins().stack_load(I64, out_slot, 0);
+            let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, pid);
             let sv = &vars[&vr.display()];
             builder.def_var(sv.str_ptr(), str_ptr);
             builder.def_var(sv.str_len(), str_len);

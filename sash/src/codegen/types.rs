@@ -3,7 +3,11 @@
 //! TRUST: ExternFuncs declares every runtime function available to compiled
 //! binaries. A reviewer should verify this matches sash-rt/src/lib.rs exactly.
 
-use cranelift_frontend::Variable;
+use cranelift_codegen::ir::types::I64;
+use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind, Value};
+use cranelift_frontend::{FunctionBuilder, Variable};
+use cranelift_module::Module;
+use cranelift_object::ObjectModule;
 
 #[derive(Debug, Clone, Copy)]
 pub(super) enum VarSlot {
@@ -201,4 +205,27 @@ pub(super) fn find_var_key(
         }
     }
     best_key.cloned()
+}
+
+/// Lower a 64-bit integer Value into a (ptr, len) string pair via `sash_itoa`.
+///
+/// Every site that needs to produce a string representation of an integer
+/// (echo of `$?`, `$$`, `${#arr[@]}`, arithmetic-expression result, etc.)
+/// allocates the same 8-byte stack slot for the out-length, calls `sash_itoa`,
+/// and reads back the returned pointer plus the slot. This helper centralises
+/// that boilerplate so the call sites stay readable.
+pub(super) fn emit_int_to_str(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    int_val: Value,
+) -> (Value, Value) {
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
+    let call = builder.ins().call(itoa_ref, &[int_val, out_addr]);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, out_slot, 0);
+    (ptr, len)
 }

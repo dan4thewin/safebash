@@ -9,7 +9,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::redirects::emit_redirects;
-use super::types::{ExternFuncs, VarSlot};
+use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
@@ -93,13 +93,7 @@ pub(super) fn handle_param_expansion(
 
     // "strlen" doesn't use an operand
     if operator == "strlen" {
-        let out_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-        let call = builder.ins().call(itoa_ref, &[s_len, out_addr]);
-        let result_ptr = builder.inst_results(call)[0];
-        let result_len = builder.ins().stack_load(I64, out_slot, 0);
+        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, s_len);
         return (result_ptr, result_len);
     }
 
@@ -109,13 +103,7 @@ pub(super) fn handle_param_expansion(
         let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
         let call = builder.ins().call(len_ref, &[s_ptr]);
         let arr_len = builder.inst_results(call)[0];
-        let out_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-        let call2 = builder.ins().call(itoa_ref, &[arr_len, out_addr]);
-        let result_ptr = builder.inst_results(call2)[0];
-        let result_len = builder.ins().stack_load(I64, out_slot, 0);
+        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, arr_len);
         return (result_ptr, result_len);
     }
 
@@ -137,13 +125,7 @@ pub(super) fn handle_param_expansion(
         let _elem_ptr = builder.inst_results(call)[0];
         let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
         // itoa the length
-        let out_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-        let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-        let call2 = builder.ins().call(itoa_ref, &[elem_len, out_addr]);
-        let result_ptr = builder.inst_results(call2)[0];
-        let result_len = builder.ins().stack_load(I64, out_slot, 0);
+        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, elem_len);
         return (result_ptr, result_len);
     }
     if operator == "regex_replace" {
@@ -603,16 +585,7 @@ pub(super) fn handle_cmdsub(
                 let func_ref = module.declare_func_in_func(externs.getppid, builder.func);
                 let call = builder.ins().call(func_ref, &[]);
                 let pid = builder.inst_results(call)[0];
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                let ptr = builder.inst_results(call2)[0];
-                let len = builder.ins().stack_load(I64, out_slot, 0);
+                let (ptr, len) = emit_int_to_str(builder, module, externs, pid);
                 return (ptr, len);
             }
             "getcwd" => {
@@ -663,16 +636,7 @@ pub(super) fn handle_cmdsub(
                 // argc includes $0, so subtract 1 for $# equivalence
                 let one = builder.ins().iconst(I64, 1);
                 let count = builder.ins().isub(argc_val, one);
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call = builder.ins().call(itoa_ref, &[count, out_addr]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.ins().stack_load(I64, out_slot, 0);
+                let (ptr, len) = emit_int_to_str(builder, module, externs, count);
                 return (ptr, len);
             }
             "signum" => {
@@ -680,16 +644,7 @@ pub(super) fn handle_cmdsub(
                 let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
                 let signum_base = builder.ins().global_value(I64, signum_gv);
                 let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call = builder.ins().call(itoa_ref, &[signum_val, out_addr]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.ins().stack_load(I64, out_slot, 0);
+                let (ptr, len) = emit_int_to_str(builder, module, externs, signum_val);
                 return (ptr, len);
             }
             "argv" if argv_values.len() >= 2 => {
@@ -751,16 +706,7 @@ pub(super) fn handle_cmdsub(
                 let call = builder.ins().call(dtoi_ref, &[digits, str_ptr, str_len]);
                 let int_val = builder.inst_results(call)[0];
                 // Convert int result to string via itoa
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call2 = builder.ins().call(itoa_ref, &[int_val, out_addr]);
-                let ptr = builder.inst_results(call2)[0];
-                let len = builder.ins().stack_load(I64, out_slot, 0);
+                let (ptr, len) = emit_int_to_str(builder, module, externs, int_val);
                 return (ptr, len);
             }
             "itod" if argv_values.len() >= 3 => {

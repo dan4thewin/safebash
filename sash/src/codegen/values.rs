@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::arithmetic::emit_arith_op;
-use super::types::{ExternFuncs, VarSlot};
+use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
 use super::value_handlers::{handle_cmdsub, handle_param_expansion};
 use crate::ir::TestExpr;
 use crate::ssa::*;
@@ -43,16 +43,7 @@ pub(super) fn lower_expr_value(
             if name == "?" {
                 if let Some(esv) = exit_status_var {
                     let status = builder.use_var(esv);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[status, out_addr]);
-                    let res_ptr = builder.inst_results(call)[0];
-                    let res_len = builder.ins().stack_load(I64, out_slot, 0);
+                    let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, status);
                     return (res_ptr, res_len);
                 }
             }
@@ -61,16 +52,7 @@ pub(super) fn lower_expr_value(
                 let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
                 let call = builder.ins().call(getpid_ref, &[]);
                 let pid = builder.inst_results(call)[0];
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                let res_ptr = builder.inst_results(call2)[0];
-                let res_len = builder.ins().stack_load(I64, out_slot, 0);
+                let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, pid);
                 return (res_ptr, res_len);
             }
             // Search vars map for the highest version of this variable
@@ -79,17 +61,7 @@ pub(super) fn lower_expr_value(
                 let sv = *sv;
                 if sv.is_int() {
                     let int_val = builder.use_var(*sv.as_int());
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[int_val, out_addr]);
-                    let res_ptr = builder.inst_results(call)[0];
-                    let res_len = builder.ins().stack_load(I64, out_slot, 0);
-                    (res_ptr, res_len)
+                    emit_int_to_str(builder, module, externs, int_val)
                 } else {
                     let ptr = builder.use_var(sv.str_ptr());
                     let len = builder.use_var(sv.str_len());
@@ -320,16 +292,7 @@ pub(super) fn lower_value(
             if base == "?" {
                 if let Some(esv) = exit_status_var {
                     let status = builder.use_var(esv);
-                    let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                        StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                    let call = builder.ins().call(itoa_ref, &[status, out_addr]);
-                    let res_ptr = builder.inst_results(call)[0];
-                    let res_len = builder.ins().stack_load(I64, out_slot, 0);
+                    let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, status);
                     return (res_ptr, res_len);
                 }
             }
@@ -337,16 +300,7 @@ pub(super) fn lower_value(
                 let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
                 let call = builder.ins().call(getpid_ref, &[]);
                 let pid = builder.inst_results(call)[0];
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call2 = builder.ins().call(itoa_ref, &[pid, out_addr]);
-                let res_ptr = builder.inst_results(call2)[0];
-                let res_len = builder.ins().stack_load(I64, out_slot, 0);
+                let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, pid);
                 return (res_ptr, res_len);
             }
             let sv = match vars.get(&key) {
@@ -360,17 +314,7 @@ pub(super) fn lower_value(
             if sv.is_int() {
                 // Int var used in string context: itoa
                 let int_val = builder.use_var(*sv.as_int());
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-                let call = builder.ins().call(itoa_ref, &[int_val, out_addr]);
-                let res_ptr = builder.inst_results(call)[0];
-                let res_len = builder.ins().stack_load(I64, out_slot, 0);
-                (res_ptr, res_len)
+                emit_int_to_str(builder, module, externs, int_val)
             } else {
                 let ptr = builder.use_var(sv.str_ptr());
                 let len = builder.use_var(sv.str_len());
@@ -471,17 +415,7 @@ pub(super) fn lower_value(
             let result =
                 emit_arith_op(*op, int_val, rhs, builder, module, externs, exit_status_var);
             // Convert back to string via itoa
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-            let call2 = builder.ins().call(itoa_ref, &[result, out_addr]);
-            let res_ptr = builder.inst_results(call2)[0];
-            let res_len = builder.ins().stack_load(I64, out_slot, 0);
-            (res_ptr, res_len)
+            emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lower_value_as_int(
@@ -503,17 +437,7 @@ pub(super) fn lower_value(
                 externs,
             );
             let result = emit_arith_op(*op, l, r, builder, module, externs, None);
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-            let call2 = builder.ins().call(itoa_ref, &[result, out_addr]);
-            let res_ptr = builder.inst_results(call2)[0];
-            let res_len = builder.ins().stack_load(I64, out_slot, 0);
-            (res_ptr, res_len)
+            emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::CmdSubst {
             argv: argv_values,

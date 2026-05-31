@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore, ir_expr_to_ssa_value};
-use super::types::InstCtx;
+use super::types::{emit_int_to_str, InstCtx};
 use super::values::{emit_strlen, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
@@ -789,16 +789,7 @@ pub(super) fn handle_shift(
         } else if base == "#" {
             let one = builder.ins().iconst(I64, 1);
             let count = builder.ins().isub(fresh_argc, one);
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let itoa_ref = module.declare_func_in_func(externs.itoa, builder.func);
-            let call = builder.ins().call(itoa_ref, &[count, out_addr]);
-            let str_ptr = builder.inst_results(call)[0];
-            let str_len = builder.ins().stack_load(I64, out_slot, 0);
+            let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, count);
             builder.def_var(sv.str_ptr(), str_ptr);
             builder.def_var(sv.str_len(), str_len);
         } else if base == "@" {
