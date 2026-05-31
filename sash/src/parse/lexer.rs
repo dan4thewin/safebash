@@ -727,214 +727,9 @@ impl Scanner {
 
         while self.pos < self.source.len() && self.source[self.pos] != b'"' {
             match self.source[self.pos] {
-                b'\\' => {
-                    if self.pos + 1 < self.source.len() {
-                        let next = self.source[self.pos + 1];
-                        match next {
-                            b'"' | b'\\' | b'$' | b'`' => {
-                                literal.push(next as char);
-                                self.pos += 2;
-                            }
-                            b'\n' => {
-                                // Line continuation — skip both
-                                self.pos += 2;
-                            }
-                            _ => {
-                                literal.push('\\');
-                                self.pos += 1;
-                            }
-                        }
-                    } else {
-                        literal.push('\\');
-                        self.pos += 1;
-                    }
-                }
-                b'$' => {
-                    // Flush literal
-                    if !literal.is_empty() {
-                        parts.push(StringPart::Literal(std::mem::take(&mut literal)));
-                    }
-                    self.pos += 1;
-                    if self.pos >= self.source.len() {
-                        literal.push('$');
-                        continue;
-                    }
-                    match self.source[self.pos] {
-                        b'{' => {
-                            // ${...}
-                            self.pos += 1;
-                            let inner_start = self.pos;
-                            let mut depth = 1i32;
-                            while self.pos < self.source.len() && depth > 0 {
-                                match self.source[self.pos] {
-                                    b'{' => {
-                                        depth += 1;
-                                        self.pos += 1;
-                                    }
-                                    b'}' => {
-                                        depth -= 1;
-                                        if depth > 0 {
-                                            self.pos += 1;
-                                        }
-                                    }
-                                    b'\'' => {
-                                        self.pos += 1;
-                                        while self.pos < self.source.len()
-                                            && self.source[self.pos] != b'\''
-                                        {
-                                            self.pos += 1;
-                                        }
-                                        if self.pos < self.source.len() {
-                                            self.pos += 1;
-                                        }
-                                    }
-                                    b'"' => {
-                                        // Nested " inside ${} — just skip
-                                        self.pos += 1;
-                                    }
-                                    b'\\' => {
-                                        self.pos += 2;
-                                    }
-                                    _ => {
-                                        self.pos += 1;
-                                    }
-                                }
-                            }
-                            let content =
-                                String::from_utf8_lossy(&self.source[inner_start..self.pos])
-                                    .to_string();
-                            if self.pos < self.source.len() {
-                                self.pos += 1; // skip }
-                            }
-                            parts.push(StringPart::Expansion(content));
-                        }
-                        b'(' => {
-                            if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'('
-                            {
-                                // $((...))
-                                self.pos += 2;
-                                let inner_start = self.pos;
-                                let mut depth = 1i32;
-                                while self.pos + 1 < self.source.len() && depth > 0 {
-                                    if self.source[self.pos] == b'('
-                                        && self.source[self.pos + 1] == b'('
-                                    {
-                                        depth += 1;
-                                        self.pos += 2;
-                                    } else if self.source[self.pos] == b')'
-                                        && self.source[self.pos + 1] == b')'
-                                    {
-                                        depth -= 1;
-                                        if depth == 0 {
-                                            break;
-                                        }
-                                        self.pos += 2;
-                                    } else {
-                                        self.pos += 1;
-                                    }
-                                }
-                                let content =
-                                    String::from_utf8_lossy(&self.source[inner_start..self.pos])
-                                        .to_string();
-                                if self.pos + 1 < self.source.len() {
-                                    self.pos += 2; // skip ))
-                                }
-                                parts.push(StringPart::ArithSub(content));
-                            } else {
-                                // $(...)
-                                self.pos += 1;
-                                let inner_start = self.pos;
-                                let mut depth = 1i32;
-                                while self.pos < self.source.len() && depth > 0 {
-                                    match self.source[self.pos] {
-                                        b'(' => {
-                                            depth += 1;
-                                            self.pos += 1;
-                                        }
-                                        b')' => {
-                                            depth -= 1;
-                                            if depth > 0 {
-                                                self.pos += 1;
-                                            }
-                                        }
-                                        b'\'' => {
-                                            self.pos += 1;
-                                            while self.pos < self.source.len()
-                                                && self.source[self.pos] != b'\''
-                                            {
-                                                self.pos += 1;
-                                            }
-                                            if self.pos < self.source.len() {
-                                                self.pos += 1;
-                                            }
-                                        }
-                                        b'"' => {
-                                            self.pos += 1;
-                                            while self.pos < self.source.len()
-                                                && self.source[self.pos] != b'"'
-                                            {
-                                                if self.source[self.pos] == b'\\' {
-                                                    self.pos += 1;
-                                                }
-                                                self.pos += 1;
-                                            }
-                                            if self.pos < self.source.len() {
-                                                self.pos += 1;
-                                            }
-                                        }
-                                        _ => {
-                                            self.pos += 1;
-                                        }
-                                    }
-                                }
-                                let content =
-                                    String::from_utf8_lossy(&self.source[inner_start..self.pos])
-                                        .to_string();
-                                if self.pos < self.source.len() {
-                                    self.pos += 1; // skip )
-                                }
-                                parts.push(StringPart::CommandSub(content));
-                            }
-                        }
-                        c if c.is_ascii_alphabetic() || c == b'_' => {
-                            let name_start = self.pos;
-                            while self.pos < self.source.len()
-                                && (self.source[self.pos].is_ascii_alphanumeric()
-                                    || self.source[self.pos] == b'_')
-                            {
-                                self.pos += 1;
-                            }
-                            let name = String::from_utf8_lossy(&self.source[name_start..self.pos])
-                                .to_string();
-                            parts.push(StringPart::Variable(name));
-                        }
-                        b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0'..=b'9' => {
-                            let var = (self.source[self.pos] as char).to_string();
-                            self.pos += 1;
-                            parts.push(StringPart::Variable(var));
-                        }
-                        _ => {
-                            literal.push('$');
-                        }
-                    }
-                }
-                b'`' => {
-                    // Backtick inside string — capture for rejection
-                    if !literal.is_empty() {
-                        parts.push(StringPart::Literal(std::mem::take(&mut literal)));
-                    }
-                    self.pos += 1;
-                    let inner_start = self.pos;
-                    while self.pos < self.source.len() && self.source[self.pos] != b'`' {
-                        self.pos += 1;
-                    }
-                    let content =
-                        String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-                    if self.pos < self.source.len() {
-                        self.pos += 1; // skip closing `
-                    }
-                    parts.push(StringPart::CommandSub(format!("`{}`", content)));
-                }
+                b'\\' => self.scan_dq_escape(&mut literal),
+                b'$' => self.scan_dq_dollar(&mut parts, &mut literal),
+                b'`' => self.scan_dq_backtick(&mut parts, &mut literal),
                 _ => {
                     literal.push(self.source[self.pos] as char);
                     self.pos += 1;
@@ -957,6 +752,229 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// Handle a `\` inside a `"…"` string. Per POSIX, `\` is literal
+    /// except before `"`, `\`, `$`, `` ` ``, or newline (line continuation).
+    fn scan_dq_escape(&mut self, literal: &mut String) {
+        if self.pos + 1 >= self.source.len() {
+            literal.push('\\');
+            self.pos += 1;
+            return;
+        }
+        let next = self.source[self.pos + 1];
+        match next {
+            b'"' | b'\\' | b'$' | b'`' => {
+                literal.push(next as char);
+                self.pos += 2;
+            }
+            b'\n' => {
+                // Line continuation — both bytes vanish.
+                self.pos += 2;
+            }
+            _ => {
+                literal.push('\\');
+                self.pos += 1;
+            }
+        }
+    }
+
+    /// Handle a `$` inside a `"…"` string. Dispatches to one of the
+    /// six expansion forms (`${…}`, `$((…))`, `$(…)`, `$name`, special
+    /// var, or bare literal `$`). Flushes the current literal first
+    /// when an expansion is recognised.
+    fn scan_dq_dollar(&mut self, parts: &mut Vec<StringPart>, literal: &mut String) {
+        if !literal.is_empty() {
+            parts.push(StringPart::Literal(std::mem::take(literal)));
+        }
+        self.pos += 1; // skip $
+        if self.pos >= self.source.len() {
+            literal.push('$');
+            return;
+        }
+        match self.source[self.pos] {
+            b'{' => {
+                let content = self.consume_dq_brace_expansion();
+                parts.push(StringPart::Expansion(content));
+            }
+            b'(' => {
+                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
+                    let content = self.consume_dq_arith_sub();
+                    parts.push(StringPart::ArithSub(content));
+                } else {
+                    let content = self.consume_dq_cmd_sub();
+                    parts.push(StringPart::CommandSub(content));
+                }
+            }
+            c if c.is_ascii_alphabetic() || c == b'_' => {
+                let name = self.consume_dq_var_name();
+                parts.push(StringPart::Variable(name));
+            }
+            b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0'..=b'9' => {
+                let var = (self.source[self.pos] as char).to_string();
+                self.pos += 1;
+                parts.push(StringPart::Variable(var));
+            }
+            _ => {
+                // Bare `$` followed by something unexpected — keep as
+                // literal; don't consume the next byte.
+                literal.push('$');
+            }
+        }
+    }
+
+    /// `${…}` — opening `{` is at `self.pos`. Returns the inner text
+    /// and advances past the closing `}`.
+    fn consume_dq_brace_expansion(&mut self) -> String {
+        self.pos += 1; // skip {
+        let inner_start = self.pos;
+        let mut depth = 1i32;
+        while self.pos < self.source.len() && depth > 0 {
+            match self.source[self.pos] {
+                b'{' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                b'}' => {
+                    depth -= 1;
+                    if depth > 0 {
+                        self.pos += 1;
+                    }
+                }
+                b'\'' => self.skip_balanced_squote(),
+                b'"' => {
+                    // Nested " inside ${} — skip without re-scanning.
+                    self.pos += 1;
+                }
+                b'\\' => {
+                    self.pos += 2;
+                }
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
+        if self.pos < self.source.len() {
+            self.pos += 1; // skip closing }
+        }
+        content
+    }
+
+    /// `$((…))` — caller has not yet advanced past `((`. Returns the
+    /// inner arithmetic text and advances past the closing `))`.
+    fn consume_dq_arith_sub(&mut self) -> String {
+        self.pos += 2; // skip ((
+        let inner_start = self.pos;
+        let mut depth = 1i32;
+        while self.pos + 1 < self.source.len() && depth > 0 {
+            if self.source[self.pos] == b'(' && self.source[self.pos + 1] == b'(' {
+                depth += 1;
+                self.pos += 2;
+            } else if self.source[self.pos] == b')' && self.source[self.pos + 1] == b')' {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+                self.pos += 2;
+            } else {
+                self.pos += 1;
+            }
+        }
+        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
+        if self.pos + 1 < self.source.len() {
+            self.pos += 2; // skip ))
+        }
+        content
+    }
+
+    /// `$(…)` — caller has not yet advanced past `(`. Returns the
+    /// inner command text and advances past the closing `)`.
+    fn consume_dq_cmd_sub(&mut self) -> String {
+        self.pos += 1; // skip (
+        let inner_start = self.pos;
+        let mut depth = 1i32;
+        while self.pos < self.source.len() && depth > 0 {
+            match self.source[self.pos] {
+                b'(' => {
+                    depth += 1;
+                    self.pos += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    if depth > 0 {
+                        self.pos += 1;
+                    }
+                }
+                b'\'' => self.skip_balanced_squote(),
+                b'"' => self.skip_balanced_dquote(),
+                _ => {
+                    self.pos += 1;
+                }
+            }
+        }
+        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
+        if self.pos < self.source.len() {
+            self.pos += 1; // skip closing )
+        }
+        content
+    }
+
+    /// `$NAME` — caller is at the first name byte (alpha/`_`). Returns
+    /// the name and advances past its last byte.
+    fn consume_dq_var_name(&mut self) -> String {
+        let name_start = self.pos;
+        while self.pos < self.source.len()
+            && (self.source[self.pos].is_ascii_alphanumeric() || self.source[self.pos] == b'_')
+        {
+            self.pos += 1;
+        }
+        String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string()
+    }
+
+    /// Skip a single-quoted run starting at `self.pos`. Single quotes
+    /// have no escapes; just advance until the closing `'`.
+    fn skip_balanced_squote(&mut self) {
+        self.pos += 1; // opening '
+        while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
+            self.pos += 1;
+        }
+        if self.pos < self.source.len() {
+            self.pos += 1;
+        }
+    }
+
+    /// Skip a double-quoted run starting at `self.pos`. Honours `\`
+    /// escapes (one extra byte past the backslash).
+    fn skip_balanced_dquote(&mut self) {
+        self.pos += 1; // opening "
+        while self.pos < self.source.len() && self.source[self.pos] != b'"' {
+            if self.source[self.pos] == b'\\' {
+                self.pos += 1;
+            }
+            self.pos += 1;
+        }
+        if self.pos < self.source.len() {
+            self.pos += 1;
+        }
+    }
+
+    /// Handle a `` ` `` inside a `"…"` string. Captures the backtick
+    /// span as a CommandSub so the validator can reject it (SB5020).
+    fn scan_dq_backtick(&mut self, parts: &mut Vec<StringPart>, literal: &mut String) {
+        if !literal.is_empty() {
+            parts.push(StringPart::Literal(std::mem::take(literal)));
+        }
+        self.pos += 1; // opening `
+        let inner_start = self.pos;
+        while self.pos < self.source.len() && self.source[self.pos] != b'`' {
+            self.pos += 1;
+        }
+        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
+        if self.pos < self.source.len() {
+            self.pos += 1; // closing `
+        }
+        parts.push(StringPart::CommandSub(format!("`{}`", content)));
     }
 
     /// Scan $'...' ANSI-C quoted string (opening $' already consumed).
