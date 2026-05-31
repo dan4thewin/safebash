@@ -238,74 +238,22 @@ fn lower_test_unary(
             builder.inst_results(call2)[0]
         }
         "-v" => {
-            // Variable existence check: look up the variable by name
-            // The operand is a Literal containing the variable name
+            // Variable existence check: look up the highest-version
+            // variable matching this base name. Set ⇔ value is non-empty.
             let var_name = match &operand.kind {
-                crate::ir::ExprKind::Literal(s) => s.clone(),
-                crate::ir::ExprKind::SimpleExpansion(s) => s.clone(),
-                _ => String::new(),
+                crate::ir::ExprKind::Literal(s) => s.as_str(),
+                crate::ir::ExprKind::SimpleExpansion(s) => s.as_str(),
+                _ => "",
             };
             if var_name.is_empty() {
-                // Can't determine var name — treat as unset
                 builder.ins().iconst(I64, 0)
+            } else if let Some(sv) = super::types::find_var_slot(vars, var_name) {
+                let v_len = builder.use_var(sv.str_len());
+                let zero = builder.ins().iconst(I64, 0);
+                let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
+                builder.ins().uextend(I64, cmp)
             } else {
-                // Look up all versioned names for this variable
-                // If any version exists and has non-zero length, it's "set"
-                let mut found = false;
-                for key in vars.keys() {
-                    if let Some(base) = key.rsplit('_').next_back() {
-                        // key format is "name_version"
-                        let base_name = if let Some(idx) = key.rfind('_') {
-                            let suffix = &key[idx + 1..];
-                            if suffix.chars().all(|c| c.is_ascii_digit()) {
-                                &key[..idx]
-                            } else {
-                                key.as_str()
-                            }
-                        } else {
-                            key.as_str()
-                        };
-                        let _ = base;
-                        if base_name == var_name {
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-                if found {
-                    // Variable exists — check if current value is non-empty
-                    // Find the highest version
-                    let mut best_key = String::new();
-                    let mut best_ver: i64 = -1;
-                    for key in vars.keys() {
-                        if let Some(idx) = key.rfind('_') {
-                            let base = &key[..idx];
-                            let suffix = &key[idx + 1..];
-                            if base == var_name {
-                                if let Ok(v) = suffix.parse::<i64>() {
-                                    if v > best_ver {
-                                        best_ver = v;
-                                        best_key = key.clone();
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    if !best_key.is_empty() {
-                        if let Some(sv) = vars.get(&best_key) {
-                            let v_len = builder.use_var(sv.str_len());
-                            let zero = builder.ins().iconst(I64, 0);
-                            let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
-                            builder.ins().uextend(I64, cmp)
-                        } else {
-                            builder.ins().iconst(I64, 0)
-                        }
-                    } else {
-                        builder.ins().iconst(I64, 0)
-                    }
-                } else {
-                    builder.ins().iconst(I64, 0)
-                }
+                builder.ins().iconst(I64, 0)
             }
         }
         other => {
