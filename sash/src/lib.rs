@@ -73,35 +73,114 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    // --extract: dump .sash_source section from a compiled binary
     if args[1] == "--extract" {
-        if args.len() < 3 {
-            eprintln!("Usage: sash --extract <binary>");
+        dump_sash_source(&args);
+        return;
+    }
+
+    let parsed = parse_cli_args(&args);
+    let input = parsed.input;
+    let source = read_source(input, parsed.inline_source);
+
+    for flag in &parsed.flags {
+        if let Some(path) = flag.strip_prefix("--sysroot=") {
+            set_sysroot(path.to_string());
+        }
+    }
+
+    // DD#57: reject converter flags
+    for flag in &parsed.flags {
+        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
+            eprintln!(
+                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
+                flag
+            );
             std::process::exit(1);
         }
-        let binary_path = &args[2];
-        let data = std::fs::read(binary_path).unwrap_or_else(|e| {
-            eprintln!("sash: {}: {}", binary_path, e);
+    }
+
+    let (program, parse_diags) = match parse::parse(&source) {
+        Ok(result) => result,
+        Err(diags) => {
+            print_diags(input, &diags);
             std::process::exit(1);
-        });
-        let obj = object::read::File::parse(&*data).unwrap_or_else(|e| {
-            eprintln!("sash: {}: not a valid object file: {}", binary_path, e);
-            std::process::exit(1);
-        });
-        use object::read::{Object, ObjectSection};
-        for section in obj.sections() {
-            if section.name() == Ok(".sash_source") {
-                if let Ok(data) = section.data() {
-                    print!("{}", std::str::from_utf8(data).unwrap_or("<binary data>"));
-                    return;
-                }
-            }
         }
-        eprintln!("sash: {}: no .sash_source section found", binary_path);
+    };
+
+    print_diags(input, &parse_diags);
+
+    let vdiags = validate::validate(&program);
+    let mut tdiags = validate::check_taint(&program);
+    tdiags.extend(vdiags);
+    if !tdiags.is_empty() {
+        print_diags(input, &tdiags);
         std::process::exit(1);
     }
 
-    // Split args into flags and positional
+    if parsed.flags.contains(&"--ir") {
+        print!("{}", printer::print_program(&program));
+        return;
+    }
+    if parsed.flags.contains(&"--janet") {
+        print!("{}", emit_janet::emit_janet(&program));
+        return;
+    }
+    if parsed.flags.contains(&"--ssa") {
+        let (ssa, _diags) = transform::ir_to_ssa(&program);
+        print!("{}", ssa_printer::print_ssa(&ssa));
+        return;
+    }
+    if parsed.flags.contains(&"--manifest") {
+        emit_manifest(&program);
+        return;
+    }
+
+    compile_native(
+        input,
+        &source,
+        &program,
+        parsed.output_path,
+        parsed.inline_source.is_some(),
+        &parsed.flags,
+    );
+}
+
+/// `--extract`: dump the `.sash_source` section from a compiled binary.
+fn dump_sash_source(args: &[String]) {
+    if args.len() < 3 {
+        eprintln!("Usage: sash --extract <binary>");
+        std::process::exit(1);
+    }
+    let binary_path = &args[2];
+    let data = std::fs::read(binary_path).unwrap_or_else(|e| {
+        eprintln!("sash: {}: {}", binary_path, e);
+        std::process::exit(1);
+    });
+    let obj = object::read::File::parse(&*data).unwrap_or_else(|e| {
+        eprintln!("sash: {}: not a valid object file: {}", binary_path, e);
+        std::process::exit(1);
+    });
+    use object::read::{Object, ObjectSection};
+    for section in obj.sections() {
+        if section.name() == Ok(".sash_source") {
+            if let Ok(data) = section.data() {
+                print!("{}", std::str::from_utf8(data).unwrap_or("<binary data>"));
+                return;
+            }
+        }
+    }
+    eprintln!("sash: {}: no .sash_source section found", binary_path);
+    std::process::exit(1);
+}
+
+struct ParsedCli<'a> {
+    flags: Vec<&'a str>,
+    output_path: Option<&'a str>,
+    inline_source: Option<&'a str>,
+    input: &'a str,
+}
+
+fn parse_cli_args(args: &[String]) -> ParsedCli<'_> {
     let mut flags: Vec<&str> = Vec::new();
     let mut positional: Vec<&str> = Vec::new();
     let mut output_path: Option<&str> = None;
@@ -134,58 +213,27 @@ pub fn cli_main(args: Vec<String>) {
             std::process::exit(1);
         }
     };
+    ParsedCli {
+        flags,
+        output_path,
+        inline_source,
+        input,
+    }
+}
 
-    // Read source
-    let source = if let Some(src) = inline_source {
+fn read_source(input: &str, inline_source: Option<&str>) -> String {
+    if let Some(src) = inline_source {
         src.to_string()
     } else {
-        match std::fs::read_to_string(input) {
-            Ok(s) => s,
-            Err(e) => {
-                eprintln!("sash: {}: {}", input, e);
-                std::process::exit(1);
-            }
-        }
-    };
-
-    // DD#23: --sysroot=<path> for cross-compilation path resolution
-    for flag in &flags {
-        if let Some(path) = flag.strip_prefix("--sysroot=") {
-            set_sysroot(path.to_string());
-        }
-    }
-
-    // DD#57: reject converter flags
-    for flag in &flags {
-        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
-            eprintln!(
-                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
-                flag
-            );
+        std::fs::read_to_string(input).unwrap_or_else(|e| {
+            eprintln!("sash: {}: {}", input, e);
             std::process::exit(1);
-        }
+        })
     }
+}
 
-    // Parse with new hand-written parser
-    let (program, parse_diags) = match parse::parse(&source) {
-        Ok(result) => result,
-        Err(diags) => {
-            for d in &diags {
-                let prefix = match d.severity {
-                    diagnostic::Severity::Error => "error",
-                    diagnostic::Severity::Deferred => "deferred",
-                };
-                eprintln!(
-                    "{}:{}:{}: {} [{}] {}",
-                    input, d.line, d.col, prefix, d.code, d.message
-                );
-            }
-            std::process::exit(1);
-        }
-    };
-
-    // Emit non-fatal parse diagnostics
-    for d in &parse_diags {
+fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
+    for d in diags {
         let prefix = match d.severity {
             diagnostic::Severity::Error => "error",
             diagnostic::Severity::Deferred => "deferred",
@@ -195,121 +243,100 @@ pub fn cli_main(args: Vec<String>) {
             input, d.line, d.col, prefix, d.code, d.message
         );
     }
+}
 
-    // TODO: Validator rules and taint tracking will be reimplemented
-    // as IR walkers. Tree-sitter removed.
-    {
-        let vdiags = validate::validate(&program);
-        let mut tdiags = validate::check_taint(&program);
-        tdiags.extend(vdiags);
-        if !tdiags.is_empty() {
-            for d in &tdiags {
-                let prefix = match d.severity {
-                    diagnostic::Severity::Error => "error",
-                    diagnostic::Severity::Deferred => "deferred",
-                };
-                eprintln!(
-                    "{}:{}:{}: {} [{}] {}",
-                    input, d.line, d.col, prefix, d.code, d.message
-                );
-            }
-            std::process::exit(1);
-        }
-    }
-
-    if flags.contains(&"--ir") {
-        let ir = printer::print_program(&program);
-        print!("{}", ir);
-        return;
-    }
-    if flags.contains(&"--janet") {
-        let janet = emit_janet::emit_janet(&program);
-        print!("{}", janet);
-        return;
-    }
-    if flags.contains(&"--ssa") {
-        let (ssa, _diags) = transform::ir_to_ssa(&program);
-        let ssa_text = ssa_printer::print_ssa(&ssa);
-        print!("{}", ssa_text);
-        return;
-    }
-    if flags.contains(&"--manifest") {
-        let type_map = type_check::infer_types(&program);
-        let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
-        let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-        let builtins: std::collections::HashSet<&str> = [
-            "echo",
-            "true",
-            "false",
-            ":",
-            "exit",
-            "cd",
-            "pwd",
-            "wait",
-            "shift",
-            "read",
-            "exec",
-            "command",
-            "[[",
-            "__redirect_push",
-            "__redirect_pop",
-            "__store_bg_pid",
-            "__subshell_wait",
-            "__table_delete",
-            "printf",
-            "signal",
-        ]
-        .iter()
-        .copied()
-        .collect();
-        let path_var = std::env::var("PATH").unwrap_or_default();
-        let sysroot = get_sysroot();
-        let resolve = |name: &str| -> Option<String> {
-            if name.starts_with('/') {
-                return Some(name.to_string());
-            }
-            if builtins.contains(name) {
-                return None;
-            }
-            for dir in path_var.split(':') {
-                let target_path = format!("{}/{}", dir, name);
-                let exists = if let Some(ref sr) = sysroot {
-                    crate::sysroot_file_exists(sr, &target_path)
-                } else {
-                    std::path::Path::new(&target_path).is_file()
-                };
-                if exists {
-                    return Some(target_path);
+/// `--manifest`: emit one path per line for every external dependency.
+fn emit_manifest(program: &crate::ir::Program) {
+    let type_map = type_check::infer_types(program);
+    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
+    let builtins: std::collections::HashSet<&str> = [
+        "echo",
+        "true",
+        "false",
+        ":",
+        "exit",
+        "cd",
+        "pwd",
+        "wait",
+        "shift",
+        "read",
+        "exec",
+        "command",
+        "[[",
+        "__redirect_push",
+        "__redirect_pop",
+        "__store_bg_pid",
+        "__subshell_wait",
+        "__table_delete",
+        "printf",
+        "signal",
+    ]
+    .iter()
+    .copied()
+    .collect();
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    let sysroot = get_sysroot();
+    let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for block in ssa.blocks.values() {
+        for inst in &block.insts {
+            if let ssa::SsaInst::Command { name, .. } = inst {
+                if let Some(path) = resolve_dep(name, &builtins, &path_var, sysroot.as_deref()) {
+                    deps.insert(path);
                 }
             }
-            Some(name.to_string())
-        };
-        for block in ssa.blocks.values() {
-            for inst in &block.insts {
-                if let ssa::SsaInst::Command { name, .. } = inst {
-                    if let Some(path) = resolve(name) {
+            if let ssa::SsaInst::Pipeline { stages, .. } = inst {
+                for (name, _, _) in stages {
+                    if let Some(path) = resolve_dep(name, &builtins, &path_var, sysroot.as_deref())
+                    {
                         deps.insert(path);
                     }
                 }
-                if let ssa::SsaInst::Pipeline { stages, .. } = inst {
-                    for (name, _, _) in stages {
-                        if let Some(path) = resolve(name) {
-                            deps.insert(path);
-                        }
-                    }
-                }
             }
         }
-        for dep in &deps {
-            println!("{}", dep);
-        }
-        return;
     }
+    for dep in &deps {
+        println!("{}", dep);
+    }
+}
 
-    // Default: compile to native binary
+fn resolve_dep(
+    name: &str,
+    builtins: &std::collections::HashSet<&str>,
+    path_var: &str,
+    sysroot: Option<&str>,
+) -> Option<String> {
+    if name.starts_with('/') {
+        return Some(name.to_string());
+    }
+    if builtins.contains(name) {
+        return None;
+    }
+    for dir in path_var.split(':') {
+        let target_path = format!("{}/{}", dir, name);
+        let exists = if let Some(sr) = sysroot {
+            crate::sysroot_file_exists(sr, &target_path)
+        } else {
+            std::path::Path::new(&target_path).is_file()
+        };
+        if exists {
+            return Some(target_path);
+        }
+    }
+    Some(name.to_string())
+}
+
+/// Default path: type-check, taint-verify, codegen, and link a static ELF.
+fn compile_native(
+    input: &str,
+    source: &str,
+    program: &crate::ir::Program,
+    output_path: Option<&str>,
+    is_inline: bool,
+    flags: &[&str],
+) {
     let output = if let Some(p) = output_path {
         p.to_string()
-    } else if inline_source.is_some() {
+    } else if is_inline {
         "a.out".to_string()
     } else {
         input
@@ -321,9 +348,8 @@ pub fn cli_main(args: Vec<String>) {
 
     let obj_path = format!("{}.o", output);
 
-    // Type checking
-    let type_map = type_check::infer_types(&program);
-    let type_errors = type_check::type_check(&program);
+    let type_map = type_check::infer_types(program);
+    let type_errors = type_check::type_check(program);
     if !type_errors.is_empty() {
         for te in &type_errors {
             eprintln!(
@@ -334,8 +360,7 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    // SSA taint verification
-    let (ssa, _) = transform::ir_to_ssa_typed(&program, type_map);
+    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
     let taint_ices = ssa_taint::verify_ssa_taint(&ssa);
     if !taint_ices.is_empty() {
         for ice in &taint_ices {
@@ -345,7 +370,7 @@ pub fn cli_main(args: Vec<String>) {
     }
 
     let trace = flags.contains(&"--trace");
-    let obj_bytes = match codegen::compile_to_object(&source, trace) {
+    let obj_bytes = match codegen::compile_to_object(source, trace) {
         Ok(bytes) => bytes,
         Err(diags) => {
             for d in &diags {

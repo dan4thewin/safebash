@@ -57,6 +57,15 @@ Everything else in the top-10 is codegen/transform.
   `intern_trace_terminator`. All ≤ 17.
 - Spec gates 285/285 unchanged; clippy clean.
 
+`cli_main` split into mode-specific helpers (commit pending).
+
+- `lib.rs::cli_main` CC: **69 → 14**.
+- Helpers: `dump_sash_source` (--extract), `parse_cli_args`,
+  `read_source`, `print_diags`, `emit_manifest`, `resolve_dep`,
+  `compile_native`. All ≤ 13.
+- Spec gates 285/285 unchanged; clippy clean.
+- Max CC across the codebase: 69 → 63.
+
 ## Progress (2026-05-27)
 
 `next_token` migration landed. See `DD59-logos-structural-lexer.md`.
@@ -87,8 +96,7 @@ the spec/test gates green:
 2. ~~`next_token` (CC 78)~~ — **done** (DD#59, 78 → 15).
 3. ~~`scan_double_quoted` (CC 68)~~ — **done** (68 → 9).
 4. ~~`intern_literals` (CC 70)~~ — **done** (70 → 6 via `Interner` struct).
-5. `cli_main` (CC 69) — extract arg parsing, --extract, --janet, --ssa,
-   --ir paths into named functions.
+5. ~~`cli_main` (CC 69)~~ — **done** (69 → 14).
 6. `parse_expr` (in arith.rs, CC 54) — extract the Pratt prefix and
    infix tables into static data; reduce the dispatch to two helpers.
 
