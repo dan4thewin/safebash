@@ -48,6 +48,15 @@ Top-10 after the three parser refactors:
 Only one parser function remains above 50: `parse_expr` (CC 54).
 Everything else in the top-10 is codegen/transform.
 
+`intern_literals` extracted to an `Interner` struct (commit pending).
+
+- `codegen/setup.rs::intern_literals` CC: **70 → 6**.
+- New `Interner<'a>` owns module borrow + literal map. Per-variant
+  methods: `intern_value`, `intern_param_expansion`, `intern_ir_expr`,
+  `intern_test_ir_expr`, `intern_test_expr`, `intern_inst`,
+  `intern_trace_terminator`. All ≤ 17.
+- Spec gates 285/285 unchanged; clippy clean.
+
 ## Progress (2026-05-27)
 
 `next_token` migration landed. See `DD59-logos-structural-lexer.md`.
@@ -77,9 +86,7 @@ the spec/test gates green:
 1. ~~`tokenize_arith` (CC 88)~~ — **done** (commit 23b1665, 88 → 12).
 2. ~~`next_token` (CC 78)~~ — **done** (DD#59, 78 → 15).
 3. ~~`scan_double_quoted` (CC 68)~~ — **done** (68 → 9).
-4. `intern_literals` (CC 70) — split by `SsaValue` variant. Today this
-   is one giant match per variant; per-variant inline-able fns are
-   cheaper to read.
+4. ~~`intern_literals` (CC 70)~~ — **done** (70 → 6 via `Interner` struct).
 5. `cli_main` (CC 69) — extract arg parsing, --extract, --janet, --ssa,
    --ir paths into named functions.
 6. `parse_expr` (in arith.rs, CC 54) — extract the Pratt prefix and

@@ -743,90 +743,101 @@ pub(super) fn intern_literals(
     cranelift_module::DataId,
     cranelift_module::DataId,
 ) {
-    let mut literals: HashMap<String, cranelift_module::DataId> = HashMap::new();
-    let mut intern = |module: &mut ObjectModule, s: &str| -> cranelift_module::DataId {
-        if let Some(&id) = literals.get(s) {
+    let mut interner = Interner::new(module);
+
+    let space_id = interner.intern(" ");
+    let nl_id = interner.intern("\n");
+    let _empty_id = interner.intern(""); // for argv bounds check
+
+    for block in program.blocks.values() {
+        for inst in &block.insts {
+            interner.intern_inst(inst);
+        }
+    }
+
+    for s in func_constants.values() {
+        interner.intern(s);
+    }
+
+    if trace {
+        for block in program.blocks.values() {
+            interner.intern_trace_terminator(block, program);
+        }
+    }
+
+    (interner.literals, space_id, nl_id)
+}
+
+/// Owns the literal map and a mutable borrow of the object module while a
+/// single SSA program is scanned for string literals to intern. Splitting
+/// `intern_literals` by SSA-value / IR-expr / test-expr / instruction shape
+/// keeps each method small enough to read on one screen.
+struct Interner<'a> {
+    module: &'a mut ObjectModule,
+    literals: HashMap<String, cranelift_module::DataId>,
+}
+
+impl<'a> Interner<'a> {
+    fn new(module: &'a mut ObjectModule) -> Self {
+        Self {
+            module,
+            literals: HashMap::new(),
+        }
+    }
+
+    fn intern(&mut self, s: &str) -> cranelift_module::DataId {
+        if let Some(&id) = self.literals.get(s) {
             return id;
         }
-        let name = format!("__str_{}", literals.len());
-        let data_id = module
+        let name = format!("__str_{}", self.literals.len());
+        let data_id = self
+            .module
             .declare_data(&name, Linkage::Local, false, false)
             .expect("declare data");
         let mut desc = DataDescription::new();
         let mut bytes = s.as_bytes().to_vec();
         bytes.push(0);
         desc.define(bytes.into_boxed_slice());
-        module.define_data(data_id, &desc).expect("define data");
-        literals.insert(s.to_string(), data_id);
+        self.module
+            .define_data(data_id, &desc)
+            .expect("define data");
+        self.literals.insert(s.to_string(), data_id);
         data_id
-    };
+    }
 
-    let space_id = intern(module, " ");
-    let nl_id = intern(module, "\n");
-    let _empty_id = intern(module, ""); // for argv bounds check
-
-    // Pre-intern all string literals in the program
-    fn intern_value(
-        module: &mut ObjectModule,
-        intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId,
-        v: &SsaValue,
-    ) {
+    fn intern_value(&mut self, v: &SsaValue) {
         match v {
             SsaValue::Literal(s) | SsaValue::Expr(s) => {
-                intern(module, s);
+                self.intern(s);
             }
             SsaValue::Concat(parts) => {
                 for p in parts {
-                    intern_value(module, intern, p);
+                    self.intern_value(p);
                 }
             }
             SsaValue::ParamExpansion {
                 operator, operand, ..
             } => {
-                intern(module, operand);
-                if operator == "glob" || operator == "glob_regex" {
-                    intern(module, ".");
-                }
-                if operator == "regex_replace" {
-                    // operand is "pattern\0replacement\0global"
-                    for part in operand.split('\0') {
-                        if !part.is_empty() {
-                            intern(module, part);
-                        }
-                    }
-                }
-                if operator == "/" || operator == "//" || operator == "/#" || operator == "/%" {
-                    // operand is "pattern\0replacement"
-                    for part in operand.split('\0') {
-                        intern(module, part);
-                    }
-                }
-                // DD#33: per-element operations on arrvals
-                if operator.starts_with("arrvals_/") {
-                    // operand is "regex\0replacement" (null-separated)
-                    for part in operand.split('\0') {
-                        intern(module, part);
-                    }
-                }
+                self.intern_param_expansion(operator, operand);
             }
             SsaValue::CmdSubst { argv, .. } => {
                 for a in argv {
-                    intern_value(module, intern, a);
+                    self.intern_value(a);
                 }
             }
             SsaValue::AssocArray(pairs) => {
                 for (k, v) in pairs {
-                    intern(module, k);
-                    intern_value(module, intern, v);
+                    self.intern(k);
+                    self.intern_value(v);
                 }
             }
             SsaValue::IndexedArray(elems) => {
                 for v in elems {
-                    intern_value(module, intern, v);
+                    self.intern_value(v);
                 }
             }
             SsaValue::Subscript { index, .. } => {
-                intern_value(module, intern, index);
+                self.intern_value(index);
             }
             SsaValue::ArgvIndex(_) => {}
             SsaValue::Ternary {
@@ -834,166 +845,174 @@ pub(super) fn intern_literals(
                 true_val,
                 false_val,
             } => {
-                intern_value(module, intern, cond);
-                intern_value(module, intern, true_val);
-                intern_value(module, intern, false_val);
+                self.intern_value(cond);
+                self.intern_value(true_val);
+                self.intern_value(false_val);
             }
             _ => {}
         }
     }
-    fn intern_ir_expr(
-        module: &mut ObjectModule,
-        intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId,
-        expr: &crate::ir::Expr,
-    ) {
+
+    fn intern_param_expansion(&mut self, operator: &str, operand: &str) {
+        self.intern(operand);
+        if operator == "glob" || operator == "glob_regex" {
+            self.intern(".");
+        }
+        if operator == "regex_replace" {
+            // operand is "pattern\0replacement\0global"
+            for part in operand.split('\0') {
+                if !part.is_empty() {
+                    self.intern(part);
+                }
+            }
+        }
+        if operator == "/" || operator == "//" || operator == "/#" || operator == "/%" {
+            // operand is "pattern\0replacement"
+            for part in operand.split('\0') {
+                self.intern(part);
+            }
+        }
+        // DD#33: per-element operations on arrvals
+        if operator.starts_with("arrvals_/") {
+            // operand is "regex\0replacement" (null-separated)
+            for part in operand.split('\0') {
+                self.intern(part);
+            }
+        }
+    }
+
+    fn intern_ir_expr(&mut self, expr: &crate::ir::Expr) {
         match &expr.kind {
             crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-                intern(module, s);
+                self.intern(s);
             }
             crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
                 for p in parts {
-                    intern_ir_expr(module, intern, p);
+                    self.intern_ir_expr(p);
                 }
             }
             _ => {}
         }
     }
-    fn intern_test_expr(
-        module: &mut ObjectModule,
-        intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId,
-        test: &TestExpr,
-    ) {
-        fn intern_expr(
-            module: &mut ObjectModule,
-            intern: &mut dyn FnMut(&mut ObjectModule, &str) -> cranelift_module::DataId,
-            expr: &crate::ir::Expr,
-        ) {
-            match &expr.kind {
-                crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-                    intern(module, s);
-                }
-                crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => {
-                    for p in parts {
-                        intern_expr(module, intern, p);
-                    }
-                }
-                crate::ir::ExprKind::Subscript { name, index } => {
-                    intern(module, name);
-                    intern_expr(module, intern, index);
-                }
-                _ => {}
+
+    fn intern_test_ir_expr(&mut self, expr: &crate::ir::Expr) {
+        match &expr.kind {
+            crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
+                self.intern(s);
             }
+            crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => {
+                for p in parts {
+                    self.intern_test_ir_expr(p);
+                }
+            }
+            crate::ir::ExprKind::Subscript { name, index } => {
+                self.intern(name);
+                self.intern_test_ir_expr(index);
+            }
+            _ => {}
         }
+    }
+
+    fn intern_test_expr(&mut self, test: &TestExpr) {
         match test {
             TestExpr::Binary { left, op: _, right } => {
-                intern_expr(module, intern, left);
-                intern_expr(module, intern, right);
+                self.intern_test_ir_expr(left);
+                self.intern_test_ir_expr(right);
             }
             TestExpr::Unary { operand, .. } => {
-                intern_expr(module, intern, operand);
+                self.intern_test_ir_expr(operand);
             }
             TestExpr::Not(inner) | TestExpr::Paren(inner) => {
-                intern_test_expr(module, intern, inner);
+                self.intern_test_expr(inner);
             }
             TestExpr::And(a, b) | TestExpr::Or(a, b) => {
-                intern_test_expr(module, intern, a);
-                intern_test_expr(module, intern, b);
+                self.intern_test_expr(a);
+                self.intern_test_expr(b);
             }
         }
     }
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            match inst {
-                SsaInst::Assign { value, .. } => {
-                    intern_value(module, &mut intern, value);
+
+    fn intern_inst(&mut self, inst: &SsaInst) {
+        match inst {
+            SsaInst::Assign { value, .. } => {
+                self.intern_value(value);
+            }
+            SsaInst::Command {
+                name,
+                args,
+                redirects,
+                ..
+            } => {
+                if name != "[[" {
+                    self.intern(name);
                 }
-                SsaInst::Command {
-                    name,
-                    args,
-                    redirects,
-                    ..
-                } => {
-                    if name != "[[" {
-                        intern(module, name);
-                    }
+                for a in args {
+                    self.intern_value(a);
+                }
+                for r in redirects {
+                    self.intern_ir_expr(&r.target);
+                }
+            }
+            SsaInst::Test(test_expr) => {
+                self.intern_test_expr(test_expr);
+            }
+            SsaInst::Pipeline { stages, .. } => {
+                for (name, args, redirects) in stages {
+                    self.intern(name);
                     for a in args {
-                        intern_value(module, &mut intern, a);
+                        self.intern_value(a);
                     }
                     for r in redirects {
-                        intern_ir_expr(module, &mut intern, &r.target);
+                        self.intern_ir_expr(&r.target);
                     }
                 }
-                SsaInst::Test(test_expr) => {
-                    intern_test_expr(module, &mut intern, test_expr);
-                }
-
-                SsaInst::Pipeline { stages, .. } => {
-                    for (name, args, redirects) in stages {
-                        intern(module, name);
-                        for a in args {
-                            intern_value(module, &mut intern, a);
-                        }
-                        for r in redirects {
-                            intern_ir_expr(module, &mut intern, &r.target);
-                        }
-                    }
-                }
-                SsaInst::SubscriptAssign { index, value, .. } => {
-                    intern_value(module, &mut intern, index);
-                    intern_value(module, &mut intern, value);
-                }
-                SsaInst::ArrayAppend { value, .. } => {
-                    intern_value(module, &mut intern, value);
-                }
-                SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
-                    for r in redirects {
-                        intern_ir_expr(module, &mut intern, &r.target);
-                    }
-                }
-                SsaInst::Bless { test, .. } => {
-                    intern_test_expr(module, &mut intern, test);
-                    intern(module, "bless: validation failed\n");
-                }
-                _ => {}
             }
+            SsaInst::SubscriptAssign { index, value, .. } => {
+                self.intern_value(index);
+                self.intern_value(value);
+            }
+            SsaInst::ArrayAppend { value, .. } => {
+                self.intern_value(value);
+            }
+            SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
+                for r in redirects {
+                    self.intern_ir_expr(&r.target);
+                }
+            }
+            SsaInst::Bless { test, .. } => {
+                self.intern_test_expr(test);
+                self.intern("bless: validation failed\n");
+            }
+            _ => {}
         }
     }
 
-    // Intern constant-folded function outputs
-    for s in func_constants.values() {
-        intern(module, s);
-    }
-
-    // DD#32: intern branch trace messages
-    if trace {
-        for block in program.blocks.values() {
-            match &block.terminator {
-                crate::ssa::Terminator::Branch {
-                    true_block,
-                    false_block,
-                    ..
-                } => {
-                    let true_label = program.block(*true_block).label.as_str();
-                    let false_label = program.block(*false_block).label.as_str();
-                    intern(module, &format!("+ branch \u{2192} {}\n", true_label));
-                    intern(module, &format!("+ branch \u{2192} {}\n", false_label));
-                }
-                crate::ssa::Terminator::Loop {
-                    body_block,
-                    exit_block,
-                    ..
-                } => {
-                    let body_label = program.block(*body_block).label.as_str();
-                    let exit_label = program.block(*exit_block).label.as_str();
-                    intern(module, &format!("+ loop \u{2192} {}\n", body_label));
-                    intern(module, &format!("+ loop \u{2192} {}\n", exit_label));
-                }
-                _ => {}
+    /// DD#32: intern branch trace messages for the block's terminator.
+    fn intern_trace_terminator(&mut self, block: &BasicBlock, program: &SsaProgram) {
+        match &block.terminator {
+            crate::ssa::Terminator::Branch {
+                true_block,
+                false_block,
+                ..
+            } => {
+                let true_label = program.block(*true_block).label.as_str();
+                let false_label = program.block(*false_block).label.as_str();
+                self.intern(&format!("+ branch \u{2192} {}\n", true_label));
+                self.intern(&format!("+ branch \u{2192} {}\n", false_label));
             }
+            crate::ssa::Terminator::Loop {
+                body_block,
+                exit_block,
+                ..
+            } => {
+                let body_label = program.block(*body_block).label.as_str();
+                let exit_label = program.block(*exit_block).label.as_str();
+                self.intern(&format!("+ loop \u{2192} {}\n", body_label));
+                self.intern(&format!("+ loop \u{2192} {}\n", exit_label));
+            }
+            _ => {}
         }
     }
-
-    (literals, space_id, nl_id)
 }
 
 /// Create Cranelift blocks and allocate variables for the SSA program.
