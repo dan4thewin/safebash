@@ -213,41 +213,21 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>)
                     returns.push(val);
                 }
             }
-            StmtKind::If(i) => {
-                collect_returns_inner(&i.condition, returns);
-                collect_returns_inner(&i.then_body, returns);
-                if let Some(ref eb) = i.else_body {
-                    collect_returns_inner(eb, returns);
+            // `return` inside a subshell only exits the subshell, not
+            // the enclosing function.
+            StmtKind::Subshell(_) => {}
+            // Nested function definitions have their own returns.
+            StmtKind::Function(_) => {}
+            // Default: descend into every nested statement body via
+            // child_bodies(). Covers If (incl. elif_clauses), While,
+            // For, Case, Group, Pipeline, List, Redirected, Suppressed.
+            // Leaf StmtKinds (Assignment, Declaration, Comment,
+            // ArithTest) return empty bodies.
+            _ => {
+                for body in stmt.child_bodies() {
+                    collect_returns_inner(body, returns);
                 }
             }
-            StmtKind::While(w) => {
-                collect_returns_inner(&w.condition, returns);
-                collect_returns_inner(&w.body, returns);
-            }
-            StmtKind::For(f) => {
-                collect_returns_inner(&f.body, returns);
-            }
-            StmtKind::Case(c) => {
-                for item in &c.items {
-                    collect_returns_inner(&item.body, returns);
-                }
-            }
-            StmtKind::Group(g) => {
-                collect_returns_inner(&g.body, returns);
-            }
-            StmtKind::Pipeline(p) => {
-                for s in &p.commands {
-                    collect_returns_inner(std::slice::from_ref(s), returns);
-                }
-            }
-            StmtKind::List(l) => {
-                collect_returns_inner(std::slice::from_ref(&l.left), returns);
-                collect_returns_inner(std::slice::from_ref(&l.right), returns);
-            }
-            StmtKind::Redirected(r) => {
-                collect_returns_inner(std::slice::from_ref(&r.body), returns);
-            }
-            _ => {}
         }
     }
 }

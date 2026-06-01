@@ -67,32 +67,6 @@ pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shif
                 scan_expr_positionals_expr(&a.value, max);
             }
         }
-        StmtKind::Pipeline(p) => {
-            for s in &p.commands {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
-        }
-        StmtKind::If(i) => {
-            for s in &i.condition {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
-            for s in &i.then_body {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
-            if let Some(ref eb) = i.else_body {
-                for s in eb {
-                    scan_expr_positionals_stmt(s, max, shifts);
-                }
-            }
-        }
-        StmtKind::While(w) => {
-            for s in &w.condition {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
-            for s in &w.body {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
-        }
         StmtKind::For(f) => {
             for w in &f.words {
                 scan_expr_positionals_expr(w, max);
@@ -110,28 +84,17 @@ pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shif
             }
         }
         StmtKind::Function(_) => {} // don't recurse into nested functions
-        StmtKind::Redirected(r) => {
-            scan_expr_positionals_stmt(&r.body, max, shifts);
-        }
-        StmtKind::List(l) => {
-            scan_expr_positionals_stmt(&l.left, max, shifts);
-            scan_expr_positionals_stmt(&l.right, max, shifts);
-        }
-        StmtKind::Subshell(s) => {
-            for st in &s.body {
-                scan_expr_positionals_stmt(st, max, shifts);
+        // Default: descend into every nested statement body via
+        // child_bodies(). Covers If (incl. elif_clauses), While,
+        // Pipeline, Group, Subshell, List, Redirected, Suppressed.
+        // Leaf StmtKinds (Comment, ArithTest) return empty bodies.
+        _ => {
+            for body in stmt.child_bodies() {
+                for s in body {
+                    scan_expr_positionals_stmt(s, max, shifts);
+                }
             }
         }
-        StmtKind::Group(g) => {
-            for st in &g.body {
-                scan_expr_positionals_stmt(st, max, shifts);
-            }
-        }
-        StmtKind::Comment(_) => {}
-        StmtKind::Suppressed(inner) => {
-            scan_expr_positionals_stmt(inner, max, shifts);
-        }
-        StmtKind::ArithTest(_) => {}
     }
 }
 

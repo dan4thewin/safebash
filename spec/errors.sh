@@ -3,10 +3,44 @@
 set -eu
 . common.sh
 setup errors
-plan=25
+plan=28
 echo "1..$plan" >&3
 
 set +e
+
+# --- DD#0 (implicit): bash control-flow constructs (elif, etc.)
+# must apply compile-time analyses uniformly. Walker bugs that
+# silently skip elif clauses caused either spurious diagnostics or
+# silent acceptance of invalid code. Regressions for journal 057.
+
+# 0.5 collect_returns_inner must walk elif branches when deciding if
+# a -> int function is non-void. Without this, only `return 0` in
+# the `then` branch is seen and SB4017 fires spuriously even though
+# the elif returns a meaningful status.
+run_sash 'fn f -> int {
+    if /bin/false; then
+        return 0
+    elif /bin/true; then
+        return 5
+    fi
+}
+int x=$((f))
+echo "$x"'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 0.5
+
+# 0.6 scan_expr_positionals_stmt must walk elif branches when
+# computing the highest positional read inside a function body.
+# Without this, `$5` in an elif branch is invisible and the
+# caller-argc check (SB4017-like) is bypassed.
+run_sash 'fn f {
+    if (($# == 0)); then
+        :
+    elif /bin/true; then
+        /bin/echo $5
+    fi
+}
+f a b c'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 0.6
 
 # 21.1 - cmd suppresses exit status
 run_sash '- /bin/false; echo ok'

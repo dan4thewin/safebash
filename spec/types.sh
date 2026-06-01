@@ -3,10 +3,35 @@
 set -eu
 . common.sh
 setup types
-plan=37
+plan=41
 echo "1..$plan" >&3
 
 set +e
+
+# --- DD#0 (implicit): bash control-flow constructs must apply
+# compile-time analyses uniformly. A type error at top level must
+# still fire when the same statement is wrapped in a Group, List
+# (&&/||), Pipeline, etc. Regression for journal 056.
+
+# 0.1 type-check descends into Group { ... }
+run_sash 'int x=5
+{ x=hello; }'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 0.1
+
+# 0.2 type-check descends into left side of `&&`
+run_sash 'int x=5
+x=hello && /bin/true'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 0.2
+
+# 0.3 type-check descends into right side of `&&`
+run_sash 'int x=5
+/bin/true && x=hello'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 0.3
+
+# 0.4 type-check descends into pipeline stages
+run_sash 'int x=5
+x=hello | /bin/cat'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 0.4
 
 # 12.1 string length
 run_sash 'x="hello"; echo ${#x}'

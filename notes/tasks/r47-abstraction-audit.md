@@ -75,24 +75,26 @@ the per-function extractions cheap.
    StmtKind. Use the helper aggressively. (Likewise
    `direct_exprs()` at `ir.rs:120` for expression-walking arms.)
 
-   **Per-walker addendum (after audit during rollout attempt):**
-   blanket recommendation was wrong. Of six candidates:
-   - `taint_stmt`: already done.
-   - `check_dq_stmt`: not applicable — `_ =>` arm tracks `$?` state,
-     not a recursion site.
-   - `scan_expr_positionals_stmt`: clean rollout candidate.
-   - `collect_returns_inner`: careful — must not descend into
-     Subshell/Function; needs explicit early-returns.
-   - `validate_stmt_ctx`: needs a state-aware `child_bodies_with_ctx`
-     helper to thread `in_condition` flag.
-   - `check_stmt`: was a **bug** — `_ => {}` silently dropped
-     Pipeline/Group/Subshell/List/Redirected. Fixed in journal 056;
-     CC went 47 → 49 because the existing explicit arms each carry
-     custom pre-work and were not collapsed. Collapse is a separate
-     refactor.
+   **Per-walker addendum (rollout completed across journals
+   056/057):** blanket recommendation was wrong. Final disposition:
+   - `taint_stmt`: already used `child_bodies()`.
+   - `check_dq_stmt`: not applicable — `_ =>` arm tracks `$?`
+     state, not a recursion site.
+   - `scan_expr_positionals_stmt`: **rolled out (journal 057).**
+     CC 37 → 21. Side-fixed a latent elif undercount bug (spec
+     0.6).
+   - `collect_returns_inner`: **rolled out (journal 057).**
+     CC 21 → 13. Side-fixed a latent elif undercount that fired
+     spurious SB4017 (spec 0.5), plus a Suppressed skip.
+   - `validate_stmt_ctx`: leave alone — arms thread `in_condition`
+     and express real per-StmtKind decisions; only 5 pass-through
+     arms could collapse and abstracting them would obscure intent.
+   - `check_stmt`: **bug-fixed (journal 056).** CC 47 → 49 because
+     the existing explicit arms each carry custom pre-work and
+     were not collapsed. Collapse would be a separate refactor.
 
-   Each remaining walker should be its own task, not a single
-   "rollout".
+   Pattern #5 task is complete. Each walker was its own discrete
+   investigation.
 
 6. **`if let SsaInst::X = inst` → `match inst`** — `allocate_variables`
    (CC 36) and `print_ssa` (29) use sequential `if let` chains where
