@@ -148,7 +148,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 36 | `allocate_variables` | **A** | Two-pass loop with `if let SsaInst::X` instead of `match inst` (pattern #6). Convert to match + extract `declare_base_var` and `map_versioned`. |
+| 36 | `allocate_variables` | **A** | Two-pass loop with `if let SsaInst::X` instead of `match inst` (pattern #6). Convert to match + extract `declare_base_var` and `map_versioned`. **Done 2026-06-01 (journal 068).** CC 36 → 2. Eight helpers + `AmbientVars` struct: `build_cl_blocks`, `make_str_slot`, `slot_for_var_type`, `collect_base_vars` / `declare_inst_bases`, `map_versioned_names` / `map_inst_versioned`, `declare_ambient_vars`. Both passes now single `match inst`. Max helper CC 12 (5-arm match, intrinsic). |
 | 22 | `init_positional_params` | **C** | Top-level setup driver. Mostly linear; modest. |
 | 17 | `intern_inst` | **B** | SsaInst variant traversal. WHITELIST. |
 | 15 | `intern_value` | **B** | SsaValue variant traversal. WHITELIST. |

@@ -1024,19 +1024,9 @@ pub(super) fn allocate_variables(
     program: &SsaProgram,
     reachable: &std::collections::HashSet<usize>,
 ) -> super::types::FuncState {
-    use super::types::{FuncState, VarSlot};
-    use cranelift_codegen::ir::types::I64;
-    use cranelift_codegen::ir::InstBuilder;
+    use super::types::FuncState;
 
-    let mut cl_blocks: HashMap<BlockId, cranelift_codegen::ir::Block> = HashMap::new();
-    for &id in program.blocks.keys() {
-        if !reachable.contains(&id) {
-            continue;
-        }
-        let cl_block = builder.create_block();
-        cl_blocks.insert(id, cl_block);
-    }
-
+    let cl_blocks = build_cl_blocks(builder, program, reachable);
     let entry_cl = cl_blocks[&program.entry];
     // DD#56: resolve end_block CL target for abort paths
     let end_cl_block: Option<cranelift_codegen::ir::Block> =
@@ -1044,144 +1034,193 @@ pub(super) fn allocate_variables(
     builder.append_block_params_for_function_params(entry_cl);
     builder.switch_to_block(entry_cl);
 
-    // Declare Cranelift variables for each bash variable.
-    // All SSA versions of the same bash variable (x_1, x_2, x_3) share
-    // the SAME Cranelift Variable pair. Cranelift's SSA builder handles
-    // the merge at join points automatically — our SSA versioning is for
-    // the oracle and printer, not for Cranelift.
-    let mut vars: HashMap<String, VarSlot> = HashMap::new();
-    let mut base_vars: HashMap<String, VarSlot> = HashMap::new();
-    // First pass: collect all base variable names
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            if let SsaInst::ReadLineMulti { targets, .. } = inst {
-                for target in targets {
-                    let base = target.name.clone();
-                    base_vars.entry(base).or_insert_with(|| VarSlot::Str {
-                        ptr: builder.declare_var(I64),
-                        len: builder.declare_var(I64),
-                    });
-                }
-            }
-            if let SsaInst::Mapfile { array, .. } | SsaInst::ReadArray { array, .. } = inst {
-                if !base_vars.contains_key(array) {
-                    let sv = VarSlot::Str {
-                        ptr: builder.declare_var(I64),
-                        len: builder.declare_var(I64),
-                    };
-                    base_vars.insert(array.clone(), sv);
-                }
-            }
-            if let SsaInst::Command { name, args, .. } = inst {
-                if name == "__store_bg_pid" {
-                    if let Some(SsaValue::Var(vr)) = args.first() {
-                        let base = vr.name.clone();
-                        base_vars.entry(base).or_insert_with(|| VarSlot::Str {
-                            ptr: builder.declare_var(I64),
-                            len: builder.declare_var(I64),
-                        });
-                    }
-                }
-            }
-            if let SsaInst::Assign { target, .. }
-            | SsaInst::ReadLine { target, .. }
-            | SsaInst::CaptureEnd { target } = inst
-            {
-                let base = target.name.clone();
-                base_vars.entry(base).or_insert_with(|| {
-                    if target.var_type == crate::ir::VarType::Int {
-                        VarSlot::Int(builder.declare_var(I64))
-                    } else {
-                        VarSlot::Str {
-                            ptr: builder.declare_var(I64),
-                            len: builder.declare_var(I64),
-                        }
-                    }
-                });
-            }
-        }
-        for phi in &block.phis {
-            let base = phi.target.name.clone();
-            base_vars.entry(base).or_insert_with(|| {
-                if phi.target.var_type == crate::ir::VarType::Int {
-                    VarSlot::Int(builder.declare_var(I64))
-                } else {
-                    VarSlot::Str {
-                        ptr: builder.declare_var(I64),
-                        len: builder.declare_var(I64),
-                    }
-                }
-            });
-        }
-    }
-    // Second pass: map every versioned name to its base variable's CL vars
-    for block in program.blocks.values() {
-        for inst in &block.insts {
-            if let SsaInst::ReadLineMulti { targets, .. } = inst {
-                for target in targets {
-                    let key = target.display();
-                    vars.entry(key).or_insert_with(|| base_vars[&target.name]);
-                }
-            }
-            if let SsaInst::Assign { target, .. }
-            | SsaInst::ReadLine { target, .. }
-            | SsaInst::CaptureEnd { target } = inst
-            {
-                let key = target.display();
-                vars.entry(key).or_insert_with(|| base_vars[&target.name]);
-            }
-            if let SsaInst::Command { name, args, .. } = inst {
-                if name == "__store_bg_pid" {
-                    if let Some(SsaValue::Var(vr)) = args.first() {
-                        let key = vr.display();
-                        vars.entry(key).or_insert_with(|| base_vars[&vr.name]);
-                    }
-                }
-            }
-        }
-        for phi in &block.phis {
-            let key = phi.target.display();
-            vars.entry(key)
-                .or_insert_with(|| base_vars[&phi.target.name]);
-            for (_, src) in &phi.sources {
-                let sk = src.display();
-                vars.entry(sk).or_insert_with(|| base_vars[&src.name]);
-            }
-        }
-    }
+    // All SSA versions of the same bash variable (x_1, x_2, x_3) share the
+    // SAME Cranelift Variable pair. Cranelift's SSA builder handles the
+    // merge at join points automatically — our SSA versioning is for the
+    // oracle and printer, not for Cranelift.
+    let base_vars = collect_base_vars(builder, program);
+    let vars = map_versioned_names(program, &base_vars);
+    let ambient = declare_ambient_vars(builder);
 
-    // Also declare a "last_test_result" variable for [[ ]] conditions
-    let test_result_var = builder.declare_var(I64);
-    let zero = builder.ins().iconst(I64, 0);
-    builder.def_var(test_result_var, zero);
-
-    // $? — exit status of last command (0 = success)
-    let exit_status_var = builder.declare_var(I64);
-    builder.def_var(exit_status_var, zero);
-
-    // DD#56: saved exit status for END block (preserves triggering status)
-    let saved_end_status_var = builder.declare_var(I64);
-    builder.def_var(saved_end_status_var, zero);
-
-    // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
-    let pipe_read_fd_var = builder.declare_var(I64);
-    builder.def_var(pipe_read_fd_var, zero);
-
-    // Capture state vars for $(func) capture
-    let capture_saved_var = builder.declare_var(I64);
-    builder.def_var(capture_saved_var, zero);
-    let capture_pipe_var = builder.declare_var(I64);
-    builder.def_var(capture_pipe_var, zero);
     FuncState {
         cl_blocks,
         vars,
-        test_result_var,
-        exit_status_var,
-        pipe_read_fd_var,
-        capture_saved_var,
-        capture_pipe_var,
-        saved_end_status_var,
+        test_result_var: ambient.test_result_var,
+        exit_status_var: ambient.exit_status_var,
+        pipe_read_fd_var: ambient.pipe_read_fd_var,
+        capture_saved_var: ambient.capture_saved_var,
+        capture_pipe_var: ambient.capture_pipe_var,
+        saved_end_status_var: ambient.saved_end_status_var,
         end_cl_block,
+    }
+}
+
+fn build_cl_blocks(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    program: &SsaProgram,
+    reachable: &std::collections::HashSet<usize>,
+) -> HashMap<BlockId, cranelift_codegen::ir::Block> {
+    let mut cl_blocks = HashMap::new();
+    for &id in program.blocks.keys() {
+        if !reachable.contains(&id) {
+            continue;
+        }
+        cl_blocks.insert(id, builder.create_block());
+    }
+    cl_blocks
+}
+
+fn make_str_slot(builder: &mut cranelift_frontend::FunctionBuilder) -> super::types::VarSlot {
+    super::types::VarSlot::Str {
+        ptr: builder.declare_var(I64),
+        len: builder.declare_var(I64),
+    }
+}
+
+fn slot_for_var_type(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    var_type: &crate::ir::VarType,
+) -> super::types::VarSlot {
+    if *var_type == crate::ir::VarType::Int {
+        super::types::VarSlot::Int(builder.declare_var(I64))
+    } else {
+        make_str_slot(builder)
+    }
+}
+
+fn collect_base_vars(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    program: &SsaProgram,
+) -> HashMap<String, super::types::VarSlot> {
+    let mut base_vars = HashMap::new();
+    for block in program.blocks.values() {
+        for inst in &block.insts {
+            declare_inst_bases(builder, inst, &mut base_vars);
+        }
+        for phi in &block.phis {
+            base_vars
+                .entry(phi.target.name.clone())
+                .or_insert_with(|| slot_for_var_type(builder, &phi.target.var_type));
+        }
+    }
+    base_vars
+}
+
+fn declare_inst_bases(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    inst: &SsaInst,
+    base_vars: &mut HashMap<String, super::types::VarSlot>,
+) {
+    match inst {
+        SsaInst::ReadLineMulti { targets, .. } => {
+            for target in targets {
+                base_vars
+                    .entry(target.name.clone())
+                    .or_insert_with(|| make_str_slot(builder));
+            }
+        }
+        SsaInst::Mapfile { array, .. } | SsaInst::ReadArray { array, .. } => {
+            base_vars
+                .entry(array.clone())
+                .or_insert_with(|| make_str_slot(builder));
+        }
+        SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
+            if let Some(SsaValue::Var(vr)) = args.first() {
+                base_vars
+                    .entry(vr.name.clone())
+                    .or_insert_with(|| make_str_slot(builder));
+            }
+        }
+        SsaInst::Assign { target, .. }
+        | SsaInst::ReadLine { target, .. }
+        | SsaInst::CaptureEnd { target } => {
+            base_vars
+                .entry(target.name.clone())
+                .or_insert_with(|| slot_for_var_type(builder, &target.var_type));
+        }
+        _ => {}
+    }
+}
+
+fn map_versioned_names(
+    program: &SsaProgram,
+    base_vars: &HashMap<String, super::types::VarSlot>,
+) -> HashMap<String, super::types::VarSlot> {
+    let mut vars = HashMap::new();
+    for block in program.blocks.values() {
+        for inst in &block.insts {
+            map_inst_versioned(inst, base_vars, &mut vars);
+        }
+        for phi in &block.phis {
+            vars.entry(phi.target.display())
+                .or_insert_with(|| base_vars[&phi.target.name]);
+            for (_, src) in &phi.sources {
+                vars.entry(src.display())
+                    .or_insert_with(|| base_vars[&src.name]);
+            }
+        }
+    }
+    vars
+}
+
+fn map_inst_versioned(
+    inst: &SsaInst,
+    base_vars: &HashMap<String, super::types::VarSlot>,
+    vars: &mut HashMap<String, super::types::VarSlot>,
+) {
+    match inst {
+        SsaInst::ReadLineMulti { targets, .. } => {
+            for target in targets {
+                vars.entry(target.display())
+                    .or_insert_with(|| base_vars[&target.name]);
+            }
+        }
+        SsaInst::Assign { target, .. }
+        | SsaInst::ReadLine { target, .. }
+        | SsaInst::CaptureEnd { target } => {
+            vars.entry(target.display())
+                .or_insert_with(|| base_vars[&target.name]);
+        }
+        SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
+            if let Some(SsaValue::Var(vr)) = args.first() {
+                vars.entry(vr.display())
+                    .or_insert_with(|| base_vars[&vr.name]);
+            }
+        }
+        _ => {}
+    }
+}
+
+struct AmbientVars {
+    test_result_var: cranelift_frontend::Variable,
+    exit_status_var: cranelift_frontend::Variable,
+    saved_end_status_var: cranelift_frontend::Variable,
+    pipe_read_fd_var: cranelift_frontend::Variable,
+    capture_saved_var: cranelift_frontend::Variable,
+    capture_pipe_var: cranelift_frontend::Variable,
+}
+
+fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> AmbientVars {
+    use cranelift_codegen::ir::InstBuilder;
+
+    let zero = builder.ins().iconst(I64, 0);
+    let decl = |v: &mut cranelift_frontend::FunctionBuilder| {
+        let var = v.declare_var(I64);
+        v.def_var(var, zero);
+        var
+    };
+    AmbientVars {
+        // [[ ]] last test result
+        test_result_var: decl(builder),
+        // $? — exit status of last command (0 = success)
+        exit_status_var: decl(builder),
+        // DD#56: saved exit status for END block (preserves triggering status)
+        saved_end_status_var: decl(builder),
+        // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
+        pipe_read_fd_var: decl(builder),
+        // Capture state vars for $(func) capture
+        capture_saved_var: decl(builder),
+        capture_pipe_var: decl(builder),
     }
 }
 
