@@ -142,7 +142,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 34 | `handle_pipeline` | **A** | Massive procedural fork/pipe/dup/wait codegen. Extract `create_pipes`, `wire_child_io`, `lower_pipeline_builtin`, `lower_compound_stage`, `lower_exec_stage`, `wait_for_children`. |
+| 34 | `handle_pipeline` | **A** | Massive procedural fork/pipe/dup/wait codegen. Extract `create_pipes`, `wire_child_io`, `lower_pipeline_builtin`, `lower_compound_stage`, `lower_exec_stage`, `wait_for_children`. **Done 2026-06-01 (journal 069).** CC 34 → 4. Twelve helpers + `PipelineExterns` struct: `resolve_pipeline_externs`, `create_pipe_slots`, `lower_pipeline_stage` orchestrator (calls `wire_child_pipes`, `emit_stage_redirects`, `lower_pipeline_builtin`, `lower_exec_stage`; compound case inline), `parent_close_pipes`, `save_capture_fd`, `wait_for_children`, `update_pipeline_status`, `emit_pipeline_abort_check`. Max helper CC 7. Also dropped vestigial ctx destructuring + `for (_n,_,_r) in stages.iter() {}` no-op loop. |
 
 ### sash/src/codegen/setup.rs
 
