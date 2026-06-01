@@ -184,7 +184,7 @@ sash/src --top 90` as of 2026-05-26.
 |---:|---|:-:|---|
 | 54 | `handle_pipeline` | **A** | 200 lines, deeply nested. Extract `build_producer_stages`, `parse_read_flags`, sub-handlers per pipeline shape. **Done 2026-06-01 (journal 060).** CC 54 → 7. Extracted 7 helpers; max helper CC 9. |
 | 48 | `handle_command` | **A** | Multiple distinct concerns: bless, [[, regex sub, shift. Per-shape `try_X` helpers (pattern #3). **Done 2026-06-01 (journal 078).** Phase 8 BuiltinCmd refactor brought it 48 → 26; this session merged the two BuiltinCmd matches into one `try_builtin` dispatcher (13, cyclo-allow'd) and lifted `try_test_arg_capture` (3), `try_regex_substitution` (8), `check_non_void_bare_call` (3). Parent 26 → 3. |
-| 24 | `handle_assignment` | **A** | Inline FuncCall capture block (~110 lines). Extract `emit_capture_inline`. |
+| 24 | `handle_assignment` | **A** | Inline FuncCall capture block (~110 lines). Extract `emit_capture_inline`. **Done 2026-06-01 (journal 080).** Live CC was 23. Top-level split into `handle_subscript_assign` (1), `handle_append_assign` (5)/`append_scalar` (2), `handle_plain_assign` (4); capture-inline lifted into `try_capture_inline` (2) backed by `save_positionals` (2), `save_locals` (2), `extract_func_args` (5), `setup_func_args` (3), `restore_positionals` (3), plus `check_var_func_collision` (2). Parent 23 → 3. |
 
 ### sash/src/transform/control_flow.rs
 

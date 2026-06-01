@@ -580,192 +580,299 @@ pub(super) fn handle_assignment(
     stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    mut block: BlockId,
+    block: BlockId,
 ) -> BlockId {
-    // DD#58: name collision check — variable vs function
-    if state.known_functions.contains(a.name.as_str()) {
+    check_var_func_collision(&a.name, stmt, state);
+    if let Some(ref idx) = a.index {
+        return handle_subscript_assign(a, idx, state, ssa, block);
+    }
+    if a.op == crate::ir::AssignOp::Append {
+        return handle_append_assign(a, state, ssa, block);
+    }
+    handle_plain_assign(a, stmt, state, ssa, block)
+}
+
+/// DD#58: emit SB4019 if a variable name collides with a known function.
+fn check_var_func_collision(name: &str, stmt: &Statement, state: &mut VersionState) {
+    if state.known_functions.contains(name) {
         state.diagnostics.push(format!(
             "{}:{}: error [SB4019] variable '{}' collides with function '{}' — rename one",
-            stmt.span.line, stmt.span.col, a.name, a.name
+            stmt.span.line, stmt.span.col, name, name
         ));
     }
-    if let Some(ref idx) = a.index {
-        // Subscript assignment: arr[i]=val or map[key]=val
-        let val = expr_to_value(&a.value, state);
-        let idx_val = expr_to_value(idx, state);
-        let is_int = !state.assoc_arrays.contains(&a.name);
-        ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
-            array: a.name.clone(),
-            index: idx_val,
-            value: val,
-            is_integer_key: is_int,
-        });
-    } else if a.op == crate::ir::AssignOp::Append {
-        let val = expr_to_value(&a.value, state);
-        match val {
-            SsaValue::IndexedArray(elems) => {
-                // arr+=(val1 val2 ...) — array append
-                for elem in elems {
-                    ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
-                        array: a.name.clone(),
-                        value: elem,
-                    });
-                }
-            }
-            other => {
-                // Check if this is an array variable
-                if state.assoc_arrays.contains(&a.name) {
-                    ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
-                        array: a.name.clone(),
-                        value: other,
-                    });
-                } else {
-                    // String concatenation: var = var ++ val
-                    // Check if integer-typed: += does arithmetic addition
-                    let is_int =
-                        state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
-                    if is_int {
-                        let old = SsaValue::Var(state.lookup(&a.name));
-                        let new_val = SsaValue::ArithBinOp {
-                            left: Box::new(old),
-                            op: ArithOp::Add,
-                            right: Box::new(other),
-                        };
-                        let target = state.define(&a.name);
-                        ssa.block_mut(block).insts.push(SsaInst::Assign {
-                            target,
-                            value: new_val,
-                        });
-                    } else {
-                        let old = SsaValue::Var(state.lookup(&a.name));
-                        let concat = SsaValue::Concat(vec![old, other]);
-                        let target = state.define(&a.name);
-                        ssa.block_mut(block).insts.push(SsaInst::Assign {
-                            target,
-                            value: concat,
-                        });
-                    }
-                }
+}
+
+/// `arr[i] = val` / `map[key] = val` — subscript assignment. The
+/// index is integer-keyed unless the array was declared associative.
+fn handle_subscript_assign(
+    a: &Assignment,
+    idx: &Expr,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> BlockId {
+    let val = expr_to_value(&a.value, state);
+    let idx_val = expr_to_value(idx, state);
+    let is_int = !state.assoc_arrays.contains(&a.name);
+    ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
+        array: a.name.clone(),
+        index: idx_val,
+        value: val,
+        is_integer_key: is_int,
+    });
+    block
+}
+
+/// `var += val` — append form. Dispatches on the value shape:
+/// IndexedArray literal → element-by-element ArrayAppend; assoc
+/// array → ArrayAppend; otherwise string-concat (or arithmetic add
+/// for int-typed vars).
+fn handle_append_assign(
+    a: &Assignment,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> BlockId {
+    let val = expr_to_value(&a.value, state);
+    match val {
+        SsaValue::IndexedArray(elems) => {
+            for elem in elems {
+                ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
+                    array: a.name.clone(),
+                    value: elem,
+                });
             }
         }
-    } else {
-        let val = expr_to_value(&a.value, state);
-        // Check if the value is a FuncCall that needs capture
-        if let SsaValue::FuncCall(fname) = &val {
-            // DD#55: $(f) for -> int function is a type error
-            if state.function_int_typed.contains(fname.as_str()) {
-                state.diagnostics.push(format!(
-                    "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                    stmt.span.line, stmt.span.col, fname, fname
-                ));
-                return block;
-            }
-            // Non-constant function call: emit CaptureStart, inline body, CaptureEnd
-            if let Some(body) = state.function_bodies.get(fname).cloned() {
-                let locals = collect_local_vars(&body);
-                // CaptureStart
-                ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
-                // Save/set positional params (same as direct call)
-                let saved: Vec<(String, VarRef)> = (1..=9)
-                    .map(|i| (i.to_string(), state.lookup(&i.to_string())))
-                    .collect();
-                let saved_argc = state.lookup("#");
-                let saved_locals: Vec<(String, VarRef)> = locals
-                    .iter()
-                    .map(|lname| {
-                        let save_name = format!("__save_{}_{}", fname, lname);
-                        let src = state.lookup(lname);
-                        let save_ref = state.define(&save_name);
-                        ssa.block_mut(block).insts.push(SsaInst::Assign {
-                            target: save_ref.clone(),
-                            value: SsaValue::Var(src),
-                        });
-                        (lname.clone(), save_ref)
-                    })
-                    .collect();
-                // We need to get the args from the original CommandSubstitution
-                // The args were lost when expr_to_value returned FuncCall(name)
-                // Re-extract them from the expression
-                let func_args = match &a.value.kind {
-                    ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
-                        let inner = match &stmts[0].kind {
-                            StmtKind::Redirected(r) => &r.body.kind,
-                            other => other,
-                        };
-                        if let StmtKind::Command(c) = inner {
-                            c.args.clone()
-                        } else {
-                            vec![]
-                        }
-                    }
-                    _ => vec![],
-                };
-                let argc_val = SsaValue::Literal(func_args.len().to_string());
-                let argc_var = state.define("#");
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target: argc_var,
-                    value: argc_val,
+        other => {
+            if state.assoc_arrays.contains(&a.name) {
+                ssa.block_mut(block).insts.push(SsaInst::ArrayAppend {
+                    array: a.name.clone(),
+                    value: other,
                 });
-                for (i, arg) in func_args.iter().enumerate() {
-                    let v = expr_to_value(arg, state);
-                    let param_var = state.define(&(i + 1).to_string());
-                    ssa.block_mut(block).insts.push(SsaInst::Assign {
-                        target: param_var,
-                        value: v,
-                    });
-                }
-                // DD#46: clear unbound positional slots so caller's
-                // $K doesn't leak through inside the inlined body.
-                for i in (func_args.len() + 1)..=9 {
-                    let param_var = state.define(&i.to_string());
-                    ssa.block_mut(block).insts.push(SsaInst::Assign {
-                        target: param_var,
-                        value: SsaValue::Literal(String::new()),
-                    });
-                }
-                // Inline function body
-                let call_block = ssa.new_block(&format!("cap_{}", fname));
-                ssa.block_mut(block).terminator = Terminator::Goto(call_block);
-                let restore_block = ssa.new_block(&format!("capret_{}", fname));
-                let saved_return_target = state.return_target;
-                state.return_target = Some(restore_block);
-                let exit_block = lower_stmts(&body, ssa, state, call_block);
-                state.return_target = saved_return_target;
-                ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
-                // CaptureEnd — assign captured output to target
-                let target = state.define(&a.name);
-                ssa.block_mut(restore_block)
-                    .insts
-                    .push(SsaInst::CaptureEnd { target });
-                // Restore params
-                for (param_name, saved_ref) in &saved {
-                    let rv = state.define(param_name);
-                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                        target: rv,
-                        value: SsaValue::Var(saved_ref.clone()),
-                    });
-                }
-                let ra = state.define("#");
-                ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                    target: ra,
-                    value: SsaValue::Var(saved_argc),
-                });
-                for (local_name, saved_ref) in &saved_locals {
-                    let rv = state.define(local_name);
-                    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                        target: rv,
-                        value: SsaValue::Var(saved_ref.clone()),
-                    });
-                }
-                return restore_block;
+            } else {
+                append_scalar(a, other, state, ssa, block);
             }
         }
-        // DD#58: lift IntFuncCall out of arithmetic expressions
-        let val = lift_int_func_calls(val, ssa, state, &mut block);
-        let target = state.define(&a.name);
-        ssa.block_mut(block)
-            .insts
-            .push(SsaInst::Assign { target, value: val });
     }
     block
+}
+
+/// Scalar `var += val` — arithmetic add for int-typed vars,
+/// otherwise string concat (`var = var ++ val`).
+fn append_scalar(
+    a: &Assignment,
+    other: SsaValue,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) {
+    let old = SsaValue::Var(state.lookup(&a.name));
+    let is_int = state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
+    let new_val = if is_int {
+        SsaValue::ArithBinOp {
+            left: Box::new(old),
+            op: ArithOp::Add,
+            right: Box::new(other),
+        }
+    } else {
+        SsaValue::Concat(vec![old, other])
+    };
+    let target = state.define(&a.name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target,
+        value: new_val,
+    });
+}
+
+/// `var = val` — plain assignment. If the value is a `FuncCall`
+/// substitution that needs capture, inlines the body
+/// (`try_capture_inline`); otherwise lifts any int-typed function
+/// calls and emits a single `Assign`.
+fn handle_plain_assign(
+    a: &Assignment,
+    stmt: &Statement,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    mut block: BlockId,
+) -> BlockId {
+    let val = expr_to_value(&a.value, state);
+    if let SsaValue::FuncCall(fname) = &val {
+        // DD#55: $(f) for -> int function is a type error
+        if state.function_int_typed.contains(fname.as_str()) {
+            state.diagnostics.push(format!(
+                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                stmt.span.line, stmt.span.col, fname, fname
+            ));
+            return block;
+        }
+        if let Some(b) = try_capture_inline(a, fname, state, ssa, block) {
+            return b;
+        }
+    }
+    // DD#58: lift IntFuncCall out of arithmetic expressions
+    let val = lift_int_func_calls(val, ssa, state, &mut block);
+    let target = state.define(&a.name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value: val });
+    block
+}
+
+/// Inline a function-substitution `$(fname args...)` so its output
+/// can be captured into `a.name`. Emits `CaptureStart`, sets up
+/// positional params (DD#46 clears unbound slots), inlines the body
+/// with `return_target` pointing at the restore block, emits
+/// `CaptureEnd`, and restores the saved positional / local params.
+/// Returns `None` when no body is registered for `fname`.
+fn try_capture_inline(
+    a: &Assignment,
+    fname: &str,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
+    let body = state.function_bodies.get(fname).cloned()?;
+    let locals = collect_local_vars(&body);
+
+    ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
+    let (saved, saved_argc) = save_positionals(state);
+    let saved_locals = save_locals(fname, &locals, state, ssa, block);
+
+    let func_args = extract_func_args(&a.value);
+    setup_func_args(&func_args, state, ssa, block);
+
+    let call_block = ssa.new_block(&format!("cap_{}", fname));
+    ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+    let restore_block = ssa.new_block(&format!("capret_{}", fname));
+    let saved_return_target = state.return_target;
+    state.return_target = Some(restore_block);
+    let exit_block = lower_stmts(&body, ssa, state, call_block);
+    state.return_target = saved_return_target;
+    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+    let target = state.define(&a.name);
+    ssa.block_mut(restore_block)
+        .insts
+        .push(SsaInst::CaptureEnd { target });
+
+    restore_positionals(&saved, saved_argc, &saved_locals, state, ssa, restore_block);
+    Some(restore_block)
+}
+
+/// Snapshot the current `$1..$9` and `$#` versions so they can be
+/// rolled back after the inlined call returns. No instructions are
+/// emitted; the caller saves these as `Var` references.
+fn save_positionals(state: &mut VersionState) -> (Vec<(String, VarRef)>, VarRef) {
+    let saved: Vec<(String, VarRef)> = (1..=9)
+        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+        .collect();
+    let saved_argc = state.lookup("#");
+    (saved, saved_argc)
+}
+
+/// Save each of `locals` into a fresh `__save_<fname>_<lname>`
+/// variable in `block`. Returns the (name, save-ref) pairs for the
+/// later restore.
+fn save_locals(
+    fname: &str,
+    locals: &[String],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Vec<(String, VarRef)> {
+    locals
+        .iter()
+        .map(|lname| {
+            let save_name = format!("__save_{}_{}", fname, lname);
+            let src = state.lookup(lname);
+            let save_ref = state.define(&save_name);
+            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                target: save_ref.clone(),
+                value: SsaValue::Var(src),
+            });
+            (lname.clone(), save_ref)
+        })
+        .collect()
+}
+
+/// Re-extract the call args from the original `$(…)` expression. The
+/// args were dropped when `expr_to_value` collapsed the substitution
+/// into a `FuncCall(name)`, so we pull them back from the `Expr` here.
+fn extract_func_args(value: &Expr) -> Vec<Expr> {
+    let ExprKind::CommandSubstitution(stmts) = &value.kind else {
+        return vec![];
+    };
+    if stmts.len() != 1 {
+        return vec![];
+    }
+    let inner = match &stmts[0].kind {
+        StmtKind::Redirected(r) => &r.body.kind,
+        other => other,
+    };
+    if let StmtKind::Command(c) = inner {
+        c.args.clone()
+    } else {
+        vec![]
+    }
+}
+
+/// Install `$#` and `$1..$N` in `block`, then clear `$(N+1)..$9`
+/// (DD#46: keeps the caller's higher slots from leaking through).
+fn setup_func_args(
+    func_args: &[Expr],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) {
+    let argc_val = SsaValue::Literal(func_args.len().to_string());
+    let argc_var = state.define("#");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: argc_var,
+        value: argc_val,
+    });
+    for (i, arg) in func_args.iter().enumerate() {
+        let v = expr_to_value(arg, state);
+        let param_var = state.define(&(i + 1).to_string());
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: v,
+        });
+    }
+    for i in (func_args.len() + 1)..=9 {
+        let param_var = state.define(&i.to_string());
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: SsaValue::Literal(String::new()),
+        });
+    }
+}
+
+/// Roll the saved positionals, `$#`, and locals back into `block`.
+fn restore_positionals(
+    saved: &[(String, VarRef)],
+    saved_argc: VarRef,
+    saved_locals: &[(String, VarRef)],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) {
+    for (param_name, saved_ref) in saved {
+        let rv = state.define(param_name);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: rv,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
+    let ra = state.define("#");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: ra,
+        value: SsaValue::Var(saved_argc),
+    });
+    for (local_name, saved_ref) in saved_locals {
+        let rv = state.define(local_name);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: rv,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
 }
