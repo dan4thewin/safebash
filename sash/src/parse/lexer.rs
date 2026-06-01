@@ -1144,6 +1144,7 @@ impl Scanner {
 }
 
 /// Map a scanned word to its keyword token, falling back to `Tok::Word`.
+// cyclo-allow: pure word → Tok keyword table; arms == CC by construction
 fn classify_word_token(word: String) -> Tok {
     match word.as_str() {
         "if" => Tok::If,
