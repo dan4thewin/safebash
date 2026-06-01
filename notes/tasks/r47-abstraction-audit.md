@@ -309,7 +309,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 40 | `value_is_tainted` | **B** | SsaValue dispatcher + 15-arm cmd-basename table. WHITELIST. |
-| 36 | `verify_ssa_taint` | **A** | Two-phase analysis with inline inst dispatchers. Extract `classify_inst_def` and `check_inst_uses`. |
+| 36 | `verify_ssa_taint` | **A** | Two-phase analysis with inline inst dispatchers. Extract `classify_inst_def` and `check_inst_uses`. **Done 2026-06-01 (journal 072).** CC 36 → 3. Seven helpers: `seed_clean_specials`, `collect_user_functions`, `classify_block_defs` / `classify_inst_def`, `read_line_taint` (folds ReadLine + ReadLineMulti herestring detection), `check_block_uses` / `check_inst_uses`. Max helper CC 10 (`check_inst_uses`, 5-arm dispatch with multi-`check_value_use` bodies). |
 | 16 | `check_value_use` | **B** | SsaValue traversal. WHITELIST. |
 
 ### sash/src/ssa.rs
