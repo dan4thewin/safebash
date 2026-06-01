@@ -182,84 +182,108 @@ fn lower_test_unary(
         exit_status_var,
     );
     match op {
-        "-n" => {
-            // Non-empty string: len > 0
-            let zero = builder.ins().iconst(I64, 0);
-            let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
-            builder.ins().uextend(I64, cmp)
-        }
-        "-z" => {
-            // Empty string: len == 0
-            let zero = builder.ins().iconst(I64, 0);
-            let cmp = builder.ins().icmp(IntCC::Equal, len, zero);
-            builder.ins().uextend(I64, cmp)
-        }
-        // Bare word in [[ ]] — implicit -n (non-empty test)
-        "?" => {
-            let zero = builder.ins().iconst(I64, 0);
-            let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
-            builder.ins().uextend(I64, cmp)
-        }
-        "-e" | "-f" | "-d" | "-r" | "-w" | "-x" | "-s" | "-L" | "-a" | "-c" | "-p" | "-k"
-        | "-h" | "-b" | "-g" | "-u" | "-G" | "-O" | "-S" | "-N" => {
-            let op_code = match op {
-                "-e" | "-a" => 0i64, // -a is same as -e
-                "-f" => 1,
-                "-d" => 2,
-                "-r" => 3,
-                "-w" => 4,
-                "-x" => 5,
-                "-s" => 6,
-                "-L" | "-h" => 7, // -h is same as -L
-                "-c" => 8,
-                "-p" => 9,
-                "-k" => 10,
-                "-b" => 11,
-                "-g" => 12,
-                "-u" => 13,
-                "-G" => 14,
-                "-O" => 15,
-                "-S" => 16,
-                "-N" => 17,
-                _ => unreachable!(),
-            };
-            let op_val = builder.ins().iconst(I64, op_code);
-            let ft_ref = module.declare_func_in_func(externs.file_test, builder.func);
-            let call = builder.ins().call(ft_ref, &[ptr, len, op_val]);
-            builder.inst_results(call)[0]
-        }
-        "-t" => {
-            // -t fd: test if fd is a terminal
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-            let fd_val = builder.inst_results(call)[0];
-            let isatty_ref = module.declare_func_in_func(externs.isatty, builder.func);
-            let call2 = builder.ins().call(isatty_ref, &[fd_val]);
-            builder.inst_results(call2)[0]
-        }
-        "-v" => {
-            // Variable existence check: look up the highest-version
-            // variable matching this base name. Set ⇔ value is non-empty.
-            let var_name = match &operand.kind {
-                crate::ir::ExprKind::Literal(s) => s.as_str(),
-                crate::ir::ExprKind::SimpleExpansion(s) => s.as_str(),
-                _ => "",
-            };
-            if var_name.is_empty() {
-                builder.ins().iconst(I64, 0)
-            } else if let Some(sv) = super::types::find_var_slot(vars, var_name) {
-                let v_len = builder.use_var(sv.str_len());
-                let zero = builder.ins().iconst(I64, 0);
-                let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
-                builder.ins().uextend(I64, cmp)
-            } else {
-                builder.ins().iconst(I64, 0)
-            }
-        }
-        other => {
-            panic!("ICE: unimplemented unary test operator: {}", other);
-        }
+        // Implicit -n (bare word in [[ ]]) shares the -n path.
+        "-n" | "?" => emit_len_cmp(builder, len, IntCC::SignedGreaterThan),
+        "-z" => emit_len_cmp(builder, len, IntCC::Equal),
+        "-t" => emit_isatty_test(builder, module, externs, ptr, len),
+        "-v" => emit_var_set_test(builder, vars, operand),
+        other => match file_test_op_code(other) {
+            Some(code) => emit_file_test(builder, module, externs, ptr, len, code),
+            None => panic!("ICE: unimplemented unary test operator: {}", other),
+        },
     }
+}
+
+/// 1 if `len <cc> 0`, else 0. Used for -n, -z, and implicit-? bare-word.
+fn emit_len_cmp(
+    builder: &mut FunctionBuilder,
+    len: cranelift_codegen::ir::Value,
+    cc: IntCC,
+) -> cranelift_codegen::ir::Value {
+    let zero = builder.ins().iconst(I64, 0);
+    let cmp = builder.ins().icmp(cc, len, zero);
+    builder.ins().uextend(I64, cmp)
+}
+
+/// stat(2)-style file test ops → opaque opcode passed to runtime
+/// `sash_file_test(ptr, len, op_code)`. Returns None for non-file-test ops.
+// cyclo-allow: pure 20-entry op-to-code table; arms == CC by construction
+fn file_test_op_code(op: &str) -> Option<i64> {
+    Some(match op {
+        "-e" | "-a" => 0, // -a is same as -e
+        "-f" => 1,
+        "-d" => 2,
+        "-r" => 3,
+        "-w" => 4,
+        "-x" => 5,
+        "-s" => 6,
+        "-L" | "-h" => 7, // -h is same as -L
+        "-c" => 8,
+        "-p" => 9,
+        "-k" => 10,
+        "-b" => 11,
+        "-g" => 12,
+        "-u" => 13,
+        "-G" => 14,
+        "-O" => 15,
+        "-S" => 16,
+        "-N" => 17,
+        _ => return None,
+    })
+}
+
+fn emit_file_test(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+    op_code: i64,
+) -> cranelift_codegen::ir::Value {
+    let op_val = builder.ins().iconst(I64, op_code);
+    let ft_ref = module.declare_func_in_func(externs.file_test, builder.func);
+    let call = builder.ins().call(ft_ref, &[ptr, len, op_val]);
+    builder.inst_results(call)[0]
+}
+
+/// `-t fd`: atoi(ptr,len) → isatty → 1/0.
+fn emit_isatty_test(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[ptr, len]);
+    let fd_val = builder.inst_results(call)[0];
+    let isatty_ref = module.declare_func_in_func(externs.isatty, builder.func);
+    let call2 = builder.ins().call(isatty_ref, &[fd_val]);
+    builder.inst_results(call2)[0]
+}
+
+/// `-v name`: 1 ⇔ highest-version slot for `name` exists and holds a
+/// non-empty value; 0 otherwise (including any non-name operand).
+fn emit_var_set_test(
+    builder: &mut FunctionBuilder,
+    vars: &HashMap<String, VarSlot>,
+    operand: &crate::ir::Expr,
+) -> cranelift_codegen::ir::Value {
+    let var_name = match &operand.kind {
+        crate::ir::ExprKind::Literal(s) => s.as_str(),
+        crate::ir::ExprKind::SimpleExpansion(s) => s.as_str(),
+        _ => "",
+    };
+    if var_name.is_empty() {
+        return builder.ins().iconst(I64, 0);
+    }
+    let Some(sv) = super::types::find_var_slot(vars, var_name) else {
+        return builder.ins().iconst(I64, 0);
+    };
+    let v_len = builder.use_var(sv.str_len());
+    let zero = builder.ins().iconst(I64, 0);
+    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
+    builder.ins().uextend(I64, cmp)
 }
 
 #[allow(clippy::too_many_arguments)]

@@ -135,7 +135,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 45 | `lower_test_unary` | **A** | -e/-f/etc. op-code table inline + 60-line $-v find-highest-version block. Extract `file_test_op_code()` and `find_highest_version_var()` (pattern #2). |
+| 45 | `lower_test_unary` | **A** | -e/-f/etc. op-code table inline + 60-line $-v find-highest-version block. Extract `file_test_op_code()` and `find_highest_version_var()` (pattern #2). **Done 2026-06-01 (journal 071).** Live CC was 32 at start (audit stale). 32 → 8. Five helpers: `emit_len_cmp` (folds -n/-z/?), `file_test_op_code` (pure 20-entry table, `cyclo-allow`'d), `emit_file_test`, `emit_isatty_test`, `emit_var_set_test`. `find_highest_version_var` already existed as `super::types::find_var_slot` from earlier work. |
 | 22 | `lower_test_binary` | **C** | Op-keyed match with `lower_expr_value` repeated. Extract `lower_pair(...)`. |
 
 ### sash/src/codegen/inst_handlers.rs
