@@ -34,239 +34,245 @@ pub(super) fn lower_one(
         StmtKind::Assignment(a) => {
             super::stmt_handlers::handle_assignment(a, stmt, ssa, state, block)
         }
-
         StmtKind::Declaration(d) => lower_declaration_stmt(d, ssa, state, block),
-
         StmtKind::Command(c) => super::stmt_handlers::handle_command(c, stmt, ssa, state, block),
-
         StmtKind::If(i) => {
             let flattened = flatten_elif(i);
             lower_if(&flattened, ssa, state, block)
         }
-
-        StmtKind::While(w) => {
-            if w.until {
-                // Desugar: until cond → while ! cond
-                // lower_while will emit a Test instruction; we wrap it with Not
-                // by lowering normally then patching the last Test in the header
-                let mut desugared = w.clone();
-                desugared.until = false;
-                let exit = lower_while(&desugared, ssa, state, block);
-                // Find the header block (first block after current) and negate its Test
-                // The header is the Goto target from current block
-                if let Terminator::Goto(header_id) = &ssa.block(block).terminator {
-                    let header_id = *header_id;
-                    let insts = &mut ssa.block_mut(header_id).insts;
-                    for inst in insts.iter_mut() {
-                        if let SsaInst::Test(ref mut test) = inst {
-                            *test = TestExpr::Not(Box::new(test.clone()));
-                        }
-                    }
-                }
-                exit
-            } else {
-                lower_while(w, ssa, state, block)
-            }
-        }
-
+        StmtKind::While(w) => lower_while_stmt(w, ssa, state, block),
         StmtKind::For(f) => lower_for(f, ssa, state, block),
-
         StmtKind::Pipeline(p) => super::stmt_handlers::handle_pipeline(p, stmt, ssa, state, block),
         StmtKind::List(l) => lower_list_stmt(l, stmt, ssa, state, block),
-
-        StmtKind::Function(f) => {
-            // DD#56: END block — store body for end_block, don't emit as function
-            if f.name == "__sash_end__" {
-                state.exit_trap = Some(f.body.clone());
-                return block;
-            }
-
-            // Store function body for inline expansion at call sites.
-            state.function_bodies.insert(f.name.clone(), f.body.clone());
-
-            // DD#18: track local function scope
-            if f.name.starts_with("__local__") {
-                state.local_fn_scope.insert(f.name.clone());
-            }
-
-            // Track -> int functions for DD#55 type error on $(f)
-            if f.return_type == crate::ir::VarType::Int {
-                state.function_int_typed.insert(f.name.clone());
-            }
-
-            // DD#55: non-void function detection
-            let returns = collect_returns(&f.body);
-            if !returns.is_empty() {
-                // SB4017: -> int function where all literal returns are 0
-                if f.return_type == crate::ir::VarType::Int {
-                    let all_literal_zero = returns
-                        .iter()
-                        .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
-                    if all_literal_zero {
-                        state.diagnostics.push(format!(
-                            "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
-                            stmt.span.line, stmt.span.col, f.name
-                        ));
-                    }
-                }
-                // -> int function with any nonzero or computed returns is non-void
-                let has_nonzero = returns.iter().any(|v| match v {
-                    Some(s) => !s.is_empty() && s != "0",
-                    None => true, // computed value — assume non-void
-                });
-                if has_nonzero && f.return_type == crate::ir::VarType::Int {
-                    state.function_non_void.insert(f.name.clone());
-                }
-            }
-
-            let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
-            // DD#18: save/restore local_fn_scope around function body compilation
-            let saved_scope = state.local_fn_scope.clone();
-            let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
-            state.local_fn_scope = saved_scope;
-            ssa.block_mut(fn_exit).terminator = Terminator::Return;
-            block
-        }
-
-        StmtKind::Redirected(r) => {
-            // For compound commands (for/while/if/case/group/function), the redirect
-            // applies to the entire body — emit push/pop around it.
-            let is_compound = matches!(
-                r.body.kind,
-                StmtKind::While(_)
-                    | StmtKind::If(_)
-                    | StmtKind::For(_)
-                    | StmtKind::Case(_)
-                    | StmtKind::Group(_)
-                    | StmtKind::Subshell(_)
-                    | StmtKind::Function { .. }
-            );
-
-            // Special case: redirected function definition — store redirects
-            // for application at call sites
-            if let StmtKind::Function(ref f) = r.body.kind {
-                if !r.redirects.is_empty() {
-                    state
-                        .function_redirects
-                        .insert(f.name.clone(), r.redirects.clone());
-                }
-                // Still lower the function def normally
-                return lower_one(&r.body, ssa, state, block);
-            }
-
-            if is_compound && !r.redirects.is_empty() {
-                // Emit __redirect_push with redirect metadata
-                ssa.block_mut(block).insts.push(SsaInst::Command {
-                    name: "__redirect_push".to_string(),
-                    kind: BuiltinCmd::RedirectPush,
-                    args: vec![],
-                    redirects: r.redirects.clone(),
-                    checked: true,
-                });
-                let result_block = lower_one(&r.body, ssa, state, block);
-                ssa.block_mut(result_block).insts.push(SsaInst::Command {
-                    name: "__redirect_pop".to_string(),
-                    kind: BuiltinCmd::RedirectPop,
-                    args: vec![],
-                    redirects: r.redirects.clone(),
-                    checked: true,
-                });
-                result_block
-            } else {
-                // Simple command — attach redirects to the instruction
-                let result_block = lower_one(&r.body, ssa, state, block);
-                if !r.redirects.is_empty() {
-                    let blocks_to_check = if result_block == block {
-                        vec![block]
-                    } else {
-                        vec![block, result_block]
-                    };
-                    for blk_id in blocks_to_check {
-                        let blk = ssa.block_mut(blk_id);
-                        if let Some(inst) = blk.insts.last_mut() {
-                            match inst {
-                                SsaInst::Command { redirects, .. } => {
-                                    *redirects = r.redirects.clone();
-                                }
-                                SsaInst::Pipeline { stages, .. } => {
-                                    if let Some(last) = stages.last_mut() {
-                                        last.2 = r.redirects.clone();
-                                    }
-                                }
-                                SsaInst::ReadLine { redirects, .. } => {
-                                    *redirects = r.redirects.clone();
-                                }
-                                SsaInst::ReadLineMulti { redirects, .. } => {
-                                    *redirects = r.redirects.clone();
-                                }
-                                _ => {}
-                            }
-                        }
-                    }
-                }
-                result_block
-            }
-        }
-
+        StmtKind::Function(f) => lower_function_stmt(f, stmt, ssa, state, block),
+        StmtKind::Redirected(r) => lower_redirected_stmt(r, ssa, state, block),
         StmtKind::Subshell(s) => lower_subshell_stmt(s, ssa, state, block),
-
         StmtKind::Group(g) => lower_stmts(&g.body, ssa, state, block),
-
         StmtKind::Case(c) => lower_case(c, ssa, state, block),
-
         StmtKind::Comment(_) => block,
+        StmtKind::ArithTest(expr) => lower_arith_test_stmt(expr, stmt, ssa, state, &mut block),
+        StmtKind::Suppressed(inner) => lower_suppressed_stmt(inner, ssa, state, block),
+    }
+}
 
-        StmtKind::ArithTest(expr) => {
-            // (( expr )) as a condition: evaluate arithmetic, set exit
-            // status based on result (0 = true if nonzero, 1 = false if zero)
-            let ir_expr = crate::ir::Expr {
-                kind: crate::ir::ExprKind::Arithmetic(expr.clone()),
-                span: stmt.span,
-            };
-            let val = super::expressions::expr_to_value(&ir_expr, state);
-            let val = super::functions::lift_int_func_calls(val, ssa, state, &mut block);
-            // Emit as a test: compare result != 0
-            let target = state.define("__arith_test");
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target: target.clone(),
-                value: val,
-            });
-            ssa.block_mut(block).insts.push(SsaInst::sigil(
-                BuiltinCmd::LetExit,
-                vec![SsaValue::Var(target)],
-                true,
-            ));
-            block
+/// `while`/`until`. For `until`, desugar to `while ! cond` by lowering as
+/// `while` then patching the header block's last Test instruction with `Not`.
+fn lower_while_stmt(
+    w: &While,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    if !w.until {
+        return lower_while(w, ssa, state, block);
+    }
+    let mut desugared = w.clone();
+    desugared.until = false;
+    let exit = lower_while(&desugared, ssa, state, block);
+    if let Terminator::Goto(header_id) = &ssa.block(block).terminator {
+        let header_id = *header_id;
+        let insts = &mut ssa.block_mut(header_id).insts;
+        for inst in insts.iter_mut() {
+            if let SsaInst::Test(ref mut test) = inst {
+                *test = TestExpr::Not(Box::new(test.clone()));
+            }
         }
+    }
+    exit
+}
 
-        StmtKind::Suppressed(inner) => {
-            // DD#55: lower the inner statement, then mark the last
-            // Command/Pipeline instruction as unchecked.
-            let pre_len = ssa.block(block).insts.len();
-            let result_block = lower_one(inner, ssa, state, block);
-            // Walk backwards through emitted instructions to uncheck commands/pipelines
-            fn uncheck_block(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {
-                let insts = &mut ssa.block_mut(block_id).insts;
-                for inst in insts[from..].iter_mut() {
-                    match inst {
-                        SsaInst::Command { checked, .. } => {
-                            *checked = false;
-                        }
-                        SsaInst::Pipeline { checked, .. } => {
-                            *checked = false;
-                        }
-                        _ => {}
+/// Function definition. Registers the body for inline expansion at call sites,
+/// then emits the body into a dedicated SSA block sequence terminating in Return.
+/// Special cases: `__sash_end__` (DD#56 exit trap), `__local__*` (DD#18 local scope),
+/// `-> int` return type tracking, DD#55 non-void detection + SB4017 emission.
+fn lower_function_stmt(
+    f: &Function,
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    if f.name == "__sash_end__" {
+        state.exit_trap = Some(f.body.clone());
+        return block;
+    }
+    state.function_bodies.insert(f.name.clone(), f.body.clone());
+    if f.name.starts_with("__local__") {
+        state.local_fn_scope.insert(f.name.clone());
+    }
+    if f.return_type == crate::ir::VarType::Int {
+        state.function_int_typed.insert(f.name.clone());
+    }
+    let returns = collect_returns(&f.body);
+    if !returns.is_empty() {
+        if f.return_type == crate::ir::VarType::Int {
+            let all_literal_zero = returns
+                .iter()
+                .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
+            if all_literal_zero {
+                state.diagnostics.push(format!(
+                    "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
+                    stmt.span.line, stmt.span.col, f.name
+                ));
+            }
+        }
+        let has_nonzero = returns.iter().any(|v| match v {
+            Some(s) => !s.is_empty() && s != "0",
+            None => true,
+        });
+        if has_nonzero && f.return_type == crate::ir::VarType::Int {
+            state.function_non_void.insert(f.name.clone());
+        }
+    }
+    let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
+    let saved_scope = state.local_fn_scope.clone();
+    let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
+    state.local_fn_scope = saved_scope;
+    ssa.block_mut(fn_exit).terminator = Terminator::Return;
+    block
+}
+
+/// Statement wrapped in a redirect. For compound bodies (while/for/if/case/group/
+/// subshell/function), bracket with __redirect_push/__redirect_pop. For simple
+/// commands, attach the redirects to the last emitted Command/Pipeline/Read inst.
+fn lower_redirected_stmt(
+    r: &Redirected,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let is_compound = matches!(
+        r.body.kind,
+        StmtKind::While(_)
+            | StmtKind::If(_)
+            | StmtKind::For(_)
+            | StmtKind::Case(_)
+            | StmtKind::Group(_)
+            | StmtKind::Subshell(_)
+            | StmtKind::Function { .. }
+    );
+
+    // Special case: redirected function definition — store redirects
+    // for application at call sites
+    if let StmtKind::Function(ref f) = r.body.kind {
+        if !r.redirects.is_empty() {
+            state
+                .function_redirects
+                .insert(f.name.clone(), r.redirects.clone());
+        }
+        return lower_one(&r.body, ssa, state, block);
+    }
+
+    if is_compound && !r.redirects.is_empty() {
+        ssa.block_mut(block).insts.push(SsaInst::Command {
+            name: "__redirect_push".to_string(),
+            kind: BuiltinCmd::RedirectPush,
+            args: vec![],
+            redirects: r.redirects.clone(),
+            checked: true,
+        });
+        let result_block = lower_one(&r.body, ssa, state, block);
+        ssa.block_mut(result_block).insts.push(SsaInst::Command {
+            name: "__redirect_pop".to_string(),
+            kind: BuiltinCmd::RedirectPop,
+            args: vec![],
+            redirects: r.redirects.clone(),
+            checked: true,
+        });
+        return result_block;
+    }
+
+    let result_block = lower_one(&r.body, ssa, state, block);
+    if !r.redirects.is_empty() {
+        let blocks_to_check = if result_block == block {
+            vec![block]
+        } else {
+            vec![block, result_block]
+        };
+        for blk_id in blocks_to_check {
+            let blk = ssa.block_mut(blk_id);
+            if let Some(inst) = blk.insts.last_mut() {
+                match inst {
+                    SsaInst::Command { redirects, .. } => {
+                        *redirects = r.redirects.clone();
                     }
+                    SsaInst::Pipeline { stages, .. } => {
+                        if let Some(last) = stages.last_mut() {
+                            last.2 = r.redirects.clone();
+                        }
+                    }
+                    SsaInst::ReadLine { redirects, .. } => {
+                        *redirects = r.redirects.clone();
+                    }
+                    SsaInst::ReadLineMulti { redirects, .. } => {
+                        *redirects = r.redirects.clone();
+                    }
+                    _ => {}
                 }
             }
-            uncheck_block(ssa, block, pre_len);
-            // If lowering created new blocks, uncheck those too
-            if result_block != block {
-                for b in (block + 1)..=result_block {
-                    uncheck_block(ssa, b, 0);
-                }
+        }
+    }
+    result_block
+}
+
+/// `(( expr ))` as a condition: evaluate arithmetic, set exit status based on
+/// result (0 = true if nonzero, 1 = false if zero).
+fn lower_arith_test_stmt(
+    expr: &ArithExpr,
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> BlockId {
+    let ir_expr = crate::ir::Expr {
+        kind: crate::ir::ExprKind::Arithmetic(Box::new(expr.clone())),
+        span: stmt.span,
+    };
+    let val = expr_to_value(&ir_expr, state);
+    let val = lift_int_func_calls(val, ssa, state, block);
+    let target = state.define("__arith_test");
+    ssa.block_mut(*block).insts.push(SsaInst::Assign {
+        target: target.clone(),
+        value: val,
+    });
+    ssa.block_mut(*block).insts.push(SsaInst::sigil(
+        BuiltinCmd::LetExit,
+        vec![SsaValue::Var(target)],
+        true,
+    ));
+    *block
+}
+
+/// DD#55: `- cmd` (suppressed) — lower the inner statement, then mark the last
+/// emitted Command/Pipeline instruction(s) as unchecked.
+fn lower_suppressed_stmt(
+    inner: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let pre_len = ssa.block(block).insts.len();
+    let result_block = lower_one(inner, ssa, state, block);
+    uncheck_block_from(ssa, block, pre_len);
+    if result_block != block {
+        for b in (block + 1)..=result_block {
+            uncheck_block_from(ssa, b, 0);
+        }
+    }
+    result_block
+}
+
+fn uncheck_block_from(ssa: &mut SsaProgram, block_id: BlockId, from: usize) {
+    let insts = &mut ssa.block_mut(block_id).insts;
+    for inst in insts[from..].iter_mut() {
+        match inst {
+            SsaInst::Command { checked, .. } => {
+                *checked = false;
             }
-            result_block
+            SsaInst::Pipeline { checked, .. } => {
+                *checked = false;
+            }
+            _ => {}
         }
     }
 }

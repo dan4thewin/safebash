@@ -176,7 +176,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 57 | `lower_one` | **C→A** | StmtKind dispatcher with inline arms for Until-desugaring, Function, Redirected, Suppressed. Extract those four. |
+| 57 | `lower_one` | **C→A** | StmtKind dispatcher with inline arms for Until-desugaring, Function, Redirected, Suppressed. Extract those four. **Done 2026-06-01 (journal 061).** CC 55 → 17. Extracted 5 sub-handlers + 1 helper; max helper CC 15. |
 
 ### sash/src/transform/stmt_handlers.rs
 
