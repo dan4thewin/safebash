@@ -590,3 +590,55 @@ fn type_ok_string_func_in_if() {
     let errs = check(src);
     assert!(errs.is_empty(), "unexpected errors: {:?}", errs);
 }
+
+// ── check_stmt must descend into grouping statements ───────
+// Regression: previously check_stmt's `_ =>` arm silently dropped
+// recursion into Group, Pipeline, List, Subshell, Redirected,
+// Suppressed — so a `string → int var` assignment was caught at
+// top level but missed if wrapped. Fix: default-descend via
+// stmt.child_bodies() in the fallthrough arm.
+
+#[test]
+fn type_err_string_to_int_in_group() {
+    let src = "int x=5\n{ x=hello; }\n";
+    let errs = check(src);
+    assert!(
+        !errs.is_empty(),
+        "expected type error inside {{ ... }} — got none"
+    );
+    assert!(
+        errs[0].message.contains("string"),
+        "error should mention string: {}",
+        errs[0]
+    );
+}
+
+#[test]
+fn type_err_string_to_int_in_list_left() {
+    let src = "int x=5\nx=hello && true\n";
+    let errs = check(src);
+    assert!(
+        !errs.is_empty(),
+        "expected type error in left side of `&&` — got none"
+    );
+}
+
+#[test]
+fn type_err_string_to_int_in_list_right() {
+    let src = "int x=5\ntrue && x=hello\n";
+    let errs = check(src);
+    assert!(
+        !errs.is_empty(),
+        "expected type error in right side of `&&` — got none"
+    );
+}
+
+#[test]
+fn type_err_string_to_int_in_pipeline() {
+    let src = "int x=5\nx=hello | cat\n";
+    let errs = check(src);
+    assert!(
+        !errs.is_empty(),
+        "expected type error in pipeline stage — got none"
+    );
+}

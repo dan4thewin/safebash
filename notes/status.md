@@ -8,7 +8,7 @@ modified: 2026-05-24
 
 ## Spec status: 285 passing / 0 failing of 285 (spec.db @ b8e87a0)
 
-_Regenerated 2026-05-31 by `mk status`. Edits inside this block will be
+_Regenerated 2026-06-01 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 

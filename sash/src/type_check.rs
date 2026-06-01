@@ -405,7 +405,19 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
             }
         }
 
-        _ => {}
+        // Default: descend into any nested statement bodies (Pipeline,
+        // Group, List, Subshell, Redirected, Suppressed) so wrapping a
+        // statement in grouping syntax doesn't silently bypass type
+        // checking. child_bodies() returns empty for leaf StmtKinds
+        // (Assignment/Declaration/Command/Comment/ArithTest), which
+        // each have their own arm above.
+        _ => {
+            for body in stmt.child_bodies() {
+                for s in body {
+                    check_stmt(s, env, errors);
+                }
+            }
+        }
     }
 }
 

@@ -75,6 +75,25 @@ the per-function extractions cheap.
    StmtKind. Use the helper aggressively. (Likewise
    `direct_exprs()` at `ir.rs:120` for expression-walking arms.)
 
+   **Per-walker addendum (after audit during rollout attempt):**
+   blanket recommendation was wrong. Of six candidates:
+   - `taint_stmt`: already done.
+   - `check_dq_stmt`: not applicable — `_ =>` arm tracks `$?` state,
+     not a recursion site.
+   - `scan_expr_positionals_stmt`: clean rollout candidate.
+   - `collect_returns_inner`: careful — must not descend into
+     Subshell/Function; needs explicit early-returns.
+   - `validate_stmt_ctx`: needs a state-aware `child_bodies_with_ctx`
+     helper to thread `in_condition` flag.
+   - `check_stmt`: was a **bug** — `_ => {}` silently dropped
+     Pipeline/Group/Subshell/List/Redirected. Fixed in journal 056;
+     CC went 47 → 49 because the existing explicit arms each carry
+     custom pre-work and were not collapsed. Collapse is a separate
+     refactor.
+
+   Each remaining walker should be its own task, not a single
+   "rollout".
+
 6. **`if let SsaInst::X = inst` → `match inst`** — `allocate_variables`
    (CC 36) and `print_ssa` (29) use sequential `if let` chains where
    a single `match` would be both flatter and cheaper-on-CC. Pure
