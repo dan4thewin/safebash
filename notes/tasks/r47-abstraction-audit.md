@@ -182,7 +182,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 54 | `handle_pipeline` | **A** | 200 lines, deeply nested. Extract `build_producer_stages`, `parse_read_flags`, sub-handlers per pipeline shape. |
+| 54 | `handle_pipeline` | **A** | 200 lines, deeply nested. Extract `build_producer_stages`, `parse_read_flags`, sub-handlers per pipeline shape. **Done 2026-06-01 (journal 060).** CC 54 → 7. Extracted 7 helpers; max helper CC 9. |
 | 48 | `handle_command` | **A** | Multiple distinct concerns: bless, [[, regex sub, shift. Per-shape `try_X` helpers (pattern #3). |
 | 24 | `handle_assignment` | **A** | Inline FuncCall capture block (~110 lines). Extract `emit_capture_inline`. |
 
