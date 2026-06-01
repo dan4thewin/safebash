@@ -206,7 +206,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 34 | `expr_to_value` | **A** | ExprKind dispatcher with non-trivial Array (regex/glob detection) and DoubleQuoted (all-literal collapse). Extract `lower_array_literal`. |
+| 34 | `expr_to_value` | **A** | ExprKind dispatcher with non-trivial Array (regex/glob detection) and DoubleQuoted (all-literal collapse). Extract `lower_array_literal`. **Done 2026-06-01 (journal 070).** CC 34 → 12 (floor for 11-arm pure dispatcher; cf. `expr_to_string` 16). Eight helpers: `simple_expansion_to_value`, `parameter_expansion_to_value`, `assoc_array_to_value`, `subscript_to_value`, `concat_to_value`, `dq_to_value`, `lower_array_literal`, `try_array_regex_filter`, `try_array_single_glob`. Every match arm is a single dispatch line; non-trivial arms (DoubleQuoted all-literal collapse, regex-filter/single-glob detection) live in named helpers. Max helper CC 7 (`dq_to_value`). |
 | 16 | `expr_to_string` | **B** | Pure ExprKind→String formatter. WHITELIST. |
 
 ### sash/src/transform/helpers.rs

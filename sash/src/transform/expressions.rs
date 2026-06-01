@@ -10,129 +10,147 @@ use crate::ssa::*;
 pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     match &expr.kind {
         ExprKind::Literal(s) => SsaValue::Literal(s.clone()),
-        ExprKind::SimpleExpansion(var) => {
-            // Coerce magic variables to builtins (DD#40)
-            if var == "EPOCHSECONDS" {
-                return SsaValue::CmdSubst {
-                    argv: vec![SsaValue::Literal("epochseconds".to_string())],
-                    redirects: vec![],
-                };
-            }
-            SsaValue::Var(state.lookup(var))
-        }
+        ExprKind::SimpleExpansion(var) => simple_expansion_to_value(var, state),
         ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
         ExprKind::Arithmetic(a) => {
             super::expr_handlers::handle_structured_arithmetic(a, expr, state)
         }
-        ExprKind::ParameterExpansion(pe) => {
-            let var = state.lookup(&pe.name);
-            if let Some(ref op) = pe.operator {
-                let operand = pe
-                    .operand
-                    .as_ref()
-                    .map(|e| expr_to_string(e))
-                    .unwrap_or_default();
-                SsaValue::ParamExpansion {
-                    var,
-                    operator: op.clone(),
-                    operand,
-                }
-            } else {
-                SsaValue::Var(var)
-            }
-        }
-        ExprKind::DoubleQuoted(parts) => {
-            // Unwrap single-element DoubleQuoted to its inner value.
-            if parts.len() == 1 {
-                return expr_to_value(&parts[0], state);
-            }
-            // Multi-part: check if all literal
-            let mut all_literal = true;
-            let mut lit_concat = String::new();
-            for part in parts {
-                match &part.kind {
-                    ExprKind::Literal(lit) => lit_concat.push_str(lit),
-                    _ => {
-                        all_literal = false;
-                        break;
-                    }
-                }
-            }
-            if all_literal {
-                SsaValue::Literal(lit_concat)
-            } else {
-                // Build a Concat of resolved parts
-                let mut concat_parts = Vec::new();
-                for part in parts {
-                    concat_parts.push(expr_to_value(part, state));
-                }
-                SsaValue::Concat(concat_parts)
-            }
-        }
-        ExprKind::AssocArray(pairs) => {
-            let vals: Vec<(String, SsaValue)> = pairs
-                .iter()
-                .map(|(k, v)| (k.clone(), expr_to_value(v, state)))
-                .collect();
-            SsaValue::AssocArray(vals)
-        }
-        ExprKind::Subscript { name, index } => {
-            let is_integer = !state.assoc_arrays.contains(name);
-            SsaValue::Subscript {
-                array: name.clone(),
-                index: Box::new(expr_to_value(index, state)),
-                is_integer_key: is_integer,
-            }
-        }
-        ExprKind::Concat(parts) => {
-            let vals: Vec<SsaValue> = parts.iter().map(|p| expr_to_value(p, state)).collect();
-            if vals.len() == 1 {
-                return vals.into_iter().next().unwrap();
-            }
-            SsaValue::Concat(vals)
-        }
-        ExprKind::Array(elems) => {
-            let vals: Vec<SsaValue> = elems.iter().map(|e| expr_to_value(e, state)).collect();
-            // Check for regex filter pattern: (* =~ 'regex')
-            // vals would be ["*", "=~", "pattern"]
-            if vals.len() == 3 {
-                if let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) =
-                    (&vals[0], &vals[1], &vals[2])
-                {
-                    if star == "*" && op == "=~" {
-                        return SsaValue::ParamExpansion {
-                            var: VarRef::new(".", 0),
-                            operator: "glob_regex".to_string(),
-                            operand: pat.clone(),
-                        };
-                    }
-                }
-            }
-            // Check if any element is a glob pattern (contains *)
-            let has_glob = vals.iter().any(|v| {
-                if let SsaValue::Literal(s) = v {
-                    s.contains('*')
-                } else {
-                    false
-                }
-            });
-            if has_glob && vals.len() == 1 {
-                // Single glob pattern: arr=(*.sh) → sash_glob(".", "*.sh")
-                SsaValue::ParamExpansion {
-                    var: VarRef::new(".", 0),
-                    operator: "glob".to_string(),
-                    operand: if let SsaValue::Literal(s) = &vals[0] {
-                        s.clone()
-                    } else {
-                        String::new()
-                    },
-                }
-            } else {
-                SsaValue::IndexedArray(vals)
-            }
-        }
+        ExprKind::ParameterExpansion(pe) => parameter_expansion_to_value(pe, state),
+        ExprKind::DoubleQuoted(parts) => dq_to_value(parts, state),
+        ExprKind::AssocArray(pairs) => assoc_array_to_value(pairs, state),
+        ExprKind::Subscript { name, index } => subscript_to_value(name, index, state),
+        ExprKind::Concat(parts) => concat_to_value(parts, state),
+        ExprKind::Array(elems) => lower_array_literal(elems, state),
         _ => super::expr_handlers::handle_command_substitution(expr, state),
     }
+}
+
+/// DD#40: $EPOCHSECONDS coerces to a sash-native builtin call.
+fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
+    if var == "EPOCHSECONDS" {
+        return SsaValue::CmdSubst {
+            argv: vec![SsaValue::Literal("epochseconds".to_string())],
+            redirects: vec![],
+        };
+    }
+    SsaValue::Var(state.lookup(var))
+}
+
+fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
+    let var = state.lookup(&pe.name);
+    let Some(op) = pe.operator.as_ref() else {
+        return SsaValue::Var(var);
+    };
+    let operand = pe
+        .operand
+        .as_ref()
+        .map(|e| expr_to_string(e))
+        .unwrap_or_default();
+    SsaValue::ParamExpansion {
+        var,
+        operator: op.clone(),
+        operand,
+    }
+}
+
+fn assoc_array_to_value(pairs: &[(String, Expr)], state: &VersionState) -> SsaValue {
+    let vals: Vec<(String, SsaValue)> = pairs
+        .iter()
+        .map(|(k, v)| (k.clone(), expr_to_value(v, state)))
+        .collect();
+    SsaValue::AssocArray(vals)
+}
+
+fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
+    let is_integer = !state.assoc_arrays.contains(name);
+    SsaValue::Subscript {
+        array: name.to_string(),
+        index: Box::new(expr_to_value(index, state)),
+        is_integer_key: is_integer,
+    }
+}
+
+fn concat_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
+    let mut vals: Vec<SsaValue> = parts.iter().map(|p| expr_to_value(p, state)).collect();
+    if vals.len() == 1 {
+        return vals.pop().unwrap();
+    }
+    SsaValue::Concat(vals)
+}
+
+/// `"…"` double-quoted: single-part is the part itself; all-literal parts
+/// flatten to a single literal; otherwise build a `Concat`.
+fn dq_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
+    if parts.len() == 1 {
+        return expr_to_value(&parts[0], state);
+    }
+    let mut lit_concat = String::new();
+    let mut all_literal = true;
+    for part in parts {
+        match &part.kind {
+            ExprKind::Literal(lit) => lit_concat.push_str(lit),
+            _ => {
+                all_literal = false;
+                break;
+            }
+        }
+    }
+    if all_literal {
+        return SsaValue::Literal(lit_concat);
+    }
+    let concat_parts: Vec<SsaValue> = parts.iter().map(|p| expr_to_value(p, state)).collect();
+    SsaValue::Concat(concat_parts)
+}
+
+/// `arr=(…)` array literal: detect two sash-native shorthand patterns
+/// (regex filter and single-glob) before falling back to IndexedArray.
+fn lower_array_literal(elems: &[Expr], state: &VersionState) -> SsaValue {
+    let vals: Vec<SsaValue> = elems.iter().map(|e| expr_to_value(e, state)).collect();
+    if let Some(v) = try_array_regex_filter(&vals) {
+        return v;
+    }
+    if let Some(v) = try_array_single_glob(&vals) {
+        return v;
+    }
+    SsaValue::IndexedArray(vals)
+}
+
+/// arr=(* =~ 'pat') → sash_glob(".") | grep -E 'pat' shorthand.
+fn try_array_regex_filter(vals: &[SsaValue]) -> Option<SsaValue> {
+    if vals.len() != 3 {
+        return None;
+    }
+    let (SsaValue::Literal(star), SsaValue::Literal(op), SsaValue::Literal(pat)) =
+        (&vals[0], &vals[1], &vals[2])
+    else {
+        return None;
+    };
+    if star != "*" || op != "=~" {
+        return None;
+    }
+    Some(SsaValue::ParamExpansion {
+        var: VarRef::new(".", 0),
+        operator: "glob_regex".to_string(),
+        operand: pat.clone(),
+    })
+}
+
+/// arr=(*.sh) → sash_glob(".", "*.sh") shorthand.
+fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
+    if vals.len() != 1 {
+        return None;
+    }
+    let SsaValue::Literal(s) = &vals[0] else {
+        return None;
+    };
+    if !s.contains('*') {
+        return None;
+    }
+    Some(SsaValue::ParamExpansion {
+        var: VarRef::new(".", 0),
+        operator: "glob".to_string(),
+        operand: s.clone(),
+    })
 }
 
 /// Convert an expression to a simple string representation.
