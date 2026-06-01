@@ -267,7 +267,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 28 | `parse_prefix` | **A** | 12-arm token dispatcher; ++/-- arms duplicate, unary Minus/Plus/Bang/Tilde all duplicate. Extract `parse_pre_incdec(inc)` and `parse_unary(op)`. |
+| 28 | `parse_prefix` | **A** | 12-arm token dispatcher; ++/-- arms duplicate, unary Minus/Plus/Bang/Tilde all duplicate. Extract `parse_pre_incdec(inc)` and `parse_unary(op)`. **Done 2026-06-01 (journal 077).** Extracted `parse_pre_incdec` (2), `parse_unary` (2), `parse_lparen_form` (10, DD#58 sexpr). Parent 28 → 13 (12-arm floor). |
 | 26 | `tok_to_text` | **B** | Pure 1:1 Tok→String. WHITELIST. |
 | 21 | `match_arith_op2` | **B** | 1:1 byte→token. WHITELIST. |
 | 21 | `binary_op_for` | **B** | Declarative token→(op, bp) table. WHITELIST. |

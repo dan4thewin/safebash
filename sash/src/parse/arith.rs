@@ -697,98 +697,13 @@ impl ArithParser {
                 self.advance();
                 Ok(ArithExpr::DollarVar(name))
             }
-            Some(ATok::PlusPlus) => {
-                self.advance();
-                if let Some(ATok::Var(name)) = self.peek().cloned() {
-                    self.advance();
-                    Ok(ArithExpr::PreIncDec {
-                        var: name,
-                        inc: true,
-                    })
-                } else {
-                    Err(arith_error(
-                        self.span,
-                        "expected variable after ++".to_string(),
-                    ))
-                }
-            }
-            Some(ATok::MinusMinus) => {
-                self.advance();
-                if let Some(ATok::Var(name)) = self.peek().cloned() {
-                    self.advance();
-                    Ok(ArithExpr::PreIncDec {
-                        var: name,
-                        inc: false,
-                    })
-                } else {
-                    Err(arith_error(
-                        self.span,
-                        "expected variable after --".to_string(),
-                    ))
-                }
-            }
-            Some(ATok::Minus) => {
-                self.advance();
-                let operand = self.parse_expr(25)?; // unary binds tighter than binary
-                Ok(ArithExpr::UnaryOp {
-                    op: IrUnaryArithOp::Neg,
-                    operand: Box::new(operand),
-                })
-            }
-            Some(ATok::Plus) => {
-                self.advance();
-                let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp {
-                    op: IrUnaryArithOp::Pos,
-                    operand: Box::new(operand),
-                })
-            }
-            Some(ATok::Bang) => {
-                self.advance();
-                let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp {
-                    op: IrUnaryArithOp::Not,
-                    operand: Box::new(operand),
-                })
-            }
-            Some(ATok::Tilde) => {
-                self.advance();
-                let operand = self.parse_expr(25)?;
-                Ok(ArithExpr::UnaryOp {
-                    op: IrUnaryArithOp::BitNot,
-                    operand: Box::new(operand),
-                })
-            }
-            Some(ATok::LParen) => {
-                self.advance();
-                // DD#58: Check if this is a sexpr function call: (name args...)
-                if let Some(ATok::Var(name)) = self.peek().cloned() {
-                    // Could be (name ...) sexpr or (expr) grouping
-                    // Peek ahead: if next after name is a number, var, $var, or (
-                    // then it's a function call. If it's an operator or ), it's grouping.
-                    let saved_pos = self.pos;
-                    self.advance(); // consume name
-                    if self.peek() == Some(&ATok::RParen) {
-                        // (name) — zero-arg function call
-                        self.advance();
-                        return Ok(ArithExpr::FuncCall { name, args: vec![] });
-                    }
-                    if self.is_func_arg_start() {
-                        // (name expr...) — function call with args
-                        let mut args = Vec::new();
-                        while self.peek() != Some(&ATok::RParen) && self.peek().is_some() {
-                            args.push(self.parse_expr(0)?);
-                        }
-                        self.expect(&ATok::RParen)?;
-                        return Ok(ArithExpr::FuncCall { name, args });
-                    }
-                    // Not a function call — restore and parse as grouping
-                    self.pos = saved_pos;
-                }
-                let expr = self.parse_expr(0)?;
-                self.expect(&ATok::RParen)?;
-                Ok(ArithExpr::Paren(Box::new(expr)))
-            }
+            Some(ATok::PlusPlus) => self.parse_pre_incdec(true),
+            Some(ATok::MinusMinus) => self.parse_pre_incdec(false),
+            Some(ATok::Minus) => self.parse_unary(IrUnaryArithOp::Neg),
+            Some(ATok::Plus) => self.parse_unary(IrUnaryArithOp::Pos),
+            Some(ATok::Bang) => self.parse_unary(IrUnaryArithOp::Not),
+            Some(ATok::Tilde) => self.parse_unary(IrUnaryArithOp::BitNot),
+            Some(ATok::LParen) => self.parse_lparen_form(),
             Some(_) => {
                 // Unknown token — try to recover
                 self.advance();
@@ -796,6 +711,65 @@ impl ArithParser {
             }
             None => Ok(ArithExpr::Literal(0)),
         }
+    }
+
+    /// `++var` / `--var` — pre-increment or pre-decrement. The
+    /// `++`/`--` token is at `self.pos`; consumes both it and the
+    /// following `Var`.
+    fn parse_pre_incdec(&mut self, inc: bool) -> Result<ArithExpr, Diagnostic> {
+        self.advance();
+        let Some(ATok::Var(name)) = self.peek().cloned() else {
+            let op = if inc { "++" } else { "--" };
+            return Err(arith_error(
+                self.span,
+                format!("expected variable after {op}"),
+            ));
+        };
+        self.advance();
+        Ok(ArithExpr::PreIncDec { var: name, inc })
+    }
+
+    /// `-x` / `+x` / `!x` / `~x` — unary arithmetic. The operator
+    /// token is at `self.pos`; consumes it and parses the operand at
+    /// precedence 25 (binds tighter than any binary).
+    fn parse_unary(&mut self, op: IrUnaryArithOp) -> Result<ArithExpr, Diagnostic> {
+        self.advance();
+        let operand = self.parse_expr(25)?;
+        Ok(ArithExpr::UnaryOp {
+            op,
+            operand: Box::new(operand),
+        })
+    }
+
+    /// `(...)` — either a DD#58 sexpr-style function call `(name args...)`
+    /// or ordinary parenthesised grouping. The opening `(` is at
+    /// `self.pos`; consumes through the matching `)`.
+    fn parse_lparen_form(&mut self) -> Result<ArithExpr, Diagnostic> {
+        self.advance();
+        // DD#58: peek for a sexpr function call.
+        if let Some(ATok::Var(name)) = self.peek().cloned() {
+            let saved_pos = self.pos;
+            self.advance(); // consume name
+            if self.peek() == Some(&ATok::RParen) {
+                // (name) — zero-arg function call
+                self.advance();
+                return Ok(ArithExpr::FuncCall { name, args: vec![] });
+            }
+            if self.is_func_arg_start() {
+                // (name expr...) — function call with args
+                let mut args = Vec::new();
+                while self.peek() != Some(&ATok::RParen) && self.peek().is_some() {
+                    args.push(self.parse_expr(0)?);
+                }
+                self.expect(&ATok::RParen)?;
+                return Ok(ArithExpr::FuncCall { name, args });
+            }
+            // Not a function call — restore and parse as grouping
+            self.pos = saved_pos;
+        }
+        let expr = self.parse_expr(0)?;
+        self.expect(&ATok::RParen)?;
+        Ok(ArithExpr::Paren(Box::new(expr)))
     }
 
     /// Check if current token could start a function argument (for sexpr detection).
