@@ -278,7 +278,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 31 | `parse_statement` | **A** | 14-arm Tok dispatcher + 5-pattern postfix-rejection table. Extract `reject_postfix_on_compound`. |
+| 31 | `parse_statement` | **A** | 14-arm Tok dispatcher + 5-pattern postfix-rejection table. Extract `reject_postfix_on_compound`. **Done 2026-06-01 (journal 074).** CC 30 (live) → 7. Three helpers: `dispatch_statement` (20-arm Tok router, `cyclo-allow`'d), `parse_comment_stmt`, `reject_compound_postfix` calling `compound_postfix_rejection` (the SB4021/22/23/24 table). |
 | 26 | `parse_test_primary` | **C/A** | Token dispatcher with multiple binary-op arms. Could fold via a small op-table. |
 | 23 | `maybe_wrap_redirects` | **A** | 3-phase tail (redirects → pipeline → list-op). Extract `parse_trailing_redirects`, `parse_trailing_pipeline`, `parse_trailing_list_op`. |
 | 17 | `parse_simple_or_assignment` | **A** | 6-arm leading-rejected-keyword table inline. Extract `try_reject_unsafe_keyword(scanner, span) -> Option<Diagnostic>`. |

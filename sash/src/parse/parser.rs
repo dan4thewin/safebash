@@ -106,15 +106,29 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
     let tok = scanner.peek().token.clone();
     let span = span_from(scanner, start);
 
-    let result = match tok {
-        Tok::Comment(ref text) => {
-            let text = text.clone();
-            scanner.next();
-            Ok(Some(Statement {
-                kind: StmtKind::Comment(text),
-                span,
-            }))
-        }
+    let stmt = match dispatch_statement(scanner, tok, span)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+
+    if is_compound(&stmt.kind) {
+        reject_compound_postfix(stmt, scanner)
+    } else {
+        Ok(Some(maybe_wrap_redirects(scanner, stmt)?))
+    }
+}
+
+/// Dispatch on the leading token of a statement. Pure routing — each
+/// arm calls the corresponding `parse_*` subparser, which is responsible
+/// for advancing the scanner.
+// cyclo-allow: 20-arm Tok dispatcher; arms == CC by construction
+fn dispatch_statement(
+    scanner: &mut Scanner,
+    tok: Tok,
+    span: Span,
+) -> Result<Option<Statement>, Diagnostic> {
+    match tok {
+        Tok::Comment(text) => parse_comment_stmt(scanner, text, span),
         Tok::If => parse_if(scanner),
         Tok::While | Tok::Until => parse_while(scanner),
         Tok::For => parse_for(scanner),
@@ -134,63 +148,72 @@ pub fn parse_statement(scanner: &mut Scanner) -> Result<Option<Statement>, Diagn
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::Bless => parse_bless(scanner),
         _ => parse_simple_or_assignment(scanner),
-    };
-
-    // Wrap with trailing redirects/pipes/list-ops if present
-    match result {
-        Ok(Some(stmt)) => {
-            // Reject all postfix operators on compound commands.
-            // Sash idiom: wrap in a function for composition.
-            if is_compound(&stmt.kind) {
-                let next = scanner.peek().token.clone();
-                if matches!(
-                    next,
-                    Tok::Gt
-                        | Tok::DblGt
-                        | Tok::Lt
-                        | Tok::GtAmp
-                        | Tok::LtAmp
-                        | Tok::LtGt
-                        | Tok::AmpGt
-                        | Tok::HereString
-                ) {
-                    return Err(parse_error(
-                        stmt.span,
-                        "SB4021",
-                        "redirects on compound commands are not supported — wrap in a function"
-                            .to_string(),
-                    ));
-                }
-                if matches!(next, Tok::Pipe) {
-                    return Err(parse_error(
-                        stmt.span,
-                        "SB4022",
-                        "pipes on compound commands are not supported — wrap in a function"
-                            .to_string(),
-                    ));
-                }
-                if matches!(next, Tok::AndAnd | Tok::OrOr) {
-                    return Err(parse_error(
-                        stmt.span,
-                        "SB4023",
-                        "&& / || on compound commands are not supported — wrap in a function"
-                            .to_string(),
-                    ));
-                }
-                if matches!(next, Tok::Amp) {
-                    return Err(parse_error(
-                        stmt.span,
-                        "SB4024",
-                        "& on compound commands is not supported — wrap in a function".to_string(),
-                    ));
-                }
-                Ok(Some(stmt))
-            } else {
-                Ok(Some(maybe_wrap_redirects(scanner, stmt)?))
-            }
-        }
-        other => other,
     }
+}
+
+fn parse_comment_stmt(
+    scanner: &mut Scanner,
+    text: String,
+    span: Span,
+) -> Result<Option<Statement>, Diagnostic> {
+    scanner.next();
+    Ok(Some(Statement {
+        kind: StmtKind::Comment(text),
+        span,
+    }))
+}
+
+/// SB4021–SB4024 reject all postfix composition on compound commands.
+/// Sash idiom: wrap the compound in a function for composition.
+fn reject_compound_postfix(
+    stmt: Statement,
+    scanner: &mut Scanner,
+) -> Result<Option<Statement>, Diagnostic> {
+    let next = scanner.peek().token.clone();
+    if let Some((code, msg)) = compound_postfix_rejection(&next) {
+        return Err(parse_error(stmt.span, code, msg));
+    }
+    Ok(Some(stmt))
+}
+
+/// Lookup table: which SB-code/message a particular trailing token should
+/// raise after a compound command. None ⇒ allowed (statement terminator).
+fn compound_postfix_rejection(next: &Tok) -> Option<(&'static str, String)> {
+    if matches!(
+        next,
+        Tok::Gt
+            | Tok::DblGt
+            | Tok::Lt
+            | Tok::GtAmp
+            | Tok::LtAmp
+            | Tok::LtGt
+            | Tok::AmpGt
+            | Tok::HereString
+    ) {
+        return Some((
+            "SB4021",
+            "redirects on compound commands are not supported — wrap in a function".to_string(),
+        ));
+    }
+    if matches!(next, Tok::Pipe) {
+        return Some((
+            "SB4022",
+            "pipes on compound commands are not supported — wrap in a function".to_string(),
+        ));
+    }
+    if matches!(next, Tok::AndAnd | Tok::OrOr) {
+        return Some((
+            "SB4023",
+            "&& / || on compound commands are not supported — wrap in a function".to_string(),
+        ));
+    }
+    if matches!(next, Tok::Amp) {
+        return Some((
+            "SB4024",
+            "& on compound commands is not supported — wrap in a function".to_string(),
+        ));
+    }
+    None
 }
 
 /// Check if a statement kind is a compound command.
