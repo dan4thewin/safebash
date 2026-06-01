@@ -221,7 +221,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 24 | `handle_trap` | **C** | Multi-shape with signal-name→number table inline. Extract `signal_name_to_num()`. |
-| 21 | `handle_read` | **A** | Hand-rolled flag-parser with awkward `skip_next` state. Extract `parse_read_flags` returning (delim, field_sep, array, vars). |
+| 21 | `handle_read` | **A** | Hand-rolled flag-parser with awkward `skip_next` state. Extract `parse_read_flags` returning (delim, field_sep, array, vars). **Done 2026-06-01 (journal 085).** Extracted `parse_read_flags`, `consume_byte_flag`, `emit_read_inst`. Parent 21 → 4. |
 | 17 | `handle_function_call_or_command` | **C** | Function inlining; mostly linear data plumbing. |
 
 ### sash/src/transform/functions.rs

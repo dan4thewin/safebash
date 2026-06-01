@@ -17,91 +17,134 @@ pub(super) fn handle_read(
     block: BlockId,
 ) -> BlockId {
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    // Parse flags: -d DELIM (record delimiter), -f DELIM (field separator), -a ARR
-    let mut delim: Option<u8> = None;
-    let mut field_sep: Option<u8> = None;
-    let mut array_name: Option<String> = None;
-    let mut skip_next = false;
-    let mut var_names: Vec<&String> = Vec::new();
-    for (i, a) in args.iter().enumerate() {
-        if skip_next {
-            skip_next = false;
-            continue;
-        }
-        if a == "-d" || a.starts_with("-d") {
-            if a.len() > 2 {
-                delim = Some(a.as_bytes()[2]);
-            } else if i + 1 < args.len() {
-                delim = Some(args[i + 1].as_bytes()[0]);
-                skip_next = true;
-            }
-            continue;
-        }
-        if a == "-f" || a.starts_with("-f") {
-            if a.len() > 2 {
-                field_sep = Some(a.as_bytes()[2]);
-            } else if i + 1 < args.len() {
-                field_sep = Some(args[i + 1].as_bytes()[0]);
-                skip_next = true;
-            }
-            continue;
-        }
-        if a == "-a" {
-            if i + 1 < args.len() {
-                array_name = Some(args[i + 1].clone());
-                skip_next = true;
-            }
-            continue;
-        }
-        if a.starts_with('-') {
-            // Reject unknown flags (including -r, -t)
-            state.diagnostics.push(format!(
-                "{}:{}: error [SB5015] read: unknown flag '{}'",
-                stmt.span.line, stmt.span.col, a
-            ));
-            return block;
-        }
-        var_names.push(a);
-    }
-    // Reject -f with single variable
-    if field_sep.is_some() && var_names.len() <= 1 && array_name.is_none() {
+    let Some(flags) = parse_read_flags(&args, stmt, state) else {
+        return block;
+    };
+    if flags.field_sep.is_some() && flags.var_names.len() <= 1 && flags.array_name.is_none() {
         state.diagnostics.push(format!(
             "{}:{}: error [SB5016] read -f: field separator requires multiple target variables",
             stmt.span.line, stmt.span.col
         ));
         return block;
     }
-    // read -a arr: split line into array
-    if let Some(arr) = array_name {
-        ssa.block_mut(block).insts.push(SsaInst::ReadArray {
-            array: arr,
-            fd: 0,
-            delim,
-        });
-        return block;
-    }
-    if var_names.len() == 1 {
-        let target = state.define(var_names[0]);
-        ssa.block_mut(block).insts.push(SsaInst::ReadLine {
-            target,
-            fd: 0,
-            delim,
-            redirects: vec![],
-            clean_pipe: false,
-        });
-        return block;
-    } else if var_names.len() > 1 {
-        let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
-        ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
-            targets,
-            fd: 0,
-            delim,
-            redirects: vec![],
-            clean_pipe: false,
-            field_sep,
-        });
-    }
+    emit_read_inst(&flags, ssa, state, block);
     block
+}
+
+/// Decoded `read` flags. `var_names` borrows from the original args
+/// vector since they're consumed in place to build SSA targets.
+struct ReadFlags<'a> {
+    delim: Option<u8>,
+    field_sep: Option<u8>,
+    array_name: Option<String>,
+    var_names: Vec<&'a String>,
+}
+
+/// Parse `read` flags: `-d DELIM` (record delimiter), `-f DELIM`
+/// (field separator), `-a ARR`. Joined forms (`-dDELIM`, `-fSEP`)
+/// are accepted. Any unknown flag (including `-r`, `-t`) is rejected
+/// with SB5015 — returns `None` so the caller can early-out without
+/// emitting an instruction.
+fn parse_read_flags<'a>(
+    args: &'a [String],
+    stmt: &Statement,
+    state: &mut VersionState,
+) -> Option<ReadFlags<'a>> {
+    let mut flags = ReadFlags {
+        delim: None,
+        field_sep: None,
+        array_name: None,
+        var_names: Vec::new(),
+    };
+    let mut skip_next = false;
+    for (i, a) in args.iter().enumerate() {
+        if skip_next {
+            skip_next = false;
+            continue;
+        }
+        if a == "-d" || a.starts_with("-d") {
+            skip_next = consume_byte_flag(a, &mut flags.delim, args, i);
+            continue;
+        }
+        if a == "-f" || a.starts_with("-f") {
+            skip_next = consume_byte_flag(a, &mut flags.field_sep, args, i);
+            continue;
+        }
+        if a == "-a" {
+            if i + 1 < args.len() {
+                flags.array_name = Some(args[i + 1].clone());
+                skip_next = true;
+            }
+            continue;
+        }
+        if a.starts_with('-') {
+            state.diagnostics.push(format!(
+                "{}:{}: error [SB5015] read: unknown flag '{}'",
+                stmt.span.line, stmt.span.col, a
+            ));
+            return None;
+        }
+        flags.var_names.push(a);
+    }
+    Some(flags)
+}
+
+/// Decode a `-X` byte flag in either joined form (`-Xbyte`) or
+/// split form (`-X next`). Sets `*slot` to the first byte of the
+/// chosen value and returns `true` iff a following arg was consumed
+/// (so the caller can advance `skip_next`).
+fn consume_byte_flag(arg: &str, slot: &mut Option<u8>, args: &[String], i: usize) -> bool {
+    if arg.len() > 2 {
+        *slot = Some(arg.as_bytes()[2]);
+        false
+    } else if i + 1 < args.len() {
+        *slot = Some(args[i + 1].as_bytes()[0]);
+        true
+    } else {
+        false
+    }
+}
+
+/// Emit the right `Read*` SSA instruction for the parsed flags.
+/// `-a` → `ReadArray`; one var → `ReadLine`; many vars → `ReadLineMulti`.
+fn emit_read_inst(
+    flags: &ReadFlags,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    if let Some(arr) = &flags.array_name {
+        ssa.block_mut(block).insts.push(SsaInst::ReadArray {
+            array: arr.clone(),
+            fd: 0,
+            delim: flags.delim,
+        });
+        return;
+    }
+    match flags.var_names.len() {
+        0 => {}
+        1 => {
+            let target = state.define(flags.var_names[0]);
+            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+                target,
+                fd: 0,
+                delim: flags.delim,
+                redirects: vec![],
+                clean_pipe: false,
+            });
+        }
+        _ => {
+            let targets: Vec<VarRef> = flags.var_names.iter().map(|n| state.define(n)).collect();
+            ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
+                targets,
+                fd: 0,
+                delim: flags.delim,
+                redirects: vec![],
+                clean_pipe: false,
+                field_sep: flags.field_sep,
+            });
+        }
+    }
 }
 
 /// Handle `trap` command — convert to signal instructions.
