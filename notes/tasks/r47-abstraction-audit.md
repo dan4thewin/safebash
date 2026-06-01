@@ -198,7 +198,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 37 | `handle_command_substitution` | **A** | Shape recognition: known fn, len, keys, join, echo, generic. Per-builtin `try_X` helpers (pattern #3). |
-| 30 | `arith_to_ssa` | **A** | ArithExpr dispatcher with constant-folding inline in 4 arms. Extract `try_fold_binop`, `try_fold_unop`. |
+| 30 | `arith_to_ssa` | **A** | ArithExpr dispatcher with constant-folding inline in 4 arms. Extract `try_fold_binop`, `try_fold_unop`. **Done 2026-06-01 (journal 073).** CC 30 → 13 (12-arm pure dispatcher floor). Eight helpers: `var_to_ssa`, `binop_to_ssa` (calls `try_fold_binop`), `unaryop_to_ssa` (calls `try_fold_unop`), `incdec_to_ssa`, `compound_assign_to_ssa`, `comma_to_ssa`, `funccall_to_ssa`. `try_fold_unop` now table-driven for all four unary ops (was three inline copy-paste folds with mismatched coverage of `Pos`). Max helper CC 7. |
 | 25 | `fold_arith_op` | **B** | Small ArithOp dispatcher; 1-3 lines per arm. WHITELIST. |
 | 20 | `ir_op_to_ssa` | **B** | 1:1 enum→enum. WHITELIST. |
 
