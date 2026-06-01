@@ -114,7 +114,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 63 | `emit` | **A** | Top hotspot. String-keyed builtin dispatcher. Extract `BuiltinCmd` enum + handler table (pattern #3). |
+| 63 | `emit` | **A** | Top hotspot. String-keyed builtin dispatcher. Extract `BuiltinCmd` enum + handler table (pattern #3). **Done 2026-06-01 (journal 058).** BuiltinCmd already landed; live CC was 42. Extracted inner `match kind` into `emit_command_kind`. `emit` 42 → 15; `emit_command_kind` 28 (new). `emit` out of top-15. |
 
 ### sash/src/codegen/value_handlers.rs
 
