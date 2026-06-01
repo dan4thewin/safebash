@@ -1504,6 +1504,19 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
 
 /// Check for trailing redirects, pipes, and list operators after any statement.
 fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
+    let redirects = parse_trailing_redirects(scanner, stmt.span)?;
+    let mut result = wrap_with_redirects(stmt, redirects);
+    result = parse_trailing_pipeline(scanner, result)?;
+    parse_trailing_list_op(scanner, result)
+}
+
+/// Collect zero or more trailing redirect operators (`>`, `>>`,
+/// `<`, `>&`, `<&`, `<>`, `&>`, `<<<`, and the bare-fd-prefixed
+/// `N>` / `N<` family). Stops at the first non-redirect token.
+fn parse_trailing_redirects(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<Vec<Redirect>, Diagnostic> {
     let mut redirects = Vec::new();
     loop {
         let tok = scanner.peek().token.clone();
@@ -1516,7 +1529,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
             | Tok::LtGt
             | Tok::AmpGt
             | Tok::HereString => {
-                redirects.push(parse_redirect(scanner, stmt.span)?);
+                redirects.push(parse_redirect(scanner, span)?);
             }
             Tok::Word(ref w) if is_fd_number(w) => {
                 let next = scanner.peek_n(1).token.clone();
@@ -1526,7 +1539,7 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
                 ) {
                     let fd: u32 = w.parse().unwrap_or(0);
                     scanner.next();
-                    let mut redir = parse_redirect(scanner, stmt.span)?;
+                    let mut redir = parse_redirect(scanner, span)?;
                     redir.fd = Some(fd);
                     redirects.push(redir);
                 } else {
@@ -1536,94 +1549,104 @@ fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statem
             _ => break,
         }
     }
+    Ok(redirects)
+}
 
-    let mut result = if redirects.is_empty() {
-        stmt
-    } else {
-        let span = stmt.span;
+/// Wrap `stmt` in a `Redirected` node iff there are any redirects;
+/// otherwise return it unchanged.
+fn wrap_with_redirects(stmt: Statement, redirects: Vec<Redirect>) -> Statement {
+    if redirects.is_empty() {
+        return stmt;
+    }
+    let span = stmt.span;
+    Statement {
+        kind: StmtKind::Redirected(Redirected {
+            body: Box::new(stmt),
+            redirects,
+        }),
+        span,
+    }
+}
+
+/// If a `|` follows, consume one more pipeline stage and wrap as a
+/// `Pipeline`. Flattens nested pipelines from the right-hand side
+/// so `a | b | c` produces a flat 3-stage pipeline.
+fn parse_trailing_pipeline(
+    scanner: &mut Scanner,
+    stmt: Statement,
+) -> Result<Statement, Diagnostic> {
+    if !matches!(scanner.peek().token, Tok::Pipe) {
+        return Ok(stmt);
+    }
+    let span = stmt.span;
+    let mut commands = vec![stmt];
+    while matches!(scanner.peek().token, Tok::Pipe) {
+        scanner.next();
+        skip_terminators(scanner);
+        if let Some(next_stmt) = parse_statement(scanner)? {
+            match next_stmt.kind {
+                StmtKind::Pipeline(p) => commands.extend(p.commands),
+                _ => commands.push(next_stmt),
+            }
+            break;
+        }
+    }
+    Ok(if commands.len() > 1 {
         Statement {
-            kind: StmtKind::Redirected(Redirected {
-                body: Box::new(stmt),
-                redirects,
+            kind: StmtKind::Pipeline(Pipeline {
+                commands,
+                negated: false,
             }),
             span,
         }
-    };
+    } else {
+        commands.into_iter().next().unwrap()
+    })
+}
 
-    // Handle trailing pipeline
-    if matches!(scanner.peek().token, Tok::Pipe) {
-        let span = result.span;
-        let mut commands = vec![result];
-        while matches!(scanner.peek().token, Tok::Pipe) {
-            scanner.next();
-            skip_terminators(scanner);
-            if let Some(next_stmt) = parse_statement(scanner)? {
-                match next_stmt.kind {
-                    StmtKind::Pipeline(p) => commands.extend(p.commands),
-                    _ => commands.push(next_stmt),
-                }
-                break;
-            }
-        }
-        if commands.len() > 1 {
-            result = Statement {
-                kind: StmtKind::Pipeline(Pipeline {
-                    commands,
-                    negated: false,
-                }),
-                span,
-            };
-        } else {
-            result = commands.into_iter().next().unwrap();
-        }
-    }
-
-    // Handle trailing list operators
+/// If `&&`, `||`, or `&` follows, wrap `stmt` in a `List` with the
+/// matching `ListOp`. `&` produces `Background` with a synthetic
+/// `true` right-hand side; the binary ops parse one more statement
+/// (defaulting to `true` if the input is malformed).
+fn parse_trailing_list_op(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
     match scanner.peek().token {
-        Tok::AndAnd => {
-            let span = result.span;
-            scanner.next();
-            skip_terminators(scanner);
-            let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
-            result = Statement {
-                kind: StmtKind::List(List {
-                    op: ListOp::And,
-                    left: Box::new(result),
-                    right: Box::new(right),
-                }),
-                span,
-            };
-        }
-        Tok::OrOr => {
-            let span = result.span;
-            scanner.next();
-            skip_terminators(scanner);
-            let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
-            result = Statement {
-                kind: StmtKind::List(List {
-                    op: ListOp::Or,
-                    left: Box::new(result),
-                    right: Box::new(right),
-                }),
-                span,
-            };
-        }
-        Tok::Amp => {
-            let span = result.span;
-            scanner.next();
-            result = Statement {
-                kind: StmtKind::List(List {
-                    op: ListOp::Background,
-                    left: Box::new(result),
-                    right: Box::new(Statement::true_cmd(span)),
-                }),
-                span,
-            };
-        }
-        _ => {}
+        Tok::AndAnd => binary_list_op(scanner, stmt, ListOp::And),
+        Tok::OrOr => binary_list_op(scanner, stmt, ListOp::Or),
+        Tok::Amp => Ok(background_list_op(scanner, stmt)),
+        _ => Ok(stmt),
     }
+}
 
-    Ok(result)
+fn binary_list_op(
+    scanner: &mut Scanner,
+    left: Statement,
+    op: ListOp,
+) -> Result<Statement, Diagnostic> {
+    let span = left.span;
+    scanner.next();
+    skip_terminators(scanner);
+    let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
+    Ok(Statement {
+        kind: StmtKind::List(List {
+            op,
+            left: Box::new(left),
+            right: Box::new(right),
+        }),
+        span,
+    })
+}
+
+fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {
+    let span = left.span;
+    scanner.next();
+    Statement {
+        kind: StmtKind::List(List {
+            op: ListOp::Background,
+            left: Box::new(left),
+            right: Box::new(Statement::true_cmd(span)),
+        }),
+        span,
+    }
 }
 
 // cyclo-allow: Tok → (fd, op) dispatch — 1 arm per redirect op
