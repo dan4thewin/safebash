@@ -740,29 +740,11 @@ pub fn parse_sub_script(content: &str, _span: Span) -> Vec<Statement> {
 
 /// Parse a command substitution after the opening $(
 pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    // Check for $(<file) file slurp
     if matches!(scanner.peek().token, Tok::Lt) {
-        scanner.next();
-        let file_expr = parse_expr(scanner)?;
-        expect_rparen(scanner, span)?;
-        return Ok(Expr {
-            kind: ExprKind::CommandSubstitution(vec![Statement {
-                kind: StmtKind::Command(Command {
-                    name: Expr {
-                        kind: ExprKind::Literal("cat".to_string()),
-                        span: Span { line: 0, col: 0 },
-                    },
-                    args: vec![file_expr],
-                }),
-                span: Span { line: 0, col: 0 },
-            }]),
-            span,
-        });
+        return parse_slurp_form(scanner, span);
     }
 
-    // Collect statements until matching )
     let mut stmts = Vec::new();
-
     loop {
         if scanner.at_eof() {
             break;
@@ -777,68 +759,15 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
                 scanner.next();
             }
             _ => {
-                // Check for special single-word commands
                 if stmts.is_empty() {
                     if let Tok::Word(ref w) = tok {
-                        match w.as_str() {
-                            "status" => {
-                                scanner.next();
-                                if matches!(scanner.peek().token, Tok::RParen) {
-                                    scanner.next();
-                                    return Ok(Expr {
-                                        kind: ExprKind::SimpleExpansion("?".to_string()),
-                                        span,
-                                    });
-                                }
-                                // Reconstruct as command
-                                let mut args = Vec::new();
-                                while !scanner.at_eof()
-                                    && !matches!(
-                                        scanner.peek().token,
-                                        Tok::RParen
-                                            | Tok::Newline
-                                            | Tok::Semi
-                                            | Tok::Pipe
-                                            | Tok::AndAnd
-                                            | Tok::OrOr
-                                    )
-                                {
-                                    args.push(parse_expr(scanner)?);
-                                }
-                                stmts.push(Statement {
-                                    kind: StmtKind::Command(Command {
-                                        name: Expr {
-                                            kind: ExprKind::Literal("status".to_string()),
-                                            span,
-                                        },
-                                        args,
-                                    }),
-                                    span,
-                                });
+                        match try_special_word(scanner, span, w)? {
+                            Some(SpecialWord::Returned(e)) => return Ok(e),
+                            Some(SpecialWord::Continued(s)) => {
+                                stmts.push(s);
                                 continue;
                             }
-                            "getcpid" => {
-                                scanner.next();
-                                if matches!(scanner.peek().token, Tok::RParen) {
-                                    scanner.next();
-                                    return Ok(Expr {
-                                        kind: ExprKind::SimpleExpansion("!".to_string()),
-                                        span,
-                                    });
-                                }
-                                stmts.push(Statement {
-                                    kind: StmtKind::Command(Command {
-                                        name: Expr {
-                                            kind: ExprKind::Literal("getcpid".to_string()),
-                                            span,
-                                        },
-                                        args: vec![],
-                                    }),
-                                    span,
-                                });
-                                continue;
-                            }
-                            _ => {}
+                            None => {}
                         }
                     }
                 }
@@ -854,6 +783,108 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
         kind: ExprKind::CommandSubstitution(stmts),
         span,
     })
+}
+
+/// `$(<file)` — slurp a file via `cat`. Caller has just consumed `(`.
+fn parse_slurp_form(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
+    scanner.next();
+    let file_expr = parse_expr(scanner)?;
+    expect_rparen(scanner, span)?;
+    Ok(Expr {
+        kind: ExprKind::CommandSubstitution(vec![Statement {
+            kind: StmtKind::Command(Command {
+                name: Expr {
+                    kind: ExprKind::Literal("cat".to_string()),
+                    span: Span { line: 0, col: 0 },
+                },
+                args: vec![file_expr],
+            }),
+            span: Span { line: 0, col: 0 },
+        }]),
+        span,
+    })
+}
+
+/// Outcome of probing the first word of a `$(…)` substitution for
+/// one of the bareword shortcuts (`status`, `getcpid`).
+enum SpecialWord {
+    /// Already consumed the entire substitution; return this `Expr`.
+    Returned(Expr),
+    /// Pushed a command statement; caller should `continue` the loop.
+    Continued(Statement),
+}
+
+/// Probe for bareword-shortcut command substitutions:
+/// `$(status)` → `$?`, `$(status args…)` → status command,
+/// `$(getcpid)` → `$!`, `$(getcpid)` (with no args allowed) →
+/// getcpid command. Returns `Ok(None)` when `w` is not one of
+/// these.
+fn try_special_word(
+    scanner: &mut Scanner,
+    span: Span,
+    w: &str,
+) -> Result<Option<SpecialWord>, Diagnostic> {
+    match w {
+        "status" => parse_status_word(scanner, span).map(Some),
+        "getcpid" => parse_getcpid_word(scanner, span).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// `$(status)` returns the `$?` expansion; `$(status args…)`
+/// reconstructs as a regular `status` command (args parsed until
+/// the next pipeline / list / close-paren terminator).
+fn parse_status_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
+    scanner.next();
+    if matches!(scanner.peek().token, Tok::RParen) {
+        scanner.next();
+        return Ok(SpecialWord::Returned(Expr {
+            kind: ExprKind::SimpleExpansion("?".to_string()),
+            span,
+        }));
+    }
+    let mut args = Vec::new();
+    while !scanner.at_eof()
+        && !matches!(
+            scanner.peek().token,
+            Tok::RParen | Tok::Newline | Tok::Semi | Tok::Pipe | Tok::AndAnd | Tok::OrOr
+        )
+    {
+        args.push(parse_expr(scanner)?);
+    }
+    Ok(SpecialWord::Continued(Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal("status".to_string()),
+                span,
+            },
+            args,
+        }),
+        span,
+    }))
+}
+
+/// `$(getcpid)` returns the `$!` expansion; anything else with the
+/// `getcpid` head reconstructs as a no-arg `getcpid` command.
+fn parse_getcpid_word(scanner: &mut Scanner, span: Span) -> Result<SpecialWord, Diagnostic> {
+    scanner.next();
+    if matches!(scanner.peek().token, Tok::RParen) {
+        scanner.next();
+        return Ok(SpecialWord::Returned(Expr {
+            kind: ExprKind::SimpleExpansion("!".to_string()),
+            span,
+        }));
+    }
+    Ok(SpecialWord::Continued(Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal("getcpid".to_string()),
+                span,
+            },
+            args: vec![],
+        }),
+        span,
+    }))
 }
 
 fn expect_rparen(scanner: &mut Scanner, span: Span) -> Result<(), Diagnostic> {

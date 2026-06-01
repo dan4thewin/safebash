@@ -259,7 +259,7 @@ sash/src --top 90` as of 2026-05-26.
 | 44 | `parse_parameter_expansion` | **A** | Multi-stage parser with distinct shape branches. Extract `try_length`, `try_keys`, `try_subscript`, `try_sed`, `try_substring`, `try_transform`, `parse_standard_op`. **Done 2026-06-01 (journal 064).** Eight helpers extracted exactly per the recipe. Parent 44 → 9; max helper CC 9. |
 | 32 | `parse_expr` | **A** | Tok dispatcher with rich per-arm logic. Extract the Tok::Word arm (tilde/@arr) and Tok::Dollar arm ($arr[i] / LINENO). **Done 2026-06-01 (journal 076).** Extracted `parse_word_arm` (5), `parse_dollar_arm` (3) + `try_subscript_arm` (5), `parts_to_expr` (4). Parent 32 → 18 (12-arm dispatcher floor of ~17, plus two `?` and two `&&`). |
 | 24 | `keyword_to_str` | **B** | Pure 1:1 Tok→str. WHITELIST. |
-| 22 | `parse_command_substitution` | **A** | Special-word handling (status, getcpid) inline. Extract `try_special_word(scanner, span) -> Option<Expr>`. |
+| 22 | `parse_command_substitution` | **A** | Special-word handling (status, getcpid) inline. Extract `try_special_word(scanner, span) -> Option<Expr>`. **Done 2026-06-01 (journal 082).** Recipe applied: `try_special_word` (4) returns `Option<SpecialWord>` (`Returned`/`Continued`); concrete helpers `parse_status_word` (5), `parse_getcpid_word` (2); also lifted `parse_slurp_form` (3) for `$(<file)`. Parent 22 → 16. |
 | 20 | `parse_array_literal` | **C** | [key]=val parsing inline. Extract `try_parse_assoc_pair`. |
 | 17 | `string_parts_to_exprs` | **C** | Per-StringPart dispatch; modest. |
 
