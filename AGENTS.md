@@ -154,6 +154,8 @@ Tests live in `sash/tests/`:
 ## Code index
 
 <!-- BEGIN indexnudge AGENTS.md block -->
+## Code index database
+
 This project has an **indexnudge** SQLite database at `.indexnudge-rust.db`
 in the repo root containing every line of source, every symbol definition,
 every call site, every import, and full-text search over the code.
@@ -171,6 +173,7 @@ sqlite3 "$DB" ".schema"
 ```
 
 ### Core query patterns
+
 
 ```bash
 # Project overview
@@ -202,24 +205,202 @@ sqlite3 "$DB" "SELECT DISTINCT callee FROM calls
 sqlite3 "$DB" "SELECT module, line_num FROM imports WHERE file='src/foo.rs';"
 ```
 
+### Complexity hotspots
+
+`symbols.cyclomatic` is the McCabe cyclomatic complexity of each
+function/method (NULL for non-callables). Use it to find refactor
+targets or check whether a change spiked complexity:
+
+```bash
+# Top complexity in the whole codebase
+sqlite3 "$DB" "SELECT name, qualified_name, file, cyclomatic,
+                      end_line - start_line + 1 AS lines
+               FROM symbols
+               WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL
+               ORDER BY cyclomatic DESC LIMIT 20;"
+
+# Hotspots in one module
+sqlite3 "$DB" "SELECT name, cyclomatic FROM symbols
+               WHERE file LIKE 'src/parse/%' AND kind IN ('function','method')
+               ORDER BY cyclomatic DESC LIMIT 10;"
+
+# Distribution — how many functions sit in each bucket?
+sqlite3 "$DB" "SELECT CASE WHEN cyclomatic <= 5  THEN '1-5'
+                           WHEN cyclomatic <= 10 THEN '6-10'
+                           WHEN cyclomatic <= 20 THEN '11-20'
+                           ELSE '21+' END AS bucket,
+                      COUNT(*) AS fns
+               FROM symbols
+               WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL
+               GROUP BY bucket;"
+```
+
+Counting rules: 1 + (each `if`, loop, switch/match arm, `&&`/`||`
+operator, and Rust `?` operator). Nested closures/functions are
+separate symbols and don't contribute to their enclosing function's
+complexity.
+
+### Disambiguating call targets
+
+`calls.callee` stores the short name as written at the call site
+(`find`, `new`, `parse`). When multiple symbols share that short name,
+use the `callee_candidates` view to enumerate possibilities and narrow
+them with what you know about the context:
+
+```bash
+# All candidate targets for one call site
+sqlite3 "$DB" "SELECT candidate_qname, def_file, def_parent
+               FROM callee_candidates
+               WHERE caller_symbol='handle_request' AND callee='render_template';"
+
+# Filter to same-crate / same-directory candidates
+sqlite3 "$DB" "SELECT candidate_qname, def_file FROM callee_candidates
+               WHERE caller_symbol='handle_request' AND callee='render_template'
+                 AND def_file LIKE 'src/%';"
+
+# Use a parent type the calling fn's body already mentions
+sqlite3 "$DB" "SELECT cc.candidate_qname, cc.def_parent
+               FROM callee_candidates cc
+               WHERE cc.caller_symbol='handle_request' AND cc.callee='render_template'
+                 AND EXISTS (
+                   SELECT 1 FROM lines l
+                   WHERE l.file=cc.caller_file
+                     AND l.symbol=cc.caller_symbol
+                     AND l.content LIKE '%' || cc.def_parent || '%');"
+```
+
+The view returns zero rows for foreign/stdlib calls (no local symbol
+to point at) and exactly one row when the short name is unique in the
+codebase. Multiple rows mean ambiguity — narrow with WHERE clauses.
+
+For Rust today, `calls.callee_qname` is always NULL — the indexer does
+not resolve qualified names. The view falls back to "every local
+symbol with a matching short name" and you narrow from there.
+
+
+### Finding string-keyed dispatch
+
+`string_literals` is a view that peels every double-quoted string off
+each source line and classifies its surrounding context. Use it to find
+sites that compare-against / match-against / format-with a specific
+string — far more precise than `lines_fts MATCH '"value"'` which would
+also hit comments, format args, and arbitrary mentions.
+
+| context     | matches lines like                            |
+|-------------|-----------------------------------------------|
+| `compare`   | `if name == "x"` / `if name != "x"`           |
+| `match_pat` | `"x" => ...` / `"x" | "y" => ...`            |
+| `fmt`       | `format!`, `println!`, `panic!`, etc.         |
+| `arg`       | everything else (function arguments, struct literals, etc.) |
+
+```bash
+# Every site that dispatches on one of N builtin names
+sqlite3 "$DB" "SELECT file, line_num, symbol, value, context
+               FROM string_literals
+               WHERE value IN ('echo','true','false','printf','exec')
+                 AND context IN ('compare','match_pat')
+               ORDER BY file, line_num;"
+
+# Where is literal 'X' used as a format-string vs a real arg?
+sqlite3 "$DB" "SELECT context, COUNT(*) FROM string_literals
+               WHERE value LIKE '%error%' GROUP BY context;"
+
+# Find string-keyed dispatch outside the canonical from_name() functions
+sqlite3 "$DB" "SELECT file, line_num, symbol, value FROM string_literals
+               WHERE value IN ('echo','true','false')
+                 AND context = 'match_pat'
+                 AND symbol NOT LIKE '%::from_name';"
+```
+
+Limits: lines that begin with `//` are filtered to suppress comment
+false positives; multi-line raw strings (`r#"..."#` in Rust, backtick
+strings in Go) only appear up to the first newline; escaped `"`
+inside a string can split it early. For the dispatch-discovery use
+case these gaps are rarely material.
+
+### Finding repeated code (extract-helper candidates)
+
+`block_dupes` is a view that surfaces every 4-line block of code that
+appears 2+ times across the codebase. Use it before extracting a helper
+to make sure you find every callsite, not just the obvious ones.
+
+```bash
+# Top duplication hotspots
+sqlite3 "$DB" "SELECT occurrences, substr(replace(shingle, char(10), ' / '), 1, 80) AS preview
+               FROM block_dupes ORDER BY occurrences DESC LIMIT 20;"
+
+# Sites of a specific duplicate (find the locations to refactor)
+sqlite3 "$DB" "SELECT occurrences, sites FROM block_dupes
+               WHERE shingle LIKE '%create_sized_stack_slot%' LIMIT 5;"
+
+# Filter out comma-separated parameter-list noise — focus on real code
+sqlite3 "$DB" "SELECT occurrences, substr(replace(shingle, char(10), ' / '), 1, 100) AS preview
+               FROM block_dupes
+               WHERE shingle NOT LIKE '%,%,%,%,%'
+                 AND length(shingle) > 60
+               ORDER BY occurrences DESC LIMIT 10;"
+```
+
+Limits:
+  - **k=4 fixed.** For a different window size, write your own CTE
+    inline against `lines` with `ROW_NUMBER()` over `(file ORDER BY
+    line_num)`.
+  - **No identifier renaming.** `let ptr = ...` and `let dest = ...`
+    hash differently. In practice the dominant duplicates are
+    literally identical (function signatures, test scaffolding, setup
+    boilerplate), so this matters less than expected.
+  - **Overlapping shingles** within one larger duplicated block all
+    appear separately — merge with your own filter when needed.
+
 ### Schema reference
 
 | Table         | Columns of interest                                                |
 |---------------|--------------------------------------------------------------------|
 | `lines`       | `file, line_num, content, symbol`                                  |
 | `lines_fts`   | FTS5 over `(file, line_num, content, symbol)`                      |
-| `symbols`     | `name, qualified_name, kind, file, start_line, end_line, parent, signature` |
-| `calls`       | `caller_file, caller_symbol, callee, kind, line_num`               |
+| `symbols`     | `name, qualified_name, kind, file, start_line, end_line, parent, signature, cyclomatic` |
+| `calls`       | `caller_file, caller_symbol, callee, callee_qname, kind, line_num`  |
+| `callee_candidates` | view: `calls` ⨝ `symbols` — one row per (call, candidate symbol) |
+| `string_literals` | view: every double-quoted string on every line, with context bucket |
+| `block_dupes` | view: 4-line duplicated runs across the codebase (extract-helper candidates) |
 | `defs`        | `symbol, file, line_num, var, kind`  *(variable/binding definitions)* |
 | `imports`     | `file, module, line_num`                                           |
 | `files`       | `file, lines, language, indexed_mtime`                             |
 | `directories` | `path, file_count, total_lines`                                    |
 
+
 ### Freshness
 
-If the `sqlite3` shim is on `PATH`, the database is re-freshened
-automatically before each query (only changed files are re-parsed).
-You don't need to re-run the indexer after editing source files.
+The database is re-freshened on-demand by the `sqlite3` shim in
+`indexnudge/bin-rust/`. If that shim is first on `PATH`, every shell
+invocation of `sqlite3` re-parses changed files before querying.
+
+**Non-shim callers bypass this.** Anything that links `libsqlite3`
+directly — Python's `sqlite3` module, Rust `rusqlite`, Node
+`better-sqlite3`, `sqlite-utils`, `litecli`, GUI browsers — opens the
+DB file directly and sees whatever snapshot the last shim invocation
+left behind.
+
+| Caller                                | Triggers shim? |
+|---------------------------------------|----------------|
+| `bash$ sqlite3 .indexnudge-rust.db`   | yes            |
+| `python3 -c "import sqlite3; ..."`    | **no**         |
+| Rust `rusqlite::Connection::open()`   | **no**         |
+| Node `better-sqlite3`                 | **no**         |
+| `sqlite-utils`, `litecli`, GUI tools  | **no**         |
+
+When you drive the index from a script, run `indexnudge --freshen`
+explicitly first:
+
+```bash
+indexnudge --freshen     # incremental: only re-parses changed files in cwd
+python3 my_helper.py        # now sees current state
+```
+
+Or wrap the shell call inside the script (`subprocess.run(["sqlite3", ...])`)
+so the shim handles it. Within a single script run, one freshen at the
+top is enough — line numbers stay stable until the script itself mutates
+files.
 
 ### Editing
 
