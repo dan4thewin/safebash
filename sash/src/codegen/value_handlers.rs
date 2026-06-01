@@ -593,8 +593,8 @@ fn emit_string_op_expansion(
 /// Handle SsaValue::CmdSubst — command substitution $(cmd args...).
 ///
 /// TRUST: Command names are resolved at compile time. Builtins (echo, printf)
-#[allow(clippy::too_many_arguments)]
 /// are handled inline without fork. External commands use fork/exec.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],
     redirects: &[crate::ir::Redirect],
@@ -607,192 +607,233 @@ pub(super) fn handle_cmdsub(
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     if let Some(SsaValue::Literal(name)) = argv_values.first() {
-        match name.as_str() {
-            "epochseconds" => {
-                let func_ref = module.declare_func_in_func(externs.epochseconds, builder.func);
-                let call = builder.ins().call(func_ref, &[]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.inst_results(call)[1];
-                return (ptr, len);
-            }
-            "getppid" => {
-                // $(getppid) → parent PID as string
-                let func_ref = module.declare_func_in_func(externs.getppid, builder.func);
-                let call = builder.ins().call(func_ref, &[]);
-                let pid = builder.inst_results(call)[0];
-                let (ptr, len) = emit_int_to_str(builder, module, externs, pid);
-                return (ptr, len);
-            }
-            "getcwd" => {
-                // $(getcwd) → current working directory
-                let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let call = builder.ins().call(func_ref, &[out_addr]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.ins().stack_load(I64, out_slot, 0);
-                return (ptr, len);
-            }
-            "getenv" if argv_values.len() >= 2 => {
-                // $(getenv NAME) — look up environment variable
-                let (name_ptr, name_len) = lower_value(
-                    &argv_values[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-                let getenv_ref = module.declare_func_in_func(externs.getenv, builder.func);
-                let call = builder
-                    .ins()
-                    .call(getenv_ref, &[name_ptr, name_len, out_len_addr]);
-                let val_ptr = builder.inst_results(call)[0];
-                let val_len = builder.ins().stack_load(I64, out_len_slot, 0);
-                return (val_ptr, val_len);
-            }
-            "argc" => {
-                // $(argc) — return number of positional params as string
-                let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-                let argc_base = builder.ins().global_value(I64, argc_gv);
-                let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
-                // argc includes $0, so subtract 1 for $# equivalence
-                let one = builder.ins().iconst(I64, 1);
-                let count = builder.ins().isub(argc_val, one);
-                let (ptr, len) = emit_int_to_str(builder, module, externs, count);
-                return (ptr, len);
-            }
-            "signum" => {
-                // $(signum) — return last signal number as string
-                let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
-                let signum_base = builder.ins().global_value(I64, signum_gv);
-                let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-                let (ptr, len) = emit_int_to_str(builder, module, externs, signum_val);
-                return (ptr, len);
-            }
-            "argv" if argv_values.len() >= 2 => {
-                // $(argv N) — get positional parameter by 1-based index
-                // Aborts if index is out of range (like integer overflow)
-                let (idx_ptr, idx_len) = lower_value(
-                    &argv_values[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call_atoi = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-                let idx = builder.inst_results(call_atoi)[0];
-
-                let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-                let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
-                let call = builder.ins().call(argv_get_ref, &[idx, out_len_addr]);
-                let str_ptr = builder.inst_results(call)[0];
-                let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
-                return (str_ptr, str_len);
-            }
-            "dtoi" if argv_values.len() >= 3 => {
-                // $(dtoi N "str") — decimal to int
-                let (digits_ptr, digits_len) = lower_value(
-                    &argv_values[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
-                let digits = builder.inst_results(call_atoi)[0];
-
-                let (str_ptr, str_len) = lower_value(
-                    &argv_values[2],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                let dtoi_ref = module.declare_func_in_func(externs.dtoi, builder.func);
-                let call = builder.ins().call(dtoi_ref, &[digits, str_ptr, str_len]);
-                let int_val = builder.inst_results(call)[0];
-                // Convert int result to string via itoa
-                let (ptr, len) = emit_int_to_str(builder, module, externs, int_val);
-                return (ptr, len);
-            }
-            "itod" if argv_values.len() >= 3 => {
-                // $(itod N $var) — int to decimal string
-                let (digits_ptr, digits_len) = lower_value(
-                    &argv_values[1],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
-                let digits = builder.inst_results(call_atoi)[0];
-
-                let (val_ptr, val_len) = lower_value(
-                    &argv_values[2],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                // Convert string arg to int
-                let call_val = builder.ins().call(atoi_ref, &[val_ptr, val_len]);
-                let value = builder.inst_results(call_val)[0];
-
-                let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-                let itod_ref = module.declare_func_in_func(externs.itod, builder.func);
-                let call = builder.ins().call(itod_ref, &[digits, value, out_len_addr]);
-                let ptr = builder.inst_results(call)[0];
-                let len = builder.ins().stack_load(I64, out_len_slot, 0);
-                return (ptr, len);
-            }
-            _ => {}
+        if let Some(result) = try_native_intrinsic(
+            name,
+            argv_values,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ) {
+            return result;
         }
     }
-    // Runtime command substitution using composable primitives:
-    //   pipe → fork → (child: close read, dup2 write→stdout, close write, [redirects], exec)
-    //                  (parent: close write, read loop, close read, wait)
+    emit_cmdsub_exec(
+        argv_values,
+        redirects,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    )
+}
 
+/// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
+/// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`,
+/// `$(dtoi N "s")`, `$(itod N V)`. Returns `Some((ptr, len))` when
+/// `name` matches a known intrinsic and the arity check passes; `None`
+/// to fall through to the external-command exec path.
+#[allow(clippy::too_many_arguments)]
+fn try_native_intrinsic(
+    name: &str,
+    argv_values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
+    match name {
+        "epochseconds" => {
+            let func_ref = module.declare_func_in_func(externs.epochseconds, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let ptr = builder.inst_results(call)[0];
+            let len = builder.inst_results(call)[1];
+            Some((ptr, len))
+        }
+        "getppid" => {
+            let func_ref = module.declare_func_in_func(externs.getppid, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let pid = builder.inst_results(call)[0];
+            Some(emit_int_to_str(builder, module, externs, pid))
+        }
+        "getcwd" => {
+            let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
+            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+            let call = builder.ins().call(func_ref, &[out_addr]);
+            let ptr = builder.inst_results(call)[0];
+            let len = builder.ins().stack_load(I64, out_slot, 0);
+            Some((ptr, len))
+        }
+        "getenv" if argv_values.len() >= 2 => {
+            let (name_ptr, name_len) = lower_value(
+                &argv_values[1],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+            let getenv_ref = module.declare_func_in_func(externs.getenv, builder.func);
+            let call = builder
+                .ins()
+                .call(getenv_ref, &[name_ptr, name_len, out_len_addr]);
+            let val_ptr = builder.inst_results(call)[0];
+            let val_len = builder.ins().stack_load(I64, out_len_slot, 0);
+            Some((val_ptr, val_len))
+        }
+        "argc" => {
+            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
+            let argc_base = builder.ins().global_value(I64, argc_gv);
+            let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
+            // argc includes $0, so subtract 1 for $# equivalence
+            let one = builder.ins().iconst(I64, 1);
+            let count = builder.ins().isub(argc_val, one);
+            Some(emit_int_to_str(builder, module, externs, count))
+        }
+        "signum" => {
+            let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
+            let signum_base = builder.ins().global_value(I64, signum_gv);
+            let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+            Some(emit_int_to_str(builder, module, externs, signum_val))
+        }
+        "argv" if argv_values.len() >= 2 => {
+            let (idx_ptr, idx_len) = lower_value(
+                &argv_values[1],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call_atoi = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
+            let idx = builder.inst_results(call_atoi)[0];
+
+            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+            let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
+            let call = builder.ins().call(argv_get_ref, &[idx, out_len_addr]);
+            let str_ptr = builder.inst_results(call)[0];
+            let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
+            Some((str_ptr, str_len))
+        }
+        "dtoi" if argv_values.len() >= 3 => {
+            let (digits_ptr, digits_len) = lower_value(
+                &argv_values[1],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
+            let digits = builder.inst_results(call_atoi)[0];
+
+            let (str_ptr, str_len) = lower_value(
+                &argv_values[2],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let dtoi_ref = module.declare_func_in_func(externs.dtoi, builder.func);
+            let call = builder.ins().call(dtoi_ref, &[digits, str_ptr, str_len]);
+            let int_val = builder.inst_results(call)[0];
+            Some(emit_int_to_str(builder, module, externs, int_val))
+        }
+        "itod" if argv_values.len() >= 3 => {
+            let (digits_ptr, digits_len) = lower_value(
+                &argv_values[1],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
+            let digits = builder.inst_results(call_atoi)[0];
+
+            let (val_ptr, val_len) = lower_value(
+                &argv_values[2],
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let call_val = builder.ins().call(atoi_ref, &[val_ptr, val_len]);
+            let value = builder.inst_results(call_val)[0];
+
+            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
+                StackSlotKind::ExplicitSlot,
+                8,
+                3,
+            ));
+            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+            let itod_ref = module.declare_func_in_func(externs.itod, builder.func);
+            let call = builder.ins().call(itod_ref, &[digits, value, out_len_addr]);
+            let ptr = builder.inst_results(call)[0];
+            let len = builder.ins().stack_load(I64, out_len_slot, 0);
+            Some((ptr, len))
+        }
+        _ => None,
+    }
+}
+
+/// External `$(cmd ...)`: pipe → fork → (child: redirect stdout to
+/// pipe, apply redirects, exec) ‖ (parent: read loop into a 64 KiB
+/// heap buffer, wait, strip trailing newline, propagate DD#55 exit).
+#[allow(clippy::too_many_arguments)]
+fn emit_cmdsub_exec(
+    argv_values: &[SsaValue],
+    redirects: &[crate::ir::Redirect],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     // 1. Build argv on stack (null-terminated pointer array)
     let argc = argv_values.len();
     let argv_size = ((argc + 1) * 8) as u32;
