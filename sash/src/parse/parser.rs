@@ -1185,93 +1185,91 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
 
-    // Check for rejected constructs
-    if let Tok::Word(ref w) = scanner.peek().token {
-        let w = w.clone();
-        match w.as_str() {
-            "eval" => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB4001",
-                    "'eval' is not allowed in the safe subset".to_string(),
-                ));
-            }
-            "source" | "." => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB4002",
-                    "'source' / '.' is not allowed — use sash-convert to inline source files"
-                        .to_string(),
-                ));
-            }
-            "export" => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB5001",
-                    "'export' is not allowed — use FOO=bar before a command instead".to_string(),
-                ));
-            }
-            "declare" | "typeset" => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB5001",
-                    format!("'{}' is not allowed — use int/const/array/map instead", w),
-                ));
-            }
-            "readonly" => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB5001",
-                    "'readonly' is not allowed — use 'const' instead".to_string(),
-                ));
-            }
-            "select" => {
-                scanner.next();
-                return Err(parse_error(
-                    span,
-                    "SB5001",
-                    "'select' is not supported in sash".to_string(),
-                ));
-            }
-            _ => {}
-        }
+    if let Some(diag) = try_rejected_keyword(scanner, span) {
+        return Err(diag);
     }
-
-    // Check if this is an assignment: word = value or word += value
-    // Look for: Word Eq or Word PlusAssign or Word[idx] Eq
-    let maybe_assignment = match &scanner.peek().token {
-        Tok::Word(w) => {
-            // Check if next token is = or +=
-            let w = w.clone();
-            let next = scanner.peek_n(1);
-            matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w)
-        }
-        _ => false,
-    };
-
-    if maybe_assignment {
+    if looks_like_assignment(scanner) {
         return parse_assignment(scanner, span);
     }
-
-    // Check for regex mutation: var =~ s/pat/rep/
-    if let Tok::Word(ref w) = scanner.peek().token {
-        let w = w.clone();
-        if is_identifier(&w) {
-            if let Tok::Word(ref next_w) = scanner.peek_n(1).token {
-                if next_w == "=~" {
-                    return parse_regex_mutation(scanner, span, &w);
-                }
-            }
-        }
+    if let Some(name) = looks_like_regex_mutation(scanner) {
+        return parse_regex_mutation(scanner, span, &name);
     }
-
-    // It's a simple command
     parse_command(scanner, span)
+}
+
+/// If the next word is a banned builtin, consume it and synthesize the
+/// rejection diagnostic. Returns `None` to fall through to normal
+/// command parsing.
+fn try_rejected_keyword(scanner: &mut Scanner, span: Span) -> Option<Diagnostic> {
+    let Tok::Word(w) = &scanner.peek().token else {
+        return None;
+    };
+    let w = w.clone();
+    let (code, msg) = rejected_keyword_msg(&w)?;
+    scanner.next();
+    Some(parse_error(span, code, msg))
+}
+
+/// Lookup table for banned builtins (eval, source/., export, declare/
+/// typeset, readonly, select). Returns the diagnostic code and the
+/// human message, or `None` if the word is not banned. `declare` and
+/// `typeset` share a format string that interpolates the actual word.
+fn rejected_keyword_msg(w: &str) -> Option<(&'static str, String)> {
+    match w {
+        "eval" => Some((
+            "SB4001",
+            "'eval' is not allowed in the safe subset".to_string(),
+        )),
+        "source" | "." => Some((
+            "SB4002",
+            "'source' / '.' is not allowed — use sash-convert to inline source files".to_string(),
+        )),
+        "export" => Some((
+            "SB5001",
+            "'export' is not allowed — use FOO=bar before a command instead".to_string(),
+        )),
+        "declare" | "typeset" => Some((
+            "SB5001",
+            format!("'{}' is not allowed — use int/const/array/map instead", w),
+        )),
+        "readonly" => Some((
+            "SB5001",
+            "'readonly' is not allowed — use 'const' instead".to_string(),
+        )),
+        "select" => Some(("SB5001", "'select' is not supported in sash".to_string())),
+        _ => None,
+    }
+}
+
+/// `name = value` / `name += value` / `name[idx] = value` shape probe.
+/// Doesn't consume any tokens.
+fn looks_like_assignment(scanner: &mut Scanner) -> bool {
+    let Tok::Word(w) = &scanner.peek().token else {
+        return false;
+    };
+    let w = w.clone();
+    let next = scanner.peek_n(1);
+    matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w)
+}
+
+/// `var =~ s/pat/rep/` shape probe. Returns the var name (cloned) if
+/// the pattern matches; doesn't consume any tokens.
+fn looks_like_regex_mutation(scanner: &mut Scanner) -> Option<String> {
+    let Tok::Word(w) = &scanner.peek().token else {
+        return None;
+    };
+    if !is_identifier(w) {
+        return None;
+    }
+    let w = w.clone();
+    let Tok::Word(next_w) = &scanner.peek_n(1).token else {
+        return None;
+    };
+    if next_w == "=~" {
+        Some(w)
+    } else {
+        None
+    }
 }
 
 fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
