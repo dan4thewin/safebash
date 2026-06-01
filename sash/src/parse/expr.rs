@@ -36,35 +36,7 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
         match tok {
             Tok::Word(ref w) => {
                 let w = w.clone();
-                scanner.next();
-                // Handle tilde expansion
-                if w == "~" {
-                    parts.push(Expr {
-                        kind: ExprKind::SimpleExpansion("HOME".to_string()),
-                        span,
-                    });
-                } else if w.starts_with("~/") {
-                    parts.push(Expr {
-                        kind: ExprKind::Concat(vec![
-                            Expr {
-                                kind: ExprKind::SimpleExpansion("HOME".to_string()),
-                                span,
-                            },
-                            Expr {
-                                kind: ExprKind::Literal(w[1..].to_string()),
-                                span,
-                            },
-                        ]),
-                        span,
-                    });
-                } else if w.starts_with('@') && w.len() > 1 {
-                    parts.push(Expr::param(&w[1..], Some("arrvals"), None, span));
-                } else {
-                    parts.push(Expr {
-                        kind: ExprKind::Literal(w),
-                        span,
-                    });
-                }
+                parts.push(parse_word_arm(scanner, w, span));
             }
             Tok::SingleQuoted(ref s) => {
                 let s = s.clone();
@@ -93,52 +65,7 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
             }
             Tok::Dollar(ref name) => {
                 let name = name.clone();
-                scanner.next();
-                // Check for $arr[i] subscript syntax (DD#41)
-                let next_tok = scanner.peek().token.clone();
-                if let Tok::Word(ref w) = next_tok {
-                    if w.starts_with('[') {
-                        if let Some(close) = w.find(']') {
-                            let idx = w[1..close].to_string();
-                            let rest = w[close + 1..].to_string();
-                            scanner.next();
-                            if idx == "@" || idx == "*" {
-                                parts.push(Expr::param(name.clone(), Some("arrvals"), None, span));
-                            } else {
-                                parts.push(Expr {
-                                    kind: ExprKind::Subscript {
-                                        name: name.clone(),
-                                        index: Box::new(Expr {
-                                            kind: ExprKind::Literal(idx),
-                                            span,
-                                        }),
-                                    },
-                                    span,
-                                });
-                            }
-                            if !rest.is_empty() {
-                                parts.push(Expr {
-                                    kind: ExprKind::Literal(rest),
-                                    span,
-                                });
-                            }
-                            continue;
-                        }
-                    }
-                }
-                // DD#24: $LINENO → compile-time literal line number
-                if name == "LINENO" {
-                    let (line, _) = scanner.line_col(start);
-                    parts.push(Expr {
-                        kind: ExprKind::Literal(line.to_string()),
-                        span,
-                    });
-                } else {
-                    parts.push(Expr {
-                        kind: ExprKind::SimpleExpansion(name),
-                        span,
-                    });
-                }
+                parse_dollar_arm(scanner, name, span, start, &mut parts);
             }
             Tok::DollarBrace(ref content) => {
                 let content = content.clone();
@@ -155,7 +82,6 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                 parts.push(arith);
             }
             Tok::Eq => {
-                // = in expression context (e.g., FOO=bar as command arg)
                 scanner.next();
                 parts.push(Expr {
                     kind: ExprKind::Literal("=".to_string()),
@@ -203,6 +129,116 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
         }
     }
 
+    parts_to_expr(parts)
+}
+
+/// `Tok::Word` arm — handles tilde expansion (`~`, `~/path`), the
+/// `@arr` array-values shorthand, and bare literal words. Consumes
+/// the token before returning.
+fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Expr {
+    scanner.next();
+    if w == "~" {
+        Expr {
+            kind: ExprKind::SimpleExpansion("HOME".to_string()),
+            span,
+        }
+    } else if w.starts_with("~/") {
+        Expr {
+            kind: ExprKind::Concat(vec![
+                Expr {
+                    kind: ExprKind::SimpleExpansion("HOME".to_string()),
+                    span,
+                },
+                Expr {
+                    kind: ExprKind::Literal(w[1..].to_string()),
+                    span,
+                },
+            ]),
+            span,
+        }
+    } else if w.starts_with('@') && w.len() > 1 {
+        Expr::param(&w[1..], Some("arrvals"), None, span)
+    } else {
+        Expr {
+            kind: ExprKind::Literal(w),
+            span,
+        }
+    }
+}
+
+/// `Tok::Dollar(name)` arm — checks for `$arr[i]` subscript syntax
+/// (DD#41), `$LINENO` compile-time line number (DD#24), or falls back
+/// to a simple variable expansion. Consumes the `$name` token (and
+/// the `[i]rest` word when subscript is recognised), and pushes one or
+/// two parts onto `parts`.
+fn parse_dollar_arm(
+    scanner: &mut Scanner,
+    name: String,
+    span: Span,
+    start: usize,
+    parts: &mut Vec<Expr>,
+) {
+    scanner.next();
+    if try_subscript_arm(scanner, &name, span, parts) {
+        return;
+    }
+    if name == "LINENO" {
+        let (line, _) = scanner.line_col(start);
+        parts.push(Expr {
+            kind: ExprKind::Literal(line.to_string()),
+            span,
+        });
+    } else {
+        parts.push(Expr {
+            kind: ExprKind::SimpleExpansion(name),
+            span,
+        });
+    }
+}
+
+/// Probe for `$arr[i]` / `$arr[@]` / `$arr[*]` subscript form. The
+/// caller has already consumed `$name`. Returns true (and pushes the
+/// subscript part plus any trailing literal text) if the next token
+/// is a word beginning with `[` and containing `]`.
+fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut Vec<Expr>) -> bool {
+    let Tok::Word(ref w) = scanner.peek().token.clone() else {
+        return false;
+    };
+    if !w.starts_with('[') {
+        return false;
+    }
+    let Some(close) = w.find(']') else {
+        return false;
+    };
+    let idx = w[1..close].to_string();
+    let rest = w[close + 1..].to_string();
+    scanner.next();
+    if idx == "@" || idx == "*" {
+        parts.push(Expr::param(name, Some("arrvals"), None, span));
+    } else {
+        parts.push(Expr {
+            kind: ExprKind::Subscript {
+                name: name.to_string(),
+                index: Box::new(Expr {
+                    kind: ExprKind::Literal(idx),
+                    span,
+                }),
+            },
+            span,
+        });
+    }
+    if !rest.is_empty() {
+        parts.push(Expr {
+            kind: ExprKind::Literal(rest),
+            span,
+        });
+    }
+    true
+}
+
+/// Collapse the collected `parts` into a final `Expr`: empty → error,
+/// single → unwrap, multiple → `Concat`.
+fn parts_to_expr(parts: Vec<Expr>) -> Result<Expr, Diagnostic> {
     match parts.len() {
         0 => Err(parse_error(
             Span { line: 1, col: 1 },
