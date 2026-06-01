@@ -190,7 +190,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 44 | `lower_for` | **A** | Shape dispatcher: dynamic vs static, $@, array iter, $(cmd)→pipe-while-read. Extract `try_lower_dollar_at`, `try_lower_array_iter`, `try_lower_cmdsubst_pipe`. |
+| 44 | `lower_for` | **A** | Shape dispatcher: dynamic vs static, $@, array iter, $(cmd)→pipe-while-read. Extract `try_lower_dollar_at`, `try_lower_array_iter`, `try_lower_cmdsubst_pipe`. **Done 2026-06-01 (journal 067).** CC 35 → 4. Three `try_dispatch_*` helpers + `is_dynamic_single_word` precondition + `detect_array_iter` + `build_pipeline_stages_from_cmdsubst` + `emit_cmdsubst_pipe_while_read` + `lower_for_static`. Max helper CC 10. |
 | 44 | `lower_case` | **A** | Multi-phase: build bodies, wire fall-through, build dispatch, build no-match. Split phases. **Done 2026-06-01 (journal 066).** CC 40 → 2. Seven phase-helpers + three small utilities + `BranchSnapshot` type alias. Plus dead-code removal: two consecutive `for (i, item) in c.items.iter().enumerate()` loops wired terminators on `case_exits`; the first was unconditionally overwritten by the second (left over from before `;;&` resume wiring was added). Removed inline; semantically equivalent, no behavior change. |
 
 ### sash/src/transform/expr_handlers.rs

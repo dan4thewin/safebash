@@ -276,138 +276,181 @@ pub(super) fn lower_for(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // Check if this is a dynamic for loop (e.g., `for x in "$@"`)
+    if let Some(b) = try_dispatch_dollar_at(f, ssa, state, block) {
+        return b;
+    }
+    if let Some(b) = try_dispatch_array(f, ssa, state, block) {
+        return b;
+    }
+    if let Some(b) = try_dispatch_cmdsubst(f, ssa, state, block) {
+        return b;
+    }
+    lower_for_static(f, ssa, state, block)
+}
+
+fn is_dynamic_single_word(f: &For) -> bool {
     let is_dynamic = f
         .words
         .iter()
         .any(|w| !matches!(&w.kind, ExprKind::Literal(_)));
+    is_dynamic && f.words.len() == 1
+}
 
-    if is_dynamic && f.words.len() == 1 {
-        // Check for "$@" — may be SimpleExpansion("@") or DoubleQuoted([SimpleExpansion("@")])
-        let is_dollar_at = match &f.words[0].kind {
-            ExprKind::SimpleExpansion(v) if v == "@" => true,
-            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
-                matches!(&parts[0].kind, ExprKind::SimpleExpansion(v) if v == "@")
-            }
-            _ => false,
-        };
-        if is_dollar_at {
-            return lower_for_dollar_at(f, ssa, state, block);
+fn try_dispatch_dollar_at(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if !is_dynamic_single_word(f) {
+        return None;
+    }
+    let is_dollar_at = match &f.words[0].kind {
+        ExprKind::SimpleExpansion(v) if v == "@" => true,
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
+            matches!(&parts[0].kind, ExprKind::SimpleExpansion(v) if v == "@")
         }
+        _ => false,
+    };
+    is_dollar_at.then(|| lower_for_dollar_at(f, ssa, state, block))
+}
 
-        // Check for "${arr[@]}" or "${!arr[@]}" — array iteration
-        let arr_info = match &f.words[0].kind {
-            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-                Some((pe.name.clone(), false))
-            }
-            ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
-                Some((pe.name.clone(), true))
-            }
-            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
-                ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
-                    Some((pe.name.clone(), false))
-                }
-                ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
-                    Some((pe.name.clone(), true))
-                }
-                _ => None,
-            },
-            // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
-            ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
-                let inner = match &stmts[0].kind {
-                    StmtKind::Redirected(r) => &r.body.kind,
-                    other => other,
-                };
-                if let StmtKind::Command(c) = inner {
-                    if let ExprKind::Literal(cmd_name) = &c.name.kind {
-                        if cmd_name == "keys" {
-                            c.args.first().map(|a| (expr_to_string(a), true))
-                        } else {
-                            None
-                        }
-                    } else {
-                        None
-                    }
-                } else {
-                    None
-                }
-            }
-            _ => None,
-        };
-        if let Some((name, use_keys)) = arr_info {
-            return lower_for_array(f, &name, use_keys, ssa, state, block);
+fn try_dispatch_array(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if !is_dynamic_single_word(f) {
+        return None;
+    }
+    let (name, use_keys) = detect_array_iter(&f.words[0].kind)?;
+    Some(lower_for_array(f, &name, use_keys, ssa, state, block))
+}
+
+fn detect_array_iter(kind: &ExprKind) -> Option<(String, bool)> {
+    match kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            Some((pe.name.clone(), false))
         }
-
-        // Check for $(cmd) — command substitution in for-loop
-        // DD#28/DD#40: silently transform to pipe-while-read
-        // `for x in $(cmd args)` → `cmd args | while read -r x; do body; done`
-        let is_cmd_subst = matches!(&f.words[0].kind, ExprKind::CommandSubstitution(_));
-        if is_cmd_subst {
-            if let ExprKind::CommandSubstitution(stmts) = &f.words[0].kind {
-                // Build pipeline stages from the command substitution
-                let mut stages = vec![];
-                for stmt in stmts {
-                    let cmd_stmt = match &stmt.kind {
-                        StmtKind::Redirected(r) => &r.body,
-                        _ => stmt,
-                    };
-                    if let StmtKind::Command(c) = &cmd_stmt.kind {
-                        let name = expr_to_string(&c.name);
-                        let args: Vec<SsaValue> =
-                            c.args.iter().map(|a| expr_to_value(a, state)).collect();
-                        let redirs = match &stmt.kind {
-                            StmtKind::Redirected(r) => r.redirects.clone(),
-                            _ => vec![],
-                        };
-                        stages.push((resolve_pipeline_command(&name), args, redirs));
-                    }
-                }
-                // Emit pipeline with pipe capture
-                ssa.block_mut(block).insts.push(SsaInst::Pipeline {
-                    stages,
-                    capture_read_fd: true,
-                    checked: true,
-                });
-
-                // Build a while-read loop over the pipe
-                let loop_var = &f.variable;
-                let header = ssa.new_block("for_cmd.hdr");
-                let body_block = ssa.new_block("for_cmd.body");
-                let exit = ssa.new_block("for_cmd.exit");
-
-                ssa.block_mut(block).terminator = Terminator::Goto(header);
-
-                // Header: read -r var from pipe (fd = -1 sentinel)
-                let target = state.define(loop_var);
-                ssa.block_mut(header).insts.push(SsaInst::ReadLine {
-                    target,
-                    fd: -1,
-                    delim: None,
-                    redirects: vec![],
-                    clean_pipe: false,
-                });
-                ssa.block_mut(header).terminator = Terminator::Branch {
-                    condition: "__test_result".to_string(),
-                    true_block: body_block,
-                    false_block: exit,
-                };
-
-                // Body: lower the for-loop body statements
-                state.loop_stack.push((header, exit));
-                let body_end = lower_stmts(&f.body, ssa, state, body_block);
-                state.loop_stack.pop();
-                ssa.block_mut(body_end).terminator = Terminator::Goto(header);
-
-                return exit;
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrkeys") => {
+            Some((pe.name.clone(), true))
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => detect_array_iter(&parts[0].kind),
+        // Sash-native: $(keys arr) in for-loop → array key iteration (DD#41)
+        ExprKind::CommandSubstitution(stmts) if stmts.len() == 1 => {
+            let inner = match &stmts[0].kind {
+                StmtKind::Redirected(r) => &r.body.kind,
+                other => other,
+            };
+            let StmtKind::Command(c) = inner else {
+                return None;
+            };
+            let ExprKind::Literal(cmd_name) = &c.name.kind else {
+                return None;
+            };
+            if cmd_name != "keys" {
+                return None;
             }
+            c.args.first().map(|a| (expr_to_string(a), true))
+        }
+        _ => None,
+    }
+}
+
+fn try_dispatch_cmdsubst(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if !is_dynamic_single_word(f) {
+        return None;
+    }
+    let ExprKind::CommandSubstitution(stmts) = &f.words[0].kind else {
+        return None;
+    };
+    // DD#28/DD#40: silently transform `for x in $(cmd args)` to
+    // `cmd args | while read -r x; do body; done`.
+    let stages = build_pipeline_stages_from_cmdsubst(stmts, state);
+    Some(emit_cmdsubst_pipe_while_read(f, stages, ssa, state, block))
+}
+
+fn build_pipeline_stages_from_cmdsubst(
+    stmts: &[Statement],
+    state: &mut VersionState,
+) -> Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)> {
+    let mut stages = vec![];
+    for stmt in stmts {
+        let cmd_stmt = match &stmt.kind {
+            StmtKind::Redirected(r) => &r.body,
+            _ => stmt,
+        };
+        if let StmtKind::Command(c) = &cmd_stmt.kind {
+            let name = expr_to_string(&c.name);
+            let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+            let redirs = match &stmt.kind {
+                StmtKind::Redirected(r) => r.redirects.clone(),
+                _ => vec![],
+            };
+            stages.push((resolve_pipeline_command(&name), args, redirs));
         }
     }
+    stages
+}
 
-    // Static word list — unroll
+fn emit_cmdsubst_pipe_while_read(
+    f: &For,
+    stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    ssa.block_mut(block).insts.push(SsaInst::Pipeline {
+        stages,
+        capture_read_fd: true,
+        checked: true,
+    });
+
+    let loop_var = &f.variable;
+    let header = ssa.new_block("for_cmd.hdr");
+    let body_block = ssa.new_block("for_cmd.body");
+    let exit = ssa.new_block("for_cmd.exit");
+
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+
+    let target = state.define(loop_var);
+    ssa.block_mut(header).insts.push(SsaInst::ReadLine {
+        target,
+        fd: -1,
+        delim: None,
+        redirects: vec![],
+        clean_pipe: false,
+    });
+    ssa.block_mut(header).terminator = Terminator::Branch {
+        condition: "__test_result".to_string(),
+        true_block: body_block,
+        false_block: exit,
+    };
+
+    state.loop_stack.push((header, exit));
+    let body_end = lower_stmts(&f.body, ssa, state, body_block);
+    state.loop_stack.pop();
+    ssa.block_mut(body_end).terminator = Terminator::Goto(header);
+
+    exit
+}
+
+fn lower_for_static(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
     let exit_block = ssa.new_block("for.exit");
     let mut current = block;
 
-    // Pre-create iteration blocks so continue can jump to the next one
+    // Pre-create iteration blocks so `continue` can jump to the next one.
     let iter_blocks: Vec<BlockId> = f.words.iter().map(|_| ssa.new_block("for.iter")).collect();
 
     for (i, word) in f.words.iter().enumerate() {
@@ -415,7 +458,6 @@ pub(super) fn lower_for(
         ssa.block_mut(current).terminator = Terminator::Goto(iter_block);
         current = iter_block;
 
-        // continue → next iteration (or exit if last)
         let continue_target = if i + 1 < iter_blocks.len() {
             iter_blocks[i + 1]
         } else {
