@@ -6,7 +6,7 @@
 #   - cargo clippy -D warnings (sash, sash-convert)
 #
 # Report-only gates (printed, never block):
-#   - contrib/cyclo.sh --top 10
+#   - top-5 cyclomatic complexity from .indexnudge-rust.db
 #
 # Bypass: SKIP_HOOKS=1 git commit ...     (skips all)
 #         git commit --no-verify ...      (skips all, hard escape)
@@ -59,9 +59,13 @@ done
 [ "$lint_failed" -eq 0 ] || exit 1
 
 # --- complexity (report only) ----------------------------------------
-if [ "${SKIP_COMPLEXITY:-0}" != "1" ] && [ -x contrib/cyclo.sh ]; then
+if [ "${SKIP_COMPLEXITY:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
     gray "pre-commit: complexity report (top 5, report-only)"
-    bash contrib/cyclo.sh sash/src --top 5 2>/dev/null | head -10 | sed 's/^/  /'
+    sqlite3 .indexnudge-rust.db \
+      "SELECT cyclomatic, name, file||':'||start_line FROM symbols
+       WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL
+         AND file LIKE 'sash/src/%'
+       ORDER BY cyclomatic DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /'
 fi
 
 green "pre-commit: all gates green"

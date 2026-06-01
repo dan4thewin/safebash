@@ -235,23 +235,31 @@ sqlite3 "$DB" "SELECT CASE WHEN cyclomatic <= 5  THEN '1-5'
                GROUP BY bucket;"
 ```
 
-Counting rules (McCabe, tuned to match Mozilla `rust-code-analysis`
-for cross-tool comparability):
+Counting rules (matches Mozilla `rust-code-analysis` per-function
+`cyclomatic.sum` — verified against the
+[Mozilla source](https://github.com/mozilla/rust-code-analysis/blob/main/src/metrics/cyclomatic.rs)):
 
   - **+1 base** per function/method
   - **+1 per** `if` (including `if let`), `while` (including
-    `while let`), `for`, `loop`, `match` arm, `let-else`, `&&`/`||`
-    operator, match arm guard (`pat if cond => ...`), Rust `?` operator
-  - **+1 per** closure/`FuncLit` in the enclosing function's body —
-    the closure body itself is a separate symbol with its own CC row
-  - **NOT counted**: `|`-alternated patterns (`A | B | C => ...`)
-    count as one decision, not three — McCabe original convention
+    `while let`), `for`, `loop`, `match` arm, `&&`, `||`, Rust `?`
+    operator
+  - **+1 per** closure / nested-fn inside the function's body, AND
+    its inner decisions accumulate too (Mozilla's `.sum` merges
+    child-space CCs into the parent)
 
-Nested closures and inner functions are separate `symbols` rows; their
-body branching does NOT contribute to the enclosing function's CC
-(the `+1` for the closure expression itself accounts for the branch
-the enclosing fn took to construct it). Nested closures may not appear
-in `symbols` today; the +1 for them is still counted.
+**Explicitly NOT counted** (Mozilla doesn't either, and several were
+tested empirically and rejected):
+
+  - `matches!` macro invocations (tree-sitter sees a macro, doesn't
+    expand it)
+  - `let-else` declarations
+  - match-arm guards (`pat if cond => ...`)
+  - `|`-alternated patterns (`A | B | C => ...` is one decision)
+  - The `match` / `switch` keyword itself (the arms are what counts)
+
+If you've used `rust-code-analysis-cli -m -p path -O json` and read
+`metrics.cyclomatic.sum` from each `kind: function` space, those
+numbers match the values returned here.
 
 ### Disambiguating call targets
 
@@ -432,13 +440,25 @@ might appear more than once.
 - ❌ Routing around the shims with `/usr/bin/grep`, `command cat`, or `awk 'NR>=X && NR<=Y'`
 <!-- END indexnudge AGENTS.md block -->
 
-### Complexity index
+### Complexity index — known residual
 
-`bash contrib/cyclo.sh sash/src --top N` ranks functions by CC.
-The driver honors `.cyclo-allow` at the repo root — one
-`path::function # rationale` per line filters trivially declarative
-high-CC functions out of the report. `--show-allowed` displays what
-was filtered. Use `--no-allow` to bypass the file entirely.
+Use `symbols.cyclomatic` from the indexnudge DB as the canonical CC
+source (counting rules are documented in the indexnudge block above).
+Numbers match Mozilla `rust-code-analysis-cli` exactly for 11 of the
+14 spot-checked hotspots. **Three functions in `sash/src/transform/`
+under-report** due to a tree-sitter-rust grammar version skew vs.
+Mozilla's pinned grammar (MatchArm/MatchArm2 split):
+
+| function                                  | indexnudge | Mozilla | delta |
+|-------------------------------------------|-----------:|--------:|------:|
+| `transform/statements::lower_one`         |         55 |      57 |    −2 |
+| `transform/control_flow::lower_case`      |         40 |      44 |    −4 |
+| `transform/control_flow::lower_for`       |         35 |      44 |    −9 |
+
+When setting absolute thresholds (e.g. enforce CC ≤ 50), allow ~10
+slop on big-match-on-CST-kind functions in `sash/src/transform/`,
+or run `rust-code-analysis-cli -m -p sash/src -O json` and read
+`metrics.cyclomatic.sum` for those three specifically.
 
 ## Completion checklist
 

@@ -50,7 +50,7 @@ coverage:V: build
 	(cd $SASH && cargo llvm-cov report --release)
 
 complexity:V:
-	bash contrib/cyclo.sh sash/src --top 20
+	sqlite3 .indexnudge-rust.db "SELECT cyclomatic AS cc, name, file||':'||start_line AS where_ FROM symbols WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL AND file LIKE 'sash/src/%' ORDER BY cyclomatic DESC LIMIT 20;"
 
 status:V:
 	bash contrib/status-update.sh
