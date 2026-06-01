@@ -1095,42 +1095,59 @@ impl Scanner {
     fn scan_word(&mut self, start: usize) -> SpannedToken {
         let mut word = String::new();
 
+        if let Some(eq_tok) = self.scan_word_chars(start, &mut word) {
+            return eq_tok;
+        }
+
+        if word.is_empty() {
+            return SpannedToken {
+                token: Tok::Eof,
+                span: LexSpan { start, end: start },
+            };
+        }
+
+        SpannedToken {
+            token: classify_word_token(word),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
+    /// Scan word body bytes into `word`. Returns `Some(token)` if a bare `=`
+    /// at word start was consumed (caller emits it directly); returns `None`
+    /// after a normal break / end-of-input.
+    fn scan_word_chars(&mut self, start: usize, word: &mut String) -> Option<SpannedToken> {
         while self.pos < self.source.len() {
             let b = self.source[self.pos];
             match b {
-                // Word-breaking characters
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
                 | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
                 b'=' => {
-                    // = breaks a word IFF we're at word start scanning an assignment
-                    // We need to emit the word accumulated so far, then emit = separately
                     if word.is_empty() {
                         self.pos += 1;
-                        return SpannedToken {
+                        return Some(SpannedToken {
                             token: Tok::Eq,
                             span: LexSpan {
                                 start,
                                 end: self.pos,
                             },
-                        };
+                        });
                     }
-                    // Check if next char is = (== operator in test context)
                     if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                        break; // Let the parser handle ==
+                        break;
                     }
-                    // Otherwise this = is part of assignment — break here so parser
-                    // can see: Word("name") Eq Word("value")
                     break;
                 }
                 b'+' => {
                     if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                        break; // += assignment operator
+                        break;
                     }
                     word.push('+');
                     self.pos += 1;
                 }
                 b'[' | b']' => {
-                    // Include brackets in words (array subscripts, case patterns)
                     word.push(b as char);
                     self.pos += 1;
                 }
@@ -1140,59 +1157,46 @@ impl Scanner {
                 }
             }
         }
+        None
+    }
+}
 
-        if word.is_empty() {
-            // Shouldn't happen but safety
-            return SpannedToken {
-                token: Tok::Eof,
-                span: LexSpan { start, end: start },
-            };
-        }
-
-        // Check for keyword match
-        let token = match word.as_str() {
-            "if" => Tok::If,
-            "then" => Tok::Then,
-            "else" => Tok::Else,
-            "elif" => Tok::Elif,
-            "fi" => Tok::Fi,
-            "while" => Tok::While,
-            "until" => Tok::Until,
-            "do" => Tok::Do,
-            "done" => Tok::Done,
-            "for" => Tok::For,
-            "in" => Tok::In,
-            "case" => Tok::Case,
-            "esac" => Tok::Esac,
-            "fn" => Tok::Fn,
-            "function" => Tok::Function,
-            "local" => Tok::Local,
-            "int" => Tok::Int,
-            "const" => Tok::Const,
-            "array" => Tok::Array,
-            "map" => Tok::Map,
-            "bless" => Tok::Bless,
-            "signal" => Tok::Word("signal".to_string()),
-            "END" => Tok::End,
-            "return" => Tok::Word("return".to_string()),
-            "break" => Tok::Word("break".to_string()),
-            "continue" => Tok::Word("continue".to_string()),
-            "eval" => Tok::Word("eval".to_string()), // keep as word for error reporting
-            "source" => Tok::Word("source".to_string()),
-            "export" => Tok::Word("export".to_string()),
-            "declare" => Tok::Word("declare".to_string()),
-            "typeset" => Tok::Word("typeset".to_string()),
-            "readonly" => Tok::Word("readonly".to_string()),
-            "select" => Tok::Word("select".to_string()),
-            _ => Tok::Word(word),
-        };
-
-        SpannedToken {
-            token,
-            span: LexSpan {
-                start,
-                end: self.pos,
-            },
-        }
+/// Map a scanned word to its keyword token, falling back to `Tok::Word`.
+fn classify_word_token(word: String) -> Tok {
+    match word.as_str() {
+        "if" => Tok::If,
+        "then" => Tok::Then,
+        "else" => Tok::Else,
+        "elif" => Tok::Elif,
+        "fi" => Tok::Fi,
+        "while" => Tok::While,
+        "until" => Tok::Until,
+        "do" => Tok::Do,
+        "done" => Tok::Done,
+        "for" => Tok::For,
+        "in" => Tok::In,
+        "case" => Tok::Case,
+        "esac" => Tok::Esac,
+        "fn" => Tok::Fn,
+        "function" => Tok::Function,
+        "local" => Tok::Local,
+        "int" => Tok::Int,
+        "const" => Tok::Const,
+        "array" => Tok::Array,
+        "map" => Tok::Map,
+        "bless" => Tok::Bless,
+        "signal" => Tok::Word("signal".to_string()),
+        "END" => Tok::End,
+        "return" => Tok::Word("return".to_string()),
+        "break" => Tok::Word("break".to_string()),
+        "continue" => Tok::Word("continue".to_string()),
+        "eval" => Tok::Word("eval".to_string()),
+        "source" => Tok::Word("source".to_string()),
+        "export" => Tok::Word("export".to_string()),
+        "declare" => Tok::Word("declare".to_string()),
+        "typeset" => Tok::Word("typeset".to_string()),
+        "readonly" => Tok::Word("readonly".to_string()),
+        "select" => Tok::Word("select".to_string()),
+        _ => Tok::Word(word),
     }
 }
