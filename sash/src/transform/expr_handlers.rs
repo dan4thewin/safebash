@@ -5,75 +5,90 @@ use crate::ir::*;
 use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
-    // Handle CommandSubstitution → FuncCall if it's a known function,
-    // or CmdSubst for runtime capture
-    if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
-        // Filter out comments — they're not real statements
-        let real_stmts: Vec<&Statement> = stmts
-            .iter()
-            .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
-            .collect();
-        if real_stmts.len() == 1 {
-            // Unwrap Redirected or Suppressed to get the inner Command
-            let (inner, _is_suppressed) = {
-                let mut s = &real_stmts[0].kind;
-                let mut suppressed = false;
-                loop {
-                    match s {
-                        StmtKind::Redirected(r) => {
-                            s = &r.body.kind;
-                        }
-                        StmtKind::Suppressed(inner) => {
-                            s = &inner.kind;
-                            suppressed = true;
-                        }
-                        other => break (other, suppressed),
-                    }
-                }
-            };
-            if let StmtKind::Command(c) = inner {
-                if let ExprKind::Literal(name) = &c.name.kind {
-                    if state.known_functions.contains(name.as_str()) {
-                        return SsaValue::FuncCall(name.clone());
-                    }
-                    // Sash-native builtins: len, keys, join (DD#41) and echo (DD#14)
-                    match BuiltinCmd::from_name(name) {
-                        BuiltinCmd::Len => {
-                            if let Some(v) = try_len_intrinsic(c, state) {
-                                return v;
-                            }
-                        }
-                        BuiltinCmd::Keys => {
-                            if let Some(v) = try_keys_intrinsic(c, state) {
-                                return v;
-                            }
-                        }
-                        BuiltinCmd::Join => {
-                            return join_intrinsic(c, state);
-                        }
-                        BuiltinCmd::Echo => {
-                            return echo_concat(c, state);
-                        }
-                        _ => {}
-                    }
-                }
-
-                // Not an elidable function — emit CmdSubst with argv
-                let mut argv = Vec::new();
-                argv.push(expr_to_value(&c.name, state));
-                for arg in &c.args {
-                    argv.push(expr_to_value(arg, state));
-                }
-                // Capture redirects from Redirected wrapper
-                let redirects = match &real_stmts[0].kind {
-                    StmtKind::Redirected(r) => r.redirects.clone(),
-                    _ => vec![],
-                };
-                return SsaValue::CmdSubst { argv, redirects };
-            }
+    let Some((stmt, name_opt, c)) = single_command_subst(expr) else {
+        return SsaValue::Expr(expr_to_string(expr));
+    };
+    if let Some(name) = name_opt {
+        if state.known_functions.contains(name.as_str()) {
+            return SsaValue::FuncCall(name);
+        }
+        if let Some(v) = try_native_intrinsic(&name, c, state) {
+            return v;
         }
     }
-    SsaValue::Expr(expr_to_string(expr))
+    let argv = build_argv(c, state);
+    let redirects = match &stmt.kind {
+        StmtKind::Redirected(r) => r.redirects.clone(),
+        _ => vec![],
+    };
+    SsaValue::CmdSubst { argv, redirects }
+}
+
+/// Extract `$(<single-command>)` shape: returns the original outer
+/// `Statement` (needed to recover any redirects), the head name if
+/// it's a bare literal, and the inner `Command`. Returns `None` for
+/// anything that isn't a single-command substitution after stripping
+/// `Comment` filler and `Redirected` / `Suppressed` wrappers.
+fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Command)> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let real_stmts: Vec<&Statement> = stmts
+        .iter()
+        .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
+        .collect();
+    if real_stmts.len() != 1 {
+        return None;
+    }
+    let stmt = real_stmts[0];
+    let inner = unwrap_subst_wrappers(&stmt.kind);
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    let name = match &c.name.kind {
+        ExprKind::Literal(n) => Some(n.clone()),
+        _ => None,
+    };
+    Some((stmt, name, c))
+}
+
+/// Peel any number of `Redirected` / `Suppressed` wrappers off a
+/// `StmtKind`, returning a reference to the innermost kind. Used by
+/// `single_command_subst` to look through `$(- foo)` etc.
+fn unwrap_subst_wrappers(mut s: &StmtKind) -> &StmtKind {
+    loop {
+        match s {
+            StmtKind::Redirected(r) => s = &r.body.kind,
+            StmtKind::Suppressed(inner) => s = &inner.kind,
+            other => return other,
+        }
+    }
+}
+
+/// Native-builtin shortcut for `$(name args…)` — len / keys / join
+/// (DD#41) and echo (DD#14). Returns `None` for any other builtin
+/// (or unknown name), letting the caller fall through to the regular
+/// `CmdSubst` argv path.
+fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option<SsaValue> {
+    match BuiltinCmd::from_name(name) {
+        BuiltinCmd::Len => try_len_intrinsic(c, state),
+        BuiltinCmd::Keys => try_keys_intrinsic(c, state),
+        BuiltinCmd::Join => Some(join_intrinsic(c, state)),
+        BuiltinCmd::Echo => Some(echo_concat(c, state)),
+        _ => None,
+    }
+}
+
+/// Build the runtime argv: head followed by every argument lowered
+/// to an `SsaValue` (preserves the `expr_to_value` shape that
+/// `CmdSubst` expects).
+fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
+    let mut argv = Vec::with_capacity(c.args.len() + 1);
+    argv.push(expr_to_value(&c.name, state));
+    for arg in &c.args {
+        argv.push(expr_to_value(arg, state));
+    }
+    argv
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
