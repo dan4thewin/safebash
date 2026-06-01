@@ -163,7 +163,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 19 | `emit_redirects` | **A** | "Literal-path-fast vs dynamic-path-slow" duplicated across Write/Append/Read/HereString arms. Extract `emit_open_path(builder, target, flags) -> ()`. |
+| 19 | `emit_redirects` | **A** | "Literal-path-fast vs dynamic-path-slow" duplicated across Write/Append/Read/HereString arms. Extract `emit_open_path(builder, target, flags) -> ()`. **Done 2026-06-01 (journal 086).** Extracted `default_fd_for_op`, `emit_save_fd`, `emit_one_redirect` (dispatcher), `open_flags_for_op` (Write|Append|Read flag table), `emit_open_redirect` (shared open-and-dup2 for the 3 file-open ops), `emit_dup_output` (>&N), `emit_heredoc_redirect`. Parent 19 → 2. |
 | 16 | `lower_ir_redirect_expr` | **C** | ExprKind→(ptr, len) lowering. Modest. |
 
 ### sash/src/codegen/entry.rs
