@@ -27,52 +27,10 @@ pub(super) fn handle_param_expansion(
     externs: &ExternFuncs,
     _exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // glob: arr=(*.sh) → sash_glob(".", pattern)
-    if operator == "glob" {
-        let dir_str = ".";
-        let dir_id = literals
-            .get(dir_str)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
-        let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
-        let dir_ptr = builder.ins().global_value(I64, dir_gv);
-        let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
-        let pat = operand;
-        let pat_id = literals
-            .get(pat)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", pat));
-        let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
-        let pat_ptr = builder.ins().global_value(I64, pat_gv);
-        let pat_len = builder.ins().iconst(I64, pat.len() as i64);
-        let glob_ref = module.declare_func_in_func(externs.glob, builder.func);
-        let call = builder
-            .ins()
-            .call(glob_ref, &[dir_ptr, dir_len, pat_ptr, pat_len]);
-        let table_ptr = builder.inst_results(call)[0];
-        let zero = builder.ins().iconst(I64, 0);
-        return (table_ptr, zero);
-    }
-    if operator == "glob_regex" {
-        let dir_str = ".";
-        let dir_id = literals
-            .get(dir_str)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
-        let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
-        let dir_ptr = builder.ins().global_value(I64, dir_gv);
-        let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
-        let pat = operand;
-        let pat_id = literals
-            .get(pat)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", pat));
-        let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
-        let pat_ptr = builder.ins().global_value(I64, pat_gv);
-        let pat_len = builder.ins().iconst(I64, pat.len() as i64);
-        let glob_regex_ref = module.declare_func_in_func(externs.glob_regex, builder.func);
-        let call = builder
-            .ins()
-            .call(glob_regex_ref, &[dir_ptr, dir_len, pat_ptr, pat_len]);
-        let table_ptr = builder.inst_results(call)[0];
-        let zero = builder.ins().iconst(I64, 0);
-        return (table_ptr, zero);
+    // glob: arr=(*.sh) → sash_glob(".", pattern); glob_regex uses sash_glob_regex.
+    if operator == "glob" || operator == "glob_regex" {
+        let use_regex = operator == "glob_regex";
+        return emit_glob_expansion(operand, use_regex, builder, module, literals, externs);
     }
 
     // Get the variable's current value
@@ -129,293 +87,16 @@ pub(super) fn handle_param_expansion(
         return (result_ptr, result_len);
     }
     if operator == "regex_replace" {
-        // operand format: "pattern\0replacement\0global"
-        let parts: Vec<&str> = operand.split('\0').collect();
-        let pattern = parts.first().unwrap_or(&"");
-        let replacement = parts.get(1).unwrap_or(&"");
-        let global_s = parts.get(2).unwrap_or(&"0");
-        let global_i: i64 = if *global_s == "1" { 1 } else { 0 };
-
-        let pat_id = literals
-            .get(*pattern)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
-        let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
-        let pat_ptr = builder.ins().global_value(I64, pat_gv);
-        let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
-
-        let rep_id = literals
-            .get(*replacement)
-            .unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
-        let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
-        let rep_ptr = builder.ins().global_value(I64, rep_gv);
-        let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
-
-        let global_val = builder.ins().iconst(I64, global_i);
-        let replace_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-        let call = builder.ins().call(
-            replace_ref,
-            &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
-        );
-        let result_ptr = builder.inst_results(call)[0];
-        let result_len = builder.inst_results(call)[1];
-        return (result_ptr, result_len);
+        return emit_regex_replace_op(operand, s_ptr, s_len, builder, module, literals, externs);
     }
     if operator == "arrkeys"
         || operator == "arrvals"
         || operator == "arrjoin"
         || operator.starts_with("arrvals_")
     {
-        // Build separator-joined list of keys or values from a table.
-        let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-        let call = builder.ins().call(len_ref, &[s_ptr]);
-        let arr_len = builder.inst_results(call)[0];
-
-        // Buffer for concatenated output
-        let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
-            StackSlotKind::ExplicitSlot,
-            4096,
-            3,
-        ));
-        let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
-        // Track current write position
-        let pos_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let zero = builder.ins().iconst(I64, 0);
-        builder.ins().stack_store(zero, pos_slot, 0);
-
-        let item_fn = if operator == "arrkeys" {
-            module.declare_func_in_func(externs.table_key, builder.func)
-        } else {
-            module.declare_func_in_func(externs.table_value, builder.func)
-        };
-
-        // Separator: arrjoin uses operand, others use space
-        let sep_str = if operator == "arrjoin" { operand } else { " " };
-        let sep_len_val = sep_str.len() as i64;
-        let sep_data_id = literals.get(sep_str).unwrap_or_else(|| {
-            panic!("ICE: join separator not interned: {:?}", sep_str);
-        });
-        let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
-        let sep_ptr = builder.ins().global_value(I64, sep_gv);
-        let sep_len = builder.ins().iconst(I64, sep_len_val);
-
-        // Loop index variable
-        let idx_var = builder.declare_var(I64);
-        let zero2 = builder.ins().iconst(I64, 0);
-        builder.def_var(idx_var, zero2);
-
-        let header = builder.create_block();
-        let body = builder.create_block();
-        let exit = builder.create_block();
-        builder.ins().jump(header, &[]);
-
-        // Header: check i < len
-        builder.switch_to_block(header);
-        let i = builder.use_var(idx_var);
-        let done = builder
-            .ins()
-            .icmp(IntCC::SignedGreaterThanOrEqual, i, arr_len);
-        builder.ins().brif(done, exit, &[], body, &[]);
-
-        // Body: get item, append space separator + item bytes
-        builder.switch_to_block(body);
-        builder.seal_block(body);
-
-        let cur_i = builder.use_var(idx_var);
-
-        // Insert space before all items except the first
-        let need_sep = builder.ins().icmp_imm(IntCC::SignedGreaterThan, cur_i, 0);
-        let sep_block = builder.create_block();
-        let item_block = builder.create_block();
-        builder
-            .ins()
-            .brif(need_sep, sep_block, &[], item_block, &[]);
-
-        builder.switch_to_block(sep_block);
-        builder.seal_block(sep_block);
-        let pos = builder.ins().stack_load(I64, pos_slot, 0);
-        let dst = builder.ins().iadd(buf_ptr, pos);
-        // Copy separator bytes
-        let sep_copy_idx = builder.declare_var(I64);
-        let sep_zero = builder.ins().iconst(I64, 0);
-        builder.def_var(sep_copy_idx, sep_zero);
-        let sep_hdr = builder.create_block();
-        let sep_body = builder.create_block();
-        let sep_done = builder.create_block();
-        builder.ins().jump(sep_hdr, &[]);
-
-        builder.switch_to_block(sep_hdr);
-        let sj = builder.use_var(sep_copy_idx);
-        let sep_end = builder
-            .ins()
-            .icmp(IntCC::SignedGreaterThanOrEqual, sj, sep_len);
-        builder.ins().brif(sep_end, sep_done, &[], sep_body, &[]);
-
-        builder.switch_to_block(sep_body);
-        builder.seal_block(sep_body);
-        let sj2 = builder.use_var(sep_copy_idx);
-        let src = builder.ins().iadd(sep_ptr, sj2);
-        let b = builder.ins().load(
-            cranelift_codegen::ir::types::I8,
-            cranelift_codegen::ir::MemFlags::new(),
-            src,
-            0,
+        return emit_array_join_expansion(
+            operator, operand, s_ptr, builder, module, literals, externs,
         );
-        let d = builder.ins().iadd(dst, sj2);
-        builder
-            .ins()
-            .store(cranelift_codegen::ir::MemFlags::new(), b, d, 0);
-        let next_sj = builder.ins().iadd_imm(sj2, 1);
-        builder.def_var(sep_copy_idx, next_sj);
-        builder.ins().jump(sep_hdr, &[]);
-        builder.seal_block(sep_hdr);
-
-        builder.switch_to_block(sep_done);
-        builder.seal_block(sep_done);
-        let pos_after_sep = builder.ins().iadd(pos, sep_len);
-        builder.ins().stack_store(pos_after_sep, pos_slot, 0);
-        builder.ins().jump(item_block, &[]);
-
-        // Get item ptr+len from table
-        builder.switch_to_block(item_block);
-        builder.seal_block(item_block);
-        let cur_i2 = builder.use_var(idx_var);
-        let item_len_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let item_len_addr = builder.ins().stack_addr(I64, item_len_slot, 0);
-        let call = builder.ins().call(item_fn, &[s_ptr, cur_i2, item_len_addr]);
-        let item_ptr = builder.inst_results(call)[0];
-        let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
-
-        // DD#33: per-element operation (if arrvals_OP)
-        let (item_ptr, item_len) = if let Some(sub_op) = operator.strip_prefix("arrvals_") {
-            let op_data_id = literals.get(operand).unwrap_or_else(|| {
-                panic!("ICE: per-element operand not interned: {:?}", operand);
-            });
-            let op_gv = module.declare_data_in_func(*op_data_id, builder.func);
-            let op_ptr = builder.ins().global_value(I64, op_gv);
-            let op_len = builder.ins().iconst(I64, operand.len() as i64);
-            match sub_op {
-                "/" | "//" => {
-                    // ${arr[@]/pat/rep} or ${arr[@]//pat/rep}
-                    // operand is "regex\0replacement" (null-separated)
-                    let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
-                    let pat_did = literals.get(pat_s).unwrap_or_else(|| {
-                        panic!("ICE: pattern not interned: {:?}", pat_s);
-                    });
-                    let rep_did = literals.get(rep_s).unwrap_or_else(|| {
-                        panic!("ICE: replacement not interned: {:?}", rep_s);
-                    });
-                    let p_gv = module.declare_data_in_func(*pat_did, builder.func);
-                    let p_ptr = builder.ins().global_value(I64, p_gv);
-                    let p_len = builder.ins().iconst(I64, pat_s.len() as i64);
-                    let r_gv = module.declare_data_in_func(*rep_did, builder.func);
-                    let r_ptr = builder.ins().global_value(I64, r_gv);
-                    let r_len = builder.ins().iconst(I64, rep_s.len() as i64);
-                    let global = if sub_op == "//" {
-                        builder.ins().iconst(I64, 1)
-                    } else {
-                        builder.ins().iconst(I64, 0)
-                    };
-                    let regex_ref =
-                        module.declare_func_in_func(externs.regex_replace, builder.func);
-                    let call2 = builder.ins().call(
-                        regex_ref,
-                        &[item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global],
-                    );
-                    let res_ptr = builder.inst_results(call2)[0];
-                    let res_len = builder.inst_results(call2)[1];
-                    (res_ptr, res_len)
-                }
-                "#" | "##" => {
-                    // ${arr[@]#pat} or ${arr[@]##pat} — strip prefix
-                    let longest = if sub_op == "##" {
-                        builder.ins().iconst(I64, 1)
-                    } else {
-                        builder.ins().iconst(I64, 0)
-                    };
-                    let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
-                    let call2 = builder
-                        .ins()
-                        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
-                    let offset = builder.inst_results(call2)[0];
-                    let res_ptr = builder.ins().iadd(item_ptr, offset);
-                    let res_len = builder.ins().isub(item_len, offset);
-                    (res_ptr, res_len)
-                }
-                "%" | "%%" => {
-                    // ${arr[@]%pat} or ${arr[@]%%pat} — strip suffix
-                    let longest = if sub_op == "%%" {
-                        builder.ins().iconst(I64, 1)
-                    } else {
-                        builder.ins().iconst(I64, 0)
-                    };
-                    let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
-                    let call2 = builder
-                        .ins()
-                        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
-                    let res_len = builder.inst_results(call2)[0];
-                    (item_ptr, res_len)
-                }
-                _ => (item_ptr, item_len),
-            }
-        } else {
-            (item_ptr, item_len)
-        };
-
-        // Byte-copy loop
-        let copy_idx = builder.declare_var(I64);
-        let czero = builder.ins().iconst(I64, 0);
-        builder.def_var(copy_idx, czero);
-
-        let copy_hdr = builder.create_block();
-        let copy_body = builder.create_block();
-        let copy_done = builder.create_block();
-        builder.ins().jump(copy_hdr, &[]);
-
-        builder.switch_to_block(copy_hdr);
-        let cj = builder.use_var(copy_idx);
-        let copy_end = builder
-            .ins()
-            .icmp(IntCC::SignedGreaterThanOrEqual, cj, item_len);
-        builder.ins().brif(copy_end, copy_done, &[], copy_body, &[]);
-
-        builder.switch_to_block(copy_body);
-        builder.seal_block(copy_body);
-        let cj2 = builder.use_var(copy_idx);
-        let cur_pos = builder.ins().stack_load(I64, pos_slot, 0);
-        let src_addr = builder.ins().iadd(item_ptr, cj2);
-        let byte = builder.ins().load(
-            cranelift_codegen::ir::types::I8,
-            cranelift_codegen::ir::MemFlags::new(),
-            src_addr,
-            0,
-        );
-        let dst_addr = builder.ins().iadd(buf_ptr, cur_pos);
-        builder
-            .ins()
-            .store(cranelift_codegen::ir::MemFlags::new(), byte, dst_addr, 0);
-        let new_pos = builder.ins().iadd_imm(cur_pos, 1);
-        builder.ins().stack_store(new_pos, pos_slot, 0);
-        let next_cj = builder.ins().iadd_imm(cj2, 1);
-        builder.def_var(copy_idx, next_cj);
-        builder.ins().jump(copy_hdr, &[]);
-        builder.seal_block(copy_hdr);
-
-        builder.switch_to_block(copy_done);
-        builder.seal_block(copy_done);
-
-        // Increment loop index
-        let cur_i3 = builder.use_var(idx_var);
-        let next_i = builder.ins().iadd_imm(cur_i3, 1);
-        builder.def_var(idx_var, next_i);
-        builder.ins().jump(header, &[]);
-        builder.seal_block(header);
-
-        builder.switch_to_block(exit);
-        builder.seal_block(exit);
-        let final_len = builder.ins().stack_load(I64, pos_slot, 0);
-        return (buf_ptr, final_len);
     }
 
     // Intern the operand pattern
@@ -426,6 +107,360 @@ pub(super) fn handle_param_expansion(
     let pat_ptr = builder.ins().global_value(I64, pat_gv);
     let pat_len = builder.ins().iconst(I64, operand.len() as i64);
 
+    emit_string_op_expansion(
+        operator, operand, s_ptr, s_len, pat_ptr, pat_len, builder, module, literals, externs,
+    )
+}
+
+fn emit_glob_expansion(
+    operand: &str,
+    use_regex: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let dir_str = ".";
+    let dir_id = literals
+        .get(dir_str)
+        .unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
+    let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
+    let dir_ptr = builder.ins().global_value(I64, dir_gv);
+    let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
+    let pat_id = literals
+        .get(operand)
+        .unwrap_or_else(|| panic!("ICE: missing literal: {}", operand));
+    let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
+    let pat_ptr = builder.ins().global_value(I64, pat_gv);
+    let pat_len = builder.ins().iconst(I64, operand.len() as i64);
+    let func_id = if use_regex {
+        externs.glob_regex
+    } else {
+        externs.glob
+    };
+    let func_ref = module.declare_func_in_func(func_id, builder.func);
+    let call = builder
+        .ins()
+        .call(func_ref, &[dir_ptr, dir_len, pat_ptr, pat_len]);
+    let table_ptr = builder.inst_results(call)[0];
+    let zero = builder.ins().iconst(I64, 0);
+    (table_ptr, zero)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_regex_replace_op(
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    // operand format: "pattern\0replacement\0global"
+    let parts: Vec<&str> = operand.split('\0').collect();
+    let pattern = parts.first().unwrap_or(&"");
+    let replacement = parts.get(1).unwrap_or(&"");
+    let global_s = parts.get(2).unwrap_or(&"0");
+    let global_i: i64 = if *global_s == "1" { 1 } else { 0 };
+
+    let pat_id = literals
+        .get(*pattern)
+        .unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
+    let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
+    let pat_ptr = builder.ins().global_value(I64, pat_gv);
+    let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
+
+    let rep_id = literals
+        .get(*replacement)
+        .unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
+    let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
+    let rep_ptr = builder.ins().global_value(I64, rep_gv);
+    let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
+
+    let global_val = builder.ins().iconst(I64, global_i);
+    let replace_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+    let call = builder.ins().call(
+        replace_ref,
+        &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
+    );
+    let result_ptr = builder.inst_results(call)[0];
+    let result_len = builder.inst_results(call)[1];
+    (result_ptr, result_len)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_array_join_expansion(
+    operator: &str,
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    // Build separator-joined list of keys or values from a table.
+    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+    let call = builder.ins().call(len_ref, &[s_ptr]);
+    let arr_len = builder.inst_results(call)[0];
+
+    // Buffer for concatenated output
+    let buf_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
+    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
+    // Track current write position
+    let pos_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let zero = builder.ins().iconst(I64, 0);
+    builder.ins().stack_store(zero, pos_slot, 0);
+
+    let item_fn = if operator == "arrkeys" {
+        module.declare_func_in_func(externs.table_key, builder.func)
+    } else {
+        module.declare_func_in_func(externs.table_value, builder.func)
+    };
+
+    // Separator: arrjoin uses operand, others use space
+    let sep_str = if operator == "arrjoin" { operand } else { " " };
+    let sep_len_val = sep_str.len() as i64;
+    let sep_data_id = literals.get(sep_str).unwrap_or_else(|| {
+        panic!("ICE: join separator not interned: {:?}", sep_str);
+    });
+    let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
+    let sep_ptr = builder.ins().global_value(I64, sep_gv);
+    let sep_len = builder.ins().iconst(I64, sep_len_val);
+
+    // Loop index variable
+    let idx_var = builder.declare_var(I64);
+    let zero2 = builder.ins().iconst(I64, 0);
+    builder.def_var(idx_var, zero2);
+
+    let header = builder.create_block();
+    let body = builder.create_block();
+    let exit = builder.create_block();
+    builder.ins().jump(header, &[]);
+
+    // Header: check i < len
+    builder.switch_to_block(header);
+    let i = builder.use_var(idx_var);
+    let done = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, i, arr_len);
+    builder.ins().brif(done, exit, &[], body, &[]);
+
+    // Body: get item, append space separator + item bytes
+    builder.switch_to_block(body);
+    builder.seal_block(body);
+
+    let cur_i = builder.use_var(idx_var);
+
+    // Insert space before all items except the first
+    let need_sep = builder.ins().icmp_imm(IntCC::SignedGreaterThan, cur_i, 0);
+    let sep_block = builder.create_block();
+    let item_block = builder.create_block();
+    builder
+        .ins()
+        .brif(need_sep, sep_block, &[], item_block, &[]);
+
+    builder.switch_to_block(sep_block);
+    builder.seal_block(sep_block);
+    let pos = builder.ins().stack_load(I64, pos_slot, 0);
+    let dst = builder.ins().iadd(buf_ptr, pos);
+    // Copy separator bytes
+    let sep_copy_idx = builder.declare_var(I64);
+    let sep_zero = builder.ins().iconst(I64, 0);
+    builder.def_var(sep_copy_idx, sep_zero);
+    let sep_hdr = builder.create_block();
+    let sep_body = builder.create_block();
+    let sep_done = builder.create_block();
+    builder.ins().jump(sep_hdr, &[]);
+
+    builder.switch_to_block(sep_hdr);
+    let sj = builder.use_var(sep_copy_idx);
+    let sep_end = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, sj, sep_len);
+    builder.ins().brif(sep_end, sep_done, &[], sep_body, &[]);
+
+    builder.switch_to_block(sep_body);
+    builder.seal_block(sep_body);
+    let sj2 = builder.use_var(sep_copy_idx);
+    let src = builder.ins().iadd(sep_ptr, sj2);
+    let b = builder.ins().load(
+        cranelift_codegen::ir::types::I8,
+        cranelift_codegen::ir::MemFlags::new(),
+        src,
+        0,
+    );
+    let d = builder.ins().iadd(dst, sj2);
+    builder
+        .ins()
+        .store(cranelift_codegen::ir::MemFlags::new(), b, d, 0);
+    let next_sj = builder.ins().iadd_imm(sj2, 1);
+    builder.def_var(sep_copy_idx, next_sj);
+    builder.ins().jump(sep_hdr, &[]);
+    builder.seal_block(sep_hdr);
+
+    builder.switch_to_block(sep_done);
+    builder.seal_block(sep_done);
+    let pos_after_sep = builder.ins().iadd(pos, sep_len);
+    builder.ins().stack_store(pos_after_sep, pos_slot, 0);
+    builder.ins().jump(item_block, &[]);
+
+    // Get item ptr+len from table
+    builder.switch_to_block(item_block);
+    builder.seal_block(item_block);
+    let cur_i2 = builder.use_var(idx_var);
+    let item_len_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let item_len_addr = builder.ins().stack_addr(I64, item_len_slot, 0);
+    let call = builder.ins().call(item_fn, &[s_ptr, cur_i2, item_len_addr]);
+    let item_ptr = builder.inst_results(call)[0];
+    let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
+
+    // DD#33: per-element operation (if arrvals_OP)
+    let (item_ptr, item_len) = if let Some(sub_op) = operator.strip_prefix("arrvals_") {
+        let op_data_id = literals.get(operand).unwrap_or_else(|| {
+            panic!("ICE: per-element operand not interned: {:?}", operand);
+        });
+        let op_gv = module.declare_data_in_func(*op_data_id, builder.func);
+        let op_ptr = builder.ins().global_value(I64, op_gv);
+        let op_len = builder.ins().iconst(I64, operand.len() as i64);
+        match sub_op {
+            "/" | "//" => {
+                // ${arr[@]/pat/rep} or ${arr[@]//pat/rep}
+                // operand is "regex\0replacement" (null-separated)
+                let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
+                let pat_did = literals.get(pat_s).unwrap_or_else(|| {
+                    panic!("ICE: pattern not interned: {:?}", pat_s);
+                });
+                let rep_did = literals.get(rep_s).unwrap_or_else(|| {
+                    panic!("ICE: replacement not interned: {:?}", rep_s);
+                });
+                let p_gv = module.declare_data_in_func(*pat_did, builder.func);
+                let p_ptr = builder.ins().global_value(I64, p_gv);
+                let p_len = builder.ins().iconst(I64, pat_s.len() as i64);
+                let r_gv = module.declare_data_in_func(*rep_did, builder.func);
+                let r_ptr = builder.ins().global_value(I64, r_gv);
+                let r_len = builder.ins().iconst(I64, rep_s.len() as i64);
+                let global = if sub_op == "//" {
+                    builder.ins().iconst(I64, 1)
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                let regex_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+                let call2 = builder.ins().call(
+                    regex_ref,
+                    &[item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global],
+                );
+                let res_ptr = builder.inst_results(call2)[0];
+                let res_len = builder.inst_results(call2)[1];
+                (res_ptr, res_len)
+            }
+            "#" | "##" => {
+                // ${arr[@]#pat} or ${arr[@]##pat} — strip prefix
+                let longest = if sub_op == "##" {
+                    builder.ins().iconst(I64, 1)
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
+                let call2 = builder
+                    .ins()
+                    .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
+                let offset = builder.inst_results(call2)[0];
+                let res_ptr = builder.ins().iadd(item_ptr, offset);
+                let res_len = builder.ins().isub(item_len, offset);
+                (res_ptr, res_len)
+            }
+            "%" | "%%" => {
+                // ${arr[@]%pat} or ${arr[@]%%pat} — strip suffix
+                let longest = if sub_op == "%%" {
+                    builder.ins().iconst(I64, 1)
+                } else {
+                    builder.ins().iconst(I64, 0)
+                };
+                let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
+                let call2 = builder
+                    .ins()
+                    .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
+                let res_len = builder.inst_results(call2)[0];
+                (item_ptr, res_len)
+            }
+            _ => (item_ptr, item_len),
+        }
+    } else {
+        (item_ptr, item_len)
+    };
+
+    // Byte-copy loop
+    let copy_idx = builder.declare_var(I64);
+    let czero = builder.ins().iconst(I64, 0);
+    builder.def_var(copy_idx, czero);
+
+    let copy_hdr = builder.create_block();
+    let copy_body = builder.create_block();
+    let copy_done = builder.create_block();
+    builder.ins().jump(copy_hdr, &[]);
+
+    builder.switch_to_block(copy_hdr);
+    let cj = builder.use_var(copy_idx);
+    let copy_end = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, cj, item_len);
+    builder.ins().brif(copy_end, copy_done, &[], copy_body, &[]);
+
+    builder.switch_to_block(copy_body);
+    builder.seal_block(copy_body);
+    let cj2 = builder.use_var(copy_idx);
+    let cur_pos = builder.ins().stack_load(I64, pos_slot, 0);
+    let src_addr = builder.ins().iadd(item_ptr, cj2);
+    let byte = builder.ins().load(
+        cranelift_codegen::ir::types::I8,
+        cranelift_codegen::ir::MemFlags::new(),
+        src_addr,
+        0,
+    );
+    let dst_addr = builder.ins().iadd(buf_ptr, cur_pos);
+    builder
+        .ins()
+        .store(cranelift_codegen::ir::MemFlags::new(), byte, dst_addr, 0);
+    let new_pos = builder.ins().iadd_imm(cur_pos, 1);
+    builder.ins().stack_store(new_pos, pos_slot, 0);
+    let next_cj = builder.ins().iadd_imm(cj2, 1);
+    builder.def_var(copy_idx, next_cj);
+    builder.ins().jump(copy_hdr, &[]);
+    builder.seal_block(copy_hdr);
+
+    builder.switch_to_block(copy_done);
+    builder.seal_block(copy_done);
+
+    // Increment loop index
+    let cur_i3 = builder.use_var(idx_var);
+    let next_i = builder.ins().iadd_imm(cur_i3, 1);
+    builder.def_var(idx_var, next_i);
+    builder.ins().jump(header, &[]);
+    builder.seal_block(header);
+
+    builder.switch_to_block(exit);
+    builder.seal_block(exit);
+    let final_len = builder.ins().stack_load(I64, pos_slot, 0);
+    (buf_ptr, final_len)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_string_op_expansion(
+    operator: &str,
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    pat_ptr: cranelift_codegen::ir::Value,
+    pat_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match operator {
         "%%" | "%" => {
             // strip_suffix returns new_len; ptr unchanged

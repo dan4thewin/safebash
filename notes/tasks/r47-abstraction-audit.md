@@ -120,7 +120,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 58 | `handle_param_expansion` | **A** | Per-operator if-chain with repeated "intern, build ptr/len, call extern" boilerplate. Per-operator helpers + dispatch (patterns #1, #4). |
+| 58 | `handle_param_expansion` | **A** | Per-operator if-chain with repeated "intern, build ptr/len, call extern" boilerplate. Per-operator helpers + dispatch (patterns #1, #4). **Done 2026-06-01 (journal 059).** Extracted 4 helpers: `emit_glob_expansion` (4), `emit_regex_replace_op` (4), `emit_array_join_expansion` (15), `emit_string_op_expansion` (20). Parent 58 → 18; out of top-15. |
 | 19 | `handle_cmdsub` | **A** | Same itoa+stack-slot pattern as `handle_param_expansion` (pattern #1). |
 
 ### sash/src/codegen/values.rs
