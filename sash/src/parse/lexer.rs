@@ -986,90 +986,7 @@ impl Scanner {
         while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
             if self.source[self.pos] == b'\\' && self.pos + 1 < self.source.len() {
                 self.pos += 1;
-                match self.source[self.pos] {
-                    b'n' => {
-                        result.push('\n');
-                        self.pos += 1;
-                    }
-                    b't' => {
-                        result.push('\t');
-                        self.pos += 1;
-                    }
-                    b'r' => {
-                        result.push('\r');
-                        self.pos += 1;
-                    }
-                    b'a' => {
-                        result.push('\x07');
-                        self.pos += 1;
-                    }
-                    b'b' => {
-                        result.push('\x08');
-                        self.pos += 1;
-                    }
-                    b'e' | b'E' => {
-                        result.push('\x1b');
-                        self.pos += 1;
-                    }
-                    b'f' => {
-                        result.push('\x0c');
-                        self.pos += 1;
-                    }
-                    b'v' => {
-                        result.push('\x0b');
-                        self.pos += 1;
-                    }
-                    b'\\' => {
-                        result.push('\\');
-                        self.pos += 1;
-                    }
-                    b'\'' => {
-                        result.push('\'');
-                        self.pos += 1;
-                    }
-                    b'"' => {
-                        result.push('"');
-                        self.pos += 1;
-                    }
-                    b'0' => {
-                        self.pos += 1;
-                        let mut val = 0u8;
-                        for _ in 0..3 {
-                            if self.pos < self.source.len()
-                                && self.source[self.pos] >= b'0'
-                                && self.source[self.pos] <= b'7'
-                            {
-                                val = val * 8 + (self.source[self.pos] - b'0');
-                                self.pos += 1;
-                            } else {
-                                break;
-                            }
-                        }
-                        result.push(val as char);
-                    }
-                    b'x' => {
-                        self.pos += 1;
-                        let mut val = 0u8;
-                        for _ in 0..2 {
-                            if self.pos < self.source.len() {
-                                let d = match self.source[self.pos] {
-                                    b'0'..=b'9' => self.source[self.pos] - b'0',
-                                    b'a'..=b'f' => self.source[self.pos] - b'a' + 10,
-                                    b'A'..=b'F' => self.source[self.pos] - b'A' + 10,
-                                    _ => break,
-                                };
-                                val = val * 16 + d;
-                                self.pos += 1;
-                            }
-                        }
-                        result.push(val as char);
-                    }
-                    other => {
-                        result.push('\\');
-                        result.push(other as char);
-                        self.pos += 1;
-                    }
-                }
+                self.consume_ansi_c_escape(&mut result);
             } else {
                 result.push(self.source[self.pos] as char);
                 self.pos += 1;
@@ -1085,6 +1002,71 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// `\…` body inside `$'…'`. `self.pos` points at the byte after `\`.
+    /// Tries `simple_escape` first, then `\0NNN` octal and `\xHH` hex,
+    /// then falls back to literal `\<byte>` passthrough.
+    fn consume_ansi_c_escape(&mut self, out: &mut String) {
+        let c = self.source[self.pos];
+        if let Some(ch) = simple_escape(c) {
+            out.push(ch);
+            self.pos += 1;
+            return;
+        }
+        match c {
+            b'0' => {
+                self.pos += 1;
+                out.push(self.scan_ansi_c_octal() as char);
+            }
+            b'x' => {
+                self.pos += 1;
+                out.push(self.scan_ansi_c_hex() as char);
+            }
+            other => {
+                out.push('\\');
+                out.push(other as char);
+                self.pos += 1;
+            }
+        }
+    }
+
+    /// Up to three octal digits after `\0`. Stops at the first non-octal
+    /// byte or EOI.
+    fn scan_ansi_c_octal(&mut self) -> u8 {
+        let mut val = 0u8;
+        for _ in 0..3 {
+            if self.pos >= self.source.len() {
+                break;
+            }
+            let b = self.source[self.pos];
+            if !(b'0'..=b'7').contains(&b) {
+                break;
+            }
+            val = val.wrapping_mul(8).wrapping_add(b - b'0');
+            self.pos += 1;
+        }
+        val
+    }
+
+    /// Up to two hex digits after `\x`. Stops at the first non-hex byte
+    /// or EOI.
+    fn scan_ansi_c_hex(&mut self) -> u8 {
+        let mut val = 0u8;
+        for _ in 0..2 {
+            if self.pos >= self.source.len() {
+                break;
+            }
+            let d = match self.source[self.pos] {
+                b'0'..=b'9' => self.source[self.pos] - b'0',
+                b'a'..=b'f' => self.source[self.pos] - b'a' + 10,
+                b'A'..=b'F' => self.source[self.pos] - b'A' + 10,
+                _ => break,
+            };
+            val = val.wrapping_mul(16).wrapping_add(d);
+            self.pos += 1;
+        }
+        val
     }
 
     // ── Word scanning ─────────────────────────────────────────────────
@@ -1199,4 +1181,25 @@ fn classify_word_token(word: String) -> Tok {
         "select" => Tok::Word("select".to_string()),
         _ => Tok::Word(word),
     }
+}
+
+/// Named-escape table for `$'…'`: `\n`, `\t`, `\r`, `\a`, `\b`, `\e`/`\E`,
+/// `\f`, `\v`, `\\`, `\'`, `\"`. Returns `None` for anything else (octal
+/// `\0NNN`, hex `\xHH`, or unknown — caller handles).
+// cyclo-allow: pure escape-byte → char table; arms == CC by construction
+fn simple_escape(b: u8) -> Option<char> {
+    Some(match b {
+        b'n' => '\n',
+        b't' => '\t',
+        b'r' => '\r',
+        b'a' => '\x07',
+        b'b' => '\x08',
+        b'e' | b'E' => '\x1b',
+        b'f' => '\x0c',
+        b'v' => '\x0b',
+        b'\\' => '\\',
+        b'\'' => '\'',
+        b'"' => '"',
+        _ => return None,
+    })
 }

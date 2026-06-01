@@ -241,7 +241,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 47 | `scan_word` | **A** | Byte-match dispatcher + 30-arm keyword table. Extract `keyword_token(&str) -> Option<Tok>`. **Done 2026-06-01 (journal 063).** Two-phase split: `scan_word_chars` (12) + `classify_word_token` (35, intrinsic). Parent 47 → 3. |
-| 30 | `scan_ansi_c_quoted` | **A** | 14-arm escape table (`\n`/`\t`/`\r`/…) + inline octal and hex scanners. Extract `simple_escape(byte) -> Option<char>` + share hex/octal scanners (pattern #7). |
+| 30 | `scan_ansi_c_quoted` | **A** | 14-arm escape table (`\n`/`\t`/`\r`/…) + inline octal and hex scanners. Extract `simple_escape(byte) -> Option<char>` + share hex/octal scanners (pattern #7). **Done 2026-06-01 (journal 075).** Extracted `simple_escape` (13 CC, cyclo-allow'd), `consume_ansi_c_escape`, `scan_ansi_c_octal`, `scan_ansi_c_hex`. Parent 30 → 6. |
 | 18 | `scan_brace_expansion` | **C** | Bracket-counting lexer with quote-state. Modest. |
 | 16 | `scan_dollar` | **B** | Pure byte-dispatcher. WHITELIST. |
 | 15 | `next_token` | **B** | Already cleared in r47 phase 6. WHITELIST. |
