@@ -5,7 +5,7 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlot, StackSlotData, StackSlotKind};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
@@ -270,74 +270,13 @@ pub(super) fn lower_value(
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
-            let data_id = literals[s];
-            let gv = module.declare_data_in_func(data_id, builder.func);
-            let ptr = builder.ins().global_value(I64, gv);
-            let len = builder.ins().iconst(I64, s.len() as i64);
-            (ptr, len)
+            lower_literal_value(s, builder, module, literals)
         }
         SsaValue::Var(vref) => {
-            let key = vref.display();
-            // Special: $? — read exit_status_var and itoa
-            let base = if let Some(idx) = key.rfind('_') {
-                let suffix = &key[idx + 1..];
-                if suffix.chars().all(|c| c.is_ascii_digit()) {
-                    &key[..idx]
-                } else {
-                    key.as_str()
-                }
-            } else {
-                key.as_str()
-            };
-            if base == "?" {
-                if let Some(esv) = exit_status_var {
-                    let status = builder.use_var(esv);
-                    let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, status);
-                    return (res_ptr, res_len);
-                }
-            }
-            if base == "$" {
-                let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
-                let call = builder.ins().call(getpid_ref, &[]);
-                let pid = builder.inst_results(call)[0];
-                let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, pid);
-                return (res_ptr, res_len);
-            }
-            let sv = match vars.get(&key) {
-                Some(v) => v,
-                None => {
-                    // Undefined variable → empty string
-                    let zero = builder.ins().iconst(I64, 0);
-                    return (zero, zero);
-                }
-            };
-            if sv.is_int() {
-                // Int var used in string context: itoa
-                let int_val = builder.use_var(*sv.as_int());
-                emit_int_to_str(builder, module, externs, int_val)
-            } else {
-                let ptr = builder.use_var(sv.str_ptr());
-                let len = builder.use_var(sv.str_len());
-                (ptr, len)
-            }
+            lower_var_value(vref, builder, module, vars, externs, exit_status_var)
         }
         SsaValue::FuncCall(name) => {
-            if let Some(constant) = func_constants.get(name.as_str()) {
-                // Constant-folded: the function output is a known string
-                let data_id = literals.get(constant.as_str()).unwrap_or_else(|| {
-                    panic!("ICE: constant-folded string not interned: {:?}", constant);
-                });
-                let gv = module.declare_data_in_func(*data_id, builder.func);
-                let ptr = builder.ins().global_value(I64, gv);
-                let len = builder.ins().iconst(I64, constant.len() as i64);
-                (ptr, len)
-            } else {
-                // Non-constant function — not yet supported
-                panic!(
-                    "ICE: non-constant elidable function call not yet supported: {}",
-                    name
-                );
-            }
+            lower_func_call_value(name, builder, module, literals, func_constants)
         }
         SsaValue::IntFuncCall { name, .. } => {
             panic!(
@@ -345,46 +284,16 @@ pub(super) fn lower_value(
                 name
             );
         }
-        SsaValue::Concat(parts) => {
-            // Runtime string concatenation: fold left with sash_concat
-            assert!(!parts.is_empty(), "empty Concat");
-            let (mut acc_ptr, mut acc_len) = lower_value(
-                &parts[0],
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            for part in &parts[1..] {
-                let (p_ptr, p_len) = lower_value(
-                    part,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                // Stack slot for out_len
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
-                let call = builder
-                    .ins()
-                    .call(concat_ref, &[acc_ptr, acc_len, p_ptr, p_len, out_addr]);
-                acc_ptr = builder.inst_results(call)[0];
-                acc_len = builder.ins().stack_load(I64, out_slot, 0);
-            }
-            (acc_ptr, acc_len)
-        }
+        SsaValue::Concat(parts) => lower_concat_value(
+            parts,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ParamExpansion {
             var,
             operator,
@@ -414,7 +323,6 @@ pub(super) fn lower_value(
             let rhs = builder.ins().iconst(I64, *operand);
             let result =
                 emit_arith_op(*op, int_val, rhs, builder, module, externs, exit_status_var);
-            // Convert back to string via itoa
             emit_int_to_str(builder, module, externs, result)
         }
         SsaValue::ArithBinOp { left, op, right } => {
@@ -453,270 +361,488 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
-        SsaValue::AssocArray(pairs) => {
-            // Create a hash table via sash_table_new, populate with sash_table_set.
-            // Store table_ptr in the variable's VarSlot (ptr slot = table, len slot = unused).
-            let capacity = core::cmp::max(pairs.len() * 2, 8) as i64;
-            let cap_val = builder.ins().iconst(I64, capacity);
-            let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
-            let call = builder.ins().call(new_ref, &[cap_val]);
-            let table_ptr = builder.inst_results(call)[0];
-
-            let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-            for (key, val_ssa) in pairs.iter() {
-                let key_data = literals.get(key.as_str()).unwrap_or_else(|| {
-                    panic!("ICE: assoc array key not interned: {}", key);
-                });
-                let key_gv = module.declare_data_in_func(*key_data, builder.func);
-                let key_ptr = builder.ins().global_value(I64, key_gv);
-                let key_len = builder.ins().iconst(I64, key.len() as i64);
-                let (val_ptr, val_len) = lower_value(
-                    val_ssa,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                builder
-                    .ins()
-                    .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
-            }
-            let zero = builder.ins().iconst(I64, 0);
-            (table_ptr, zero) // ptr = table handle, len = unused
-        }
+        SsaValue::AssocArray(pairs) => lower_assoc_array_value(
+            pairs,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::Subscript {
             array,
             index,
             is_integer_key,
-        } => {
-            // Look up key in the hash table via sash_table_get
-            let array_key = format!("{}_0", array);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys()
-                    .find(|k| k.starts_with(&format!("{}_", array)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-            });
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            let (key_ptr, key_len) = if *is_integer_key {
-                // Integer key: convert index to i64, store on stack, use raw 8 bytes as key
-                let idx_int = lower_value_as_int(
-                    index,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                );
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                builder.ins().stack_store(idx_int, idx_slot, 0);
-                let kp = builder.ins().stack_addr(I64, idx_slot, 0);
-                let kl = builder.ins().iconst(I64, 8);
-                (kp, kl)
-            } else {
-                // String key: use string bytes directly
-                lower_value(
-                    index,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                )
-            };
-
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let get_ref = module.declare_func_in_func(externs.table_get, builder.func);
-            let call = builder
-                .ins()
-                .call(get_ref, &[table_ptr, key_ptr, key_len, out_addr]);
-            let val_ptr = builder.inst_results(call)[0];
-            let val_len = builder.ins().stack_load(I64, out_slot, 0);
-            (val_ptr, val_len)
-        }
+        } => lower_subscript_value(
+            array,
+            index,
+            *is_integer_key,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ArgvIndex(idx_ref) => {
-            // Load argv[atoi(idx) + 1]: dynamic positional param access
-            let sv = vars
-                .get(&idx_ref.display())
-                .unwrap_or_else(|| panic!("ICE: undefined index var: {}", idx_ref.display()));
-            let idx_ptr = builder.use_var(sv.str_ptr());
-            let idx_len = builder.use_var(sv.str_len());
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-            let idx_int = builder.inst_results(call)[0];
-            // offset = (idx + 1) * 8 — positional params are 1-indexed
-            let one = builder.ins().iconst(I64, 1);
-            let idx_plus_1 = builder.ins().iadd(idx_int, one);
-            let eight = builder.ins().iconst(I64, 8);
-            let offset = builder.ins().imul(idx_plus_1, eight);
-            // Load from sash_argv
-            let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-            let argv_ptr = builder.ins().global_value(I64, argv_gv);
-            let argv_val = builder.ins().load(I64, MemFlags::trusted(), argv_ptr, 0);
-            let arg_addr = builder.ins().iadd(argv_val, offset);
-            let arg_ptr = builder.ins().load(I64, MemFlags::trusted(), arg_addr, 0);
-            let arg_len = emit_strlen(builder, module, externs.strlen, arg_ptr);
-            (arg_ptr, arg_len)
+            lower_argv_index_value(idx_ref, builder, module, vars, externs)
         }
         SsaValue::TableValue { array, index } => {
-            // Look up the table pointer for the array
-            let array_key = format!("{}_0", array);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys()
-                    .find(|k| k.starts_with(&format!("{}_", array)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-            });
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            // Convert index var to i64
-            let idx_sv = vars
-                .get(&index.display())
-                .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
-            let idx_ptr = builder.use_var(idx_sv.str_ptr());
-            let idx_len = builder.use_var(idx_sv.str_len());
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-            let idx_int = builder.inst_results(call)[0];
-
-            // sash_table_value(table, index, out_len_ptr) -> val_ptr
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
-            let call2 = builder.ins().call(tv_ref, &[table_ptr, idx_int, out_addr]);
-            let val_ptr = builder.inst_results(call2)[0];
-            let val_len = builder.ins().stack_load(I64, out_slot, 0);
-            (val_ptr, val_len)
+            lower_table_value_value(array, index, builder, module, vars, externs)
         }
         SsaValue::TableKey { array, index } => {
-            let array_key = format!("{}_0", array);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys()
-                    .find(|k| k.starts_with(&format!("{}_", array)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-            });
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            let idx_sv = vars
-                .get(&index.display())
-                .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
-            let idx_ptr = builder.use_var(idx_sv.str_ptr());
-            let idx_len = builder.use_var(idx_sv.str_len());
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-            let idx_int = builder.inst_results(call)[0];
-
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let tk_ref = module.declare_func_in_func(externs.table_key, builder.func);
-            let call2 = builder.ins().call(tk_ref, &[table_ptr, idx_int, out_addr]);
-            let key_ptr = builder.inst_results(call2)[0];
-            let key_len = builder.ins().stack_load(I64, out_slot, 0);
-            (key_ptr, key_len)
+            lower_table_key_value(array, index, builder, module, vars, externs)
         }
         SsaValue::Ternary {
             cond,
             true_val,
             false_val,
-        } => {
-            let cond_int = lower_value_as_int(
-                cond,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-            );
-            let zero = builder.ins().iconst(I64, 0);
-            let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
-            let (t_ptr, t_len) = lower_value(
-                true_val,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            let (f_ptr, f_len) = lower_value(
-                false_val,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            let r_ptr = builder.ins().select(is_true, t_ptr, f_ptr);
-            let r_len = builder.ins().select(is_true, t_len, f_len);
-            (r_ptr, r_len)
-        }
-        SsaValue::IndexedArray(elems) => {
-            // Create a hash table with integer keys 0, 1, 2, ...
-            let capacity = core::cmp::max(elems.len() * 2, 8) as i64;
-            let cap_val = builder.ins().iconst(I64, capacity);
-            let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
-            let call = builder.ins().call(new_ref, &[cap_val]);
-            let table_ptr = builder.inst_results(call)[0];
+        } => lower_ternary_value(
+            cond,
+            true_val,
+            false_val,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
+        SsaValue::IndexedArray(elems) => lower_indexed_array_value(
+            elems,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
+    }
+}
 
-            let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-            for (i, val_ssa) in elems.iter().enumerate() {
-                // Key is the raw i64 bytes of the index
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let idx_val = builder.ins().iconst(I64, i as i64);
-                builder.ins().stack_store(idx_val, idx_slot, 0);
-                let key_ptr = builder.ins().stack_addr(I64, idx_slot, 0);
-                let key_len = builder.ins().iconst(I64, 8);
-                let (val_ptr, val_len) = lower_value(
-                    val_ssa,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    exit_status_var,
-                );
-                builder
-                    .ins()
-                    .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
-            }
-            let zero = builder.ins().iconst(I64, 0);
-            (table_ptr, zero)
+/// Stack slot for "out_len" arguments to extern calls returning (ptr, len-by-ref).
+fn alloc_out_slot(builder: &mut FunctionBuilder) -> (StackSlot, cranelift_codegen::ir::Value) {
+    let slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let addr = builder.ins().stack_addr(I64, slot, 0);
+    (slot, addr)
+}
+
+/// Look up the table pointer for an array: prefer `name_0`, else find any
+/// `name_*` and use its slot's str_ptr.
+fn lookup_array_table(
+    array: &str,
+    vars: &HashMap<String, VarSlot>,
+    builder: &mut FunctionBuilder,
+) -> cranelift_codegen::ir::Value {
+    let array_key = format!("{}_0", array);
+    let sv = vars.get(&array_key).unwrap_or_else(|| {
+        vars.keys()
+            .find(|k| k.starts_with(&format!("{}_", array)))
+            .and_then(|k| vars.get(k))
+            .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
+    });
+    builder.use_var(sv.str_ptr())
+}
+
+fn lower_literal_value(
+    s: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let data_id = literals[s];
+    let gv = module.declare_data_in_func(data_id, builder.func);
+    let ptr = builder.ins().global_value(I64, gv);
+    let len = builder.ins().iconst(I64, s.len() as i64);
+    (ptr, len)
+}
+
+fn lower_var_value(
+    vref: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let key = vref.display();
+    // Strip numeric SSA version suffix to get base name.
+    let base = if let Some(idx) = key.rfind('_') {
+        let suffix = &key[idx + 1..];
+        if suffix.chars().all(|c| c.is_ascii_digit()) {
+            &key[..idx]
+        } else {
+            key.as_str()
+        }
+    } else {
+        key.as_str()
+    };
+    if base == "?" {
+        if let Some(esv) = exit_status_var {
+            let status = builder.use_var(esv);
+            return emit_int_to_str(builder, module, externs, status);
         }
     }
+    if base == "$" {
+        let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
+        let call = builder.ins().call(getpid_ref, &[]);
+        let pid = builder.inst_results(call)[0];
+        return emit_int_to_str(builder, module, externs, pid);
+    }
+    let sv = match vars.get(&key) {
+        Some(v) => v,
+        None => {
+            let zero = builder.ins().iconst(I64, 0);
+            return (zero, zero);
+        }
+    };
+    if sv.is_int() {
+        let int_val = builder.use_var(*sv.as_int());
+        emit_int_to_str(builder, module, externs, int_val)
+    } else {
+        let ptr = builder.use_var(sv.str_ptr());
+        let len = builder.use_var(sv.str_len());
+        (ptr, len)
+    }
+}
+
+fn lower_func_call_value(
+    name: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    if let Some(constant) = func_constants.get(name) {
+        let data_id = literals.get(constant.as_str()).unwrap_or_else(|| {
+            panic!("ICE: constant-folded string not interned: {:?}", constant);
+        });
+        let gv = module.declare_data_in_func(*data_id, builder.func);
+        let ptr = builder.ins().global_value(I64, gv);
+        let len = builder.ins().iconst(I64, constant.len() as i64);
+        (ptr, len)
+    } else {
+        panic!(
+            "ICE: non-constant elidable function call not yet supported: {}",
+            name
+        );
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_concat_value(
+    parts: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    assert!(!parts.is_empty(), "empty Concat");
+    let (mut acc_ptr, mut acc_len) = lower_value(
+        &parts[0],
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    for part in &parts[1..] {
+        let (p_ptr, p_len) = lower_value(
+            part,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        );
+        let (out_slot, out_addr) = alloc_out_slot(builder);
+        let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
+        let call = builder
+            .ins()
+            .call(concat_ref, &[acc_ptr, acc_len, p_ptr, p_len, out_addr]);
+        acc_ptr = builder.inst_results(call)[0];
+        acc_len = builder.ins().stack_load(I64, out_slot, 0);
+    }
+    (acc_ptr, acc_len)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_assoc_array_value(
+    pairs: &[(String, SsaValue)],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let capacity = core::cmp::max(pairs.len() * 2, 8) as i64;
+    let cap_val = builder.ins().iconst(I64, capacity);
+    let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
+    let call = builder.ins().call(new_ref, &[cap_val]);
+    let table_ptr = builder.inst_results(call)[0];
+
+    let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+    for (key, val_ssa) in pairs.iter() {
+        let key_data = literals.get(key.as_str()).unwrap_or_else(|| {
+            panic!("ICE: assoc array key not interned: {}", key);
+        });
+        let key_gv = module.declare_data_in_func(*key_data, builder.func);
+        let key_ptr = builder.ins().global_value(I64, key_gv);
+        let key_len = builder.ins().iconst(I64, key.len() as i64);
+        let (val_ptr, val_len) = lower_value(
+            val_ssa,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        );
+        builder
+            .ins()
+            .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
+    }
+    let zero = builder.ins().iconst(I64, 0);
+    (table_ptr, zero)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_subscript_value(
+    array: &str,
+    index: &SsaValue,
+    is_integer_key: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let table_ptr = lookup_array_table(array, vars, builder);
+    let (key_ptr, key_len) = if is_integer_key {
+        let idx_int = lower_value_as_int(
+            index,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+        );
+        let (idx_slot, kp) = alloc_out_slot(builder);
+        builder.ins().stack_store(idx_int, idx_slot, 0);
+        let kl = builder.ins().iconst(I64, 8);
+        (kp, kl)
+    } else {
+        lower_value(
+            index,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )
+    };
+    let (out_slot, out_addr) = alloc_out_slot(builder);
+    let get_ref = module.declare_func_in_func(externs.table_get, builder.func);
+    let call = builder
+        .ins()
+        .call(get_ref, &[table_ptr, key_ptr, key_len, out_addr]);
+    let val_ptr = builder.inst_results(call)[0];
+    let val_len = builder.ins().stack_load(I64, out_slot, 0);
+    (val_ptr, val_len)
+}
+
+fn lower_argv_index_value(
+    idx_ref: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let sv = vars
+        .get(&idx_ref.display())
+        .unwrap_or_else(|| panic!("ICE: undefined index var: {}", idx_ref.display()));
+    let idx_ptr = builder.use_var(sv.str_ptr());
+    let idx_len = builder.use_var(sv.str_len());
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
+    let idx_int = builder.inst_results(call)[0];
+    // offset = (idx + 1) * 8 — positional params are 1-indexed
+    let one = builder.ins().iconst(I64, 1);
+    let idx_plus_1 = builder.ins().iadd(idx_int, one);
+    let eight = builder.ins().iconst(I64, 8);
+    let offset = builder.ins().imul(idx_plus_1, eight);
+    let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
+    let argv_ptr = builder.ins().global_value(I64, argv_gv);
+    let argv_val = builder.ins().load(I64, MemFlags::trusted(), argv_ptr, 0);
+    let arg_addr = builder.ins().iadd(argv_val, offset);
+    let arg_ptr = builder.ins().load(I64, MemFlags::trusted(), arg_addr, 0);
+    let arg_len = emit_strlen(builder, module, externs.strlen, arg_ptr);
+    (arg_ptr, arg_len)
+}
+
+fn lower_table_value_value(
+    array: &str,
+    index: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let table_ptr = lookup_array_table(array, vars, builder);
+    let idx_int = lookup_atoi_var(index, builder, module, vars, externs);
+    let (out_slot, out_addr) = alloc_out_slot(builder);
+    let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
+    let call = builder.ins().call(tv_ref, &[table_ptr, idx_int, out_addr]);
+    let val_ptr = builder.inst_results(call)[0];
+    let val_len = builder.ins().stack_load(I64, out_slot, 0);
+    (val_ptr, val_len)
+}
+
+fn lower_table_key_value(
+    array: &str,
+    index: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let table_ptr = lookup_array_table(array, vars, builder);
+    let idx_int = lookup_atoi_var(index, builder, module, vars, externs);
+    let (out_slot, out_addr) = alloc_out_slot(builder);
+    let tk_ref = module.declare_func_in_func(externs.table_key, builder.func);
+    let call = builder.ins().call(tk_ref, &[table_ptr, idx_int, out_addr]);
+    let key_ptr = builder.inst_results(call)[0];
+    let key_len = builder.ins().stack_load(I64, out_slot, 0);
+    (key_ptr, key_len)
+}
+
+/// Load a string var by VarRef and run it through sash_atoi.
+fn lookup_atoi_var(
+    index: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let idx_sv = vars
+        .get(&index.display())
+        .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
+    let idx_ptr = builder.use_var(idx_sv.str_ptr());
+    let idx_len = builder.use_var(idx_sv.str_len());
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
+    builder.inst_results(call)[0]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_ternary_value(
+    cond: &SsaValue,
+    true_val: &SsaValue,
+    false_val: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let cond_int = lower_value_as_int(
+        cond,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+    );
+    let zero = builder.ins().iconst(I64, 0);
+    let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
+    let (t_ptr, t_len) = lower_value(
+        true_val,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let (f_ptr, f_len) = lower_value(
+        false_val,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let r_ptr = builder.ins().select(is_true, t_ptr, f_ptr);
+    let r_len = builder.ins().select(is_true, t_len, f_len);
+    (r_ptr, r_len)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_indexed_array_value(
+    elems: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let capacity = core::cmp::max(elems.len() * 2, 8) as i64;
+    let cap_val = builder.ins().iconst(I64, capacity);
+    let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
+    let call = builder.ins().call(new_ref, &[cap_val]);
+    let table_ptr = builder.inst_results(call)[0];
+
+    let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+    for (i, val_ssa) in elems.iter().enumerate() {
+        let (idx_slot, key_ptr) = alloc_out_slot(builder);
+        let idx_val = builder.ins().iconst(I64, i as i64);
+        builder.ins().stack_store(idx_val, idx_slot, 0);
+        let key_len = builder.ins().iconst(I64, 8);
+        let (val_ptr, val_len) = lower_value(
+            val_ssa,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        );
+        builder
+            .ins()
+            .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
+    }
+    let zero = builder.ins().iconst(I64, 0);
+    (table_ptr, zero)
 }
 
 /// Emit Cranelift instructions for an ArithOp on two i64 values.
