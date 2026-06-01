@@ -157,7 +157,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 22 | `emit_arith_op` | **A** | Mostly 1-line per ArithOp arm except a 50-line Div/Mod zero-check block. Extract `emit_div_or_mod_with_zero_check(op, ...)`. |
+| 22 | `emit_arith_op` | **A** | Mostly 1-line per ArithOp arm except a 50-line Div/Mod zero-check block. Extract `emit_div_or_mod_with_zero_check(op, ...)`. **Done 2026-06-01 (journal 081).** Lifted `emit_div_or_mod_with_zero_check` (2) + `emit_div_by_zero_error` (2), comparison ops table-driven via `comparison_intcc` (8) → `emit_icmp_bool` (1), `emit_logical_and_or` (2), `emit_pow` (1). Parent 22 → 15 (13-arm dispatcher floor; cyclo-allow'd). |
 
 ### sash/src/codegen/redirects.rs
 
