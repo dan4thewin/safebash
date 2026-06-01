@@ -507,83 +507,98 @@ fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize
     }
 }
 
+// cyclo-allow: 14-arm BuiltinCmd dispatcher; arms == CC by construction
 fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
     let cmd_name = expr_to_literal(&c.name);
     let kind = BuiltinCmd::from_name(&cmd_name);
     indent(out, depth);
     match kind {
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
-        BuiltinCmd::True => {
-            writeln!(out, "(set __last_exit 0)").unwrap();
-            writeln!(out, "true").unwrap();
-        }
-        BuiltinCmd::False => {
-            writeln!(out, "(set __last_exit 1)").unwrap();
-            writeln!(out, "false").unwrap();
-        }
+        BuiltinCmd::True => emit_janet_const_bool(out, true),
+        BuiltinCmd::False => emit_janet_const_bool(out, false),
         BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
         BuiltinCmd::Shift => {
             writeln!(out, "(set _args (array/slice _args 1))").unwrap();
         }
-        BuiltinCmd::Test => {
-            if let Some(arg) = c.args.first() {
-                write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
-                writeln!(out).unwrap();
-            }
-        }
-        BuiltinCmd::Break => {
-            writeln!(out, "(break)").unwrap();
-        }
-        BuiltinCmd::Continue => {
+        BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
+        BuiltinCmd::Break | BuiltinCmd::Continue => {
             // Janet's (each) doesn't support continue; use (break) as approximation
-            // TODO: restructure loop body with when/unless for real continue
             writeln!(out, "(break)").unwrap();
         }
-        BuiltinCmd::Return => {
-            if let Some(code) = c.args.first() {
-                let val = emit_expr_inline(code, ctx);
-                writeln!(out, "(return {})", val).unwrap();
-            } else {
-                writeln!(out, "(return)").unwrap();
-            }
-        }
+        BuiltinCmd::Return => emit_janet_return(out, ctx, c),
         BuiltinCmd::Printf => emit_janet_printf(out, ctx, c),
         BuiltinCmd::Read => emit_janet_read(out, ctx, c),
-        BuiltinCmd::Bless => {
-            if !c.args.is_empty() {
-                let var_name = expr_to_literal(&c.args[0]);
-                writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
-            }
-        }
-        BuiltinCmd::Unset => {
-            for arg in &c.args {
-                let name = expr_to_literal(arg);
-                if ctx.is_declared(&name) {
-                    writeln!(out, "(set {} nil)", name).unwrap();
-                }
-            }
-        }
+        BuiltinCmd::Bless => emit_janet_bless(out, c),
+        BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
         // `cat` is not a builtin — special-cased so we can shortcut
         // stdin-only invocations to (file/read stdin :all).
         _ if cmd_name == "cat" => emit_janet_cat(out, ctx, c),
-        _ => {
-            // Check if this is a known function call
-            if ctx.is_function(&cmd_name) {
-                let mut args_str = String::new();
-                for arg in &c.args {
-                    args_str.push(' ');
-                    args_str.push_str(&emit_expr_inline(arg, ctx));
-                }
-                writeln!(out, "({}{})", cmd_name, args_str).unwrap();
-            } else {
-                // General command → os/execute
-                let mut cmd_parts = vec![format!("\"{}\"", cmd_name)];
-                for arg in &c.args {
-                    cmd_parts.push(emit_expr_inline(arg, ctx));
-                }
-                writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
-            }
+        _ => emit_janet_general_command(out, ctx, c, &cmd_name),
+    }
+}
+
+/// `true` / `false` — set `__last_exit` and emit the literal.
+fn emit_janet_const_bool(out: &mut String, success: bool) {
+    let (exit_code, literal) = if success { (0, "true") } else { (1, "false") };
+    writeln!(out, "(set __last_exit {})", exit_code).unwrap();
+    writeln!(out, "{}", literal).unwrap();
+}
+
+/// `[[ … ]]` form attached as a `test` command argument. Emits the
+/// test expression inline; silently no-ops if no Test arg is present.
+fn emit_janet_test_cmd(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if let Some(arg) = c.args.first() {
+        write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
+        writeln!(out).unwrap();
+    }
+}
+
+/// `return [code]` — Janet's `(return …)` form. Omits the operand
+/// when no code is supplied.
+fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if let Some(code) = c.args.first() {
+        let val = emit_expr_inline(code, ctx);
+        writeln!(out, "(return {})", val).unwrap();
+    } else {
+        writeln!(out, "(return)").unwrap();
+    }
+}
+
+/// `bless var [[ … ]]` — type/range/regex assertion. Janet emits a
+/// comment only; the runtime check is elided in the Janet backend.
+fn emit_janet_bless(out: &mut String, c: &Command) {
+    if !c.args.is_empty() {
+        let var_name = expr_to_literal(&c.args[0]);
+        writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
+    }
+}
+
+/// `unset var…` — set each declared variable to nil.
+fn emit_janet_unset(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    for arg in &c.args {
+        let name = expr_to_literal(arg);
+        if ctx.is_declared(&name) {
+            writeln!(out, "(set {} nil)", name).unwrap();
         }
+    }
+}
+
+/// Default `_ =>` arm — known function call (Janet sexpr) or generic
+/// external command (`os/execute`).
+fn emit_janet_general_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, cmd_name: &str) {
+    if ctx.is_function(cmd_name) {
+        let mut args_str = String::new();
+        for arg in &c.args {
+            args_str.push(' ');
+            args_str.push_str(&emit_expr_inline(arg, ctx));
+        }
+        writeln!(out, "({}{})", cmd_name, args_str).unwrap();
+    } else {
+        let mut cmd_parts = vec![format!("\"{}\"", cmd_name)];
+        for arg in &c.args {
+            cmd_parts.push(emit_expr_inline(arg, ctx));
+        }
+        writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
     }
 }
 

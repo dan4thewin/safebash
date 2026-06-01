@@ -341,7 +341,7 @@ sash/src --top 90` as of 2026-05-26.
 |---:|---|:-:|---|
 | 44 | `arith_expr_to_janet` | **B** | ArithExpr variant dispatch with three op-string tables (19+4+5 variants). WHITELIST. |
 | 41 | `emit_param_expansion_inline` | **A** | By-operator string-keyed dispatcher, 4-6 way sub-matches. Per-operator helpers shared with `handle_param_expansion` (pattern #4). **Done 2026-06-01 (journal 065).** 9 per-operator helpers + `pe_operand_literal`; case ops merged; `/`/`//` collapsed with `global` bool. Parent 41 → 14; max helper CC 6. Drive-by: 4 clippy strip-suffix fixes exposed by the extraction. |
-| 39 | `emit_command` | **A** | String-keyed builtin dispatcher — same pattern as `emit` (pattern #3). |
+| 39 | `emit_command` | **A** | String-keyed builtin dispatcher — same pattern as `emit` (pattern #3). **Done 2026-06-01 (journal 079).** Phase 8 BuiltinCmd brought 39 → 24; this session unified Break/Continue and lifted `emit_janet_const_bool` (True/False), `emit_janet_test_cmd`, `emit_janet_return`, `emit_janet_bless`, `emit_janet_unset`, `emit_janet_general_command`. Parent 24 → 15 (14-arm BuiltinCmd dispatcher; cyclo-allow'd). |
 | 39 | `emit_stmt` | **C** | StmtKind dispatcher with For/Case/Function/List arms inline. Modest. |
 | 31 | `emit_expr_inline` | **B/C** | ExprKind dispatcher, mostly trivial mapping. CC overcounted by SimpleExpansion special-name arms. |
 | 26 | `emit_test_expr` | **C** | TestExpr dispatcher with op-string tables. Extract `binary_op_to_janet`, `unary_op_to_janet`. |
