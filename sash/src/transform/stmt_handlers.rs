@@ -25,101 +25,133 @@ pub(super) fn handle_command(
     let name = expr_to_string(&c.name);
     let kind = BuiltinCmd::from_name(&name);
 
-    // Builtins that always (or may) handle the statement themselves.
-    // Arms that may not handle it use `if let Some(b) = ... { return b; }`
-    // and otherwise fall through to the regex/general handling below.
-    match kind {
-        BuiltinCmd::Bless => return handle_bless_stmt(&name, c, ssa, state, block),
-        BuiltinCmd::Test => {
-            // Preserve TestExpr arg for codegen; if no TestExpr is
-            // attached we fall through to the general handler.
-            for arg in &c.args {
-                if let ExprKind::Test(test_expr) = &arg.kind {
-                    ssa.block_mut(block)
-                        .insts
-                        .push(SsaInst::Test(test_expr.clone()));
-                    return block;
-                }
-            }
-        }
-        _ => {}
+    if let Some(b) = try_builtin(kind, &name, c, stmt, ssa, state, &mut block) {
+        return b;
     }
 
     // var =~ s/pattern/replacement/flags — regex mutation
     // (single-arg commands only; not keyed on a builtin name)
-    if c.args.len() == 1 {
-        let arg_s = expr_to_string(&c.args[0]);
-        if let Some(after_prefix) = arg_s.strip_prefix("s/") {
-            // Parse s/pattern/replacement/flags
-            let parts: Vec<&str> = after_prefix.splitn(3, '/').collect();
-            if parts.len() >= 2 {
-                let pattern = parts[0].to_string();
-                let replacement = parts[1].to_string();
-                let flags = if parts.len() > 2 { parts[2] } else { "" };
-
-                // DD#39: compile-time regex validation
-                if !pattern.contains('$') {
-                    if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
-                        state.diagnostics.push(format!(
-                            "1:1: error [SB5023] invalid regex in substitution: {}",
-                            msg
-                        ));
-                        return block;
-                    }
-                }
-
-                let global = if flags.contains('g') { "1" } else { "0" };
-                let var_ref = state.lookup(&name);
-                let new_ref = state.define(&name);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target: new_ref,
-                    value: SsaValue::ParamExpansion {
-                        var: var_ref,
-                        operator: "regex_replace".to_string(),
-                        operand: format!("{}\x00{}\x00{}", pattern, replacement, global),
-                    },
-                });
-                return block;
-            }
-        }
+    if let Some(b) = try_regex_substitution(c, &name, state, ssa, block) {
+        return b;
     }
 
-    // Builtins below this point all unconditionally consume the statement,
-    // so an early return is safe.
+    check_non_void_bare_call(&name, stmt, state);
+    super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
+}
+
+/// Dispatch a `BuiltinCmd` to its handler. Most builtins always
+/// consume the statement (return `Some`); `Test` and `Mapfile` may
+/// return `None` to fall through to the regex / general handler.
+// cyclo-allow: 11-arm BuiltinCmd dispatcher; arms == CC by construction
+fn try_builtin(
+    kind: BuiltinCmd,
+    name: &str,
+    c: &Command,
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Option<BlockId> {
     match kind {
-        BuiltinCmd::Shift => return handle_shift_stmt(c, ssa, state, block),
-        BuiltinCmd::Break => return handle_break_stmt(c, state, ssa, block),
-        BuiltinCmd::Continue => return handle_continue_stmt(c, state, ssa, block),
-        BuiltinCmd::Return => return handle_return_stmt(c, ssa, state, &mut block),
-        BuiltinCmd::Mapfile => {
-            if let Some(b) = try_handle_mapfile(c, ssa, block) {
-                return b;
-            }
-            // else fall through (no array name found)
+        BuiltinCmd::Bless => Some(handle_bless_stmt(name, c, ssa, state, *block)),
+        BuiltinCmd::Test => try_test_arg_capture(c, ssa, *block),
+        BuiltinCmd::Shift => Some(handle_shift_stmt(c, ssa, state, *block)),
+        BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
+        BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
+        BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
+        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, *block),
+        BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
+            name, c, stmt, ssa, state, *block,
+        )),
+        BuiltinCmd::Trap => Some(super::cmd_handlers::handle_trap(
+            name, c, stmt, ssa, state, *block,
+        )),
+        BuiltinCmd::Unset => Some(super::cmd_handlers::handle_unset(
+            name, c, stmt, ssa, state, *block,
+        )),
+        BuiltinCmd::Read => Some(super::cmd_handlers::handle_read(
+            name, c, stmt, ssa, state, *block,
+        )),
+        _ => None,
+    }
+}
+
+/// `[[ … ]]` attached as an argument (the parser may emit `test` /
+/// `[` commands whose first/only arg carries the `Test` expression
+/// kind). The first matching arg wins. Returns `None` when no
+/// `ExprKind::Test` is found so the caller falls through.
+fn try_test_arg_capture(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Option<BlockId> {
+    for arg in &c.args {
+        if let ExprKind::Test(test_expr) = &arg.kind {
+            ssa.block_mut(block)
+                .insts
+                .push(SsaInst::Test(test_expr.clone()));
+            return Some(block);
         }
-        BuiltinCmd::Signal => {
-            return super::cmd_handlers::handle_signal(&name, c, stmt, ssa, state, block);
+    }
+    None
+}
+
+/// `var s/pattern/replacement/flags` — bash-style sed substitution
+/// against the named variable. DD#39 compile-time regex validation.
+/// Single-arg form only. Returns `None` when the arg does not start
+/// with `s/` or the substitution body is malformed.
+fn try_regex_substitution(
+    c: &Command,
+    name: &str,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
+    if c.args.len() != 1 {
+        return None;
+    }
+    let arg_s = expr_to_string(&c.args[0]);
+    let after_prefix = arg_s.strip_prefix("s/")?;
+    let parts: Vec<&str> = after_prefix.splitn(3, '/').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+    let pattern = parts[0].to_string();
+    let replacement = parts[1].to_string();
+    let flags = if parts.len() > 2 { parts[2] } else { "" };
+
+    // DD#39: compile-time regex validation
+    if !pattern.contains('$') {
+        if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
+            state.diagnostics.push(format!(
+                "1:1: error [SB5023] invalid regex in substitution: {}",
+                msg
+            ));
+            return Some(block);
         }
-        BuiltinCmd::Trap => {
-            return super::cmd_handlers::handle_trap(&name, c, stmt, ssa, state, block);
-        }
-        BuiltinCmd::Unset => {
-            return super::cmd_handlers::handle_unset(&name, c, stmt, ssa, state, block);
-        }
-        BuiltinCmd::Read => {
-            return super::cmd_handlers::handle_read(&name, c, stmt, ssa, state, block);
-        }
-        _ => {}
     }
 
-    // DD#55/SB4016: bare call of non-void (-> int) function is error
-    if state.function_non_void.contains(&name) && state.in_condition == 0 {
+    let global = if flags.contains('g') { "1" } else { "0" };
+    let var_ref = state.lookup(name);
+    let new_ref = state.define(name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: new_ref,
+        value: SsaValue::ParamExpansion {
+            var: var_ref,
+            operator: "regex_replace".to_string(),
+            operand: format!("{}\x00{}\x00{}", pattern, replacement, global),
+        },
+    });
+    Some(block)
+}
+
+/// DD#55/SB4016: a bare call of a non-void (`-> int`) function in
+/// statement position must be handled by `if`/`||` or captured by
+/// `$((…))`. Emits a diagnostic when violated; does not affect
+/// codegen (the caller still threads the call through).
+fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionState) {
+    if state.function_non_void.contains(name) && state.in_condition == 0 {
         state.diagnostics.push(format!(
             "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $(({}))",
             stmt.span.line, stmt.span.col, name, name
         ));
     }
-    super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
 }
 
 fn handle_bless_stmt(
