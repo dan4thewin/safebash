@@ -333,182 +333,228 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, _scanner: &Scanne
 pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     let bytes = content.as_bytes();
 
-    // ${#var} — string length
-    if bytes.first() == Some(&b'#') && bytes.len() > 1 && bytes[1] != b'#' {
-        let rest = &content[1..];
-        if rest.contains("[@]") || rest.contains("[*]") {
-            let name = rest.split('[').next().unwrap_or(rest);
-            return Expr::param(name, Some("arrlen"), None, span);
-        }
-        return Expr::param(rest, Some("strlen"), None, span);
+    if let Some(e) = try_strlen_or_arrlen(content, bytes, span) {
+        return e;
+    }
+    if let Some(e) = try_indirection_or_arrkeys(content, bytes, span) {
+        return e;
     }
 
-    // ${!var[@]} — all keys
-    if bytes.first() == Some(&b'!') {
-        let rest = &content[1..];
-        if rest.contains("[@]") || rest.contains("[*]") {
-            let name = rest.split('[').next().unwrap_or(rest);
-            return Expr::param(name, Some("arrkeys"), None, span);
-        }
-        return Expr::param(rest, Some("!"), None, span);
+    let (name, name_end) = scan_param_name(content);
+    if name_end >= bytes.len() {
+        return Expr::param(name, None, None, span);
     }
 
-    // Find the variable name
+    if let Some(e) = try_subscript(content, name, name_end, span) {
+        return e;
+    }
+
+    let rest = &content[name_end..];
+
+    if let Some(e) = try_sed_op(rest, name, span) {
+        return e;
+    }
+    if let Some(e) = try_substring_op(rest, name, span) {
+        return e;
+    }
+    if let Some(e) = try_at_transform(rest, name, span) {
+        return e;
+    }
+    if let Some(e) = parse_standard_operator(rest, name, span) {
+        return e;
+    }
+
+    Expr::param(name, None, None, span)
+}
+
+/// `${#var}` → strlen, or `${#var[@]}`/`${#var[*]}` → arrlen.
+fn try_strlen_or_arrlen(content: &str, bytes: &[u8], span: Span) -> Option<Expr> {
+    if bytes.first() != Some(&b'#') || bytes.len() <= 1 || bytes[1] == b'#' {
+        return None;
+    }
+    let rest = &content[1..];
+    if rest.contains("[@]") || rest.contains("[*]") {
+        let name = rest.split('[').next().unwrap_or(rest);
+        return Some(Expr::param(name, Some("arrlen"), None, span));
+    }
+    Some(Expr::param(rest, Some("strlen"), None, span))
+}
+
+/// `${!var}` → indirection, or `${!var[@]}` → array keys.
+fn try_indirection_or_arrkeys(content: &str, bytes: &[u8], span: Span) -> Option<Expr> {
+    if bytes.first() != Some(&b'!') {
+        return None;
+    }
+    let rest = &content[1..];
+    if rest.contains("[@]") || rest.contains("[*]") {
+        let name = rest.split('[').next().unwrap_or(rest);
+        return Some(Expr::param(name, Some("arrkeys"), None, span));
+    }
+    Some(Expr::param(rest, Some("!"), None, span))
+}
+
+/// Scan the leading identifier in a parameter expansion body.
+fn scan_param_name(content: &str) -> (&str, usize) {
+    let bytes = content.as_bytes();
     let mut name_end = 0;
     while name_end < bytes.len()
         && (bytes[name_end].is_ascii_alphanumeric() || bytes[name_end] == b'_')
     {
         name_end += 1;
     }
-    let name = &content[..name_end];
+    (&content[..name_end], name_end)
+}
 
-    if name_end >= bytes.len() {
-        return Expr::param(name, None, None, span);
+/// `${var[idx]}` — `@`/`*` produce arrvals (or chained operator); literal
+/// index produces a `Subscript` expression.
+fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Option<Expr> {
+    if content.as_bytes()[name_end] != b'[' {
+        return None;
     }
+    let close = content[name_end..].find(']')?;
+    let idx = &content[name_end + 1..name_end + close];
+    let after_bracket = &content[name_end + close + 1..];
 
-    // ${var[...]} — subscript
-    if bytes[name_end] == b'[' {
-        if let Some(close) = content[name_end..].find(']') {
-            let idx = &content[name_end + 1..name_end + close];
-            let after_bracket = &content[name_end + close + 1..];
-
-            if idx == "@" || idx == "*" {
-                if !after_bracket.is_empty() {
-                    if let Some(op_result) = parse_subscript_operator(name, after_bracket, span) {
-                        return op_result;
-                    }
-                }
-                return Expr::param(name, Some("arrvals"), None, span);
+    if idx == "@" || idx == "*" {
+        if !after_bracket.is_empty() {
+            if let Some(op_result) = parse_subscript_operator(name, after_bracket, span) {
+                return Some(op_result);
             }
-
-            return Expr {
-                kind: ExprKind::Subscript {
-                    name: name.to_string(),
-                    index: Box::new(Expr {
-                        kind: ExprKind::Literal(idx.to_string()),
-                        span,
-                    }),
-                },
-                span,
-            };
         }
+        return Some(Expr::param(name, Some("arrvals"), None, span));
     }
 
-    let rest = &content[name_end..];
-
-    // ${var:s/regex/replacement/flags} — DD#39 sed expression
-    if let Some(sed_content) = rest.strip_prefix(":s/") {
-        if let Some(slash_pos) = sed_content.find('/') {
-            let pattern = &sed_content[..slash_pos];
-            let after = &sed_content[slash_pos + 1..];
-            let (replacement, flags) = if let Some(flag_slash) = after.rfind('/') {
-                (&after[..flag_slash], &after[flag_slash + 1..])
-            } else {
-                (after, "")
-            };
-            let is_global = flags.contains('g');
-            let combined = format!("{}\0{}", pattern, replacement);
-            let op = if is_global { "//" } else { "/" };
-            return Expr {
-                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                    name: name.to_string(),
-                    operator: Some(op.to_string()),
-                    operand: Some(Box::new(Expr {
-                        kind: ExprKind::Literal(combined),
-                        span,
-                    })),
-                }),
+    Some(Expr {
+        kind: ExprKind::Subscript {
+            name: name.to_string(),
+            index: Box::new(Expr {
+                kind: ExprKind::Literal(idx.to_string()),
                 span,
-            };
-        }
-    }
+            }),
+        },
+        span,
+    })
+}
 
-    // ${var:offset} or ${var:offset:length} — substring
-    if rest.starts_with(':')
-        && !rest.starts_with(":-")
-        && !rest.starts_with(":+")
-        && !rest.starts_with(":=")
-        && !rest.starts_with(":?")
+/// `${var:s/regex/replacement/flags}` — DD#39 sed expression.
+fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
+    let sed_content = rest.strip_prefix(":s/")?;
+    let slash_pos = sed_content.find('/')?;
+    let pattern = &sed_content[..slash_pos];
+    let after = &sed_content[slash_pos + 1..];
+    let (replacement, flags) = if let Some(flag_slash) = after.rfind('/') {
+        (&after[..flag_slash], &after[flag_slash + 1..])
+    } else {
+        (after, "")
+    };
+    let is_global = flags.contains('g');
+    let combined = format!("{}\0{}", pattern, replacement);
+    let op = if is_global { "//" } else { "/" };
+    Some(Expr {
+        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some(op.to_string()),
+            operand: Some(Box::new(Expr {
+                kind: ExprKind::Literal(combined),
+                span,
+            })),
+        }),
+        span,
+    })
+}
+
+/// `${var:offset}` / `${var:offset:length}` — substring.
+fn try_substring_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
+    if !rest.starts_with(':')
+        || rest.starts_with(":-")
+        || rest.starts_with(":+")
+        || rest.starts_with(":=")
+        || rest.starts_with(":?")
     {
-        let sub_content = &rest[1..];
-        let first_ch = sub_content.as_bytes().first().copied().unwrap_or(0);
-        if first_ch.is_ascii_digit() || first_ch == b'-' || first_ch == b'(' {
-            let cleaned = sub_content.replace(['(', ')'], "");
-            return Expr {
-                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                    name: name.to_string(),
-                    operator: Some("substring".to_string()),
-                    operand: Some(Box::new(Expr {
-                        kind: ExprKind::Literal(cleaned),
-                        span,
-                    })),
-                }),
+        return None;
+    }
+    let sub_content = &rest[1..];
+    let first_ch = sub_content.as_bytes().first().copied().unwrap_or(0);
+    if !first_ch.is_ascii_digit() && first_ch != b'-' && first_ch != b'(' {
+        return None;
+    }
+    let cleaned = sub_content.replace(['(', ')'], "");
+    Some(Expr {
+        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some("substring".to_string()),
+            operand: Some(Box::new(Expr {
+                kind: ExprKind::Literal(cleaned),
                 span,
-            };
-        }
-    }
+            })),
+        }),
+        span,
+    })
+}
 
-    // ${var@X} — parameter transform (rejected SB4015)
-    if let Some(at_pos) = rest.rfind('@') {
-        let after = &rest[at_pos + 1..];
-        if after.len() == 1
-            && after
-                .chars()
-                .next()
-                .is_some_and(|c| c.is_ascii_alphabetic())
-            && !rest.contains("[@]")
-            && !rest.contains("[@")
-        {
-            return Expr::param(name, Some(&format!("@{}", after)), None, span);
-        }
+/// `${var@X}` — parameter transform (rejected SB4015 downstream).
+fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
+    let at_pos = rest.rfind('@')?;
+    let after = &rest[at_pos + 1..];
+    if after.len() == 1
+        && after
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphabetic())
+        && !rest.contains("[@]")
+        && !rest.contains("[@")
+    {
+        return Some(Expr::param(name, Some(&format!("@{}", after)), None, span));
     }
+    None
+}
 
-    // Standard operators
+/// Standard parameter-expansion operators (`:-`, `:+`, `:=`, `:?`, `#`, `##`,
+/// `%`, `%%`, `/`, `//`, `/#`, `/%`). The slash family compiles the glob
+/// pattern to a regex and packs it as `pattern\0replacement` for the runtime.
+fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let (op, operand_str) = split_operator(rest);
-    if let Some(op_str) = op {
-        let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
-        let operand = match (is_slash_op, operand_str.clone()) {
-            (true, Some(raw)) => {
-                if let Some(sep) = find_unescaped_slash(&raw) {
-                    let pattern = &raw[..sep];
-                    let replacement = &raw[sep + 1..];
-                    let mut pat_regex = glob_to_regex(pattern);
-                    if op_str == "/#" {
-                        pat_regex = format!("^{}", pat_regex);
-                    }
-                    if op_str == "/%" {
-                        pat_regex = format!("{}$", pat_regex);
-                    }
-                    Some(Box::new(Expr {
-                        kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
-                        span,
-                    }))
-                } else {
-                    let pat_regex = glob_to_regex(&raw);
-                    Some(Box::new(Expr {
-                        kind: ExprKind::Literal(format!("{}\0", pat_regex)),
-                        span,
-                    }))
+    let op_str = op?;
+    let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
+    let operand = match (is_slash_op, operand_str.clone()) {
+        (true, Some(raw)) => {
+            if let Some(sep) = find_unescaped_slash(&raw) {
+                let pattern = &raw[..sep];
+                let replacement = &raw[sep + 1..];
+                let mut pat_regex = glob_to_regex(pattern);
+                if op_str == "/#" {
+                    pat_regex = format!("^{}", pat_regex);
                 }
-            }
-            _ => operand_str.map(|s| {
-                Box::new(Expr {
-                    kind: ExprKind::Literal(s),
+                if op_str == "/%" {
+                    pat_regex = format!("{}$", pat_regex);
+                }
+                Some(Box::new(Expr {
+                    kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
                     span,
-                })
-            }),
-        };
-        return Expr {
-            kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                name: name.to_string(),
-                operator: Some(op_str),
-                operand,
-            }),
-            span,
-        };
-    }
-
-    Expr::param(name, None, None, span)
+                }))
+            } else {
+                let pat_regex = glob_to_regex(&raw);
+                Some(Box::new(Expr {
+                    kind: ExprKind::Literal(format!("{}\0", pat_regex)),
+                    span,
+                }))
+            }
+        }
+        _ => operand_str.map(|s| {
+            Box::new(Expr {
+                kind: ExprKind::Literal(s),
+                span,
+            })
+        }),
+    };
+    Some(Expr {
+        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some(op_str),
+            operand,
+        }),
+        span,
+    })
 }
 
 fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr> {
