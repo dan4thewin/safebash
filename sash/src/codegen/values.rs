@@ -28,178 +28,206 @@ pub(super) fn lower_expr_value(
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-            if let Some(&data_id) = literals.get(s.as_str()) {
-                let gv = module.declare_data_in_func(data_id, builder.func);
-                let ptr = builder.ins().global_value(I64, gv);
-                let len = builder.ins().iconst(I64, s.len() as i64);
-                (ptr, len)
-            } else {
-                let zero = builder.ins().iconst(I64, 0);
-                (zero, zero)
-            }
+            lower_literal(s, builder, module, literals)
         }
         crate::ir::ExprKind::SimpleExpansion(name) => {
-            // $? — exit status
-            if name == "?" {
-                if let Some(esv) = exit_status_var {
-                    let status = builder.use_var(esv);
-                    let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, status);
-                    return (res_ptr, res_len);
-                }
-            }
-            // $$ — process ID
-            if name == "$" {
-                let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
-                let call = builder.ins().call(getpid_ref, &[]);
-                let pid = builder.inst_results(call)[0];
-                let (res_ptr, res_len) = emit_int_to_str(builder, module, externs, pid);
-                return (res_ptr, res_len);
-            }
-            // Search vars map for the highest version of this variable
-            // This finds phi-merged versions (x_3) as well as regular ones (x_1)
-            if let Some(sv) = super::types::find_var_slot(vars, name.as_str()) {
-                let sv = *sv;
-                if sv.is_int() {
-                    let int_val = builder.use_var(*sv.as_int());
-                    emit_int_to_str(builder, module, externs, int_val)
-                } else {
-                    let ptr = builder.use_var(sv.str_ptr());
-                    let len = builder.use_var(sv.str_len());
-                    (ptr, len)
-                }
-            } else {
-                let zero = builder.ins().iconst(I64, 0);
-                (zero, zero)
-            }
+            lower_simple_expansion(name, builder, module, vars, externs, exit_status_var)
         }
         crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => {
-            if parts.len() == 1 {
-                lower_expr_value(
-                    &parts[0],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                )
-            } else if parts.len() >= 2 {
-                // Multi-part: concat all parts using sash_concat(a_ptr, a_len, b_ptr, b_len, out_len_ptr) -> ptr
-                let (mut acc_ptr, mut acc_len) = lower_expr_value(
-                    &parts[0],
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                );
-                let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
-                for part in &parts[1..] {
-                    let (p2, l2) = lower_expr_value(
-                        part,
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        externs,
-                        exit_status_var,
-                    );
-                    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                    let call = builder
-                        .ins()
-                        .call(concat_ref, &[acc_ptr, acc_len, p2, l2, out_addr]);
-                    acc_ptr = builder.inst_results(call)[0];
-                    acc_len = builder.ins().stack_load(I64, out_slot, 0);
-                }
-                (acc_ptr, acc_len)
-            } else {
-                let zero = builder.ins().iconst(I64, 0);
-                (zero, zero)
-            }
+            lower_concat(
+                parts,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            )
         }
         crate::ir::ExprKind::ParameterExpansion(pe) => {
             if pe.operator.is_none() {
                 // ${var} with no operator — same as $var (SimpleExpansion)
-                let simple = crate::ir::Expr {
-                    kind: crate::ir::ExprKind::SimpleExpansion(pe.name.clone()),
-                    span: expr.span,
-                };
-                lower_expr_value(
-                    &simple,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    exit_status_var,
-                )
+                lower_simple_expansion(&pe.name, builder, module, vars, externs, exit_status_var)
             } else {
-                // Has operator — delegate to lower_value path via SSA
-                let zero = builder.ins().iconst(I64, 0);
-                (zero, zero)
+                // Has operator — caller routes via SSA value lowering
+                empty_value(builder)
             }
         }
         crate::ir::ExprKind::Subscript { name, index } => {
-            // Array/map subscript: look up in table
-            let array_key = format!("{}_0", name);
-            let sv = vars.get(&array_key).unwrap_or_else(|| {
-                vars.keys()
-                    .find(|k| k.starts_with(&format!("{}_", name)))
-                    .and_then(|k| vars.get(k))
-                    .unwrap_or_else(|| panic!("ICE: undefined array in test: {}", name))
-            });
-            let table_ptr = builder.use_var(sv.str_ptr());
-
-            // Determine key type: if index is a non-numeric literal, use string key
-            let use_string_key = match &index.kind {
-                crate::ir::ExprKind::Literal(s) => !s.chars().all(|c| c.is_ascii_digit()),
-                crate::ir::ExprKind::SimpleExpansion(_)
-                | crate::ir::ExprKind::ParameterExpansion(_) => false,
-                _ => false,
-            };
-
-            let (kp, kl) = if use_string_key {
-                // String key: use literal bytes
-                let (p, l) =
-                    lower_expr_value(index, builder, module, vars, literals, externs, None);
-                (p, l)
-            } else {
-                // Integer key
-                let idx_val =
-                    lower_expr_value_as_int(index, builder, module, vars, literals, externs);
-                let idx_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                builder.ins().stack_store(idx_val, idx_slot, 0);
-                let p = builder.ins().stack_addr(I64, idx_slot, 0);
-                let l = builder.ins().iconst(I64, 8);
-                (p, l)
-            };
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let get_ref = module.declare_func_in_func(externs.table_get, builder.func);
-            let call = builder.ins().call(get_ref, &[table_ptr, kp, kl, out_addr]);
-            let val_ptr = builder.inst_results(call)[0];
-            let val_len = builder.ins().stack_load(I64, out_slot, 0);
-            (val_ptr, val_len)
+            lower_subscript(name, index, builder, module, vars, literals, externs)
         }
-        _ => {
-            let zero = builder.ins().iconst(I64, 0);
-            (zero, zero)
+        _ => empty_value(builder),
+    }
+}
+
+fn empty_value(
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let zero = builder.ins().iconst(I64, 0);
+    (zero, zero)
+}
+
+fn lower_literal(
+    s: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    if let Some(&data_id) = literals.get(s) {
+        let gv = module.declare_data_in_func(data_id, builder.func);
+        let ptr = builder.ins().global_value(I64, gv);
+        let len = builder.ins().iconst(I64, s.len() as i64);
+        (ptr, len)
+    } else {
+        empty_value(builder)
+    }
+}
+
+fn lower_simple_expansion(
+    name: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    // $? — exit status
+    if name == "?" {
+        if let Some(esv) = exit_status_var {
+            let status = builder.use_var(esv);
+            return emit_int_to_str(builder, module, externs, status);
         }
     }
+    // $$ — process ID
+    if name == "$" {
+        let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
+        let call = builder.ins().call(getpid_ref, &[]);
+        let pid = builder.inst_results(call)[0];
+        return emit_int_to_str(builder, module, externs, pid);
+    }
+    // Search vars map for the highest version of this variable
+    // (finds phi-merged versions x_3 as well as regular ones x_1).
+    if let Some(sv) = super::types::find_var_slot(vars, name) {
+        let sv = *sv;
+        if sv.is_int() {
+            let int_val = builder.use_var(*sv.as_int());
+            emit_int_to_str(builder, module, externs, int_val)
+        } else {
+            let ptr = builder.use_var(sv.str_ptr());
+            let len = builder.use_var(sv.str_len());
+            (ptr, len)
+        }
+    } else {
+        empty_value(builder)
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_concat(
+    parts: &[crate::ir::Expr],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    if parts.len() == 1 {
+        return lower_expr_value(
+            &parts[0],
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+    }
+    if parts.is_empty() {
+        return empty_value(builder);
+    }
+    // Multi-part: concat all parts using sash_concat(a_ptr, a_len, b_ptr, b_len, out_len_ptr) -> ptr
+    let (mut acc_ptr, mut acc_len) = lower_expr_value(
+        &parts[0],
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
+    for part in &parts[1..] {
+        let (p2, l2) = lower_expr_value(
+            part,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        );
+        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+        let call = builder
+            .ins()
+            .call(concat_ref, &[acc_ptr, acc_len, p2, l2, out_addr]);
+        acc_ptr = builder.inst_results(call)[0];
+        acc_len = builder.ins().stack_load(I64, out_slot, 0);
+    }
+    (acc_ptr, acc_len)
+}
+
+fn lower_subscript(
+    name: &str,
+    index: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    // Array/map subscript: look up in table
+    let array_key = format!("{}_0", name);
+    let sv = vars.get(&array_key).unwrap_or_else(|| {
+        vars.keys()
+            .find(|k| k.starts_with(&format!("{}_", name)))
+            .and_then(|k| vars.get(k))
+            .unwrap_or_else(|| panic!("ICE: undefined array in test: {}", name))
+    });
+    let table_ptr = builder.use_var(sv.str_ptr());
+
+    // Determine key type: if index is a non-numeric literal, use string key
+    let use_string_key = match &index.kind {
+        crate::ir::ExprKind::Literal(s) => !s.chars().all(|c| c.is_ascii_digit()),
+        crate::ir::ExprKind::SimpleExpansion(_) | crate::ir::ExprKind::ParameterExpansion(_) => {
+            false
+        }
+        _ => false,
+    };
+
+    let (kp, kl) = if use_string_key {
+        // String key: use literal bytes
+        lower_expr_value(index, builder, module, vars, literals, externs, None)
+    } else {
+        // Integer key
+        let idx_val = lower_expr_value_as_int(index, builder, module, vars, literals, externs);
+        let idx_slot =
+            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+        builder.ins().stack_store(idx_val, idx_slot, 0);
+        let p = builder.ins().stack_addr(I64, idx_slot, 0);
+        let l = builder.ins().iconst(I64, 8);
+        (p, l)
+    };
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+    let get_ref = module.declare_func_in_func(externs.table_get, builder.func);
+    let call = builder.ins().call(get_ref, &[table_ptr, kp, kl, out_addr]);
+    let val_ptr = builder.inst_results(call)[0];
+    let val_len = builder.ins().stack_load(I64, out_slot, 0);
+    (val_ptr, val_len)
 }
 
 /// Lower an IR Expr to an i64 value for numeric contexts.
