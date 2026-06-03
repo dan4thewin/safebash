@@ -287,6 +287,326 @@ fn emit_var_set_test(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn lower_pair(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+) {
+    let (l_ptr, l_len) = lower_expr_value(
+        left,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let (r_ptr, r_len) = lower_expr_value(
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    (l_ptr, l_len, r_ptr, r_len)
+}
+
+fn right_is_quoted(right: &crate::ir::Expr) -> bool {
+    matches!(
+        &right.kind,
+        crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_)
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_eq(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    // In [[ ]] context: quoted RHS → exact match, unquoted → glob match.
+    let is_quoted = right_is_quoted(right);
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    if is_quoted {
+        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+    } else {
+        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+        let call = builder
+            .ins()
+            .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
+        builder.inst_results(call)[0]
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_glob(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    // Case pattern glob matching: fnmatch(pattern, string). Note swap.
+    let (s_ptr, s_len, p_ptr, p_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+    let call = builder
+        .ins()
+        .call(fnmatch_ref, &[p_ptr, p_len, s_ptr, s_len]);
+    builder.inst_results(call)[0]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_regex(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let is_quoted = right_is_quoted(right);
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    if is_quoted {
+        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+    } else {
+        let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
+        let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
+        builder.inst_results(call)[0]
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_ne(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let is_quoted = right_is_quoted(right);
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let matched = if is_quoted {
+        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
+    } else {
+        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+        let call = builder
+            .ins()
+            .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
+        builder.inst_results(call)[0]
+    };
+    let one = builder.ins().iconst(I64, 1);
+    builder.ins().isub(one, matched)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_lex_cmp(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    op: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let strcmp_ref = module.declare_func_in_func(externs.strcmp, builder.func);
+    let call = builder
+        .ins()
+        .call(strcmp_ref, &[l_ptr, l_len, r_ptr, r_len]);
+    let cmp_result = builder.inst_results(call)[0];
+    let zero = builder.ins().iconst(I64, 0);
+    let cc = if op == ">" {
+        IntCC::SignedGreaterThan
+    } else {
+        IntCC::SignedLessThan
+    };
+    let cmp = builder.ins().icmp(cc, cmp_result, zero);
+    builder.ins().uextend(I64, cmp)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_numeric_cmp(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    op: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let l_int = lower_expr_value_as_int(left, builder, module, vars, literals, externs);
+    let r_int = lower_expr_value_as_int(right, builder, module, vars, literals, externs);
+    let cc = numeric_cc(op);
+    let cmp = builder.ins().icmp(cc, l_int, r_int);
+    builder.ins().uextend(I64, cmp)
+}
+
+// cyclo-allow: pure op-name → IntCC table; arms == CC by construction.
+fn numeric_cc(op: &str) -> IntCC {
+    match op {
+        "-eq" | "==" => IntCC::Equal,
+        "-ne" | "!=" => IntCC::NotEqual,
+        "-lt" | "<" => IntCC::SignedLessThan,
+        "-le" | "<=" => IntCC::SignedLessThanOrEqual,
+        "-gt" | ">" => IntCC::SignedGreaterThan,
+        "-ge" | ">=" => IntCC::SignedGreaterThanOrEqual,
+        _ => unreachable!(),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_file_newer(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
+    let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
+    builder.inst_results(call)[0]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_file_older(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
+    // Swap args: file2 -nt file1.
+    let call = builder.ins().call(fn_ref, &[r_ptr, r_len, l_ptr, l_len]);
+    builder.inst_results(call)[0]
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_file_same(
+    left: &crate::ir::Expr,
+    right: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let fn_ref = module.declare_func_in_func(externs.file_same_dev, builder.func);
+    let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
+    builder.inst_results(call)[0]
+}
+
+#[allow(clippy::too_many_arguments)]
 fn lower_test_binary(
     left: &crate::ir::Expr,
     op: &str,
@@ -299,261 +619,90 @@ fn lower_test_binary(
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     match op {
-        "=" | "==" => {
-            // In [[ ]] context: quoted RHS → exact match, unquoted → glob match
-            let is_quoted = matches!(
-                &right.kind,
-                crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_)
-            );
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            if is_quoted {
-                emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-            } else {
-                let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-                let call = builder
-                    .ins()
-                    .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
-                builder.inst_results(call)[0]
-            }
-        }
-        "=glob" => {
-            // Case pattern glob matching: fnmatch(pattern, string)
-            // Note: left=value, right=pattern (swap for fnmatch which takes pat first)
-            let (s_ptr, s_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (p_ptr, p_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-            let call = builder
-                .ins()
-                .call(fnmatch_ref, &[p_ptr, p_len, s_ptr, s_len]);
-            builder.inst_results(call)[0]
-        }
-        "=~" => {
-            let is_quoted = matches!(
-                &right.kind,
-                crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_)
-            );
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            if is_quoted {
-                // Quoted regex RHS → literal string match (exact)
-                emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-            } else {
-                let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
-                let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
-                builder.inst_results(call)[0]
-            }
-        }
-        "!=" => {
-            let is_quoted = matches!(
-                &right.kind,
-                crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_)
-            );
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            if is_quoted {
-                let eq = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
-                let one = builder.ins().iconst(I64, 1);
-                builder.ins().isub(one, eq)
-            } else {
-                let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-                let call = builder
-                    .ins()
-                    .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
-                let matched = builder.inst_results(call)[0];
-                let one = builder.ins().iconst(I64, 1);
-                builder.ins().isub(one, matched)
-            }
-        }
-        ">" | "<" => {
-            // Lexicographic string comparison
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let strcmp_ref = module.declare_func_in_func(externs.strcmp, builder.func);
-            let call = builder
-                .ins()
-                .call(strcmp_ref, &[l_ptr, l_len, r_ptr, r_len]);
-            let cmp_result = builder.inst_results(call)[0];
-            let zero = builder.ins().iconst(I64, 0);
-            let cc = if op == ">" {
-                IntCC::SignedGreaterThan
-            } else {
-                IntCC::SignedLessThan
-            };
-            let cmp = builder.ins().icmp(cc, cmp_result, zero);
-            builder.ins().uextend(I64, cmp)
-        }
+        "=" | "==" => emit_eq(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        "=glob" => emit_glob(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        "=~" => emit_regex(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        "!=" => emit_ne(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        ">" | "<" => emit_lex_cmp(
+            left,
+            right,
+            op,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" | ">=" | "<=" => {
-            // Numeric comparison: use int vars directly, atoi for string vars
-            let l_int = lower_expr_value_as_int(left, builder, module, vars, literals, externs);
-            let r_int = lower_expr_value_as_int(right, builder, module, vars, literals, externs);
-            let cc = match op {
-                "-eq" | "==" => IntCC::Equal,
-                "-ne" | "!=" => IntCC::NotEqual,
-                "-lt" | "<" => IntCC::SignedLessThan,
-                "-le" | "<=" => IntCC::SignedLessThanOrEqual,
-                "-gt" | ">" => IntCC::SignedGreaterThan,
-                "-ge" | ">=" => IntCC::SignedGreaterThanOrEqual,
-                _ => unreachable!(),
-            };
-            let cmp = builder.ins().icmp(cc, l_int, r_int);
-            builder.ins().uextend(I64, cmp)
+            emit_numeric_cmp(left, right, op, builder, module, vars, literals, externs)
         }
-        "-nt" => {
-            // file1 -nt file2: file1 is newer than file2
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
-            let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
-            builder.inst_results(call)[0]
-        }
-        "-ot" => {
-            // file1 -ot file2: file1 is older than file2 (reverse of -nt)
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
-            // Swap args: file2 -nt file1
-            let call = builder.ins().call(fn_ref, &[r_ptr, r_len, l_ptr, l_len]);
-            builder.inst_results(call)[0]
-        }
-        "-ef" => {
-            // file1 -ef file2: same device and inode
-            let (l_ptr, l_len) = lower_expr_value(
-                left,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let (r_ptr, r_len) = lower_expr_value(
-                right,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let fn_ref = module.declare_func_in_func(externs.file_same_dev, builder.func);
-            let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
-            builder.inst_results(call)[0]
-        }
-        other => {
-            panic!("ICE: unimplemented test operator: {}", other);
-        }
+        "-nt" => emit_file_newer(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        "-ot" => emit_file_older(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        "-ef" => emit_file_same(
+            left,
+            right,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
+        other => panic!("ICE: unimplemented test operator: {}", other),
     }
 }
