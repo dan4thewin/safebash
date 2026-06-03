@@ -18,6 +18,7 @@ use crate::ir::*;
 
 // ── Top-level expression parsing ───────────────────────────────────
 
+// cyclo-allow: token-driven N-arm dispatcher with adjacency-concat loop
 /// Parse a single word/expression that produces a value.
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
 /// concatenation of adjacent tokens, and array literals.

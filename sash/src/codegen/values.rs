@@ -286,6 +286,7 @@ pub(super) fn lower_expr_value_as_int(
 }
 
 #[allow(clippy::too_many_arguments)]
+// cyclo-allow: pure N-arm SsaValue dispatcher (CC == arms by construction)
 pub(super) fn lower_value(
     value: &SsaValue,
     builder: &mut FunctionBuilder,

@@ -21,6 +21,7 @@ pub(super) fn lower_stmts(
     block
 }
 
+// cyclo-allow: pure N-arm StmtKind dispatcher (CC == arms by construction)
 /// Lower a single statement into SSA.
 /// DD#58: Lift IntFuncCall values out of arithmetic expressions.
 /// Inlines the function body, captures the return value as an int temp var.
