@@ -8,10 +8,8 @@ pub mod parse;
 pub mod codegen;
 pub(crate) mod diagnostic;
 pub(crate) mod emit_source;
-pub(crate) mod printer;
 pub(crate) mod regex_validate;
 pub(crate) mod ssa;
-pub(crate) mod ssa_printer;
 pub(crate) mod ssa_taint;
 pub(crate) mod transform;
 pub mod type_check;
@@ -69,7 +67,9 @@ use std::process::Command;
 
 pub fn cli_main(args: Vec<String>) {
     if args.len() < 2 {
-        eprintln!("Usage: sash <script.sh> [-o <output>] [--janet] [--ir] [--ssa] [--manifest] [--extract <binary>]");
+        eprintln!(
+            "Usage: sash <script.sh> [-o <output>] [--janet] [--manifest] [--extract <binary>]"
+        );
         std::process::exit(1);
     }
 
@@ -117,17 +117,8 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    if parsed.flags.contains(&"--ir") {
-        print!("{}", printer::print_program(&program));
-        return;
-    }
     if parsed.flags.contains(&"--janet") {
         print!("{}", emit_janet::emit_janet(&program));
-        return;
-    }
-    if parsed.flags.contains(&"--ssa") {
-        let (ssa, _diags) = transform::ir_to_ssa(&program);
-        print!("{}", ssa_printer::print_ssa(&ssa));
         return;
     }
     if parsed.flags.contains(&"--manifest") {
@@ -209,7 +200,7 @@ fn parse_cli_args(args: &[String]) -> ParsedCli<'_> {
         Some(f) => *f,
         None if inline_source.is_some() => "-c",
         None => {
-            eprintln!("Usage: sash [-c 'script'] [-o output] [--ir|--ssa] <script.sh>");
+            eprintln!("Usage: sash [-c 'script'] [-o output] [--janet] <script.sh>");
             std::process::exit(1);
         }
     };

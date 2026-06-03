@@ -129,8 +129,8 @@ assignments and rejects use of tainted values in sensitive positions.
 - `--annotate` adds `# was:` comments showing original constructs
 
 ### Compiler Modes (sash)
-`--ir` shows the intermediate representation.
-`--ssa` shows the SSA form.
+`--janet` emits Janet source (executable, used as the property
+test oracle).
 `--manifest` lists all external command dependencies.
 `--sysroot=<path>` resolves commands against a target filesystem.
 `--trace` enables runtime command tracing.

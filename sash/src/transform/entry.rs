@@ -5,11 +5,6 @@ use crate::ir::*;
 use crate::ssa::*;
 use std::collections::HashMap;
 
-/// Transform an IR Program into SSA form.
-pub fn ir_to_ssa(program: &Program) -> (SsaProgram, Vec<String>) {
-    ir_to_ssa_typed(program, HashMap::new())
-}
-
 /// Transform an IR Program into SSA form with type information.
 pub fn ir_to_ssa_typed(
     program: &Program,
