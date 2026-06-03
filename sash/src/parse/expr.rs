@@ -917,63 +917,84 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
             break;
         }
 
-        let tok = scanner.peek().token.clone();
-        if let Tok::Word(ref w) = tok {
-            if w.starts_with('[') {
-                // Check for [key]=value (old format with = inside word)
-                if let Some(close) = w.find("]=") {
-                    is_assoc = true;
-                    let key = w[1..close].to_string();
-                    let val_str = w[close + 2..].to_string();
-                    scanner.next();
-                    let val = if val_str.is_empty() {
-                        parse_expr(scanner)?
-                    } else {
-                        let val_str = if (val_str.starts_with('"') && val_str.ends_with('"'))
-                            || (val_str.starts_with('\'') && val_str.ends_with('\''))
-                        {
-                            val_str[1..val_str.len() - 1].to_string()
-                        } else {
-                            val_str
-                        };
-                        Expr {
-                            kind: ExprKind::Literal(val_str),
-                            span,
-                        }
-                    };
-                    assoc_pairs.push((key, val));
-                    continue;
-                }
-                // Check for [key] followed by = token (scanner splits on =)
-                if w.ends_with(']') && w.len() > 2 {
-                    let next_tok = scanner.peek_n(1).token.clone();
-                    if matches!(next_tok, Tok::Eq) {
-                        is_assoc = true;
-                        let key = w[1..w.len() - 1].to_string();
-                        scanner.next(); // consume [key]
-                        scanner.next(); // consume =
-                        let val = parse_expr(scanner)?;
-                        assoc_pairs.push((key, val));
-                        continue;
-                    }
-                }
-            }
+        if let Some((key, val)) = try_parse_assoc_element(scanner, span)? {
+            is_assoc = true;
+            assoc_pairs.push((key, val));
+            continue;
         }
 
-        let elem = parse_expr(scanner)?;
-        elems.push(elem);
+        elems.push(parse_expr(scanner)?);
     }
 
-    if is_assoc {
-        Ok(Expr {
-            kind: ExprKind::AssocArray(assoc_pairs),
-            span,
-        })
+    let kind = if is_assoc {
+        ExprKind::AssocArray(assoc_pairs)
     } else {
-        Ok(Expr {
-            kind: ExprKind::Array(elems),
-            span,
-        })
+        ExprKind::Array(elems)
+    };
+    Ok(Expr { kind, span })
+}
+
+/// Recognise an associative-array element at the scanner cursor.
+/// Bash accepts two surface forms inside an `=(...)` literal:
+/// `[key]=value` (the `]=` lives inside one Word token) and
+/// `[key] = value` (the scanner already split on the `=`).
+/// Returns `Ok(Some((key, value)))` if one matched and the cursor
+/// has been advanced past the value; `Ok(None)` if the next token
+/// is not an assoc element and the caller should parse it as a
+/// plain element.
+fn try_parse_assoc_element(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<Option<(String, Expr)>, Diagnostic> {
+    let tok = scanner.peek().token.clone();
+    let Tok::Word(ref w) = tok else {
+        return Ok(None);
+    };
+    if !w.starts_with('[') {
+        return Ok(None);
+    }
+
+    if let Some(close) = w.find("]=") {
+        let key = w[1..close].to_string();
+        let val_str = w[close + 2..].to_string();
+        scanner.next();
+        let val = if val_str.is_empty() {
+            parse_expr(scanner)?
+        } else {
+            Expr {
+                kind: ExprKind::Literal(strip_matching_quotes(&val_str)),
+                span,
+            }
+        };
+        return Ok(Some((key, val)));
+    }
+
+    if w.ends_with(']') && w.len() > 2 && matches!(scanner.peek_n(1).token, Tok::Eq) {
+        let key = w[1..w.len() - 1].to_string();
+        scanner.next(); // consume [key]
+        scanner.next(); // consume =
+        let val = parse_expr(scanner)?;
+        return Ok(Some((key, val)));
+    }
+
+    Ok(None)
+}
+
+/// Strip a single layer of matching surrounding quotes ("..." or
+/// '...') from `s`. Returns `s` unchanged if no matching pair is
+/// present. Used when an `=(...)` element embeds its value directly
+/// inside the `]=value` word token; the rest of the parser handles
+/// quote stripping via the lexer, but this short-circuit path does
+/// not pass through that layer.
+fn strip_matching_quotes(s: &str) -> String {
+    let bytes = s.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        s[1..s.len() - 1].to_string()
+    } else {
+        s.to_string()
     }
 }
 
