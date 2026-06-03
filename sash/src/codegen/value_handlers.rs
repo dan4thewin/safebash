@@ -53,7 +53,7 @@ pub(super) fn handle_param_expansion(
             emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
         }
         _ => {
-            let (pat_ptr, pat_len) = intern_operand_pattern(operand, literals, module, builder);
+            let (pat_ptr, pat_len) = intern_literal_value(operand, literals, module, builder);
             emit_string_op_expansion(
                 operator, operand, s_ptr, s_len, pat_ptr, pat_len, builder, module, literals,
                 externs,
@@ -114,25 +114,6 @@ fn emit_strlen_elem(
     let _elem_ptr = builder.inst_results(call)[0];
     let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
     emit_int_to_str(builder, module, externs, elem_len)
-}
-
-/// Intern an operand string literal into the module and return
-/// (ptr, len) for use in pattern operations. The operand must
-/// have been pre-interned by `intern_literals`; an ICE here means
-/// a code path was added that bypasses that pass.
-fn intern_operand_pattern(
-    operand: &str,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    module: &mut ObjectModule,
-    builder: &mut FunctionBuilder,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let pat_data_id = literals
-        .get(operand)
-        .unwrap_or_else(|| panic!("ICE: param expansion operand not interned: {:?}", operand));
-    let pat_gv = module.declare_data_in_func(*pat_data_id, builder.func);
-    let pat_ptr = builder.ins().global_value(I64, pat_gv);
-    let pat_len = builder.ins().iconst(I64, operand.len() as i64);
-    (pat_ptr, pat_len)
 }
 
 fn emit_glob_expansion(
@@ -471,6 +452,7 @@ fn emit_array_join_expansion(
     (buf_ptr, final_len)
 }
 
+// cyclo-allow: pure N-arm operator dispatcher (CC == arms by construction)
 #[allow(clippy::too_many_arguments)]
 fn emit_string_op_expansion(
     operator: &str,
@@ -485,132 +467,221 @@ fn emit_string_op_expansion(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     match operator {
-        "%%" | "%" => {
-            // strip_suffix returns new_len; ptr unchanged
-            let longest = builder
-                .ins()
-                .iconst(I64, if operator == "%%" { 1 } else { 0 });
-            let func_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
-            let call = builder
-                .ins()
-                .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
-            let new_len = builder.inst_results(call)[0];
-            (s_ptr, new_len)
-        }
-        "##" | "#" => {
-            // strip_prefix returns offset; ptr advances, len shrinks
-            let longest = builder
-                .ins()
-                .iconst(I64, if operator == "##" { 1 } else { 0 });
-            let func_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
-            let call = builder
-                .ins()
-                .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
-            let offset = builder.inst_results(call)[0];
-            let new_ptr = builder.ins().iadd(s_ptr, offset);
-            let new_len = builder.ins().isub(s_len, offset);
-            (new_ptr, new_len)
-        }
-        ":-" | "-" => {
-            // default_value(s_len) returns 0 if empty, 1 if set
-            let func_ref = module.declare_func_in_func(externs.default_value, builder.func);
-            let call = builder.ins().call(func_ref, &[s_len]);
-            let is_set = builder.inst_results(call)[0];
-            // if is_set: use (s_ptr, s_len), else use (pat_ptr, pat_len)
-            let result_ptr = builder.ins().select(is_set, s_ptr, pat_ptr);
-            let result_len = builder.ins().select(is_set, s_len, pat_len);
-            (result_ptr, result_len)
-        }
-        ":+" | "+" => {
-            // alternate_value: if variable is set/non-empty, use operand; else empty
-            let func_ref = module.declare_func_in_func(externs.default_value, builder.func);
-            let call = builder.ins().call(func_ref, &[s_len]);
-            let is_set = builder.inst_results(call)[0];
-            // Inverted from :- — if set, use operand; if empty, use empty
-            let null = builder.ins().iconst(I64, 0);
-            let zero = builder.ins().iconst(I64, 0);
-            let result_ptr = builder.ins().select(is_set, pat_ptr, null);
-            let result_len = builder.ins().select(is_set, pat_len, zero);
-            (result_ptr, result_len)
-        }
-        "substring" => {
-            // ${var:offset:length} — operand is "offset" or "offset:length"
-            let parts: Vec<&str> = operand.split(':').collect();
-            let offset_val = parts[0].parse::<i64>().unwrap_or(0);
-            let offset = builder.ins().iconst(I64, offset_val);
-            let (length, has_length) = if parts.len() > 1 {
-                let l = parts[1].parse::<i64>().unwrap_or(0);
-                (builder.ins().iconst(I64, l), builder.ins().iconst(I64, 1))
-            } else {
-                (builder.ins().iconst(I64, 0), builder.ins().iconst(I64, 0))
-            };
-            let func_ref = module.declare_func_in_func(externs.substring, builder.func);
-            let call = builder
-                .ins()
-                .call(func_ref, &[s_ptr, s_len, offset, length, has_length]);
-            let results = builder.inst_results(call);
-            (results[0], results[1])
-        }
+        "%%" | "%" => emit_strip_suffix(
+            operator, s_ptr, s_len, pat_ptr, pat_len, builder, module, externs,
+        ),
+        "##" | "#" => emit_strip_prefix(
+            operator, s_ptr, s_len, pat_ptr, pat_len, builder, module, externs,
+        ),
+        ":-" | "-" => emit_default_value(s_ptr, s_len, pat_ptr, pat_len, builder, module, externs),
+        ":+" | "+" => emit_alternate_value(s_len, pat_ptr, pat_len, builder, module, externs),
+        "substring" => emit_substring(operand, s_ptr, s_len, builder, module, externs),
         "^" | "^^" | "," | ",," => {
-            // Case conversion: allocate buffer, call runtime, return (ptr, len)
-            let buf_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                4096,
-                3,
-            ));
-            let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
-            let func_id = match operator {
-                "^" => externs.toupper_first,
-                "^^" => externs.toupper_all,
-                "," => externs.tolower_first,
-                ",," => externs.tolower_all,
-                _ => unreachable!(),
-            };
-            let func_ref = module.declare_func_in_func(func_id, builder.func);
-            let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
-            let result_len = builder.inst_results(call)[0];
-            (buf_ptr, result_len)
+            emit_case_conversion(operator, s_ptr, s_len, builder, module, externs)
         }
-        "/" | "//" | "/#" | "/%" => {
-            // ${var/pat/rep} → coerce to regex_replace (DD#37)
-            // operand is "pattern\0replacement"
-            let parts: Vec<&str> = operand.splitn(2, '\0').collect();
-            let pattern = parts.first().unwrap_or(&"");
-            let replacement = parts.get(1).unwrap_or(&"");
-
-            let pat_id = literals
-                .get(*pattern)
-                .unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
-            let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
-            let pat_ptr = builder.ins().global_value(I64, pat_gv);
-            let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
-
-            let rep_id = literals
-                .get(*replacement)
-                .unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
-            let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
-            let rep_ptr = builder.ins().global_value(I64, rep_gv);
-            let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
-
-            let global_flag = if operator == "//" { 1i64 } else { 0i64 };
-            let global_val = builder.ins().iconst(I64, global_flag);
-
-            let func_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-            let call = builder.ins().call(
-                func_ref,
-                &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
-            );
-            let result_ptr = builder.inst_results(call)[0];
-            let result_len = builder.inst_results(call)[1];
-            (result_ptr, result_len)
-        }
-        _ => {
-            panic!(
-                "ICE: unsupported parameter expansion operator: {}",
-                operator
-            );
-        }
+        "/" | "//" | "/#" | "/%" => emit_pattern_replace(
+            operator, operand, s_ptr, s_len, builder, module, literals, externs,
+        ),
+        _ => panic!(
+            "ICE: unsupported parameter expansion operator: {}",
+            operator
+        ),
     }
+}
+
+/// ${var%pat} / ${var%%pat} — strip matching suffix.
+/// `%%` strips the longest match, `%` the shortest. The runtime
+/// returns the new length; the pointer is unchanged.
+#[allow(clippy::too_many_arguments)]
+fn emit_strip_suffix(
+    operator: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    pat_ptr: cranelift_codegen::ir::Value,
+    pat_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let longest = builder
+        .ins()
+        .iconst(I64, if operator == "%%" { 1 } else { 0 });
+    let func_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
+    let call = builder
+        .ins()
+        .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
+    let new_len = builder.inst_results(call)[0];
+    (s_ptr, new_len)
+}
+
+/// ${var#pat} / ${var##pat} — strip matching prefix.
+/// `##` strips the longest match, `#` the shortest. The runtime
+/// returns the offset; the pointer advances and the length shrinks.
+#[allow(clippy::too_many_arguments)]
+fn emit_strip_prefix(
+    operator: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    pat_ptr: cranelift_codegen::ir::Value,
+    pat_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let longest = builder
+        .ins()
+        .iconst(I64, if operator == "##" { 1 } else { 0 });
+    let func_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
+    let call = builder
+        .ins()
+        .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
+    let offset = builder.inst_results(call)[0];
+    let new_ptr = builder.ins().iadd(s_ptr, offset);
+    let new_len = builder.ins().isub(s_len, offset);
+    (new_ptr, new_len)
+}
+
+/// ${var:-default} / ${var-default} — use var if set, else default.
+fn emit_default_value(
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    pat_ptr: cranelift_codegen::ir::Value,
+    pat_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let func_ref = module.declare_func_in_func(externs.default_value, builder.func);
+    let call = builder.ins().call(func_ref, &[s_len]);
+    let is_set = builder.inst_results(call)[0];
+    let result_ptr = builder.ins().select(is_set, s_ptr, pat_ptr);
+    let result_len = builder.ins().select(is_set, s_len, pat_len);
+    (result_ptr, result_len)
+}
+
+/// ${var:+alt} / ${var+alt} — use alt if var is set/non-empty, else empty.
+fn emit_alternate_value(
+    s_len: cranelift_codegen::ir::Value,
+    pat_ptr: cranelift_codegen::ir::Value,
+    pat_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let func_ref = module.declare_func_in_func(externs.default_value, builder.func);
+    let call = builder.ins().call(func_ref, &[s_len]);
+    let is_set = builder.inst_results(call)[0];
+    let null = builder.ins().iconst(I64, 0);
+    let zero = builder.ins().iconst(I64, 0);
+    let result_ptr = builder.ins().select(is_set, pat_ptr, null);
+    let result_len = builder.ins().select(is_set, pat_len, zero);
+    (result_ptr, result_len)
+}
+
+/// ${var:offset} / ${var:offset:length} — substring extraction.
+/// Operand is "offset" or "offset:length".
+fn emit_substring(
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let parts: Vec<&str> = operand.split(':').collect();
+    let offset_val = parts[0].parse::<i64>().unwrap_or(0);
+    let offset = builder.ins().iconst(I64, offset_val);
+    let (length, has_length) = if parts.len() > 1 {
+        let l = parts[1].parse::<i64>().unwrap_or(0);
+        (builder.ins().iconst(I64, l), builder.ins().iconst(I64, 1))
+    } else {
+        (builder.ins().iconst(I64, 0), builder.ins().iconst(I64, 0))
+    };
+    let func_ref = module.declare_func_in_func(externs.substring, builder.func);
+    let call = builder
+        .ins()
+        .call(func_ref, &[s_ptr, s_len, offset, length, has_length]);
+    let results = builder.inst_results(call);
+    (results[0], results[1])
+}
+
+/// ${var^} / ${var^^} / ${var,} / ${var,,} — case conversion.
+/// Allocates a 4096-byte stack buffer; the runtime writes the
+/// converted value and returns the new length.
+fn emit_case_conversion(
+    operator: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let buf_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
+    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
+    let func_id = match operator {
+        "^" => externs.toupper_first,
+        "^^" => externs.toupper_all,
+        "," => externs.tolower_first,
+        ",," => externs.tolower_all,
+        _ => unreachable!(),
+    };
+    let func_ref = module.declare_func_in_func(func_id, builder.func);
+    let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
+    let result_len = builder.inst_results(call)[0];
+    (buf_ptr, result_len)
+}
+
+/// ${var/pat/rep} family → regex_replace (DD#37). Operand is
+/// `"pattern\0replacement"`. The `//` operator sets the global
+/// flag; `/#` and `/%` are anchored variants (the runtime
+/// distinguishes them by examining the pattern).
+#[allow(clippy::too_many_arguments)]
+fn emit_pattern_replace(
+    operator: &str,
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    s_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let parts: Vec<&str> = operand.splitn(2, '\0').collect();
+    let pattern = parts.first().unwrap_or(&"");
+    let replacement = parts.get(1).unwrap_or(&"");
+
+    let (pat_ptr, pat_len) = intern_literal_value(pattern, literals, module, builder);
+    let (rep_ptr, rep_len) = intern_literal_value(replacement, literals, module, builder);
+
+    let global_flag = if operator == "//" { 1i64 } else { 0i64 };
+    let global_val = builder.ins().iconst(I64, global_flag);
+
+    let func_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+    let call = builder.ins().call(
+        func_ref,
+        &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
+    );
+    let result_ptr = builder.inst_results(call)[0];
+    let result_len = builder.inst_results(call)[1];
+    (result_ptr, result_len)
+}
+
+/// Look up an interned literal and emit `(ptr, len)`. Panics with
+/// an ICE if the literal was not pre-interned by `intern_literals`.
+fn intern_literal_value(
+    s: &str,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    module: &mut ObjectModule,
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let id = literals
+        .get(s)
+        .unwrap_or_else(|| panic!("ICE: missing literal: {}", s));
+    let gv = module.declare_data_in_func(*id, builder.func);
+    let ptr = builder.ins().global_value(I64, gv);
+    let len = builder.ins().iconst(I64, s.len() as i64);
+    (ptr, len)
 }
 
 /// Handle SsaValue::CmdSubst — command substitution $(cmd args...).
