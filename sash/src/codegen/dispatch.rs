@@ -168,6 +168,7 @@ impl SsaInst {
     /// SECURITY: Every BuiltinCmd variant is handled. Variants not listed
     /// explicitly fall through to `handle_general_command`, which dispatches
     /// on `name` (printf, len/keys/join intrinsics, exec lookup, …).
+    // cyclo-allow: N-arm pure dispatcher (BuiltinCmd → emit_X helper).
     #[allow(clippy::too_many_arguments)]
     fn emit_command_kind(
         &self,
@@ -180,127 +181,34 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let test_result_var = ctx.test_result_var;
-        let exit_status_var = ctx.exit_status_var;
-        let redirect_stack = &mut *ctx.redirect_stack;
         match kind {
-            BuiltinCmd::Echo => {
-                return self.emit_echo(args, redirects, builder, module, ctx);
-            }
+            BuiltinCmd::Echo => return self.emit_echo(args, redirects, builder, module, ctx),
             BuiltinCmd::Test => {
                 // Legacy path — should not be reached now that transform
                 // emits SsaInst::Test directly. Treat as always-true.
                 let one = builder.ins().iconst(I64, 1);
-                builder.def_var(test_result_var, one);
+                builder.def_var(ctx.test_result_var, one);
             }
-            BuiltinCmd::NegateTestResult => {
-                let cur = builder.use_var(test_result_var);
-                let one = builder.ins().iconst(I64, 1);
-                let flipped = builder.ins().isub(one, cur);
-                builder.def_var(test_result_var, flipped);
-                // Also flip exit status so $? reflects the negation
-                let cur_es = builder.use_var(exit_status_var);
-                let zero = builder.ins().iconst(I64, 0);
-                let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
-                let new_es = builder.ins().select(is_zero, one, zero);
-                builder.def_var(exit_status_var, new_es);
-            }
-            BuiltinCmd::LetExit => {
-                return self.emit_let_exit(args, builder, module, ctx);
-            }
-            BuiltinCmd::SubshellStart => {
-                // Fork: pid = sash_fork(). Store pid in test_result_var
-                // so the Branch terminator can dispatch on it.
-                let fork_ref = module.declare_func_in_func(externs.fork, builder.func);
-                let call = builder.ins().call(fork_ref, &[]);
-                let pid = builder.inst_results(call)[0];
-                builder.def_var(test_result_var, pid);
-            }
-            BuiltinCmd::SubshellWait => {
-                // Parent: wait for the child whose pid is in test_result_var
-                let pid = builder.use_var(test_result_var);
-                let wait_ref = module.declare_func_in_func(externs.wait, builder.func);
-                let call = builder.ins().call(wait_ref, &[pid]);
-                let status = builder.inst_results(call)[0];
-                builder.def_var(exit_status_var, status);
-            }
-            BuiltinCmd::RedirectPush => {
-                // Compound-command redirect: save fds, apply redirects
-                let saved = emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
-                );
-                redirect_stack.push(saved);
-            }
-            BuiltinCmd::RedirectPop => {
-                // Compound-command redirect: restore saved fds
-                if let Some(saved) = redirect_stack.pop() {
-                    emit_restore(saved, builder, module, externs);
-                }
-            }
-            BuiltinCmd::StoreBgPid => {
-                return self.emit_store_bg_pid(args, builder, module, ctx);
-            }
-            BuiltinCmd::TrapSignal => {
-                // trap '' SIG or trap - SIG: call sash_trap(signum, handler)
-                if args.len() >= 2 {
-                    if let (SsaValue::Literal(sig_s), SsaValue::Literal(handler_s)) =
-                        (&args[0], &args[1])
-                    {
-                        let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
-                        let handler = builder
-                            .ins()
-                            .iconst(I64, handler_s.parse::<i64>().unwrap_or(0));
-                        let trap_ref = module.declare_func_in_func(externs.trap, builder.func);
-                        builder.ins().call(trap_ref, &[signum, handler]);
-                    }
-                }
-            }
-            BuiltinCmd::SignalFlag => {
-                // signal N FLAG: call sash_signal_flag(signum)
-                if let Some(SsaValue::Literal(sig_s)) = args.first() {
-                    let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
-                    let flag_ref = module.declare_func_in_func(externs.signal_flag, builder.func);
-                    builder.ins().call(flag_ref, &[signum]);
-                }
-            }
-            BuiltinCmd::TableDelete => {
-                return self.emit_table_delete(args, builder, module, ctx);
-            }
+            BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
+            BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
+            BuiltinCmd::SubshellStart => self.emit_subshell_start(builder, module, ctx),
+            BuiltinCmd::SubshellWait => self.emit_subshell_wait(builder, module, ctx),
+            BuiltinCmd::RedirectPush => self.emit_redirect_push(redirects, builder, module, ctx),
+            BuiltinCmd::RedirectPop => self.emit_redirect_pop(builder, module, ctx),
+            BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
+            BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
+            BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
+            BuiltinCmd::TableDelete => return self.emit_table_delete(args, builder, module, ctx),
             BuiltinCmd::Noop | BuiltinCmd::True | BuiltinCmd::False => {
-                let is_false = matches!(kind, BuiltinCmd::False);
-                let val = if is_false { 0i64 } else { 1i64 };
-                let v = builder.ins().iconst(I64, val);
-                builder.def_var(test_result_var, v);
-                // $? = 0 for true/:, 1 for false
-                let es = builder.ins().iconst(I64, if is_false { 1 } else { 0 });
-                builder.def_var(exit_status_var, es);
+                self.emit_noop_true_false(kind, builder, ctx)
             }
-            BuiltinCmd::Exit => {
-                return self.emit_exit(args, builder, module, ctx);
-            }
-            BuiltinCmd::Exec => {
-                return self.emit_exec(name, args, redirects, builder, module, ctx);
-            }
-            BuiltinCmd::Cd => {
-                return super::inst_handlers::handle_cd(args, builder, module, ctx);
-            }
-            BuiltinCmd::Pwd => {
-                return self.emit_pwd(args, builder, module, ctx);
-            }
-            BuiltinCmd::Wait => {
-                return self.emit_wait(args, builder, module, ctx);
-            }
+            BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
+            BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
+            BuiltinCmd::Cd => return super::inst_handlers::handle_cd(args, builder, module, ctx),
+            BuiltinCmd::Pwd => return self.emit_pwd(args, builder, module, ctx),
+            BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
             BuiltinCmd::Shift => {
-                return super::inst_handlers::handle_shift(args, builder, module, ctx);
+                return super::inst_handlers::handle_shift(args, builder, module, ctx)
             }
             BuiltinCmd::CommandBuiltin => {
                 return self.emit_command_builtin(name, args, redirects, builder, module, ctx);
@@ -316,6 +224,131 @@ impl SsaInst {
             }
         }
         false
+    }
+
+    fn emit_negate_test_result(&self, builder: &mut FunctionBuilder, ctx: &mut InstCtx) {
+        let test_result_var = ctx.test_result_var;
+        let exit_status_var = ctx.exit_status_var;
+        let cur = builder.use_var(test_result_var);
+        let one = builder.ins().iconst(I64, 1);
+        let flipped = builder.ins().isub(one, cur);
+        builder.def_var(test_result_var, flipped);
+        // Also flip exit status so $? reflects the negation
+        let cur_es = builder.use_var(exit_status_var);
+        let zero = builder.ins().iconst(I64, 0);
+        let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
+        let new_es = builder.ins().select(is_zero, one, zero);
+        builder.def_var(exit_status_var, new_es);
+    }
+
+    fn emit_subshell_start(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // Fork: pid = sash_fork(). Store pid in test_result_var
+        // so the Branch terminator can dispatch on it.
+        let fork_ref = module.declare_func_in_func(ctx.externs.fork, builder.func);
+        let call = builder.ins().call(fork_ref, &[]);
+        let pid = builder.inst_results(call)[0];
+        builder.def_var(ctx.test_result_var, pid);
+    }
+
+    fn emit_subshell_wait(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // Parent: wait for the child whose pid is in test_result_var
+        let pid = builder.use_var(ctx.test_result_var);
+        let wait_ref = module.declare_func_in_func(ctx.externs.wait, builder.func);
+        let call = builder.ins().call(wait_ref, &[pid]);
+        let status = builder.inst_results(call)[0];
+        builder.def_var(ctx.exit_status_var, status);
+    }
+
+    fn emit_redirect_push(
+        &self,
+        redirects: &[crate::ir::Redirect],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // Compound-command redirect: save fds, apply redirects
+        let saved = emit_redirects(
+            redirects,
+            builder,
+            module,
+            ctx.externs,
+            ctx.literals,
+            ctx.vars,
+            Some(ctx.exit_status_var),
+        );
+        ctx.redirect_stack.push(saved);
+    }
+
+    fn emit_redirect_pop(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // Compound-command redirect: restore saved fds
+        if let Some(saved) = ctx.redirect_stack.pop() {
+            emit_restore(saved, builder, module, ctx.externs);
+        }
+    }
+
+    fn emit_trap_signal(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // trap '' SIG or trap - SIG: call sash_trap(signum, handler)
+        if args.len() >= 2 {
+            if let (SsaValue::Literal(sig_s), SsaValue::Literal(handler_s)) = (&args[0], &args[1]) {
+                let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
+                let handler = builder
+                    .ins()
+                    .iconst(I64, handler_s.parse::<i64>().unwrap_or(0));
+                let trap_ref = module.declare_func_in_func(ctx.externs.trap, builder.func);
+                builder.ins().call(trap_ref, &[signum, handler]);
+            }
+        }
+    }
+
+    fn emit_signal_flag(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // signal N FLAG: call sash_signal_flag(signum)
+        if let Some(SsaValue::Literal(sig_s)) = args.first() {
+            let signum = builder.ins().iconst(I64, sig_s.parse::<i64>().unwrap_or(0));
+            let flag_ref = module.declare_func_in_func(ctx.externs.signal_flag, builder.func);
+            builder.ins().call(flag_ref, &[signum]);
+        }
+    }
+
+    fn emit_noop_true_false(
+        &self,
+        kind: &BuiltinCmd,
+        builder: &mut FunctionBuilder,
+        ctx: &mut InstCtx,
+    ) {
+        let is_false = matches!(kind, BuiltinCmd::False);
+        let val = if is_false { 0i64 } else { 1i64 };
+        let v = builder.ins().iconst(I64, val);
+        builder.def_var(ctx.test_result_var, v);
+        // $? = 0 for true/:, 1 for false
+        let es = builder.ins().iconst(I64, if is_false { 1 } else { 0 });
+        builder.def_var(ctx.exit_status_var, es);
     }
 
     fn emit_exec(

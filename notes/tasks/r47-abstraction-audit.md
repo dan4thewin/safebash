@@ -114,7 +114,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 63 | `emit` | **A** | Top hotspot. String-keyed builtin dispatcher. Extract `BuiltinCmd` enum + handler table (pattern #3). **Done 2026-06-01 (journal 058).** BuiltinCmd already landed; live CC was 42. Extracted inner `match kind` into `emit_command_kind`. `emit` 42 → 15; `emit_command_kind` 28 (new). `emit` out of top-15. |
+| 63 | `emit` | **A** | Top hotspot. String-keyed builtin dispatcher. Extract `BuiltinCmd` enum + handler table (pattern #3). **Done 2026-06-01 (journal 058).** BuiltinCmd already landed; live CC was 42. Extracted inner `match kind` into `emit_command_kind`. `emit` 42 → 15; `emit_command_kind` 28 (new). `emit` out of top-15. **Follow-up 2026-06-03 (journal 092).** Extracted 7 inline arms (NegateTestResult, SubshellStart/Wait, RedirectPush/Pop, TrapSignal, SignalFlag, Noop|True|False) into `emit_X` helpers; `emit_command_kind` 28 → 22 (pure dispatcher; `// cyclo-allow:` annotated). |
 
 ### sash/src/codegen/value_handlers.rs
 
