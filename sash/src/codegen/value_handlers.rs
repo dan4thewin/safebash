@@ -27,89 +27,112 @@ pub(super) fn handle_param_expansion(
     externs: &ExternFuncs,
     _exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // glob: arr=(*.sh) → sash_glob(".", pattern); glob_regex uses sash_glob_regex.
-    if operator == "glob" || operator == "glob_regex" {
+    // arr=(*.sh) / glob_regex bypass the var load and go straight to libc glob.
+    if matches!(operator, "glob" | "glob_regex") {
         let use_regex = operator == "glob_regex";
         return emit_glob_expansion(operand, use_regex, builder, module, literals, externs);
     }
 
-    // Get the variable's current value
+    let (s_ptr, s_len) = load_var_or_empty(var, vars, builder);
+
+    match operator {
+        "strlen" => emit_int_to_str(builder, module, externs, s_len),
+        "arrlen" => {
+            let arr_len = emit_table_len(s_ptr, builder, module, externs);
+            emit_int_to_str(builder, module, externs, arr_len)
+        }
+        "strlen_elem" => emit_strlen_elem(operand, s_ptr, builder, module, externs),
+        "regex_replace" => {
+            emit_regex_replace_op(operand, s_ptr, s_len, builder, module, literals, externs)
+        }
+        op if op == "arrkeys"
+            || op == "arrvals"
+            || op == "arrjoin"
+            || op.starts_with("arrvals_") =>
+        {
+            emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
+        }
+        _ => {
+            let (pat_ptr, pat_len) = intern_operand_pattern(operand, literals, module, builder);
+            emit_string_op_expansion(
+                operator, operand, s_ptr, s_len, pat_ptr, pat_len, builder, module, literals,
+                externs,
+            )
+        }
+    }
+}
+
+/// Load (str_ptr, str_len) for a var, or zero/zero if the var is
+/// not in scope. Bash treats undefined vars as empty strings in
+/// parameter expansion, so the `:- / -` / `:+ / +` defaulting
+/// operators do not need a special path here — the rest of the
+/// emission already handles the empty case correctly.
+fn load_var_or_empty(
+    var: &VarRef,
+    vars: &HashMap<String, VarSlot>,
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let key = var.display();
-    let (s_ptr, s_len) = if let Some(sv) = vars.get(&key) {
+    if let Some(sv) = vars.get(&key) {
         (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
-    } else if operator == ":-" || operator == "-" || operator == ":+" || operator == "+" {
-        // Unset variable with default/alternate operator → treat as empty
-        let null = builder.ins().iconst(I64, 0);
-        let zero = builder.ins().iconst(I64, 0);
-        (null, zero)
     } else {
-        // Undefined variable — treat as empty string (bash behavior)
         let null = builder.ins().iconst(I64, 0);
         let zero = builder.ins().iconst(I64, 0);
         (null, zero)
-    };
+    }
+}
 
-    // "strlen" doesn't use an operand
-    if operator == "strlen" {
-        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, s_len);
-        return (result_ptr, result_len);
-    }
+fn emit_table_len(
+    s_ptr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+    let call = builder.ins().call(len_ref, &[s_ptr]);
+    builder.inst_results(call)[0]
+}
 
-    // ${#arr[@]} — array length
-    if operator == "arrlen" {
-        // s_ptr IS the table pointer (stored in str_ptr slot for arrays)
-        let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
-        let call = builder.ins().call(len_ref, &[s_ptr]);
-        let arr_len = builder.inst_results(call)[0];
-        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, arr_len);
-        return (result_ptr, result_len);
-    }
+/// ${#arr[N]} — string length of element N. The element pointer
+/// comes back via the return value of `sash_table_value`; the
+/// length comes back via the out-pointer in the third argument.
+fn emit_strlen_elem(
+    operand: &str,
+    s_ptr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
+    let idx_val = builder
+        .ins()
+        .iconst(I64, operand.parse::<i64>().unwrap_or(0));
+    let out_len_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+    let call = builder.ins().call(tv_ref, &[s_ptr, idx_val, out_len_addr]);
+    let _elem_ptr = builder.inst_results(call)[0];
+    let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
+    emit_int_to_str(builder, module, externs, elem_len)
+}
 
-    // ${#arr[N]} — string length of element N
-    if operator == "strlen_elem" {
-        // Get element by integer index from the table
-        let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
-        let idx_val = if !operand.is_empty() {
-            builder
-                .ins()
-                .iconst(I64, operand.parse::<i64>().unwrap_or(0))
-        } else {
-            builder.ins().iconst(I64, 0)
-        };
-        let out_len_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-        let call = builder.ins().call(tv_ref, &[s_ptr, idx_val, out_len_addr]);
-        let _elem_ptr = builder.inst_results(call)[0];
-        let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
-        // itoa the length
-        let (result_ptr, result_len) = emit_int_to_str(builder, module, externs, elem_len);
-        return (result_ptr, result_len);
-    }
-    if operator == "regex_replace" {
-        return emit_regex_replace_op(operand, s_ptr, s_len, builder, module, literals, externs);
-    }
-    if operator == "arrkeys"
-        || operator == "arrvals"
-        || operator == "arrjoin"
-        || operator.starts_with("arrvals_")
-    {
-        return emit_array_join_expansion(
-            operator, operand, s_ptr, builder, module, literals, externs,
-        );
-    }
-
-    // Intern the operand pattern
-    let pat_data_id = literals.get(operand).unwrap_or_else(|| {
-        panic!("ICE: param expansion operand not interned: {:?}", operand);
-    });
+/// Intern an operand string literal into the module and return
+/// (ptr, len) for use in pattern operations. The operand must
+/// have been pre-interned by `intern_literals`; an ICE here means
+/// a code path was added that bypasses that pass.
+fn intern_operand_pattern(
+    operand: &str,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    module: &mut ObjectModule,
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let pat_data_id = literals
+        .get(operand)
+        .unwrap_or_else(|| panic!("ICE: param expansion operand not interned: {:?}", operand));
     let pat_gv = module.declare_data_in_func(*pat_data_id, builder.func);
     let pat_ptr = builder.ins().global_value(I64, pat_gv);
     let pat_len = builder.ins().iconst(I64, operand.len() as i64);
-
-    emit_string_op_expansion(
-        operator, operand, s_ptr, s_len, pat_ptr, pat_len, builder, module, literals, externs,
-    )
+    (pat_ptr, pat_len)
 }
 
 fn emit_glob_expansion(
