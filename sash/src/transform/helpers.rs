@@ -34,24 +34,7 @@ pub(super) fn insert_phis_two_branch(
 pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shifts: &mut usize) {
     match &stmt.kind {
         StmtKind::Command(c) => {
-            // Detect `shift` command
-            let name_text = match &c.name.kind {
-                ExprKind::Literal(s) => s.as_str(),
-                _ => "",
-            };
-            if name_text == "shift" {
-                // shift with no args shifts by 1; shift N shifts by N
-                let n = c
-                    .args
-                    .first()
-                    .and_then(|a| {
-                        if let ExprKind::Literal(s) = &a.kind {
-                            s.parse::<usize>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(1);
+            if let Some(n) = shift_amount(c) {
                 *shifts += n;
             }
             scan_expr_positionals_expr(&c.name, max);
@@ -71,16 +54,12 @@ pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shif
             for w in &f.words {
                 scan_expr_positionals_expr(w, max);
             }
-            for s in &f.body {
-                scan_expr_positionals_stmt(s, max, shifts);
-            }
+            scan_stmts(&f.body, max, shifts);
         }
         StmtKind::Case(c) => {
             scan_expr_positionals_expr(&c.value, max);
             for item in &c.items {
-                for s in &item.body {
-                    scan_expr_positionals_stmt(s, max, shifts);
-                }
+                scan_stmts(&item.body, max, shifts);
             }
         }
         StmtKind::Function(_) => {} // don't recurse into nested functions
@@ -90,53 +69,61 @@ pub(super) fn scan_expr_positionals_stmt(stmt: &Statement, max: &mut usize, shif
         // Leaf StmtKinds (Comment, ArithTest) return empty bodies.
         _ => {
             for body in stmt.child_bodies() {
-                for s in body {
-                    scan_expr_positionals_stmt(s, max, shifts);
-                }
+                scan_stmts(body, max, shifts);
             }
         }
     }
 }
 
+/// If `c` is a `shift` command, return how many positions it
+/// shifts by (`shift` ≡ 1, `shift N` parses N as a positive
+/// integer, falling back to 1 if N is non-numeric). Returns
+/// `None` for any other command.
+fn shift_amount(c: &Command) -> Option<usize> {
+    let name = match &c.name.kind {
+        ExprKind::Literal(s) => s.as_str(),
+        _ => return None,
+    };
+    if name != "shift" {
+        return None;
+    }
+    let n = c
+        .args
+        .first()
+        .and_then(|a| match &a.kind {
+            ExprKind::Literal(s) => s.parse::<usize>().ok(),
+            _ => None,
+        })
+        .unwrap_or(1);
+    Some(n)
+}
+
+/// Walk a sequence of statements, accumulating max positional ref
+/// and shift count. Factor of `scan_expr_positionals_stmt` for
+/// uses that already have a `&[Statement]` slice.
+fn scan_stmts(stmts: &[Statement], max: &mut usize, shifts: &mut usize) {
+    for s in stmts {
+        scan_expr_positionals_stmt(s, max, shifts);
+    }
+}
+
 pub(super) fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
     match &expr.kind {
-        ExprKind::SimpleExpansion(name) => {
-            if let Ok(n) = name.parse::<usize>() {
-                if (1..=9).contains(&n) && n > *max {
-                    *max = n;
-                }
-            }
-        }
-        ExprKind::DoubleQuoted(parts) => {
+        ExprKind::SimpleExpansion(name) => record_positional(name, max),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
             for p in parts {
                 scan_expr_positionals_expr(p, max);
-            }
-        }
-        ExprKind::Concat(parts) => {
-            for p in parts {
-                scan_expr_positionals_expr(p, max);
-            }
-        }
-        ExprKind::Array(elems) => {
-            for e in elems {
-                scan_expr_positionals_expr(e, max);
             }
         }
         ExprKind::ParameterExpansion(pe) => {
-            if let Ok(n) = pe.name.parse::<usize>() {
-                if (1..=9).contains(&n) && n > *max {
-                    *max = n;
-                }
-            }
+            record_positional(&pe.name, max);
             if let Some(ref op) = pe.operand {
                 scan_expr_positionals_expr(op, max);
             }
         }
         ExprKind::CommandSubstitution(stmts) => {
             let mut sub_shifts = 0;
-            for s in stmts {
-                scan_expr_positionals_stmt(s, max, &mut sub_shifts);
-            }
+            scan_stmts(stmts, max, &mut sub_shifts);
         }
         ExprKind::Test(t) => {
             scan_test_positionals(t, max);
@@ -145,6 +132,18 @@ pub(super) fn scan_expr_positionals_expr(expr: &Expr, max: &mut usize) {
             scan_expr_positionals_expr(index, max);
         }
         _ => {}
+    }
+}
+
+/// If `name` is `"1"`..`"9"`, update `max` to the larger of itself
+/// and the parsed digit. Non-numeric or out-of-range names are no-
+/// ops. Used for both `$N` (`SimpleExpansion`) and `${N…}`
+/// (`ParameterExpansion`) name parts.
+fn record_positional(name: &str, max: &mut usize) {
+    if let Ok(n) = name.parse::<usize>() {
+        if (1..=9).contains(&n) && n > *max {
+            *max = n;
+        }
     }
 }
 
