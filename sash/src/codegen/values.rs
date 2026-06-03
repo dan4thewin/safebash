@@ -969,25 +969,25 @@ pub(super) fn lower_value_as_int(
     }
 }
 
+/// If `name` is a positional ($1, $2, ...) or special var ($#, $@, $0),
+/// insert it into `refs` for later runtime emission.
+fn maybe_insert_positional(name: &str, refs: &mut std::collections::HashSet<String>) {
+    if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
+        refs.insert(name.to_string());
+    }
+}
+
 /// Scan an SsaValue for variable references that might be positional or env vars
 pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
     match val {
-        SsaValue::Var(vref) if vref.version == 0 => {
-            let name = &vref.name;
-            if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                refs.insert(name.clone());
-            }
-        }
+        SsaValue::Var(vref) if vref.version == 0 => maybe_insert_positional(&vref.name, refs),
         SsaValue::Concat(parts) => {
             for p in parts {
                 scan_value_for_vars(p, refs);
             }
         }
         SsaValue::ParamExpansion { var, .. } if var.version == 0 => {
-            let name = &var.name;
-            if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                refs.insert(name.clone());
-            }
+            maybe_insert_positional(&var.name, refs)
         }
         SsaValue::CmdSubst { argv, .. } => {
             for a in argv {
@@ -995,10 +995,7 @@ pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::H
             }
         }
         SsaValue::ArithExpr { var, .. } if var.version == 0 => {
-            let name = &var.name;
-            if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                refs.insert(name.clone());
-            }
+            maybe_insert_positional(&var.name, refs)
         }
         SsaValue::AssocArray(pairs) => {
             for (_, v) in pairs {
@@ -1035,11 +1032,7 @@ pub(super) fn emit_strlen(
 pub(super) fn scan_test_for_vars(test: &TestExpr, refs: &mut std::collections::HashSet<String>) {
     fn scan_expr(expr: &crate::ir::Expr, refs: &mut std::collections::HashSet<String>) {
         match &expr.kind {
-            crate::ir::ExprKind::SimpleExpansion(name) => {
-                if name.parse::<u64>().is_ok() || name == "#" || name == "@" || name == "0" {
-                    refs.insert(name.clone());
-                }
-            }
+            crate::ir::ExprKind::SimpleExpansion(name) => maybe_insert_positional(name, refs),
             crate::ir::ExprKind::DoubleQuoted(parts) => {
                 for p in parts {
                     scan_expr(p, refs);

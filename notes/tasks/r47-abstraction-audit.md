@@ -128,7 +128,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 48 | `lower_value` | **A** | Itoa-from-i64 duplicated across $?, $$, int var, ArithExpr, ArithBinOp arms (pattern #1, #2). **Done 2026-06-01 (journal 062).** Extracted 11 per-arm handlers + 2 utilities (`alloc_out_slot`, `lookup_array_table`) + `lookup_atoi_var`. Parent 48 → 17; max helper CC 10. |
-| 32 | `scan_value_for_vars` | **B/C** | Pure variant traversal; multiple arms repeat positional-name check. Extract `maybe_insert_positional`. |
+| 32 | `scan_value_for_vars` | **B/C** | Pure variant traversal; multiple arms repeat positional-name check. Extract `maybe_insert_positional`. **Done 2026-06-03 (journal 091).** Extracted `maybe_insert_positional` (CC 5), 4 callsites collapsed (3 in scan_value_for_vars + 1 in scan_expr inside scan_test_for_vars). Parent 29 → 17. Bonus: sibling `scan_test_for_vars` 14 → 10, `scan_expr` 9 → 5 — both fell out of the audit band. |
 | 26 | `lower_expr_value` | **A** | Itoa pattern duplicated (pattern #1). |
 
 ### sash/src/codegen/tests.rs
