@@ -163,43 +163,11 @@ pub(super) fn handle_trap(
         let body_str = expr_to_string(&c.args[0]);
         let signal = expr_to_string(&c.args[1]);
         if signal == "EXIT" || signal == "0" {
-            // Parse the trap body as bash source and store for later
-            // Strip surrounding quotes if present
-            let body_clean = if (body_str.starts_with('\'') && body_str.ends_with('\''))
-                || (body_str.starts_with('"') && body_str.ends_with('"'))
-            {
-                &body_str[1..body_str.len() - 1]
-            } else {
-                &body_str
-            };
-            let trap_stmts = match crate::parse::parse(body_clean) {
-                Ok((program, _)) => program.statements,
-                Err(_) => vec![],
-            };
-            state.exit_trap = Some(trap_stmts);
+            handle_trap_exit(&body_str, state);
             return block;
-        } else if body_str.is_empty() || body_str == "''" || body_str == "\"\"" || body_str == "-" {
+        } else if is_ignore_reset_body(&body_str) {
             // trap '' SIG or trap - SIG → ignore/reset
-            let signum = match signal.as_str() {
-                "INT" | "SIGINT" | "2" => 2,
-                "TERM" | "SIGTERM" | "15" => 15,
-                "HUP" | "SIGHUP" | "1" => 1,
-                "PIPE" | "SIGPIPE" | "13" => 13,
-                "USR1" | "SIGUSR1" | "10" => 10,
-                "USR2" | "SIGUSR2" | "12" => 12,
-                _ => 0,
-            };
-            if signum > 0 {
-                let handler = if body_str == "-" { 0i64 } else { 1i64 }; // SIG_DFL=0, SIG_IGN=1
-                ssa.block_mut(block).insts.push(SsaInst::sigil(
-                    BuiltinCmd::TrapSignal,
-                    vec![
-                        SsaValue::Literal(signum.to_string()),
-                        SsaValue::Literal(handler.to_string()),
-                    ],
-                    true,
-                ));
-            }
+            handle_trap_ignore_reset(&body_str, &signal, ssa, block);
             return block;
         }
     }
@@ -210,6 +178,63 @@ pub(super) fn handle_trap(
         .insts
         .push(SsaInst::command(resolved, args, vec![], true));
     block
+}
+
+/// Map a signal name or numeric string to the kernel signal number.
+/// Returns 0 for unsupported names.
+fn signal_name_to_num(signal: &str) -> i64 {
+    match signal {
+        "INT" | "SIGINT" | "2" => 2,
+        "TERM" | "SIGTERM" | "15" => 15,
+        "HUP" | "SIGHUP" | "1" => 1,
+        "PIPE" | "SIGPIPE" | "13" => 13,
+        "USR1" | "SIGUSR1" | "10" => 10,
+        "USR2" | "SIGUSR2" | "12" => 12,
+        _ => 0,
+    }
+}
+
+/// Detect the trap-body forms that mean "ignore" (`''`, `""`, empty) or
+/// "reset to SIG_DFL" (`-`).
+fn is_ignore_reset_body(body_str: &str) -> bool {
+    body_str.is_empty() || body_str == "''" || body_str == "\"\"" || body_str == "-"
+}
+
+/// Strip a single pair of matching surrounding quotes from `s`, if any.
+fn strip_outer_quotes(s: &str) -> &str {
+    if (s.starts_with('\'') && s.ends_with('\'')) || (s.starts_with('"') && s.ends_with('"')) {
+        &s[1..s.len() - 1]
+    } else {
+        s
+    }
+}
+
+/// `trap 'body' EXIT` — parse the body and store on the version state
+/// for emission before every Return terminator.
+fn handle_trap_exit(body_str: &str, state: &mut VersionState) {
+    let body_clean = strip_outer_quotes(body_str);
+    let trap_stmts = match crate::parse::parse(body_clean) {
+        Ok((program, _)) => program.statements,
+        Err(_) => vec![],
+    };
+    state.exit_trap = Some(trap_stmts);
+}
+
+/// `trap '' SIG` / `trap - SIG` — emit a TrapSignal sigil with SIG_IGN
+/// (handler=1) or SIG_DFL (handler=0).
+fn handle_trap_ignore_reset(body_str: &str, signal: &str, ssa: &mut SsaProgram, block: BlockId) {
+    let signum = signal_name_to_num(signal);
+    if signum > 0 {
+        let handler = if body_str == "-" { 0i64 } else { 1i64 }; // SIG_DFL=0, SIG_IGN=1
+        ssa.block_mut(block).insts.push(SsaInst::sigil(
+            BuiltinCmd::TrapSignal,
+            vec![
+                SsaValue::Literal(signum.to_string()),
+                SsaValue::Literal(handler.to_string()),
+            ],
+            true,
+        ));
+    }
 }
 
 /// Handle `signal` command — emit signal configuration instructions.

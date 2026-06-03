@@ -220,7 +220,7 @@ sash/src --top 90` as of 2026-05-26.
 
 | CC | Function | V | Note |
 |---:|---|:-:|---|
-| 24 | `handle_trap` | **C** | Multi-shape with signal-name→number table inline. Extract `signal_name_to_num()`. |
+| 24 | `handle_trap` | **C** | Multi-shape with signal-name→number table inline. Extract `signal_name_to_num()`. **Done 2026-06-03 (journal 095).** Extracted 5 helpers: `signal_name_to_num` (the 6-row table, CC 8), `is_ignore_reset_body`, `strip_outer_quotes`, `handle_trap_exit`, `handle_trap_ignore_reset`. Parent 24 → 6. |
 | 21 | `handle_read` | **A** | Hand-rolled flag-parser with awkward `skip_next` state. Extract `parse_read_flags` returning (delim, field_sep, array, vars). **Done 2026-06-01 (journal 085).** Extracted `parse_read_flags`, `consume_byte_flag`, `emit_read_inst`. Parent 21 → 4. |
 | 17 | `handle_function_call_or_command` | **C** | Function inlining; mostly linear data plumbing. |
 
