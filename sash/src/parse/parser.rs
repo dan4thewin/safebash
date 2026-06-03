@@ -909,114 +909,107 @@ fn parse_test_not(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnos
 }
 
 fn parse_test_primary(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
-    // ( grouped expr )
     if matches!(scanner.peek().token, Tok::LParen) {
-        scanner.next();
-        let inner = parse_test_expr(scanner, span)?;
-        expect(
-            scanner,
-            &Tok::RParen,
-            span,
-            "expected ')' in test expression",
-        )?;
-        return Ok(inner);
+        return parse_test_group(scanner, span);
     }
+    if let Some(unary) = try_parse_leading_unary(scanner, span)? {
+        return Ok(unary);
+    }
+    let left = parse_test_operand(scanner, span)?;
+    parse_test_binary_tail(left, scanner, span)
+}
 
-    // Unary operators: -f, -d, -n, -z, -e, -r, -w, -x, etc.
+fn parse_test_group(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
+    scanner.next();
+    let inner = parse_test_expr(scanner, span)?;
+    expect(
+        scanner,
+        &Tok::RParen,
+        span,
+        "expected ')' in test expression",
+    )?;
+    Ok(inner)
+}
+
+fn try_parse_leading_unary(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<Option<TestExpr>, Diagnostic> {
     if let Tok::Word(ref w) = scanner.peek().token {
-        if w.starts_with('-') && w.len() >= 2 {
+        if w.starts_with('-') && w.len() >= 2 && is_unary_test_op(w) {
             let op = w.clone();
-            // Check if it's a known unary test operator
-            if is_unary_test_op(&op) {
-                scanner.next();
-                let operand = parse_test_operand(scanner, span)?;
-                return Ok(TestExpr::Unary {
-                    op,
-                    operand: Box::new(operand),
-                });
-            }
+            scanner.next();
+            let operand = parse_test_operand(scanner, span)?;
+            return Ok(Some(TestExpr::Unary {
+                op,
+                operand: Box::new(operand),
+            }));
         }
     }
+    Ok(None)
+}
 
-    // Primary: value, possibly followed by binary operator
-    let left = parse_test_operand(scanner, span)?;
-
-    // Check for binary operator
-    let next = scanner.peek();
-    match &next.token {
+fn parse_test_binary_tail(
+    left: Expr,
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<TestExpr, Diagnostic> {
+    match &scanner.peek().token {
         Tok::Word(w) if is_binary_test_op(w) => {
             let op = w.clone();
             scanner.next();
-            let right = if op == "=~" {
-                // Regex RHS: collect raw text until ]] (braces, parens are literal)
-                parse_regex_rhs(scanner, span)?
-            } else {
-                parse_test_operand(scanner, span)?
-            };
-            Ok(TestExpr::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
-            })
+            parse_binary_rhs(left, op, scanner, span)
         }
         Tok::Eq => {
-            // = or == in test
-            scanner.next();
-            // Check for == (next char)
-            if matches!(scanner.peek().token, Tok::Eq) {
-                scanner.next(); // consume second =
-            }
-            let right = parse_test_operand(scanner, span)?;
-            Ok(TestExpr::Binary {
-                left: Box::new(left),
-                op: "==".to_string(),
-                right: Box::new(right),
-            })
-        }
-        Tok::Bang => {
-            // !=
             scanner.next();
             if matches!(scanner.peek().token, Tok::Eq) {
                 scanner.next();
-                let right = parse_test_operand(scanner, span)?;
-                Ok(TestExpr::Binary {
-                    left: Box::new(left),
-                    op: "!=".to_string(),
-                    right: Box::new(right),
-                })
+            }
+            parse_binary_rhs(left, "==".to_string(), scanner, span)
+        }
+        Tok::Bang => {
+            scanner.next();
+            if matches!(scanner.peek().token, Tok::Eq) {
+                scanner.next();
+                parse_binary_rhs(left, "!=".to_string(), scanner, span)
             } else {
-                // Bare ! after expression — shouldn't happen
-                Ok(TestExpr::Unary {
-                    op: "-n".to_string(),
-                    operand: Box::new(left),
-                })
+                Ok(implicit_nonempty(left))
             }
         }
         Tok::Lt => {
             scanner.next();
-            let right = parse_test_operand(scanner, span)?;
-            Ok(TestExpr::Binary {
-                left: Box::new(left),
-                op: "<".to_string(),
-                right: Box::new(right),
-            })
+            parse_binary_rhs(left, "<".to_string(), scanner, span)
         }
         Tok::Gt => {
             scanner.next();
-            let right = parse_test_operand(scanner, span)?;
-            Ok(TestExpr::Binary {
-                left: Box::new(left),
-                op: ">".to_string(),
-                right: Box::new(right),
-            })
+            parse_binary_rhs(left, ">".to_string(), scanner, span)
         }
-        _ => {
-            // Bare expression — implicit -n test
-            Ok(TestExpr::Unary {
-                op: "-n".to_string(),
-                operand: Box::new(left),
-            })
-        }
+        _ => Ok(implicit_nonempty(left)),
+    }
+}
+
+fn parse_binary_rhs(
+    left: Expr,
+    op: String,
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<TestExpr, Diagnostic> {
+    let right = if op == "=~" {
+        parse_regex_rhs(scanner, span)?
+    } else {
+        parse_test_operand(scanner, span)?
+    };
+    Ok(TestExpr::Binary {
+        left: Box::new(left),
+        op,
+        right: Box::new(right),
+    })
+}
+
+fn implicit_nonempty(operand: Expr) -> TestExpr {
+    TestExpr::Unary {
+        op: "-n".to_string(),
+        operand: Box::new(operand),
     }
 }
 
