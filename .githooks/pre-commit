@@ -59,20 +59,51 @@ done
 [ "$lint_failed" -eq 0 ] || exit 1
 
 # --- complexity (report only) ----------------------------------------
-# Excludes fns whose immediately preceding line is `// cyclo-allow: ...`
-# (declared intrinsics: 1:1 tables, traversals where arms == CC).
+# Excludes any fn whose `// cyclo-allow: ...` comment sits within the
+# contiguous doc-comment / attribute / blank-line block immediately
+# above `fn`. The walk-up handles the idiomatic Rust shape where
+# rustdoc /// comments must sit directly above the function.
 if [ "${SKIP_COMPLEXITY:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
     gray "pre-commit: complexity report (top 5, report-only)"
-    sqlite3 .indexnudge-rust.db \
-      "SELECT s.cyclomatic, s.name, s.file||':'||s.start_line
-       FROM symbols s
-       LEFT JOIN lines l
-         ON l.file = s.file AND l.line_num = s.start_line - 1
-       WHERE s.kind IN ('function','method')
-         AND s.cyclomatic IS NOT NULL
-         AND s.file LIKE 'sash/src/%'
-         AND (l.content IS NULL OR TRIM(l.content) NOT LIKE '// cyclo-allow:%')
-       ORDER BY s.cyclomatic DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /'
+    sqlite3 .indexnudge-rust.db "
+WITH RECURSIVE attached(file, line_num, sym_file, sym_start, content, depth) AS (
+    SELECT s.file, s.start_line-1, s.file, s.start_line,
+           (SELECT content FROM lines
+            WHERE file=s.file AND line_num=s.start_line-1), 1
+    FROM symbols s
+    WHERE s.kind IN ('function','method')
+      AND s.cyclomatic IS NOT NULL
+      AND s.file LIKE 'sash/src/%'
+    UNION ALL
+    SELECT a.file, a.line_num-1, a.sym_file, a.sym_start,
+           (SELECT content FROM lines
+            WHERE file=a.file AND line_num=a.line_num-1), a.depth+1
+    FROM attached a
+    WHERE a.depth < 12
+      AND a.content IS NOT NULL
+      AND (
+        TRIM(a.content) LIKE '///%'
+        OR TRIM(a.content) LIKE '//!%'
+        OR TRIM(a.content) LIKE '// cyclo-allow:%'
+        OR TRIM(a.content) LIKE '#[%'
+        OR TRIM(a.content) = ''
+      )
+),
+allowed AS (
+    SELECT DISTINCT sym_file, sym_start
+    FROM attached
+    WHERE TRIM(content) LIKE '// cyclo-allow:%'
+)
+SELECT s.cyclomatic, s.name, s.file||':'||s.start_line
+FROM symbols s
+WHERE s.kind IN ('function','method')
+  AND s.cyclomatic IS NOT NULL
+  AND s.file LIKE 'sash/src/%'
+  AND NOT EXISTS (
+    SELECT 1 FROM allowed a
+    WHERE a.sym_file = s.file AND a.sym_start = s.start_line
+  )
+ORDER BY s.cyclomatic DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /'
 fi
 
 green "pre-commit: all gates green"
