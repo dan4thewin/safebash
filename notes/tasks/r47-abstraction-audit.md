@@ -300,7 +300,7 @@ sash/src --top 90` as of 2026-05-26.
 | CC | Function | V | Note |
 |---:|---|:-:|---|
 | 43 | `validate_stmt_ctx` | **C** | StmtKind dispatcher; mostly recurse-with-condition-bool (pattern #5). |
-| 28 | `taint_stmt` | **C** | StmtKind dispatcher, Pipeline/Redirected have distinct logic. Extract `taint_pipeline`, `taint_redirected_read`. |
+| 28 | `taint_stmt` | **C** | StmtKind dispatcher, Pipeline/Redirected have distinct logic. Extract `taint_pipeline`, `taint_redirected_read`. **Done 2026-06-03 (journal 093).** Extracted 5 helpers: `taint_assignment_value` (shared by Assignment + Declaration), `taint_function_body`, `taint_pipeline`, `taint_redirected`, `taint_case_arms`. Parent 28 → 12. All helpers CC 3–6. |
 | 21 | `check_dq_stmt` | **C** | Status state-machine across StmtKind. Already well-structured. |
 | 19 | `validate_command` | **C** | Per-builtin SBxxxx error rules. Extract `check_heredoc`, `check_dynexec`. |
 

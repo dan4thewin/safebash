@@ -1091,71 +1091,94 @@ fn is_external_source(stmt: &Statement) -> bool {
 
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
-        StmtKind::Assignment(a) => {
-            if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
-                tainted.insert(a.name.clone());
-            }
-        }
+        StmtKind::Assignment(a) => taint_assignment_value(&a.name, &a.value, tainted),
         StmtKind::Declaration(d) => {
             for a in &d.assignments {
-                if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
-                    tainted.insert(a.name.clone());
-                }
+                taint_assignment_value(&a.name, &a.value, tainted);
             }
         }
         StmtKind::Command(c) => taint_command(c, stmt.span, tainted, diags),
-        StmtKind::Function(f) => {
-            // Function body: $1-$9 are function args (clean), not top-level argv
-            let mut fn_tainted = tainted.clone();
-            for i in 1..=9 {
-                fn_tainted.remove(&i.to_string());
-            }
-            for s in &f.body {
-                taint_stmt(s, &mut fn_tainted, diags);
-            }
-        }
-        StmtKind::Pipeline(p) => {
-            // Pipeline taint: if first stage is external, subsequent reads are tainted.
-            let first_is_external = p.commands.first().is_some_and(is_external_source);
-            for (i, s) in p.commands.iter().enumerate() {
-                if i > 0 && !first_is_external {
-                    taint_stmt_no_read_taint(s, tainted, diags);
-                } else {
-                    taint_stmt(s, tainted, diags);
-                }
-            }
-        }
-        StmtKind::Redirected(r) => {
-            // `read x <<< "literal"` — clean read (herestring source is sash code)
-            if let StmtKind::Command(c) = &r.body.kind {
-                let name = expr_literal_str(&c.name);
-                if (name == "read" || name == "mapfile")
-                    && r.redirects.iter().any(|rd| {
-                        matches!(
-                            rd.op,
-                            crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc
-                        )
-                    })
-                {
-                    return;
-                }
-            }
-            taint_stmt(&r.body, tainted, diags);
-        }
-        StmtKind::Case(c) => {
-            check_expr_taint(&c.value, tainted, diags);
-            for item in &c.items {
-                for s in &item.body {
-                    taint_stmt(s, tainted, diags);
-                }
-            }
-        }
+        StmtKind::Function(f) => taint_function_body(&f.body, tainted, diags),
+        StmtKind::Pipeline(p) => taint_pipeline(p, tainted, diags),
+        StmtKind::Redirected(r) => taint_redirected(r, tainted, diags),
+        StmtKind::Case(c) => taint_case_arms(c, tainted, diags),
         _ => {
             for body in stmt.child_bodies() {
                 for s in body {
                     taint_stmt(s, tainted, diags);
                 }
             }
+        }
+    }
+}
+
+/// Mark `name` as tainted if `value` is a taint source or uses a tainted var.
+fn taint_assignment_value(name: &str, value: &Expr, tainted: &mut HashSet<String>) {
+    if is_taint_source(value) || expr_uses_tainted(value, tainted) {
+        tainted.insert(name.to_string());
+    }
+}
+
+/// Taint a function body: $1-$9 are function args (clean), not top-level argv.
+fn taint_function_body(body: &[Statement], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let mut fn_tainted = tainted.clone();
+    for i in 1..=9 {
+        fn_tainted.remove(&i.to_string());
+    }
+    for s in body {
+        taint_stmt(s, &mut fn_tainted, diags);
+    }
+}
+
+/// Taint a pipeline: if first stage is external, subsequent reads are tainted.
+fn taint_pipeline(
+    p: &crate::ir::Pipeline,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let first_is_external = p.commands.first().is_some_and(is_external_source);
+    for (i, s) in p.commands.iter().enumerate() {
+        if i > 0 && !first_is_external {
+            taint_stmt_no_read_taint(s, tainted, diags);
+        } else {
+            taint_stmt(s, tainted, diags);
+        }
+    }
+}
+
+/// Taint a redirected statement, with a `read … <<< "literal"` exception
+/// (herestring/heredoc sources are sash code, not external input).
+fn taint_redirected(
+    r: &crate::ir::Redirected,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if let StmtKind::Command(c) = &r.body.kind {
+        let name = expr_literal_str(&c.name);
+        if (name == "read" || name == "mapfile")
+            && r.redirects.iter().any(|rd| {
+                matches!(
+                    rd.op,
+                    crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc
+                )
+            })
+        {
+            return;
+        }
+    }
+    taint_stmt(&r.body, tainted, diags);
+}
+
+/// Taint a case statement's discriminant and each arm body.
+fn taint_case_arms(
+    c: &crate::ir::Case,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    check_expr_taint(&c.value, tainted, diags);
+    for item in &c.items {
+        for s in &item.body {
+            taint_stmt(s, tainted, diags);
         }
     }
 }
