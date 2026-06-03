@@ -198,28 +198,43 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
 fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let name = expr_literal_str(&c.name);
 
-    // SB5002: heredocs rejected
-    if name == "__HEREDOC__" {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5002",
-            "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables"
-                .to_string(),
-        ));
+    if check_heredoc(name, c, span, diags) {
         return;
+    }
+    check_export_or_declare(name, c, span, diags);
+    check_dynexec(name, span, diags);
+    check_test_constructs(name, c, span, diags);
+}
+
+fn heredoc_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5002",
+        "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables"
+            .to_string(),
+    )
+}
+
+/// SB5002: reject heredocs as the command name or any argument.
+/// Returns true if a heredoc was pushed (caller should stop further checks).
+fn check_heredoc(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) -> bool {
+    if name == "__HEREDOC__" {
+        diags.push(heredoc_diag(span));
+        return true;
     }
     for arg in &c.args {
         if let ExprKind::Literal(s) = &arg.kind {
             if s == "__HEREDOC__" {
-                diags.push(Diagnostic::error_span(span, "SB5002",
-                    "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables".to_string(),
-                ));
-                return;
+                diags.push(heredoc_diag(span));
+                return true;
             }
         }
     }
+    false
+}
 
-    // SB5001: export rejected
+/// SB5001: reject `export` and `declare -x`.
+fn check_export_or_declare(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     if name == "export" {
         diags.push(Diagnostic::error_span(
             span,
@@ -238,33 +253,34 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
             }
         }
     }
+}
 
-    // SB4001: dynamic execution rejected
+/// SB4001: reject dynamic-execution builtins.
+fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     if name == "eval" || name == "source" || name == "." || name == "command" {
         diags.push(Diagnostic::error_span(
             span,
             "SB4001",
             format!("'{}' is not allowed in sash", name),
         ));
-    }
-
-    // Coproc rejected
-    if name == "coproc" {
+    } else if name == "coproc" {
         diags.push(Diagnostic::error_span(
             span,
             "SB4001",
             "'coproc' is not allowed in sash".to_string(),
         ));
     }
+}
 
-    // SB5019: numeric test operators in [[ ]]
-    // SB5023: compile-time regex validation for literal patterns
-    if name == "[[" {
-        for arg in &c.args {
-            if let ExprKind::Test(ref test) = arg.kind {
-                check_numeric_test_ops(test, diags);
-                check_regex_literal(test, span, diags);
-            }
+/// SB5019/SB5023: numeric test ops + literal regex validation inside `[[ ]]`.
+fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name != "[[" {
+        return;
+    }
+    for arg in &c.args {
+        if let ExprKind::Test(ref test) = arg.kind {
+            check_numeric_test_ops(test, diags);
+            check_regex_literal(test, span, diags);
         }
     }
 }
