@@ -397,49 +397,69 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
 /// (`0…`), arbitrary-base (`base#digits`), and decimal. Returns the
 /// recognised token and the byte index just past it.
 fn scan_arith_number(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
-    let start = i;
-
-    if bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X') {
-        let mut j = i + 2;
-        while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
-            j += 1;
-        }
-        let s = &input[start..j];
-        let val = i64::from_str_radix(&s[2..], 16).unwrap_or(0);
-        return (ATok::Num(val), j);
+    if is_hex_prefix(bytes, i) {
+        return scan_hex_literal(input, bytes, i);
     }
-
-    if bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit() {
-        let mut j = i + 1;
-        while j < bytes.len() && (b'0'..=b'7').contains(&bytes[j]) {
-            j += 1;
-        }
-        let s = &input[start + 1..j];
-        let val = i64::from_str_radix(s, 8).unwrap_or(0);
-        return (ATok::Num(val), j);
+    if is_octal_prefix(bytes, i) {
+        return scan_octal_literal(input, bytes, i);
     }
+    let digits_end = scan_decimal_digits(bytes, i);
+    if digits_end < bytes.len() && bytes[digits_end] == b'#' {
+        return scan_based_literal(input, bytes, i, digits_end);
+    }
+    scan_decimal_literal(input, i, digits_end)
+}
 
-    let mut j = i;
+fn is_hex_prefix(bytes: &[u8], i: usize) -> bool {
+    bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
+}
+
+fn is_octal_prefix(bytes: &[u8], i: usize) -> bool {
+    bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()
+}
+
+fn scan_hex_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
+    let mut j = start + 2;
+    while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
+        j += 1;
+    }
+    let val = i64::from_str_radix(&input[start + 2..j], 16).unwrap_or(0);
+    (ATok::Num(val), j)
+}
+
+fn scan_octal_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
+    let mut j = start + 1;
+    while j < bytes.len() && (b'0'..=b'7').contains(&bytes[j]) {
+        j += 1;
+    }
+    let val = i64::from_str_radix(&input[start + 1..j], 8).unwrap_or(0);
+    (ATok::Num(val), j)
+}
+
+fn scan_decimal_digits(bytes: &[u8], start: usize) -> usize {
+    let mut j = start;
     while j < bytes.len() && bytes[j].is_ascii_digit() {
         j += 1;
     }
+    j
+}
 
-    if j < bytes.len() && bytes[j] == b'#' {
-        let base: u32 = input[start..j].parse().unwrap_or(10);
-        j += 1; // skip '#'
-        let digit_start = j;
-        while j < bytes.len()
-            && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
-        {
-            j += 1;
-        }
-        let digits = &input[digit_start..j];
-        let val = parse_arith_base_digits(digits, base);
-        return (ATok::Num(val), j);
+fn scan_based_literal(input: &str, bytes: &[u8], start: usize, base_end: usize) -> (ATok, usize) {
+    let base: u32 = input[start..base_end].parse().unwrap_or(10);
+    let digit_start = base_end + 1;
+    let mut j = digit_start;
+    while j < bytes.len()
+        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
+    {
+        j += 1;
     }
-
-    let val: i64 = input[start..j].parse().unwrap_or(0);
+    let val = parse_arith_base_digits(&input[digit_start..j], base);
     (ATok::Num(val), j)
+}
+
+fn scan_decimal_literal(input: &str, start: usize, end: usize) -> (ATok, usize) {
+    let val: i64 = input[start..end].parse().unwrap_or(0);
+    (ATok::Num(val), end)
 }
 
 /// Parse `base#digits` payload using bash's base-N digit encoding:
