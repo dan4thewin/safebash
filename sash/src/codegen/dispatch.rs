@@ -168,8 +168,8 @@ impl SsaInst {
     /// SECURITY: Every BuiltinCmd variant is handled. Variants not listed
     /// explicitly fall through to `handle_general_command`, which dispatches
     /// on `name` (printf, len/keys/join intrinsics, exec lookup, …).
-    // cyclo-allow: N-arm pure dispatcher (BuiltinCmd → emit_X helper).
     #[allow(clippy::too_many_arguments)]
+    // cyclo-allow: N-arm pure dispatcher (BuiltinCmd → emit_X helper).
     fn emit_command_kind(
         &self,
         name: &str,
