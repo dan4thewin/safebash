@@ -242,181 +242,174 @@ fn is_integer_literal(expr: &Expr) -> bool {
 
 fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     match &stmt.kind {
-        StmtKind::Assignment(a) => {
-            let rtype = expr_type(&a.value, env);
-            let ltype = env.var_type(&a.name);
-            // Bare assignment: variable gets the RHS type on first use
-            // But if already declared with a type, check compatibility
-            if env.vars.contains_key(&a.name) && ltype != rtype {
-                errors.push(TypeError {
-                    message: format!(
-                        "cannot assign {} value to {} variable `{}`{}",
-                        type_name(rtype),
-                        type_name(ltype),
-                        a.name,
-                        conversion_hint(rtype, ltype),
-                    ),
-                    span: stmt.span,
-                });
-            } else {
-                env.declare(&a.name, rtype);
-            }
-        }
-
-        StmtKind::Declaration(d) => {
-            for a in &d.assignments {
-                let rtype = expr_type(&a.value, env);
-                if d.var_type == VarType::Int && rtype == VarType::String {
-                    // String assigned to int variable — need conversion
-                    // Exception: literal numbers in quotes are OK (common pattern)
-                    if !is_numeric_literal(&a.value) {
-                        errors.push(TypeError {
-                            message: format!(
-                                "cannot assign string value to int variable `{}`{}",
-                                a.name,
-                                conversion_hint(VarType::String, VarType::Int),
-                            ),
-                            span: stmt.span,
-                        });
-                    }
-                } else if d.var_type == VarType::String && rtype == VarType::Int {
-                    errors.push(TypeError {
-                        message: format!(
-                            "cannot assign int value to string variable `{}`{}",
-                            a.name,
-                            conversion_hint(VarType::Int, VarType::String),
-                        ),
-                        span: stmt.span,
-                    });
-                }
-                env.declare(&a.name, d.var_type);
-            }
-            // Track collections
-            if d.flags.contains(&"-a".to_string()) || d.flags.contains(&"-A".to_string()) {
-                for a in &d.assignments {
-                    env.collections.insert(a.name.clone());
-                    if d.flags.contains(&"-A".to_string()) {
-                        env.assoc_arrays.insert(a.name.clone());
-                    }
-                }
-            }
-        }
-
-        StmtKind::Command(c) => {
-            let cmd_name = expr_to_name(&c.name);
-            if cmd_name == "unset" {
-                // DD#30: unset on scalar variables is rejected
-                for arg in &c.args {
-                    let name = expr_to_name(arg);
-                    // If the name contains '[', it's a subscript (array/map element) — allowed
-                    if !name.contains('[') && !name.is_empty() {
-                        let vtype = env.var_type(&name);
-                        if vtype == VarType::String || vtype == VarType::Int {
-                            // Check if it's declared as array/map — those are OK
-                            if !env.is_collection(&name) {
-                                errors.push(TypeError {
-                                    message: format!(
-                                        "unset on scalar '{}' is not allowed — use {}=\"\" to clear",
-                                        name, name,
-                                    ),
-                                    span: stmt.span,
-                                });
-                            }
-                        }
-                    }
-                }
-            }
-            if cmd_name == "exit" {
-                // exit with int variable → error (unbounded)
-                if let Some(arg) = c.args.first() {
-                    let atype = expr_type(arg, env);
-                    if atype == VarType::Int {
-                        if let ExprKind::SimpleExpansion(var) = &arg.kind {
-                            errors.push(TypeError {
-                                message: format!(
-                                    "exit with int variable `${}` — value may exceed 0-255. \
-                                     Use `exit $(({}<256?{}:1))`",
-                                    var, var, var,
-                                ),
-                                span: stmt.span,
-                            });
-                        }
-                    }
-                }
-            }
-
-            // DD#33: check subscript key types in command args
-            for arg in &c.args {
-                check_subscript_types(arg, env, errors);
-            }
-        }
-
-        StmtKind::If(if_stmt) => {
-            // Check condition for int-function-in-boolean-context
-            check_condition_type(&if_stmt.condition, env, errors);
-            for s in &if_stmt.condition {
-                check_stmt(s, env, errors);
-            }
-            for s in &if_stmt.then_body {
-                check_stmt(s, env, errors);
-            }
-            for elif in &if_stmt.elif_clauses {
-                for s in &elif.condition {
-                    check_stmt(s, env, errors);
-                }
-                for s in &elif.body {
-                    check_stmt(s, env, errors);
-                }
-            }
-            if let Some(else_body) = &if_stmt.else_body {
-                for s in else_body {
-                    check_stmt(s, env, errors);
-                }
-            }
-        }
-
-        StmtKind::For(for_stmt) => {
-            for s in &for_stmt.body {
-                check_stmt(s, env, errors);
-            }
-        }
-
-        StmtKind::While(while_stmt) => {
-            for s in &while_stmt.condition {
-                check_stmt(s, env, errors);
-            }
-            for s in &while_stmt.body {
-                check_stmt(s, env, errors);
-            }
-        }
-
-        StmtKind::Function(f) => {
-            // Type-check the body
-            for s in &f.body {
-                check_stmt(s, env, errors);
-            }
-        }
-
-        StmtKind::Case(case_stmt) => {
-            for item in &case_stmt.items {
-                for s in &item.body {
-                    check_stmt(s, env, errors);
-                }
-            }
-        }
-
-        // Default: descend into any nested statement bodies (Pipeline,
-        // Group, List, Subshell, Redirected, Suppressed) so wrapping a
-        // statement in grouping syntax doesn't silently bypass type
-        // checking. child_bodies() returns empty for leaf StmtKinds
-        // (Assignment/Declaration/Command/Comment/ArithTest), which
-        // each have their own arm above.
+        StmtKind::Assignment(a) => check_assignment(a, stmt.span, env, errors),
+        StmtKind::Declaration(d) => check_declaration(d, stmt.span, env, errors),
+        StmtKind::Command(c) => check_command(c, stmt.span, env, errors),
+        StmtKind::If(if_stmt) => check_if(if_stmt, env, errors),
+        // Default: descend into every nested statement body via
+        // child_bodies(). Covers For, While, Function, Case (no
+        // per-arm pre-work) and the wrapping StmtKinds Pipeline,
+        // Group, List, Subshell, Redirected, Suppressed — so
+        // wrapping a statement in grouping syntax doesn't silently
+        // bypass type checking (journal 056). child_bodies()
+        // returns empty for leaf StmtKinds (Assignment,
+        // Declaration, Command, Comment, ArithTest), which all
+        // have their own arm above.
         _ => {
             for body in stmt.child_bodies() {
                 for s in body {
                     check_stmt(s, env, errors);
                 }
             }
+        }
+    }
+}
+
+fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    let rtype = expr_type(&a.value, env);
+    let ltype = env.var_type(&a.name);
+    // Bare assignment: variable gets the RHS type on first use.
+    // But if already declared with a type, check compatibility.
+    if env.vars.contains_key(&a.name) && ltype != rtype {
+        errors.push(TypeError {
+            message: format!(
+                "cannot assign {} value to {} variable `{}`{}",
+                type_name(rtype),
+                type_name(ltype),
+                a.name,
+                conversion_hint(rtype, ltype),
+            ),
+            span,
+        });
+    } else {
+        env.declare(&a.name, rtype);
+    }
+}
+
+fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    for a in &d.assignments {
+        let rtype = expr_type(&a.value, env);
+        if d.var_type == VarType::Int && rtype == VarType::String {
+            // String assigned to int variable — need conversion.
+            // Exception: literal numbers in quotes are OK (common pattern).
+            if !is_numeric_literal(&a.value) {
+                errors.push(TypeError {
+                    message: format!(
+                        "cannot assign string value to int variable `{}`{}",
+                        a.name,
+                        conversion_hint(VarType::String, VarType::Int),
+                    ),
+                    span,
+                });
+            }
+        } else if d.var_type == VarType::String && rtype == VarType::Int {
+            errors.push(TypeError {
+                message: format!(
+                    "cannot assign int value to string variable `{}`{}",
+                    a.name,
+                    conversion_hint(VarType::Int, VarType::String),
+                ),
+                span,
+            });
+        }
+        env.declare(&a.name, d.var_type);
+    }
+    // Track collections.
+    if d.flags.contains(&"-a".to_string()) || d.flags.contains(&"-A".to_string()) {
+        for a in &d.assignments {
+            env.collections.insert(a.name.clone());
+            if d.flags.contains(&"-A".to_string()) {
+                env.assoc_arrays.insert(a.name.clone());
+            }
+        }
+    }
+}
+
+fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    let cmd_name = expr_to_name(&c.name);
+    if cmd_name == "unset" {
+        check_unset_args(c, span, env, errors);
+    }
+    if cmd_name == "exit" {
+        check_exit_arg(c, span, env, errors);
+    }
+
+    // DD#33: check subscript key types in command args
+    for arg in &c.args {
+        check_subscript_types(arg, env, errors);
+    }
+}
+
+/// DD#30: unset on a scalar variable (int or string, not declared
+/// as -a/-A) is rejected. Subscript forms like `unset name[i]` are
+/// allowed.
+fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    for arg in &c.args {
+        let name = expr_to_name(arg);
+        // Names containing '[' are subscript forms — allowed.
+        if name.contains('[') || name.is_empty() {
+            continue;
+        }
+        let vtype = env.var_type(&name);
+        if vtype != VarType::String && vtype != VarType::Int {
+            continue;
+        }
+        // Declared as array/map → OK
+        if env.is_collection(&name) {
+            continue;
+        }
+        errors.push(TypeError {
+            message: format!(
+                "unset on scalar '{}' is not allowed — use {}=\"\" to clear",
+                name, name,
+            ),
+            span,
+        });
+    }
+}
+
+/// `exit $intvar` is rejected because exit codes are bounded 0..255
+/// and an int value may exceed that range. Suggest a clamping form.
+fn check_exit_arg(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some(arg) = c.args.first() else {
+        return;
+    };
+    if expr_type(arg, env) != VarType::Int {
+        return;
+    }
+    let ExprKind::SimpleExpansion(var) = &arg.kind else {
+        return;
+    };
+    errors.push(TypeError {
+        message: format!(
+            "exit with int variable `${}` — value may exceed 0-255. \
+             Use `exit $(({}<256?{}:1))`",
+            var, var, var,
+        ),
+        span,
+    });
+}
+
+fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    // Check condition for int-function-in-boolean-context
+    check_condition_type(&if_stmt.condition, env, errors);
+    for s in &if_stmt.condition {
+        check_stmt(s, env, errors);
+    }
+    for s in &if_stmt.then_body {
+        check_stmt(s, env, errors);
+    }
+    for elif in &if_stmt.elif_clauses {
+        for s in &elif.condition {
+            check_stmt(s, env, errors);
+        }
+        for s in &elif.body {
+            check_stmt(s, env, errors);
+        }
+    }
+    if let Some(else_body) = &if_stmt.else_body {
+        for s in else_body {
+            check_stmt(s, env, errors);
         }
     }
 }
