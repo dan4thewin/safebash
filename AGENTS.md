@@ -24,6 +24,11 @@ implementation strategy, or anything else that matters. The AI
 does not get to decide what's "just implementation" and skip the
 conversation. When in doubt, present options with tradeoffs.
 
+See `notes/parser-migration-postmortem.md` for the canonical
+examples of what this rule prevents — six addenda where DG had
+to correct the AI for narrowing options or justifying deferrals
+before DG saw the choice.
+
 ## First thing every session
 
 Read `notes/status.md`. It tells you the current priority and
@@ -32,6 +37,11 @@ what was just completed.
 Read `notes/decisions/` before changing any behavior that might
 be deliberate. These are the authoritative source for what's
 intentional vs. what's a gap.
+
+If the task involves a non-trivial decision (design choice,
+architecture pivot, behavior change, irreversible cleanup),
+list options + tradeoffs and ask DG before acting. Defaulting
+to "I'll just implement option A" violates Decision authority.
 
 ## Current state
 

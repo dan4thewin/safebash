@@ -1,8 +1,11 @@
 title: Elevate "present options, don't narrow" to top of AGENTS.md
-status: ready
+status: done
 priority: P8
 kind: work
 source: opus-47-review
+resolved: 2026-06-05
+resolution: Verified Decision authority paragraph already sits at AGENTS.md line 19 — immediately after What this project is, well within first screen. Added (a) cross-reference to notes/parser-migration-postmortem.md inside the Decision authority section pointing readers at the canonical examples of what the rule prevents, and (b) a new paragraph in First thing every session expanding the rule into concrete trigger criteria (design choice, architecture pivot, behavior change, irreversible cleanup) so the next agent knows when to ask.
+landed: 2026-06-05
 depends: []
 gates:
   - AGENTS.md edits committed

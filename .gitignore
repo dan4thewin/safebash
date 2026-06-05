@@ -13,6 +13,7 @@ out.*
 stderr.*
 stdout.*
 file.*
+fifo-*
 *.bin
 *.Y
 foo
