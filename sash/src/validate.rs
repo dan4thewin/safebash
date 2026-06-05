@@ -70,127 +70,149 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
     match &stmt.kind {
         StmtKind::Command(c) => validate_command(c, stmt.span, diags),
         StmtKind::Declaration(d) => validate_declaration(d, stmt.span, diags),
-        StmtKind::Assignment(a) => {
-            validate_assignment(a, stmt.span, diags);
-            // SB5007: arithmetic assignment in condition context
-            // (DD#31 comma pattern is handled at the Group level)
-            if in_condition && matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
-                diags.push(Diagnostic::error_span(stmt.span, "SB5007",
-                        format!("mutation {} = ... not allowed in condition (( )) expression context — use (( )) statement instead", a.name),
-                    ));
-            }
-        }
-        StmtKind::If(i) => {
-            for s in &i.condition {
-                validate_stmt_ctx(s, diags, true);
-            }
-            for s in &i.then_body {
-                validate_stmt_ctx(s, diags, false);
-            }
-            for elif in &i.elif_clauses {
-                for s in &elif.condition {
-                    validate_stmt_ctx(s, diags, true);
-                }
-                for s in &elif.body {
-                    validate_stmt_ctx(s, diags, false);
-                }
-            }
-            if let Some(ref else_body) = i.else_body {
-                for s in else_body {
-                    validate_stmt_ctx(s, diags, false);
-                }
-            }
-        }
-        StmtKind::While(w) => {
-            for s in &w.condition {
-                validate_stmt_ctx(s, diags, true);
-            }
-            for s in &w.body {
-                validate_stmt_ctx(s, diags, false);
-            }
-        }
-        StmtKind::For(f) => {
-            // Check glob patterns and unquoted expansions in for-loop words
-            for w in &f.words {
-                check_unquoted_glob(w, diags);
-                // SB5009: unquoted $var in for-loop words implies word splitting
-                if let ExprKind::SimpleExpansion(var) = &w.kind {
-                    diags.push(Diagnostic::error_span(
-                        w.span,
-                        "SB5009",
-                        format!(
-                            "unquoted ${} in for-loop would word-split — quote it or use an array",
-                            var
-                        ),
-                    ));
-                }
-            }
-            for s in &f.body {
-                validate_stmt_ctx(s, diags, false);
-            }
-        }
-        StmtKind::Case(c) => {
-            for item in &c.items {
-                for s in &item.body {
-                    validate_stmt_ctx(s, diags, false);
-                }
-            }
-        }
-        StmtKind::Function(f) => {
-            for s in &f.body {
-                validate_stmt_ctx(s, diags, false);
-            }
-        }
-        StmtKind::Pipeline(p) => {
-            for s in &p.commands {
-                validate_stmt_ctx(s, diags, in_condition);
-            }
-        }
-        StmtKind::Redirected(r) => {
-            validate_stmt_ctx(&r.body, diags, in_condition);
-        }
-        StmtKind::List(l) => {
-            validate_stmt_ctx(&l.left, diags, in_condition);
-            validate_stmt_ctx(&l.right, diags, in_condition);
-        }
-        StmtKind::Group(g) => {
-            // DD#31: comma expression desugars to Group with mutations then ArithTest.
-            // In condition context, if last is ArithTest, earlier stmts are the
-            // mutation part — validate them as NOT in condition.
-            if in_condition
-                && g.body
-                    .last()
-                    .is_some_and(|s| matches!(s.kind, StmtKind::ArithTest(_)))
-            {
-                for (i, s) in g.body.iter().enumerate() {
-                    if i == g.body.len() - 1 {
-                        validate_stmt_ctx(s, diags, true); // final: condition
-                    } else {
-                        validate_stmt_ctx(s, diags, false); // non-final: statement
-                    }
-                }
-            } else {
-                for s in &g.body {
-                    validate_stmt_ctx(s, diags, in_condition);
-                }
-            }
-        }
-        StmtKind::Subshell(s) => {
-            for st in &s.body {
-                validate_stmt_ctx(st, diags, in_condition);
-            }
-        }
-        StmtKind::Suppressed(inner) => validate_stmt_ctx(inner, diags, in_condition),
+        StmtKind::Assignment(a) => validate_assignment_stmt(a, stmt.span, in_condition, diags),
+        StmtKind::If(i) => validate_if(i, diags),
+        StmtKind::While(w) => validate_while(w, diags),
+        StmtKind::For(f) => validate_for(f, diags),
+        StmtKind::Group(g) => validate_group(g, in_condition, diags),
         StmtKind::ArithTest(expr) => {
             // SB5007: check arithmetic in context
             validate_arith_context(expr, stmt.span, in_condition, diags);
         }
         StmtKind::Comment(_) => {}
+        // Default for wrappers (Pipeline, Subshell, Suppressed,
+        // Redirected, List) and reset-context constructs (Function,
+        // Case). Forwarders propagate `in_condition`; resetters
+        // (Function, Case) drop it to false so a function body or
+        // case body is never validated as if it were in condition
+        // context.
+        _ => {
+            let inner = forwards_condition(stmt) && in_condition;
+            for body in stmt.child_bodies() {
+                for s in body {
+                    validate_stmt_ctx(s, diags, inner);
+                }
+            }
+        }
     }
-    // SB5007: ArithTest as bare statement (not in condition) is a no-op warning
-    // This is handled separately since we need condition context
     // Validate all expressions in the statement
     walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
+}
+
+/// True for wrapping StmtKinds whose validation context is the
+/// same as the wrapper itself: Pipeline, Subshell, Suppressed,
+/// Redirected, List. Group is *not* listed here because DD#31
+/// requires a per-call inspection; it has its own dedicated arm.
+/// Function and Case are *not* listed because their bodies must
+/// be validated outside of condition context regardless of the
+/// wrapper's own context.
+fn forwards_condition(stmt: &Statement) -> bool {
+    matches!(
+        &stmt.kind,
+        StmtKind::Pipeline(_)
+            | StmtKind::Subshell(_)
+            | StmtKind::Suppressed(_)
+            | StmtKind::Redirected(_)
+            | StmtKind::List(_)
+    )
+}
+
+fn validate_assignment_stmt(
+    a: &Assignment,
+    span: Span,
+    in_condition: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    validate_assignment(a, span, diags);
+    // SB5007: arithmetic assignment in condition context.
+    // The DD#31 comma pattern is handled at the Group level.
+    if in_condition && matches!(&a.value.kind, ExprKind::Arithmetic(_)) {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5007",
+            format!(
+                "mutation {} = ... not allowed in condition (( )) expression context — \
+                 use (( )) statement instead",
+                a.name
+            ),
+        ));
+    }
+}
+
+fn validate_if(i: &If, diags: &mut Vec<Diagnostic>) {
+    for s in &i.condition {
+        validate_stmt_ctx(s, diags, true);
+    }
+    for s in &i.then_body {
+        validate_stmt_ctx(s, diags, false);
+    }
+    for elif in &i.elif_clauses {
+        for s in &elif.condition {
+            validate_stmt_ctx(s, diags, true);
+        }
+        for s in &elif.body {
+            validate_stmt_ctx(s, diags, false);
+        }
+    }
+    if let Some(ref else_body) = i.else_body {
+        for s in else_body {
+            validate_stmt_ctx(s, diags, false);
+        }
+    }
+}
+
+fn validate_while(w: &While, diags: &mut Vec<Diagnostic>) {
+    for s in &w.condition {
+        validate_stmt_ctx(s, diags, true);
+    }
+    for s in &w.body {
+        validate_stmt_ctx(s, diags, false);
+    }
+}
+
+fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
+    // Check glob patterns and unquoted expansions in for-loop words
+    for w in &f.words {
+        check_unquoted_glob(w, diags);
+        // SB5009: unquoted $var in for-loop words implies word splitting
+        if let ExprKind::SimpleExpansion(var) = &w.kind {
+            diags.push(Diagnostic::error_span(
+                w.span,
+                "SB5009",
+                format!(
+                    "unquoted ${} in for-loop would word-split — quote it or use an array",
+                    var
+                ),
+            ));
+        }
+    }
+    for s in &f.body {
+        validate_stmt_ctx(s, diags, false);
+    }
+}
+
+/// DD#31: a comma expression like `(a=1, x<5)` desugars to a
+/// Group whose body is a sequence of mutations followed by a
+/// final ArithTest. In condition context, the mutations must
+/// validate as *non*-condition (they're statements), while the
+/// trailing ArithTest validates as condition. Outside that
+/// shape, forward `in_condition` unchanged to every body
+/// statement.
+fn validate_group(g: &Group, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    let is_comma_pattern = in_condition
+        && g.body
+            .last()
+            .is_some_and(|s| matches!(s.kind, StmtKind::ArithTest(_)));
+    if !is_comma_pattern {
+        for s in &g.body {
+            validate_stmt_ctx(s, diags, in_condition);
+        }
+        return;
+    }
+    let last = g.body.len() - 1;
+    for (i, s) in g.body.iter().enumerate() {
+        validate_stmt_ctx(s, diags, i == last);
+    }
 }
 
 // ── SB5001/SB5002/SB4001: command-level rejections ─────────────
