@@ -1,8 +1,11 @@
 title: Install commit hooks for fmt + lint, report complexity + coverage
-status: ready
+status: done
 priority: P2
 kind: work
 source: opus-47-review
+resolved: 2026-06-05
+resolution: .githooks/pre-commit runs cargo fmt --check + cargo clippy -D warnings as blocking gates, and a top-5 cyclomatic-complexity report (cyclo-allow-aware) as report-only. .githooks/pre-push runs llvm-cov coverage report (skip via SKIP_COVERAGE=1). Both exercised live during the Phase 11 wave.
+landed: 2026-05-27
 depends:
   - r47-decide-quality-gate-thresholds
 gates:

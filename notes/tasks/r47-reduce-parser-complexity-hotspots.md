@@ -1,9 +1,12 @@
 title: Reduce parser-complexity hotspots (CC > 50)
-status: in-progress
+status: done
 priority: P1
 kind: work
 source: opus-47-review
-branch: logos-lexer
+branch: hand-parser
+resolved: 2026-06-05
+resolution: All 6 named hotspots landed (tokenize_arith 88→12, next_token 78→15, scan_double_quoted 68→9, intern_literals 70→6, cli_main 69→14, parse_expr 54→13). Transform/codegen follow-up wave (Phases 8-11) brought max non-allow'd CC from 49 → 26 (the live 26 is emit_janet, deferred to the SSA-rewrite task). All gates green at 291/291.
+landed: 2026-06-05
 depends:
   - r47-decide-logos-vs-handroll
 gates:
