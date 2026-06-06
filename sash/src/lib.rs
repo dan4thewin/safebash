@@ -1,4 +1,5 @@
 // Modules used by tests (oracle_tests.rs) — must be pub
+pub mod emit_c;
 pub mod emit_janet;
 pub mod ir;
 pub mod oracle;
@@ -117,12 +118,7 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    if parsed.flags.contains(&"--janet") {
-        print!("{}", emit_janet::emit_janet(&program));
-        return;
-    }
-    if parsed.flags.contains(&"--manifest") {
-        emit_manifest(&program);
+    if maybe_emit_alt_output(&parsed.flags, &program) {
         return;
     }
 
@@ -134,6 +130,37 @@ pub fn cli_main(args: Vec<String>) {
         parsed.inline_source.is_some(),
         &parsed.flags,
     );
+}
+
+/// Handle the terminal "emit an alternative output and exit" flags
+/// (`--janet`, `--emit-c`, `--manifest`). Returns `true` if one
+/// fired (caller should return); `false` if none matched (caller
+/// proceeds to native codegen).
+fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
+    if flags.contains(&"--janet") {
+        print!("{}", emit_janet::emit_janet(program));
+        return true;
+    }
+    if flags.contains(&"--emit-c") {
+        emit_c_to_stdout(program);
+        return true;
+    }
+    if flags.contains(&"--manifest") {
+        emit_manifest(program);
+        return true;
+    }
+    false
+}
+
+/// `--emit-c`: lower to SSA, emit C source to stdout. The C oracle
+/// (notes/tasks/add-c-oracle.md). gcc-compiled output of this C
+/// linked against libsash_rt.a is a differential oracle against
+/// Cranelift-compiled output of the same SSA — any disagreement
+/// is a bug somewhere in the compiler.
+fn emit_c_to_stdout(program: &crate::ir::Program) {
+    let type_map = type_check::infer_types(program);
+    let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
+    print!("{}", emit_c::emit_c(&ssa));
 }
 
 /// `--extract`: dump the `.sash_source` section from a compiled binary.
