@@ -269,126 +269,116 @@ fn value_is_tainted(
     user_functions: &std::collections::HashSet<String>,
 ) -> Taint {
     match value {
-        SsaValue::Literal(_) => Taint::Clean,
-        SsaValue::Var(vref) => {
-            if is_tainted(taint, vref) {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
-        }
-        SsaValue::Expr(_) => Taint::Clean, // string expressions from lowerer
-        SsaValue::FuncCall(_) => Taint::Clean, // elidable user functions
-        SsaValue::IntFuncCall { .. } => Taint::Clean, // int functions return clean integers
-        SsaValue::CmdSubst { argv, .. } => {
-            // All command substitution output is tainted unless it's a known-clean builtin.
-            // External command output (including getenv) requires explicit bless.
-            if let Some(SsaValue::Literal(cmd)) = argv.first() {
-                // Strip path to get basename (e.g., /bin/echo → echo)
-                let basename = cmd.rsplit('/').next().unwrap_or(cmd);
-                match basename {
-                    "getenv" | "argv" => Taint::Tainted,
-                    // Known-safe internal builtins (pure computation, no external data)
-                    "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid"
-                    | "getppid" | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => {
-                        Taint::Clean
-                    }
-                    _ => {
-                        // Sash builtins that produce output from their args:
-                        // if all args are clean, output is clean (pure computation).
-                        if matches!(basename, "echo" | "printf" | "pwd") {
-                            let args_clean = argv[1..].iter().all(|a| {
-                                value_is_tainted(a, taint, user_functions) != Taint::Tainted
-                            });
-                            if args_clean {
-                                return Taint::Clean;
-                            }
-                        }
-                        // User-defined functions are clean by DD#24
-                        if user_functions.contains(cmd.as_str())
-                            || user_functions.contains(basename)
-                        {
-                            return Taint::Clean;
-                        }
-                        // Everything else (external commands) is tainted.
-                        // Explicit `bless` is required — no auto-bless.
-                        Taint::Tainted
-                    }
-                }
-            } else {
-                Taint::Tainted
-            }
-        }
-        SsaValue::Concat(parts) => {
-            if parts
-                .iter()
-                .any(|p| value_is_tainted(p, taint, user_functions) == Taint::Tainted)
-            {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
-        }
-        SsaValue::ArithExpr { var, .. } => {
-            if is_tainted(taint, var) {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
-        }
-        SsaValue::ArithBinOp { left, right, .. } => {
-            if value_is_tainted(left, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(right, taint, user_functions) == Taint::Tainted
-            {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
-        }
-        SsaValue::ParamExpansion { var, .. } => {
-            if is_tainted(taint, var) {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
-        }
-        SsaValue::Subscript { .. } => Taint::Clean, // array access — taint is on the array
-        SsaValue::ArgvIndex(_) => Taint::Tainted,   // program argv — tainted
-        SsaValue::IndexedArray(elems) => {
-            if elems
-                .iter()
-                .any(|e| value_is_tainted(e, taint, user_functions) == Taint::Tainted)
-            {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
+        // Always-clean leaves: pure-computation values that the
+        // lowerer guarantees do not carry external input.
+        SsaValue::Literal(_)
+        | SsaValue::Expr(_)
+        | SsaValue::FuncCall(_)
+        | SsaValue::IntFuncCall { .. }
+        | SsaValue::Subscript { .. }
+        | SsaValue::TableValue { .. }
+        | SsaValue::TableKey { .. } => Taint::Clean,
+
+        // Always-tainted: program argv is external input by construction.
+        SsaValue::ArgvIndex(_) => Taint::Tainted,
+
+        // Var-rooted: taint inherited from the named variable's status.
+        SsaValue::Var(vref)
+        | SsaValue::ArithExpr { var: vref, .. }
+        | SsaValue::ParamExpansion { var: vref, .. } => taint_of_var(taint, vref),
+
+        // Any-tainted collections: taint if any subvalue is tainted.
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
+            any_tainted(parts.iter(), taint, user_functions)
         }
         SsaValue::AssocArray(pairs) => {
-            if pairs
-                .iter()
-                .any(|(_, v)| value_is_tainted(v, taint, user_functions) == Taint::Tainted)
-            {
-                Taint::Tainted
-            } else {
-                Taint::Clean
-            }
+            any_tainted(pairs.iter().map(|(_, v)| v), taint, user_functions)
+        }
+        SsaValue::ArithBinOp { left, right, .. } => {
+            any_tainted([left.as_ref(), right.as_ref()], taint, user_functions)
         }
         SsaValue::Ternary {
             cond,
             true_val,
             false_val,
-        } => {
-            if value_is_tainted(cond, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(true_val, taint, user_functions) == Taint::Tainted
-                || value_is_tainted(false_val, taint, user_functions) == Taint::Tainted
-            {
-                Taint::Tainted
-            } else {
+        } => any_tainted(
+            [cond.as_ref(), true_val.as_ref(), false_val.as_ref()],
+            taint,
+            user_functions,
+        ),
+
+        // Command substitution: the only variant whose taint
+        // depends on the callee (builtins are clean, externals
+        // tainted, user fns clean by DD#24).
+        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, taint, user_functions),
+    }
+}
+
+/// Lift `is_tainted` (which returns bool) to the Taint enum used
+/// here, with DD#53 semantics for unknown vars (treated as Clean).
+fn taint_of_var(taint: &HashMap<String, Taint>, vref: &VarRef) -> Taint {
+    if is_tainted(taint, vref) {
+        Taint::Tainted
+    } else {
+        Taint::Clean
+    }
+}
+
+/// `Taint::Tainted` if any of `values` is tainted, else `Taint::Clean`.
+fn any_tainted<'a>(
+    values: impl IntoIterator<Item = &'a SsaValue>,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    if values
+        .into_iter()
+        .any(|v| value_is_tainted(v, taint, user_functions) == Taint::Tainted)
+    {
+        Taint::Tainted
+    } else {
+        Taint::Clean
+    }
+}
+
+/// Compute the taint of a `$(...)` command substitution. The first
+/// argv element is the command name; basename lookup classifies it:
+///
+/// - `getenv` / `argv` — external input, always tainted.
+/// - Known-safe sash builtins (`len`, `keys`, etc.) — clean, pure
+///   computation.
+/// - `echo` / `printf` / `pwd` — output is clean if all args are
+///   clean (pass-through pure functions).
+/// - User-defined functions — clean by DD#24.
+/// - Everything else (external commands) — tainted; explicit
+///   `bless` required to launder.
+fn cmd_subst_taint(
+    argv: &[SsaValue],
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    let Some(SsaValue::Literal(cmd)) = argv.first() else {
+        return Taint::Tainted;
+    };
+    let basename = cmd.rsplit('/').next().unwrap_or(cmd);
+    match basename {
+        "getenv" | "argv" => Taint::Tainted,
+        "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
+        | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => Taint::Clean,
+        "echo" | "printf" | "pwd" => {
+            // Pass-through builtins: output clean iff all args clean.
+            if any_tainted(argv[1..].iter(), taint, user_functions) == Taint::Clean {
                 Taint::Clean
+            } else {
+                Taint::Tainted
             }
         }
-        SsaValue::TableValue { .. } | SsaValue::TableKey { .. } => Taint::Clean,
+        _ => {
+            if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
+                Taint::Clean
+            } else {
+                Taint::Tainted
+            }
+        }
     }
 }
 
