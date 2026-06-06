@@ -268,88 +268,121 @@ pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, _scanner: &Scanne
     let mut result = Vec::new();
     let mut i = 0;
     while i < parts.len() {
-        match &parts[i] {
-            StringPart::Literal(s) => {
-                result.push(Expr {
-                    kind: ExprKind::Literal(s.clone()),
-                    span,
-                });
-            }
-            StringPart::Variable(name) => {
-                // Check for $arr[i] inside strings (DD#41)
-                if i + 1 < parts.len() {
-                    if let StringPart::Literal(lit) = &parts[i + 1] {
-                        if lit.starts_with('[') {
-                            if let Some(close) = lit.find(']') {
-                                let idx = &lit[1..close];
-                                let rest = &lit[close + 1..];
-                                if idx == "@" || idx == "*" {
-                                    result.push(Expr::param(
-                                        name.clone(),
-                                        Some("arrvals"),
-                                        None,
-                                        span,
-                                    ));
-                                } else {
-                                    result.push(Expr {
-                                        kind: ExprKind::Subscript {
-                                            name: name.clone(),
-                                            index: Box::new(Expr {
-                                                kind: ExprKind::Literal(idx.to_string()),
-                                                span,
-                                            }),
-                                        },
-                                        span,
-                                    });
-                                }
-                                if !rest.is_empty() {
-                                    result.push(Expr {
-                                        kind: ExprKind::Literal(rest.to_string()),
-                                        span,
-                                    });
-                                }
-                                i += 2;
-                                continue;
-                            }
-                        }
-                    }
-                }
-                result.push(Expr {
-                    kind: ExprKind::SimpleExpansion(name.clone()),
-                    span,
-                });
-            }
-            StringPart::Expansion(content) => {
-                result.push(parse_parameter_expansion(content, span));
-            }
-            StringPart::CommandSub(content) => {
-                if content.starts_with('`') {
-                    result.push(Expr {
-                        kind: ExprKind::Literal(content.clone()),
-                        span,
-                    });
-                } else {
-                    let stmts = parse_sub_script(content, span);
-                    result.push(Expr {
-                        kind: ExprKind::CommandSubstitution(stmts),
-                        span,
-                    });
-                }
-            }
-            StringPart::ArithSub(content) => {
-                let arith = match super::arith::parse_arith_str(content.trim(), span) {
-                    Ok(expr) => expr,
-                    Err(_) => crate::ir::ArithExpr::Literal(0),
-                };
-                result.push(Expr {
-                    kind: ExprKind::Arithmetic(Box::new(arith)),
-                    span,
-                });
-            }
-        }
-        i += 1;
+        i += emit_string_part(&parts[i..], span, &mut result);
     }
     result
+}
+
+/// Convert the next [StringPart] (and possibly the one after it,
+/// for $arr[idx] lookahead) into one or more Exprs appended to
+/// `result`. Returns the number of input parts consumed (1 or 2).
+fn emit_string_part(parts_from_here: &[StringPart], span: Span, result: &mut Vec<Expr>) -> usize {
+    match &parts_from_here[0] {
+        StringPart::Literal(s) => {
+            result.push(Expr {
+                kind: ExprKind::Literal(s.clone()),
+                span,
+            });
+            1
+        }
+        StringPart::Variable(name) => {
+            // DD#41: detect $arr[i] / $arr[@] inside double quotes
+            // by peeking at the next part for a [idx]suffix literal.
+            if let Some(advance) =
+                try_emit_array_subscript_in_string(parts_from_here, name, span, result)
+            {
+                return advance;
+            }
+            result.push(Expr {
+                kind: ExprKind::SimpleExpansion(name.clone()),
+                span,
+            });
+            1
+        }
+        StringPart::Expansion(content) => {
+            result.push(parse_parameter_expansion(content, span));
+            1
+        }
+        StringPart::CommandSub(content) => {
+            result.push(command_sub_to_expr(content, span));
+            1
+        }
+        StringPart::ArithSub(content) => {
+            let arith = super::arith::parse_arith_str(content.trim(), span)
+                .unwrap_or(crate::ir::ArithExpr::Literal(0));
+            result.push(Expr {
+                kind: ExprKind::Arithmetic(Box::new(arith)),
+                span,
+            });
+            1
+        }
+    }
+}
+
+/// If `parts_from_here` starts with `$name` followed by a literal
+/// of the shape `[idx]rest…`, push the corresponding subscript /
+/// arrvals expansion (plus a literal for `rest…` if non-empty)
+/// and return `Some(2)`. Otherwise return `None` and the caller
+/// falls back to a plain `$name` expansion.
+fn try_emit_array_subscript_in_string(
+    parts_from_here: &[StringPart],
+    name: &str,
+    span: Span,
+    result: &mut Vec<Expr>,
+) -> Option<usize> {
+    let StringPart::Literal(lit) = parts_from_here.get(1)? else {
+        return None;
+    };
+    if !lit.starts_with('[') {
+        return None;
+    }
+    let close = lit.find(']')?;
+    let idx = &lit[1..close];
+    let rest = &lit[close + 1..];
+    result.push(subscript_expr(name, idx, span));
+    if !rest.is_empty() {
+        result.push(Expr {
+            kind: ExprKind::Literal(rest.to_string()),
+            span,
+        });
+    }
+    Some(2)
+}
+
+/// Build the subscript / arrvals expansion for `$name[idx]`.
+/// `idx` of `@` or `*` becomes arrvals; anything else becomes a
+/// literal subscript.
+fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
+    if idx == "@" || idx == "*" {
+        Expr::param(name.to_string(), Some("arrvals"), None, span)
+    } else {
+        Expr {
+            kind: ExprKind::Subscript {
+                name: name.to_string(),
+                index: Box::new(Expr {
+                    kind: ExprKind::Literal(idx.to_string()),
+                    span,
+                }),
+            },
+            span,
+        }
+    }
+}
+
+/// Backticked content gets preserved verbatim (legacy holdover);
+/// modern `$(…)` content lowers to CommandSubstitution.
+fn command_sub_to_expr(content: &str, span: Span) -> Expr {
+    if content.starts_with('`') {
+        return Expr {
+            kind: ExprKind::Literal(content.to_string()),
+            span,
+        };
+    }
+    let stmts = parse_sub_script(content, span);
+    Expr {
+        kind: ExprKind::CommandSubstitution(stmts),
+        span,
+    }
 }
 
 // ── Parameter expansion (${...}) ─────────────────────────────────
