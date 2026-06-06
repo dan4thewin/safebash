@@ -86,8 +86,10 @@ fi
 #        OR cognitive > 3 * mean_cog)        --   axis
 #
 # Pre-existing violators (any function NOT touched by this commit's
-# staged hunks) are grandfathered. Scope: sash/src/, excluding
-# sash/src/emit_janet.rs (deferred to the SSA-rewrite task).
+# staged hunks) are grandfathered. Scope: all of sash/src/ — no file
+# is exempt from the gate. (The previous emit_janet.rs exemption was
+# retired 2026-06-06 because deferral was entrenching the violation
+# rather than driving it down.)
 #
 # Threshold is 3× current means (recalculated per commit) — a ratchet
 # that tightens as the codebase improves. Plan: 3× → 2× → 1.5× as the
@@ -96,10 +98,8 @@ if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
     gray "pre-commit: complexity gate (3× mean, grandfather-on-modify)"
 
     # Collect staged hunk ranges as (file, start, end) tuples.
-    # ':!sash/src/emit_janet.rs' excludes the deferred file.
     hunks=$(git diff --cached --unified=0 -- \
-                'sash/src/*.rs' 'sash/src/**/*.rs' \
-                ':!sash/src/emit_janet.rs' 2>/dev/null | \
+                'sash/src/*.rs' 'sash/src/**/*.rs' 2>/dev/null | \
             awk '
                 /^\+\+\+ b\// { file = substr($0, 7); next }
                 /^@@ / {
@@ -132,7 +132,6 @@ SELECT printf('cc=%-3d cog=%-3d delta=%+d', s.cyclomatic, s.cognitive,
        || '  ' || s.name || '  ' || s.file || ':' || s.start_line
 FROM symbols s, t
 WHERE s.file LIKE 'sash/src/%'
-  AND s.file NOT LIKE '%emit_janet.rs'
   AND s.kind IN ('function','method')
   AND s.cyclomatic IS NOT NULL
   AND (s.cognitive - s.cyclomatic) > -15

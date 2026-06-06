@@ -1,9 +1,12 @@
 ---
 title: Retarget emit_janet to consume SSA instead of IR
-status: pending
-priority: P2
+status: deferred
+priority: P3
 kind: refactor
 depends: []
+superseded-by: add-c-oracle
+resolved: 2026-06-06
+resolution: DG decided 2026-06-06 to keep emit_janet on IR (it stays as the existing oracle for the IR-stage and joins the cohort for complexity refactoring) and instead add a new emit_c that consumes SSA. C with goto+labels maps 1:1 to SSA basic blocks, gives a differential oracle against Cranelift via gcc, and reveals what the compiler does without contorting the target language. See notes/tasks/add-c-oracle.md.
 gates:
   - all 401 lines of janet_tests.rs pass after the rewrite
   - 291/291 spec gates remain green

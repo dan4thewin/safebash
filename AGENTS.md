@@ -484,7 +484,7 @@ complexity per cognitive). Do **not** re-introduce the convention.
 ```
 REJECT if (cognitive - cyclomatic) > -15
        AND (cyclomatic > 3 × mean_cc OR cognitive > 3 × mean_cog)
-       AND file in sash/src/ but not sash/src/emit_janet.rs
+       AND file in sash/src/
        AND function is touched by this commit's staged hunks
        (i.e. grandfather-on-modify)
 ```
@@ -497,7 +497,9 @@ annotation needed.
 The means recalculate per commit (a ratchet: as the codebase
 refactors down, the bar tightens). Pre-existing violators remain
 silent until edited, at which point they must come down to spec.
-`emit_janet.rs` is scoped out until the SSA-rewrite task ships.
+**No file is exempt.** (The previous `emit_janet.rs` carve-out was
+retired 2026-06-06: deferral was entrenching the violation rather
+than driving it down.)
 
 Plan: start at 3× mean, tighten to 2× then 1.5× as the cohort
 clears. Full rubric and pattern library: `notes/journal/108-cog-cc-
