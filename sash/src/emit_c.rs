@@ -79,7 +79,13 @@ fn emit_prologue(out: &mut String) {
     writeln!(out).unwrap();
     writeln!(out, "typedef long i64;").unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "/* sash-rt C ABI (subset for Phase 2) */").unwrap();
+    writeln!(
+        out,
+        "typedef struct {{ const char* ptr; i64 len; }} sash_pair;"
+    )
+    .unwrap();
+    writeln!(out).unwrap();
+    writeln!(out, "/* sash-rt C ABI (Phase 3) */").unwrap();
     writeln!(
         out,
         "extern i64 sash_write(i64 fd, const char* buf, i64 len);"
@@ -108,6 +114,53 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
+    // Phase 3 — parameter expansion
+    writeln!(
+        out,
+        "extern i64 sash_strip_suffix(const char* sp, i64 sl, const char* pp, i64 pl, i64 longest);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_strip_prefix(const char* sp, i64 sl, const char* pp, i64 pl, i64 longest);"
+    )
+    .unwrap();
+    writeln!(out, "extern i64 sash_default_value(i64 s_len);").unwrap();
+    writeln!(
+        out,
+        "extern sash_pair sash_substring(const char* sp, i64 sl, i64 off, i64 len, i64 has_len);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_toupper_first(const char* sp, i64 sl, char* out);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_toupper_all(const char* sp, i64 sl, char* out);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_tolower_first(const char* sp, i64 sl, char* out);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_tolower_all(const char* sp, i64 sl, char* out);"
+    )
+    .unwrap();
+    // Phase 3 — command substitution intrinsics
+    writeln!(
+        out,
+        "extern char* sash_getenv(const char* np, i64 nl, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
+    writeln!(out, "extern i64 sash_getpid(void);").unwrap();
+    writeln!(out, "extern i64 sash_getppid(void);").unwrap();
+    writeln!(out, "extern char* sash_getcwd(i64* out_len);").unwrap();
     writeln!(out).unwrap();
 }
 
@@ -266,20 +319,12 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
 ///
 /// If the value requires a runtime call (e.g. `sash_itoa` for an
 /// int variable), this function *emits a temp declaration into `e.out`*
-/// and returns expressions referencing the temp. That preserves
-/// single-evaluation semantics — C evaluation order of function
-/// arguments is unspecified, so we can't rely on `sash_write(1,
-/// sash_itoa(x, &len), len)` reading `len` after `sash_itoa` writes
-/// it.
+/// and returns expressions referencing the temp.
 fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr {
     match value {
-        // Literal / Expr: codegen interns and returns ptr + compile-
-        // time length. C: bare string literal + literal byte count.
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
-        // Var: codegen reads the VarSlot's two registers. For Int
-        // vars codegen routes through sash_itoa — mirror exactly.
         SsaValue::Var(vref) => match vref.var_type {
             VarType::String => {
                 let base = c_var_name(&vref.name, vref.version);
@@ -287,13 +332,22 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             }
             VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
         },
-        // ArithExpr / ArithBinOp in string context: codegen calls
-        // emit_arith_op then emit_int_to_str (codegen/values.rs:341+).
-        // We compute the int expression then route through itoa.
         SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
         }
+        // Phase 3: ${var...} → handle_param_expansion
+        // (codegen/value_handlers.rs:18). Routes through the operator
+        // dispatch.
+        SsaValue::ParamExpansion {
+            var,
+            operator,
+            operand,
+        } => emit_param_expansion(e, var, operator, operand, types),
+        // Phase 3: $(...) → handle_cmdsub
+        // (codegen/value_handlers.rs:691). Tries native intrinsics
+        // first; external exec is deferred to Phase 4.
+        SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
         _ => {
             writeln!(
                 e.out,
@@ -719,4 +773,298 @@ fn highest_version(name: &str, types: &VarTypes) -> Option<((String, u32), VarTy
         .filter(|((n, _), _)| n == name)
         .max_by_key(|((_, v), _)| *v)
         .map(|((n, v), t)| ((n.clone(), *v), *t))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Parameter expansion: ${var...}
+// ═══════════════════════════════════════════════════════════════
+
+/// Mirrors `handle_param_expansion` from codegen/value_handlers.rs:18.
+/// Loads the var as (ptr, len), then dispatches on operator.
+///
+/// Phase 3 implements: strlen (#), strip suffix (% / %%), strip
+/// prefix (# / ##), default (:- / -), alternate (:+ / +),
+/// substring, case conversion (^ / ^^ / , / ,,). Plain ${var} with
+/// no operator is handled by emit_assign at the consumer level
+/// (it never appears as a ParamExpansion with empty operator in
+/// SSA — the transform converts it to SsaValue::Var).
+///
+/// Deferred to later phases: glob / glob_regex (needs `.` dir
+/// literal), regex_replace (DD#37), arrkeys / arrvals / arrjoin
+/// (needs table runtime), arrlen, strlen_elem.
+fn emit_param_expansion(
+    e: &mut Emit,
+    var: &VarRef,
+    operator: &str,
+    operand: &str,
+    types: &VarTypes,
+) -> CStr {
+    let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+
+    match operator {
+        "" => (s_ptr, s_len),
+        "strlen" => emit_itoa_temp(e, &s_len),
+        "%" | "%%" => emit_strip_suffix_c(e, operator, &s_ptr, &s_len, operand),
+        "#" | "##" => emit_strip_prefix_c(e, operator, &s_ptr, &s_len, operand),
+        ":-" | "-" => emit_default_value_c(e, &s_ptr, &s_len, operand),
+        ":+" | "+" => emit_alternate_value_c(e, &s_len, operand),
+        "substring" => emit_substring_c(e, &s_ptr, &s_len, operand),
+        "^" | "^^" | "," | ",," => emit_case_conversion_c(e, operator, &s_ptr, &s_len),
+        _ => {
+            writeln!(e.out, "    /* TODO param expansion op: {} */", operator).unwrap();
+            ("\"\"".to_string(), "0".to_string())
+        }
+    }
+}
+
+/// Mirrors `load_var_or_empty` (codegen/value_handlers.rs:70). Look
+/// up the highest-version slot for `var.name`; if absent, return
+/// ("\"\"", "0") as the empty-string sentinel. emit_c carries the
+/// version directly on VarRef so we can prefer the exact version
+/// when present.
+fn load_var_or_empty_c(var: &VarRef, types: &VarTypes) -> CStr {
+    let key = (var.name.clone(), var.version);
+    let known = types.contains_key(&key);
+    if known {
+        let base = c_var_name(&var.name, var.version);
+        return (format!("{}_ptr", base), format!("{}_len", base));
+    }
+    // Fall back to highest-version lookup, mirroring codegen's
+    // find_var_slot path (codegen/types.rs:189) for back-compat.
+    if let Some(((_, v), _)) = highest_version(&var.name, types) {
+        let base = c_var_name(&var.name, v);
+        return (format!("{}_ptr", base), format!("{}_len", base));
+    }
+    ("\"\"".to_string(), "0".to_string())
+}
+
+/// ${var%pat} / ${var%%pat} — strip matching suffix. Mirrors
+/// emit_strip_suffix (codegen/value_handlers.rs:495). Runtime
+/// returns the new length; pointer unchanged.
+fn emit_strip_suffix_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str, pat: &str) -> CStr {
+    let t = e.fresh();
+    let longest = if op == "%%" { 1 } else { 0 };
+    writeln!(
+        e.out,
+        "    i64 {t}_l = sash_strip_suffix({sp}, {sl}, \"{pat}\", {pl}, {lg});",
+        t = t,
+        sp = s_ptr,
+        sl = s_len,
+        pat = c_escape(pat),
+        pl = pat.len(),
+        lg = longest
+    )
+    .unwrap();
+    (s_ptr.to_string(), format!("{}_l", t))
+}
+
+/// ${var#pat} / ${var##pat} — strip matching prefix. Mirrors
+/// emit_strip_prefix (codegen/value_handlers.rs:520). Runtime
+/// returns offset; pointer advances and length shrinks.
+fn emit_strip_prefix_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str, pat: &str) -> CStr {
+    let t = e.fresh();
+    let longest = if op == "##" { 1 } else { 0 };
+    writeln!(
+        e.out,
+        "    i64 {t}_off = sash_strip_prefix({sp}, {sl}, \"{pat}\", {pl}, {lg});",
+        t = t,
+        sp = s_ptr,
+        sl = s_len,
+        pat = c_escape(pat),
+        pl = pat.len(),
+        lg = longest
+    )
+    .unwrap();
+    (
+        format!("({} + {}_off)", s_ptr, t),
+        format!("({} - {}_off)", s_len, t),
+    )
+}
+
+/// ${var:-default} / ${var-default}. Mirrors emit_default_value
+/// (codegen/value_handlers.rs:544). sash_default_value(len) returns
+/// 1 if var is set (len > 0), 0 if not. Then we select between
+/// the var's (ptr, len) and the operand literal.
+fn emit_default_value_c(e: &mut Emit, s_ptr: &str, s_len: &str, default: &str) -> CStr {
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_set = sash_default_value({sl});",
+        t = t,
+        sl = s_len
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    const char* {t}_p = {t}_set ? ({sp}) : \"{d}\";",
+        t = t,
+        sp = s_ptr,
+        d = c_escape(default)
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    i64 {t}_l = {t}_set ? ({sl}) : {dl};",
+        t = t,
+        sl = s_len,
+        dl = default.len()
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// ${var:+alt} / ${var+alt}. Mirrors emit_alternate_value
+/// (codegen/value_handlers.rs:562). If var is set: return alt; else
+/// return empty.
+fn emit_alternate_value_c(e: &mut Emit, s_len: &str, alt: &str) -> CStr {
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_set = sash_default_value({sl});",
+        t = t,
+        sl = s_len
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    const char* {t}_p = {t}_set ? \"{a}\" : \"\";",
+        t = t,
+        a = c_escape(alt)
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    i64 {t}_l = {t}_set ? {al} : 0;",
+        t = t,
+        al = alt.len()
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// ${var:offset} / ${var:offset:length}. Mirrors emit_substring
+/// (codegen/value_handlers.rs:582). Operand is "offset" or
+/// "offset:length". sash_substring writes the result ptr to its
+/// return value and the new length to *out_len.
+fn emit_substring_c(e: &mut Emit, s_ptr: &str, s_len: &str, operand: &str) -> CStr {
+    let parts: Vec<&str> = operand.split(':').collect();
+    let off: i64 = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+    let (length, has_length) = if parts.len() > 1 {
+        (parts[1].parse::<i64>().unwrap_or(0), 1i64)
+    } else {
+        (0, 0)
+    };
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    sash_pair {t} = sash_substring({sp}, {sl}, {off}, {len}, {has});",
+        t = t,
+        sp = s_ptr,
+        sl = s_len,
+        off = off,
+        len = length,
+        has = has_length
+    )
+    .unwrap();
+    (format!("{}.ptr", t), format!("{}.len", t))
+}
+
+/// ${var^} / ${var^^} / ${var,} / ${var,,}. Mirrors
+/// emit_case_conversion (codegen/value_handlers.rs:610). Allocates
+/// a 4096-byte stack buffer; runtime writes converted bytes and
+/// returns new length.
+fn emit_case_conversion_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str) -> CStr {
+    let func = match op {
+        "^" => "sash_toupper_first",
+        "^^" => "sash_toupper_all",
+        "," => "sash_tolower_first",
+        ",," => "sash_tolower_all",
+        _ => unreachable!(),
+    };
+    let t = e.fresh();
+    writeln!(e.out, "    char {t}_buf[4096];", t = t).unwrap();
+    writeln!(
+        e.out,
+        "    i64 {t}_l = {f}({sp}, {sl}, {t}_buf);",
+        t = t,
+        f = func,
+        sp = s_ptr,
+        sl = s_len
+    )
+    .unwrap();
+    (format!("{}_buf", t), format!("{}_l", t))
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Command substitution: $(cmd args...)
+// ═══════════════════════════════════════════════════════════════
+
+/// Mirrors `handle_cmdsub` from codegen/value_handlers.rs:691.
+/// Tries native intrinsics first (getenv, epochseconds, etc.); on
+/// non-intrinsic name, falls through to a TODO that defers to
+/// Phase 4's external-exec path.
+fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
+    if let Some(SsaValue::Literal(name)) = argv.first() {
+        if let Some(result) = try_native_intrinsic_c(e, name, argv, types) {
+            return result;
+        }
+        writeln!(e.out, "    /* TODO cmdsub exec: {} (Phase 4) */", name).unwrap();
+    } else {
+        writeln!(e.out, "    /* TODO cmdsub: non-literal cmd (Phase 4) */").unwrap();
+    }
+    ("\"\"".to_string(), "0".to_string())
+}
+
+/// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs:736).
+/// Returns Some when the command is a sash-native intrinsic.
+/// Phase 3 implements: getenv, epochseconds, getpid, getppid, getcwd.
+/// Deferred to Phase 4: argc, argv, signum, dtoi, itod (need argv
+/// access plumbing or are tied to status handling).
+fn try_native_intrinsic_c(
+    e: &mut Emit,
+    name: &str,
+    argv: &[SsaValue],
+    types: &VarTypes,
+) -> Option<CStr> {
+    match name {
+        "epochseconds" => {
+            let t = e.fresh();
+            writeln!(e.out, "    sash_pair {t} = sash_epochseconds();", t = t).unwrap();
+            Some((format!("{}.ptr", t), format!("{}.len", t)))
+        }
+        "getpid" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        "getppid" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        "getcwd" => {
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_l; const char* {t}_p = sash_getcwd(&{t}_l);",
+                t = t
+            )
+            .unwrap();
+            Some((format!("{}_p", t), format!("{}_l", t)))
+        }
+        "getenv" if argv.len() >= 2 => {
+            let (np, nl) = lower_value_as_str(e, &argv[1], types);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_l; const char* {t}_p = sash_getenv({np}, {nl}, &{t}_l);",
+                t = t,
+                np = np,
+                nl = nl
+            )
+            .unwrap();
+            Some((format!("{}_p", t), format!("{}_l", t)))
+        }
+        _ => None,
+    }
 }
