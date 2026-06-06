@@ -79,7 +79,7 @@ fn emit_prologue(out: &mut String) {
     writeln!(out).unwrap();
     writeln!(out, "typedef long i64;").unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "/* sash-rt C ABI (subset for Phase 1) */").unwrap();
+    writeln!(out, "/* sash-rt C ABI (subset for Phase 2) */").unwrap();
     writeln!(
         out,
         "extern i64 sash_write(i64 fd, const char* buf, i64 len);"
@@ -95,6 +95,17 @@ fn emit_prologue(out: &mut String) {
     writeln!(
         out,
         "extern i64 sash_strcmp(const char* p1, i64 l1, const char* p2, i64 l2);"
+    )
+    .unwrap();
+    writeln!(out, "extern i64 sash_pow(i64 base, i64 exp);").unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_fnmatch(const char* p, i64 pl, const char* s, i64 sl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
     writeln!(out).unwrap();
@@ -213,6 +224,14 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::Command {
             name, kind, args, ..
         } => emit_command(e, name, kind, args, types),
+        // SsaInst::Test stores its result into __test_result. Codegen
+        // (dispatch.rs:108-118): result = lower_test_expr(...);
+        // builder.def_var(test_result_var, result). Branch terminator
+        // then reads it.
+        SsaInst::Test(test_expr) => {
+            let val = lower_test_expr(e, test_expr, types);
+            writeln!(e.out, "    __test_result = {};", val).unwrap();
+        }
         _ => {
             writeln!(
                 e.out,
@@ -252,7 +271,7 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
 /// arguments is unspecified, so we can't rely on `sash_write(1,
 /// sash_itoa(x, &len), len)` reading `len` after `sash_itoa` writes
 /// it.
-fn lower_value_as_str(e: &mut Emit, value: &SsaValue, _types: &VarTypes) -> CStr {
+fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr {
     match value {
         // Literal / Expr: codegen interns and returns ptr + compile-
         // time length. C: bare string literal + literal byte count.
@@ -268,6 +287,13 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, _types: &VarTypes) -> CStr
             }
             VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
         },
+        // ArithExpr / ArithBinOp in string context: codegen calls
+        // emit_arith_op then emit_int_to_str (codegen/values.rs:341+).
+        // We compute the int expression then route through itoa.
+        SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
+            let int_expr = lower_value_as_int(e, value, types);
+            emit_itoa_temp(e, &int_expr)
+        }
         _ => {
             writeln!(
                 e.out,
@@ -301,7 +327,9 @@ fn emit_itoa_temp(e: &mut Emit, int_expr: &str) -> CStr {
 /// context. Mirrors `lower_value_as_int` from codegen/values.rs:877.
 /// String vars go through `sash_atoi`; int vars pass through;
 /// literals parse as i64 if numeric, else `sash_atoi` over the bytes.
-fn lower_value_as_int(_e: &mut Emit, value: &SsaValue, _types: &VarTypes) -> String {
+/// ArithExpr / ArithBinOp recurse through `arith_op_c`.
+#[allow(clippy::only_used_in_recursion)]
+fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> String {
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => s
             .parse::<i64>()
@@ -314,8 +342,83 @@ fn lower_value_as_int(_e: &mut Emit, value: &SsaValue, _types: &VarTypes) -> Str
                 format!("sash_atoi({}_ptr, {}_len)", base, base)
             }
         },
+        // codegen/values.rs:341+ for ArithExpr: lower_value_as_int(Var(var))
+        // then emit_arith_op(op, lhs, iconst(operand)).
+        SsaValue::ArithExpr { var, op, operand } => {
+            let lhs = lower_value_as_int(e, &SsaValue::Var(var.clone()), types);
+            emit_arith_op_c(e, *op, &lhs, &operand.to_string())
+        }
+        // codegen/values.rs:356+ for ArithBinOp: lower_value_as_int(left/right)
+        // then emit_arith_op(op, l, r).
+        SsaValue::ArithBinOp { left, op, right } => {
+            let l = lower_value_as_int(e, left, types);
+            let r = lower_value_as_int(e, right, types);
+            emit_arith_op_c(e, *op, &l, &r)
+        }
         _ => "0 /* TODO value_as_int */".to_string(),
     }
+}
+
+/// Emit a C i64 expression for an arithmetic op on already-lowered
+/// operands. Mirrors `emit_arith_op` from codegen/arithmetic.rs:14.
+///
+/// Comparison ops (Eq..Ge) yield 0/1 via C `(lhs OP rhs)` which is
+/// already i64-typed in C semantics (bool result widened in
+/// assignment context, which is what __test_result expects).
+///
+/// Div/Mod include a zero check via a fresh helper local that
+/// matches codegen's emit_div_by_zero_error behaviour: writes
+/// bash's "division by 0" message to stderr and returns 0.
+///
+/// Pow routes through `sash_pow` (mirrors codegen's externs.pow).
+fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
+    use ArithOp::*;
+    match op {
+        Add => format!("({} + {})", lhs, rhs),
+        Sub => format!("({} - {})", lhs, rhs),
+        Mul => format!("({} * {})", lhs, rhs),
+        Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
+        And => format!("({} && {})", lhs, rhs),
+        Or => format!("({} || {})", lhs, rhs),
+        Not => format!("(!{})", lhs), // unary; rhs ignored
+        Shl => format!("({} << {})", lhs, rhs),
+        Shr => format!("({} >> {})", lhs, rhs),
+        BitAnd => format!("({} & {})", lhs, rhs),
+        BitOr => format!("({} | {})", lhs, rhs),
+        BitXor => format!("({} ^ {})", lhs, rhs),
+        Eq => format!("(({} == {}) ? 1 : 0)", lhs, rhs),
+        Ne => format!("(({} != {}) ? 1 : 0)", lhs, rhs),
+        Lt => format!("(({} < {}) ? 1 : 0)", lhs, rhs),
+        Le => format!("(({} <= {}) ? 1 : 0)", lhs, rhs),
+        Gt => format!("(({} > {}) ? 1 : 0)", lhs, rhs),
+        Ge => format!("(({} >= {}) ? 1 : 0)", lhs, rhs),
+        Pow => format!("sash_pow({}, {})", lhs, rhs),
+    }
+}
+
+/// Emit a Div or Mod operation with bash's div-by-zero semantics:
+/// stderr message + result = 0 + don't crash. Mirrors codegen's
+/// `emit_div_or_mod_with_zero_check` (codegen/arithmetic.rs:66).
+/// Uses a fresh temp because both operand evaluations and the
+/// dispatch must happen-before the consumer reads the result.
+fn emit_div_or_mod_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_l = ({});", lhs, t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_r = ({});", rhs, t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_v;", t = t).unwrap();
+    writeln!(e.out, "    if ({t}_r == 0) {{", t = t).unwrap();
+    writeln!(
+        e.out,
+        "        sash_write(2, \"bash: division by 0 (error token is \\\"0\\\")\\n\", 41);"
+    )
+    .unwrap();
+    writeln!(e.out, "        __exit_status = 1;").unwrap();
+    writeln!(e.out, "        {}_v = 0;", t).unwrap();
+    writeln!(e.out, "    }} else {{").unwrap();
+    let c_op = if matches!(op, ArithOp::Div) { "/" } else { "%" };
+    writeln!(e.out, "        {t}_v = {t}_l {} {t}_r;", c_op, t = t).unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    format!("{}_v", t)
 }
 
 /// Escape a string literal for C source.
@@ -429,4 +532,191 @@ fn emit_terminator(out: &mut String, term: &Terminator) {
             .unwrap();
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Test expressions ([[ ... ]])
+// ═══════════════════════════════════════════════════════════════
+
+/// Lower a `TestExpr` to a C i64 expression returning 0 or 1.
+/// Mirrors `lower_test_expr` from codegen/tests.rs:98.
+///
+/// Phase 2 scope: -n, -z, -eq/-ne/-gt/-lt/-ge/-le, = and != with
+/// quoted RHS, And/Or/Not/Paren. Unquoted-RHS pattern matching
+/// (fnmatch path) and file tests (-f, -d, etc.) routed through
+/// sash_fnmatch / sash_file_test deferred to Phase 3.
+fn lower_test_expr(e: &mut Emit, test: &crate::ir::TestExpr, types: &VarTypes) -> String {
+    use crate::ir::TestExpr;
+    match test {
+        TestExpr::Binary { left, op, right } => lower_test_binary(e, left, op, right, types),
+        TestExpr::Unary { op, operand } => lower_test_unary(e, op, operand, types),
+        TestExpr::Not(inner) => {
+            // codegen/tests.rs:129: result = isub(iconst(1), inner_val).
+            // C: (1 - inner). Since inner is 0/1, this yields 1/0.
+            let v = lower_test_expr(e, inner, types);
+            format!("(1 - ({}))", v)
+        }
+        TestExpr::And(a, b) => {
+            // codegen/tests.rs:142: band(va, vb). Bitwise AND of 0/1
+            // values. C: (a & b). Use & rather than && to mirror
+            // codegen's bit-level op exactly.
+            let va = lower_test_expr(e, a, types);
+            let vb = lower_test_expr(e, b, types);
+            format!("(({}) & ({}))", va, vb)
+        }
+        TestExpr::Or(a, b) => {
+            let va = lower_test_expr(e, a, types);
+            let vb = lower_test_expr(e, b, types);
+            format!("(({}) | ({}))", va, vb)
+        }
+        TestExpr::Paren(inner) => lower_test_expr(e, inner, types),
+    }
+}
+
+/// Lower a binary test expression. Numeric ops (-eq..-le) → integer
+/// comparison via lower_value_as_int on both sides. String ops
+/// (=, ==, !=) → sash_strcmp. Unquoted RHS for = / ==
+/// would route through sash_fnmatch (pattern match) — Phase 3.
+fn lower_test_binary(
+    e: &mut Emit,
+    left: &crate::ir::Expr,
+    op: &str,
+    right: &crate::ir::Expr,
+    types: &VarTypes,
+) -> String {
+    if matches!(op, "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le") {
+        let l = ir_expr_as_int(e, left, types);
+        let r = ir_expr_as_int(e, right, types);
+        let c_op = match op {
+            "-eq" => "==",
+            "-ne" => "!=",
+            "-gt" => ">",
+            "-lt" => "<",
+            "-ge" => ">=",
+            "-le" => "<=",
+            _ => unreachable!(),
+        };
+        return format!("(({}) {} ({}) ? 1 : 0)", l, c_op, r);
+    }
+    if matches!(op, "=" | "==" | "!=") {
+        let (lp, ll) = ir_expr_as_str(e, left, types);
+        let (rp, rl) = ir_expr_as_str(e, right, types);
+        let cmp = format!("sash_strcmp({}, {}, {}, {})", lp, ll, rp, rl);
+        return if op == "!=" {
+            format!("(({}) != 0 ? 1 : 0)", cmp)
+        } else {
+            // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match.
+            // We invert: (cmp == 0) ? 1 : 0.
+            format!("(({}) == 0 ? 1 : 0)", cmp)
+        };
+    }
+    writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
+    "0".to_string()
+}
+
+/// Lower a unary test expression. Phase 2 implements -n and -z;
+/// later phases add -f, -d, -e via sash_file_test (codegen
+/// tests.rs:190 → file_test_op_code).
+fn lower_test_unary(e: &mut Emit, op: &str, operand: &crate::ir::Expr, types: &VarTypes) -> String {
+    let (_ptr, len) = ir_expr_as_str(e, operand, types);
+    match op {
+        // codegen/tests.rs:186: emit_len_cmp(len, IntCC::SignedGreaterThan)
+        "-n" | "?" => format!("(({}) > 0 ? 1 : 0)", len),
+        // codegen/tests.rs:187: emit_len_cmp(len, IntCC::Equal)
+        "-z" => format!("(({}) == 0 ? 1 : 0)", len),
+        _ => {
+            writeln!(e.out, "    /* TODO test unary op: {} */", op).unwrap();
+            "0".to_string()
+        }
+    }
+}
+
+/// IR Expr → (ptr, len) C expression pair.
+/// Bridge from IR Expr (what TestExpr operands carry) into the SSA
+/// lowering shape. Reads the highest-version slot for `$name` lookups.
+fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CStr {
+    use crate::ir::ExprKind;
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => {
+            (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
+        }
+        ExprKind::SimpleExpansion(name) => latest_var_as_str(name, types),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => ir_expr_as_str(e, &parts[0], types),
+        _ => {
+            writeln!(
+                e.out,
+                "    /* TODO ir_expr_as_str: {:?} */",
+                std::mem::discriminant(&expr.kind)
+            )
+            .unwrap();
+            ("\"\"".to_string(), "0".to_string())
+        }
+    }
+}
+
+/// IR Expr → C i64 expression. Mirrors codegen's
+/// `lower_expr_value_as_int` from codegen/values.rs:235.
+fn ir_expr_as_int(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> String {
+    use crate::ir::ExprKind;
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s
+            .parse::<i64>()
+            .map(|n| n.to_string())
+            .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
+        ExprKind::SimpleExpansion(name) => latest_var_as_int(name, types),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => ir_expr_as_int(e, &parts[0], types),
+        _ => {
+            writeln!(
+                e.out,
+                "    /* TODO ir_expr_as_int: {:?} */",
+                std::mem::discriminant(&expr.kind)
+            )
+            .unwrap();
+            "0".to_string()
+        }
+    }
+}
+
+/// Look up the highest-version slot for `name` and return its
+/// (ptr, len) C expression pair. For Int vars: route through
+/// sash_itoa via emit_itoa_temp (which requires `e` to emit setup).
+/// For unknown vars: empty string. NB: this signature doesn't
+/// thread `e` for the Int path — caller must use a String-typed
+/// var. Phase 2 acknowledges this limitation; Phase 3 will widen.
+fn latest_var_as_str(name: &str, types: &VarTypes) -> CStr {
+    let Some(((n, v), vtype)) = highest_version(name, types) else {
+        return ("\"\"".to_string(), "0".to_string());
+    };
+    let base = c_var_name(&n, v);
+    match vtype {
+        VarType::String => (format!("{}_ptr", base), format!("{}_len", base)),
+        // Int var in string context inside a test op: we'd need
+        // sash_itoa. Currently the test ops requiring this (e.g.
+        // [[ "$intvar" = "5" ]]) are rare enough to defer.
+        VarType::Int => ("\"\"".to_string(), "0".to_string()),
+    }
+}
+
+/// Look up the highest-version slot for `name` and return its i64
+/// C expression. String vars route through sash_atoi at the use
+/// site; int vars pass through.
+fn latest_var_as_int(name: &str, types: &VarTypes) -> String {
+    let Some(((n, v), vtype)) = highest_version(name, types) else {
+        return "0".to_string();
+    };
+    let base = c_var_name(&n, v);
+    match vtype {
+        VarType::Int => base,
+        VarType::String => format!("sash_atoi({}_ptr, {}_len)", base, base),
+    }
+}
+
+/// Find the highest-version (name, version) entry for `name` in
+/// the type map. Returns Some((entry, type)) if found.
+fn highest_version(name: &str, types: &VarTypes) -> Option<((String, u32), VarType)> {
+    types
+        .iter()
+        .filter(|((n, _), _)| n == name)
+        .max_by_key(|((_, v), _)| *v)
+        .map(|((n, v), t)| ((n.clone(), *v), *t))
 }

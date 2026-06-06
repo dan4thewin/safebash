@@ -66,6 +66,28 @@ fn to_c(name: &str, script: &str) -> String {
     String::from_utf8_lossy(&out.stdout).to_string()
 }
 
+/// Compile sash script → native binary via Cranelift, run it.
+/// Returns (stdout, exit_code).
+fn run_cranelift(name: &str, script: &str) -> (String, i32) {
+    let src = write_tmp(name, script);
+    let bin = format!("/tmp/sash_c_cl_{}.bin", name);
+    let out = Command::new(sash_bin())
+        .args(["-o", &bin, &src])
+        .output()
+        .expect("sash failed");
+    assert!(
+        out.status.success(),
+        "sash codegen failed for {}: {}",
+        name,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let run = Command::new(&bin).output().expect("run failed");
+    (
+        String::from_utf8_lossy(&run.stdout).to_string(),
+        run.status.code().unwrap_or(-1),
+    )
+}
+
 /// Compile C → binary, run it. Returns (stdout, exit_code).
 /// Links against libsash_rt.a with -nostartfiles so sash-rt's
 /// own _start runs (sets up argc/argv/envp the same way the
@@ -84,6 +106,9 @@ fn run_c(name: &str, c_src: &str) -> (String, i32) {
         .args([
             "-nostartfiles",
             "-static",
+            // Stack canaries read from %fs:0x28 (libc TLS) which
+            // sash-rt's _start doesn't set up. Disable.
+            "-fno-stack-protector",
             "-o",
             &bpath,
             &cpath,
@@ -137,6 +162,25 @@ fn assert_c_matches_bash(name: &str, script: &str) {
     );
 }
 
+/// Differential round-trip for sash extensions that don't run under
+/// bash: C oracle vs Cranelift output, both compiled from the same
+/// SSA. Disagreement = compiler bug in one of them.
+fn assert_c_matches_cranelift(name: &str, script: &str) {
+    let c_src = to_c(name, script);
+    let (cl_out, cl_exit) = run_cranelift(name, script);
+    let (c_out, c_exit) = run_c(name, &c_src);
+    assert_eq!(
+        cl_out, c_out,
+        "stdout mismatch for {} (Cranelift vs C).\nCL: {:?}\nC:  {:?}\nC source:\n{}",
+        name, cl_out, c_out, c_src
+    );
+    assert_eq!(
+        cl_exit, c_exit,
+        "exit mismatch for {} (cranelift={} c={}).\nC source:\n{}",
+        name, cl_exit, c_exit, c_src
+    );
+}
+
 // ═══════════════════════════════════════════════════════════════
 // PHASE 1: BASIC OUTPUT
 // ═══════════════════════════════════════════════════════════════
@@ -179,4 +223,108 @@ fn c_exit_zero() {
 #[test]
 fn c_echo_then_exit() {
     assert_c_matches_bash("echo_exit", "#!/bin/bash\necho before\nexit 3");
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 2: ARITHMETIC + CONDITIONALS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn c_arith_add() {
+    assert_c_matches_bash("arith_add", "#!/bin/bash\necho $((2 + 3))");
+}
+
+#[test]
+fn c_arith_sub() {
+    assert_c_matches_bash("arith_sub", "#!/bin/bash\necho $((10 - 4))");
+}
+
+#[test]
+fn c_arith_mul() {
+    assert_c_matches_bash("arith_mul", "#!/bin/bash\necho $((6 * 7))");
+}
+
+#[test]
+fn c_arith_div() {
+    assert_c_matches_bash("arith_div", "#!/bin/bash\necho $((100 / 4))");
+}
+
+#[test]
+fn c_arith_mod() {
+    assert_c_matches_bash("arith_mod", "#!/bin/bash\necho $((17 % 5))");
+}
+
+#[test]
+fn c_arith_precedence() {
+    assert_c_matches_bash("arith_prec", "#!/bin/bash\necho $((2 + 3 * 4))");
+}
+
+#[test]
+fn c_int_var_arith() {
+    // Uses 'int' sash extension; compare against Cranelift not bash.
+    assert_c_matches_cranelift("int_arith", "#!/bin/bash\nint x=5\necho $((x + 3))");
+}
+
+#[test]
+fn c_int_var_two_step() {
+    assert_c_matches_cranelift(
+        "int_two",
+        "#!/bin/bash\nint x=10\nint y=$((x * 2))\necho $y",
+    );
+}
+
+#[test]
+fn c_if_string_eq_true() {
+    assert_c_matches_bash(
+        "if_str_eq_t",
+        "#!/bin/bash\nif [[ \"hello\" = \"hello\" ]]; then echo match; fi",
+    );
+}
+
+#[test]
+fn c_if_string_eq_false_with_else() {
+    assert_c_matches_bash(
+        "if_str_eq_f",
+        "#!/bin/bash\nif [[ \"hello\" = \"world\" ]]; then echo no; else echo yes; fi",
+    );
+}
+
+#[test]
+fn c_if_string_neq() {
+    assert_c_matches_bash(
+        "if_str_neq",
+        "#!/bin/bash\nif [[ \"hello\" != \"world\" ]]; then echo neq; fi",
+    );
+}
+
+#[test]
+fn c_if_empty_eq_empty() {
+    assert_c_matches_bash(
+        "if_empty",
+        "#!/bin/bash\nif [[ \"\" = \"\" ]]; then echo empty; fi",
+    );
+}
+
+#[test]
+fn c_if_n_nonempty() {
+    assert_c_matches_bash(
+        "if_n",
+        "#!/bin/bash\nif [[ -n \"abc\" ]]; then echo nonempty; fi",
+    );
+}
+
+#[test]
+fn c_if_z_empty() {
+    assert_c_matches_bash(
+        "if_z",
+        "#!/bin/bash\nif [[ -z \"\" ]]; then echo zempty; fi",
+    );
+}
+
+#[test]
+fn c_if_var_string_eq() {
+    assert_c_matches_bash(
+        "if_var_eq",
+        "#!/bin/bash\na=hello\nb=hello\nif [[ \"$a\" = \"$b\" ]]; then echo eq; fi",
+    );
 }
