@@ -529,7 +529,7 @@ fn validate_arith_context(
     in_condition: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
-    use crate::parse::{classify_arith_expr, ArithKind};
+    use crate::parse::classify_arith_expr;
 
     // Prefix ++/-- always rejected
     if let ArithExpr::PreIncDec { var, .. } = expr {
@@ -546,64 +546,99 @@ fn validate_arith_context(
 
     let kind = classify_arith_expr(expr);
     if in_condition {
-        // DD#31: comma expressions in conditions: non-final must be mutations,
-        // final must be comparison. This is valid.
-        if let ArithExpr::Comma(exprs) = expr {
-            if let Some((last, init)) = exprs.split_last() {
-                // Non-final must be mutations
-                for e in init {
-                    let k = classify_arith_expr(e);
-                    if k != ArithKind::Mutation {
-                        let desc = arith_brief(e);
-                        diags.push(Diagnostic::error_span(
-                            span,
-                            "SB5007",
-                            format!("non-final comma expression {} must be a mutation", desc),
-                        ));
-                    }
-                }
-                // Final must be comparison
-                let last_kind = classify_arith_expr(last);
-                if last_kind == ArithKind::Mutation {
-                    let desc = arith_brief(last);
-                    diags.push(Diagnostic::error_span(
-                        span,
-                        "SB5007",
-                        format!(
-                            "final comma expression {} must be a comparison in condition context",
-                            desc
-                        ),
-                    ));
-                }
-            }
-            return;
-        }
-        // In condition: mutations rejected
-        if kind == ArithKind::Mutation {
-            let desc = arith_brief(expr);
-            diags.push(Diagnostic::error_span(span, "SB5007",
-                format!("mutation {} not allowed in condition (( )) expression context — use (( )) statement instead", desc),
+        validate_arith_in_condition(expr, kind, span, diags);
+    } else {
+        validate_arith_as_statement(expr, kind, span, diags);
+    }
+}
+
+/// In condition context (`if (( … ))`, `while (( … ))`, etc.):
+/// DD#31 permits comma expressions whose non-final parts are
+/// mutations and final part is a comparison. Outside that shape,
+/// a bare mutation is rejected (SB5007).
+fn validate_arith_in_condition(
+    expr: &ArithExpr,
+    kind: crate::parse::ArithKind,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use crate::parse::ArithKind;
+
+    if let ArithExpr::Comma(exprs) = expr {
+        validate_arith_comma_in_condition(exprs, span, diags);
+        return;
+    }
+    if kind == ArithKind::Mutation {
+        let desc = arith_brief(expr);
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5007",
+            format!(
+                "mutation {} not allowed in condition (( )) expression context — \
+                 use (( )) statement instead",
+                desc
+            ),
+        ));
+    }
+}
+
+/// DD#31 comma expression in condition context: every non-final
+/// part must be a mutation; the final part must be a comparison
+/// (not a mutation). Empty comma lists are no-ops.
+fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mut Vec<Diagnostic>) {
+    use crate::parse::{classify_arith_expr, ArithKind};
+
+    let Some((last, init)) = exprs.split_last() else {
+        return;
+    };
+    for e in init {
+        if classify_arith_expr(e) != ArithKind::Mutation {
+            let desc = arith_brief(e);
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5007",
+                format!("non-final comma expression {} must be a mutation", desc),
             ));
         }
-    } else {
-        // As bare statement: comparisons rejected (no-op)
-        if kind == ArithKind::Comparison || kind == ArithKind::Test {
-            // Only reject if it's actually a comparison (has comparison op)
-            if kind == ArithKind::Comparison {
-                let desc = arith_brief(expr);
-                diags.push(Diagnostic::error_span(
-                    span,
-                    "SB5007",
-                    format!(
-                        "comparison {} as bare statement has no effect — use in if/while condition",
-                        desc
-                    ),
-                ));
-            }
-        }
-        // Check for mutations in sub-expressions of statement context
-        check_arith_nested_mutation(expr, span, diags);
     }
+    if classify_arith_expr(last) == ArithKind::Mutation {
+        let desc = arith_brief(last);
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5007",
+            format!(
+                "final comma expression {} must be a comparison in condition context",
+                desc
+            ),
+        ));
+    }
+}
+
+/// As a bare statement (`(( … ))` standalone): a comparison is a
+/// no-op (the program does nothing with the boolean); flag it
+/// (SB5007). Also check for nested mutations like `x = y++` in
+/// the assignment RHS.
+fn validate_arith_as_statement(
+    expr: &ArithExpr,
+    kind: crate::parse::ArithKind,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use crate::parse::ArithKind;
+
+    if kind == ArithKind::Comparison {
+        let desc = arith_brief(expr);
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5007",
+            format!(
+                "comparison {} as bare statement has no effect — \
+                 use in if/while condition",
+                desc
+            ),
+        ));
+    }
+    check_arith_nested_mutation(expr, span, diags);
 }
 
 /// Check for nested mutations like `x = y++` in statement arithmetic
