@@ -479,6 +479,34 @@ suppressions on dispatchers; the original annotation set also had a
 known mis-application problem (12 of 51 annotations were hiding real
 complexity per cognitive). Do **not** re-introduce the convention.
 
+**Enforced gate (pre-commit).** Adopts the rubric directly:
+
+```
+REJECT if (cognitive - cyclomatic) > -15
+       AND (cyclomatic > 3 × mean_cc OR cognitive > 3 × mean_cog)
+       AND file in sash/src/ but not sash/src/emit_janet.rs
+       AND function is touched by this commit's staged hunks
+       (i.e. grandfather-on-modify)
+```
+
+Reading: "if a function this commit touches is not a pure dispatcher
+AND it's above 3× the codebase mean on either axis, reject." Pure
+dispatchers (delta ≤ −15) are exempted by construction — no manual
+annotation needed.
+
+The means recalculate per commit (a ratchet: as the codebase
+refactors down, the bar tightens). Pre-existing violators remain
+silent until edited, at which point they must come down to spec.
+`emit_janet.rs` is scoped out until the SSA-rewrite task ships.
+
+Plan: start at 3× mean, tighten to 2× then 1.5× as the cohort
+clears. Full rubric and pattern library: `notes/journal/108-cog-cc-
+rubric.md`.
+
+Bypass for one commit: `SKIP_COMPLEXITY_GATE=1 git commit ...`
+(prefer fixing the function or amending the surrounding code if at
+all possible; bypass should be rare and never routine).
+
 **Cyclomatic residuals.** Numbers match Mozilla exactly for 11 of 14
 spot-checked hotspots. Three functions in `sash/src/transform/`
 under-report due to a tree-sitter-rust grammar version skew vs.

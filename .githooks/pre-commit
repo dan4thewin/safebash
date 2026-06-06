@@ -4,14 +4,16 @@
 # Enforced gates (block on failure):
 #   - cargo fmt --check (sash, sash-convert, sash-expand)
 #   - cargo clippy -D warnings (sash, sash-convert)
+#   - complexity gate (grandfather-on-modify, 3× current means)
 #
 # Report-only gates (printed, never block):
-#   - top-5 cyclomatic complexity from .indexnudge-rust.db
+#   - top-5 cc/cog from .indexnudge-rust.db
 #
 # Bypass: SKIP_HOOKS=1 git commit ...     (skips all)
 #         git commit --no-verify ...      (skips all, hard escape)
 #
-# Set SKIP_COMPLEXITY=1 to skip just the report.
+# Set SKIP_COMPLEXITY=1 to skip the report (still runs the gate).
+# Set SKIP_COMPLEXITY_GATE=1 to skip the gate (still prints report).
 
 set -eu
 
@@ -58,13 +60,11 @@ done
 [ "$lint_failed" -eq 0 ] && green "  ok"
 [ "$lint_failed" -eq 0 ] || exit 1
 
-# --- complexity (report only) ----------------------------------------
+# --- complexity report (info only) -----------------------------------
 # Reports top 5 by max(cyclomatic, cognitive). Both columns shown so a
 # wide-but-shallow dispatcher (high cc, low cog) is visually distinct
 # from deeply-nested logic (low cc, high cog) and genuine refactor
-# targets (high both). Replaces the prior cyclo-allow filter:
-# cognitive scores wide matches at 1, so no manual annotation is
-# needed to keep dispatchers out of the report.
+# targets (high both).
 if [ "${SKIP_COMPLEXITY:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
     gray "pre-commit: complexity report (top 5 by max(cc,cog), report-only)"
     sqlite3 .indexnudge-rust.db "
@@ -75,6 +75,89 @@ WHERE kind IN ('function','method')
   AND cyclomatic IS NOT NULL
   AND file LIKE 'sash/src/%'
 ORDER BY MAX(cyclomatic, cognitive) DESC LIMIT 5;" 2>/dev/null | sed 's/^/  /'
+fi
+
+# --- complexity gate (enforced, grandfather-on-modify) ---------------
+# Reject if a function modified in this commit fails the rubric (see
+# notes/journal/108-cog-cc-rubric.md):
+#
+#   (cognitive - cyclomatic) > -15           -- not a pure dispatcher
+#   AND (cyclomatic > 3 * mean_cc            -- AND high on either
+#        OR cognitive > 3 * mean_cog)        --   axis
+#
+# Pre-existing violators (any function NOT touched by this commit's
+# staged hunks) are grandfathered. Scope: sash/src/, excluding
+# sash/src/emit_janet.rs (deferred to the SSA-rewrite task).
+#
+# Threshold is 3× current means (recalculated per commit) — a ratchet
+# that tightens as the codebase improves. Plan: 3× → 2× → 1.5× as the
+# population of pre-existing violators clears.
+if [ "${SKIP_COMPLEXITY_GATE:-0}" != "1" ] && [ -f .indexnudge-rust.db ]; then
+    gray "pre-commit: complexity gate (3× mean, grandfather-on-modify)"
+
+    # Collect staged hunk ranges as (file, start, end) tuples.
+    # ':!sash/src/emit_janet.rs' excludes the deferred file.
+    hunks=$(git diff --cached --unified=0 -- \
+                'sash/src/*.rs' 'sash/src/**/*.rs' \
+                ':!sash/src/emit_janet.rs' 2>/dev/null | \
+            awk '
+                /^\+\+\+ b\// { file = substr($0, 7); next }
+                /^@@ / {
+                    if (match($0, /\+([0-9]+),?([0-9]*)/, m)) {
+                        start = m[1]
+                        count = (m[2] == "" ? 1 : m[2])
+                        if (count > 0) {
+                            end = start + count - 1
+                            print file "\t" start "\t" end
+                        }
+                    }
+                }
+            ')
+
+    if [ -n "$hunks" ]; then
+        # Build SQL VALUES list from the hunks
+        values=$(printf '%s\n' "$hunks" | \
+            awk -F'\t' 'BEGIN{first=1}
+                       {
+                           if (first) first=0; else printf(",")
+                           printf("(%c%s%c,%s,%s)", 39, $1, 39, $2, $3)
+                       }')
+
+        gate_out=$(sqlite3 .indexnudge-rust.db "
+WITH ranges(rfile, rstart, rend) AS (VALUES $values),
+t AS (SELECT 3.0 * AVG(cyclomatic) AS cc_t, 3.0 * AVG(cognitive) AS cog_t
+      FROM symbols WHERE file LIKE 'sash/src/%' AND cyclomatic IS NOT NULL)
+SELECT printf('cc=%-3d cog=%-3d delta=%+d', s.cyclomatic, s.cognitive,
+              s.cognitive - s.cyclomatic)
+       || '  ' || s.name || '  ' || s.file || ':' || s.start_line
+FROM symbols s, t
+WHERE s.file LIKE 'sash/src/%'
+  AND s.file NOT LIKE '%emit_janet.rs'
+  AND s.kind IN ('function','method')
+  AND s.cyclomatic IS NOT NULL
+  AND (s.cognitive - s.cyclomatic) > -15
+  AND (s.cyclomatic > t.cc_t OR s.cognitive > t.cog_t)
+  AND EXISTS (
+    SELECT 1 FROM ranges r
+    WHERE r.rfile = s.file
+      AND r.rstart <= s.end_line
+      AND r.rend   >= s.start_line
+  )
+ORDER BY MAX(s.cyclomatic, s.cognitive) DESC;" 2>/dev/null)
+
+        if [ -n "$gate_out" ]; then
+            red "  FAIL: modified function(s) fail the complexity gate"
+            printf '%s\n' "$gate_out" | sed 's/^/    /'
+            red "    rubric (notes/journal/108-cog-cc-rubric.md):"
+            red "      reject if (delta > -15) AND (cc > 3×mean OR cog > 3×mean)"
+            red "      delta = cog - cc; mean recalculated per freshen"
+            red "    bypass for one commit: SKIP_COMPLEXITY_GATE=1 git commit ..."
+            exit 1
+        fi
+        green "  ok"
+    else
+        gray "  (no modified ranges in sash/src — skipped)"
+    fi
 fi
 
 green "pre-commit: all gates green"
