@@ -192,217 +192,28 @@ pub fn compile_ssa(
             exit_status_var,
             test_result_var,
         );
-        // Emit code for each SSA block
-        let block_ids: Vec<BlockId> = program.blocks.keys().copied().collect();
-        let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
-        for (idx, &ssa_id) in block_ids.iter().enumerate() {
-            if !reachable.contains(&ssa_id) {
-                continue;
-            }
-            let cl_block = cl_blocks[&ssa_id];
+        emit_all_blocks(EmitCtx {
+            builder: &mut builder,
+            module: &mut module,
+            program,
+            reachable: &reachable,
+            cl_blocks: &cl_blocks,
+            vars: &mut vars,
+            literals: &literals,
+            externs: &externs,
+            test_result_var,
+            exit_status_var,
+            pipe_read_fd_var,
+            capture_saved_var,
+            capture_pipe_var,
+            saved_end_status_var,
+            end_cl_block,
+            func_constants,
+            space_id,
+            nl_id,
+            trace,
+        });
 
-            let ssa_block = program.block(ssa_id);
-
-            // Skip function blocks — their output was constant-folded
-            if ssa_block.label.starts_with("fn_") {
-                continue;
-            }
-
-            if idx > 0 {
-                builder.switch_to_block(cl_block);
-            }
-
-            // DD#56: save exit status on entering END block
-            if ssa_block.label == "__end__" {
-                let es = builder.use_var(exit_status_var);
-                builder.def_var(saved_end_status_var, es);
-            }
-
-            // Phi nodes are no-ops in Cranelift codegen: all SSA versions
-            // of the same bash variable share the same Cranelift Variable,
-            // so Cranelift's SSA builder handles the merge automatically.
-
-            // Emit instructions
-            let mut block_terminated = false;
-            for inst in &ssa_block.insts {
-                if block_terminated {
-                    break;
-                }
-                block_terminated = inst.emit(
-                    &mut builder,
-                    &mut module,
-                    &mut InstCtx {
-                        vars: &mut vars,
-                        literals: &literals,
-                        externs: &externs,
-                        space_id,
-                        nl_id,
-                        test_result_var,
-                        exit_status_var,
-                        pipe_read_fd_var,
-                        capture_saved_var,
-                        capture_pipe_var,
-                        func_constants,
-                        redirect_stack: &mut redirect_stack,
-                        end_cl_block,
-                        program,
-                        ssa_id,
-                        saved_end_status_var,
-                        cl_blocks: &cl_blocks,
-                        trace,
-                    },
-                );
-            }
-
-            // Emit terminator (unless block was already terminated by exit)
-            if !block_terminated {
-                match &ssa_block.terminator {
-                    Terminator::Return => {
-                        // DD#56: if END block exists, use saved triggering status
-                        let status =
-                            if program.end_block.is_some() && !ssa_block.label.starts_with("fn_") {
-                                builder.use_var(saved_end_status_var)
-                            } else {
-                                builder.use_var(exit_status_var)
-                            };
-                        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                        builder.ins().call(exit_ref, &[status]);
-                        builder
-                            .ins()
-                            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                    }
-                    Terminator::Goto(target) => {
-                        let target_cl = cl_blocks[target];
-                        builder.ins().jump(target_cl, &[]);
-                    }
-                    Terminator::Branch {
-                        true_block,
-                        false_block,
-                        ..
-                    } => {
-                        // DD#32: trace branch outcome
-                        if trace {
-                            let cond_val = builder.use_var(test_result_var);
-                            let true_label = program.block(*true_block).label.as_str();
-                            let false_label = program.block(*false_block).label.as_str();
-                            let true_msg = format!("+ branch → {}\n", true_label);
-                            let false_msg = format!("+ branch → {}\n", false_label);
-                            if let (Some(&true_id), Some(&false_id)) = (
-                                literals.get(true_msg.as_str()),
-                                literals.get(false_msg.as_str()),
-                            ) {
-                                let trace_gv =
-                                    module.declare_data_in_func(externs.trace_flag, builder.func);
-                                let trace_base = builder.ins().global_value(I64, trace_gv);
-                                let trace_val =
-                                    builder.ins().load(I64, MemFlags::new(), trace_base, 0);
-                                let zero_t = builder.ins().iconst(I64, 0);
-                                let is_tracing =
-                                    builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
-                                let trace_block = builder.create_block();
-                                let no_trace_block = builder.create_block();
-                                builder.ins().brif(
-                                    is_tracing,
-                                    trace_block,
-                                    &[],
-                                    no_trace_block,
-                                    &[],
-                                );
-
-                                builder.switch_to_block(trace_block);
-                                builder.seal_block(trace_block);
-                                let fd2 = builder.ins().iconst(I64, 2);
-                                let write_ref =
-                                    module.declare_func_in_func(externs.write, builder.func);
-                                // Write the appropriate message based on condition
-                                let zero2 = builder.ins().iconst(I64, 0);
-                                let took_true =
-                                    builder.ins().icmp(IntCC::NotEqual, cond_val, zero2);
-                                let true_gv = module.declare_data_in_func(true_id, builder.func);
-                                let true_ptr = builder.ins().global_value(I64, true_gv);
-                                let true_len = builder.ins().iconst(I64, true_msg.len() as i64);
-                                let false_gv = module.declare_data_in_func(false_id, builder.func);
-                                let false_ptr = builder.ins().global_value(I64, false_gv);
-                                let false_len = builder.ins().iconst(I64, false_msg.len() as i64);
-                                let msg_ptr = builder.ins().select(took_true, true_ptr, false_ptr);
-                                let msg_len = builder.ins().select(took_true, true_len, false_len);
-                                builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
-                                builder.ins().jump(no_trace_block, &[]);
-
-                                builder.switch_to_block(no_trace_block);
-                                builder.seal_block(no_trace_block);
-                            }
-                        }
-                        let cond = builder.use_var(test_result_var);
-                        let true_cl = cl_blocks[true_block];
-                        let false_cl = cl_blocks[false_block];
-                        builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
-                    }
-                    Terminator::Loop {
-                        body_block,
-                        exit_block,
-                        ..
-                    } => {
-                        if trace {
-                            let cond_val = builder.use_var(test_result_var);
-                            let body_label = program.block(*body_block).label.as_str();
-                            let exit_label = program.block(*exit_block).label.as_str();
-                            let body_msg = format!("+ loop \u{2192} {}\n", body_label);
-                            let exit_msg = format!("+ loop \u{2192} {}\n", exit_label);
-                            if let (Some(&body_id), Some(&exit_id)) = (
-                                literals.get(body_msg.as_str()),
-                                literals.get(exit_msg.as_str()),
-                            ) {
-                                let trace_gv =
-                                    module.declare_data_in_func(externs.trace_flag, builder.func);
-                                let trace_base = builder.ins().global_value(I64, trace_gv);
-                                let trace_val =
-                                    builder.ins().load(I64, MemFlags::new(), trace_base, 0);
-                                let zero_t = builder.ins().iconst(I64, 0);
-                                let is_tracing =
-                                    builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
-                                let trace_block = builder.create_block();
-                                let no_trace_block = builder.create_block();
-                                builder.ins().brif(
-                                    is_tracing,
-                                    trace_block,
-                                    &[],
-                                    no_trace_block,
-                                    &[],
-                                );
-                                builder.switch_to_block(trace_block);
-                                builder.seal_block(trace_block);
-                                let fd2 = builder.ins().iconst(I64, 2);
-                                let write_ref =
-                                    module.declare_func_in_func(externs.write, builder.func);
-                                let zero2 = builder.ins().iconst(I64, 0);
-                                let took_body =
-                                    builder.ins().icmp(IntCC::NotEqual, cond_val, zero2);
-                                let body_gv = module.declare_data_in_func(body_id, builder.func);
-                                let body_ptr = builder.ins().global_value(I64, body_gv);
-                                let body_len = builder.ins().iconst(I64, body_msg.len() as i64);
-                                let exit_gv = module.declare_data_in_func(exit_id, builder.func);
-                                let exit_ptr = builder.ins().global_value(I64, exit_gv);
-                                let exit_len = builder.ins().iconst(I64, exit_msg.len() as i64);
-                                let msg_ptr = builder.ins().select(took_body, body_ptr, exit_ptr);
-                                let msg_len = builder.ins().select(took_body, body_len, exit_len);
-                                builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
-                                builder.ins().jump(no_trace_block, &[]);
-                                builder.switch_to_block(no_trace_block);
-                                builder.seal_block(no_trace_block);
-                            }
-                        }
-                        let cond = builder.use_var(test_result_var);
-                        let body_cl = cl_blocks[body_block];
-                        let exit_cl = cl_blocks[exit_block];
-                        builder.ins().brif(cond, body_cl, &[], exit_cl, &[]);
-                    }
-                }
-            } // if !block_terminated
-        }
-
-        // Seal all blocks not yet sealed (handles complex CFGs where
-        // predecessors are emitted out of order).
         builder.seal_all_blocks();
         builder.finalize();
     }
@@ -415,18 +226,236 @@ pub fn compile_ssa(
         .expect("define function");
 
     let mut product = module.finish();
+    embed_sash_source(&mut product, bash_source);
+    product.emit().expect("emit object")
+}
 
-    // Embed sash-native source in .sash_source ELF section (DD#45)
-    if let Some(src) = bash_source {
-        let sash_source = crate::emit_source::emit_source(src.as_bytes(), false);
-        let section_id =
-            product
-                .object
-                .add_section(vec![], b".sash_source".to_vec(), object::SectionKind::Note);
+/// All the threading compile_ssa needs to hand to per-block / per-
+/// terminator emit helpers. Bundled to keep the call sites readable
+/// and to make the helpers' signatures bounded.
+struct EmitCtx<'a, 'b> {
+    builder: &'a mut FunctionBuilder<'b>,
+    module: &'a mut ObjectModule,
+    program: &'a SsaProgram,
+    reachable: &'a std::collections::HashSet<BlockId>,
+    cl_blocks: &'a HashMap<BlockId, cranelift_codegen::ir::Block>,
+    vars: &'a mut HashMap<String, super::types::VarSlot>,
+    literals: &'a HashMap<String, cranelift_module::DataId>,
+    externs: &'a super::types::ExternFuncs,
+    test_result_var: cranelift_frontend::Variable,
+    exit_status_var: cranelift_frontend::Variable,
+    pipe_read_fd_var: cranelift_frontend::Variable,
+    capture_saved_var: cranelift_frontend::Variable,
+    capture_pipe_var: cranelift_frontend::Variable,
+    saved_end_status_var: cranelift_frontend::Variable,
+    end_cl_block: Option<cranelift_codegen::ir::Block>,
+    func_constants: &'a HashMap<String, String>,
+    space_id: cranelift_module::DataId,
+    nl_id: cranelift_module::DataId,
+    trace: bool,
+}
+
+fn emit_all_blocks(mut ctx: EmitCtx) {
+    let block_ids: Vec<BlockId> = ctx.program.blocks.keys().copied().collect();
+    let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
+    for (idx, &ssa_id) in block_ids.iter().enumerate() {
+        if !ctx.reachable.contains(&ssa_id) {
+            continue;
+        }
+        let cl_block = ctx.cl_blocks[&ssa_id];
+        let ssa_block = ctx.program.block(ssa_id);
+
+        // Function blocks were constant-folded; skip them.
+        if ssa_block.label.starts_with("fn_") {
+            continue;
+        }
+
+        if idx > 0 {
+            ctx.builder.switch_to_block(cl_block);
+        }
+
+        // DD#56: save exit status on entering END block
+        if ssa_block.label == "__end__" {
+            let es = ctx.builder.use_var(ctx.exit_status_var);
+            ctx.builder.def_var(ctx.saved_end_status_var, es);
+        }
+
+        // Phi nodes are no-ops in Cranelift codegen: all SSA versions
+        // of the same bash variable share the same Cranelift Variable,
+        // so Cranelift's SSA builder handles the merge automatically.
+
+        let block_terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id, &mut redirect_stack);
+
+        if !block_terminated {
+            emit_terminator(&mut ctx, ssa_block);
+        }
+    }
+}
+
+/// Emit all instructions in a block; return true if any instruction
+/// terminated the block early (e.g. `exit`).
+fn emit_block_insts(
+    ctx: &mut EmitCtx,
+    ssa_block: &BasicBlock,
+    ssa_id: BlockId,
+    redirect_stack: &mut Vec<Vec<SavedFd>>,
+) -> bool {
+    let mut block_terminated = false;
+    for inst in &ssa_block.insts {
+        if block_terminated {
+            break;
+        }
+        block_terminated = inst.emit(
+            ctx.builder,
+            ctx.module,
+            &mut InstCtx {
+                vars: ctx.vars,
+                literals: ctx.literals,
+                externs: ctx.externs,
+                space_id: ctx.space_id,
+                nl_id: ctx.nl_id,
+                test_result_var: ctx.test_result_var,
+                exit_status_var: ctx.exit_status_var,
+                pipe_read_fd_var: ctx.pipe_read_fd_var,
+                capture_saved_var: ctx.capture_saved_var,
+                capture_pipe_var: ctx.capture_pipe_var,
+                func_constants: ctx.func_constants,
+                redirect_stack,
+                end_cl_block: ctx.end_cl_block,
+                program: ctx.program,
+                ssa_id,
+                saved_end_status_var: ctx.saved_end_status_var,
+                cl_blocks: ctx.cl_blocks,
+                trace: ctx.trace,
+            },
+        );
+    }
+    block_terminated
+}
+
+fn emit_terminator(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
+    match &ssa_block.terminator {
+        Terminator::Return => emit_return(ctx, ssa_block),
+        Terminator::Goto(target) => {
+            let target_cl = ctx.cl_blocks[target];
+            ctx.builder.ins().jump(target_cl, &[]);
+        }
+        Terminator::Branch {
+            true_block,
+            false_block,
+            ..
+        } => {
+            if ctx.trace {
+                emit_branch_outcome_trace(ctx, "branch", *true_block, *false_block);
+            }
+            let cond = ctx.builder.use_var(ctx.test_result_var);
+            let true_cl = ctx.cl_blocks[true_block];
+            let false_cl = ctx.cl_blocks[false_block];
+            ctx.builder.ins().brif(cond, true_cl, &[], false_cl, &[]);
+        }
+        Terminator::Loop {
+            body_block,
+            exit_block,
+            ..
+        } => {
+            if ctx.trace {
+                emit_branch_outcome_trace(ctx, "loop", *body_block, *exit_block);
+            }
+            let cond = ctx.builder.use_var(ctx.test_result_var);
+            let body_cl = ctx.cl_blocks[body_block];
+            let exit_cl = ctx.cl_blocks[exit_block];
+            ctx.builder.ins().brif(cond, body_cl, &[], exit_cl, &[]);
+        }
+    }
+}
+
+fn emit_return(ctx: &mut EmitCtx, ssa_block: &BasicBlock) {
+    // DD#56: if END block exists, use saved triggering status
+    let status = if ctx.program.end_block.is_some() && !ssa_block.label.starts_with("fn_") {
+        ctx.builder.use_var(ctx.saved_end_status_var)
+    } else {
+        ctx.builder.use_var(ctx.exit_status_var)
+    };
+    let exit_ref = ctx
+        .module
+        .declare_func_in_func(ctx.externs.exit, ctx.builder.func);
+    ctx.builder.ins().call(exit_ref, &[status]);
+    ctx.builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+}
+
+/// DD#32: emit a runtime trace message of the form
+/// `+ <kind> → <target_label>\n` to stderr at branch/loop time,
+/// gated on the global `sash_trace_flag`. The message picked depends
+/// on which side of the branch was taken; we use a `select` between
+/// the two pre-interned literal pointers to keep the emitted code
+/// branchless after the trace-active check.
+fn emit_branch_outcome_trace(
+    ctx: &mut EmitCtx,
+    kind: &str,
+    true_target: BlockId,
+    false_target: BlockId,
+) {
+    let cond_val = ctx.builder.use_var(ctx.test_result_var);
+    let true_label = ctx.program.block(true_target).label.as_str();
+    let false_label = ctx.program.block(false_target).label.as_str();
+    let true_msg = format!("+ {} \u{2192} {}\n", kind, true_label);
+    let false_msg = format!("+ {} \u{2192} {}\n", kind, false_label);
+    let (Some(&true_id), Some(&false_id)) = (
+        ctx.literals.get(true_msg.as_str()),
+        ctx.literals.get(false_msg.as_str()),
+    ) else {
+        return;
+    };
+
+    let trace_gv = ctx
+        .module
+        .declare_data_in_func(ctx.externs.trace_flag, ctx.builder.func);
+    let trace_base = ctx.builder.ins().global_value(I64, trace_gv);
+    let trace_val = ctx.builder.ins().load(I64, MemFlags::new(), trace_base, 0);
+    let zero_t = ctx.builder.ins().iconst(I64, 0);
+    let is_tracing = ctx.builder.ins().icmp(IntCC::NotEqual, trace_val, zero_t);
+    let trace_block = ctx.builder.create_block();
+    let no_trace_block = ctx.builder.create_block();
+    ctx.builder
+        .ins()
+        .brif(is_tracing, trace_block, &[], no_trace_block, &[]);
+
+    ctx.builder.switch_to_block(trace_block);
+    ctx.builder.seal_block(trace_block);
+    let fd2 = ctx.builder.ins().iconst(I64, 2);
+    let write_ref = ctx
+        .module
+        .declare_func_in_func(ctx.externs.write, ctx.builder.func);
+    let zero2 = ctx.builder.ins().iconst(I64, 0);
+    let took_true = ctx.builder.ins().icmp(IntCC::NotEqual, cond_val, zero2);
+    let true_gv = ctx.module.declare_data_in_func(true_id, ctx.builder.func);
+    let true_ptr = ctx.builder.ins().global_value(I64, true_gv);
+    let true_len = ctx.builder.ins().iconst(I64, true_msg.len() as i64);
+    let false_gv = ctx.module.declare_data_in_func(false_id, ctx.builder.func);
+    let false_ptr = ctx.builder.ins().global_value(I64, false_gv);
+    let false_len = ctx.builder.ins().iconst(I64, false_msg.len() as i64);
+    let msg_ptr = ctx.builder.ins().select(took_true, true_ptr, false_ptr);
+    let msg_len = ctx.builder.ins().select(took_true, true_len, false_len);
+    ctx.builder.ins().call(write_ref, &[fd2, msg_ptr, msg_len]);
+    ctx.builder.ins().jump(no_trace_block, &[]);
+
+    ctx.builder.switch_to_block(no_trace_block);
+    ctx.builder.seal_block(no_trace_block);
+}
+
+/// DD#45: embed sash-native source as a `.sash_source` ELF section.
+fn embed_sash_source(product: &mut cranelift_object::ObjectProduct, bash_source: Option<&str>) {
+    let Some(src) = bash_source else {
+        return;
+    };
+    let sash_source = crate::emit_source::emit_source(src.as_bytes(), false);
+    let section_id =
         product
             .object
-            .append_section_data(section_id, sash_source.as_bytes(), 1);
-    }
-
-    product.emit().expect("emit object")
+            .add_section(vec![], b".sash_source".to_vec(), object::SectionKind::Note);
+    product
+        .object
+        .append_section_data(section_id, sash_source.as_bytes(), 1);
 }
