@@ -263,7 +263,6 @@ fn is_tainted(taint: &HashMap<String, Taint>, vref: &VarRef) -> bool {
     }
 }
 
-// cyclo-allow: SsaValue dispatch + 15-arm cmd-basename table
 fn value_is_tainted(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -393,7 +392,6 @@ fn value_is_tainted(
     }
 }
 
-// cyclo-allow: SsaValue traversal — 1-line arms
 fn check_value_use(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,

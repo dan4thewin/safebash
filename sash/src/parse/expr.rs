@@ -18,7 +18,6 @@ use crate::ir::*;
 
 // ── Top-level expression parsing ───────────────────────────────────
 
-// cyclo-allow: token-driven N-arm dispatcher with adjacency-concat loop
 /// Parse a single word/expression that produces a value.
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
 /// concatenation of adjacent tokens, and array literals.
@@ -265,7 +264,6 @@ pub fn parse_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
 // ── Double-quoted string interpolation ───────────────────────────
 
 /// Convert lexer StringParts to IR Exprs for double-quoted strings.
-// cyclo-allow: per-StringPart dispatch, modest
 pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, _scanner: &Scanner) -> Vec<Expr> {
     let mut result = Vec::new();
     let mut i = 0;
@@ -1007,7 +1005,6 @@ pub fn span_from(scanner: &Scanner, offset: usize) -> Span {
 }
 
 /// Convert a keyword token to its string representation.
-// cyclo-allow: pure 1:1 Tok → &str
 fn keyword_to_str(tok: &Tok) -> &'static str {
     match tok {
         Tok::If => "if",

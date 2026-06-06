@@ -524,7 +524,6 @@ fn match_arith_op3(s: &[u8]) -> Option<ATok> {
 
 /// Match a two-byte arithmetic operator (compound assignment, comparison,
 /// shift, increment/decrement, logical-and/or, exponent).
-// cyclo-allow: 1:1 byte → token, two-byte ops
 fn match_arith_op2(s: &[u8]) -> Option<ATok> {
     match s {
         b"++" => Some(ATok::PlusPlus),
@@ -551,7 +550,6 @@ fn match_arith_op2(s: &[u8]) -> Option<ATok> {
 }
 
 /// Match a single-byte arithmetic operator.
-// cyclo-allow: 1:1 byte → token, single-byte ops
 fn match_arith_op1(b: u8) -> Option<ATok> {
     match b {
         b'+' => Some(ATok::Plus),
@@ -807,7 +805,6 @@ impl ArithParser {
 
 /// Map a token to its binary operator + Pratt binding power.
 /// Returned tuple is `(op, (left_bp, right_bp))`.
-// cyclo-allow: declarative Tok → (ArithOp, prec) table
 fn binary_op_for(tok: &ATok) -> Option<(IrArithOp, (u8, u8))> {
     Some(match tok {
         ATok::PipePipe => (IrArithOp::Or, (3, 4)),
@@ -1016,7 +1013,6 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
 }
 
 /// Convert a token back to source text for arithmetic content collection.
-// cyclo-allow: pure 1:1 Tok → String formatter
 fn tok_to_text(tok: &Tok) -> String {
     match tok {
         Tok::Word(w) => w.clone(),

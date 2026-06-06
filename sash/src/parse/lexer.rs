@@ -263,7 +263,6 @@ impl Scanner {
     // r47-decide-logos-vs-handroll: kept hand-roll for `<` (heredoc),
     // `-` (dash vs word), and the punct/word boundary cases.
 
-    // cyclo-allow: cleared in r47 phase 6; logos-driven dispatch
     fn next_token(&mut self) -> SpannedToken {
         self.skip_whitespace();
         let start = self.pos;
@@ -536,7 +535,6 @@ impl Scanner {
     // ── Dollar expansions ─────────────────────────────────────────────
 
     /// Scan $...: $var, ${...}, $((, $(, $1, $@, $#, $?, $$, $!, $'...', $0
-    // cyclo-allow: pure byte-dispatcher into existing scanners
     fn scan_dollar(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // skip $
 
@@ -641,7 +639,6 @@ impl Scanner {
 
     /// Scan ${...} — capture everything between { and matching }.
     /// Handles nested braces, quoted strings, and backslash escapes.
-    // cyclo-allow: bracket-counting with quote-state; coherent
     fn scan_brace_expansion(&mut self, start: usize) -> SpannedToken {
         let content_start = self.pos;
         let mut depth = 1i32;
@@ -1144,7 +1141,6 @@ impl Scanner {
 }
 
 /// Map a scanned word to its keyword token, falling back to `Tok::Word`.
-// cyclo-allow: pure word → Tok keyword table; arms == CC by construction
 fn classify_word_token(word: String) -> Tok {
     match word.as_str() {
         "if" => Tok::If,
@@ -1187,7 +1183,6 @@ fn classify_word_token(word: String) -> Tok {
 /// Named-escape table for `$'…'`: `\n`, `\t`, `\r`, `\a`, `\b`, `\e`/`\E`,
 /// `\f`, `\v`, `\\`, `\'`, `\"`. Returns `None` for anything else (octal
 /// `\0NNN`, hex `\xHH`, or unknown — caller handles).
-// cyclo-allow: pure escape-byte → char table; arms == CC by construction
 fn simple_escape(b: u8) -> Option<char> {
     Some(match b {
         b'n' => '\n',

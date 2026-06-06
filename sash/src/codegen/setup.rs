@@ -805,7 +805,6 @@ impl<'a> Interner<'a> {
         data_id
     }
 
-    // cyclo-allow: SsaValue variant traversal — 1-line arms
     fn intern_value(&mut self, v: &SsaValue) {
         match v {
             SsaValue::Literal(s) | SsaValue::Expr(s) => {
@@ -933,7 +932,6 @@ impl<'a> Interner<'a> {
         }
     }
 
-    // cyclo-allow: SsaInst variant traversal — 1-line arms
     fn intern_inst(&mut self, inst: &SsaInst) {
         match inst {
             SsaInst::Assign { value, .. } => {
@@ -1227,7 +1225,6 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
 /// Initialize positional parameters ($1-$9, $@, $#, $0, $$, $?, $!) from argv.
 /// Scans the SSA to determine which positionals are referenced.
 #[allow(clippy::too_many_arguments)]
-// cyclo-allow: top-level driver, mostly linear
 pub(super) fn init_positional_params(
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,

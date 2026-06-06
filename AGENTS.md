@@ -452,11 +452,36 @@ might appear more than once.
 
 ### Complexity index — known residual
 
-Use `symbols.cyclomatic` from the indexnudge DB as the canonical CC
-source (counting rules are documented in the indexnudge block above).
-Numbers match Mozilla `rust-code-analysis-cli` exactly for 11 of the
-14 spot-checked hotspots. **Three functions in `sash/src/transform/`
-under-report** due to a tree-sitter-rust grammar version skew vs.
+Use `symbols.cyclomatic` and `symbols.cognitive` from the indexnudge
+DB as the canonical complexity sources (counting rules documented in
+the indexnudge block above). Both metrics are calibrated against
+Mozilla `rust-code-analysis-cli` (cyclomatic.sum, cognitive.sum).
+
+**Two-metric convention.** McCabe cyclomatic alone is a poor signal:
+a 48-arm pure dispatcher and a 4-level nested-conditional function
+both score around 48, but only one is actually complex. Cognitive
+Complexity (Campbell, SonarSource 2018) discounts wide-but-shallow
+matches and adds nesting penalties, so it disambiguates the two.
+
+The pre-commit hook reports both columns side-by-side, ranked by
+`MAX(cyclomatic, cognitive)`. Read them together:
+
+| pattern               | shape                                     | what to do |
+|-----------------------|-------------------------------------------|-----------|
+| high cc, low cog      | wide dispatcher (match on enum, lex table)| accept as-is — no refactor needed |
+| low cc, high cog      | hidden nesting (cc structurally blind)    | investigate — cc was masking it |
+| high both             | genuine refactor target                   | refactor |
+| double-failure at 2×  | cc > 11.7 AND cog > 8.8 — the gate cohort | priority refactor |
+
+The `// cyclo-allow:` annotation convention is retired (commit
+2026-06-05). Cognitive scoring eliminates the need for per-function
+suppressions on dispatchers; the original annotation set also had a
+known mis-application problem (12 of 51 annotations were hiding real
+complexity per cognitive). Do **not** re-introduce the convention.
+
+**Cyclomatic residuals.** Numbers match Mozilla exactly for 11 of 14
+spot-checked hotspots. Three functions in `sash/src/transform/`
+under-report due to a tree-sitter-rust grammar version skew vs.
 Mozilla's pinned grammar (MatchArm/MatchArm2 split):
 
 | function                                  | indexnudge | Mozilla | delta |
@@ -465,10 +490,16 @@ Mozilla's pinned grammar (MatchArm/MatchArm2 split):
 | `transform/control_flow::lower_case`      |         40 |      44 |    −4 |
 | `transform/control_flow::lower_for`       |         35 |      44 |    −9 |
 
-When setting absolute thresholds (e.g. enforce CC ≤ 50), allow ~10
-slop on big-match-on-CST-kind functions in `sash/src/transform/`,
-or run `rust-code-analysis-cli -m -p sash/src -O json` and read
+When setting absolute thresholds, allow ~10 slop on big-match-on-
+CST-kind functions in `sash/src/transform/`, or run
+`rust-code-analysis-cli -m -p sash/src -O json` and read
 `metrics.cyclomatic.sum` for those three specifically.
+
+**Cognitive residuals.** Inner `function_item` nested inside outer
+`function_item` reports `depth = 0` in indexnudge but `depth = 1` in
+Mozilla — per-fn divergence of +1/+2 at most, and item-level nested
+fns are rare in Rust. No known residuals beyond that and the same
+tree-sitter grammar skew that affects cyclomatic.
 
 ## Completion checklist
 

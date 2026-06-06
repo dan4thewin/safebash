@@ -452,7 +452,6 @@ fn emit_array_join_expansion(
     (buf_ptr, final_len)
 }
 
-// cyclo-allow: pure N-arm operator dispatcher (CC == arms by construction)
 #[allow(clippy::too_many_arguments)]
 fn emit_string_op_expansion(
     operator: &str,

@@ -207,7 +207,6 @@ fn emit_len_cmp(
 
 /// stat(2)-style file test ops → opaque opcode passed to runtime
 /// `sash_file_test(ptr, len, op_code)`. Returns None for non-file-test ops.
-// cyclo-allow: pure 20-entry op-to-code table; arms == CC by construction
 fn file_test_op_code(op: &str) -> Option<i64> {
     Some(match op {
         "-e" | "-a" => 0, // -a is same as -e
@@ -514,7 +513,6 @@ fn emit_numeric_cmp(
     builder.ins().uextend(I64, cmp)
 }
 
-// cyclo-allow: pure op-name → IntCC table; arms == CC by construction.
 fn numeric_cc(op: &str) -> IntCC {
     match op {
         "-eq" | "==" => IntCC::Equal,

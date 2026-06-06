@@ -42,7 +42,6 @@ pub(super) fn handle_command(
 /// Dispatch a `BuiltinCmd` to its handler. Most builtins always
 /// consume the statement (return `Some`); `Test` and `Mapfile` may
 /// return `None` to fall through to the regex / general handler.
-// cyclo-allow: 11-arm BuiltinCmd dispatcher; arms == CC by construction
 fn try_builtin(
     kind: BuiltinCmd,
     name: &str,

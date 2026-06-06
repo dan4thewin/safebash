@@ -154,7 +154,6 @@ fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
 }
 
 /// Convert an expression to a simple string representation.
-// cyclo-allow: pure ExprKind → String formatter
 pub(super) fn expr_to_string(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),

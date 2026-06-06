@@ -743,7 +743,6 @@ fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
-// cyclo-allow: status state-machine; already well-structured
 fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
         StmtKind::List(l) => {

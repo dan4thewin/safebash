@@ -141,7 +141,6 @@ pub enum BuiltinCmd {
 impl BuiltinCmd {
     /// Classify a raw command name into a [`BuiltinCmd`] variant.
     /// Unrecognized names map to [`BuiltinCmd::Other`].
-    // cyclo-allow: flat name → variant lookup; CC = arm count
     pub fn from_name(name: &str) -> Self {
         match name {
             "__negate_test_result" => Self::NegateTestResult,
@@ -186,7 +185,6 @@ impl BuiltinCmd {
     /// Canonical sigil string for compiler-internal sigil variants.
     /// Returns `None` for non-sigil variants (the raw name should be
     /// used instead).
-    // cyclo-allow: flat variant → sigil string lookup; CC = arm count
     pub fn sigil_str(self) -> Option<&'static str> {
         Some(match self {
             Self::NegateTestResult => "__negate_test_result",
@@ -362,7 +360,6 @@ pub enum ArithOp {
 }
 
 impl ArithOp {
-    // cyclo-allow: 1:1 str → ArithOp
     pub fn from_str(s: &str) -> Option<ArithOp> {
         match s {
             "+" => Some(ArithOp::Add),
@@ -388,7 +385,6 @@ impl ArithOp {
         }
     }
 
-    // cyclo-allow: 1:1 ArithOp → byte
     pub fn as_u8(self) -> u8 {
         match self {
             ArithOp::Add => b'+',
@@ -414,7 +410,6 @@ impl ArithOp {
         }
     }
 
-    // cyclo-allow: 1:1 ArithOp → str
     pub fn display(&self) -> &'static str {
         match self {
             ArithOp::Add => "+",

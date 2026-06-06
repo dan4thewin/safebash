@@ -133,7 +133,6 @@ pub enum LogosTok {
 /// Helper for the integration shim: convert a successfully-matched
 /// `LogosTok` to the corresponding payload-free `lexer::Tok`. Returns
 /// `None` for `Comment` (caller extracts the slice).
-// cyclo-allow: pure 1:1 logos-token → Tok mapping
 pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
     use super::lexer::Tok;
     Some(match t {

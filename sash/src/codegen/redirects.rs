@@ -265,7 +265,6 @@ pub(super) fn scan_redirect_for_vars(
 
 /// Lower an IR Expr (from a redirect target) directly to Cranelift values,
 /// bypassing SSA. Used for redirect targets that contain tilde-expanded paths.
-// cyclo-allow: ExprKind → (ptr, len), one shape per arm
 pub(super) fn lower_ir_redirect_expr(
     expr: &crate::ir::Expr,
     builder: &mut FunctionBuilder,

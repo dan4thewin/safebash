@@ -23,7 +23,6 @@ pub(super) fn emit_arith_op(
     if let Some(cc) = comparison_intcc(op) {
         return emit_icmp_bool(cc, lhs, rhs, builder);
     }
-    // cyclo-allow: 13-arm ArithOp dispatcher; arms == CC by construction
     match op {
         ArithOp::Add => builder.ins().iadd(lhs, rhs),
         ArithOp::Sub => builder.ins().isub(lhs, rhs),
