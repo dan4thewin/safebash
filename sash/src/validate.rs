@@ -745,78 +745,96 @@ fn check_dollar_question(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
-        StmtKind::List(l) => {
-            // Left side executes normally
-            check_dq_stmt(&l.left, state, diags);
-            // Right side of || / &&: status is available ONLY for the first statement
-            let mut branch_state = StatusState::Available;
-            check_dq_stmt_branch(&l.right, &mut branch_state, diags);
-            // After the List, status is undefined
-            *state = StatusState::Undefined;
-        }
+        StmtKind::List(l) => check_dq_list(l, state, diags),
         StmtKind::Group(g) => {
             for s in &g.body {
                 check_dq_stmt(s, state, diags);
             }
         }
-        StmtKind::Function(f) => {
-            let mut fn_state = StatusState::Undefined;
-            for s in &f.body {
-                check_dq_stmt(s, &mut fn_state, diags);
+        StmtKind::Function(f) => check_dq_function(f, diags),
+        StmtKind::If(i) => check_dq_if(i, state, diags),
+        StmtKind::While(w) => check_dq_while(w, state, diags),
+        _ => check_dq_leaf(stmt, state, diags),
+    }
+}
+
+/// `a && b` / `a || b`: left runs normally, right is a branch so
+/// inherited $? is available only for the first statement.
+fn check_dq_list(l: &crate::ir::List, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    check_dq_stmt(&l.left, state, diags);
+    let mut branch_state = StatusState::Available;
+    check_dq_stmt_branch(&l.right, &mut branch_state, diags);
+    *state = StatusState::Undefined;
+}
+
+/// A function body is checked in a fresh `Undefined` status
+/// context (the caller's $? state does not flow in).
+fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
+    let mut fn_state = StatusState::Undefined;
+    for s in &f.body {
+        check_dq_stmt(s, &mut fn_state, diags);
+    }
+}
+
+/// `if … then … (elif …)* (else …)? fi`: walk the condition with
+/// the inherited state, then each branch body with the
+/// first-statement-only rule. After the construct, state is
+/// undefined regardless of which branch ran.
+fn check_dq_if(i: &crate::ir::If, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    for s in &i.condition {
+        check_dq_stmt(s, state, diags);
+    }
+    check_dq_body_branch(&i.then_body, *state, diags);
+    for elif in &i.elif_clauses {
+        let mut es = *state;
+        for s in &elif.condition {
+            check_dq_stmt(s, &mut es, diags);
+        }
+        check_dq_body_branch(&elif.body, es, diags);
+    }
+    if let Some(ref eb) = i.else_body {
+        check_dq_body_branch(eb, *state, diags);
+    }
+    *state = StatusState::Undefined;
+}
+
+/// `while … do … done`: condition uses inherited state, body
+/// re-reads it fresh for each iteration. After the loop, state
+/// is undefined.
+fn check_dq_while(w: &crate::ir::While, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    for s in &w.condition {
+        check_dq_stmt(s, state, diags);
+    }
+    let mut bs = *state;
+    for s in &w.body {
+        check_dq_stmt(s, &mut bs, diags);
+    }
+    *state = StatusState::Undefined;
+}
+
+/// Default arm: a leaf-ish statement (Command, Pipeline, etc.).
+/// Two responsibilities: (1) if it consumes `$?`, raise SB5012
+/// when the status is unavailable; (2) update state to reflect
+/// what this statement does (sets, consumes, or neither).
+fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    if stmt_uses_status(stmt) {
+        if *state != StatusState::Available {
+            let mut spans = Vec::new();
+            find_dollar_question(stmt, &mut spans);
+            for span in spans {
+                diags.push(Diagnostic::error_span(
+                    span,
+                    "SB5012",
+                    "$? is not available here — no preceding command".to_string(),
+                ));
             }
         }
-        StmtKind::If(i) => {
-            for s in &i.condition {
-                check_dq_stmt(s, state, diags);
-            }
-            // then body: inherited status available for first statement only
-            check_dq_body_branch(&i.then_body, *state, diags);
-            for elif in &i.elif_clauses {
-                let mut es = *state;
-                for s in &elif.condition {
-                    check_dq_stmt(s, &mut es, diags);
-                }
-                check_dq_body_branch(&elif.body, es, diags);
-            }
-            if let Some(ref eb) = i.else_body {
-                check_dq_body_branch(eb, *state, diags);
-            }
-            *state = StatusState::Undefined;
-        }
-        StmtKind::While(w) => {
-            for s in &w.condition {
-                check_dq_stmt(s, state, diags);
-            }
-            let mut bs = *state;
-            for s in &w.body {
-                check_dq_stmt(s, &mut bs, diags);
-            }
-            *state = StatusState::Undefined;
-        }
-        _ => {
-            // Check if this statement uses $?
-            if stmt_uses_status(stmt) {
-                if *state != StatusState::Available {
-                    let mut spans = Vec::new();
-                    find_dollar_question(stmt, &mut spans);
-                    for span in spans {
-                        diags.push(Diagnostic::error_span(
-                            span,
-                            "SB5012",
-                            "$? is not available here — no preceding command".to_string(),
-                        ));
-                    }
-                }
-                // Consumed: reset to undefined
-                *state = StatusState::Undefined;
-            }
-            // Update state based on what this statement does
-            if is_suppressed(stmt) {
-                *state = StatusState::Undefined;
-            } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
-                *state = StatusState::Available;
-            }
-        }
+        *state = StatusState::Undefined;
+    }
+    if is_suppressed(stmt) {
+        *state = StatusState::Undefined;
+    } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
+        *state = StatusState::Available;
     }
 }
 
