@@ -481,48 +481,37 @@ fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
             let t = expr_type(&a.value, env);
             env.declare(&a.name, t);
         }
-        StmtKind::Declaration(d) => {
-            if d.var_type == VarType::Int {
-                for a in &d.assignments {
-                    env.declare(&a.name, VarType::Int);
-                }
-            } else {
-                for a in &d.assignments {
-                    let t = expr_type(&a.value, env);
-                    env.declare(&a.name, t);
-                }
-            }
-        }
-        StmtKind::If(i) => {
-            for s in &i.then_body {
-                infer_stmt(s, env);
-            }
-            for elif in &i.elif_clauses {
-                for s in &elif.body {
-                    infer_stmt(s, env);
-                }
-            }
-            if let Some(e) = &i.else_body {
-                for s in e {
+        StmtKind::Declaration(d) => infer_declaration_types(d, env),
+        // Default: walk all child bodies. Covers For, While, Function
+        // (no per-arm pre-work in this pass), plus every wrapping
+        // StmtKind (Pipeline, Group, List, Subshell, Redirected,
+        // Suppressed, If, Case) so a `int x=5` declared inside any
+        // of them gets type-tracked. Bug parallel to journal 056 for
+        // check_stmt: the original `_ => {}` silently dropped them.
+        // child_bodies() returns empty for the leaves (Assignment,
+        // Declaration, Command, Comment, ArithTest) which all have
+        // explicit arms or no-effect semantics.
+        _ => {
+            for body in stmt.child_bodies() {
+                for s in body {
                     infer_stmt(s, env);
                 }
             }
         }
-        StmtKind::While(w) => {
-            for s in &w.body {
-                infer_stmt(s, env);
-            }
+    }
+}
+
+/// `int x=…` declares with the explicit type; otherwise the RHS
+/// expression is type-inferred per-assignment.
+fn infer_declaration_types(d: &crate::ir::Declaration, env: &mut TypeEnv) {
+    if d.var_type == VarType::Int {
+        for a in &d.assignments {
+            env.declare(&a.name, VarType::Int);
         }
-        StmtKind::For(f) => {
-            for s in &f.body {
-                infer_stmt(s, env);
-            }
+    } else {
+        for a in &d.assignments {
+            let t = expr_type(&a.value, env);
+            env.declare(&a.name, t);
         }
-        StmtKind::Function(f) => {
-            for s in &f.body {
-                infer_stmt(s, env);
-            }
-        }
-        _ => {}
     }
 }
