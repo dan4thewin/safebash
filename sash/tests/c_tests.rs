@@ -422,11 +422,24 @@ fn c_pe_tolower_all() {
 #[test]
 fn c_cmdsub_epochseconds() {
     // epochseconds is a sash intrinsic — bash has no such builtin.
-    // Cranelift and C oracle should both emit a current epoch.
-    // Can't compare against bash (would call /usr/bin/epochseconds
-    // if present, else error). Just check both compilers produce
-    // identical output.
-    assert_c_matches_cranelift("cs_epoch", "#!/bin/bash\necho \"$(epochseconds)\"");
+    // Can't strict-equality C vs Cranelift: the two runs may
+    // straddle a second boundary. Test that the C-emitted version
+    // produces a 10+ digit epoch.
+    let script = "#!/bin/bash\necho \"$(epochseconds)\"";
+    let c_src = to_c("cs_epoch", script);
+    let (c_out, c_exit) = run_c("cs_epoch", &c_src);
+    assert_eq!(
+        c_exit, 0,
+        "C exited with {} for epochseconds\n{}",
+        c_exit, c_src
+    );
+    let trimmed = c_out.trim();
+    assert!(
+        !trimmed.is_empty() && trimmed.chars().all(|c| c.is_ascii_digit()) && trimmed.len() >= 10,
+        "Expected 10+ digit epoch, got {:?}\nC source:\n{}",
+        trimmed,
+        c_src
+    );
 }
 
 #[test]
@@ -545,5 +558,73 @@ fn c_fn_with_positional() {
     assert_c_matches_cranelift(
         "fn_pos",
         "#!/bin/bash\nfn greet() {\n    echo \"hello $1\"\n}\ngreet world\n",
+    );
+}
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 5: ARRAYS, MAPS, SUBSCRIPTS, READ
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn c_array_subscript() {
+    assert_c_matches_cranelift(
+        "arr_sub",
+        "#!/bin/bash\narray arr=(one two three)\necho \"${arr[0]}\"\necho \"${arr[2]}\"\n",
+    );
+}
+
+#[test]
+fn c_array_length() {
+    assert_c_matches_cranelift(
+        "arr_len",
+        "#!/bin/bash\narray arr=(foo bar baz)\necho \"${#arr[@]}\"\n",
+    );
+}
+
+#[test]
+fn c_array_join_all() {
+    assert_c_matches_cranelift(
+        "arr_all",
+        "#!/bin/bash\narray arr=(x y z)\necho \"${arr[@]}\"\n",
+    );
+}
+
+#[test]
+fn c_array_assign_element() {
+    assert_c_matches_cranelift(
+        "arr_set",
+        "#!/bin/bash\narray arr=(p q r)\narr[1]=changed\necho \"${arr[0]} ${arr[1]} ${arr[2]}\"\n",
+    );
+}
+
+#[test]
+fn c_array_for_iter() {
+    assert_c_matches_cranelift(
+        "arr_for",
+        "#!/bin/bash\narray arr=(a b c)\nfor x in \"${arr[@]}\"; do\n    echo \"$x\"\ndone\n",
+    );
+}
+
+#[test]
+fn c_map_lookup() {
+    assert_c_matches_cranelift(
+        "map_lookup",
+        "#!/bin/bash\nmap m=([key1]=\"val1\" [key2]=\"val2\")\necho \"${m[key1]}\"\necho \"${m[key2]}\"\n",
+    );
+}
+
+#[test]
+fn c_map_assign_element() {
+    assert_c_matches_cranelift(
+        "map_set",
+        "#!/bin/bash\nmap m=([a]=\"first\")\nm[a]=\"updated\"\necho \"${m[a]}\"\n",
+    );
+}
+
+#[test]
+fn c_map_new_key() {
+    assert_c_matches_cranelift(
+        "map_new",
+        "#!/bin/bash\nmap m=([a]=\"1\")\nm[b]=\"2\"\necho \"${m[b]}\"\n",
     );
 }

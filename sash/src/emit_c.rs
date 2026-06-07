@@ -200,6 +200,38 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_exec(const char* const* argv, const char* const* envp) __attribute__((noreturn));"
     )
     .unwrap();
+    // Phase 5 — table runtime (arrays + maps share the same table)
+    writeln!(out, "typedef struct SashTable SashTable;").unwrap();
+    writeln!(out, "extern SashTable* sash_table_new(i64 capacity);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_table_set(SashTable* t, const char* kp, i64 kl, const char* vp, i64 vl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern const char* sash_table_get(SashTable* t, const char* kp, i64 kl, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(out, "extern i64 sash_table_len(SashTable* t);").unwrap();
+    writeln!(
+        out,
+        "extern const char* sash_table_value(SashTable* t, i64 idx, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern const char* sash_table_key(SashTable* t, i64 idx, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern void sash_table_delete(SashTable* t, const char* kp, i64 kl);"
+    )
+    .unwrap();
+    // Phase 5 — read
+    writeln!(out, "extern sash_pair sash_read_line(i64 fd);").unwrap();
+    writeln!(out, "extern sash_pair sash_read_delim(i64 fd, i64 delim);").unwrap();
     writeln!(out).unwrap();
 }
 
@@ -328,17 +360,31 @@ fn collect_value_vars(value: &SsaValue, types: &mut VarTypes) {
     }
 }
 
-/// Declare one C variable per `(name, version)` pair. Mirrors
-/// codegen's `VarSlot` model: string vars are *two* C variables
-/// (`_ptr` + `_len`), int vars are one.
+/// Declare one C variable per distinct *name* (not per (name,
+/// version) pair — see c_var_name's doc). Mirrors codegen's
+/// `VarSlot` model where each bash variable maps to one
+/// Cranelift `Variable`: string vars are two C variables
+/// (`_ptr` plus `_len`), int vars are one. If a name appears at
+/// multiple versions with different declared types we take the
+/// most-Int-like (Int over String) since Int vars get reused as
+/// Int across the function.
 fn declare_vars(out: &mut String, types: &VarTypes) {
-    let mut sorted: Vec<_> = types.iter().collect();
-    sorted.sort_by_key(|((name, ver), _)| (name.clone(), *ver));
+    // Collapse versions: name → most-int-like type seen.
+    let mut by_name: HashMap<String, VarType> = HashMap::new();
+    for ((name, _ver), vt) in types {
+        let entry = by_name.entry(name.clone()).or_insert(*vt);
+        // Int wins if any version is Int.
+        if *vt == VarType::Int {
+            *entry = VarType::Int;
+        }
+    }
+    let mut sorted: Vec<_> = by_name.iter().collect();
+    sorted.sort_by_key(|(name, _)| (*name).clone());
     if sorted.is_empty() {
         return;
     }
-    for ((name, version), vtype) in &sorted {
-        let base = c_var_name(name, *version);
+    for (name, vtype) in &sorted {
+        let base = c_var_name(name, 0);
         match vtype {
             VarType::Int => {
                 writeln!(out, "    i64 {} = 0; (void){};", base, base).unwrap();
@@ -356,12 +402,19 @@ fn declare_vars(out: &mut String, types: &VarTypes) {
     writeln!(out).unwrap();
 }
 
-/// Map an SSA `(name, version)` to a C identifier stem. Strings
-/// get `_ptr` / `_len` suffixes at the use site. Special vars like
-/// `1`, `2`, …, `9`, `#`, `?`, `$`, `@` are sanitised:
-/// non-alphanumerics → `_`, and a leading digit is prefixed with
-/// `p` so the C identifier is well-formed.
-fn c_var_name(name: &str, version: u32) -> String {
+/// Map an SSA `(name, version)` to a C identifier stem. **Versions
+/// are dropped.** This mirrors Cranelift's SSA model: every SSA
+/// version of the same bash variable is represented by ONE
+/// Cranelift `Variable`, so phi nodes resolve implicitly via the
+/// last-write-wins discipline at `def_var` sites. emit_c does the
+/// same — one C local per variable name; assignments overwrite;
+/// phi nodes are no-ops (the assignment in the predecessor already
+/// wrote the right value).
+///
+/// Special vars like `1`, `2`, …, `9`, `#`, `?`, `$`, `@` are
+/// sanitised: non-alphanumerics → `_`, and a leading digit is
+/// prefixed with `p` so the C identifier is well-formed.
+fn c_var_name(name: &str, _version: u32) -> String {
     let sanitized: String = name
         .chars()
         .map(|c| {
@@ -372,9 +425,7 @@ fn c_var_name(name: &str, version: u32) -> String {
             }
         })
         .collect();
-    // C identifiers must start with a letter or underscore;
-    // positional params ("1", "2", …) need a non-digit prefix.
-    let base = if sanitized
+    if sanitized
         .chars()
         .next()
         .map(|c| c.is_ascii_digit())
@@ -383,8 +434,7 @@ fn c_var_name(name: &str, version: u32) -> String {
         format!("p{}", sanitized)
     } else {
         sanitized
-    };
-    format!("{}_v{}", base, version)
+    }
 }
 
 fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
@@ -410,6 +460,21 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         // Phase 4: SsaInst::Pipeline → fork chain with pipes.
         // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
         SsaInst::Pipeline { stages, .. } => emit_pipeline(e, stages, types),
+        // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
+        // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
+        SsaInst::SubscriptAssign {
+            array,
+            index,
+            value,
+            is_integer_key,
+        } => emit_subscript_assign(e, array, index, value, *is_integer_key, types),
+        // Phase 5: SsaInst::ReadLine → sash_read_line/sash_read_delim.
+        // Single-target read (read VAR). For Phase 5 we ignore
+        // redirects and clean_pipe (always read from fd given,
+        // typically 0). __read_eof tracks EOF.
+        SsaInst::ReadLine {
+            target, fd, delim, ..
+        } => emit_readline(e, target, *fd, *delim, types),
         // SsaInst::Test stores its result into __test_result. Codegen
         // (dispatch.rs:108-118): result = lower_test_expr(...);
         // builder.def_var(test_result_var, result). Branch terminator
@@ -481,6 +546,22 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // (codegen/value_handlers.rs:691). Tries native intrinsics
         // first; external exec is deferred to Phase 4.
         SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
+        // Phase 5: array / map literals → sash_table_new + per-elem set.
+        // The table pointer goes in the _ptr slot of the assigned var;
+        // _len is 0 (mirrors codegen's lower_indexed_array_value +
+        // lower_assoc_array_value).
+        SsaValue::IndexedArray(elems) => emit_indexed_array(e, elems, types),
+        SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
+        // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
+        // Mirrors lower_subscript_value (codegen/values.rs:654).
+        SsaValue::Subscript {
+            array,
+            index,
+            is_integer_key,
+        } => emit_subscript_value(e, array, index, *is_integer_key, types),
+        // Phase 5: table iteration helpers (for x in "${arr[@]}").
+        SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
+        SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
         _ => {
             writeln!(
                 e.out,
@@ -905,6 +986,21 @@ fn ir_expr_as_int(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> Str
             .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
         ExprKind::SimpleExpansion(name) => latest_var_as_int(name, types),
         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => ir_expr_as_int(e, &parts[0], types),
+        // Special case: ${#arr[@]} (arrlen) calls table_len directly
+        // rather than going through atoi(value-as-string). Mirrors
+        // codegen/values.rs:262-279.
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrlen") => {
+            let table_expr = lookup_table_var(&pe.name, types);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_n = sash_table_len((SashTable*){tbl});",
+                t = t,
+                tbl = table_expr
+            )
+            .unwrap();
+            format!("{}_n", t)
+        }
         _ => {
             writeln!(
                 e.out,
@@ -990,6 +1086,11 @@ fn emit_param_expansion(
     match operator {
         "" => (s_ptr, s_len),
         "strlen" => emit_itoa_temp(e, &s_len),
+        // Phase 5: arrlen / arrkeys / arrvals — table-based vars.
+        // The var's _ptr slot holds the table pointer; _len holds 0.
+        "arrlen" => emit_arrlen(e, &s_ptr),
+        "arrvals" | "arrjoin" => emit_arr_values_joined(e, &s_ptr, operand),
+        "arrkeys" => emit_arr_keys_joined(e, &s_ptr, operand),
         "%" | "%%" => emit_strip_suffix_c(e, operator, &s_ptr, &s_len, operand),
         "#" | "##" => emit_strip_prefix_c(e, operator, &s_ptr, &s_len, operand),
         ":-" | "-" => emit_default_value_c(e, &s_ptr, &s_len, operand),
@@ -1596,6 +1697,308 @@ fn emit_pipeline_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTy
         e.out,
         "        sash_exec((const char* const*){a}_argv, sash_envp);",
         a = a
+    )
+    .unwrap();
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Phase 5: Arrays, maps, subscripts, read
+// ═══════════════════════════════════════════════════════════════
+
+/// Indexed array literal (val0, val1, …). Mirrors
+/// lower_indexed_array_value (codegen/values.rs:836). Creates a
+/// SashTable with int keys 0..N-1. The table pointer goes in the
+/// var's _ptr slot; _len is 0.
+fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CStr {
+    let t = e.fresh();
+    let capacity = std::cmp::max(elems.len() * 2, 8);
+    writeln!(
+        e.out,
+        "    SashTable* {t}_tbl = sash_table_new({cap});",
+        t = t,
+        cap = capacity
+    )
+    .unwrap();
+    for (i, val_ssa) in elems.iter().enumerate() {
+        let (val_ptr, val_len) = lower_value_as_str(e, val_ssa, types);
+        // 8-byte int key: store the int into a stack i64, pass its addr.
+        writeln!(e.out, "    i64 {t}_k{i} = {i};", t = t, i = i).unwrap();
+        writeln!(
+            e.out,
+            "    sash_table_set({t}_tbl, (const char*)&{t}_k{i}, 8, {vp}, {vl});",
+            t = t,
+            i = i,
+            vp = val_ptr,
+            vl = val_len
+        )
+        .unwrap();
+    }
+    (format!("(const char*){}_tbl", t), "0".to_string())
+}
+
+/// Associative array literal — sash_table_new + per-pair set with
+/// string keys. Mirrors lower_assoc_array_value (codegen/values.rs:611).
+fn emit_assoc_array(e: &mut Emit, pairs: &[(String, SsaValue)], types: &VarTypes) -> CStr {
+    let t = e.fresh();
+    let capacity = std::cmp::max(pairs.len() * 2, 8);
+    writeln!(
+        e.out,
+        "    SashTable* {t}_tbl = sash_table_new({cap});",
+        t = t,
+        cap = capacity
+    )
+    .unwrap();
+    for (key, val_ssa) in pairs {
+        let (val_ptr, val_len) = lower_value_as_str(e, val_ssa, types);
+        writeln!(
+            e.out,
+            "    sash_table_set({t}_tbl, \"{k}\", {kl}, {vp}, {vl});",
+            t = t,
+            k = c_escape(key),
+            kl = key.len(),
+            vp = val_ptr,
+            vl = val_len
+        )
+        .unwrap();
+    }
+    (format!("(const char*){}_tbl", t), "0".to_string())
+}
+
+/// Subscript read: ${arr[i]} / ${map[key]}. Mirrors
+/// lower_subscript_value (codegen/values.rs:654). For int keys
+/// the index is stored into a stack i64 and passed by address;
+/// for string keys the (ptr, len) of the index expression is used.
+fn emit_subscript_value(
+    e: &mut Emit,
+    array: &str,
+    index: &SsaValue,
+    is_integer_key: bool,
+    types: &VarTypes,
+) -> CStr {
+    let table_expr = lookup_table_var(array, types);
+    let t = e.fresh();
+    let (kp, kl) = if is_integer_key {
+        let idx_int = lower_value_as_int(e, index, types);
+        writeln!(e.out, "    i64 {t}_k = {idx};", t = t, idx = idx_int).unwrap();
+        (format!("(const char*)&{}_k", t), "8".to_string())
+    } else {
+        lower_value_as_str(e, index, types)
+    };
+    writeln!(
+        e.out,
+        "    i64 {t}_l; const char* {t}_p = sash_table_get((SashTable*){table}, {kp}, {kl}, &{t}_l);",
+        t = t,
+        table = table_expr,
+        kp = kp,
+        kl = kl
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// Subscript write: arr[i]=val / map[key]=val. Mirrors
+/// handle_subscript_assign (codegen/inst_handlers.rs:1070).
+fn emit_subscript_assign(
+    e: &mut Emit,
+    array: &str,
+    index: &SsaValue,
+    value: &SsaValue,
+    is_integer_key: bool,
+    types: &VarTypes,
+) {
+    let table_expr = lookup_table_var(array, types);
+    let (vp, vl) = lower_value_as_str(e, value, types);
+    let t = e.fresh();
+    let (kp, kl) = if is_integer_key {
+        let idx_int = lower_value_as_int(e, index, types);
+        writeln!(e.out, "    i64 {t}_k = {idx};", t = t, idx = idx_int).unwrap();
+        (format!("(const char*)&{}_k", t), "8".to_string())
+    } else {
+        lower_value_as_str(e, index, types)
+    };
+    writeln!(
+        e.out,
+        "    sash_table_set((SashTable*){table}, {kp}, {kl}, {vp}, {vl});",
+        table = table_expr,
+        kp = kp,
+        kl = kl,
+        vp = vp,
+        vl = vl,
+    )
+    .unwrap();
+}
+
+/// Look up the table pointer for an array/map name. Mirrors
+/// codegen's `find_var_slot(vars, name).str_ptr()` pattern. The
+/// var's _ptr slot holds the table pointer (set when the array
+/// literal was assigned).
+fn lookup_table_var(name: &str, types: &VarTypes) -> String {
+    // Pick the highest-version slot — that's the most recent
+    // assignment, which carries the table pointer.
+    if let Some(((n, v), _)) = highest_version(name, types) {
+        let base = c_var_name(&n, v);
+        format!("{}_ptr", base)
+    } else {
+        "(const char*)0".to_string()
+    }
+}
+
+/// ${#arr[@]} — table length. Mirrors emit_table_len
+/// (codegen/value_handlers.rs:85).
+fn emit_arrlen(e: &mut Emit, table_expr: &str) -> CStr {
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_n = sash_table_len((SashTable*){tbl});",
+        t = t,
+        tbl = table_expr
+    )
+    .unwrap();
+    emit_itoa_temp(e, &format!("{}_n", t))
+}
+
+/// `${arr[@]}` / `${arr[*]}` — array values joined by sep.
+/// Sep encoded in operand (default = single space). Phase 5: walk
+/// the table by index, concatenate values with sep into a
+/// stack-allocated buffer.
+fn emit_arr_values_joined(e: &mut Emit, table_expr: &str, sep_operand: &str) -> CStr {
+    let sep = arrjoin_separator(sep_operand);
+    emit_arr_join_loop(e, table_expr, sep, /* keys = */ false)
+}
+
+/// `${!arr[@]}` — array keys joined by sep.
+fn emit_arr_keys_joined(e: &mut Emit, table_expr: &str, sep_operand: &str) -> CStr {
+    let sep = arrjoin_separator(sep_operand);
+    emit_arr_join_loop(e, table_expr, sep, /* keys = */ true)
+}
+
+/// Decode the arrjoin / arrvals_<sep> operator's separator-encoding
+/// hint. Empty → single space. Otherwise the operand is a literal
+/// separator string.
+fn arrjoin_separator(operand: &str) -> &str {
+    if operand.is_empty() {
+        " "
+    } else {
+        operand
+    }
+}
+
+/// Emit a runtime loop that walks the table by index, gathering
+/// values (or keys) into a 4096-byte stack buffer separated by
+/// `sep`. The returned (ptr, len) pair refers to the buffer.
+fn emit_arr_join_loop(e: &mut Emit, table_expr: &str, sep: &str, keys: bool) -> CStr {
+    let t = e.fresh();
+    let getter = if keys {
+        "sash_table_key"
+    } else {
+        "sash_table_value"
+    };
+    writeln!(e.out, "    char {t}_buf[4096];", t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_pos = 0;", t = t).unwrap();
+    writeln!(
+        e.out,
+        "    i64 {t}_n = sash_table_len((SashTable*){tbl});",
+        t = t,
+        tbl = table_expr
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    for (i64 {t}_i = 0; {t}_i < {t}_n; {t}_i++) {{",
+        t = t
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        i64 {t}_el; const char* {t}_ep = {fn}((SashTable*){tbl}, {t}_i, &{t}_el);",
+        t = t,
+        fn = getter,
+        tbl = table_expr
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        if ({t}_i > 0 && {t}_pos + {sl} < 4096) {{",
+        t = t,
+        sl = sep.len()
+    )
+    .unwrap();
+    for b in sep.bytes() {
+        writeln!(e.out, "            {t}_buf[{t}_pos++] = {b};", t = t, b = b).unwrap();
+    }
+    writeln!(e.out, "        }}").unwrap();
+    writeln!(
+        e.out,
+        "        for (i64 {t}_j = 0; {t}_j < {t}_el && {t}_pos < 4096; {t}_j++) {{",
+        t = t
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "            {t}_buf[{t}_pos++] = {t}_ep[{t}_j];",
+        t = t
+    )
+    .unwrap();
+    writeln!(e.out, "        }}").unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    (format!("{}_buf", t), format!("{}_pos", t))
+}
+
+/// SsaValue::TableValue { array, index }. Mirrors
+/// lower_table_value_value (codegen/values.rs:732). Used by
+/// `for x in "${arr[@]}"` iteration.
+fn emit_table_value(e: &mut Emit, array: &str, index: &VarRef, types: &VarTypes) -> CStr {
+    let table_expr = lookup_table_var(array, types);
+    let idx_int = lower_value_as_int(e, &SsaValue::Var(index.clone()), types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_l; const char* {t}_p = sash_table_value((SashTable*){tbl}, {idx}, &{t}_l);",
+        t = t,
+        tbl = table_expr,
+        idx = idx_int
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// SsaValue::TableKey { array, index }. Mirrors
+/// lower_table_key_value (codegen/values.rs:750). Used by
+/// `for k in "${!arr[@]}"` iteration.
+fn emit_table_key(e: &mut Emit, array: &str, index: &VarRef, types: &VarTypes) -> CStr {
+    let table_expr = lookup_table_var(array, types);
+    let idx_int = lower_value_as_int(e, &SsaValue::Var(index.clone()), types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_l; const char* {t}_p = sash_table_key((SashTable*){tbl}, {idx}, &{t}_l);",
+        t = t,
+        tbl = table_expr,
+        idx = idx_int
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// `read VAR` — assigns one line from `fd` to `target`. Mirrors
+/// emit_readline (codegen/dispatch.rs:876). delim=None uses
+/// newline; delim=Some(b) uses that byte. Sets __exit_status = 1
+/// on EOF, 0 otherwise.
+fn emit_readline(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>, _types: &VarTypes) {
+    let t = e.fresh();
+    let call = match delim {
+        None => format!("sash_read_line({})", fd),
+        Some(b) => format!("sash_read_delim({}, {})", fd, b),
+    };
+    writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
+    let base = c_var_name(&target.name, target.version);
+    writeln!(e.out, "    {0}_ptr = {1}.ptr;", base, t).unwrap();
+    writeln!(e.out, "    {0}_len = {1}.len;", base, t).unwrap();
+    // EOF iff returned ptr is NULL.
+    writeln!(
+        e.out,
+        "    __exit_status = ({t}.ptr == (const char*)0) ? 1 : 0;",
+        t = t
     )
     .unwrap();
 }
