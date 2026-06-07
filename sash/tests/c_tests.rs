@@ -628,3 +628,66 @@ fn c_map_new_key() {
         "#!/bin/bash\nmap m=([a]=\"1\")\nm[b]=\"2\"\necho \"${m[b]}\"\n",
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 6: BULK PARITY HOLES + DOLLAR-QUESTION + CASE
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn c_dollar_question_after_true() {
+    assert_c_matches_bash("dq_after_true", "#!/bin/bash\ntrue\necho $?");
+}
+
+#[test]
+fn c_dollar_question_after_false() {
+    assert_c_matches_bash("dq_after_false", "#!/bin/bash\nfalse\necho $?");
+}
+
+#[test]
+fn c_dollar_question_after_extern() {
+    assert_c_matches_bash("dq_after_extern", "#!/bin/bash\n/bin/true\necho $?");
+}
+
+#[test]
+fn c_and_chain_true_yes() {
+    // && reads test_result after true. Bash and C agree.
+    assert_c_matches_bash(
+        "and_true_yes",
+        "#!/bin/bash\ntrue && echo yes\nfalse || echo fallback",
+    );
+}
+
+#[test]
+fn c_while_arith_condition() {
+    // (( i < 3 )) uses LetExit to convert arith result → test_result.
+    assert_c_matches_cranelift(
+        "while_arith",
+        "#!/bin/bash\nint i=0\nwhile (( i < 3 )); do\n  echo $i\n  (( i = i + 1 ))\ndone",
+    );
+}
+
+#[test]
+fn c_case_pattern_match() {
+    // case uses =glob via sash_fnmatch.
+    assert_c_matches_bash(
+        "case_match",
+        "#!/bin/bash\nv=two\ncase $v in\n  one) echo 1 ;;\n  two) echo 2 ;;\n  *) echo other ;;\nesac",
+    );
+}
+
+#[test]
+fn c_case_default_branch() {
+    assert_c_matches_bash(
+        "case_default",
+        "#!/bin/bash\nv=unknown\ncase $v in\n  one) echo 1 ;;\n  two) echo 2 ;;\n  *) echo other ;;\nesac",
+    );
+}
+
+#[test]
+fn c_if_arith_condition() {
+    // if (( x > 3 )) uses LetExit + arith comparison.
+    assert_c_matches_cranelift(
+        "if_arith",
+        "#!/bin/bash\nint x=5\nif (( x > 3 )); then\n  echo big\nelse\n  echo small\nfi",
+    );
+}

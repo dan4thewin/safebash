@@ -523,13 +523,26 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
-        SsaValue::Var(vref) => match vref.var_type {
-            VarType::String => {
-                let base = c_var_name(&vref.name, vref.version);
-                (format!("{}_ptr", base), format!("{}_len", base))
+        SsaValue::Var(vref) => {
+            // Special vars `$?` (exit status) and `$$` (pid) match
+            // codegen/values.rs:514-525 — go through sash_itoa on
+            // the live int value, not through a string slot.
+            if vref.name == "?" {
+                return emit_itoa_temp(e, "__exit_status");
             }
-            VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
-        },
+            if vref.name == "$" {
+                let t = e.fresh();
+                writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
+                return emit_itoa_temp(e, &format!("{}_pid", t));
+            }
+            match vref.var_type {
+                VarType::String => {
+                    let base = c_var_name(&vref.name, vref.version);
+                    (format!("{}_ptr", base), format!("{}_len", base))
+                }
+                VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
+            }
+        }
         SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
@@ -603,13 +616,21 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             .parse::<i64>()
             .map(|n| n.to_string())
             .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
-        SsaValue::Var(vref) => match vref.var_type {
-            VarType::Int => c_var_name(&vref.name, vref.version),
-            VarType::String => {
-                let base = c_var_name(&vref.name, vref.version);
-                format!("sash_atoi({}_ptr, {}_len)", base, base)
+        SsaValue::Var(vref) => {
+            if vref.name == "?" {
+                return "__exit_status".to_string();
             }
-        },
+            if vref.name == "$" {
+                return "sash_getpid()".to_string();
+            }
+            match vref.var_type {
+                VarType::Int => c_var_name(&vref.name, vref.version),
+                VarType::String => {
+                    let base = c_var_name(&vref.name, vref.version);
+                    format!("sash_atoi({}_ptr, {}_len)", base, base)
+                }
+            }
+        }
         // codegen/values.rs:341+ for ArithExpr: lower_value_as_int(Var(var))
         // then emit_arith_op(op, lhs, iconst(operand)).
         SsaValue::ArithExpr { var, op, operand } => {
@@ -708,8 +729,9 @@ fn c_escape(s: &str) -> String {
 
 /// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
 /// false, noop. Phase 4 adds external command exec via the `Other`
-/// arm. Other builtins emit a `TODO` comment so the C still
-/// compiles and the unsupported area is visible.
+/// arm. Phase 6 adds LetExit (the post-arith-test status setter).
+/// Other builtins emit a `TODO` comment so the C still compiles and
+/// the unsupported area is visible.
 fn emit_command(
     e: &mut Emit,
     name: &str,
@@ -731,11 +753,18 @@ fn emit_command(
         BuiltinCmd::Exit => emit_exit(e, args, types),
         BuiltinCmd::Noop | BuiltinCmd::True => {
             writeln!(e.out, "    __exit_status = 0;").unwrap();
+            writeln!(e.out, "    __test_result = 1;").unwrap();
         }
         BuiltinCmd::False => {
             writeln!(e.out, "    __exit_status = 1;").unwrap();
+            writeln!(e.out, "    __test_result = 0;").unwrap();
         }
         BuiltinCmd::Other => emit_exec(e, name, args, types),
+        // Phase 6: __let_exit — convert (( … )) result to status.
+        // Mirrors emit_let_exit (codegen/dispatch.rs:978). Reads
+        // first arg as int; if zero → status=1, test_result=0; else
+        // status=0, test_result=1.
+        BuiltinCmd::LetExit => emit_let_exit(e, args, types),
         _ => {
             writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
         }
@@ -744,6 +773,23 @@ fn emit_command(
     if !saved.is_empty() {
         emit_restore(e, &saved);
     }
+}
+
+/// __let_exit: take the value of an arithmetic test (string holding
+/// an int, or int directly) and convert it to test_result + status.
+/// (( expr )) evaluates expr; if result is nonzero the test succeeded
+/// (status 0, test_result 1); if zero, the test failed (status 1,
+/// test_result 0).
+fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+    let int_val = if let Some(arg) = args.first() {
+        lower_value_as_int(e, arg, types)
+    } else {
+        "0".to_string()
+    };
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_v = {iv};", t = t, iv = int_val).unwrap();
+    writeln!(e.out, "    __exit_status = ({t}_v == 0) ? 1 : 0;", t = t).unwrap();
+    writeln!(e.out, "    __test_result = ({t}_v == 0) ? 0 : 1;", t = t).unwrap();
 }
 
 /// External command exec — mirrors lower_exec (codegen/commands.rs:103).
@@ -929,6 +975,19 @@ fn lower_test_binary(
             // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match.
             // We invert: (cmp == 0) ? 1 : 0.
             format!("(({}) == 0 ? 1 : 0)", cmp)
+        };
+    }
+    // case pattern matching: =glob and !=glob. Mirrors codegen
+    // emit_glob (codegen/tests.rs:367) — sash_fnmatch(pattern, str).
+    // Note arg order: pattern is RHS, string is LHS.
+    if matches!(op, "=glob" | "!=glob") {
+        let (lp, ll) = ir_expr_as_str(e, left, types);
+        let (rp, rl) = ir_expr_as_str(e, right, types);
+        let cmp = format!("sash_fnmatch({}, {}, {}, {})", rp, rl, lp, ll);
+        return if op == "!=glob" {
+            format!("(({}) == 0 ? 1 : 0)", cmp)
+        } else {
+            format!("({})", cmp)
         };
     }
     writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
