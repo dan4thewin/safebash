@@ -85,7 +85,7 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out).unwrap();
-    writeln!(out, "/* sash-rt C ABI (Phase 3) */").unwrap();
+    writeln!(out, "/* sash-rt C ABI (Phase 4) */").unwrap();
     writeln!(
         out,
         "extern i64 sash_write(i64 fd, const char* buf, i64 len);"
@@ -161,6 +161,45 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
     writeln!(out, "extern char* sash_getcwd(i64* out_len);").unwrap();
+    // Phase 4 — external exec
+    writeln!(
+        out,
+        "extern i64 sash_run(const char* const* argv, const char* const* envp);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern const char* const* sash_envp;  /* set by sash-rt _start */"
+    )
+    .unwrap();
+    // Phase 4 — redirects
+    writeln!(out, "extern i64 sash_dup(i64 fd);").unwrap();
+    writeln!(out, "extern i64 sash_dup2(i64 src, i64 dst);").unwrap();
+    writeln!(out, "extern i64 sash_close(i64 fd);").unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_redirect(i64 fd, const char* path, i64 flags);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_redirect_s(i64 fd, const char* path_ptr, i64 path_len, i64 flags);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern void sash_heredoc_redirect(i64 fd, const char* body_ptr, i64 body_len);"
+    )
+    .unwrap();
+    // Phase 4 — pipelines
+    writeln!(out, "extern i64 sash_fork(void);").unwrap();
+    writeln!(out, "extern i64 sash_pipe(i64* out_pair);").unwrap();
+    writeln!(out, "extern i64 sash_wait(i64 pid);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_exec(const char* const* argv, const char* const* envp) __attribute__((noreturn));"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 }
 
@@ -196,25 +235,97 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
 /// Walk every assignment in the SSA and record the declared type
 /// of each `(name, version)` pair. Type comes from `VarRef::var_type`
 /// (populated by `ir_to_ssa_typed` from `infer_types`).
+///
+/// Phi sources AND Var references in SSA values are also recorded:
+/// the SSA can reference an initial-version (`_v0`) for a variable
+/// that's never explicitly assigned in the elided-function context
+/// (sash's function bodies constant-fold into the caller, so
+/// positional params from the caller appear as v0 refs). We
+/// declare them with default zero/empty so the C compiles.
 fn collect_var_types(ssa: &SsaProgram) -> VarTypes {
     let mut types: VarTypes = HashMap::new();
     for block in ssa.blocks.values() {
         for inst in &block.insts {
-            match inst {
-                SsaInst::Assign { target, .. } => {
-                    types.insert((target.name.clone(), target.version), target.var_type);
-                }
-                SsaInst::Phi(node) => {
-                    types.insert(
-                        (node.target.name.clone(), node.target.version),
-                        node.target.var_type,
-                    );
-                }
-                _ => {}
-            }
+            collect_inst_var_types(inst, &mut types);
         }
     }
     types
+}
+
+/// Collect every var ref reachable from a single SsaInst into
+/// `types`. Walks Assign target+value, Command args, Pipeline
+/// stages, Phi targets+sources.
+fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
+    match inst {
+        SsaInst::Assign { target, value } => {
+            types.insert((target.name.clone(), target.version), target.var_type);
+            collect_value_vars(value, types);
+        }
+        SsaInst::Command { args, .. } => {
+            for a in args {
+                collect_value_vars(a, types);
+            }
+        }
+        SsaInst::Pipeline { stages, .. } => {
+            for (_, args, _) in stages {
+                for a in args {
+                    collect_value_vars(a, types);
+                }
+            }
+        }
+        SsaInst::Phi(node) => {
+            types.insert(
+                (node.target.name.clone(), node.target.version),
+                node.target.var_type,
+            );
+            for (_, src) in &node.sources {
+                types
+                    .entry((src.name.clone(), src.version))
+                    .or_insert(src.var_type);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Walk every Var reference inside an SsaValue, recording each in
+/// `types`. Used to ensure phi sources / initial-version reads have
+/// a corresponding C declaration even when no Assign target carries
+/// the same (name, version) pair.
+fn collect_value_vars(value: &SsaValue, types: &mut VarTypes) {
+    match value {
+        SsaValue::Var(vref)
+        | SsaValue::ArithExpr { var: vref, .. }
+        | SsaValue::ParamExpansion { var: vref, .. } => {
+            types
+                .entry((vref.name.clone(), vref.version))
+                .or_insert(vref.var_type);
+        }
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
+            for p in parts {
+                collect_value_vars(p, types);
+            }
+        }
+        SsaValue::ArithBinOp { left, right, .. } => {
+            collect_value_vars(left, types);
+            collect_value_vars(right, types);
+        }
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            collect_value_vars(cond, types);
+            collect_value_vars(true_val, types);
+            collect_value_vars(false_val, types);
+        }
+        SsaValue::CmdSubst { argv, .. } => {
+            for v in argv {
+                collect_value_vars(v, types);
+            }
+        }
+        _ => {}
+    }
 }
 
 /// Declare one C variable per `(name, version)` pair. Mirrors
@@ -246,7 +357,10 @@ fn declare_vars(out: &mut String, types: &VarTypes) {
 }
 
 /// Map an SSA `(name, version)` to a C identifier stem. Strings
-/// get `_ptr` / `_len` suffixes at the use site.
+/// get `_ptr` / `_len` suffixes at the use site. Special vars like
+/// `1`, `2`, …, `9`, `#`, `?`, `$`, `@` are sanitised:
+/// non-alphanumerics → `_`, and a leading digit is prefixed with
+/// `p` so the C identifier is well-formed.
 fn c_var_name(name: &str, version: u32) -> String {
     let sanitized: String = name
         .chars()
@@ -258,7 +372,19 @@ fn c_var_name(name: &str, version: u32) -> String {
             }
         })
         .collect();
-    format!("{}_v{}", sanitized, version)
+    // C identifiers must start with a letter or underscore;
+    // positional params ("1", "2", …) need a non-digit prefix.
+    let base = if sanitized
+        .chars()
+        .next()
+        .map(|c| c.is_ascii_digit())
+        .unwrap_or(true)
+    {
+        format!("p{}", sanitized)
+    } else {
+        sanitized
+    };
+    format!("{}_v{}", base, version)
 }
 
 fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
@@ -275,8 +401,15 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
     match inst {
         SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
         SsaInst::Command {
-            name, kind, args, ..
-        } => emit_command(e, name, kind, args, types),
+            name,
+            kind,
+            args,
+            redirects,
+            ..
+        } => emit_command(e, name, kind, args, redirects, types),
+        // Phase 4: SsaInst::Pipeline → fork chain with pipes.
+        // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
+        SsaInst::Pipeline { stages, .. } => emit_pipeline(e, stages, types),
         // SsaInst::Test stores its result into __test_result. Codegen
         // (dispatch.rs:108-118): result = lower_test_expr(...);
         // builder.def_var(test_result_var, result). Branch terminator
@@ -493,9 +626,25 @@ fn c_escape(s: &str) -> String {
 }
 
 /// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
-/// false, noop. Other builtins emit a `TODO` comment so the C
-/// still compiles and the unsupported area is visible.
-fn emit_command(e: &mut Emit, name: &str, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) {
+/// false, noop. Phase 4 adds external command exec via the `Other`
+/// arm. Other builtins emit a `TODO` comment so the C still
+/// compiles and the unsupported area is visible.
+fn emit_command(
+    e: &mut Emit,
+    name: &str,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) {
+    // Phase 4: redirects wrap the command. emit_redirects → lower_exec
+    // → emit_restore (codegen/inst_handlers.rs:585+).
+    let saved = if redirects.is_empty() {
+        Vec::new()
+    } else {
+        emit_redirects(e, redirects, types)
+    };
+
     match kind {
         BuiltinCmd::Echo => emit_echo(e, args, types),
         BuiltinCmd::Exit => emit_exit(e, args, types),
@@ -505,10 +654,47 @@ fn emit_command(e: &mut Emit, name: &str, kind: &BuiltinCmd, args: &[SsaValue], 
         BuiltinCmd::False => {
             writeln!(e.out, "    __exit_status = 1;").unwrap();
         }
+        BuiltinCmd::Other => emit_exec(e, name, args, types),
         _ => {
             writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
         }
     }
+
+    if !saved.is_empty() {
+        emit_restore(e, &saved);
+    }
+}
+
+/// External command exec — mirrors lower_exec (codegen/commands.rs:103).
+/// Build a NULL-terminated argv array on the C stack, call sash_run
+/// with our envp, store the exit status into __exit_status. Also
+/// sets __test_result so a Branch terminator reading it sees
+/// success ⇔ exit==0.
+fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
+    // Pre-lower every arg so all temp declarations land in the right
+    // order (before the argv array initializer).
+    let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
+    arg_ptrs.push(format!("\"{}\"", c_escape(name)));
+    for arg in args {
+        let (ptr, _len) = lower_value_as_str(e, arg, types);
+        arg_ptrs.push(ptr);
+    }
+
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    const char* {t}_argv[] = {{ {}, (const char*)0 }};",
+        arg_ptrs.join(", "),
+        t = t,
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    __exit_status = sash_run((const char* const*){t}_argv, sash_envp);",
+        t = t,
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
 }
 
 /// Echo: mirrors `lower_echo` from codegen/commands.rs:21.
@@ -1067,4 +1253,349 @@ fn try_native_intrinsic_c(
         }
         _ => None,
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Redirects: > / >> / < / >&N / <<EOF / <<<"str"
+// ═══════════════════════════════════════════════════════════════
+
+/// Per-redirect bookkeeping: the C variable holding the dup'd
+/// original fd + the integer fd we wrote to. emit_restore uses
+/// these to dup2 the saved copy back into place and close it.
+struct SavedFdC {
+    saved_var: String,
+    original_fd: i64,
+}
+
+/// Mirrors emit_redirects (codegen/redirects.rs:19). For each
+/// redirect: save the live fd via sash_dup, then dispatch on op.
+/// Returns the saved-fd list for later emit_restore.
+fn emit_redirects(
+    e: &mut Emit,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) -> Vec<SavedFdC> {
+    let mut saved = Vec::with_capacity(redirects.len());
+    for r in redirects {
+        let fd = r.fd.unwrap_or(default_fd_for_op(&r.op)) as i64;
+        let t = e.fresh();
+        writeln!(e.out, "    i64 {t}_saved = sash_dup({fd});", t = t, fd = fd).unwrap();
+        saved.push(SavedFdC {
+            saved_var: format!("{}_saved", t),
+            original_fd: fd,
+        });
+        emit_one_redirect(e, r, fd, types);
+    }
+    saved
+}
+
+/// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
+/// Mirrors default_fd_for_op (codegen/redirects.rs:39).
+fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
+    use crate::ir::RedirectOp;
+    match op {
+        RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
+        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereDoc | RedirectOp::HereString => 0,
+        _ => 1,
+    }
+}
+
+/// open(2) flags by RedirectOp. Mirrors open_flags_for_op
+/// (codegen/redirects.rs:114). Returns None for ops that don't
+/// follow the open-and-dup2 pattern (DupOutput, HereDoc, etc.).
+fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
+    use crate::ir::RedirectOp;
+    match op {
+        RedirectOp::Write => Some(1),
+        RedirectOp::Append => Some(2),
+        RedirectOp::Read => Some(0),
+        _ => None,
+    }
+}
+
+/// Dispatch on RedirectOp shape. Mirrors emit_one_redirect
+/// (codegen/redirects.rs:69).
+fn emit_one_redirect(e: &mut Emit, r: &crate::ir::Redirect, fd: i64, types: &VarTypes) {
+    use crate::ir::RedirectOp;
+    if let Some(flags) = open_flags_for_op(&r.op) {
+        emit_open_redirect(e, fd, &r.target, flags, types);
+        return;
+    }
+    match r.op {
+        RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
+        RedirectOp::HereString | RedirectOp::HereDoc => {
+            emit_heredoc_redirect(e, fd, &r.target, types)
+        }
+        _ => {
+            writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
+        }
+    }
+}
+
+/// `> file` / `>> file` / `< file`. Mirrors emit_open_redirect
+/// (codegen/redirects.rs:128). Literal path → sash_redirect (which
+/// internally does the open+dup2+close); dynamic path → sash_redirect_s
+/// with computed (ptr, len).
+fn emit_open_redirect(
+    e: &mut Emit,
+    fd: i64,
+    target: &crate::ir::Expr,
+    flags: i64,
+    types: &VarTypes,
+) {
+    if let crate::ir::ExprKind::Literal(s) = &target.kind {
+        // Static path — emit a NUL-terminated string literal and
+        // call sash_redirect.
+        writeln!(
+            e.out,
+            "    sash_redirect({fd}, \"{path}\", {flags});",
+            fd = fd,
+            path = c_escape(s),
+            flags = flags
+        )
+        .unwrap();
+        return;
+    }
+    // Dynamic path — lower via ir_expr_as_str, call sash_redirect_s.
+    let (ptr, len) = ir_expr_as_str(e, target, types);
+    writeln!(
+        e.out,
+        "    sash_redirect_s({fd}, {p}, {l}, {flags});",
+        fd = fd,
+        p = ptr,
+        l = len,
+        flags = flags
+    )
+    .unwrap();
+}
+
+/// `>&N` — dup2(target_fd, fd). Mirrors emit_dup_output
+/// (codegen/redirects.rs:163). Non-literal targets default to fd 2
+/// (matches codegen behaviour).
+fn emit_dup_output(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
+    let target_fd: i64 = match &target.kind {
+        crate::ir::ExprKind::Literal(s) => s.parse().unwrap_or(2),
+        _ => 2,
+    };
+    writeln!(e.out, "    sash_dup2({tf}, {fd});", tf = target_fd, fd = fd).unwrap();
+}
+
+/// `<<EOF` / `<<<"string"` — pipe body to stdin via
+/// sash_heredoc_redirect. Mirrors emit_heredoc_redirect
+/// (codegen/redirects.rs:183).
+fn emit_heredoc_redirect(e: &mut Emit, fd: i64, body: &crate::ir::Expr, types: &VarTypes) {
+    let (ptr, len) = ir_expr_as_str(e, body, types);
+    writeln!(
+        e.out,
+        "    sash_heredoc_redirect({fd}, {p}, {l});",
+        fd = fd,
+        p = ptr,
+        l = len
+    )
+    .unwrap();
+}
+
+/// Mirrors emit_restore (codegen/redirects.rs:214). Walk saved
+/// fds in reverse order: dup2 the saved copy back into the
+/// original fd slot, then close the saved copy.
+fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
+    for s in saved.iter().rev() {
+        writeln!(
+            e.out,
+            "    sash_dup2({sv}, {orig}); sash_close({sv});",
+            sv = s.saved_var,
+            orig = s.original_fd
+        )
+        .unwrap();
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// Pipelines: a | b | c
+// ═══════════════════════════════════════════════════════════════
+
+/// Mirrors handle_pipeline (codegen/inst_handlers.rs:24). Forks
+/// one child per stage, wires pipes between consecutive stages
+/// via dup2, parent waits for all children, exit status comes
+/// from the last stage.
+///
+/// Phase 4 scope: 2+ stage pipelines of external commands and
+/// inline builtins (echo, true, false, :). No lastpipe / capture
+/// support (`capture_read_fd` from the codegen path is for the
+/// `while read` lastpipe optimization — deferred).
+fn emit_pipeline(
+    e: &mut Emit,
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    types: &VarTypes,
+) {
+    let n = stages.len();
+    if n == 0 {
+        return;
+    }
+    if n == 1 {
+        // Degenerate pipeline — emit as a plain command. SSA shouldn't
+        // really hand us this, but be defensive.
+        let (name, args, redirects) = &stages[0];
+        let kind = BuiltinCmd::from_name(name);
+        emit_command(e, name, &kind, args, redirects, types);
+        return;
+    }
+
+    let p = e.fresh();
+    writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
+
+    // Create n-1 pipes upfront.
+    for i in 0..(n - 1) {
+        writeln!(
+            e.out,
+            "    i64 {p}_pipe{i}[2]; sash_pipe({p}_pipe{i});",
+            p = p,
+            i = i
+        )
+        .unwrap();
+    }
+    // pid slots — one per stage.
+    writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
+
+    for (i, (name, args, redirects)) in stages.iter().enumerate() {
+        emit_pipeline_stage(e, &p, i, n, name, args, redirects, types);
+    }
+
+    // Parent: close all pipe fds.
+    for i in 0..(n - 1) {
+        writeln!(
+            e.out,
+            "    sash_close({p}_pipe{i}[0]); sash_close({p}_pipe{i}[1]);",
+            p = p,
+            i = i
+        )
+        .unwrap();
+    }
+
+    // Wait for all children; status = last stage's exit.
+    writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
+    writeln!(
+        e.out,
+        "    for (i64 {p}_w = 0; {p}_w < {n}; {p}_w++) {{",
+        p = p,
+        n = n
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        i64 {p}_st = sash_wait({p}_pids[{p}_w]);",
+        p = p
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        if ({p}_w == {last}) {p}_status = {p}_st;",
+        p = p,
+        last = n - 1
+    )
+    .unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
+    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+}
+
+/// One pipeline stage. Mirrors lower_pipeline_stage
+/// (codegen/inst_handlers.rs:118). Fork; in child wire pipes via
+/// dup2 + close all pipe fds + exec; in parent record pid.
+#[allow(clippy::too_many_arguments)]
+fn emit_pipeline_stage(
+    e: &mut Emit,
+    p: &str,
+    i: usize,
+    n: usize,
+    name: &str,
+    args: &[SsaValue],
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) {
+    writeln!(e.out, "    {p}_pids[{i}] = sash_fork();", p = p, i = i).unwrap();
+    writeln!(
+        e.out,
+        "    if ({p}_pids[{i}] == 0) {{  /* child {i} */",
+        p = p,
+        i = i
+    )
+    .unwrap();
+
+    // Wire stdin from previous pipe's read end.
+    if i > 0 {
+        writeln!(
+            e.out,
+            "        sash_dup2({p}_pipe{prev}[0], 0);",
+            p = p,
+            prev = i - 1
+        )
+        .unwrap();
+    }
+    // Wire stdout to next pipe's write end.
+    if i < n - 1 {
+        writeln!(e.out, "        sash_dup2({p}_pipe{i}[1], 1);", p = p, i = i).unwrap();
+    }
+    // Close all pipe fds in child.
+    for j in 0..(n - 1) {
+        writeln!(
+            e.out,
+            "        sash_close({p}_pipe{j}[0]); sash_close({p}_pipe{j}[1]);",
+            p = p,
+            j = j
+        )
+        .unwrap();
+    }
+
+    // Stage-level redirects (these go inside the child).
+    if !redirects.is_empty() {
+        let _saved = emit_redirects(e, redirects, types);
+        // Child exits after exec; no need to restore.
+    }
+
+    // Run the command. If it's an inline builtin, emit the body
+    // then exit. Otherwise sash_exec replaces the process image.
+    let kind = BuiltinCmd::from_name(name);
+    match kind {
+        BuiltinCmd::Echo => {
+            emit_echo(e, args, types);
+            writeln!(e.out, "        sash_exit(0);").unwrap();
+        }
+        BuiltinCmd::True | BuiltinCmd::Noop => {
+            writeln!(e.out, "        sash_exit(0);").unwrap();
+        }
+        BuiltinCmd::False => {
+            writeln!(e.out, "        sash_exit(1);").unwrap();
+        }
+        _ => emit_pipeline_exec(e, name, args, types),
+    }
+
+    writeln!(e.out, "    }}").unwrap();
+}
+
+/// Per-stage external exec. Same shape as emit_exec but uses
+/// sash_exec (which never returns) instead of sash_run (which
+/// fork+execs internally). Mirrors lower_exec_stage
+/// (codegen/inst_handlers.rs:279).
+fn emit_pipeline_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
+    let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
+    arg_ptrs.push(format!("\"{}\"", c_escape(name)));
+    for arg in args {
+        let (ptr, _) = lower_value_as_str(e, arg, types);
+        arg_ptrs.push(ptr);
+    }
+    let a = e.fresh();
+    writeln!(
+        e.out,
+        "        const char* {a}_argv[] = {{ {}, (const char*)0 }};",
+        arg_ptrs.join(", "),
+        a = a
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        sash_exec((const char* const*){a}_argv, sash_envp);",
+        a = a
+    )
+    .unwrap();
 }

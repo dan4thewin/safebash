@@ -455,3 +455,95 @@ fn c_cmdsub_getpid() {
         c_src
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// PHASE 4: EXTERNAL EXEC, REDIRECTS, PIPELINES, FUNCTIONS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn c_exec_true() {
+    assert_c_matches_bash("exec_true", "#!/bin/bash\n/bin/true");
+}
+
+#[test]
+fn c_exec_false_recovered() {
+    assert_c_matches_bash(
+        "exec_false_or",
+        "#!/bin/bash\n/bin/false || /bin/echo recovered",
+    );
+}
+
+#[test]
+fn c_exec_echo_with_args() {
+    assert_c_matches_bash("exec_echo", "#!/bin/bash\n/bin/echo hello from /bin/echo");
+}
+
+#[test]
+fn c_exec_and_chain() {
+    assert_c_matches_bash("exec_and", "#!/bin/bash\n/bin/true && /bin/echo yes");
+}
+
+#[test]
+fn c_redirect_write() {
+    assert_c_matches_bash(
+        "rd_write",
+        "#!/bin/bash\n/bin/echo hi > /tmp/sash_oracle_w.txt\n/bin/cat /tmp/sash_oracle_w.txt",
+    );
+}
+
+#[test]
+fn c_redirect_append() {
+    assert_c_matches_bash(
+        "rd_append",
+        "#!/bin/bash\n/bin/echo first > /tmp/sash_oracle_a.txt\n/bin/echo second >> /tmp/sash_oracle_a.txt\n/bin/cat /tmp/sash_oracle_a.txt",
+    );
+}
+
+#[test]
+fn c_redirect_stderr_drop() {
+    assert_c_matches_bash(
+        "rd_stderr_drop",
+        "#!/bin/bash\n/bin/echo to_stdout\n/bin/echo dropped >&2 2>/dev/null",
+    );
+}
+
+#[test]
+fn c_pipeline_two_stage() {
+    assert_c_matches_bash(
+        "pipe2",
+        "#!/bin/bash\n/bin/echo hello | /usr/bin/tr a-z A-Z",
+    );
+}
+
+#[test]
+fn c_pipeline_three_stage() {
+    assert_c_matches_bash(
+        "pipe3",
+        "#!/bin/bash\n/usr/bin/seq 1 5 | /usr/bin/head -n 3 | /usr/bin/tail -n 1",
+    );
+}
+
+#[test]
+fn c_pipeline_with_builtin_echo() {
+    assert_c_matches_bash(
+        "pipe_builtin",
+        "#!/bin/bash\necho \"one two three\" | /usr/bin/wc -w",
+    );
+}
+
+#[test]
+fn c_fn_simple_call() {
+    // Bash doesn't accept sash 'fn' syntax — use Cranelift oracle.
+    assert_c_matches_cranelift(
+        "fn_simple",
+        "#!/bin/bash\nfn say() {\n    echo hello\n}\nsay\nsay\n",
+    );
+}
+
+#[test]
+fn c_fn_with_positional() {
+    assert_c_matches_cranelift(
+        "fn_pos",
+        "#!/bin/bash\nfn greet() {\n    echo \"hello $1\"\n}\ngreet world\n",
+    );
+}
