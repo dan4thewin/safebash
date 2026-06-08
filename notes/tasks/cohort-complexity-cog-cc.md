@@ -23,6 +23,31 @@ This task captures the **standing cohort work** the gate is built
 around. It is the home for ongoing refactor waves, the
 threshold-tightening plan, and the rolling list of violators.
 
+## Progress (2026-06-07 wave)
+
+Sixteen violators cleared in one session. Live cog ceiling dropped
+from 59 (`emit_stmt`) to 20. As mean cog fell from 3.82 to 3.28, the
+gate's 3× threshold ratcheted automatically from 11.46 to 9.84.
+
+| commit  | function                          | cc        | cog        | notes |
+|---------|-----------------------------------|-----------|------------|-------|
+| `b522d88` | `emit_stmt`                     | 39→17     | 59→1       | pure dispatcher |
+| `55f0f1a` | `emit_expr_inline`              | 31→13     | 27→1       | pure dispatcher |
+| `a6b08a0` | `lower_ir_redirect_expr`        | 16→5      | 27→1       | pure dispatcher + DRY |
+| `d06c3dc` | `scan_brace_expansion`          | 18→11     | 26→8       | DRY (reused skip_balanced_*) |
+| `31e6a18` | `handle_pipe_while_or_mapfile`  | 8→2       | 25→2       | extracted nested loop |
+| `ea7490b` | `handle_function_call_or_command` | 16→2    | 23→1       | 9 helpers, all ≤ cog 3 |
+| `85cf6d9` | `lower_redirected_stmt`         | 15→7      | 23→9       | predicate + 3 helpers |
+| `18d45aa` | `emit_manifest`                 | 9→2       | 23→1       | extracted builtin set |
+| `cfdfcf9` | `emit_redirected`               | 17→2      | 22→2       | 11 helpers |
+| `cd567e8` | `lower_declaration_stmt`        | 13→4      | 22→1       | one-decl orchestrator |
+| `e59b55c` | `tokenize_arith`                | 12→4      | 22→5       | next-token + op-cascade |
+| `d458215` | `lower_expr_value_as_int`       | 10→4      | 22→1       | atoi_call helper |
+| `8984a86` | `parse_command_substitution`    | 16→12     | 21→9       | CmdSubStep enum |
+| `79f6bb7` | `taint_command`                 | 13→5      | 21→4       | read/bless extracted |
+| `3dc78a2` | `check_subscript_types`         | 13→6      | 21→3       | key-kind extracted |
+| `6673167` | `handle_cd`                     | 10→1      | 20→0       | bug fix — pre-DD#53 cruft (journal 109) |
+
 ## The rubric (verbatim from journal 108)
 
 ```
@@ -30,11 +55,12 @@ reject if (cog - cc > -15)                     -- not a pure dispatcher
        AND (cc > 3×mean OR cog > 3×mean)       -- AND high on either axis
 ```
 
-Means are recalculated per `indexnudge --freshen`. Current (2026-06-07):
+Means are recalculated per `indexnudge --freshen`. Current (2026-06-07,
+after the wave):
 
 ```
-mean cc = 5.50, threshold = 16.49
-mean cog = 3.82, threshold = 11.46
+mean cc = 5.11, threshold = 15.33
+mean cog = 3.28, threshold =  9.84
 ```
 
 Pre-existing violators are grandfathered. The gate triggers only
@@ -42,29 +68,12 @@ when a commit's staged hunks intersect a violator's line range —
 the function must be brought into compliance before the touching
 commit lands.
 
-## Current cohort (2026-06-07)
+## Current cohort (post-wave, 2026-06-07)
 
-15 grandfathered violators across the codebase. Top by axis ratio:
+15 remaining violators. Refresh with the query below; the live list
+keeps moving as the threshold tightens.
 
-| function                            | file                                    | cc | cog | delta |
-|-------------------------------------|-----------------------------------------|----|-----|-------|
-| `emit_stmt`                         | `sash/src/emit_janet.rs`                | 39 |  59 |   20  |
-| `emit_expr_inline`                  | `sash/src/emit_janet.rs`                | 31 |  27 |   -4  |
-| `lower_ir_redirect_expr`            | `sash/src/codegen/redirects.rs`         | 16 |  27 |   11  |
-| `scan_brace_expansion`              | `sash/src/parse/lexer.rs`               | 18 |  26 |    8  |
-| `handle_pipe_while_or_mapfile`      | `sash/src/transform/stmt_handlers.rs`   |  8 |  25 |   17  |
-| `handle_function_call_or_command`   | `sash/src/transform/cmd_handlers.rs`    | 16 |  23 |    7  |
-| `lower_redirected_stmt`             | `sash/src/transform/statements.rs`      | 15 |  23 |    8  |
-| `emit_manifest`                     | `sash/src/lib.rs`                       |  9 |  23 |   14  |
-| `emit_redirected`                   | `sash/src/emit_janet.rs`                | 17 |  22 |    5  |
-| `lower_declaration_stmt`            | `sash/src/transform/statements.rs`      | 13 |  22 |    9  |
-| `tokenize_arith`                    | `sash/src/parse/arith.rs`               | 12 |  22 |   10  |
-| `lower_expr_value_as_int`           | `sash/src/codegen/values.rs`            | 10 |  22 |   12  |
-| `parse_command_substitution`        | `sash/src/parse/expr.rs`                | 16 |  21 |    5  |
-| `taint_command`                     | `sash/src/validate.rs`                  | 13 |  21 |    8  |
-| `check_subscript_types`             | `sash/src/type_check.rs`                | 13 |  21 |    8  |
-
-Refresh this list periodically:
+Refresh:
 
 ```bash
 sqlite3 .indexnudge-rust.db "
@@ -103,13 +112,11 @@ shrinks → eligible for the rubric).
 The gate is currently 3× mean. As the grandfathered cohort clears,
 tighten:
 
-1. **3× mean (now).** ~15 violators grandfathered. Each touch in
+1. **3× mean (now).** Cohort cleared from 15 → 15 (ratchet kept
+   surfacing new entries as means dropped). Each touch in
    `sash/src/` triggers refactor.
 2. **2× mean.** Once cohort clears to ~5 or fewer violators.
-   Currently 2× would be cc > 11, cog > 7.6 — would re-catch
-   dozens of moderate functions.
-3. **1.5× mean.** Stretch goal. Currently cc > 8.25, cog > 5.7 —
-   essentially the population mean + halo.
+3. **1.5× mean.** Stretch goal.
 
 Tightening doesn't re-grandfather; pre-existing functions above the
 new threshold become new cohort members.
@@ -121,16 +128,23 @@ new threshold become new cohort members.
   Sort cohort by cog/mean_cog ratio.
 - **Touch-driven, not campaign-driven.** Don't preemptively refactor
   a grandfathered function. Wait for a real reason to edit it; the
-  gate forces the refactor at that point.
+  gate forces the refactor at that point. (The 2026-06-07 wave was
+  one such reason: a deliberate batch session to drain the cohort.)
 - **Pure dispatchers stay.** The delta filter exists exactly to
   preserve them.
 - **One refactor per commit.** Same convention as
   r47-reduce-parser-complexity-hotspots — each violator clears in its
   own commit with all gates green.
+- **Watch for buried bugs.** The handle_cd refactor uncovered ~140
+  lines of pre-DD#53 dead code in a single function. Any refactor
+  where the function is significantly more complex than the DD
+  surface area requires is a candidate for "this might be cruft" —
+  ask DG before just decomposing.
 
 ## References
 
 - [journal 108](../journal/108-cog-cc-rubric.md) — rubric derivation
+- [journal 109](../journal/109-pre-dd53-cruft-in-handle-cd.md) — handle_cd cruft
 - Commit `c51e296` — gate enforcement
 - [r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots)
   — closed predecessor (named hotspots, parser-side)
@@ -138,3 +152,4 @@ new threshold become new cohort members.
   superseded predecessor (numeric floor approach)
 - `.githooks/pre-commit` — gate implementation
 - `extract-instctx-setup` — specific cohort target also tracked separately
+- `tilde-vs-dd53` — companion bug, similar pre-DD#53 cruft

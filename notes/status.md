@@ -12,12 +12,32 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
-### Session 2026-06-07 — task hygiene sweep + post-emit_c state
+### Session 2026-06-07 — task hygiene sweep + cohort wave + DD#53 cruft
 
 Swept 14 non-done tasks; 6 closed (5 done, 1 done-via-supersede), 1
-redirected (monitoring-rules → skill-not-paragraph), 7 legitimately
-open + 1 new (cohort-complexity tracking task). Final open count: 9
-(1 active, 3 ready, 3 pending, 1 deferred, 1 todo).
+redirected (monitoring-rules → skill-not-paragraph). Filed
+cohort-complexity-cog-cc as the standing home for the ongoing
+refactor work.
+
+**Cohort wave: 16 commits, 16 violators cleared.** Live cog ceiling
+fell from 59 (`emit_stmt`) to 20. Mean cog 3.82 → 3.28, so the
+3× threshold ratcheted from 11.46 → 9.84 — gate tightened
+automatically. emit_stmt, emit_expr_inline, lower_ir_redirect_expr,
+scan_brace_expansion, handle_pipe_while_or_mapfile,
+handle_function_call_or_command, lower_redirected_stmt, emit_manifest,
+emit_redirected, lower_declaration_stmt, tokenize_arith,
+lower_expr_value_as_int, parse_command_substitution, taint_command,
+check_subscript_types, handle_cd.
+
+**Pre-DD#53 cruft discovered in handle_cd.** While refactoring,
+DG flagged that `cd -`, `cd HOME`, and `PWD`/`OLDPWD` autoupdate
+violate DD#53 (env isolation). All three were silently active dead
+code. handle_cd reduced to chdir + \$? only. See journal 109. A
+companion task (tilde-vs-dd53) tracks the same problem in tilde
+expansion, which the parser lowers to bare \$HOME and the validator
+rejects with a misleading SB5018.
+
+Open task count: 10 (1 active, 4 ready, 3 pending, 1 deferred, 1 todo).
 
 ### Recently landed (last ~2 weeks)
 
