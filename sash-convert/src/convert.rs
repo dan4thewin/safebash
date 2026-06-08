@@ -19,6 +19,25 @@ struct Patch {
     original: Option<String>,
 }
 
+impl Patch {
+    /// Replace `node`'s source span with `replacement`. `original` is
+    /// captured for --annotate; pass None when the original isn't
+    /// already in hand.
+    fn replace_node(
+        node: tree_sitter::Node,
+        replacement: String,
+        original: Option<String>,
+    ) -> Self {
+        Patch {
+            start: node.start_byte(),
+            end: node.end_byte(),
+            replacement,
+            prefix_line: None,
+            original,
+        }
+    }
+}
+
 pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> String {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -234,13 +253,7 @@ fn convert_declaration(
     let original = node_text(node, source).to_string();
 
     if replacement != original {
-        patches.push(Patch {
-            start: node.start_byte(),
-            end: node.end_byte(),
-            replacement,
-            prefix_line: None,
-            original: Some(original),
-        });
+        patches.push(Patch::replace_node(node, replacement, Some(original)));
     }
 }
 
@@ -254,13 +267,7 @@ fn convert_unset_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
             let var_name = node_text(child, source);
             let original = node_text(node, source).to_string();
             let replacement = format!("{}=\"\"", var_name);
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement,
-                prefix_line: None,
-                original: Some(original),
-            });
+            patches.push(Patch::replace_node(node, replacement, Some(original)));
             break;
         }
     }
@@ -294,13 +301,7 @@ fn convert_command(
                 }
             }
             let replacement = format!("(( {} ))", exprs.join(", "));
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement,
-                prefix_line: None,
-                original: Some(original),
-            });
+            patches.push(Patch::replace_node(node, replacement, Some(original)));
         }
 
         // MANUAL annotations for unconvertible commands
@@ -365,13 +366,7 @@ fn convert_command(
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} IGN", n)))
                         .collect();
                     if !lines.is_empty() {
-                        patches.push(Patch {
-                            start: node.start_byte(),
-                            end: node.end_byte(),
-                            replacement: lines.join("\n"),
-                            prefix_line: None,
-                            original: Some(original),
-                        });
+                        patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
                     }
                 } else if arg_text == "-" {
                     // trap - SIG → signal N DFL
@@ -382,13 +377,7 @@ fn convert_command(
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} DFL", n)))
                         .collect();
                     if !lines.is_empty() {
-                        patches.push(Patch {
-                            start: node.start_byte(),
-                            end: node.end_byte(),
-                            replacement: lines.join("\n"),
-                            prefix_line: None,
-                            original: Some(original),
-                        });
+                        patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
                     }
                 } else if arg_text == ":" {
                     // trap : SIG → signal N FLAG
@@ -399,13 +388,7 @@ fn convert_command(
                         .filter_map(|s| sig_to_num(s).map(|n| format!("signal {} FLAG", n)))
                         .collect();
                     if !lines.is_empty() {
-                        patches.push(Patch {
-                            start: node.start_byte(),
-                            end: node.end_byte(),
-                            replacement: lines.join("\n"),
-                            prefix_line: None,
-                            original: Some(original),
-                        });
+                        patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
                     }
                 } else {
                     // trap 'handler' SIG → MANUAL
@@ -476,13 +459,11 @@ fn convert_test_command(
         let inner = text[start_trim..text.len() - end_trim].trim();
         match try_numeric_comparison(inner) {
             NumericResult::Converted(replacement) => {
-                patches.push(Patch {
-                    start: node.start_byte(),
-                    end: node.end_byte(),
+                patches.push(Patch::replace_node(
+                    node,
                     replacement,
-                    prefix_line: None,
-                    original: Some(text.to_string()),
-                });
+                    Some(text.to_string()),
+                ));
                 return;
             }
             NumericResult::TooComplex => {
@@ -504,13 +485,11 @@ fn convert_test_command(
         // to produce idiomatic [[ ]] syntax.
         let inner = strip_unnecessary_quotes(inner);
         let replacement = format!("[[ {} ]]", inner);
-        patches.push(Patch {
-            start: node.start_byte(),
-            end: node.end_byte(),
+        patches.push(Patch::replace_node(
+            node,
             replacement,
-            prefix_line: None,
-            original: Some(text.to_string()),
-        });
+            Some(text.to_string()),
+        ));
     }
 
     // Fix regex patterns: convert POSIX [-...] and [...-] to Plan 9 [\-...]
@@ -521,13 +500,7 @@ fn convert_test_command(
             let fixed = fix_regex_dashes(pattern);
             if fixed != pattern {
                 let full = format!("[[ {} =~ {} ]]", &inner[..re_start], fixed);
-                patches.push(Patch {
-                    start: node.start_byte(),
-                    end: node.end_byte(),
-                    replacement: full,
-                    prefix_line: None,
-                    original: Some(text.to_string()),
-                });
+                patches.push(Patch::replace_node(node, full, Some(text.to_string())));
             }
         }
     }
@@ -653,13 +626,7 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                 // Check if it's a numeric positional parameter
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     let replacement = format!("$(argv {})", name);
-                    patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        replacement,
-                        prefix_line: None,
-                        original: None,
-                    });
+                    patches.push(Patch::replace_node(node, replacement, None));
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
                     // Known env var: $HOME → $(getenv HOME) + bless
                     let var = name.to_lowercase();
@@ -686,13 +653,7 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                     _ => None,
                 };
                 if let Some(replacement) = replacement {
-                    patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
-                        replacement,
-                        prefix_line: None,
-                        original: None,
-                    });
+                    patches.push(Patch::replace_node(node, replacement, None));
                 }
             }
             _ => {}
@@ -712,33 +673,19 @@ fn convert_expansion(
     if text.starts_with("${") && text.ends_with('}') {
         let inner = &text[2..text.len() - 1];
         if inner.chars().all(|c| c.is_ascii_digit()) {
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement: format!("$(argv {})", inner),
-                prefix_line: None,
-                original: None,
-            });
+            patches.push(Patch::replace_node(
+                node,
+                format!("$(argv {})", inner),
+                None,
+            ));
             return;
         }
         if inner == "@" || inner == "*" {
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement: "$(argv @)".to_string(),
-                prefix_line: None,
-                original: None,
-            });
+            patches.push(Patch::replace_node(node, "$(argv @)".to_string(), None));
             return;
         }
         if inner == "#" {
-            patches.push(Patch {
-                start: node.start_byte(),
-                end: node.end_byte(),
-                replacement: "$(argc)".to_string(),
-                prefix_line: None,
-                original: None,
-            });
+            patches.push(Patch::replace_node(node, "$(argc)".to_string(), None));
             return;
         }
     }
@@ -755,13 +702,11 @@ fn convert_expansion(
                 && before_dash.chars().all(|c| c.is_alphanumeric() || c == '_')
             {
                 let replacement = format!("${{{}:-{}", before_dash, &text[dash_pos + 1..]);
-                patches.push(Patch {
-                    start: node.start_byte(),
-                    end: node.end_byte(),
+                patches.push(Patch::replace_node(
+                    node,
                     replacement,
-                    prefix_line: None,
-                    original: Some(text.to_string()),
-                });
+                    Some(text.to_string()),
+                ));
             }
         }
     }
