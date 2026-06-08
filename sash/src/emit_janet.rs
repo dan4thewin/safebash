@@ -475,63 +475,73 @@ fn emit_while(out: &mut String, ctx: &mut EmitCtx, w: &While, depth: usize) {
 fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize) {
     if p.commands.len() == 1 {
         emit_stmt(out, ctx, &p.commands[0], depth);
-    } else {
-        // Multi-stage pipeline using os/spawn + pipes
-        indent(out, depth);
-        writeln!(out, "(do").unwrap();
-        for (i, cmd) in p.commands.iter().enumerate() {
-            let cmd_name = match &cmd.kind {
-                StmtKind::Command(c) => expr_to_literal(&c.name),
-                _ => "?".to_string(),
-            };
-            let args = match &cmd.kind {
-                StmtKind::Command(c) => &c.args,
-                _ => continue,
-            };
+        return;
+    }
+    indent(out, depth);
+    writeln!(out, "(do").unwrap();
+    for (i, cmd) in p.commands.iter().enumerate() {
+        emit_pipeline_stage(out, ctx, cmd, i, depth + 1);
+    }
+    emit_pipeline_wait_and_collect(out, p.commands.len(), depth + 1);
+}
 
-            indent(out, depth + 1);
-            let mut parts = vec![format!("\"{}\"", cmd_name)];
-            for arg in args {
-                parts.push(emit_expr_inline(arg, ctx));
-            }
-
-            if i == 0 {
-                writeln!(
-                    out,
-                    "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
-                    i,
-                    parts.join(" ")
-                )
-                .unwrap();
-            } else {
-                writeln!(
-                    out,
-                    "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
-                    i,
-                    parts.join(" "),
-                    i - 1
-                )
-                .unwrap();
-            }
-        }
-        // Wait for upstream processes, then read final output
-        let last = p.commands.len() - 1;
-        for i in 0..last {
-            indent(out, depth + 1);
-            writeln!(out, "(os/proc-wait p{})", i).unwrap();
-        }
-        indent(out, depth + 1);
+/// Emit one `os/spawn` stage. Stage 0 gets its own input; subsequent
+/// stages chain `:in` from the previous stage's `:out` pipe.
+fn emit_pipeline_stage(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    cmd: &Statement,
+    i: usize,
+    depth: usize,
+) {
+    let StmtKind::Command(c) = &cmd.kind else {
+        return;
+    };
+    let cmd_name = expr_to_literal(&c.name);
+    let mut parts = vec![format!("\"{}\"", cmd_name)];
+    for arg in &c.args {
+        parts.push(emit_expr_inline(arg, ctx));
+    }
+    indent(out, depth);
+    if i == 0 {
         writeln!(
             out,
-            "(def result (string/trim (:read (p{} :out) :all)))",
-            last
+            "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
+            i,
+            parts.join(" ")
         )
         .unwrap();
-        indent(out, depth + 1);
-        writeln!(out, "(os/proc-wait p{})", last).unwrap();
-        indent(out, depth + 1);
-        writeln!(out, "(print result))").unwrap();
+    } else {
+        writeln!(
+            out,
+            "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
+            i,
+            parts.join(" "),
+            i - 1
+        )
+        .unwrap();
     }
+}
+
+/// After all stages are spawned, wait for upstream procs, read the last
+/// stage's stdout into `result`, wait for it, and print result.
+fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: usize) {
+    let last = n_commands - 1;
+    for i in 0..last {
+        indent(out, depth);
+        writeln!(out, "(os/proc-wait p{})", i).unwrap();
+    }
+    indent(out, depth);
+    writeln!(
+        out,
+        "(def result (string/trim (:read (p{} :out) :all)))",
+        last
+    )
+    .unwrap();
+    indent(out, depth);
+    writeln!(out, "(os/proc-wait p{})", last).unwrap();
+    indent(out, depth);
+    writeln!(out, "(print result))").unwrap();
 }
 
 fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
