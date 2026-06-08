@@ -655,35 +655,10 @@ impl Scanner {
                     }
                     self.pos += 1;
                 }
-                b'\'' => {
-                    // Skip single-quoted string inside ${...}
-                    self.pos += 1;
-                    while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
-                        self.pos += 1;
-                    }
-                    if self.pos < self.source.len() {
-                        self.pos += 1;
-                    }
-                }
-                b'"' => {
-                    // Skip double-quoted string inside ${...}
-                    self.pos += 1;
-                    while self.pos < self.source.len() && self.source[self.pos] != b'"' {
-                        if self.source[self.pos] == b'\\' {
-                            self.pos += 1;
-                        }
-                        self.pos += 1;
-                    }
-                    if self.pos < self.source.len() {
-                        self.pos += 1;
-                    }
-                }
-                b'\\' => {
-                    self.pos += 2;
-                }
-                _ => {
-                    self.pos += 1;
-                }
+                b'\'' => self.skip_balanced_squote(),
+                b'"' => self.skip_balanced_dquote(),
+                b'\\' => self.pos += 2,
+                _ => self.pos += 1,
             }
         }
         let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
