@@ -473,24 +473,30 @@ fn handle_pipe_while_or_mapfile(
     });
     if is_mapfile {
         block = lower_one(last, ssa, state, block);
-        for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
-            for inst in &mut ssa.block_mut(bid).insts {
-                if let SsaInst::Mapfile { fd, .. } = inst {
-                    if *fd == 0 {
-                        *fd = -1;
-                    }
-                }
-                if let SsaInst::ReadArray { fd, .. } = inst {
-                    if *fd == 0 {
-                        *fd = -1;
-                    }
-                }
-            }
-        }
+        rewrite_lastpipe_consumer_fds(ssa);
     } else {
         block = lower_pipe_while_read(last, ssa, state, block);
     }
     block
+}
+
+/// After lowering a mapfile lastpipe consumer, repoint its read fd
+/// (currently 0 = stdin) to -1 (pipe sentinel) so codegen reads from
+/// the captured pipe fd instead of the inherited stdin.
+fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram) {
+    for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
+        for inst in &mut ssa.block_mut(bid).insts {
+            repoint_stdin_to_pipe_sentinel(inst);
+        }
+    }
+}
+
+fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst) {
+    match inst {
+        SsaInst::Mapfile { fd, .. } if *fd == 0 => *fd = -1,
+        SsaInst::ReadArray { fd, .. } if *fd == 0 => *fd = -1,
+        _ => {}
+    }
 }
 
 /// DD#20: lastpipe — `cmd | read -r var` runs `read` in the main shell.
