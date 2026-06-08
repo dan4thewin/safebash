@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::arithmetic::emit_arith_op;
-use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
+use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, VarSlot};
 use super::value_handlers::{handle_cmdsub, handle_param_expansion};
 use crate::ir::TestExpr;
 use crate::ssa::*;
@@ -189,13 +189,7 @@ fn lower_subscript(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     // Array/map subscript: look up in table
-    let array_key = format!("{}_0", name);
-    let sv = vars.get(&array_key).unwrap_or_else(|| {
-        vars.keys()
-            .find(|k| k.starts_with(&format!("{}_", name)))
-            .and_then(|k| vars.get(k))
-            .unwrap_or_else(|| panic!("ICE: undefined array in test: {}", name))
-    });
+    let sv = find_array_slot(vars, name, "array in test");
     let table_ptr = builder.use_var(sv.str_ptr());
 
     // Determine key type: if index is a non-numeric literal, use string key
@@ -504,13 +498,7 @@ fn lookup_array_table(
     vars: &HashMap<String, VarSlot>,
     builder: &mut FunctionBuilder,
 ) -> cranelift_codegen::ir::Value {
-    let array_key = format!("{}_0", array);
-    let sv = vars.get(&array_key).unwrap_or_else(|| {
-        vars.keys()
-            .find(|k| k.starts_with(&format!("{}_", array)))
-            .and_then(|k| vars.get(k))
-            .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-    });
+    let sv = find_array_slot(vars, array, "array");
     builder.use_var(sv.str_ptr())
 }
 

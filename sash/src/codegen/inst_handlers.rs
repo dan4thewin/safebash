@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore, ir_expr_to_ssa_value};
-use super::types::{emit_int_to_str, InstCtx};
+use super::types::{emit_int_to_str, find_array_slot, InstCtx};
 use super::values::{atoi_call, emit_strlen, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
@@ -937,13 +937,7 @@ pub(super) fn handle_subscript_assign(
     let exit_status_var = ctx.exit_status_var;
     let func_constants = ctx.func_constants;
 
-    let array_key = format!("{}_0", array);
-    let sv = vars.get(&array_key).unwrap_or_else(|| {
-        vars.keys()
-            .find(|k| k.starts_with(&format!("{}_", array)))
-            .and_then(|k| vars.get(k))
-            .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-    });
+    let sv = find_array_slot(vars, array, "array");
     let table_ptr = builder.use_var(sv.str_ptr());
 
     let (key_ptr, key_len) = if *is_integer_key {

@@ -206,6 +206,28 @@ pub(super) fn find_var_key(
     best_key.cloned()
 }
 
+/// Look up an array/map slot by base name. Tables live in `_0` slots
+/// (they're mutated in place, not re-versioned like scalars in SSA);
+/// the fallback to any matching `<name>_*` key is defensive.
+///
+/// Panics with an ICE message including `context` (e.g. `"array"` or
+/// `"array in test"`) when the array is undefined.
+pub(super) fn find_array_slot<'a>(
+    vars: &'a std::collections::HashMap<String, VarSlot>,
+    name: &str,
+    context: &str,
+) -> &'a VarSlot {
+    let primary = format!("{}_0", name);
+    if let Some(sv) = vars.get(&primary) {
+        return sv;
+    }
+    let prefix = format!("{}_", name);
+    vars.keys()
+        .find(|k| k.starts_with(&prefix))
+        .and_then(|k| vars.get(k))
+        .unwrap_or_else(|| panic!("ICE: undefined {}: {}", context, name))
+}
+
 /// Lower a 64-bit integer Value into a (ptr, len) string pair via `sash_itoa`.
 ///
 /// Every site that needs to produce a string representation of an integer

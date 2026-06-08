@@ -14,7 +14,7 @@ use cranelift_object::ObjectModule;
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore};
 use super::tests::lower_test_expr;
-use super::types::{emit_int_to_str, ExternFuncs, InstCtx, VarSlot};
+use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
@@ -686,13 +686,7 @@ impl SsaInst {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         let func_constants = ctx.func_constants;
-        let array_key = format!("{}_0", array);
-        let sv = vars.get(&array_key).unwrap_or_else(|| {
-            vars.keys()
-                .find(|k| k.starts_with(&format!("{}_", array)))
-                .and_then(|k| vars.get(k))
-                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-        });
+        let sv = find_array_slot(vars, array, "array");
         let table_ptr = builder.use_var(sv.str_ptr());
 
         // Get current length as the next integer key
@@ -1010,13 +1004,7 @@ impl SsaInst {
         let externs = ctx.externs;
         let pipe_read_fd_var = ctx.pipe_read_fd_var;
         // Slurp all input from fd, then split by delimiter into indexed array
-        let array_key = format!("{}_0", array);
-        let sv = vars.get(&array_key).unwrap_or_else(|| {
-            vars.keys()
-                .find(|k| k.starts_with(&format!("{}_", array)))
-                .and_then(|k| vars.get(k))
-                .unwrap_or_else(|| panic!("ICE: undefined array: {}", array))
-        });
+        let sv = find_array_slot(vars, array, "array");
         let table_ptr = builder.use_var(sv.str_ptr());
 
         let fd_val = if *fd == -1 {
