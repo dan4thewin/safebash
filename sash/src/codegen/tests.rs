@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{lower_expr_value, lower_expr_value_as_int};
+use super::values::{atoi_call, lower_expr_value, lower_expr_value_as_int};
 use crate::ir::TestExpr;
 
 pub(super) fn emit_string_eq(
@@ -253,9 +253,7 @@ fn emit_isatty_test(
     ptr: cranelift_codegen::ir::Value,
     len: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-    let fd_val = builder.inst_results(call)[0];
+    let fd_val = atoi_call(builder, module, externs, ptr, len);
     let isatty_ref = module.declare_func_in_func(externs.isatty, builder.func);
     let call2 = builder.ins().call(isatty_ref, &[fd_val]);
     builder.inst_results(call2)[0]

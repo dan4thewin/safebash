@@ -263,7 +263,9 @@ fn lower_int_simple_expansion(
     if sv.is_int() {
         builder.use_var(*sv.as_int())
     } else {
-        atoi_call(builder, module, externs, sv.str_ptr(), sv.str_len())
+        let ptr = builder.use_var(sv.str_ptr());
+        let len = builder.use_var(sv.str_len());
+        atoi_call(builder, module, externs, ptr, len)
     }
 }
 
@@ -281,9 +283,7 @@ fn lower_int_fallback(
         }
     }
     let (ptr, len) = lower_expr_value(expr, builder, module, vars, literals, externs, None);
-    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-    builder.inst_results(call)[0]
+    atoi_call(builder, module, externs, ptr, len)
 }
 
 /// `${#arr[@]}` lowered to a direct table-length call instead of
@@ -307,15 +307,15 @@ fn try_lower_int_arrlen(
     Some(builder.inst_results(call)[0])
 }
 
-fn atoi_call(
+/// Call `sash_atoi(ptr, len) -> i64`. Used wherever a string slice needs
+/// to be coerced to an integer at codegen time.
+pub(super) fn atoi_call(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     externs: &ExternFuncs,
-    str_ptr_var: cranelift_frontend::Variable,
-    str_len_var: cranelift_frontend::Variable,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let ptr = builder.use_var(str_ptr_var);
-    let len = builder.use_var(str_len_var);
     let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
     let call = builder.ins().call(atoi_ref, &[ptr, len]);
     builder.inst_results(call)[0]

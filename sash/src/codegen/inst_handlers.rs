@@ -13,7 +13,7 @@ use cranelift_object::ObjectModule;
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore, ir_expr_to_ssa_value};
 use super::types::{emit_int_to_str, InstCtx};
-use super::values::{emit_strlen, lower_value, lower_value_as_int};
+use super::values::{atoi_call, emit_strlen, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
 /// Handle SsaInst::Pipeline — fork/exec multiple stages connected by pipes.
@@ -449,94 +449,116 @@ pub(super) fn handle_assign(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    let vars = &mut *ctx.vars;
-    let literals = ctx.literals;
-    let externs = ctx.externs;
-    let exit_status_var = ctx.exit_status_var;
-    let func_constants = ctx.func_constants;
-
-    // DD#30: unset on collection → new empty table
-    if let SsaValue::Literal(s) = value {
-        if s == "__new_table__" {
-            let sv = vars[&target.display()];
-            let cap = builder.ins().iconst(I64, 0);
-            let new_ref = module.declare_func_in_func(externs.table_new, builder.func);
-            let call = builder.ins().call(new_ref, &[cap]);
-            let tbl_ptr = builder.inst_results(call)[0];
-            builder.def_var(sv.str_ptr(), tbl_ptr);
-            let zero_len = builder.ins().iconst(I64, 0);
-            builder.def_var(sv.str_len(), zero_len);
-            return false;
-        }
+    if is_new_table_sentinel(value) {
+        handle_new_table_assign(target, builder, module, ctx);
+        return false;
     }
-    // Special: assignment to $? updates the exit_status_var directly
-    let base = {
-        let d = target.display();
-        if let Some(idx) = d.rfind('_') {
-            let suffix = &d[idx + 1..];
-            if suffix.chars().all(|c| c.is_ascii_digit()) {
-                d[..idx].to_string()
-            } else {
-                d.to_string()
-            }
-        } else {
-            d.to_string()
-        }
-    };
+    let base = base_var_name(&target.display());
     if base == "?" {
-        // Parse the literal value as an integer for exit_status_var
-        let int_val = match value {
-            SsaValue::Literal(s) => {
-                let n = s.parse::<i64>().unwrap_or(0);
-                builder.ins().iconst(I64, n)
-            }
-            _ => {
-                let (ptr, len) = lower_value(
-                    value,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    Some(exit_status_var),
-                );
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                builder.inst_results(call)[0]
-            }
-        };
-        builder.def_var(exit_status_var, int_val);
+        handle_exit_status_assign(value, builder, module, ctx);
     } else {
-        let sv = vars[&target.display()];
-        if sv.is_int() {
-            // Int var: evaluate value as i64 and store directly
-            let int_val = lower_value_as_int(
-                value,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-            );
-            builder.def_var(*sv.as_int(), int_val);
-        } else {
-            let (ptr_val, len_val) = lower_value(
-                value,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                Some(exit_status_var),
-            );
-            builder.def_var(sv.str_ptr(), ptr_val);
-            builder.def_var(sv.str_len(), len_val);
-        }
+        handle_regular_assign(target, value, builder, module, ctx);
     }
     false
+}
+
+/// DD#30: `unset arr` lowers to `arr = "__new_table__"`, which means
+/// 'allocate a fresh empty table and put it in this slot'.
+fn is_new_table_sentinel(value: &SsaValue) -> bool {
+    matches!(value, SsaValue::Literal(s) if s == "__new_table__")
+}
+
+fn handle_new_table_assign(
+    target: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let sv = ctx.vars[&target.display()];
+    let cap = builder.ins().iconst(I64, 0);
+    let new_ref = module.declare_func_in_func(ctx.externs.table_new, builder.func);
+    let call = builder.ins().call(new_ref, &[cap]);
+    let tbl_ptr = builder.inst_results(call)[0];
+    builder.def_var(sv.str_ptr(), tbl_ptr);
+    let zero_len = builder.ins().iconst(I64, 0);
+    builder.def_var(sv.str_len(), zero_len);
+}
+
+/// Strip the SSA version suffix from a key. Keys are `name` (v0) or
+/// `name_N` (vN where N is all-ASCII-digits).
+fn base_var_name(key: &str) -> String {
+    if let Some(idx) = key.rfind('_') {
+        let suffix = &key[idx + 1..];
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return key[..idx].to_string();
+        }
+    }
+    key.to_string()
+}
+
+/// Assignment to `$?` — the value goes into the dedicated
+/// exit_status_var (an i64), not into a regular var slot.
+fn handle_exit_status_assign(
+    value: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let int_val = match value {
+        SsaValue::Literal(s) => {
+            let n = s.parse::<i64>().unwrap_or(0);
+            builder.ins().iconst(I64, n)
+        }
+        _ => {
+            let (ptr, len) = lower_value(
+                value,
+                builder,
+                module,
+                ctx.vars,
+                ctx.literals,
+                ctx.func_constants,
+                ctx.externs,
+                Some(ctx.exit_status_var),
+            );
+            atoi_call(builder, module, ctx.externs, ptr, len)
+        }
+    };
+    builder.def_var(ctx.exit_status_var, int_val);
+}
+
+fn handle_regular_assign(
+    target: &VarRef,
+    value: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let sv = ctx.vars[&target.display()];
+    if sv.is_int() {
+        let int_val = lower_value_as_int(
+            value,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.func_constants,
+            ctx.externs,
+        );
+        builder.def_var(*sv.as_int(), int_val);
+    } else {
+        let (ptr_val, len_val) = lower_value(
+            value,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.func_constants,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        builder.def_var(sv.str_ptr(), ptr_val);
+        builder.def_var(sv.str_len(), len_val);
+    }
 }
 
 /// Handle general external command — fork, exec, wait.

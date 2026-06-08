@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use super::redirects::emit_redirects;
 use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
-use super::values::lower_value;
+use super::values::{atoi_call, lower_value};
 use crate::ssa::*;
 
 /// Handle SsaValue::ParamExpansion — ${var:op:operand} forms.
@@ -954,9 +954,7 @@ fn try_native_intrinsic(
                 externs,
                 exit_status_var,
             );
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call_atoi = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-            let idx = builder.inst_results(call_atoi)[0];
+            let idx = atoi_call(builder, module, externs, idx_ptr, idx_len);
 
             let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
@@ -981,9 +979,7 @@ fn try_native_intrinsic(
                 externs,
                 exit_status_var,
             );
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
-            let digits = builder.inst_results(call_atoi)[0];
+            let digits = atoi_call(builder, module, externs, digits_ptr, digits_len);
 
             let (str_ptr, str_len) = lower_value(
                 &argv_values[2],
@@ -1011,9 +1007,7 @@ fn try_native_intrinsic(
                 externs,
                 exit_status_var,
             );
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call_atoi = builder.ins().call(atoi_ref, &[digits_ptr, digits_len]);
-            let digits = builder.inst_results(call_atoi)[0];
+            let digits = atoi_call(builder, module, externs, digits_ptr, digits_len);
 
             let (val_ptr, val_len) = lower_value(
                 &argv_values[2],
@@ -1025,8 +1019,7 @@ fn try_native_intrinsic(
                 externs,
                 exit_status_var,
             );
-            let call_val = builder.ins().call(atoi_ref, &[val_ptr, val_len]);
-            let value = builder.inst_results(call_val)[0];
+            let value = atoi_call(builder, module, externs, val_ptr, val_len);
 
             let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
                 StackSlotKind::ExplicitSlot,
