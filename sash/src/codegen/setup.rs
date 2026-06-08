@@ -934,56 +934,57 @@ impl<'a> Interner<'a> {
 
     fn intern_inst(&mut self, inst: &SsaInst) {
         match inst {
-            SsaInst::Assign { value, .. } => {
-                self.intern_value(value);
-            }
+            SsaInst::Assign { value, .. } => self.intern_value(value),
             SsaInst::Command {
                 name,
                 args,
                 redirects,
                 ..
-            } => {
-                if name != "[[" {
-                    self.intern(name);
-                }
-                for a in args {
-                    self.intern_value(a);
-                }
-                for r in redirects {
-                    self.intern_ir_expr(&r.target);
-                }
-            }
-            SsaInst::Test(test_expr) => {
-                self.intern_test_expr(test_expr);
-            }
+            } => self.intern_command_parts(name, args, redirects, true),
+            SsaInst::Test(test_expr) => self.intern_test_expr(test_expr),
             SsaInst::Pipeline { stages, .. } => {
                 for (name, args, redirects) in stages {
-                    self.intern(name);
-                    for a in args {
-                        self.intern_value(a);
-                    }
-                    for r in redirects {
-                        self.intern_ir_expr(&r.target);
-                    }
+                    self.intern_command_parts(name, args, redirects, false);
                 }
             }
             SsaInst::SubscriptAssign { index, value, .. } => {
                 self.intern_value(index);
                 self.intern_value(value);
             }
-            SsaInst::ArrayAppend { value, .. } => {
-                self.intern_value(value);
-            }
+            SsaInst::ArrayAppend { value, .. } => self.intern_value(value),
             SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
-                for r in redirects {
-                    self.intern_ir_expr(&r.target);
-                }
+                self.intern_redirect_targets(redirects);
             }
             SsaInst::Bless { test, .. } => {
                 self.intern_test_expr(test);
                 self.intern("bless: validation failed\n");
             }
             _ => {}
+        }
+    }
+
+    /// Intern the name + each arg + each redirect target for a Command
+    /// or one stage of a Pipeline. Skip the bare-`[[` command name (it's
+    /// a sigil, not an executable path needing string interning).
+    fn intern_command_parts(
+        &mut self,
+        name: &str,
+        args: &[SsaValue],
+        redirects: &[crate::ir::Redirect],
+        skip_dbl_bracket: bool,
+    ) {
+        if !(skip_dbl_bracket && name == "[[") {
+            self.intern(name);
+        }
+        for a in args {
+            self.intern_value(a);
+        }
+        self.intern_redirect_targets(redirects);
+    }
+
+    fn intern_redirect_targets(&mut self, redirects: &[crate::ir::Redirect]) {
+        for r in redirects {
+            self.intern_ir_expr(&r.target);
         }
     }
 
