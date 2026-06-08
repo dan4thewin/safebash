@@ -958,91 +958,107 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
 fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => format!("\"{}\"", s),
-        ExprKind::SimpleExpansion(var) => {
-            if ctx.is_declared(var) {
-                var.clone()
-            } else if var == "#" {
-                "(string (length _args))".to_string()
-            } else if var == "@" {
-                "(string/join _args \" \")".to_string()
-            } else if let Ok(n) = var.parse::<u32>() {
-                let idx = n.saturating_sub(1) as usize;
-                format!("(or (get _args {}) \"\")", idx)
-            } else if var == "?" {
-                "(string __last_exit)".to_string()
-            } else {
-                format!("(or (os/getenv \"{}\") \"\")", var)
-            }
-        }
+        ExprKind::SimpleExpansion(var) => emit_expr_simple_expansion(var, ctx),
         ExprKind::SingleQuoted(s) => format!("\"{}\"", s),
-        ExprKind::DoubleQuoted(parts) => {
-            if parts.is_empty() {
-                "\"\"".to_string()
-            } else if parts.len() == 1 {
-                emit_expr_inline(&parts[0], ctx)
-            } else {
-                let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
-                format!("(string {})", ps.join(" "))
-            }
-        }
+        ExprKind::DoubleQuoted(parts) => emit_expr_double_quoted(parts, ctx),
         ExprKind::ParameterExpansion(pe) => emit_param_expansion_inline(pe, ctx),
-        ExprKind::CommandSubstitution(stmts) => {
-            // $(cmd) → capture stdout
-            if let Some(stmt) = stmts.first() {
-                let inner = match &stmt.kind {
-                    StmtKind::Redirected(r) => &r.body.kind,
-                    other => other,
-                };
-                if let StmtKind::Command(c) = inner {
-                    let name = expr_to_literal(&c.name);
-                    let mut parts = vec![format!("\"{}\"", name)];
-                    for arg in &c.args {
-                        parts.push(emit_expr_inline(arg, ctx));
-                    }
-                    return format!(
-                        "(string/trim (with [f (os/spawn [{}] :p {{:out :pipe}})] (:read (f :out) :all)))",
-                        parts.join(" ")
-                    );
-                }
-            }
-            "\"\"".to_string()
-        }
-        ExprKind::Arithmetic(a) => {
-            format!("(string ({}))", arith_expr_to_janet(a))
-        }
-        ExprKind::Concat(parts) => {
-            let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
-            format!("(string {})", ps.join(" "))
-        }
-        ExprKind::Array(elems) => {
-            let es: Vec<String> = elems.iter().map(|e| emit_expr_inline(e, ctx)).collect();
-            format!("@[{}]", es.join(" "))
-        }
-        ExprKind::AssocArray(pairs) => {
-            let es: Vec<String> = pairs
-                .iter()
-                .map(|(k, v)| format!("{:?} {}", k, emit_expr_inline(v, ctx)))
-                .collect();
-            format!("@{{{}}}", es.join(" "))
-        }
-        ExprKind::Subscript { name, index } => {
-            let idx = emit_expr_inline(index, ctx);
-            // Use numeric index for arrays
-            let idx_str = idx.trim_matches('"');
-            if idx_str.chars().all(|c| c.is_ascii_digit()) {
-                format!("(get {} {})", name, idx_str)
-            } else {
-                format!("(get {} {})", name, idx)
-            }
-        }
-        ExprKind::Test(test) => {
-            let wrapper = Expr {
-                kind: ExprKind::Test(test.clone()),
-                span: expr.span,
-            };
-            emit_test_expr(&wrapper, ctx)
+        ExprKind::CommandSubstitution(stmts) => emit_expr_command_substitution(stmts, ctx),
+        ExprKind::Arithmetic(a) => format!("(string ({}))", arith_expr_to_janet(a)),
+        ExprKind::Concat(parts) => emit_expr_concat(parts, ctx),
+        ExprKind::Array(elems) => emit_expr_array(elems, ctx),
+        ExprKind::AssocArray(pairs) => emit_expr_assoc_array(pairs, ctx),
+        ExprKind::Subscript { name, index } => emit_expr_subscript(name, index, ctx),
+        ExprKind::Test(test) => emit_expr_test(test, expr.span, ctx),
+    }
+}
+
+fn emit_expr_simple_expansion(var: &str, ctx: &EmitCtx) -> String {
+    if ctx.is_declared(var) {
+        var.to_string()
+    } else if var == "#" {
+        "(string (length _args))".to_string()
+    } else if var == "@" {
+        "(string/join _args \" \")".to_string()
+    } else if let Ok(n) = var.parse::<u32>() {
+        let idx = n.saturating_sub(1) as usize;
+        format!("(or (get _args {}) \"\")", idx)
+    } else if var == "?" {
+        "(string __last_exit)".to_string()
+    } else {
+        format!("(or (os/getenv \"{}\") \"\")", var)
+    }
+}
+
+fn emit_expr_double_quoted(parts: &[Expr], ctx: &EmitCtx) -> String {
+    if parts.is_empty() {
+        "\"\"".to_string()
+    } else if parts.len() == 1 {
+        emit_expr_inline(&parts[0], ctx)
+    } else {
+        let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
+        format!("(string {})", ps.join(" "))
+    }
+}
+
+fn emit_expr_command_substitution(stmts: &[Statement], ctx: &EmitCtx) -> String {
+    if let Some(stmt) = stmts.first() {
+        let inner = match &stmt.kind {
+            StmtKind::Redirected(r) => &r.body.kind,
+            other => other,
+        };
+        if let StmtKind::Command(c) = inner {
+            return emit_expr_cmdsub_command(c, ctx);
         }
     }
+    "\"\"".to_string()
+}
+
+fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
+    let name = expr_to_literal(&c.name);
+    let mut parts = vec![format!("\"{}\"", name)];
+    for arg in &c.args {
+        parts.push(emit_expr_inline(arg, ctx));
+    }
+    format!(
+        "(string/trim (with [f (os/spawn [{}] :p {{:out :pipe}})] (:read (f :out) :all)))",
+        parts.join(" ")
+    )
+}
+
+fn emit_expr_concat(parts: &[Expr], ctx: &EmitCtx) -> String {
+    let ps: Vec<String> = parts.iter().map(|p| emit_expr_inline(p, ctx)).collect();
+    format!("(string {})", ps.join(" "))
+}
+
+fn emit_expr_array(elems: &[Expr], ctx: &EmitCtx) -> String {
+    let es: Vec<String> = elems.iter().map(|e| emit_expr_inline(e, ctx)).collect();
+    format!("@[{}]", es.join(" "))
+}
+
+fn emit_expr_assoc_array(pairs: &[(String, Expr)], ctx: &EmitCtx) -> String {
+    let es: Vec<String> = pairs
+        .iter()
+        .map(|(k, v)| format!("{:?} {}", k, emit_expr_inline(v, ctx)))
+        .collect();
+    format!("@{{{}}}", es.join(" "))
+}
+
+fn emit_expr_subscript(name: &str, index: &Expr, ctx: &EmitCtx) -> String {
+    let idx = emit_expr_inline(index, ctx);
+    let idx_str = idx.trim_matches('"');
+    if idx_str.chars().all(|c| c.is_ascii_digit()) {
+        format!("(get {} {})", name, idx_str)
+    } else {
+        format!("(get {} {})", name, idx)
+    }
+}
+
+fn emit_expr_test(test: &TestExpr, span: Span, ctx: &EmitCtx) -> String {
+    let wrapper = Expr {
+        kind: ExprKind::Test(test.clone()),
+        span,
+    };
+    emit_test_expr(&wrapper, ctx)
 }
 
 fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
