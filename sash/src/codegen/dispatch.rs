@@ -14,7 +14,7 @@ use cranelift_object::ObjectModule;
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore};
 use super::tests::lower_test_expr;
-use super::types::{emit_int_to_str, InstCtx, VarSlot};
+use super::types::{emit_int_to_str, ExternFuncs, InstCtx, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
@@ -359,146 +359,16 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        let _test_result_var = ctx.test_result_var;
-        let _redirect_stack = &mut *ctx.redirect_stack;
-        let func_constants = ctx.func_constants;
-        // exec with no args = standalone redirects only (fd manipulation)
         if args.is_empty() {
-            if !redirects.is_empty() {
-                emit_redirects(
-                    redirects,
-                    builder,
-                    module,
-                    externs,
-                    literals,
-                    vars,
-                    Some(exit_status_var),
-                );
-            }
-            let zero = builder.ins().iconst(I64, 0);
-            builder.def_var(exit_status_var, zero);
+            emit_exec_redirects_only(redirects, builder, module, ctx);
+            false
+        } else if has_dollar_at(args) {
+            emit_exec_with_dollar_at(args, builder, module, ctx);
+            true
         } else {
-            // exec cmd args... — replace process (no fork)
-            // Check if any arg is $@ — if so, we need a dynamic-size argv
-            let has_dollar_at = args.iter().any(|a| {
-                if let SsaValue::Var(vref) = a {
-                    vref.name == "@"
-                } else {
-                    false
-                }
-            });
-            if has_dollar_at {
-                // Build prefix array (args before $@) on the stack, null-terminated
-                let prefix_args: Vec<_> = args
-                    .iter()
-                    .filter(|a| {
-                        if let SsaValue::Var(vref) = a {
-                            vref.name != "@"
-                        } else {
-                            true
-                        }
-                    })
-                    .collect();
-                let prefix_size = ((prefix_args.len() + 1) * 8) as u32;
-                let prefix_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    prefix_size,
-                    3,
-                ));
-                for (i, arg_val) in prefix_args.iter().enumerate() {
-                    let (ptr, _len) = lower_value(
-                        arg_val,
-                        builder,
-                        module,
-                        vars,
-                        literals,
-                        func_constants,
-                        externs,
-                        Some(exit_status_var),
-                    );
-                    builder.ins().stack_store(ptr, prefix_slot, (i * 8) as i32);
-                }
-                let null = builder.ins().iconst(I64, 0);
-                builder
-                    .ins()
-                    .stack_store(null, prefix_slot, (prefix_args.len() * 8) as i32);
-                let prefix_addr = builder.ins().stack_addr(I64, prefix_slot, 0);
-                // Load argv and argc
-                let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-                let argv_ptr = builder.ins().global_value(I64, argv_gv);
-                let argv_val = builder.ins().load(I64, MemFlags::new(), argv_ptr, 0);
-                let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-                let argc_ptr = builder.ins().global_value(I64, argc_gv);
-                let argc_val_exec = builder.ins().load(I64, MemFlags::new(), argc_ptr, 0);
-                // Call sash_splice_argv(prefix, argv, argc) -> merged argv
-                let splice_ref = module.declare_func_in_func(externs.splice_argv, builder.func);
-                let call = builder
-                    .ins()
-                    .call(splice_ref, &[prefix_addr, argv_val, argc_val_exec]);
-                let merged_argv = builder.inst_results(call)[0];
-                // Load envp
-                let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
-                let envp_ptr = builder.ins().global_value(I64, envp_gv);
-                let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
-                // exec(merged_argv, envp)
-                let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
-                builder.ins().call(exec_ref, &[merged_argv, envp_val]);
-                let code = builder.ins().iconst(I64, 127);
-                let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-                builder.ins().call(exit_ref, &[code]);
-                builder
-                    .ins()
-                    .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-                return true;
-            }
-            // Static argv path (no $@)
-            let argc = args.len();
-            let argv_size = ((argc + 1) * 8) as u32;
-            let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                argv_size,
-                3,
-            ));
-            for (i, arg_val) in args.iter().enumerate() {
-                let (ptr, _len) = lower_value(
-                    arg_val,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    func_constants,
-                    externs,
-                    Some(exit_status_var),
-                );
-                builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
-            }
-            // Null terminator
-            let null = builder.ins().iconst(I64, 0);
-            builder
-                .ins()
-                .stack_store(null, argv_slot, (argc * 8) as i32);
-            let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
-            // Load envp
-            let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
-            let envp_ptr = builder.ins().global_value(I64, envp_gv);
-            let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
-            // exec(argv, envp) — does not return on success
-            let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
-            builder.ins().call(exec_ref, &[argv_addr, envp_val]);
-            // If exec fails, exit 127
-            let code = builder.ins().iconst(I64, 127);
-            let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-            builder.ins().call(exit_ref, &[code]);
-            builder
-                .ins()
-                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-            return true;
+            emit_exec_static_argv(args, builder, module, ctx);
+            true
         }
-        false
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -1235,4 +1105,138 @@ impl SsaInst {
         }
         false
     }
+}
+
+/// `exec` with no args: standalone fd manipulation. Applies the
+/// redirects in the current process and sets $? = 0.
+fn emit_exec_redirects_only(
+    redirects: &[crate::ir::Redirect],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    if !redirects.is_empty() {
+        emit_redirects(
+            redirects,
+            builder,
+            module,
+            ctx.externs,
+            ctx.literals,
+            ctx.vars,
+            Some(ctx.exit_status_var),
+        );
+    }
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(ctx.exit_status_var, zero);
+}
+
+fn has_dollar_at(args: &[SsaValue]) -> bool {
+    args.iter().any(is_dollar_at)
+}
+
+fn is_dollar_at(v: &SsaValue) -> bool {
+    matches!(v, SsaValue::Var(vref) if vref.name == "@")
+}
+
+/// `exec cmd args... $@ ...` — splice the program argv into the args
+/// vector at runtime via sash_splice_argv.
+fn emit_exec_with_dollar_at(
+    args: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let prefix_args: Vec<&SsaValue> = args.iter().filter(|a| !is_dollar_at(a)).collect();
+    let prefix_addr = build_argv_on_stack(&prefix_args, builder, module, ctx);
+    let merged_argv = splice_in_program_argv(prefix_addr, builder, module, ctx.externs);
+    finalize_exec(merged_argv, builder, module, ctx.externs);
+}
+
+/// `exec cmd args...` (no $@) — build a static argv on the stack and
+/// hand it straight to exec.
+fn emit_exec_static_argv(
+    args: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let arg_refs: Vec<&SsaValue> = args.iter().collect();
+    let argv_addr = build_argv_on_stack(&arg_refs, builder, module, ctx);
+    finalize_exec(argv_addr, builder, module, ctx.externs);
+}
+
+/// Allocate a stack-resident argv (lower each arg, store pointers,
+/// null-terminate) and return its base address.
+fn build_argv_on_stack(
+    args: &[&SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> cranelift_codegen::ir::Value {
+    let argv_size = ((args.len() + 1) * 8) as u32;
+    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        argv_size,
+        3,
+    ));
+    for (i, arg_val) in args.iter().enumerate() {
+        let (ptr, _len) = lower_value(
+            arg_val,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.func_constants,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
+    }
+    let null = builder.ins().iconst(I64, 0);
+    builder
+        .ins()
+        .stack_store(null, argv_slot, (args.len() * 8) as i32);
+    builder.ins().stack_addr(I64, argv_slot, 0)
+}
+
+/// Load the program's argv/argc and call sash_splice_argv to merge
+/// them with the caller's prefix. Returns the merged argv pointer.
+fn splice_in_program_argv(
+    prefix_addr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
+    let argv_ptr = builder.ins().global_value(I64, argv_gv);
+    let argv_val = builder.ins().load(I64, MemFlags::new(), argv_ptr, 0);
+    let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
+    let argc_ptr = builder.ins().global_value(I64, argc_gv);
+    let argc_val = builder.ins().load(I64, MemFlags::new(), argc_ptr, 0);
+    let splice_ref = module.declare_func_in_func(externs.splice_argv, builder.func);
+    let call = builder
+        .ins()
+        .call(splice_ref, &[prefix_addr, argv_val, argc_val]);
+    builder.inst_results(call)[0]
+}
+
+/// Common tail for both exec paths: call exec(argv, envp); if it returns,
+/// exit 127, then trap (exec is no-return on success).
+fn finalize_exec(
+    argv_addr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) {
+    let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
+    let envp_ptr = builder.ins().global_value(I64, envp_gv);
+    let envp_val = builder.ins().load(I64, MemFlags::new(), envp_ptr, 0);
+    let exec_ref = module.declare_func_in_func(externs.exec, builder.func);
+    builder.ins().call(exec_ref, &[argv_addr, envp_val]);
+    let code = builder.ins().iconst(I64, 127);
+    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+    builder.ins().call(exit_ref, &[code]);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
 }
