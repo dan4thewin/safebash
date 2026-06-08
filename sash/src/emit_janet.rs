@@ -168,185 +168,214 @@ fn indent(out: &mut String, depth: usize) {
 
 fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize) {
     match &stmt.kind {
-        StmtKind::Assignment(a) => {
-            indent(out, depth);
-            let val = emit_expr_inline(&a.value, ctx);
-            if ctx.is_declared(&a.name) {
-                writeln!(out, "(set {} {})", a.name, val).unwrap();
-            } else {
-                ctx.declare(&a.name);
-                writeln!(out, "(var {} {})", a.name, val).unwrap();
-            }
-        }
-
-        StmtKind::Declaration(d) => {
-            for a in &d.assignments {
-                indent(out, depth);
-                let val = if d.var_type == VarType::Int {
-                    // Int declarations emit bare numbers
-                    emit_expr_as_int(&a.value, ctx)
-                } else {
-                    emit_expr_inline(&a.value, ctx)
-                };
-                if ctx.is_declared(&a.name) {
-                    writeln!(out, "(set {} {})", a.name, val).unwrap();
-                } else {
-                    if d.var_type == VarType::Int {
-                        ctx.declare_int(&a.name);
-                    } else {
-                        ctx.declare(&a.name);
-                    }
-                    if d.keyword == DeclKeyword::Readonly {
-                        writeln!(out, "(def {} {})", a.name, val).unwrap();
-                    } else {
-                        writeln!(out, "(var {} {})", a.name, val).unwrap();
-                    }
-                }
-                if d.keyword == DeclKeyword::Export {
-                    indent(out, depth);
-                    writeln!(out, "(os/setenv \"{}\" {})", a.name, a.name).unwrap();
-                }
-            }
-        }
-
+        StmtKind::Assignment(a) => emit_assignment(out, ctx, a, depth),
+        StmtKind::Declaration(d) => emit_declaration(out, ctx, d, depth),
         StmtKind::Command(c) => emit_command(out, ctx, c, stmt, depth),
-
         StmtKind::Pipeline(p) => emit_pipeline(out, ctx, p, depth),
-
         StmtKind::If(i) => emit_if(out, ctx, i, depth),
-
         StmtKind::While(w) => emit_while(out, ctx, w, depth),
-
-        StmtKind::For(f) => {
-            indent(out, depth);
-            let words: Vec<String> = f.words.iter().map(|w| emit_expr_inline(w, ctx)).collect();
-            ctx.declare(&f.variable);
-            writeln!(out, "(each {} [{}]", f.variable, words.join(" ")).unwrap();
-            for s in &f.body {
-                emit_stmt(out, ctx, s, depth + 1);
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
-
-        StmtKind::Case(c) => {
-            indent(out, depth);
-            let val = emit_expr_inline(&c.value, ctx);
-            writeln!(out, "(match {}", val).unwrap();
-            for item in &c.items {
-                indent(out, depth + 1);
-                if item.patterns.len() == 1 {
-                    let pat = emit_expr_inline(&item.patterns[0], ctx);
-                    if pat == "\"*\"" {
-                        write!(out, "_ ").unwrap();
-                    } else {
-                        write!(out, "{} ", pat).unwrap();
-                    }
-                } else {
-                    write!(out, "_ ").unwrap();
-                }
-                writeln!(out, "(do").unwrap();
-                for s in &item.body {
-                    emit_stmt(out, ctx, s, depth + 2);
-                }
-                indent(out, depth + 1);
-                writeln!(out, ")").unwrap();
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
-
-        StmtKind::Function(f) => {
-            ctx.define_function(&f.name);
-            if f.return_type == VarType::Int {
-                ctx.int_funcs.insert(f.name.clone());
-            }
-            indent(out, depth);
-            if needs_args_preamble(&f.body) {
-                writeln!(out, "(defn {} [& _args]", f.name).unwrap();
-            } else {
-                writeln!(out, "(defn {} []", f.name).unwrap();
-            }
-            for s in &f.body {
-                emit_stmt(out, ctx, s, depth + 1);
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
-
+        StmtKind::For(f) => emit_for(out, ctx, f, depth),
+        StmtKind::Case(c) => emit_case(out, ctx, c, depth),
+        StmtKind::Function(f) => emit_function_def(out, ctx, f, depth),
         StmtKind::Redirected(r) => emit_redirected(out, ctx, r, depth),
+        StmtKind::List(l) => emit_list(out, ctx, l, depth),
+        StmtKind::Subshell(s) => emit_subshell(out, ctx, s, depth),
+        StmtKind::Group(g) => emit_group(out, ctx, g, depth),
+        StmtKind::Comment(text) => emit_comment(out, text, depth),
+        StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
+        StmtKind::ArithTest(expr) => emit_arith_test(out, expr, depth),
+    }
+}
 
-        StmtKind::List(l) => match l.op {
-            crate::ir::ListOp::And => {
-                indent(out, depth);
-                writeln!(out, "(when (do").unwrap();
-                emit_stmt(out, ctx, &l.left, depth + 1);
-                indent(out, depth);
-                writeln!(out, ")").unwrap();
-                emit_stmt(out, ctx, &l.right, depth + 1);
-                indent(out, depth);
-                writeln!(out, ")").unwrap();
-            }
-            crate::ir::ListOp::Or => {
-                indent(out, depth);
-                writeln!(out, "(when (not (do").unwrap();
-                emit_stmt(out, ctx, &l.left, depth + 1);
-                indent(out, depth);
-                writeln!(out, "))").unwrap();
-                emit_stmt(out, ctx, &l.right, depth + 1);
-                indent(out, depth);
-                writeln!(out, ")").unwrap();
-            }
-            crate::ir::ListOp::Background => {
-                indent(out, depth);
-                writeln!(out, "(ev/spawn (fn []").unwrap();
-                emit_stmt(out, ctx, &l.left, depth + 1);
-                indent(out, depth);
-                writeln!(out, "))").unwrap();
-            }
-        },
+fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: usize) {
+    indent(out, depth);
+    let val = emit_expr_inline(&a.value, ctx);
+    if ctx.is_declared(&a.name) {
+        writeln!(out, "(set {} {})", a.name, val).unwrap();
+    } else {
+        ctx.declare(&a.name);
+        writeln!(out, "(var {} {})", a.name, val).unwrap();
+    }
+}
 
-        StmtKind::Subshell(s) => {
-            indent(out, depth);
-            writeln!(out, "(do").unwrap();
-            for st in &s.body {
-                emit_stmt(out, ctx, st, depth + 1);
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
+fn emit_declaration(out: &mut String, ctx: &mut EmitCtx, d: &Declaration, depth: usize) {
+    for a in &d.assignments {
+        emit_declaration_assignment(out, ctx, d, a, depth);
+    }
+}
 
-        StmtKind::Group(g) => {
-            indent(out, depth);
-            writeln!(out, "(do").unwrap();
-            for st in &g.body {
-                emit_stmt(out, ctx, st, depth + 1);
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
+fn emit_declaration_assignment(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    d: &Declaration,
+    a: &Assignment,
+    depth: usize,
+) {
+    indent(out, depth);
+    let val = if d.var_type == VarType::Int {
+        emit_expr_as_int(&a.value, ctx)
+    } else {
+        emit_expr_inline(&a.value, ctx)
+    };
+    if ctx.is_declared(&a.name) {
+        writeln!(out, "(set {} {})", a.name, val).unwrap();
+    } else {
+        if d.var_type == VarType::Int {
+            ctx.declare_int(&a.name);
+        } else {
+            ctx.declare(&a.name);
         }
-
-        StmtKind::Comment(text) => {
-            indent(out, depth);
-            if text.starts_with("#!") {
-                // Skip shebang
-            } else {
-                writeln!(out, "{}", text).unwrap();
-            }
-        }
-        StmtKind::Suppressed(inner) => {
-            // In Janet, suppression means ignoring the return value
-            indent(out, depth);
-            writeln!(out, "(do").unwrap();
-            emit_stmt(out, ctx, inner, depth + 1);
-            indent(out, depth);
-            writeln!(out, "  nil)").unwrap();
-        }
-        StmtKind::ArithTest(expr) => {
-            indent(out, depth);
-            writeln!(out, "(not= 0 ({}))", arith_expr_to_janet(expr)).unwrap();
+        if d.keyword == DeclKeyword::Readonly {
+            writeln!(out, "(def {} {})", a.name, val).unwrap();
+        } else {
+            writeln!(out, "(var {} {})", a.name, val).unwrap();
         }
     }
+    if d.keyword == DeclKeyword::Export {
+        indent(out, depth);
+        writeln!(out, "(os/setenv \"{}\" {})", a.name, a.name).unwrap();
+    }
+}
+
+fn emit_for(out: &mut String, ctx: &mut EmitCtx, f: &For, depth: usize) {
+    indent(out, depth);
+    let words: Vec<String> = f.words.iter().map(|w| emit_expr_inline(w, ctx)).collect();
+    ctx.declare(&f.variable);
+    writeln!(out, "(each {} [{}]", f.variable, words.join(" ")).unwrap();
+    for s in &f.body {
+        emit_stmt(out, ctx, s, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_case(out: &mut String, ctx: &mut EmitCtx, c: &Case, depth: usize) {
+    indent(out, depth);
+    let val = emit_expr_inline(&c.value, ctx);
+    writeln!(out, "(match {}", val).unwrap();
+    for item in &c.items {
+        emit_case_item(out, ctx, item, depth);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_case_item(out: &mut String, ctx: &mut EmitCtx, item: &crate::ir::CaseItem, depth: usize) {
+    indent(out, depth + 1);
+    if item.patterns.len() == 1 {
+        let pat = emit_expr_inline(&item.patterns[0], ctx);
+        if pat == "\"*\"" {
+            write!(out, "_ ").unwrap();
+        } else {
+            write!(out, "{} ", pat).unwrap();
+        }
+    } else {
+        write!(out, "_ ").unwrap();
+    }
+    writeln!(out, "(do").unwrap();
+    for s in &item.body {
+        emit_stmt(out, ctx, s, depth + 2);
+    }
+    indent(out, depth + 1);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_function_def(out: &mut String, ctx: &mut EmitCtx, f: &Function, depth: usize) {
+    ctx.define_function(&f.name);
+    if f.return_type == VarType::Int {
+        ctx.int_funcs.insert(f.name.clone());
+    }
+    indent(out, depth);
+    if needs_args_preamble(&f.body) {
+        writeln!(out, "(defn {} [& _args]", f.name).unwrap();
+    } else {
+        writeln!(out, "(defn {} []", f.name).unwrap();
+    }
+    for s in &f.body {
+        emit_stmt(out, ctx, s, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_list(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
+    match l.op {
+        crate::ir::ListOp::And => emit_list_and(out, ctx, l, depth),
+        crate::ir::ListOp::Or => emit_list_or(out, ctx, l, depth),
+        crate::ir::ListOp::Background => emit_list_background(out, ctx, l, depth),
+    }
+}
+
+fn emit_list_and(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(when (do").unwrap();
+    emit_stmt(out, ctx, &l.left, depth + 1);
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+    emit_stmt(out, ctx, &l.right, depth + 1);
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_list_or(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(when (not (do").unwrap();
+    emit_stmt(out, ctx, &l.left, depth + 1);
+    indent(out, depth);
+    writeln!(out, "))").unwrap();
+    emit_stmt(out, ctx, &l.right, depth + 1);
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_list_background(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(ev/spawn (fn []").unwrap();
+    emit_stmt(out, ctx, &l.left, depth + 1);
+    indent(out, depth);
+    writeln!(out, "))").unwrap();
+}
+
+fn emit_subshell(out: &mut String, ctx: &mut EmitCtx, s: &Subshell, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(do").unwrap();
+    for st in &s.body {
+        emit_stmt(out, ctx, st, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_group(out: &mut String, ctx: &mut EmitCtx, g: &Group, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(do").unwrap();
+    for st in &g.body {
+        emit_stmt(out, ctx, st, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_comment(out: &mut String, text: &str, depth: usize) {
+    indent(out, depth);
+    if text.starts_with("#!") {
+        // Skip shebang
+    } else {
+        writeln!(out, "{}", text).unwrap();
+    }
+}
+
+fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(do").unwrap();
+    emit_stmt(out, ctx, inner, depth + 1);
+    indent(out, depth);
+    writeln!(out, "  nil)").unwrap();
+}
+
+fn emit_arith_test(out: &mut String, expr: &ArithExpr, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(not= 0 ({}))", arith_expr_to_janet(expr)).unwrap();
 }
 
 fn emit_if(out: &mut String, ctx: &mut EmitCtx, i: &If, depth: usize) {
