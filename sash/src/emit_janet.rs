@@ -709,101 +709,142 @@ fn emit_janet_cat(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 }
 
 fn emit_redirected(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
-    // Check for heredoc/herestring content
-    let has_heredoc = r
-        .redirects
-        .iter()
-        .any(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString));
-    if has_heredoc {
-        // Find the heredoc body
-        let body_text = r
-            .redirects
-            .iter()
-            .filter(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
-            .map(|rd| expr_to_literal(&rd.target))
-            .collect::<Vec<_>>()
-            .join("");
-        // Check if body is "cat" with no args (heredoc-as-string pattern)
-        let is_cat = matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "cat" && c.args.is_empty());
-        if is_cat {
-            // cat <<EOF → just print the body
-            indent(out, depth);
-            // Escape for Janet string literal
-            let escaped = body_text
-                .trim_end_matches('\n')
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n");
-            writeln!(out, "(print \"{}\")", escaped).unwrap();
-        } else if matches!(&r.body.kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read")
-        {
-            // read <<< "string" — herestring
-            if let StmtKind::Command(c) = &r.body.kind {
-                let var_name = c
-                    .args
-                    .iter()
-                    .map(expr_to_literal)
-                    .find(|a| !a.starts_with('-'))
-                    .unwrap_or_else(|| "REPLY".to_string());
-                let val = body_text.trim_end_matches('\n');
-                if !ctx.is_declared(&var_name) {
-                    ctx.declare(&var_name);
-                    indent(out, depth);
-                    writeln!(out, "(var {} \"{}\")", var_name, val).unwrap();
-                } else {
-                    indent(out, depth);
-                    writeln!(out, "(set {} \"{}\")", var_name, val).unwrap();
-                }
-            }
-        } else {
-            // Other command with heredoc — pipe body text to stdin
-            indent(out, depth);
-            let escaped = body_text
-                .replace('\\', "\\\\")
-                .replace('"', "\\\"")
-                .replace('\n', "\\n");
-            writeln!(out, "(do").unwrap();
-            indent(out, depth + 1);
-            writeln!(out, "(def _heredoc_body \"{}\")", escaped).unwrap();
-            // Write body to a temp pipe and redirect
-            let cmd_name = match &r.body.kind {
-                StmtKind::Command(c) => expr_to_literal(&c.name),
-                _ => "?".to_string(),
-            };
-            let args = match &r.body.kind {
-                StmtKind::Command(c) => c
-                    .args
-                    .iter()
-                    .map(|a| emit_expr_inline(a, ctx))
-                    .collect::<Vec<_>>(),
-                _ => vec![],
-            };
-            let mut parts = vec![format!("\"{}\"", cmd_name)];
-            parts.extend(args);
-            indent(out, depth + 1);
-            writeln!(
-                out,
-                "(def p (os/spawn [{}] :p {{:in :pipe}}))",
-                parts.join(" ")
-            )
-            .unwrap();
-            indent(out, depth + 1);
-            writeln!(out, "(:write (p :in) _heredoc_body)").unwrap();
-            indent(out, depth + 1);
-            writeln!(out, "(:close (p :in))").unwrap();
-            indent(out, depth + 1);
-            writeln!(out, "(os/proc-wait p)").unwrap();
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
+    if has_heredoc_redirect(&r.redirects) {
+        let body_text = collect_heredoc_body_text(&r.redirects);
+        emit_redirected_heredoc(out, ctx, &r.body.kind, &body_text, depth);
     } else {
-        // Non-heredoc redirects — emit body, note redirect as comment
-        for rd in &r.redirects {
-            indent(out, depth);
-            writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();
-        }
-        emit_stmt(out, ctx, &r.body, depth);
+        emit_redirected_no_heredoc(out, ctx, r, depth);
     }
+}
+
+fn has_heredoc_redirect(redirects: &[Redirect]) -> bool {
+    redirects
+        .iter()
+        .any(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
+}
+
+fn collect_heredoc_body_text(redirects: &[Redirect]) -> String {
+    redirects
+        .iter()
+        .filter(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
+        .map(|rd| expr_to_literal(&rd.target))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+/// Escape a string for inclusion as a Janet string literal:
+/// backslash → \\, double-quote → \", newline → \n.
+fn escape_for_janet_string(s: &str) -> String {
+    s.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+}
+
+fn is_cat_no_args(kind: &StmtKind) -> bool {
+    matches!(kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "cat" && c.args.is_empty())
+}
+
+fn emit_redirected_heredoc(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    body_kind: &StmtKind,
+    body_text: &str,
+    depth: usize,
+) {
+    if is_cat_no_args(body_kind) {
+        emit_redirected_cat_heredoc(out, body_text, depth);
+        return;
+    }
+    if let StmtKind::Command(c) = body_kind {
+        if expr_to_literal(&c.name) == "read" {
+            emit_redirected_herestring_read(out, ctx, body_text, c, depth);
+            return;
+        }
+    }
+    emit_redirected_generic_heredoc(out, ctx, body_kind, body_text, depth);
+}
+
+/// `cat <<EOF ... EOF` — heredoc-as-string pattern; just print body.
+fn emit_redirected_cat_heredoc(out: &mut String, body_text: &str, depth: usize) {
+    indent(out, depth);
+    let escaped = escape_for_janet_string(body_text.trim_end_matches('\n'));
+    writeln!(out, "(print \"{}\")", escaped).unwrap();
+}
+
+/// `read <<< "string"` — herestring assigns trimmed body to var (default REPLY).
+fn emit_redirected_herestring_read(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    body_text: &str,
+    c: &Command,
+    depth: usize,
+) {
+    let var_name = c
+        .args
+        .iter()
+        .map(expr_to_literal)
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "REPLY".to_string());
+    let val = body_text.trim_end_matches('\n');
+    indent(out, depth);
+    if !ctx.is_declared(&var_name) {
+        ctx.declare(&var_name);
+        writeln!(out, "(var {} \"{}\")", var_name, val).unwrap();
+    } else {
+        writeln!(out, "(set {} \"{}\")", var_name, val).unwrap();
+    }
+}
+
+/// Generic command with heredoc — spawn the command and pipe the body
+/// to its stdin.
+fn emit_redirected_generic_heredoc(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    body_kind: &StmtKind,
+    body_text: &str,
+    depth: usize,
+) {
+    indent(out, depth);
+    let escaped = escape_for_janet_string(body_text);
+    writeln!(out, "(do").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(def _heredoc_body \"{}\")", escaped).unwrap();
+    let (cmd_name, args) = extract_command_name_and_args(body_kind, ctx);
+    let mut parts = vec![format!("\"{}\"", cmd_name)];
+    parts.extend(args);
+    indent(out, depth + 1);
+    writeln!(
+        out,
+        "(def p (os/spawn [{}] :p {{:in :pipe}}))",
+        parts.join(" ")
+    )
+    .unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(:write (p :in) _heredoc_body)").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(:close (p :in))").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(os/proc-wait p)").unwrap();
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn extract_command_name_and_args(kind: &StmtKind, ctx: &EmitCtx) -> (String, Vec<String>) {
+    match kind {
+        StmtKind::Command(c) => (
+            expr_to_literal(&c.name),
+            c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect(),
+        ),
+        _ => ("?".to_string(), vec![]),
+    }
+}
+
+fn emit_redirected_no_heredoc(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
+    for rd in &r.redirects {
+        indent(out, depth);
+        writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();
+    }
+    emit_stmt(out, ctx, &r.body, depth);
 }
 
 /// Emit a condition (test_command) inline for if/while.
