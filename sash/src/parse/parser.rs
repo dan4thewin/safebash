@@ -487,36 +487,9 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
 
     let name = expect_word(scanner, span, "expected function name")?;
 
-    // Optional ()
-    if matches!(scanner.peek().token, Tok::LParen) {
-        scanner.next();
-        expect(scanner, &Tok::RParen, span, "expected ')' after '('")?;
-    }
+    parse_optional_empty_parens(scanner, span)?;
+    let return_type = parse_optional_return_type(scanner);
 
-    // Optional -> int return type annotation
-    let mut return_type = VarType::String;
-    if let Tok::Word(ref w) = scanner.peek().token {
-        if w == "->" {
-            scanner.next(); // consume ->
-            if matches!(scanner.peek().token, Tok::Int) {
-                scanner.next();
-                return_type = VarType::Int;
-            }
-        } else if w == "-" {
-            // Check for - > (separated)
-            let next = scanner.peek_n(1);
-            if matches!(next.token, Tok::Gt) {
-                scanner.next(); // consume -
-                scanner.next(); // consume >
-                if matches!(scanner.peek().token, Tok::Int) {
-                    scanner.next();
-                    return_type = VarType::Int;
-                }
-            }
-        }
-    }
-
-    // Expect {
     skip_terminators(scanner);
     expect(
         scanner,
@@ -542,6 +515,44 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
         }),
         span,
     }))
+}
+
+/// Consume an optional `()` after the function name. Bash style:
+/// `name() { ... }` vs sash style `fn name { ... }`.
+fn parse_optional_empty_parens(scanner: &mut Scanner, span: Span) -> Result<(), Diagnostic> {
+    if matches!(scanner.peek().token, Tok::LParen) {
+        scanner.next();
+        expect(scanner, &Tok::RParen, span, "expected ')' after '('")?;
+    }
+    Ok(())
+}
+
+/// Consume an optional `-> int` return-type annotation. Accepts both
+/// the single `->` word token and the split `-` `>` form depending on
+/// how the lexer classified the bytes.
+fn parse_optional_return_type(scanner: &mut Scanner) -> VarType {
+    let Tok::Word(w) = &scanner.peek().token else {
+        return VarType::String;
+    };
+    if w == "->" {
+        scanner.next();
+        return consume_int_token(scanner);
+    }
+    if w == "-" && matches!(scanner.peek_n(1).token, Tok::Gt) {
+        scanner.next(); // consume -
+        scanner.next(); // consume >
+        return consume_int_token(scanner);
+    }
+    VarType::String
+}
+
+fn consume_int_token(scanner: &mut Scanner) -> VarType {
+    if matches!(scanner.peek().token, Tok::Int) {
+        scanner.next();
+        VarType::Int
+    } else {
+        VarType::String
+    }
 }
 
 // ── local ────────────────────────────────────────────────────
