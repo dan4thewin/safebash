@@ -1282,31 +1282,10 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    // read/mapfile: mark target variable as tainted
     if name == "read" || name == "mapfile" {
-        for arg in c.args.iter().rev() {
-            let s = expr_literal_str(arg);
-            if !s.starts_with('-') && !s.is_empty() {
-                tainted.insert(s.to_string());
-                break;
-            }
-        }
+        taint_read_target(c, tainted);
     } else if name == "bless" {
-        // bless removes taint — first arg is the variable
-        if let Some(arg) = c.args.first() {
-            let var = expr_literal_str(arg);
-            if !var.is_empty() {
-                let condition_args = &c.args[1..];
-                let references_var = condition_args.iter().any(|ca| expr_references_var(ca, var));
-                if !references_var && !condition_args.is_empty() {
-                    diags.push(Diagnostic::error_span(span, "SB5020",
-                        format!("bless condition must validate ${} — condition doesn't reference the variable", var),
-                    ));
-                } else {
-                    tainted.remove(var);
-                }
-            }
-        }
+        taint_bless(c, span, tainted, diags);
         return; // Don't check args of bless for taint
     }
 
@@ -1314,6 +1293,48 @@ fn taint_command(
     check_expr_taint(&c.name, tainted, diags);
     for arg in &c.args {
         check_expr_taint(arg, tainted, diags);
+    }
+}
+
+/// `read VAR` / `mapfile VAR`: mark the rightmost non-flag argument
+/// as the variable being assigned, so it becomes tainted.
+fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
+    for arg in c.args.iter().rev() {
+        let s = expr_literal_str(arg);
+        if !s.starts_with('-') && !s.is_empty() {
+            tainted.insert(s.to_string());
+            return;
+        }
+    }
+}
+
+/// `bless VAR condition…`: removes taint from VAR if the condition
+/// references it; otherwise emits SB5020 to reject the meaningless
+/// bless.
+fn taint_bless(
+    c: &Command,
+    span: Span,
+    tainted: &mut HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(arg) = c.args.first() else { return };
+    let var = expr_literal_str(arg);
+    if var.is_empty() {
+        return;
+    }
+    let condition_args = &c.args[1..];
+    let references_var = condition_args.iter().any(|ca| expr_references_var(ca, var));
+    if !references_var && !condition_args.is_empty() {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5020",
+            format!(
+                "bless condition must validate ${} — condition doesn't reference the variable",
+                var
+            ),
+        ));
+    } else {
+        tainted.remove(var);
     }
 }
 
