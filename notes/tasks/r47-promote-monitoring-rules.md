@@ -1,20 +1,34 @@
-title: Promote monitoring-postmortem rules into AGENTS.md
-status: ready
-priority: P6
-kind: work
+title: Build a "delegate management" skill from monitoring-postmortem rules
+status: pending
+priority: P3
+kind: process
 source: opus-47-review
 depends: []
+redirected: 2026-06-07
 gates:
-  - AGENTS.md contains the five rules at section-1 level
-  - notes/journal/053-monitoring-postmortem.md cross-references AGENTS.md
+  - skill artifact (script, prompt, or harness) exists and is tested on at least one autonomous batch
+  - experiments documented in notes/journal/ showing what the agent did vs. what the skill prescribes
+  - cross-reference from journal 053 to the new skill
 
-[journal 053](../journal/053-monitoring-postmortem) ends with five
-rules derived from a half-session of unjustified `pgrep`/`tail`
-monitoring of an autonomous batch. The rules are excellent and they
-are *not* in AGENTS.md, which means the next agent doesn't inherit
-them.
+## Redirection (2026-06-07)
 
-## The five rules (verbatim from journal 053)
+Original framing was "add a paragraph to AGENTS.md citing the five rules
+from journal 053." DG flagged this as a fumble: process rules embedded in
+a wall of prose don't generalize, don't survive context compaction, and
+don't catch the agent in the moment it would violate them. The pattern
+this task is really about — *how a manager interacts with autonomous
+delegates* — needs to be worked up as a **skill**, not as documentation.
+
+A skill in this sense is the combination of:
+- A reusable artifact (script, prompt template, or check harness)
+- Experiments that show the artifact catching the failure mode it targets
+- A short rubric the agent can apply in the moment ("am I about to
+  monitor a process I can't influence?") rather than "did I read the AGENTS.md
+  section about monitoring?"
+
+## The original five rules (still the source material)
+
+Verbatim from journal 053:
 
 1. **Autonomous processes get ONE confirmation check.** Launch → wait
    10s → confirm process exists → report to DG → stop.
@@ -29,20 +43,34 @@ them.
 5. **Context is a finite resource.** ~35 wasted tool calls ≈ 15–20k
    tokens of noise.
 
-## Action
+## Approach
 
-Add a new section to AGENTS.md, near the top, titled "Autonomous
-processes" or similar. Verbatim or lightly edited rules. Reference
-journal 053 for the source.
+1. Run a small experiment: launch an autonomous batch via
+   `run-compiler-tasks.sh` and let an agent (with no prompt
+   modification) handle the "process is running" state. Capture the
+   tool-call trace.
+2. Identify which of the five rules the agent violates and which it
+   honors naturally.
+3. Design an intervention — a pre-flight check, a one-shot
+   confirmation pattern, or a "delegate mode" wrapper — that targets
+   the violations specifically.
+4. Re-run with the intervention. Measure: did the wasted-tool-call
+   count drop? Did the agent still detect real problems?
+5. If the intervention works, codify it as a reusable skill (a script
+   under `contrib/`, a prompt fragment, or a check the runner enforces
+   pre-launch).
 
-## Why P6 (cheap, no decision needed)
+## Why not just edit AGENTS.md
 
-This is a one-paragraph addition to AGENTS.md. Pure process; no code.
-The cost of *not* doing it is that 4.7+ models repeat the same
-pattern, because they read AGENTS.md but not every journal entry.
+AGENTS.md is already large. Adding rules there assumes agents will
+internalize them mid-task. The evidence from journal 053 is that they
+don't — the rules describe a failure pattern, but reading them doesn't
+prevent the pattern. The skill formulation forces a tested intervention
+rather than a hopeful documentation entry.
 
 ## Related
 
-AGENTS.md already has a "Learnings from 2026-05-11 session" section.
-Same pattern applies — but those learnings were promoted; these
-weren't.
+- Journal 053 (the source rules)
+- `run-compiler-tasks.sh` (the canonical autonomous-batch entry point)
+- Future skill could live in `contrib/` or be packaged as a Copilot CLI
+  skill artifact

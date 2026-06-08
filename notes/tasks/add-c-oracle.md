@@ -1,6 +1,6 @@
 ---
 title: Add C oracle — emit_c that consumes SSA
-status: phase-1-through-6-done
+status: done
 priority: P1
 kind: feature
 depends: []
