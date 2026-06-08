@@ -1027,38 +1027,41 @@ fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<
 }
 
 fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match &stmt.kind {
-        StmtKind::Command(c) => {
-            let name = expr_literal_str(&c.name);
-            // Skip regex mutations (var =~ s/pat/rep/ → Command{name=var, args=["s/..."]})
-            if c.args.len() == 1 {
-                if let ExprKind::Literal(s) = &c.args[0].kind {
-                    if s.starts_with("s/") {
-                        return;
-                    }
-                }
-            }
-            // Also skip the old two-arg form
-            if c.args.first().is_some_and(|a| expr_literal_str(a) == "=~") {
-                return;
-            }
-            if !name.is_empty() && !is_valid_command(name, funcs) {
-                diags.push(Diagnostic::error_span(
-                    stmt.span,
-                    "SB5011",
-                    format!(
-                        "command '{}' not found — use absolute path or define as function",
-                        name
-                    ),
-                ));
-            }
+    let StmtKind::Command(c) = &stmt.kind else {
+        for body in stmt.child_bodies() {
+            check_commands(body, funcs, diags);
         }
-        _ => {
-            for body in stmt.child_bodies() {
-                check_commands(body, funcs, diags);
+        return;
+    };
+    if is_regex_mutation(c) {
+        return;
+    }
+    let name = expr_literal_str(&c.name);
+    if name.is_empty() || is_valid_command(name, funcs) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        stmt.span,
+        "SB5011",
+        format!(
+            "command '{}' not found — use absolute path or define as function",
+            name
+        ),
+    ));
+}
+
+/// Skip pseudo-commands produced by the `var =~ s/pat/rep/` lowering:
+/// modern form is `Command{name=var, args=["s/..."]}` and legacy form
+/// is the two-arg `var =~ ...`. Either way they're not real commands.
+fn is_regex_mutation(c: &Command) -> bool {
+    if c.args.len() == 1 {
+        if let ExprKind::Literal(s) = &c.args[0].kind {
+            if s.starts_with("s/") {
+                return true;
             }
         }
     }
+    c.args.first().is_some_and(|a| expr_literal_str(a) == "=~")
 }
 
 fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {
