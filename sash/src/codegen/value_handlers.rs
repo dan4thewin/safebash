@@ -203,48 +203,24 @@ fn emit_array_join_expansion(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // Build separator-joined list of keys or values from a table.
     let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
     let call = builder.ins().call(len_ref, &[s_ptr]);
     let arr_len = builder.inst_results(call)[0];
 
-    // Buffer for concatenated output
-    let buf_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
-    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
-    // Track current write position
-    let pos_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let zero = builder.ins().iconst(I64, 0);
-    builder.ins().stack_store(zero, pos_slot, 0);
-
+    let (buf_ptr, pos_slot) = alloc_join_buffer(builder);
     let item_fn = if operator == "arrkeys" {
         module.declare_func_in_func(externs.table_key, builder.func)
     } else {
         module.declare_func_in_func(externs.table_value, builder.func)
     };
+    let (sep_ptr, sep_len) = intern_join_separator(operator, operand, builder, module, literals);
 
-    // Separator: arrjoin uses operand, others use space
-    let sep_str = if operator == "arrjoin" { operand } else { " " };
-    let sep_len_val = sep_str.len() as i64;
-    let sep_data_id = literals.get(sep_str).unwrap_or_else(|| {
-        panic!("ICE: join separator not interned: {:?}", sep_str);
-    });
-    let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
-    let sep_ptr = builder.ins().global_value(I64, sep_gv);
-    let sep_len = builder.ins().iconst(I64, sep_len_val);
-
-    // Loop index variable
-    let idx_var = builder.declare_var(I64);
-    let zero2 = builder.ins().iconst(I64, 0);
-    builder.def_var(idx_var, zero2);
-
+    let idx_var = init_loop_var(builder);
     let header = builder.create_block();
     let body = builder.create_block();
     let exit = builder.create_block();
     builder.ins().jump(header, &[]);
 
-    // Header: check i < len
     builder.switch_to_block(header);
     let i = builder.use_var(idx_var);
     let done = builder
@@ -252,13 +228,82 @@ fn emit_array_join_expansion(
         .icmp(IntCC::SignedGreaterThanOrEqual, i, arr_len);
     builder.ins().brif(done, exit, &[], body, &[]);
 
-    // Body: get item, append space separator + item bytes
     builder.switch_to_block(body);
     builder.seal_block(body);
 
-    let cur_i = builder.use_var(idx_var);
+    let item_block =
+        emit_separator_for_nonfirst_item(builder, idx_var, buf_ptr, pos_slot, sep_ptr, sep_len);
 
-    // Insert space before all items except the first
+    builder.switch_to_block(item_block);
+    builder.seal_block(item_block);
+    let (item_ptr, item_len) = fetch_item(builder, item_fn, s_ptr, idx_var);
+    let (item_ptr, item_len) = apply_per_element_op(
+        operator, operand, item_ptr, item_len, builder, module, literals, externs,
+    );
+    copy_item_bytes(builder, item_ptr, item_len, buf_ptr, pos_slot);
+    advance_loop_index(builder, idx_var, header);
+
+    builder.switch_to_block(exit);
+    builder.seal_block(exit);
+    let final_len = builder.ins().stack_load(I64, pos_slot, 0);
+    (buf_ptr, final_len)
+}
+
+/// Reserve a 4KB stack buffer for the joined output and a separate
+/// stack slot tracking the running write position.
+fn alloc_join_buffer(
+    builder: &mut FunctionBuilder,
+) -> (
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::StackSlot,
+) {
+    let buf_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
+    let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
+    let pos_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let zero = builder.ins().iconst(I64, 0);
+    builder.ins().stack_store(zero, pos_slot, 0);
+    (buf_ptr, pos_slot)
+}
+
+/// Resolve the separator string: `arrjoin` uses the operand,
+/// everything else (arrkeys, arrvals, arrvals_*) uses a single space.
+fn intern_join_separator(
+    operator: &str,
+    operand: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let sep_str = if operator == "arrjoin" { operand } else { " " };
+    let sep_data_id = literals
+        .get(sep_str)
+        .unwrap_or_else(|| panic!("ICE: join separator not interned: {:?}", sep_str));
+    let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
+    let sep_ptr = builder.ins().global_value(I64, sep_gv);
+    let sep_len = builder.ins().iconst(I64, sep_str.len() as i64);
+    (sep_ptr, sep_len)
+}
+
+fn init_loop_var(builder: &mut FunctionBuilder) -> cranelift_frontend::Variable {
+    let idx_var = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(idx_var, zero);
+    idx_var
+}
+
+/// Emit: if `idx > 0` { copy separator into buf; advance pos } then
+/// fall through into the returned item block.
+fn emit_separator_for_nonfirst_item(
+    builder: &mut FunctionBuilder,
+    idx_var: cranelift_frontend::Variable,
+    buf_ptr: cranelift_codegen::ir::Value,
+    pos_slot: cranelift_codegen::ir::StackSlot,
+    sep_ptr: cranelift_codegen::ir::Value,
+    sep_len: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Block {
+    let cur_i = builder.use_var(idx_var);
     let need_sep = builder.ins().icmp_imm(IntCC::SignedGreaterThan, cur_i, 0);
     let sep_block = builder.create_block();
     let item_block = builder.create_block();
@@ -270,156 +315,243 @@ fn emit_array_join_expansion(
     builder.seal_block(sep_block);
     let pos = builder.ins().stack_load(I64, pos_slot, 0);
     let dst = builder.ins().iadd(buf_ptr, pos);
-    // Copy separator bytes
-    let sep_copy_idx = builder.declare_var(I64);
-    let sep_zero = builder.ins().iconst(I64, 0);
-    builder.def_var(sep_copy_idx, sep_zero);
-    let sep_hdr = builder.create_block();
-    let sep_body = builder.create_block();
-    let sep_done = builder.create_block();
-    builder.ins().jump(sep_hdr, &[]);
-
-    builder.switch_to_block(sep_hdr);
-    let sj = builder.use_var(sep_copy_idx);
-    let sep_end = builder
-        .ins()
-        .icmp(IntCC::SignedGreaterThanOrEqual, sj, sep_len);
-    builder.ins().brif(sep_end, sep_done, &[], sep_body, &[]);
-
-    builder.switch_to_block(sep_body);
-    builder.seal_block(sep_body);
-    let sj2 = builder.use_var(sep_copy_idx);
-    let src = builder.ins().iadd(sep_ptr, sj2);
-    let b = builder.ins().load(
-        cranelift_codegen::ir::types::I8,
-        cranelift_codegen::ir::MemFlags::new(),
-        src,
-        0,
-    );
-    let d = builder.ins().iadd(dst, sj2);
-    builder
-        .ins()
-        .store(cranelift_codegen::ir::MemFlags::new(), b, d, 0);
-    let next_sj = builder.ins().iadd_imm(sj2, 1);
-    builder.def_var(sep_copy_idx, next_sj);
-    builder.ins().jump(sep_hdr, &[]);
-    builder.seal_block(sep_hdr);
-
-    builder.switch_to_block(sep_done);
-    builder.seal_block(sep_done);
+    emit_bytecopy_loop(builder, sep_ptr, sep_len, dst);
     let pos_after_sep = builder.ins().iadd(pos, sep_len);
     builder.ins().stack_store(pos_after_sep, pos_slot, 0);
     builder.ins().jump(item_block, &[]);
+    item_block
+}
 
-    // Get item ptr+len from table
-    builder.switch_to_block(item_block);
-    builder.seal_block(item_block);
-    let cur_i2 = builder.use_var(idx_var);
+/// Emit a counted byte-copy loop: for j in 0..len { dst[j] = src[j] }
+/// using the current basic block as the loop header.
+fn emit_bytecopy_loop(
+    builder: &mut FunctionBuilder,
+    src: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+    dst: cranelift_codegen::ir::Value,
+) {
+    let copy_idx = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(copy_idx, zero);
+    let hdr = builder.create_block();
+    let body = builder.create_block();
+    let done = builder.create_block();
+    builder.ins().jump(hdr, &[]);
+
+    builder.switch_to_block(hdr);
+    let j = builder.use_var(copy_idx);
+    let end = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, j, len);
+    builder.ins().brif(end, done, &[], body, &[]);
+
+    builder.switch_to_block(body);
+    builder.seal_block(body);
+    let j2 = builder.use_var(copy_idx);
+    let src_addr = builder.ins().iadd(src, j2);
+    let b = builder.ins().load(
+        cranelift_codegen::ir::types::I8,
+        cranelift_codegen::ir::MemFlags::new(),
+        src_addr,
+        0,
+    );
+    let dst_addr = builder.ins().iadd(dst, j2);
+    builder
+        .ins()
+        .store(cranelift_codegen::ir::MemFlags::new(), b, dst_addr, 0);
+    let next = builder.ins().iadd_imm(j2, 1);
+    builder.def_var(copy_idx, next);
+    builder.ins().jump(hdr, &[]);
+    builder.seal_block(hdr);
+
+    builder.switch_to_block(done);
+    builder.seal_block(done);
+}
+
+fn fetch_item(
+    builder: &mut FunctionBuilder,
+    item_fn: cranelift_codegen::ir::FuncRef,
+    s_ptr: cranelift_codegen::ir::Value,
+    idx_var: cranelift_frontend::Variable,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let cur_i = builder.use_var(idx_var);
     let item_len_slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
     let item_len_addr = builder.ins().stack_addr(I64, item_len_slot, 0);
-    let call = builder.ins().call(item_fn, &[s_ptr, cur_i2, item_len_addr]);
+    let call = builder.ins().call(item_fn, &[s_ptr, cur_i, item_len_addr]);
     let item_ptr = builder.inst_results(call)[0];
     let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
+    (item_ptr, item_len)
+}
 
-    // DD#33: per-element operation (if arrvals_OP)
-    let (item_ptr, item_len) = if let Some(sub_op) = operator.strip_prefix("arrvals_") {
-        let op_data_id = literals.get(operand).unwrap_or_else(|| {
-            panic!("ICE: per-element operand not interned: {:?}", operand);
-        });
-        let op_gv = module.declare_data_in_func(*op_data_id, builder.func);
-        let op_ptr = builder.ins().global_value(I64, op_gv);
-        let op_len = builder.ins().iconst(I64, operand.len() as i64);
-        match sub_op {
-            "/" | "//" => {
-                // ${arr[@]/pat/rep} or ${arr[@]//pat/rep}
-                // operand is "regex\0replacement" (null-separated)
-                let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
-                let pat_did = literals.get(pat_s).unwrap_or_else(|| {
-                    panic!("ICE: pattern not interned: {:?}", pat_s);
-                });
-                let rep_did = literals.get(rep_s).unwrap_or_else(|| {
-                    panic!("ICE: replacement not interned: {:?}", rep_s);
-                });
-                let p_gv = module.declare_data_in_func(*pat_did, builder.func);
-                let p_ptr = builder.ins().global_value(I64, p_gv);
-                let p_len = builder.ins().iconst(I64, pat_s.len() as i64);
-                let r_gv = module.declare_data_in_func(*rep_did, builder.func);
-                let r_ptr = builder.ins().global_value(I64, r_gv);
-                let r_len = builder.ins().iconst(I64, rep_s.len() as i64);
-                let global = if sub_op == "//" {
-                    builder.ins().iconst(I64, 1)
-                } else {
-                    builder.ins().iconst(I64, 0)
-                };
-                let regex_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-                let call2 = builder.ins().call(
-                    regex_ref,
-                    &[item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global],
-                );
-                let res_ptr = builder.inst_results(call2)[0];
-                let res_len = builder.inst_results(call2)[1];
-                (res_ptr, res_len)
-            }
-            "#" | "##" => {
-                // ${arr[@]#pat} or ${arr[@]##pat} — strip prefix
-                let longest = if sub_op == "##" {
-                    builder.ins().iconst(I64, 1)
-                } else {
-                    builder.ins().iconst(I64, 0)
-                };
-                let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
-                let call2 = builder
-                    .ins()
-                    .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
-                let offset = builder.inst_results(call2)[0];
-                let res_ptr = builder.ins().iadd(item_ptr, offset);
-                let res_len = builder.ins().isub(item_len, offset);
-                (res_ptr, res_len)
-            }
-            "%" | "%%" => {
-                // ${arr[@]%pat} or ${arr[@]%%pat} — strip suffix
-                let longest = if sub_op == "%%" {
-                    builder.ins().iconst(I64, 1)
-                } else {
-                    builder.ins().iconst(I64, 0)
-                };
-                let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
-                let call2 = builder
-                    .ins()
-                    .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest]);
-                let res_len = builder.inst_results(call2)[0];
-                (item_ptr, res_len)
-            }
-            _ => (item_ptr, item_len),
-        }
-    } else {
-        (item_ptr, item_len)
+/// DD#33: per-element parameter expansion on arrvals (`${arr[@]/pat/rep}`
+/// and friends). For non-`arrvals_*` operators returns the item unchanged.
+#[allow(clippy::too_many_arguments)]
+fn apply_per_element_op(
+    operator: &str,
+    operand: &str,
+    item_ptr: cranelift_codegen::ir::Value,
+    item_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let Some(sub_op) = operator.strip_prefix("arrvals_") else {
+        return (item_ptr, item_len);
     };
+    match sub_op {
+        "/" | "//" => per_elem_regex_replace(
+            sub_op == "//",
+            operand,
+            item_ptr,
+            item_len,
+            builder,
+            module,
+            literals,
+            externs,
+        ),
+        "#" | "##" => per_elem_strip_prefix(
+            sub_op == "##",
+            operand,
+            item_ptr,
+            item_len,
+            builder,
+            module,
+            literals,
+            externs,
+        ),
+        "%" | "%%" => per_elem_strip_suffix(
+            sub_op == "%%",
+            operand,
+            item_ptr,
+            item_len,
+            builder,
+            module,
+            literals,
+            externs,
+        ),
+        _ => (item_ptr, item_len),
+    }
+}
 
-    // Byte-copy loop
-    let copy_idx = builder.declare_var(I64);
-    let czero = builder.ins().iconst(I64, 0);
-    builder.def_var(copy_idx, czero);
+/// `${arr[@]/pat/rep}` (sub_op=`/`) or `${arr[@]//pat/rep}` (sub_op=`//`,
+/// global). Operand is `regex\0replacement` (null-separated).
+#[allow(clippy::too_many_arguments)]
+fn per_elem_regex_replace(
+    global: bool,
+    operand: &str,
+    item_ptr: cranelift_codegen::ir::Value,
+    item_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
+    let (p_ptr, p_len) = intern_literal_string(pat_s, builder, module, literals);
+    let (r_ptr, r_len) = intern_literal_string(rep_s, builder, module, literals);
+    let global_v = builder.ins().iconst(I64, global as i64);
+    let regex_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+    let call = builder.ins().call(
+        regex_ref,
+        &[item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global_v],
+    );
+    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+}
 
-    let copy_hdr = builder.create_block();
-    let copy_body = builder.create_block();
-    let copy_done = builder.create_block();
-    builder.ins().jump(copy_hdr, &[]);
-
-    builder.switch_to_block(copy_hdr);
-    let cj = builder.use_var(copy_idx);
-    let copy_end = builder
+/// `${arr[@]#pat}` (longest=false) or `${arr[@]##pat}` (longest=true).
+#[allow(clippy::too_many_arguments)]
+fn per_elem_strip_prefix(
+    longest: bool,
+    operand: &str,
+    item_ptr: cranelift_codegen::ir::Value,
+    item_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (op_ptr, op_len) = intern_literal_string(operand, builder, module, literals);
+    let longest_v = builder.ins().iconst(I64, longest as i64);
+    let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
+    let call = builder
         .ins()
-        .icmp(IntCC::SignedGreaterThanOrEqual, cj, item_len);
-    builder.ins().brif(copy_end, copy_done, &[], copy_body, &[]);
+        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest_v]);
+    let offset = builder.inst_results(call)[0];
+    let res_ptr = builder.ins().iadd(item_ptr, offset);
+    let res_len = builder.ins().isub(item_len, offset);
+    (res_ptr, res_len)
+}
 
-    builder.switch_to_block(copy_body);
-    builder.seal_block(copy_body);
-    let cj2 = builder.use_var(copy_idx);
+/// `${arr[@]%pat}` (longest=false) or `${arr[@]%%pat}` (longest=true).
+#[allow(clippy::too_many_arguments)]
+fn per_elem_strip_suffix(
+    longest: bool,
+    operand: &str,
+    item_ptr: cranelift_codegen::ir::Value,
+    item_len: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (op_ptr, op_len) = intern_literal_string(operand, builder, module, literals);
+    let longest_v = builder.ins().iconst(I64, longest as i64);
+    let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
+    let call = builder
+        .ins()
+        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest_v]);
+    let res_len = builder.inst_results(call)[0];
+    (item_ptr, res_len)
+}
+
+/// Look up an interned literal string and emit (ptr, len) values.
+/// Panics if the literal wasn't interned at codegen setup.
+fn intern_literal_string(
+    s: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let data_id = literals
+        .get(s)
+        .unwrap_or_else(|| panic!("ICE: literal not interned: {:?}", s));
+    let gv = module.declare_data_in_func(*data_id, builder.func);
+    let ptr = builder.ins().global_value(I64, gv);
+    let len = builder.ins().iconst(I64, s.len() as i64);
+    (ptr, len)
+}
+
+/// Append `item_len` bytes from `item_ptr` to the buffer at the
+/// current pos_slot value, advancing pos_slot in lockstep.
+fn copy_item_bytes(
+    builder: &mut FunctionBuilder,
+    item_ptr: cranelift_codegen::ir::Value,
+    item_len: cranelift_codegen::ir::Value,
+    buf_ptr: cranelift_codegen::ir::Value,
+    pos_slot: cranelift_codegen::ir::StackSlot,
+) {
+    let copy_idx = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(copy_idx, zero);
+
+    let hdr = builder.create_block();
+    let body = builder.create_block();
+    let done = builder.create_block();
+    builder.ins().jump(hdr, &[]);
+
+    builder.switch_to_block(hdr);
+    let j = builder.use_var(copy_idx);
+    let end = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, j, item_len);
+    builder.ins().brif(end, done, &[], body, &[]);
+
+    builder.switch_to_block(body);
+    builder.seal_block(body);
+    let j2 = builder.use_var(copy_idx);
     let cur_pos = builder.ins().stack_load(I64, pos_slot, 0);
-    let src_addr = builder.ins().iadd(item_ptr, cj2);
-    let byte = builder.ins().load(
+    let src_addr = builder.ins().iadd(item_ptr, j2);
+    let b = builder.ins().load(
         cranelift_codegen::ir::types::I8,
         cranelift_codegen::ir::MemFlags::new(),
         src_addr,
@@ -428,28 +560,28 @@ fn emit_array_join_expansion(
     let dst_addr = builder.ins().iadd(buf_ptr, cur_pos);
     builder
         .ins()
-        .store(cranelift_codegen::ir::MemFlags::new(), byte, dst_addr, 0);
+        .store(cranelift_codegen::ir::MemFlags::new(), b, dst_addr, 0);
     let new_pos = builder.ins().iadd_imm(cur_pos, 1);
     builder.ins().stack_store(new_pos, pos_slot, 0);
-    let next_cj = builder.ins().iadd_imm(cj2, 1);
-    builder.def_var(copy_idx, next_cj);
-    builder.ins().jump(copy_hdr, &[]);
-    builder.seal_block(copy_hdr);
+    let next = builder.ins().iadd_imm(j2, 1);
+    builder.def_var(copy_idx, next);
+    builder.ins().jump(hdr, &[]);
+    builder.seal_block(hdr);
 
-    builder.switch_to_block(copy_done);
-    builder.seal_block(copy_done);
+    builder.switch_to_block(done);
+    builder.seal_block(done);
+}
 
-    // Increment loop index
-    let cur_i3 = builder.use_var(idx_var);
-    let next_i = builder.ins().iadd_imm(cur_i3, 1);
+fn advance_loop_index(
+    builder: &mut FunctionBuilder,
+    idx_var: cranelift_frontend::Variable,
+    header: cranelift_codegen::ir::Block,
+) {
+    let cur_i = builder.use_var(idx_var);
+    let next_i = builder.ins().iadd_imm(cur_i, 1);
     builder.def_var(idx_var, next_i);
     builder.ins().jump(header, &[]);
     builder.seal_block(header);
-
-    builder.switch_to_block(exit);
-    builder.seal_block(exit);
-    let final_len = builder.ins().stack_load(I64, pos_slot, 0);
-    (buf_ptr, final_len)
 }
 
 #[allow(clippy::too_many_arguments)]
