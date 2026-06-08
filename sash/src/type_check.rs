@@ -159,44 +159,11 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
 fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     match &expr.kind {
         ExprKind::Subscript { name, index } => {
-            let is_map = env.assoc_arrays.contains(name);
-            let is_collection = env.collections.contains(name);
-            if is_collection {
-                if is_map {
-                    // Map: reject integer-only keys (looks like indexed access)
-                    if is_integer_literal(index) {
-                        errors.push(TypeError {
-                            message: format!(
-                                "integer key on map '{}' — maps use string keys. Use ${{{}[\"key\"]}}",
-                                name, name,
-                            ),
-                            span: expr.span,
-                        });
-                    }
-                } else {
-                    // Indexed array: reject non-integer keys
-                    if is_string_key(index) {
-                        errors.push(TypeError {
-                            message: format!(
-                                "string key on indexed array '{}' — use integer indices. Declare as `map` for string keys",
-                                name,
-                            ),
-                            span: expr.span,
-                        });
-                    }
-                }
-            }
+            check_subscript_key_kind(name, index, expr.span, env, errors);
             check_subscript_types(index, env, errors);
         }
-        ExprKind::DoubleQuoted(parts) => {
-            for p in parts {
-                check_subscript_types(p, env, errors);
-            }
-        }
-        ExprKind::Concat(parts) => {
-            for p in parts {
-                check_subscript_types(p, env, errors);
-            }
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            check_subscripts_in_parts(parts, env, errors);
         }
         ExprKind::CommandSubstitution(stmts) => {
             for s in stmts {
@@ -204,6 +171,44 @@ fn check_subscript_types(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>
             }
         }
         _ => {}
+    }
+}
+
+fn check_subscripts_in_parts(parts: &[Expr], env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    for p in parts {
+        check_subscript_types(p, env, errors);
+    }
+}
+
+/// Reject integer keys on maps (looks like indexed access) and string
+/// keys on indexed arrays.
+fn check_subscript_key_kind(
+    name: &str,
+    index: &Expr,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if !env.collections.contains(name) {
+        return;
+    }
+    let is_map = env.assoc_arrays.contains(name);
+    if is_map && is_integer_literal(index) {
+        errors.push(TypeError {
+            message: format!(
+                "integer key on map '{}' — maps use string keys. Use ${{{}[\"key\"]}}",
+                name, name,
+            ),
+            span,
+        });
+    } else if !is_map && is_string_key(index) {
+        errors.push(TypeError {
+            message: format!(
+                "string key on indexed array '{}' — use integer indices. Declare as `map` for string keys",
+                name,
+            ),
+            span,
+        });
     }
 }
 
