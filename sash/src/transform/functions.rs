@@ -197,22 +197,7 @@ pub(super) fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
 fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>) {
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::Command(c) => {
-                let name_text = match &c.name.kind {
-                    ExprKind::Literal(s) => s.as_str(),
-                    _ => "",
-                };
-                if name_text == "return" {
-                    let val = if c.args.is_empty() {
-                        Some(String::new()) // bare return = implicit 0
-                    } else if let Some(ExprKind::Literal(s)) = c.args.first().map(|a| &a.kind) {
-                        Some(s.clone()) // literal return value
-                    } else {
-                        None // computed return value — assume non-trivial
-                    };
-                    returns.push(val);
-                }
-            }
+            StmtKind::Command(c) => maybe_collect_return(c, returns),
             // `return` inside a subshell only exits the subshell, not
             // the enclosing function.
             StmtKind::Subshell(_) => {}
@@ -229,5 +214,29 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>)
                 }
             }
         }
+    }
+}
+
+/// If `c` is a `return` command, push its target into `returns`:
+/// `None` = computed/non-trivial value, `Some(s)` = literal value
+/// (empty string means bare `return` → implicit 0).
+fn maybe_collect_return(c: &Command, returns: &mut Vec<Option<String>>) {
+    if literal_command_name(&c.name) != "return" {
+        return;
+    }
+    let val = if c.args.is_empty() {
+        Some(String::new())
+    } else if let Some(ExprKind::Literal(s)) = c.args.first().map(|a| &a.kind) {
+        Some(s.clone())
+    } else {
+        None
+    };
+    returns.push(val);
+}
+
+fn literal_command_name(name: &Expr) -> &str {
+    match &name.kind {
+        ExprKind::Literal(s) => s.as_str(),
+        _ => "",
     }
 }
