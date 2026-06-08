@@ -893,91 +893,68 @@ fn is_int_expr(expr: &Expr, ctx: &EmitCtx) -> bool {
 
 /// Emit a test expression as a Janet boolean expression.
 fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
-    match &expr.kind {
-        ExprKind::Test(test) => match test {
-            TestExpr::Unary { op, operand } => {
-                let val = emit_expr_inline(operand, ctx);
-                match op.as_str() {
-                    "-f" => format!("(= (os/stat {} :mode) :file)", val),
-                    "-d" => format!("(= (os/stat {} :mode) :directory)", val),
-                    "-e" => format!("(not (nil? (os/stat {} :mode)))", val),
-                    "-n" => format!("(not (or (nil? {0}) (empty? {0})))", val),
-                    "-z" => format!("(or (nil? {0}) (empty? {0}))", val),
-                    _ => format!("(truthy? {} {})", op, val),
-                }
-            }
-            TestExpr::Binary { left, op, right } => {
-                let is_numeric_op =
-                    matches!(op.as_str(), "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le");
-                let l = if is_numeric_op {
-                    emit_expr_as_int(left, ctx)
-                } else {
-                    emit_expr_inline(left, ctx)
-                };
-                let r = if is_numeric_op {
-                    emit_expr_as_int(right, ctx)
-                } else {
-                    emit_expr_inline(right, ctx)
-                };
-                match op.as_str() {
-                    "=" | "==" => format!("(= {} {})", l, r),
-                    "!=" => format!("(not= {} {})", l, r),
-                    "-eq" => format!("(= {} {})", l, r),
-                    "-ne" => format!("(not= {} {})", l, r),
-                    "-gt" => format!("(> {} {})", l, r),
-                    "-lt" => format!("(< {} {})", l, r),
-                    "-ge" => format!("(>= {} {})", l, r),
-                    "-le" => format!("(<= {} {})", l, r),
-                    _ => format!("({} {} {})", op, l, r),
-                }
-            }
-            TestExpr::Not(inner) => {
-                let inner_expr = Expr {
-                    kind: ExprKind::Test(*inner.clone()),
-                    span: expr.span,
-                };
-                format!("(not {})", emit_test_expr(&inner_expr, ctx))
-            }
-            TestExpr::And(l, r) => {
-                let le = Expr {
-                    kind: ExprKind::Test(*l.clone()),
-                    span: expr.span,
-                };
-                let re = Expr {
-                    kind: ExprKind::Test(*r.clone()),
-                    span: expr.span,
-                };
-                format!(
-                    "(and {} {})",
-                    emit_test_expr(&le, ctx),
-                    emit_test_expr(&re, ctx)
-                )
-            }
-            TestExpr::Or(l, r) => {
-                let le = Expr {
-                    kind: ExprKind::Test(*l.clone()),
-                    span: expr.span,
-                };
-                let re = Expr {
-                    kind: ExprKind::Test(*r.clone()),
-                    span: expr.span,
-                };
-                format!(
-                    "(or {} {})",
-                    emit_test_expr(&le, ctx),
-                    emit_test_expr(&re, ctx)
-                )
-            }
-            TestExpr::Paren(inner) => {
-                let ie = Expr {
-                    kind: ExprKind::Test(*inner.clone()),
-                    span: expr.span,
-                };
-                emit_test_expr(&ie, ctx)
-            }
-        },
-        _ => "true".to_string(),
+    let ExprKind::Test(test) = &expr.kind else {
+        return "true".to_string();
+    };
+    match test {
+        TestExpr::Unary { op, operand } => emit_unary_test(op, operand, ctx),
+        TestExpr::Binary { left, op, right } => emit_binary_test(left, op, right, ctx),
+        TestExpr::Not(inner) => format!("(not {})", emit_inner_test(inner, expr.span, ctx)),
+        TestExpr::And(l, r) => format!(
+            "(and {} {})",
+            emit_inner_test(l, expr.span, ctx),
+            emit_inner_test(r, expr.span, ctx)
+        ),
+        TestExpr::Or(l, r) => format!(
+            "(or {} {})",
+            emit_inner_test(l, expr.span, ctx),
+            emit_inner_test(r, expr.span, ctx)
+        ),
+        TestExpr::Paren(inner) => emit_inner_test(inner, expr.span, ctx),
     }
+}
+
+/// Wrap a TestExpr child into a synthetic Expr::Test and recurse —
+/// shared between Not/And/Or/Paren.
+fn emit_inner_test(inner: &TestExpr, span: Span, ctx: &EmitCtx) -> String {
+    let wrapped = Expr {
+        kind: ExprKind::Test(inner.clone()),
+        span,
+    };
+    emit_test_expr(&wrapped, ctx)
+}
+
+fn emit_unary_test(op: &str, operand: &Expr, ctx: &EmitCtx) -> String {
+    let val = emit_expr_inline(operand, ctx);
+    match op {
+        "-f" => format!("(= (os/stat {} :mode) :file)", val),
+        "-d" => format!("(= (os/stat {} :mode) :directory)", val),
+        "-e" => format!("(not (nil? (os/stat {} :mode)))", val),
+        "-n" => format!("(not (or (nil? {0}) (empty? {0})))", val),
+        "-z" => format!("(or (nil? {0}) (empty? {0}))", val),
+        _ => format!("(truthy? {} {})", op, val),
+    }
+}
+
+fn emit_binary_test(left: &Expr, op: &str, right: &Expr, ctx: &EmitCtx) -> String {
+    let (l, r) = if is_numeric_test_op(op) {
+        (emit_expr_as_int(left, ctx), emit_expr_as_int(right, ctx))
+    } else {
+        (emit_expr_inline(left, ctx), emit_expr_inline(right, ctx))
+    };
+    match op {
+        "=" | "==" | "-eq" => format!("(= {} {})", l, r),
+        "!=" | "-ne" => format!("(not= {} {})", l, r),
+        "-gt" => format!("(> {} {})", l, r),
+        "-lt" => format!("(< {} {})", l, r),
+        "-ge" => format!("(>= {} {})", l, r),
+        "-le" => format!("(<= {} {})", l, r),
+        _ => format!("({} {} {})", op, l, r),
+    }
+}
+
+fn is_numeric_test_op(op: &str) -> bool {
+    matches!(op, "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le")
 }
 
 /// Emit an expression as a Janet integer value.
