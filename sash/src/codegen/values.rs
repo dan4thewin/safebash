@@ -243,46 +243,82 @@ pub(super) fn lower_expr_value_as_int(
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) => builder.ins().iconst(I64, s.parse::<i64>().unwrap_or(0)),
         crate::ir::ExprKind::SimpleExpansion(name) => {
-            // Find highest version of this variable
-            if let Some(sv) = super::types::find_var_slot(vars, name.as_str()) {
-                let sv = *sv;
-                if sv.is_int() {
-                    builder.use_var(*sv.as_int())
-                } else {
-                    let ptr = builder.use_var(sv.str_ptr());
-                    let len = builder.use_var(sv.str_len());
-                    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                    builder.inst_results(call)[0]
-                }
-            } else {
-                builder.ins().iconst(I64, 0)
-            }
+            lower_int_simple_expansion(name, builder, module, vars, externs)
         }
-        _ => {
-            // Fallback: lower as string, atoi
-            // Special case: ParameterExpansion (e.g., arrlen) — route through SSA value lowering
-            if let crate::ir::ExprKind::ParameterExpansion(pe) = &expr.kind {
-                let var = super::types::find_var_key(vars, pe.name.as_str());
-                if let Some(ref op) = pe.operator {
-                    if op == "arrlen" {
-                        if let Some(key) = var {
-                            let sv = &vars[&key];
-                            let table_ptr = builder.use_var(sv.str_ptr());
-                            let len_ref =
-                                module.declare_func_in_func(externs.table_len, builder.func);
-                            let call = builder.ins().call(len_ref, &[table_ptr]);
-                            return builder.inst_results(call)[0];
-                        }
-                    }
-                }
-            }
-            let (ptr, len) = lower_expr_value(expr, builder, module, vars, literals, externs, None);
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let call = builder.ins().call(atoi_ref, &[ptr, len]);
-            builder.inst_results(call)[0]
+        _ => lower_int_fallback(expr, builder, module, vars, literals, externs),
+    }
+}
+
+fn lower_int_simple_expansion(
+    name: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let Some(sv) = super::types::find_var_slot(vars, name) else {
+        return builder.ins().iconst(I64, 0);
+    };
+    let sv = *sv;
+    if sv.is_int() {
+        builder.use_var(*sv.as_int())
+    } else {
+        atoi_call(builder, module, externs, sv.str_ptr(), sv.str_len())
+    }
+}
+
+fn lower_int_fallback(
+    expr: &crate::ir::Expr,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    if let crate::ir::ExprKind::ParameterExpansion(pe) = &expr.kind {
+        if let Some(v) = try_lower_int_arrlen(pe, builder, module, vars, externs) {
+            return v;
         }
     }
+    let (ptr, len) = lower_expr_value(expr, builder, module, vars, literals, externs, None);
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[ptr, len]);
+    builder.inst_results(call)[0]
+}
+
+/// `${#arr[@]}` lowered to a direct table-length call instead of
+/// stringifying then atoi-ing.
+fn try_lower_int_arrlen(
+    pe: &crate::ir::ParameterExpansion,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> Option<cranelift_codegen::ir::Value> {
+    let op = pe.operator.as_deref()?;
+    if op != "arrlen" {
+        return None;
+    }
+    let key = super::types::find_var_key(vars, pe.name.as_str())?;
+    let sv = &vars[&key];
+    let table_ptr = builder.use_var(sv.str_ptr());
+    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+    let call = builder.ins().call(len_ref, &[table_ptr]);
+    Some(builder.inst_results(call)[0])
+}
+
+fn atoi_call(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    str_ptr_var: cranelift_frontend::Variable,
+    str_len_var: cranelift_frontend::Variable,
+) -> cranelift_codegen::ir::Value {
+    let ptr = builder.use_var(str_ptr_var);
+    let len = builder.use_var(str_len_var);
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[ptr, len]);
+    builder.inst_results(call)[0]
 }
 
 #[allow(clippy::too_many_arguments)]
