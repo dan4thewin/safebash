@@ -934,70 +934,99 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
     let mut content = String::new();
     let mut depth = 1i32;
 
-    loop {
-        if scanner.at_eof() {
-            break;
-        }
+    while !scanner.at_eof() {
         let tok = scanner.peek().clone();
-        match &tok.token {
-            Tok::DblParenClose => {
-                depth -= 1;
-                if depth == 0 {
-                    scanner.next();
-                    break;
-                }
-                content.push_str("))");
-                scanner.next();
-            }
-            Tok::DblParen => {
-                depth += 1;
-                content.push_str("((");
-                scanner.next();
-            }
-            Tok::DollarDblParen => {
-                depth += 1;
-                content.push_str("$((");
-                scanner.next();
-            }
-            Tok::LParen => {
-                content.push('(');
-                scanner.next();
-            }
-            Tok::RParen => {
-                scanner.next();
-                if matches!(scanner.peek().token, Tok::RParen) {
-                    depth -= 1;
-                    scanner.next();
-                    if depth == 0 {
-                        break;
-                    }
-                    content.push_str("))");
-                } else {
-                    content.push(')');
-                }
-            }
-            _ => {
-                let text = tok_to_text(&tok.token);
-                content.push_str(&text);
-                scanner.next();
-                if !matches!(
-                    scanner.peek().token,
-                    Tok::DblParenClose
-                        | Tok::RParen
-                        | Tok::Semi
-                        | Tok::Newline
-                        | Tok::Eof
-                        | Tok::DblParen
-                        | Tok::LParen
-                ) && !text.ends_with(' ')
-                {
-                    content.push(' ');
-                }
-            }
+        if step_arith_collect(scanner, &tok.token, &mut content, &mut depth) {
+            break;
         }
     }
 
     Ok(content)
+}
+
+/// One iteration of collect_arith_content. Mutates `content` and `depth`;
+/// returns true when collection should terminate (closing `))` consumed).
+fn step_arith_collect(
+    scanner: &mut Scanner,
+    tok: &Tok,
+    content: &mut String,
+    depth: &mut i32,
+) -> bool {
+    match tok {
+        Tok::DblParenClose => step_dbl_paren_close(scanner, content, depth),
+        Tok::DblParen => step_open_paren(scanner, content, depth, "(("),
+        Tok::DollarDblParen => step_open_paren(scanner, content, depth, "$(("),
+        Tok::LParen => {
+            content.push('(');
+            scanner.next();
+            false
+        }
+        Tok::RParen => step_rparen(scanner, content, depth),
+        _ => step_default_token(scanner, tok, content),
+    }
+}
+
+/// `))` token — already-paired; decrement depth and (when depth hits 0) terminate.
+fn step_dbl_paren_close(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
+    *depth -= 1;
+    scanner.next();
+    if *depth == 0 {
+        return true;
+    }
+    content.push_str("))");
+    false
+}
+
+/// Opening `((` or `$((` — increment depth, append the text.
+fn step_open_paren(
+    scanner: &mut Scanner,
+    content: &mut String,
+    depth: &mut i32,
+    text: &str,
+) -> bool {
+    *depth += 1;
+    content.push_str(text);
+    scanner.next();
+    false
+}
+
+/// `)` token — if followed by another `)`, treat as `))`; otherwise single `)`.
+fn step_rparen(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
+    scanner.next();
+    if !matches!(scanner.peek().token, Tok::RParen) {
+        content.push(')');
+        return false;
+    }
+    *depth -= 1;
+    scanner.next();
+    if *depth == 0 {
+        return true;
+    }
+    content.push_str("))");
+    false
+}
+
+fn step_default_token(scanner: &mut Scanner, tok: &Tok, content: &mut String) -> bool {
+    let text = tok_to_text(tok);
+    content.push_str(&text);
+    scanner.next();
+    if needs_separator_space(&scanner.peek().token, &text) {
+        content.push(' ');
+    }
+    false
+}
+
+fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
+    !matches!(
+        next,
+        Tok::DblParenClose
+            | Tok::RParen
+            | Tok::Semi
+            | Tok::Newline
+            | Tok::Eof
+            | Tok::DblParen
+            | Tok::LParen
+    ) && !prev_text.ends_with(' ')
 }
 
 /// Convert a token back to source text for arithmetic content collection.
