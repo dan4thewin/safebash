@@ -24,7 +24,7 @@ fn write_tmp(name: &str, content: &str) -> String {
 fn to_janet(name: &str, script: &str) -> String {
     let src = write_tmp(name, script);
     let out = Command::new(sash_bin())
-        .args(&["--janet", &src])
+        .args(["--janet", &src])
         .output()
         .expect("sash failed");
     assert!(

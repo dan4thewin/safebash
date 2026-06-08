@@ -1,6 +1,13 @@
 // Safe inner functions extracted from lib.rs for testability.
 // These are pure Rust with no unsafe, no no_std dependencies.
 // Both lib.rs and test files include/reference these.
+//
+// Note: sash-rt-tests' overflow_tests.rs include!()s this file (textual
+// inclusion at expression position), so an `#![allow(dead_code)]` inner
+// attribute here would error 'inner attribute not permitted in this
+// context'. Per-function `#[allow(dead_code)]` would silence the
+// 'never used' false positives but each test crate calls a different
+// subset, so the cleanup belongs at the include site, not here.
 
 /// Parse decimal bytes to i64. Returns 0 for empty/non-numeric input.
 /// Panics on overflow (DD#26: integer overflow traps).

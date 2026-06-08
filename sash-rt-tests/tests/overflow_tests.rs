@@ -4,6 +4,10 @@
 //! for overflow. We test them directly here — the standard test harness
 //! catches panics normally without hitting the no_std panic handler.
 
+// inner.rs is include!()d below; this crate only exercises a subset of
+// the functions it defines, so silence 'never used' for the rest.
+#![allow(dead_code)]
+
 // Import the inner functions directly from sash-rt source.
 // These are pub and have no no_std dependencies.
 include!("../../sash-rt/src/inner.rs");

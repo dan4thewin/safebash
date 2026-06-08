@@ -491,7 +491,7 @@ fn brush_native_cmdsub_exec() {
 fn brush_native_command_builtin() {
     // Original: command echo "Hello" / command ls -d / — tainted by $(which ls)
     // Native: call commands directly
-    let original = r#"echo "Executing echo built-in"
+    let _original = r#"echo "Executing echo built-in"
 command echo "Hello"
 echo "Executing ls using name"
 command ls -d /"#;

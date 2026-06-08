@@ -1,4 +1,3 @@
-use std::io::Write;
 use std::process::Command;
 
 /// Run sash-convert on a script, return stdout.
@@ -59,7 +58,7 @@ fn coerce_declare_a_to_array() {
 }
 
 #[test]
-fn coerce_declare_A_to_map() {
+fn coerce_declare_a_to_map() {
     let out = convert("coerce_map", "#!/bin/bash\ndeclare -A m=([a]=1)");
     assert!(
         out.contains("map m=([a]=1)"),

@@ -1394,6 +1394,8 @@ fn printf_multiple_args() {
     let (out, _) = run_bash_native(r#"printf '%s is %s\n' "sky" "blue""#, &[]);
     assert_eq!(out, "sky is blue\n");
 }
+
+#[test]
 fn printf_no_format() {
     let (out, _) = run_bash_native(r#"printf "hello\n""#, &[]);
     assert_eq!(out, "hello\n");
@@ -1951,7 +1953,6 @@ echo "$(( x > 3 ? 1 : 0 ))"
     assert_eq!(out, "1\n");
 }
 
-#[test]
 // ── ${var:offset:length} substring ──────────────────────────
 #[test]
 fn substring_offset_length() {
@@ -2150,7 +2151,7 @@ fn command_v_rejected() {
     writeln!(f, "command -v ls").unwrap();
     drop(f);
     let sash = env!("CARGO_BIN_EXE_sash");
-    let output = Command::new(&sash).arg(tmp).output().expect("run sash");
+    let output = Command::new(sash).arg(tmp).output().expect("run sash");
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         !output.status.success(),
@@ -2740,7 +2741,6 @@ echo "status=$?"
 }
 
 #[test]
-#[test]
 fn trap_exit_basic() {
     let src = r#"
 trap 'echo cleanup' EXIT
@@ -2814,9 +2814,6 @@ echo ${m[x]}
     assert_eq!(out, "1\nhello\n");
 }
 #[test]
-#[test]
-#[test]
-#[test]
 fn regex_replace_basic() {
     let src = r#"
 x="hello world"
@@ -2872,9 +2869,6 @@ echo $(len files)
     let count: i32 = out.trim().parse().unwrap_or(0);
     assert!(count > 0, "expected at least one .rs file, got: {}", out);
 }
-#[test]
-#[test]
-#[test]
 #[test]
 fn arith_nested_parens_basic() {
     let (out, _) = run_bash_native("a=2\nb=3\nc=4\necho $(( (a+b)*c ))", &[]);
