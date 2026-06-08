@@ -12,6 +12,8 @@
 
 [codegen-panics-to-diagnostics](tasks/codegen-panics-to-diagnostics)
 
+[cohort-complexity-cog-cc](tasks/cohort-complexity-cog-cc)
+
 [compound-redirects](tasks/compound-redirects)
 
 [converter-compound-postfix](tasks/converter-compound-postfix)

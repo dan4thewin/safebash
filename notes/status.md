@@ -16,7 +16,8 @@ overwritten; edit outside the BEGIN/END markers._
 
 Swept 14 non-done tasks; 6 closed (5 done, 1 done-via-supersede), 1
 redirected (monitoring-rules → skill-not-paragraph), 7 legitimately
-open. Final open count: 8 (3 ready, 3 pending, 1 deferred, 1 todo).
+open + 1 new (cohort-complexity tracking task). Final open count: 9
+(1 active, 3 ready, 3 pending, 1 deferred, 1 todo).
 
 ### Recently landed (last ~2 weeks)
 
@@ -63,10 +64,11 @@ from 49 → 26.
 - `sash/src/emit_c.rs` — SSA oracle (mirrors codegen)
 - `sash-rt/` — pure Rust `#![no_std]` runtime, rustix, no libc
 
-### Remaining open tasks (8)
+### Remaining open tasks (9)
 
+Active: `cohort-complexity-cog-cc` (standing — 15 grandfathered violators).
 Ready: `brush-rerun`, `fuzz-validator`, `r47-validate-rs-per-rule-tests`.
-Pending: `audit-string-keyed-builtin-dispatch` (36 sites confirmed),
+Pending: `audit-string-keyed-builtin-dispatch` (36 sites),
 `extract-instctx-setup` (15 sites in dispatch.rs),
 `r47-promote-monitoring-rules` (redirected to skill design).
 Deferred: `audit-run3` (schedule after next big feature wave).
