@@ -25,9 +25,10 @@ threshold-tightening plan, and the rolling list of violators.
 
 ## Progress (2026-06-07 wave)
 
-Sixteen violators cleared in one session. Live cog ceiling dropped
-from 59 (`emit_stmt`) to 20. As mean cog fell from 3.82 to 3.28, the
-gate's 3× threshold ratcheted automatically from 11.46 to 9.84.
+Twenty-eight violators cleared in one session. Live cog ceiling dropped
+from 59 (`emit_stmt`) to 16. As mean cog fell from 3.82 to 2.94, the
+gate's 3× threshold ratcheted automatically from 11.46 to 8.83 — gate
+tightened twice without any policy change.
 
 | commit  | function                          | cc        | cog        | notes |
 |---------|-----------------------------------|-----------|------------|-------|
@@ -46,7 +47,19 @@ gate's 3× threshold ratcheted automatically from 11.46 to 9.84.
 | `8984a86` | `parse_command_substitution`    | 16→12     | 21→9       | CmdSubStep enum |
 | `79f6bb7` | `taint_command`                 | 13→5      | 21→4       | read/bless extracted |
 | `3dc78a2` | `check_subscript_types`         | 13→6      | 21→3       | key-kind extracted |
-| `6673167` | `handle_cd`                     | 10→1      | 20→0       | bug fix — pre-DD#53 cruft (journal 109) |
+| `6673167` | `handle_cd`                     | 10→1      | 20→0       | **bug fix** — pre-DD#53 cruft (journal 109) |
+| `bffa6de` | `emit_array_join_expansion`     | 15→2      | 20→2       | 14 helpers (Cranelift emitter) |
+| `8ce3131` | `emit_exec`                     | 10→3      | 20→3       | three-path dispatcher; finalize_exec dedup |
+| `61bdef5` | `collect_arith_content`         | 14→3      | 20→3       | step_*_token helpers |
+| `26ace17` | `emit_pipeline`                 | 10→3      | 19→2       | stage + wait helpers |
+| `c199e35` | `expr_type`                     | 15→6      | 18→1       | per-kind helpers |
+| `d1743f9` | `collect_returns_inner`         | 13→7      | 18→6       | maybe_collect_return |
+| `d4ec214` | `check_rejected`                | 9→2       | 18→0       | per-rejected-shape helpers |
+| `67f918d` | `parse_function`                | 14→7      | 17→2       | optional parens + return type |
+| `768a3f3` | `emit_test_expr`                | 26→7      | 17→1       | inner-test wrap + per-op |
+| `5a250b4` | `emit_while`                    | 12→2      | 17→2       | while-read vs generic |
+| `9d5387b` | `check_cmd_in_stmt`             | 11→5      | 17→4       | is_regex_mutation + let-else |
+| `ceca554` | `intern_inst`                   | 17→11     | 17→3       | intern_command_parts dedup |
 
 ## The rubric (verbatim from journal 108)
 
@@ -56,11 +69,11 @@ reject if (cog - cc > -15)                     -- not a pure dispatcher
 ```
 
 Means are recalculated per `indexnudge --freshen`. Current (2026-06-07,
-after the wave):
+after the 28-commit wave):
 
 ```
-mean cc = 5.11, threshold = 15.33
-mean cog = 3.28, threshold =  9.84
+mean cc = 4.85, threshold = 14.55
+mean cog = 2.94, threshold =  8.83
 ```
 
 Pre-existing violators are grandfathered. The gate triggers only
@@ -70,8 +83,11 @@ commit lands.
 
 ## Current cohort (post-wave, 2026-06-07)
 
-15 remaining violators. Refresh with the query below; the live list
-keeps moving as the threshold tightens.
+96 remaining violators. The number rose from 15 (pre-wave) as the
+threshold tightened twice (cog 11.46 → 9.84 → 8.83), pulling in
+moderate functions that were previously below the cutoff. Top
+cognitive complexity in the live cohort is 16. Refresh with the
+query below; the live list keeps moving as the threshold tightens.
 
 Refresh:
 

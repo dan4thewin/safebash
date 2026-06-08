@@ -19,15 +19,11 @@ redirected (monitoring-rules → skill-not-paragraph). Filed
 cohort-complexity-cog-cc as the standing home for the ongoing
 refactor work.
 
-**Cohort wave: 16 commits, 16 violators cleared.** Live cog ceiling
-fell from 59 (`emit_stmt`) to 20. Mean cog 3.82 → 3.28, so the
-3× threshold ratcheted from 11.46 → 9.84 — gate tightened
-automatically. emit_stmt, emit_expr_inline, lower_ir_redirect_expr,
-scan_brace_expansion, handle_pipe_while_or_mapfile,
-handle_function_call_or_command, lower_redirected_stmt, emit_manifest,
-emit_redirected, lower_declaration_stmt, tokenize_arith,
-lower_expr_value_as_int, parse_command_substitution, taint_command,
-check_subscript_types, handle_cd.
+**Cohort wave: 28 commits, 28 violators cleared.** Live cog ceiling
+fell from 59 (`emit_stmt`) to 16. Mean cog 3.82 → 2.94, so the
+3× threshold ratcheted automatically twice (11.46 → 9.84 → 8.83).
+The cohort surfaced 96 functions because the tightening keeps
+pulling in moderate violators as the population improves.
 
 **Pre-DD#53 cruft discovered in handle_cd.** While refactoring,
 DG flagged that `cd -`, `cd HOME`, and `PWD`/`OLDPWD` autoupdate
