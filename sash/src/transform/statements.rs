@@ -310,48 +310,83 @@ fn lower_declaration_stmt(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    let is_array = d.flags.contains(&"-a".to_string());
-    let is_assoc = d.flags.contains(&"-A".to_string());
+    let is_array = d.flags.iter().any(|f| f == "-a");
+    let is_assoc = d.flags.iter().any(|f| f == "-A");
     for a in &d.assignments {
-        // Bare `declare var` (no =value) — don't reset existing variable
-        let is_bare =
-            matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty()) && !is_array && !is_assoc;
-        if is_bare && state.lookup(&a.name).version > 0 {
-            // Variable already defined — bare declare is a no-op
-            continue;
-        }
-        let val = if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
-            // Bare declaration like `array arr` or `map m` — empty table
-            if is_assoc {
-                state.assoc_arrays.insert(a.name.clone());
-                state.collections.insert(a.name.clone());
-                SsaValue::AssocArray(vec![])
-            } else {
-                state.collections.insert(a.name.clone());
-                SsaValue::IndexedArray(vec![])
-            }
-        } else {
-            let val = expr_to_value(&a.value, state);
-            let val = lift_int_func_calls(val, ssa, state, &mut block);
-            if matches!(&val, SsaValue::AssocArray(_)) {
-                state.assoc_arrays.insert(a.name.clone());
-            }
-            if matches!(&val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
-                state.collections.insert(a.name.clone());
-            }
-            val
-        };
-        let target = state.define(&a.name);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: target.clone(),
-            value: val.clone(),
-        });
-
-        if d.keyword == crate::ir::DeclKeyword::Readonly {
-            state.readonly_vars.insert(a.name.clone());
-        }
+        block = lower_one_declaration(a, d, is_array, is_assoc, ssa, state, block);
     }
     block
+}
+
+fn lower_one_declaration(
+    a: &Assignment,
+    d: &Declaration,
+    is_array: bool,
+    is_assoc: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    mut block: BlockId,
+) -> BlockId {
+    if is_bare_redeclare_noop(a, is_array, is_assoc, state) {
+        return block;
+    }
+    let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
+    let target = state.define(&a.name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value: val });
+    if d.keyword == crate::ir::DeclKeyword::Readonly {
+        state.readonly_vars.insert(a.name.clone());
+    }
+    block
+}
+
+/// `declare var` (no value, not -a/-A) on an already-defined variable
+/// is a no-op — don't clobber the existing value.
+fn is_bare_redeclare_noop(
+    a: &Assignment,
+    is_array: bool,
+    is_assoc: bool,
+    state: &VersionState,
+) -> bool {
+    let is_bare =
+        matches!(&a.value.kind, ExprKind::Literal(s) if s.is_empty()) && !is_array && !is_assoc;
+    is_bare && state.lookup(&a.name).version > 0
+}
+
+fn compute_declaration_value(
+    a: &Assignment,
+    is_array: bool,
+    is_assoc: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaValue {
+    if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
+        // Bare declaration like `array arr` or `map m` — empty table
+        if is_assoc {
+            state.assoc_arrays.insert(a.name.clone());
+            state.collections.insert(a.name.clone());
+            SsaValue::AssocArray(vec![])
+        } else {
+            state.collections.insert(a.name.clone());
+            SsaValue::IndexedArray(vec![])
+        }
+    } else {
+        let val = expr_to_value(&a.value, state);
+        let val = lift_int_func_calls(val, ssa, state, block);
+        track_collection_kind(&a.name, &val, state);
+        val
+    }
+}
+
+fn track_collection_kind(name: &str, val: &SsaValue, state: &mut VersionState) {
+    if matches!(val, SsaValue::AssocArray(_)) {
+        state.assoc_arrays.insert(name.to_string());
+    }
+    if matches!(val, SsaValue::AssocArray(_) | SsaValue::IndexedArray(_)) {
+        state.collections.insert(name.to_string());
+    }
 }
 
 fn lower_list_stmt(
