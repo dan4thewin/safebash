@@ -427,49 +427,74 @@ fn emit_if(out: &mut String, ctx: &mut EmitCtx, i: &If, depth: usize) {
 }
 
 fn emit_while(out: &mut String, ctx: &mut EmitCtx, w: &While, depth: usize) {
-    // Check if this is `while read -r var` — emit Janet file/read loop
-    let is_while_read = !w.until
-        && w.condition.len() == 1
-        && matches!(&w.condition[0].kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "read");
-    if is_while_read {
-        if let StmtKind::Command(c) = &w.condition[0].kind {
-            let var_name = c
-                .args
-                .iter()
-                .map(expr_to_literal)
-                .find(|a| !a.starts_with('-'))
-                .unwrap_or_else(|| "line".to_string());
-            ctx.declare(&var_name);
-            indent(out, depth);
-            writeln!(out, "(while (def _raw (file/read stdin :line))").unwrap();
-            indent(out, depth + 1);
-            writeln!(out, "(var {} (string/trimr _raw))", var_name).unwrap();
-            for s in &w.body {
-                emit_stmt(out, ctx, s, depth + 1);
-            }
-            indent(out, depth);
-            writeln!(out, ")").unwrap();
-        }
+    if let Some(c) = match_while_read(w) {
+        emit_while_read_loop(out, ctx, c, &w.body, depth);
     } else {
-        indent(out, depth);
-        if w.until {
-            write!(out, "(while (not ").unwrap();
-        } else {
-            write!(out, "(while ").unwrap();
-        }
-        for cond in &w.condition {
-            emit_condition_inline(out, ctx, cond);
-        }
-        if w.until {
-            write!(out, ")").unwrap(); // close (not ...)
-        }
-        writeln!(out).unwrap();
-        for s in &w.body {
-            emit_stmt(out, ctx, s, depth + 1);
-        }
-        indent(out, depth);
-        writeln!(out, ")").unwrap();
+        emit_generic_while(out, ctx, w, depth);
     }
+}
+
+/// Detect `while read VAR; do ... done` (not `until`, single-cmd
+/// condition). Returns the read Command when matched.
+fn match_while_read(w: &While) -> Option<&Command> {
+    if w.until || w.condition.len() != 1 {
+        return None;
+    }
+    let StmtKind::Command(c) = &w.condition[0].kind else {
+        return None;
+    };
+    if expr_to_literal(&c.name) == "read" {
+        Some(c)
+    } else {
+        None
+    }
+}
+
+/// Janet idiom: `(while (def _raw (file/read stdin :line)) (var v ...) body)`.
+fn emit_while_read_loop(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    c: &Command,
+    body: &[Statement],
+    depth: usize,
+) {
+    let var_name = c
+        .args
+        .iter()
+        .map(expr_to_literal)
+        .find(|a| !a.starts_with('-'))
+        .unwrap_or_else(|| "line".to_string());
+    ctx.declare(&var_name);
+    indent(out, depth);
+    writeln!(out, "(while (def _raw (file/read stdin :line))").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(var {} (string/trimr _raw))", var_name).unwrap();
+    for s in body {
+        emit_stmt(out, ctx, s, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
+}
+
+fn emit_generic_while(out: &mut String, ctx: &mut EmitCtx, w: &While, depth: usize) {
+    indent(out, depth);
+    if w.until {
+        write!(out, "(while (not ").unwrap();
+    } else {
+        write!(out, "(while ").unwrap();
+    }
+    for cond in &w.condition {
+        emit_condition_inline(out, ctx, cond);
+    }
+    if w.until {
+        write!(out, ")").unwrap(); // close (not ...)
+    }
+    writeln!(out).unwrap();
+    for s in &w.body {
+        emit_stmt(out, ctx, s, depth + 1);
+    }
+    indent(out, depth);
+    writeln!(out, ")").unwrap();
 }
 
 fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize) {
