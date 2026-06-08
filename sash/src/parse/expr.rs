@@ -790,24 +790,12 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
             Tok::Newline | Tok::Semi => {
                 scanner.next();
             }
-            _ => {
-                if stmts.is_empty() {
-                    if let Tok::Word(ref w) = tok {
-                        match try_special_word(scanner, span, w)? {
-                            Some(SpecialWord::Returned(e)) => return Ok(e),
-                            Some(SpecialWord::Continued(s)) => {
-                                stmts.push(s);
-                                continue;
-                            }
-                            None => {}
-                        }
-                    }
-                }
-                match super::parser::parse_statement(scanner)? {
-                    Some(stmt) => stmts.push(stmt),
-                    None => break,
-                }
-            }
+            _ => match parse_cmd_sub_step(scanner, span, &tok, &mut stmts)? {
+                CmdSubStep::Return(e) => return Ok(e),
+                CmdSubStep::Continue => continue,
+                CmdSubStep::Break => break,
+                CmdSubStep::Pushed => {}
+            },
         }
     }
 
@@ -815,6 +803,61 @@ pub fn parse_command_substitution(scanner: &mut Scanner, span: Span) -> Result<E
         kind: ExprKind::CommandSubstitution(stmts),
         span,
     })
+}
+
+/// Outcome of one normal-token iteration inside parse_command_substitution.
+enum CmdSubStep {
+    /// First-word special shortcut consumed the whole $(...); caller returns this Expr.
+    Return(Expr),
+    /// First-word special shortcut pushed a stmt; caller continues the outer loop.
+    Continue,
+    /// parse_statement returned None; caller breaks out of the loop.
+    Break,
+    /// parse_statement returned Some; caller falls through to the next iteration.
+    Pushed,
+}
+
+fn parse_cmd_sub_step(
+    scanner: &mut Scanner,
+    span: Span,
+    tok: &Tok,
+    stmts: &mut Vec<Statement>,
+) -> Result<CmdSubStep, Diagnostic> {
+    if let Some(step) = try_first_word_shortcut(scanner, span, tok, stmts)? {
+        return Ok(step);
+    }
+    match super::parser::parse_statement(scanner)? {
+        Some(stmt) => {
+            stmts.push(stmt);
+            Ok(CmdSubStep::Pushed)
+        }
+        None => Ok(CmdSubStep::Break),
+    }
+}
+
+/// Probe the first word (when no statements have been parsed yet) for one
+/// of the bareword shortcuts (status / getcpid). Returns Some(step) when
+/// a shortcut fired; None to fall through to parse_statement.
+fn try_first_word_shortcut(
+    scanner: &mut Scanner,
+    span: Span,
+    tok: &Tok,
+    stmts: &mut Vec<Statement>,
+) -> Result<Option<CmdSubStep>, Diagnostic> {
+    if !stmts.is_empty() {
+        return Ok(None);
+    }
+    let Tok::Word(w) = tok else {
+        return Ok(None);
+    };
+    match try_special_word(scanner, span, w)? {
+        Some(SpecialWord::Returned(e)) => Ok(Some(CmdSubStep::Return(e))),
+        Some(SpecialWord::Continued(s)) => {
+            stmts.push(s);
+            Ok(Some(CmdSubStep::Continue))
+        }
+        None => Ok(None),
+    }
 }
 
 /// `$(<file)` — slurp a file via `cat`. Caller has just consumed `(`.
