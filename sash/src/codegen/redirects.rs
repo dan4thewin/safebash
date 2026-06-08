@@ -273,75 +273,107 @@ pub(super) fn lower_ir_redirect_expr(
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    use cranelift_codegen::ir::types::I64;
     match &expr.kind {
         crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-            if let Some(&data_id) = literals.get(s.as_str()) {
-                let gv = module.declare_data_in_func(data_id, builder.func);
-                let ptr = builder.ins().global_value(I64, gv);
-                let len = builder.ins().iconst(I64, s.len() as i64);
-                (ptr, len)
-            } else {
-                let z = builder.ins().iconst(I64, 0);
-                (z, z)
-            }
+            redirect_expr_literal(s, builder, module, literals)
         }
         crate::ir::ExprKind::SimpleExpansion(var) => {
-            // Find the var in vars — match on base name, pick highest version
-            let mut best: Option<(&str, u32, &VarSlot)> = None;
-            for (k, sv) in vars {
-                let base = if let Some(idx) = k.rfind('_') {
-                    let suffix = &k[idx + 1..];
-                    if suffix.chars().all(|c| c.is_ascii_digit()) {
-                        &k[..idx]
-                    } else {
-                        k.as_str()
-                    }
-                } else {
-                    k.as_str()
-                };
-                if base == var {
-                    let ver = k
-                        .rfind('_')
-                        .and_then(|i| k[i + 1..].parse::<u32>().ok())
-                        .unwrap_or(0);
-                    if best.is_none() || ver > best.unwrap().1 {
-                        best = Some((base, ver, sv));
-                    }
-                }
-            }
-            if let Some((_, _, sv)) = best {
-                return (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()));
-            }
-            let z = builder.ins().iconst(I64, 0);
-            (z, z)
+            redirect_expr_simple_expansion(var, builder, vars)
         }
         crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
-            assert!(!parts.is_empty());
-            let (mut acc_ptr, mut acc_len) =
-                lower_ir_redirect_expr(&parts[0], builder, module, vars, literals, externs);
-            for part in &parts[1..] {
-                let (p_ptr, p_len) =
-                    lower_ir_redirect_expr(part, builder, module, vars, literals, externs);
-                let out_slot =
-                    builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
-                        cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
-                        8,
-                        3,
-                    ));
-                let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-                let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
-                let call = builder
-                    .ins()
-                    .call(concat_ref, &[acc_ptr, acc_len, p_ptr, p_len, out_addr]);
-                acc_ptr = builder.inst_results(call)[0];
-                acc_len = builder.ins().stack_load(I64, out_slot, 0);
-            }
-            (acc_ptr, acc_len)
+            redirect_expr_concat(parts, builder, module, vars, literals, externs)
         }
-        _ => {
-            let z = builder.ins().iconst(I64, 0);
-            (z, z)
+        _ => redirect_expr_zero(builder),
+    }
+}
+
+fn redirect_expr_zero(
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::types::I64;
+    let z = builder.ins().iconst(I64, 0);
+    (z, z)
+}
+
+fn redirect_expr_literal(
+    s: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::types::I64;
+    if let Some(&data_id) = literals.get(s) {
+        let gv = module.declare_data_in_func(data_id, builder.func);
+        let ptr = builder.ins().global_value(I64, gv);
+        let len = builder.ins().iconst(I64, s.len() as i64);
+        (ptr, len)
+    } else {
+        redirect_expr_zero(builder)
+    }
+}
+
+fn redirect_expr_simple_expansion(
+    var: &str,
+    builder: &mut FunctionBuilder,
+    vars: &HashMap<String, VarSlot>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    if let Some(sv) = find_highest_version(vars, var) {
+        (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
+    } else {
+        redirect_expr_zero(builder)
+    }
+}
+
+/// Find the highest-version VarSlot matching `var` as a base name.
+/// Variable keys are encoded as either `name` (version 0) or `name_N`
+/// (version N, where N is all-ASCII-digits).
+fn find_highest_version<'a>(vars: &'a HashMap<String, VarSlot>, var: &str) -> Option<&'a VarSlot> {
+    let mut best: Option<(u32, &'a VarSlot)> = None;
+    for (k, sv) in vars {
+        let (base, ver) = parse_var_base_version(k);
+        if base == var && best.is_none_or(|(v, _)| ver > v) {
+            best = Some((ver, sv));
         }
     }
+    best.map(|(_, sv)| sv)
+}
+
+fn parse_var_base_version(k: &str) -> (&str, u32) {
+    if let Some(idx) = k.rfind('_') {
+        let suffix = &k[idx + 1..];
+        if !suffix.is_empty() && suffix.chars().all(|c| c.is_ascii_digit()) {
+            return (&k[..idx], suffix.parse().unwrap_or(0));
+        }
+    }
+    (k, 0)
+}
+
+fn redirect_expr_concat(
+    parts: &[crate::ir::Expr],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    use cranelift_codegen::ir::types::I64;
+    assert!(!parts.is_empty());
+    let (mut acc_ptr, mut acc_len) =
+        lower_ir_redirect_expr(&parts[0], builder, module, vars, literals, externs);
+    for part in &parts[1..] {
+        let (p_ptr, p_len) = lower_ir_redirect_expr(part, builder, module, vars, literals, externs);
+        let out_slot = builder.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(
+            cranelift_codegen::ir::StackSlotKind::ExplicitSlot,
+            8,
+            3,
+        ));
+        let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+        let concat_ref = module.declare_func_in_func(externs.concat, builder.func);
+        let call = builder
+            .ins()
+            .call(concat_ref, &[acc_ptr, acc_len, p_ptr, p_len, out_addr]);
+        acc_ptr = builder.inst_results(call)[0];
+        acc_len = builder.ins().stack_load(I64, out_slot, 0);
+    }
+    (acc_ptr, acc_len)
 }
