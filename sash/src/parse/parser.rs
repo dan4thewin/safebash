@@ -1747,40 +1747,53 @@ fn expect_word(scanner: &mut Scanner, span: Span, msg: &str) -> Result<String, D
 
 /// Check for rejected constructs in a parsed statement.
 fn check_rejected(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
-    // Check for backtick command substitution in expressions
     walk_exprs(stmt, &mut |expr| {
-        if let ExprKind::Literal(ref s) = expr.kind {
-            if s == "`backtick`" {
-                diags.push(parse_error(
-                    expr.span,
-                    "SB5020",
-                    "backtick command substitution is not allowed — use $(...) instead".to_string(),
-                ));
-            }
-        }
-        if let ExprKind::ParameterExpansion(ref pe) = expr.kind {
-            if pe.operator.as_deref() == Some("!") {
-                diags.push(parse_error(
-                    expr.span,
-                    "SB4003",
-                    format!(
-                        "indirect expansion ${{!{}}} is not allowed in the safe subset",
-                        pe.name
-                    ),
-                ));
-            }
-            // SB4015: reject @-transforms
-            if let Some(ref op) = pe.operator {
-                if op.starts_with('@') && op.len() == 2 {
-                    diags.push(parse_error(
-                        expr.span,
-                        "SB4015",
-                        format!("parameter transformation ${{var{}}} is not supported — use ^/^^/,/,, instead", op),
-                    ));
-                }
-            }
-        }
+        check_rejected_expr(expr, diags);
     });
+}
+
+fn check_rejected_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::Literal(s) if s == "`backtick`" => {
+            diags.push(parse_error(
+                expr.span,
+                "SB5020",
+                "backtick command substitution is not allowed — use $(...) instead".to_string(),
+            ));
+        }
+        ExprKind::ParameterExpansion(pe) => check_rejected_param_expansion(pe, expr.span, diags),
+        _ => {}
+    }
+}
+
+fn check_rejected_param_expansion(
+    pe: &ParameterExpansion,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if pe.operator.as_deref() == Some("!") {
+        diags.push(parse_error(
+            span,
+            "SB4003",
+            format!(
+                "indirect expansion ${{!{}}} is not allowed in the safe subset",
+                pe.name
+            ),
+        ));
+    }
+    // SB4015: reject @-transforms (${var@P}, ${var@Q}, ${var@A} etc.)
+    if let Some(op) = pe.operator.as_deref() {
+        if op.starts_with('@') && op.len() == 2 {
+            diags.push(parse_error(
+                span,
+                "SB4015",
+                format!(
+                    "parameter transformation ${{var{}}} is not supported — use ^/^^/,/,, instead",
+                    op
+                ),
+            ));
+        }
+    }
 }
 
 /// Walk all expressions in a statement, calling f for each.
