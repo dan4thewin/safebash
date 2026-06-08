@@ -267,7 +267,19 @@ fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
 fn emit_manifest(program: &crate::ir::Program) {
     let type_map = type_check::infer_types(program);
     let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
-    let builtins: std::collections::HashSet<&str> = [
+    let builtins = builtin_command_set();
+    let path_var = std::env::var("PATH").unwrap_or_default();
+    let sysroot = get_sysroot();
+    let deps = collect_external_deps(&ssa, &builtins, &path_var, sysroot.as_deref());
+    for dep in &deps {
+        println!("{}", dep);
+    }
+}
+
+/// Commands handled by the runtime rather than an external binary;
+/// resolve_dep filters these out of the manifest.
+fn builtin_command_set() -> std::collections::HashSet<&'static str> {
+    [
         "echo",
         "true",
         "false",
@@ -291,29 +303,45 @@ fn emit_manifest(program: &crate::ir::Program) {
     ]
     .iter()
     .copied()
-    .collect();
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    let sysroot = get_sysroot();
-    let mut deps: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    .collect()
+}
+
+fn collect_external_deps(
+    ssa: &ssa::SsaProgram,
+    builtins: &std::collections::HashSet<&str>,
+    path_var: &str,
+    sysroot: Option<&str>,
+) -> std::collections::BTreeSet<String> {
+    let mut deps = std::collections::BTreeSet::new();
     for block in ssa.blocks.values() {
         for inst in &block.insts {
-            if let ssa::SsaInst::Command { name, .. } = inst {
-                if let Some(path) = resolve_dep(name, &builtins, &path_var, sysroot.as_deref()) {
+            collect_inst_deps(inst, builtins, path_var, sysroot, &mut deps);
+        }
+    }
+    deps
+}
+
+fn collect_inst_deps(
+    inst: &ssa::SsaInst,
+    builtins: &std::collections::HashSet<&str>,
+    path_var: &str,
+    sysroot: Option<&str>,
+    deps: &mut std::collections::BTreeSet<String>,
+) {
+    match inst {
+        ssa::SsaInst::Command { name, .. } => {
+            if let Some(path) = resolve_dep(name, builtins, path_var, sysroot) {
+                deps.insert(path);
+            }
+        }
+        ssa::SsaInst::Pipeline { stages, .. } => {
+            for (name, _, _) in stages {
+                if let Some(path) = resolve_dep(name, builtins, path_var, sysroot) {
                     deps.insert(path);
                 }
             }
-            if let ssa::SsaInst::Pipeline { stages, .. } = inst {
-                for (name, _, _) in stages {
-                    if let Some(path) = resolve_dep(name, &builtins, &path_var, sysroot.as_deref())
-                    {
-                        deps.insert(path);
-                    }
-                }
-            }
         }
-    }
-    for dep in &deps {
-        println!("{}", dep);
+        _ => {}
     }
 }
 
