@@ -141,45 +141,12 @@ fn lower_redirected_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let is_compound = matches!(
-        r.body.kind,
-        StmtKind::While(_)
-            | StmtKind::If(_)
-            | StmtKind::For(_)
-            | StmtKind::Case(_)
-            | StmtKind::Group(_)
-            | StmtKind::Subshell(_)
-            | StmtKind::Function { .. }
-    );
-
-    // Special case: redirected function definition — store redirects
-    // for application at call sites
     if let StmtKind::Function(ref f) = r.body.kind {
-        if !r.redirects.is_empty() {
-            state
-                .function_redirects
-                .insert(f.name.clone(), r.redirects.clone());
-        }
-        return lower_one(&r.body, ssa, state, block);
+        return lower_redirected_function(f, r, ssa, state, block);
     }
 
-    if is_compound && !r.redirects.is_empty() {
-        ssa.block_mut(block).insts.push(SsaInst::Command {
-            name: "__redirect_push".to_string(),
-            kind: BuiltinCmd::RedirectPush,
-            args: vec![],
-            redirects: r.redirects.clone(),
-            checked: true,
-        });
-        let result_block = lower_one(&r.body, ssa, state, block);
-        ssa.block_mut(result_block).insts.push(SsaInst::Command {
-            name: "__redirect_pop".to_string(),
-            kind: BuiltinCmd::RedirectPop,
-            args: vec![],
-            redirects: r.redirects.clone(),
-            checked: true,
-        });
-        return result_block;
+    if is_compound_stmt(&r.body.kind) && !r.redirects.is_empty() {
+        return bracket_compound_with_redirects(r, ssa, state, block);
     }
 
     let result_block = lower_one(&r.body, ssa, state, block);
@@ -190,29 +157,89 @@ fn lower_redirected_stmt(
             vec![block, result_block]
         };
         for blk_id in blocks_to_check {
-            let blk = ssa.block_mut(blk_id);
-            if let Some(inst) = blk.insts.last_mut() {
-                match inst {
-                    SsaInst::Command { redirects, .. } => {
-                        *redirects = r.redirects.clone();
-                    }
-                    SsaInst::Pipeline { stages, .. } => {
-                        if let Some(last) = stages.last_mut() {
-                            last.2 = r.redirects.clone();
-                        }
-                    }
-                    SsaInst::ReadLine { redirects, .. } => {
-                        *redirects = r.redirects.clone();
-                    }
-                    SsaInst::ReadLineMulti { redirects, .. } => {
-                        *redirects = r.redirects.clone();
-                    }
-                    _ => {}
-                }
-            }
+            attach_redirects_to_last_inst(ssa, blk_id, &r.redirects);
         }
     }
     result_block
+}
+
+fn is_compound_stmt(kind: &StmtKind) -> bool {
+    matches!(
+        kind,
+        StmtKind::While(_)
+            | StmtKind::If(_)
+            | StmtKind::For(_)
+            | StmtKind::Case(_)
+            | StmtKind::Group(_)
+            | StmtKind::Subshell(_)
+            | StmtKind::Function { .. }
+    )
+}
+
+/// `f() { ... } > out` — store the redirects keyed by function name so
+/// they're applied at every call site (handle_function_call_or_command).
+fn lower_redirected_function(
+    f: &Function,
+    r: &Redirected,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    if !r.redirects.is_empty() {
+        state
+            .function_redirects
+            .insert(f.name.clone(), r.redirects.clone());
+    }
+    lower_one(&r.body, ssa, state, block)
+}
+
+/// `(while/if/for/case/{}/(...)) > out` — wrap the lowered body with
+/// __redirect_push / __redirect_pop so the redirects apply to every
+/// inst emitted between them.
+fn bracket_compound_with_redirects(
+    r: &Redirected,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    ssa.block_mut(block).insts.push(SsaInst::Command {
+        name: "__redirect_push".to_string(),
+        kind: BuiltinCmd::RedirectPush,
+        args: vec![],
+        redirects: r.redirects.clone(),
+        checked: true,
+    });
+    let result_block = lower_one(&r.body, ssa, state, block);
+    ssa.block_mut(result_block).insts.push(SsaInst::Command {
+        name: "__redirect_pop".to_string(),
+        kind: BuiltinCmd::RedirectPop,
+        args: vec![],
+        redirects: r.redirects.clone(),
+        checked: true,
+    });
+    result_block
+}
+
+/// Simple command + redirects: attach the redirects directly to the last
+/// emitted inst (Command/Pipeline last-stage/ReadLine/ReadLineMulti).
+fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
+    let blk = ssa.block_mut(blk_id);
+    let Some(inst) = blk.insts.last_mut() else {
+        return;
+    };
+    match inst {
+        SsaInst::Command { redirects: r, .. }
+        | SsaInst::ReadLine { redirects: r, .. }
+        | SsaInst::ReadLineMulti { redirects: r, .. } => {
+            *r = redirects.to_vec();
+        }
+        SsaInst::Pipeline { stages, .. } => {
+            if let Some(last) = stages.last_mut() {
+                last.2 = redirects.to_vec();
+            }
+        }
+        _ => {}
+    }
 }
 
 /// `(( expr ))` as a condition: evaluate arithmetic, set exit status based on
