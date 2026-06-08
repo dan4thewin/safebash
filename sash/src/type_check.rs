@@ -83,47 +83,51 @@ impl TypeEnv {
 /// Infer the type of an expression in context.
 fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
     match &expr.kind {
-        ExprKind::Literal(s) => {
-            // Bare numbers are ambiguous — treat as string (bash default)
-            // Only explicit `declare int` or $(()) makes something int
-            let _ = s;
-            VarType::String
-        }
-        ExprKind::SimpleExpansion(var) => env.var_type(var),
         ExprKind::Arithmetic(_) => VarType::Int,
-        ExprKind::CommandSubstitution(parts) => {
-            // $(func ...) — check if func is int
-            if let Some(first) = parts.first() {
-                if let StmtKind::Command(c) = &first.kind {
-                    let name = expr_to_name(&c.name);
-                    // Compiler keywords that return int
-                    if matches!(
-                        name.as_str(),
-                        "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid" | "dtoi"
-                    ) {
-                        return VarType::Int;
-                    }
-                    return env.func_type(&name);
-                }
-            }
-            VarType::String
-        }
-        ExprKind::DoubleQuoted(_) => VarType::String,
-        ExprKind::SingleQuoted(_) => VarType::String,
-        ExprKind::ParameterExpansion(pe) => {
-            if let Some(op) = &pe.operator {
-                if op == ":-" || op == "-" {
-                    // Default value — type follows the variable
-                    env.var_type(&pe.name)
-                } else {
-                    // Strip ops always produce strings
-                    VarType::String
-                }
-            } else {
-                env.var_type(&pe.name)
-            }
-        }
+        ExprKind::SimpleExpansion(var) => env.var_type(var),
+        ExprKind::CommandSubstitution(parts) => command_substitution_type(parts, env),
+        ExprKind::ParameterExpansion(pe) => parameter_expansion_type(pe, env),
+        // Literal / DoubleQuoted / SingleQuoted / everything else → String.
+        // Bash treats bare numeric literals as strings; only declare-int or
+        // $(()) makes a value int.
         _ => VarType::String,
+    }
+}
+
+/// `$(cmd)`: int when `cmd` is one of the compiler intrinsics that
+/// returns an int, otherwise the recorded function type (defaults to
+/// String for unknown commands).
+fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
+    let Some(first) = parts.first() else {
+        return VarType::String;
+    };
+    let StmtKind::Command(c) = &first.kind else {
+        return VarType::String;
+    };
+    let name = expr_to_name(&c.name);
+    if is_int_returning_intrinsic(&name) {
+        return VarType::Int;
+    }
+    env.func_type(&name)
+}
+
+fn is_int_returning_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "signum" | "argc" | "status" | "getpid" | "getppid" | "getcpid" | "dtoi"
+    )
+}
+
+/// `${var:-default}` / `${var-default}` preserve the variable's type;
+/// all other strip ops (`#`, `%`, `/`, etc.) produce strings.
+fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
+    let Some(op) = pe.operator.as_deref() else {
+        return env.var_type(&pe.name);
+    };
+    if op == ":-" || op == "-" {
+        env.var_type(&pe.name)
+    } else {
+        VarType::String
     }
 }
 
