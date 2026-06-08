@@ -1,6 +1,8 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+mod common;
+
 static COUNTER: AtomicUsize = AtomicUsize::new(0);
 
 fn run_bash_native(bash_src: &str, args: &[&str]) -> (String, i32) {
@@ -2154,10 +2156,7 @@ fn command_v_rejected() {
         !output.status.success(),
         "expected compile failure, got success"
     );
-    assert!(
-        stderr.contains("SB5011"),
-        "expected SB5011 in stderr, got: {stderr}"
-    );
+    common::expect_diag(&stderr, "SB5011");
     let _ = std::fs::remove_file(tmp);
 }
 

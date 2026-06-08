@@ -5,6 +5,8 @@
 
 use std::process::Command;
 
+mod common;
+
 fn sash_bin() -> String {
     let mut path = std::env::current_exe().unwrap();
     path.pop(); // deps/
@@ -405,33 +407,21 @@ fn pos_lowercase() {
 fn neg_export_rejected() {
     let script = "#!/bin/bash\nexport FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("export", script);
-    assert!(
-        stderr.contains("SB5001"),
-        "expected SB5001 export rejection, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5001");
 }
 
 #[test]
 fn neg_tainted_env_var() {
     let script = "#!/bin/bash\nx=$(getenv CUSTOM_VAR)\necho $x";
     let stderr = compile_expect_fail("taint_env", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 taint error, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
 fn neg_tainted_argv() {
     let script = "#!/bin/bash\necho $1";
     let stderr = compile_expect_fail("taint_argv", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 taint error, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
@@ -443,22 +433,14 @@ fn neg_tainted_env_inside_function_body() {
     let script =
         "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
     let stderr = compile_expect_fail("taint_in_fn_body", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 for tainted getenv inside function body, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
 fn neg_eval_rejected() {
     let script = "#!/bin/bash\neval echo hello";
     let stderr = compile_expect_fail("eval", script);
-    assert!(
-        stderr.contains("SB4001"),
-        "expected SB4001 eval rejection, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4001");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -525,11 +507,7 @@ fn sample_kh_taint_error() {
     let src = write_tmp("kh.sh", &script);
     let out = sash_cmd(&["-o", "/tmp/sash_e2e_kh", &src]);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
-    assert!(
-        stderr.contains("SB4020"),
-        "kh should fail with taint error, got:\n{}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -562,22 +540,14 @@ fn pos_sed_in_assignment() {
 fn neg_tainted_all_args() {
     let script = "#!/bin/bash\necho \"$@\"";
     let stderr = compile_expect_fail("taint_at", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 for $@, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
 fn neg_export_declare_x() {
     let script = "#!/bin/bash\ndeclare -x FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("decl_x", script);
-    assert!(
-        stderr.contains("SB5001"),
-        "expected SB5001 for declare -x, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5001");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -813,11 +783,7 @@ echo $x
 fn neg_cmdsub_tainted() {
     let script = "#!/bin/bash\nx=$(curl http://example.com)\necho $x";
     let stderr = compile_expect_fail("cmdsub_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 for tainted cmdsub, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
@@ -830,11 +796,7 @@ x=$(curl http://other.com)
 echo $x
 "#;
     let stderr = compile_expect_fail("retaint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 after re-taint, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -956,11 +918,7 @@ fn pos_alternate_value() {
 fn neg_heredoc_cmdsub() {
     let script = "#!/bin/bash\n/bin/cat <<EOF\nhello $(/bin/hostname)\nEOF";
     let stderr = compile_expect_fail("hd_cmdsub", script);
-    assert!(
-        stderr.contains("SB5002"),
-        "expected SB5002 for $(cmd) in heredoc, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5002");
 }
 
 #[test]
@@ -1071,11 +1029,7 @@ fn pos_auto_bless_multiple() {
 fn neg_unknown_cmd_still_tainted() {
     let script = "#!/bin/bash\nx=$(some_unknown_cmd)\necho $x";
     let stderr = compile_expect_fail("unknown_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020 for unknown cmd, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1174,11 +1128,7 @@ fn brush_getenv_bless_native() {
     // Step 1: without bless, fails
     let raw = "#!/bin/bash\nx=$(getenv MY_VAR)\necho $x";
     let stderr = compile_expect_fail("brush_getenv_raw", raw);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 
     // Step 2: with bless, compiles and output matches
     let blessed = r#"#!/bin/bash
@@ -1195,11 +1145,7 @@ fn brush_curl_tainted() {
     // curl output is correctly tainted — verify diagnostic
     let script = "#!/bin/bash\nx=$(curl http://evil.com)\necho $x";
     let stderr = compile_expect_fail("brush_curl", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
@@ -1224,11 +1170,7 @@ fn brush_heredoc_cmdsub_rejected() {
     // Heredoc with command substitution — SB5002
     let script = "#!/bin/bash\n/bin/cat <<END\n$(echo hi)\nEND\n";
     let stderr = compile_expect_fail("brush_heredoc_cmdsub", script);
-    assert!(
-        stderr.contains("SB5002"),
-        "expected SB5002, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5002");
 }
 
 #[test]
@@ -1236,11 +1178,7 @@ fn brush_indirect_rejected() {
     // ${!ref} — SB4003
     let script = "#!/bin/bash\nvar=hello\nref=var\necho ${!ref}";
     let stderr = compile_expect_fail("brush_indirect", script);
-    assert!(
-        stderr.contains("SB4003"),
-        "expected SB4003, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4003");
 }
 
 #[test]
@@ -1248,11 +1186,7 @@ fn brush_export_rejected() {
     // export — SB5001
     let script = "#!/bin/bash\nexport MY_VAR=hello";
     let stderr = compile_expect_fail("brush_export", script);
-    assert!(
-        stderr.contains("SB5001"),
-        "expected SB5001, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5001");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1263,44 +1197,28 @@ fn brush_export_rejected() {
 fn neg_extglob_at() {
     let script = "#!/bin/bash\ncase x in @(a|b)) echo match;; esac";
     let stderr = compile_expect_fail("extglob_at", script);
-    assert!(
-        stderr.contains("SB5005"),
-        "expected SB5005 for @(), got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5005");
 }
 
 #[test]
 fn neg_extglob_plus() {
     let script = "#!/bin/bash\ncase x in +(a|b)) echo match;; esac";
     let stderr = compile_expect_fail("extglob_plus", script);
-    assert!(
-        stderr.contains("SB5005"),
-        "expected SB5005 for +(), got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5005");
 }
 
 #[test]
 fn neg_extglob_question() {
     let script = "#!/bin/bash\ncase x in ?(a|b)) echo match;; esac";
     let stderr = compile_expect_fail("extglob_q", script);
-    assert!(
-        stderr.contains("SB5005"),
-        "expected SB5005 for ?(), got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5005");
 }
 
 #[test]
 fn neg_extglob_bang() {
     let script = "#!/bin/bash\ncase x in !(a|b)) echo match;; esac";
     let stderr = compile_expect_fail("extglob_bang", script);
-    assert!(
-        stderr.contains("SB5005"),
-        "expected SB5005 for !(), got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB5005");
 }
 
 #[test]
@@ -1314,22 +1232,14 @@ fn pos_case_bare_star() {
 fn neg_source_dot_rejected() {
     let script = "#!/bin/bash\n. ./file.sh";
     let stderr = compile_expect_fail("source_dot", script);
-    assert!(
-        stderr.contains("SB4002"),
-        "expected SB4002 for '.', got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4002");
 }
 
 #[test]
 fn neg_source_keyword_rejected() {
     let script = "#!/bin/bash\nsource ./file.sh";
     let stderr = compile_expect_fail("source_kw", script);
-    assert!(
-        stderr.contains("SB4002"),
-        "expected SB4002 for 'source', got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4002");
 }
 
 // ── DD#55: suppress prefix (- cmd) ──────────────────────────

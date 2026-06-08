@@ -10,6 +10,8 @@
 
 use std::process::Command;
 
+mod common;
+
 fn sash_bin() -> String {
     let mut path = std::env::current_exe().unwrap();
     path.pop();
@@ -118,11 +120,7 @@ b=$x
 echo "$b"
 "#;
     let stderr = compile_expect_fail("copy_read", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "copying tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [NOW]
@@ -133,11 +131,7 @@ x=$(getenv UNTRUSTED)
 echo "$x"
 "#;
     let stderr = compile_expect_fail("cmd_arg", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "tainted var as cmd arg should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -149,11 +143,7 @@ x=$(getenv IDX)
 echo "${items[$x]}"
 "#;
     let stderr = compile_expect_fail("arr_index", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "tainted index should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -164,11 +154,7 @@ x=$(getenv NUM)
 (( x + 1 ))
 "#;
     let stderr = compile_expect_fail("arith", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "tainted var in arithmetic should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -179,11 +165,7 @@ x=$(getenv NUM)
 echo $(( x * 2 ))
 "#;
     let stderr = compile_expect_fail("arith_exp", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "tainted var in $(()) should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -195,11 +177,7 @@ x=$(getenv NAME)
 greet "$x"
 "#;
     let stderr = compile_expect_fail("func_arg", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "passing tainted var to function should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -210,11 +188,7 @@ x=$(getenv VAL)
 echo "${x:-fallback}"
 "#;
     let stderr = compile_expect_fail("default_exp", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "default expansion of tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -225,11 +199,7 @@ x=$(getenv VAL)
 echo "${#x}"
 "#;
     let stderr = compile_expect_fail("length", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "length of tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -240,11 +210,7 @@ x=$(getenv PATH_VAL)
 echo "${x#/usr}"
 "#;
     let stderr = compile_expect_fail("prefix_strip", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "prefix strip of tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -255,11 +221,7 @@ x=$(getenv FILENAME)
 echo "${x%%.*}"
 "#;
     let stderr = compile_expect_fail("suffix_strip", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "suffix strip of tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -270,11 +232,7 @@ mapfile -t lines < /dev/stdin
 echo "${lines[0]}"
 "#;
     let stderr = compile_expect_fail("mapfile", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "mapfile element read should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test] // [SSA]
@@ -287,11 +245,7 @@ x=$(getenv B)
 echo "$x"
 "#;
     let stderr = compile_expect_fail("retaint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "re-tainted var should be SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // ===================================================================
@@ -503,22 +457,14 @@ read y <<< "$x"
 echo "$y"
 "#;
     let stderr = compile_expect_fail("t1_hs_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
 fn t1_heredoc_tainted_expansion_rejected() {
     let script = "#!/bin/bash\nx=$(getenv UNTRUSTED)\nread y <<EOF\n$x\nEOF\necho \"$y\"\n";
     let stderr = compile_expect_fail("t1_heredoc_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T2: tautological bless (test doesn't reference blessed var) ---
@@ -596,11 +542,7 @@ y=$((x + 1))
 echo "$y"
 "#;
     let stderr = compile_expect_fail("t4_arith_launder", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T5: parameter expansion operand taint ---
@@ -613,11 +555,7 @@ x=$(getenv SECRET)
 echo "${safe:-$x}"
 "#;
     let stderr = compile_expect_fail("t5_default_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 #[test]
@@ -628,11 +566,7 @@ safe="value"
 echo "${safe:+$x}"
 "#;
     let stderr = compile_expect_fail("t5_alternate_taint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T6: function global re-taint at call site ---
@@ -646,11 +580,7 @@ x=$(getenv SECRET)
 leak
 "#;
     let stderr = compile_expect_fail("t6_global_retaint", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T9: shift then positional read ---
@@ -677,11 +607,7 @@ fn t10_direct_getenv_cmdsub_rejected() {
 echo "$(getenv UNTRUSTED)"
 "#;
     let stderr = compile_expect_fail("t10_direct_getenv", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T11: case pattern taint ---
@@ -696,11 +622,7 @@ case "test" in
 esac
 "#;
     let stderr = compile_expect_fail("t11_case_pattern", script);
-    assert!(
-        stderr.contains("SB4020"),
-        "expected SB4020, got: {}",
-        stderr
-    );
+    common::expect_diag(&stderr, "SB4020");
 }
 
 // --- T7/T8/T12: regression locks for validator rules ---
