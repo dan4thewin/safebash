@@ -326,7 +326,6 @@ fn emit_block_insts(
                 ssa_id,
                 saved_end_status_var: ctx.saved_end_status_var,
                 cl_blocks: ctx.cl_blocks,
-                trace: ctx.trace,
             },
         );
     }

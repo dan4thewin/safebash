@@ -147,7 +147,6 @@ pub(super) struct InstCtx<'a> {
     pub(super) ssa_id: usize,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
-    pub(super) trace: bool,
 }
 
 /// Per-function compilation state, built during variable allocation.

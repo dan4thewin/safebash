@@ -31,20 +31,10 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
-        let _space_id = ctx.space_id;
-        let _nl_id = ctx.nl_id;
         let test_result_var = ctx.test_result_var;
         let exit_status_var = ctx.exit_status_var;
-        let _pipe_read_fd_var = ctx.pipe_read_fd_var;
         let capture_saved_var = ctx.capture_saved_var;
         let capture_pipe_var = ctx.capture_pipe_var;
-        let _func_constants = ctx.func_constants;
-        let _end_cl_block = ctx.end_cl_block;
-        let _program = ctx.program;
-        let _ssa_id = ctx.ssa_id;
-        let _saved_end_status_var = ctx.saved_end_status_var;
-        let _cl_blocks = ctx.cl_blocks;
-        let _trace = ctx.trace;
         match self {
             SsaInst::Assign { target, value } => {
                 return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
@@ -389,7 +379,6 @@ impl SsaInst {
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
         let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        let _redirect_stack = &mut *ctx.redirect_stack;
         let saved = emit_redirects(
             redirects,
             builder,
@@ -480,8 +469,6 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let _end_cl_block = ctx.end_cl_block;
-        let _func_constants = ctx.func_constants;
         // Runtime bless enforcement: evaluate test on source, abort if false.
         // On pass, copy source value to target (new clean SSA version).
         let result = lower_test_expr(
@@ -558,7 +545,6 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let _test_result_var = ctx.test_result_var;
         let func_constants = ctx.func_constants;
         // wait [pid] — wait for specific pid or last bg job
         let pid = if let Some(arg) = args.first() {
@@ -622,11 +608,6 @@ impl SsaInst {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
-        let _func_constants = ctx.func_constants;
-        let _end_cl_block = ctx.end_cl_block;
-        let _program = ctx.program;
-        let _ssa_id = ctx.ssa_id;
-        let _redirect_stack = &mut *ctx.redirect_stack;
         // DD#23: `command -v` is rejected by the validator. If we reach here,
         // it's `command [-p] <cmd>` — just run the command, bypassing functions.
         let restore = emit_redirects(
@@ -759,7 +740,6 @@ impl SsaInst {
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
         let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        let _redirect_stack = &mut *ctx.redirect_stack;
         // Set up redirects (e.g. herestring <<< "text")
         let saved = emit_redirects(
             redirects,
@@ -814,8 +794,6 @@ impl SsaInst {
         let test_result_var = ctx.test_result_var;
         let space_id = ctx.space_id;
         let nl_id = ctx.nl_id;
-        let _redirect_stack = &mut *ctx.redirect_stack;
-        let _func_constants = ctx.func_constants;
         let restore = emit_redirects(
             redirects,
             builder,
@@ -853,11 +831,9 @@ impl SsaInst {
         ctx: &mut InstCtx,
     ) -> bool {
         let vars = &mut *ctx.vars;
-        let _literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
-        let _func_constants = ctx.func_constants;
         // let builtin: exit status 0 if value != 0, 1 if value == 0
         if let Some(SsaValue::Var(vr)) = args.first() {
             let key = format!("{}_{}", vr.name, vr.version);
@@ -896,7 +872,6 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let test_result_var = ctx.test_result_var;
         let externs = ctx.externs;
-        let _literals = ctx.literals;
         // Store fork pid (test_result_var) into $! variable
         if let Some(SsaValue::Var(vr)) = args.first() {
             let pid = builder.use_var(test_result_var);
@@ -956,11 +931,8 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let _vars = &mut *ctx.vars;
-        let _literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let _func_constants = ctx.func_constants;
         let end_cl_block = ctx.end_cl_block;
         let saved_end_status_var = ctx.saved_end_status_var;
         let program = ctx.program;
@@ -1000,12 +972,9 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let _vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let _test_result_var = ctx.test_result_var;
-        let _func_constants = ctx.func_constants;
         // pwd — getcwd, write to stdout
         let len_slot =
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
@@ -1038,11 +1007,8 @@ impl SsaInst {
         ctx: &mut InstCtx,
     ) -> bool {
         let vars = &mut *ctx.vars;
-        let _literals = ctx.literals;
         let externs = ctx.externs;
-        let _exit_status_var = ctx.exit_status_var;
         let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        let _func_constants = ctx.func_constants;
         // Slurp all input from fd, then split by delimiter into indexed array
         let array_key = format!("{}_0", array);
         let sv = vars.get(&array_key).unwrap_or_else(|| {

@@ -452,21 +452,8 @@ pub(super) fn handle_assign(
     let vars = &mut *ctx.vars;
     let literals = ctx.literals;
     let externs = ctx.externs;
-    let _space_id = ctx.space_id;
-    let _nl_id = ctx.nl_id;
-    let _test_result_var = ctx.test_result_var;
     let exit_status_var = ctx.exit_status_var;
-    let _pipe_read_fd_var = ctx.pipe_read_fd_var;
-    let _capture_saved_var = ctx.capture_saved_var;
-    let _capture_pipe_var = ctx.capture_pipe_var;
     let func_constants = ctx.func_constants;
-    let _redirect_stack = &mut *ctx.redirect_stack;
-    let _end_cl_block = ctx.end_cl_block;
-    let _program = ctx.program;
-    let _ssa_id = ctx.ssa_id;
-    let _saved_end_status_var = ctx.saved_end_status_var;
-    let _cl_blocks = ctx.cl_blocks;
-    let _trace = ctx.trace;
 
     // DD#30: unset on collection → new empty table
     if let SsaValue::Literal(s) = value {
@@ -566,21 +553,11 @@ pub(super) fn handle_general_command(
     let vars = &mut *ctx.vars;
     let literals = ctx.literals;
     let externs = ctx.externs;
-    let _space_id = ctx.space_id;
-    let _nl_id = ctx.nl_id;
     let test_result_var = ctx.test_result_var;
     let exit_status_var = ctx.exit_status_var;
-    let _pipe_read_fd_var = ctx.pipe_read_fd_var;
-    let _capture_saved_var = ctx.capture_saved_var;
-    let _capture_pipe_var = ctx.capture_pipe_var;
-    let _func_constants = ctx.func_constants;
-    let _redirect_stack = &mut *ctx.redirect_stack;
     let end_cl_block = ctx.end_cl_block;
     let program = ctx.program;
     let ssa_id = ctx.ssa_id;
-    let _saved_end_status_var = ctx.saved_end_status_var;
-    let _cl_blocks = ctx.cl_blocks;
-    let _trace = ctx.trace;
 
     let restore = emit_redirects(
         redirects,
@@ -710,21 +687,6 @@ pub(super) fn handle_shift(
     let vars = &mut *ctx.vars;
     let literals = ctx.literals;
     let externs = ctx.externs;
-    let _space_id = ctx.space_id;
-    let _nl_id = ctx.nl_id;
-    let _test_result_var = ctx.test_result_var;
-    let _exit_status_var = ctx.exit_status_var;
-    let _pipe_read_fd_var = ctx.pipe_read_fd_var;
-    let _capture_saved_var = ctx.capture_saved_var;
-    let _capture_pipe_var = ctx.capture_pipe_var;
-    let _func_constants = ctx.func_constants;
-    let _redirect_stack = &mut *ctx.redirect_stack;
-    let _end_cl_block = ctx.end_cl_block;
-    let _program = ctx.program;
-    let _ssa_id = ctx.ssa_id;
-    let _saved_end_status_var = ctx.saved_end_status_var;
-    let _cl_blocks = ctx.cl_blocks;
-    let _trace = ctx.trace;
 
     // shift N: sash_argc -= N; sash_argv += N*8
     let shift_n = if let Some(SsaValue::Literal(s)) = args.first() {
@@ -835,23 +797,8 @@ pub(super) fn handle_mapfile(
     ctx: &mut InstCtx,
 ) -> bool {
     let vars = &mut *ctx.vars;
-    let _literals = ctx.literals;
     let externs = ctx.externs;
-    let _space_id = ctx.space_id;
-    let _nl_id = ctx.nl_id;
-    let _test_result_var = ctx.test_result_var;
-    let _exit_status_var = ctx.exit_status_var;
     let pipe_read_fd_var = ctx.pipe_read_fd_var;
-    let _capture_saved_var = ctx.capture_saved_var;
-    let _capture_pipe_var = ctx.capture_pipe_var;
-    let _func_constants = ctx.func_constants;
-    let _redirect_stack = &mut *ctx.redirect_stack;
-    let _end_cl_block = ctx.end_cl_block;
-    let _program = ctx.program;
-    let _ssa_id = ctx.ssa_id;
-    let _saved_end_status_var = ctx.saved_end_status_var;
-    let _cl_blocks = ctx.cl_blocks;
-    let _trace = ctx.trace;
 
     // Read all lines from fd into an array (or map in map_mode)
     let sv = vars
@@ -965,21 +912,8 @@ pub(super) fn handle_subscript_assign(
     let vars = &mut *ctx.vars;
     let literals = ctx.literals;
     let externs = ctx.externs;
-    let _space_id = ctx.space_id;
-    let _nl_id = ctx.nl_id;
-    let _test_result_var = ctx.test_result_var;
     let exit_status_var = ctx.exit_status_var;
-    let _pipe_read_fd_var = ctx.pipe_read_fd_var;
-    let _capture_saved_var = ctx.capture_saved_var;
-    let _capture_pipe_var = ctx.capture_pipe_var;
     let func_constants = ctx.func_constants;
-    let _redirect_stack = &mut *ctx.redirect_stack;
-    let _end_cl_block = ctx.end_cl_block;
-    let _program = ctx.program;
-    let _ssa_id = ctx.ssa_id;
-    let _saved_end_status_var = ctx.saved_end_status_var;
-    let _cl_blocks = ctx.cl_blocks;
-    let _trace = ctx.trace;
 
     let array_key = format!("{}_0", array);
     let sv = vars.get(&array_key).unwrap_or_else(|| {
