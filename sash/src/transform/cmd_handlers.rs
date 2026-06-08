@@ -377,166 +377,209 @@ pub(super) fn handle_function_call_or_command(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // Check if this is a known function call → inline expansion
-    // DD#18: try local function first (__local__name), only if in scope
-    let resolved_name = {
-        let local_name = format!("__local__{}", name);
-        if state.local_fn_scope.contains(&local_name)
-            && state.function_bodies.contains_key(&local_name)
-        {
-            local_name
-        } else {
-            name.to_string()
-        }
-    };
+    let resolved_name = resolve_function_name(name, state);
     if let Some(body) = state.function_bodies.get(&resolved_name).cloned() {
-        // Collect local variable names from function body
+        return inline_function_call(name, &body, c, ssa, state, block);
+    }
+    emit_external_command(name, c, ssa, state, block)
+}
 
-        let locals = collect_local_vars(&body);
+/// DD#18: prefer a local function (`__local__name`) when in scope and defined;
+/// fall back to the global `name`.
+fn resolve_function_name(name: &str, state: &VersionState) -> String {
+    let local_name = format!("__local__{}", name);
+    if state.local_fn_scope.contains(&local_name) && state.function_bodies.contains_key(&local_name)
+    {
+        local_name
+    } else {
+        name.to_string()
+    }
+}
 
-        // DD#18: save local function scope before inlining
-        let saved_local_fn_scope = state.local_fn_scope.clone();
+/// Inline a known function body into the current block.
+/// Saves caller's positional params + named locals, sets up the
+/// callee's $1..$9 and $#, lowers the body into a fresh call block,
+/// then emits a restore block that re-defines the caller's variables.
+fn inline_function_call(
+    name: &str,
+    body: &[Statement],
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let locals = collect_local_vars(body);
 
-        // Save caller's positional params
-        let saved: Vec<(String, VarRef)> = (1..=9)
-            .map(|i| (i.to_string(), state.lookup(&i.to_string())))
-            .collect();
-        let saved_argc = state.lookup("#");
+    // DD#18: save local function scope before inlining
+    let saved_local_fn_scope = state.local_fn_scope.clone();
 
-        // Save caller's versions of local variables to temp names
-        // (different base name so they get separate CL Variables)
-        let saved_locals: Vec<(String, VarRef)> = locals
-            .iter()
-            .map(|lname| {
-                let save_name = format!("__save_{}_{}", name, lname);
-                let src = state.lookup(lname);
-                let save_ref = state.define(&save_name);
-                ssa.block_mut(block).insts.push(SsaInst::Assign {
-                    target: save_ref.clone(),
-                    value: SsaValue::Var(src),
-                });
-                (lname.to_string(), save_ref)
-            })
-            .collect();
+    let (saved, saved_argc) = save_caller_positionals(state);
+    let saved_locals = save_caller_locals(name, &locals, ssa, state, block);
+    setup_callee_positionals(name, body, c, ssa, state, block);
 
-        // Set positional params from call args
-        let argc_val = SsaValue::Literal(c.args.len().to_string());
-        let argc_var = state.define("#");
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: argc_var,
-            value: argc_val,
+    // Inline the function body
+    let call_block = ssa.new_block(&format!("call_{}", name));
+    ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+
+    // Apply function-level redirects if defined with `f() { ... } > file`
+    let func_redirs = state
+        .function_redirects
+        .get(name)
+        .cloned()
+        .unwrap_or_default();
+    if !func_redirs.is_empty() {
+        ssa.block_mut(call_block).insts.push(SsaInst::Command {
+            name: "__redirect_push".to_string(),
+            kind: BuiltinCmd::RedirectPush,
+            args: vec![],
+            redirects: func_redirs.clone(),
+            checked: true,
         });
-        for (i, arg) in c.args.iter().enumerate() {
-            let val = expr_to_value(arg, state);
-            let param_var = state.define(&(i + 1).to_string());
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target: param_var,
-                value: val,
-            });
-        }
-        // DD#46: clear unbound positional slots so caller's $K
-        // doesn't leak through when the callee reads $K+1..$9.
-        // Also: detect out-of-range positional reads in the body
-        // and emit a diagnostic if the function reads $K where K > argc.
-        let max_positional = collect_max_positional(&body);
-        let call_argc = c.args.len();
-        if max_positional > call_argc {
-            state.diagnostics.push(format!(
-                "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
-                name,
-                max_positional,
-                call_argc,
-                if call_argc == 1 { "" } else { "s" }
-            ));
-        }
-        for i in (c.args.len() + 1)..=9 {
-            let param_var = state.define(&i.to_string());
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target: param_var,
-                value: SsaValue::Literal(String::new()),
-            });
-        }
-
-        // Inline the function body
-        let call_block = ssa.new_block(&format!("call_{}", name));
-        ssa.block_mut(block).terminator = Terminator::Goto(call_block);
-
-        // Apply function-level redirects if defined with `f() { ... } > file`
-        let func_redirs = state
-            .function_redirects
-            .get(name)
-            .cloned()
-            .unwrap_or_default();
-        if !func_redirs.is_empty() {
-            ssa.block_mut(call_block).insts.push(SsaInst::Command {
-                name: "__redirect_push".to_string(),
-                kind: BuiltinCmd::RedirectPush,
-                args: vec![],
-                redirects: func_redirs.clone(),
-                checked: true,
-            });
-        }
-
-        // Set return target so `return` jumps to restore block
-        let restore_block = ssa.new_block(&format!("ret_{}", name));
-        let saved_return_target = state.return_target;
-        state.return_target = Some(restore_block);
-        let exit_block = lower_stmts(&body, ssa, state, call_block);
-        state.return_target = saved_return_target;
-
-        // Pop function-level redirects before leaving
-        if !func_redirs.is_empty() {
-            ssa.block_mut(exit_block).insts.push(SsaInst::sigil(
-                BuiltinCmd::RedirectPop,
-                vec![],
-                true,
-            ));
-        }
-
-        // Normal fall-through also goes to restore block
-        ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
-
-        for (param_name, saved_ref) in &saved {
-            let restore_var = state.define(param_name);
-            ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                target: restore_var,
-                value: SsaValue::Var(saved_ref.clone()),
-            });
-        }
-        let restore_argc = state.define("#");
-        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-            target: restore_argc,
-            value: SsaValue::Var(saved_argc),
-        });
-        for (local_name, saved_ref) in &saved_locals {
-            let restore_var = state.define(local_name);
-            ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-                target: restore_var,
-                value: SsaValue::Var(saved_ref.clone()),
-            });
-        }
-
-        // DD#18: restore local function scope
-        state.local_fn_scope = saved_local_fn_scope;
-
-        return restore_block;
     }
 
-    let args: Vec<SsaValue> = c.args.iter()
-    .map(|a| {
-        let v = expr_to_value(a, state);
-        // DD#55: $(f) for -> int function is a type error
-        if let SsaValue::FuncCall(fname) = &v {
-            if state.function_int_typed.contains(fname.as_str()) {
-                state.diagnostics.push(format!(
-                    "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                    a.span.line, a.span.col, fname, fname
-                ));
-            }
-        }
-        v
-    })
-    .collect();
+    // Set return target so `return` jumps to restore block
+    let restore_block = ssa.new_block(&format!("ret_{}", name));
+    let saved_return_target = state.return_target;
+    state.return_target = Some(restore_block);
+    let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.return_target = saved_return_target;
+
+    // Pop function-level redirects before leaving
+    if !func_redirs.is_empty() {
+        ssa.block_mut(exit_block)
+            .insts
+            .push(SsaInst::sigil(BuiltinCmd::RedirectPop, vec![], true));
+    }
+
+    // Normal fall-through also goes to restore block
+    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+    restore_caller_state(&saved, saved_argc, &saved_locals, ssa, state, restore_block);
+
+    // DD#18: restore local function scope
+    state.local_fn_scope = saved_local_fn_scope;
+
+    restore_block
+}
+
+fn save_caller_positionals(state: &mut VersionState) -> (Vec<(String, VarRef)>, VarRef) {
+    let saved: Vec<(String, VarRef)> = (1..=9)
+        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
+        .collect();
+    let saved_argc = state.lookup("#");
+    (saved, saved_argc)
+}
+
+/// Snapshot the caller's versions of each local variable into
+/// `__save_<fn>_<local>` slots so the inlined body can clobber them
+/// freely; restore_caller_state copies the saves back.
+fn save_caller_locals(
+    name: &str,
+    locals: &[String],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Vec<(String, VarRef)> {
+    locals
+        .iter()
+        .map(|lname| {
+            let save_name = format!("__save_{}_{}", name, lname);
+            let src = state.lookup(lname);
+            let save_ref = state.define(&save_name);
+            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                target: save_ref.clone(),
+                value: SsaValue::Var(src),
+            });
+            (lname.to_string(), save_ref)
+        })
+        .collect()
+}
+
+/// Assign $1..$N from call args, clear $N+1..$9 (DD#46), and emit a
+/// diagnostic if the callee reads $K where K > argc.
+fn setup_callee_positionals(
+    name: &str,
+    body: &[Statement],
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    let argc_val = SsaValue::Literal(c.args.len().to_string());
+    let argc_var = state.define("#");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: argc_var,
+        value: argc_val,
+    });
+    for (i, arg) in c.args.iter().enumerate() {
+        let val = expr_to_value(arg, state);
+        let param_var = state.define(&(i + 1).to_string());
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: val,
+        });
+    }
+    let max_positional = collect_max_positional(body);
+    let call_argc = c.args.len();
+    if max_positional > call_argc {
+        state.diagnostics.push(format!(
+            "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
+            name,
+            max_positional,
+            call_argc,
+            if call_argc == 1 { "" } else { "s" }
+        ));
+    }
+    for i in (c.args.len() + 1)..=9 {
+        let param_var = state.define(&i.to_string());
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: param_var,
+            value: SsaValue::Literal(String::new()),
+        });
+    }
+}
+
+fn restore_caller_state(
+    saved: &[(String, VarRef)],
+    saved_argc: VarRef,
+    saved_locals: &[(String, VarRef)],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    restore_block: BlockId,
+) {
+    for (param_name, saved_ref) in saved {
+        let restore_var = state.define(param_name);
+        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+            target: restore_var,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
+    let restore_argc = state.define("#");
+    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+        target: restore_argc,
+        value: SsaValue::Var(saved_argc),
+    });
+    for (local_name, saved_ref) in saved_locals {
+        let restore_var = state.define(local_name);
+        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
+            target: restore_var,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
+}
+
+fn emit_external_command(
+    name: &str,
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let args: Vec<SsaValue> = c
+        .args
+        .iter()
+        .map(|a| eval_arg_and_check_int_capture(a, state))
+        .collect();
     ssa.block_mut(block).insts.push(SsaInst::command(
         resolve_pipeline_command(name),
         args,
@@ -544,4 +587,19 @@ pub(super) fn handle_function_call_or_command(
         true,
     ));
     block
+}
+
+/// Lower an argument expression and emit SB4018 if it captures an
+/// `-> int` function with `$( )` (DD#55).
+fn eval_arg_and_check_int_capture(a: &Expr, state: &mut VersionState) -> SsaValue {
+    let v = expr_to_value(a, state);
+    if let SsaValue::FuncCall(fname) = &v {
+        if state.function_int_typed.contains(fname.as_str()) {
+            state.diagnostics.push(format!(
+                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+                a.span.line, a.span.col, fname, fname
+            ));
+        }
+    }
+    v
 }
