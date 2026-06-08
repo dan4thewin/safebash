@@ -337,60 +337,48 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
     let bytes = input.as_bytes();
     let mut tokens = Vec::new();
     let mut i = 0;
-
     while i < bytes.len() {
         if bytes[i].is_ascii_whitespace() {
             i += 1;
-            continue;
-        }
-
-        if bytes[i].is_ascii_digit() {
-            let (tok, ni) = scan_arith_number(input, bytes, i);
+        } else if let Some((tok, ni)) = next_arith_token(input, bytes, i) {
             tokens.push(tok);
             i = ni;
-            continue;
-        }
-
-        if bytes[i] == b'$' {
-            let (tok, ni) = scan_arith_dollar(input, bytes, i);
-            tokens.push(tok);
-            i = ni;
-            continue;
-        }
-
-        if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
-            let (tok, ni) = scan_arith_ident(input, bytes, i);
-            tokens.push(tok);
-            i = ni;
-            continue;
-        }
-
-        // Longest-match operator family: 3-byte → 2-byte → 1-byte.
-        if i + 3 <= bytes.len() {
-            if let Some(t) = match_arith_op3(&bytes[i..i + 3]) {
-                tokens.push(t);
-                i += 3;
-                continue;
-            }
-        }
-        if i + 2 <= bytes.len() {
-            if let Some(t) = match_arith_op2(&bytes[i..i + 2]) {
-                tokens.push(t);
-                i += 2;
-                continue;
-            }
-        }
-        if let Some(t) = match_arith_op1(bytes[i]) {
-            tokens.push(t);
+        } else {
+            // Unknown byte — silently skip (matches prior behaviour).
             i += 1;
-            continue;
         }
-
-        // Unknown byte — silently skip (matches prior behaviour).
-        i += 1;
     }
-
     tokens
+}
+
+/// Recognise one non-whitespace token starting at `bytes[i]`. Returns
+/// the token and the byte index just past it, or None if no rule matches.
+fn next_arith_token(input: &str, bytes: &[u8], i: usize) -> Option<(ATok, usize)> {
+    if bytes[i].is_ascii_digit() {
+        return Some(scan_arith_number(input, bytes, i));
+    }
+    if bytes[i] == b'$' {
+        return Some(scan_arith_dollar(input, bytes, i));
+    }
+    if bytes[i].is_ascii_alphabetic() || bytes[i] == b'_' {
+        return Some(scan_arith_ident(input, bytes, i));
+    }
+    match_arith_operator(bytes, i)
+}
+
+/// Longest-match operator dispatch: 3-byte → 2-byte → 1-byte.
+fn match_arith_operator(bytes: &[u8], i: usize) -> Option<(ATok, usize)> {
+    if i + 3 <= bytes.len() {
+        if let Some(t) = match_arith_op3(&bytes[i..i + 3]) {
+            return Some((t, i + 3));
+        }
+    }
+    if i + 2 <= bytes.len() {
+        if let Some(t) = match_arith_op2(&bytes[i..i + 2]) {
+            return Some((t, i + 2));
+        }
+    }
+    match_arith_op1(bytes[i]).map(|t| (t, i + 1))
 }
 
 /// Scan a number literal at `bytes[i..]`. Handles hex (`0x…`), octal
