@@ -1162,8 +1162,7 @@ fi
 
 #[test]
 fn brush_cd_pwd() {
-    // cd then echo $PWD — PWD should update after cd
-    // NOTE: codegen doesn't update $PWD after cd yet — test the cd works
+    // cd / then pwd — pwd uses getcwd(2), independent of $PWD (DD#53).
     let script = "#!/bin/bash\ncd /\npwd";
     let sash_out = compile_and_run("brush_cd_pwd", script);
     assert_eq!(sash_out, "/\n");
