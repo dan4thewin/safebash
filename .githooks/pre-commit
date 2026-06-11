@@ -3,7 +3,7 @@
 #
 # Enforced gates (block on failure):
 #   - cargo fmt --check (sash, sash-convert, sash-expand)
-#   - cargo clippy -D warnings (sash, sash-convert)
+#   - cargo clippy --tests -D warnings (sash, sash-convert, sash-expand)
 #   - complexity gate (grandfather-on-modify, 3× current means)
 #
 # Report-only gates (printed, never block):
@@ -15,7 +15,7 @@
 # Set SKIP_COMPLEXITY=1 to skip the report (still runs the gate).
 # Set SKIP_COMPLEXITY_GATE=1 to skip the gate (still prints report).
 
-set -eu
+set -euo pipefail
 
 if [ "${SKIP_HOOKS:-0}" = "1" ]; then
     echo "pre-commit: SKIP_HOOKS=1, skipping all checks" >&2
@@ -45,12 +45,16 @@ done
 [ "$fmt_failed" -eq 0 ] || exit 1
 
 # --- lint ------------------------------------------------------------
-gray "pre-commit: cargo clippy -D warnings"
+# `--tests` extends clippy to integration tests (tests/*.rs). Without
+# this we wouldn't catch missing #[test] attrs, duplicated #[test]
+# attrs, dead test helpers, etc. — all of which we discovered on
+# 2026-06-08 by running `cargo build --tests` separately.
+gray "pre-commit: cargo clippy --tests -D warnings"
 lint_failed=0
 for crate in sash sash-convert sash-expand; do
     if [ -d "$crate" ]; then
-        if ! (cd "$crate" && cargo clippy --quiet -- -D warnings 2>&1 | tail -20 >/tmp/.pre-commit-clippy.$$); then
-            red "  FAIL: $crate has clippy warnings"
+        if ! (cd "$crate" && cargo clippy --tests --quiet -- -D warnings 2>&1 | tail -20 >/tmp/.pre-commit-clippy.$$); then
+            red "  FAIL: $crate has clippy warnings (lib or tests)"
             cat /tmp/.pre-commit-clippy.$$ >&2
             lint_failed=1
         fi
