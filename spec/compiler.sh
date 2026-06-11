@@ -54,23 +54,29 @@ run_sash 'readonly x=5'
 run_sash 'export FOO=bar'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 57.45d
 
-# --- 57.74: removed flags ---
+# --- 57.74: removed flags --- (sash CLI flag rejection — native only)
 
-# 57.74a --emit-source
-echo 'echo hello' > .input.sash
-sash --emit-source .input.sash > /dev/null 2>err
-rc=$?; err=$(<err)
-[[ $rc != 0 && -n $err ]]; chk 57.46a
+if in_modes native; then
+    # 57.74a --emit-source
+    echo 'echo hello' > .input.sash
+    sash --emit-source .input.sash > /dev/null 2>err
+    rc=$?; err=$(<err)
+    [[ $rc != 0 && -n $err ]]; chk 57.46a
 
-# 57.74b --annotate
-sash --annotate .input.sash > /dev/null 2>err
-rc=$?; err=$(<err)
-[[ $rc != 0 && -n $err ]]; chk 57.46b
+    # 57.74b --annotate
+    sash --annotate .input.sash > /dev/null 2>err
+    rc=$?; err=$(<err)
+    [[ $rc != 0 && -n $err ]]; chk 57.46b
 
-# 57.74c --nolint
-sash --nolint .input.sash > /dev/null 2>err
-rc=$?; err=$(<err)
-[[ $rc != 0 && -n $err ]]; chk 57.46c
+    # 57.74c --nolint
+    sash --nolint .input.sash > /dev/null 2>err
+    rc=$?; err=$(<err)
+    [[ $rc != 0 && -n $err ]]; chk 57.46c
+else
+    skip_chk 57.46a
+    skip_chk 57.46b
+    skip_chk 57.46c
+fi
 
 set -e
 tally

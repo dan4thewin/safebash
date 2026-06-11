@@ -789,6 +789,8 @@ fn check_dq_stmt(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
         StmtKind::Function(f) => check_dq_function(f, diags),
         StmtKind::If(i) => check_dq_if(i, state, diags),
         StmtKind::While(w) => check_dq_while(w, state, diags),
+        StmtKind::For(f) => check_dq_for(f, state, diags),
+        StmtKind::Case(c) => check_dq_case(c, state, diags),
         _ => check_dq_leaf(stmt, state, diags),
     }
 }
@@ -843,6 +845,31 @@ fn check_dq_while(w: &crate::ir::While, state: &mut StatusState, diags: &mut Vec
     let mut bs = *state;
     for s in &w.body {
         check_dq_stmt(s, &mut bs, diags);
+    }
+    *state = StatusState::Undefined;
+}
+
+/// `for x in … do … done`: word list does not consume $? (literal/
+/// expansion only). Body re-reads inherited state fresh for each
+/// iteration. After the loop, state is undefined — for is a
+/// catching construct (caught/uncaught model).
+fn check_dq_for(f: &crate::ir::For, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    let mut bs = *state;
+    for s in &f.body {
+        check_dq_stmt(s, &mut bs, diags);
+    }
+    *state = StatusState::Undefined;
+}
+
+/// `case word in pat) body ;; … esac`: scrutinee does not consume
+/// $? (it's a word). Each arm body re-reads inherited state fresh.
+/// After the case, state is undefined — case is a catching construct.
+fn check_dq_case(c: &crate::ir::Case, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
+    for item in &c.items {
+        let mut bs = *state;
+        for s in &item.body {
+            check_dq_stmt(s, &mut bs, diags);
+        }
     }
     *state = StatusState::Undefined;
 }

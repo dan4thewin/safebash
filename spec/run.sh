@@ -3,15 +3,22 @@ set -eu
 cd "$(dirname "$0")/.."
 
 sha=$(git rev-parse --short HEAD)
-release=$(pwd)/target/release
+release=${SASH_RELEASE_DIR:-$(pwd)/target/release}
 tsv=$(mktemp)
 trap 'rm -f "$tsv"' EXIT
 
+# Modes to run each spec file under. Override via SPEC_MODES env var
+# (e.g. SPEC_MODES="native" for fast iteration).
+MODES=${SPEC_MODES:-"native janet c"}
+
 cd spec
-for f in *.sh; do
-    [[ $f = common.sh ]] && continue
-    [[ $f = run.sh ]] && continue
-    SPEC_TSV="$tsv" PATH="$release:$PATH" bash "$f" 2>/dev/null || true
+for mode in $MODES; do
+    echo "=== mode: $mode ==="
+    for f in *.sh; do
+        [[ $f = common.sh ]] && continue
+        [[ $f = run.sh ]] && continue
+        SPEC_TSV="$tsv" SASH_MODE="$mode" PATH="$release:$PATH" bash "$f" 2>/dev/null || true
+    done
 done
 cd ..
 
@@ -39,9 +46,11 @@ DROP TABLE _import;
 SQL
 fi
 
-# Summary
+# Summary per mode
 sqlite3 spec.db "
-SELECT status, count(*) FROM runs
+SELECT substr(test_id, 1, instr(test_id, ':') - 1) AS mode, status, count(*)
+FROM runs
 WHERE commit_hash='$sha'
-GROUP BY status
+GROUP BY mode, status
+ORDER BY mode, status
 "

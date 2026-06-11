@@ -441,10 +441,25 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     writeln!(e.out).unwrap();
     writeln!(e.out, "_blk_{}: /* {} */", id, block.label).unwrap();
     writeln!(e.out, "    ;").unwrap();
+    // Caught/uncaught $? model: mirror codegen/entry.rs — at the
+    // start of a catching construct's exit block, reset __exit_status
+    // to 0 so caught statuses do not leak to program exit.
+    if is_catching_construct_exit(&block.label) {
+        writeln!(e.out, "    __exit_status = 0;").unwrap();
+    }
     for inst in &block.insts {
         emit_inst(e, inst, types);
     }
     emit_terminator(&mut e.out, &block.terminator);
+}
+
+/// Same predicate as `codegen/entry.rs::is_catching_construct_exit`.
+/// Keep the two in sync.
+fn is_catching_construct_exit(label: &str) -> bool {
+    matches!(
+        label,
+        "if.merge" | "if_bless.merge" | "while.exit" | "for.exit" | "for_cmd.exit" | "case.merge"
+    )
 }
 
 fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {

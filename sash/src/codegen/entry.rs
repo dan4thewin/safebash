@@ -255,41 +255,73 @@ struct EmitCtx<'a, 'b> {
     trace: bool,
 }
 
+/// Caught/uncaught $? model: these labels mark the exit/merge
+/// blocks of constructs that CATCH inner statuses (if, while, for,
+/// case). At the start of these blocks, codegen resets
+/// `exit_status_var` to 0 so caught statuses do not leak to any
+/// uncaught sink (program exit). See `notes/tasks/bug-while-loop-exit-code.md`.
+fn is_catching_construct_exit(label: &str) -> bool {
+    matches!(
+        label,
+        "if.merge" | "if_bless.merge" | "while.exit" | "for.exit" | "for_cmd.exit" | "case.merge"
+    )
+}
+
 fn emit_all_blocks(mut ctx: EmitCtx) {
     let block_ids: Vec<BlockId> = ctx.program.blocks.keys().copied().collect();
     let mut redirect_stack: Vec<Vec<SavedFd>> = Vec::new();
     for (idx, &ssa_id) in block_ids.iter().enumerate() {
-        if !ctx.reachable.contains(&ssa_id) {
+        let Some(ssa_block) = block_to_emit(&ctx, ssa_id) else {
             continue;
-        }
-        let cl_block = ctx.cl_blocks[&ssa_id];
-        let ssa_block = ctx.program.block(ssa_id);
-
-        // Function blocks were constant-folded; skip them.
-        if ssa_block.label.starts_with("fn_") {
-            continue;
-        }
-
+        };
         if idx > 0 {
-            ctx.builder.switch_to_block(cl_block);
+            ctx.builder.switch_to_block(ctx.cl_blocks[&ssa_id]);
         }
-
-        // DD#56: save exit status on entering END block
-        if ssa_block.label == "__end__" {
-            let es = ctx.builder.use_var(ctx.exit_status_var);
-            ctx.builder.def_var(ctx.saved_end_status_var, es);
-        }
-
-        // Phi nodes are no-ops in Cranelift codegen: all SSA versions
-        // of the same bash variable share the same Cranelift Variable,
-        // so Cranelift's SSA builder handles the merge automatically.
-
-        let block_terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id, &mut redirect_stack);
-
-        if !block_terminated {
+        emit_block_entry_hooks(&mut ctx, &ssa_block.label);
+        let terminated = emit_block_insts(&mut ctx, ssa_block, ssa_id, &mut redirect_stack);
+        if !terminated {
             emit_terminator(&mut ctx, ssa_block);
         }
     }
+}
+
+/// Return the block to emit, or None if it should be skipped
+/// (unreachable, or a function block that was constant-folded).
+fn block_to_emit<'a, 'b>(ctx: &EmitCtx<'a, 'b>, ssa_id: BlockId) -> Option<&'a BasicBlock> {
+    if !ctx.reachable.contains(&ssa_id) {
+        return None;
+    }
+    let block = ctx.program.block(ssa_id);
+    if block.label.starts_with("fn_") {
+        return None;
+    }
+    Some(block)
+}
+
+/// Per-block entry hooks: actions that must run at the *start* of
+/// a Cranelift block (before any SSA instruction) selected by the
+/// block's SSA label.
+fn emit_block_entry_hooks(ctx: &mut EmitCtx, label: &str) {
+    // DD#56: save exit status on entering END block so the program
+    // exits with the status that triggered END, not whatever END
+    // itself did.
+    if label == "__end__" {
+        let es = ctx.builder.use_var(ctx.exit_status_var);
+        ctx.builder.def_var(ctx.saved_end_status_var, es);
+    }
+    // Caught/uncaught $? model: if/while/for/case CATCH the
+    // statuses they contain. On exit from a catching construct,
+    // the rc register is reset to 0 so the construct's internal
+    // statuses cannot leak to any uncaught sink (program exit).
+    // SB5012 already prevents user code from reading $? after
+    // these constructs; this is the runtime counterpart.
+    if is_catching_construct_exit(label) {
+        let zero = ctx.builder.ins().iconst(I64, 0);
+        ctx.builder.def_var(ctx.exit_status_var, zero);
+    }
+    // Phi nodes are no-ops in Cranelift codegen: all SSA versions
+    // of the same bash variable share the same Cranelift Variable,
+    // so Cranelift's SSA builder handles the merge automatically.
 }
 
 /// Emit all instructions in a block; return true if any instruction

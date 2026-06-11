@@ -18,7 +18,8 @@ EOF'
 run_sash 'x=HOME; echo ${!x}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 6.1
 
-# 15.1 --janet flag accepted
+# 15.1 --janet flag accepted (native-only — tests the --janet CLI surface
+# directly; rerunning under SASH_MODE=janet would be redundant)
 run_sash_janet() {
     rc=-1 out="" err=""
     echo "$1" > .input.sash
@@ -27,12 +28,20 @@ run_sash_janet() {
     out=$(<out)
     err=$(<err)
 }
-run_sash_janet 'echo hello'
-[[ $rc = 0 && -z $err ]]; chk 15.1
+if in_modes native; then
+    run_sash_janet 'echo hello'
+    [[ $rc = 0 && -z $err ]]; chk 15.1
+else
+    skip_chk 15.1
+fi
 
 # 15.2 janet reflects sash semantics
-run_sash_janet 'x="hello world"; echo $x'
-[[ $rc = 0 && -z $err ]]; chk 15.2
+if in_modes native; then
+    run_sash_janet 'x="hello world"; echo $x'
+    [[ $rc = 0 && -z $err ]]; chk 15.2
+else
+    skip_chk 15.2
+fi
 
 # 20.3 lastpipe always on
 run_sash 'echo hello | read x; echo $x'
@@ -50,17 +59,25 @@ run_sash 'for f in **/*.sh; do echo $f; done'
 run_sash '/bin/false | /bin/true'
 [[ $rc != 0 && -z $err ]]; chk 20.6
 
-# 32.1 binary contains .sash_source section
-echo 'echo hello' > .input.sash
-sash .input.sash -o .binary 2>err
-rc=$?; err=$(<err)
-objdump -h .binary 2>/dev/null | grep -q sash_source
-[[ $? = 0 && $rc = 0 && -z $err ]]; chk 32.1
+# 32.1 binary contains .sash_source section (native ELF only)
+if in_modes native; then
+    echo 'echo hello' > .input.sash
+    sash .input.sash -o .binary 2>err
+    rc=$?; err=$(<err)
+    objdump -h .binary 2>/dev/null | grep -q sash_source
+    [[ $? = 0 && $rc = 0 && -z $err ]]; chk 32.1
+else
+    skip_chk 32.1
+fi
 
-# 32.2 sash --extract dumps embedded source
-sash --extract .binary > out 2>err
-rc=$?; out=$(<out); err=$(<err)
-[[ $rc = 0 && $out == *"echo hello"* && -z $err ]]; chk 32.2
+# 32.2 sash --extract dumps embedded source (native ELF only)
+if in_modes native; then
+    sash --extract .binary > out 2>err
+    rc=$?; out=$(<out); err=$(<err)
+    [[ $rc = 0 && $out == *"echo hello"* && -z $err ]]; chk 32.2
+else
+    skip_chk 32.2
+fi
 
 # 37.1 <(cmd) process substitution rejected
 run_sash 'diff <(echo a) <(echo b)'

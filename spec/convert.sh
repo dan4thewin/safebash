@@ -2,6 +2,9 @@
 # spec/convert.sh — acceptance tests for sash-convert (DD#57)
 set -eu
 . common.sh
+# sash-convert is a separate tool, independent of sash backend.
+# Run only in native mode to avoid 3× redundancy.
+[[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
 plan=57
 echo "1..$plan" >&3
