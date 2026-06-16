@@ -338,6 +338,64 @@ pub struct Command {
     pub args: Vec<Expr>,
 }
 
+/// DD#61: the parsed form of a `bless` command. The parser encodes the
+/// form positionally in `Command::args`; `classify_bless` decodes it.
+///
+/// | args (excluding trailing Test) | form                          |
+/// |--------------------------------|-------------------------------|
+/// | `[var]`                        | `Scalar` — `bless v [[…]]`    |
+/// | `[binder, array]`              | `Indexed` — `bless x in a …` |
+/// | `[key, val, map]`              | `Map` — `bless k v in m …`   |
+#[derive(Debug, Clone, PartialEq)]
+pub enum BlessForm<'a> {
+    Scalar {
+        var: &'a str,
+    },
+    Indexed {
+        binder: &'a str,
+        array: &'a str,
+    },
+    Map {
+        key: &'a str,
+        val: &'a str,
+        map: &'a str,
+    },
+}
+
+fn bless_lit(e: &Expr) -> Option<&str> {
+    match &e.kind {
+        ExprKind::Literal(s) => Some(s.as_str()),
+        _ => None,
+    }
+}
+
+/// Decode the args of a `bless` command into a [`BlessForm`] plus the
+/// `[[ ]]` test. Returns `None` if the args don't match any bless shape
+/// (e.g. missing test, unexpected arity).
+pub fn classify_bless(args: &[Expr]) -> Option<(BlessForm<'_>, &TestExpr)> {
+    let (last, lead) = args.split_last()?;
+    let test = match &last.kind {
+        ExprKind::Test(t) => t,
+        _ => return None,
+    };
+    let form = match lead.len() {
+        1 => BlessForm::Scalar {
+            var: bless_lit(&lead[0])?,
+        },
+        2 => BlessForm::Indexed {
+            binder: bless_lit(&lead[0])?,
+            array: bless_lit(&lead[1])?,
+        },
+        3 => BlessForm::Map {
+            key: bless_lit(&lead[0])?,
+            val: bless_lit(&lead[1])?,
+            map: bless_lit(&lead[2])?,
+        },
+        _ => return None,
+    };
+    Some((form, test))
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct Pipeline {
     pub commands: Vec<Statement>,

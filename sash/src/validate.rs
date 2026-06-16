@@ -1211,10 +1211,10 @@ fn is_external_source(stmt: &Statement) -> bool {
 
 fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
-        StmtKind::Assignment(a) => taint_assignment_value(&a.name, &a.value, tainted),
+        StmtKind::Assignment(a) => taint_assignment(a, tainted, diags),
         StmtKind::Declaration(d) => {
             for a in &d.assignments {
-                taint_assignment_value(&a.name, &a.value, tainted);
+                taint_assignment(a, tainted, diags);
             }
         }
         StmtKind::Command(c) => taint_command(c, stmt.span, tainted, diags),
@@ -1232,10 +1232,58 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
     }
 }
 
-/// Mark `name` as tainted if `value` is a taint source or uses a tainted var.
-fn taint_assignment_value(name: &str, value: &Expr, tainted: &mut HashSet<String>) {
-    if is_taint_source(value) || expr_uses_tainted(value, tainted) {
-        tainted.insert(name.to_string());
+/// Apply taint rules to an assignment.
+///
+/// DD#61: a tainted value may not enter an array through program syntax
+/// (array/map literal, `+=` append of a literal, or `a[i]=` subscript
+/// assign). Such introductions are rejected (SB5021), not quarantined —
+/// tainted arrays come only from bulk external reads (read -a / mapfile).
+/// Scalar assignment from a tainted source follows the normal flow:
+/// the scalar becomes tainted.
+fn taint_assignment(a: &Assignment, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &a.value.kind {
+        ExprKind::Array(elems) => {
+            for e in elems {
+                reject_tainted_into_array(e, &a.name, tainted, diags);
+            }
+            return;
+        }
+        ExprKind::AssocArray(pairs) => {
+            for (_k, v) in pairs {
+                reject_tainted_into_array(v, &a.name, tainted, diags);
+            }
+            return;
+        }
+        _ => {}
+    }
+    // `a[i]=value` — subscript assignment into an array slot.
+    if a.index.is_some() {
+        reject_tainted_into_array(&a.value, &a.name, tainted, diags);
+        return;
+    }
+    // Scalar (or string `+=`) assignment: normal taint propagation.
+    if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
+        tainted.insert(a.name.clone());
+    }
+}
+
+/// DD#61: reject a tainted value being placed into an array element.
+fn reject_tainted_into_array(
+    e: &Expr,
+    name: &str,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if is_taint_source(e) || expr_uses_tainted(e, tainted) {
+        diags.push(Diagnostic::error_span(
+            e.span,
+            "SB5021",
+            format!(
+                "tainted value cannot be placed in array '{}' — external data enters \
+                 arrays via read/mapfile; or bless a scalar first and assign the clean value",
+                name
+            ),
+        ));
     }
 }
 
@@ -1338,62 +1386,76 @@ fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
     }
 }
 
-/// `bless VAR condition…`: removes taint from VAR if the condition
-/// references it; otherwise emits SB5020 to reject the meaningless
-/// bless.
+/// `bless` taint handling for all three forms (DD#24 scalar, DD#61
+/// indexed array and map). Removes taint from the blessed entity if the
+/// predicate validates the required name(s); otherwise emits SB5020.
+///
+/// - Scalar `bless v [[…]]`: predicate must reference `$v` (on the LHS).
+/// - Indexed `bless x in a [[…]]`: predicate must reference the binder
+///   `$x`; clears taint on `a`.
+/// - Map `bless k v in m [[…]]`: predicate must reference BOTH binders
+///   `$k` and `$v` (a key escaping unvalidated would be unsound); clears
+///   taint on `m`.
 fn taint_bless(
     c: &Command,
     span: Span,
     tainted: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let Some(arg) = c.args.first() else { return };
-    let var = expr_literal_str(arg);
-    if var.is_empty() {
+    let Some((form, test)) = classify_bless(&c.args) else {
         return;
-    }
-    let condition_args = &c.args[1..];
-    let references_var = condition_args.iter().any(|ca| expr_references_var(ca, var));
-    if !references_var && !condition_args.is_empty() {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5020",
-            format!(
-                "bless condition must validate ${} — condition doesn't reference the variable",
-                var
-            ),
-        ));
+    };
+    // Each form reduces to: the binder name(s) the predicate must validate,
+    // the name whose taint clears on success, and the diagnostic otherwise.
+    let (binders, clear, msg): (Vec<&str>, &str, String) = match form {
+        BlessForm::Scalar { var } => (
+            vec![var],
+            var,
+            format!("bless condition must validate ${var} — condition doesn't reference the variable"),
+        ),
+        BlessForm::Indexed { binder, array } => (
+            vec![binder],
+            array,
+            format!("bless-all condition must validate each element ${binder} on the left of the test"),
+        ),
+        BlessForm::Map { key, val, map } => (
+            vec![key, val],
+            map,
+            format!("map bless-all must validate both the key ${key} and value ${val} on the left of a test"),
+        ),
+    };
+    if binders.iter().all(|b| test_references_var(test, b)) {
+        tainted.remove(clear);
     } else {
-        tainted.remove(var);
+        diags.push(Diagnostic::error_span(span, "SB5020", msg));
     }
 }
 
 /// Check if an expression is a taint source.
+///
+/// Recurses into string concatenation, double-quoted parts, and array /
+/// map literals so an embedded `$(getenv …)` / `$(argv …)` / external
+/// command substitution is detected wherever it appears (DD#61).
 fn is_taint_source(expr: &Expr) -> bool {
     match &expr.kind {
-        ExprKind::CommandSubstitution(stmts) => {
-            if let Some(first) = stmts.first() {
-                if let StmtKind::Command(c) = &first.kind {
-                    let name = expr_literal_str(&c.name);
-                    // Explicit taint sources
-                    if name == "getenv" || name == "argv" {
-                        return true;
-                    }
-                    // External commands (absolute path) are taint sources
-                    if name.starts_with('/') {
-                        return true;
-                    }
-                    // Unknown commands that aren't user functions — we can't
-                    // know at this point if it's a user function without
-                    // tracking function definitions. Be conservative: only
-                    // mark as tainted if it's clearly external.
-                    return false;
-                }
-            }
-            false
+        ExprKind::CommandSubstitution(stmts) => cmdsub_is_taint_source(stmts),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            parts.iter().any(is_taint_source)
         }
+        ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| is_taint_source(v)),
         _ => false,
     }
+}
+
+/// A command substitution is a taint source when it runs `getenv`/`argv`
+/// or an external (absolute-path) command. Unknown PATH-resolved names
+/// can't be classified here (might be a user function), so default clean.
+fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return false;
+    };
+    let name = expr_literal_str(&c.name);
+    name == "getenv" || name == "argv" || name.starts_with('/')
 }
 
 /// Check if an expression uses any tainted variable.
@@ -1401,8 +1463,11 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
         ExprKind::ParameterExpansion(pe) => tainted.contains(pe.name.as_str()),
-        ExprKind::DoubleQuoted(parts) => parts.iter().any(|p| expr_uses_tainted(p, tainted)),
-        ExprKind::Concat(parts) => parts.iter().any(|p| expr_uses_tainted(p, tainted)),
+        ExprKind::Subscript { name, .. } => tainted.contains(name.as_str()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            parts.iter().any(|p| expr_uses_tainted(p, tainted))
+        }
+        ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| expr_uses_tainted(v, tainted)),
         _ => false,
     }
 }

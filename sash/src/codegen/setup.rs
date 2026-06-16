@@ -959,6 +959,10 @@ impl<'a> Interner<'a> {
                 self.intern_test_expr(test);
                 self.intern("bless: validation failed\n");
             }
+            SsaInst::BlessAll { test, .. } => {
+                self.intern_test_expr(test);
+                self.intern("bless: validation failed\n");
+            }
             _ => {}
         }
     }

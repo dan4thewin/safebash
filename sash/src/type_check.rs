@@ -341,11 +341,81 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     if cmd_name == "exit" {
         check_exit_arg(c, span, env, errors);
     }
+    if cmd_name == "bless" {
+        check_bless_form(c, span, env, errors);
+    }
 
     // DD#33: check subscript key types in command args
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
     }
+}
+
+/// DD#61: the bless form must match the blessed entity's kind.
+/// - scalar `bless v [[…]]` requires a scalar (arrays/maps need bless-all);
+/// - one-binder `bless x in a [[…]]` requires an indexed array;
+/// - two-binder `bless k v in m [[…]]` requires a map.
+fn check_bless_form(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some((form, _)) = classify_bless(&c.args) else {
+        return;
+    };
+    if let Some(message) = bless_form_error(&form, env) {
+        errors.push(TypeError { message, span });
+    }
+}
+
+/// Returns the form/kind-mismatch error message for a bless, or `None`
+/// when the form matches the entity's declared kind.
+fn bless_form_error(form: &BlessForm, env: &TypeEnv) -> Option<String> {
+    match form {
+        BlessForm::Scalar { var } => bless_scalar_form_error(var, env),
+        BlessForm::Indexed { binder, array } => bless_indexed_form_error(binder, array, env),
+        BlessForm::Map { key, val, map } => bless_map_form_error(key, val, map, env),
+    }
+}
+
+fn bless_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
+    if !env.collections.contains(var) {
+        return None;
+    }
+    let (kind, binders) = if env.assoc_arrays.contains(var) {
+        ("map", "k v")
+    } else {
+        ("array", "x")
+    };
+    Some(format!(
+        "scalar bless on {kind} '{var}' — use bless-all: `bless {binders} in {var} [[ … ]]`"
+    ))
+}
+
+fn bless_indexed_form_error(binder: &str, array: &str, env: &TypeEnv) -> Option<String> {
+    if !env.collections.contains(array) {
+        Some(format!(
+            "`bless {binder} in {array}` requires an array or map — '{array}' is a scalar; \
+             use scalar bless `bless {array} [[ … ]]`"
+        ))
+    } else if env.assoc_arrays.contains(array) {
+        Some(format!(
+            "'{array}' is a map — bless-all needs two binders: `bless {binder} v in {array} [[ … ]]`"
+        ))
+    } else {
+        None
+    }
+}
+
+fn bless_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Option<String> {
+    if env.assoc_arrays.contains(map) {
+        return None;
+    }
+    let what = if env.collections.contains(map) {
+        "an indexed array — use one binder"
+    } else {
+        "a scalar — use scalar bless"
+    };
+    Some(format!(
+        "`bless {key} {val} in {map}` requires a map — '{map}' is {what}: \
+         `bless {key} in {map} [[ … ]]`"
+    ))
 }
 
 /// DD#30: unset on a scalar variable (int or string, not declared

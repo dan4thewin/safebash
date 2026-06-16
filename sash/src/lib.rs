@@ -83,22 +83,7 @@ pub fn cli_main(args: Vec<String>) {
     let input = parsed.input;
     let source = read_source(input, parsed.inline_source);
 
-    for flag in &parsed.flags {
-        if let Some(path) = flag.strip_prefix("--sysroot=") {
-            set_sysroot(path.to_string());
-        }
-    }
-
-    // DD#57: reject converter flags
-    for flag in &parsed.flags {
-        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
-            eprintln!(
-                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
-                flag
-            );
-            std::process::exit(1);
-        }
-    }
+    apply_and_check_flags(&parsed.flags);
 
     let (program, parse_diags) = match parse::parse(&source) {
         Ok(result) => result,
@@ -110,13 +95,7 @@ pub fn cli_main(args: Vec<String>) {
 
     print_diags(input, &parse_diags);
 
-    let vdiags = validate::validate(&program);
-    let mut tdiags = validate::check_taint(&program);
-    tdiags.extend(vdiags);
-    if !tdiags.is_empty() {
-        print_diags(input, &tdiags);
-        std::process::exit(1);
-    }
+    run_front_end_checks(input, &program);
 
     if maybe_emit_alt_output(&parsed.flags, &program) {
         return;
@@ -130,6 +109,49 @@ pub fn cli_main(args: Vec<String>) {
         parsed.inline_source.is_some(),
         &parsed.flags,
     );
+}
+
+/// Apply `--sysroot=` and reject converter-only flags (DD#57). Exits on a
+/// rejected flag.
+fn apply_and_check_flags(flags: &[&str]) {
+    for flag in flags {
+        if let Some(path) = flag.strip_prefix("--sysroot=") {
+            set_sysroot(path.to_string());
+        }
+    }
+    for flag in flags {
+        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
+            eprintln!(
+                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
+                flag
+            );
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Run the front-end diagnostic gates that apply to every backend:
+/// structural validation, taint analysis, and type checking (incl. the
+/// DD#61 bless-form rules). Exits the process on the first failing gate.
+fn run_front_end_checks(input: &str, program: &crate::ir::Program) {
+    let vdiags = validate::validate(program);
+    let mut tdiags = validate::check_taint(program);
+    tdiags.extend(vdiags);
+    if !tdiags.is_empty() {
+        print_diags(input, &tdiags);
+        std::process::exit(1);
+    }
+
+    let type_errors = type_check::type_check(program);
+    if !type_errors.is_empty() {
+        for te in &type_errors {
+            eprintln!(
+                "{}:{}:{}: error [SB4030] {}",
+                input, te.span.line, te.span.col, te.message
+            );
+        }
+        std::process::exit(1);
+    }
 }
 
 /// Handle the terminal "emit an alternative output and exit" flags
@@ -395,16 +417,6 @@ fn compile_native(
     let obj_path = format!("{}.o", output);
 
     let type_map = type_check::infer_types(program);
-    let type_errors = type_check::type_check(program);
-    if !type_errors.is_empty() {
-        for te in &type_errors {
-            eprintln!(
-                "{}:{}:{}: error [SB4030] {}",
-                input, te.span.line, te.span.col, te.message
-            );
-        }
-        std::process::exit(1);
-    }
 
     let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
     let taint_ices = ssa_taint::verify_ssa_taint(&ssa);

@@ -1148,11 +1148,23 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'bless'
 
-    // bless VAR [[ test_expr ]]
-    let var_expr = parse_expr(scanner)?;
+    // First identifier: a scalar variable, or the first bless-all binder.
+    let first = expect_word(scanner, span, "expected variable name after 'bless'")?;
+
+    let lit = |s: String| Expr {
+        kind: ExprKind::Literal(s),
+        span,
+    };
+
+    // Scalar form `bless VAR [[…]]` is just the var; bless-all forms
+    // (`bless BINDER… in ARRAY [[…]]`) collect binders then the array.
+    let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen) {
+        vec![lit(first)]
+    } else {
+        parse_bless_all_lead(scanner, first, span)?
+    };
 
     // Expect [[ test_expr ]]
-    let mut args = vec![var_expr];
     if matches!(scanner.peek().token, Tok::DblBracketOpen) {
         scanner.next();
         let test_expr = parse_test_expr(scanner, span)?;
@@ -1178,6 +1190,37 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
         }),
         span,
     }))
+}
+
+/// DD#61 bless-all lead: `BINDER… in ARRAY`. Returns the binder literals
+/// followed by the array literal (the trailing `[[ test ]]` is parsed by
+/// the caller).
+fn parse_bless_all_lead(
+    scanner: &mut Scanner,
+    first: String,
+    span: Span,
+) -> Result<Vec<Expr>, Diagnostic> {
+    let mut binders = vec![first];
+    while !matches!(scanner.peek().token, Tok::In) {
+        let Tok::Word(_) = &scanner.peek().token else {
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "expected 'in' in bless-all (bless x in a [[ … ]])".to_string(),
+            ));
+        };
+        binders.push(expect_word(scanner, span, "expected binder name in bless")?);
+    }
+    scanner.next(); // consume 'in'
+    let array = expect_word(scanner, span, "expected array name after 'in' in bless")?;
+    binders.push(array);
+    Ok(binders
+        .into_iter()
+        .map(|s| Expr {
+            kind: ExprKind::Literal(s),
+            span,
+        })
+        .collect())
 }
 
 // ── simple commands and assignments ──────────────────────────

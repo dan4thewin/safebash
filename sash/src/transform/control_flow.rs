@@ -44,23 +44,55 @@ fn lower_if_bless(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let var_name = expr_to_string(&c.args[0]);
-    // Find test expression
-    let test_expr = c.args[1..].iter().find_map(|a| {
-        if let crate::ir::ExprKind::Test(t) = &a.kind {
-            Some(t.clone())
-        } else {
-            None
-        }
-    });
-    let test_expr = match test_expr {
-        Some(t) => t,
-        None => return block,
+    let Some((form, test)) = crate::ir::classify_bless(&c.args) else {
+        return block;
+    };
+    let test = test.clone();
+
+    // Owned decode so the borrow of `c.args` ends before we mutate state.
+    enum Kind {
+        Scalar(String),
+        Coll {
+            array: String,
+            binders: Vec<String>,
+            is_map: bool,
+        },
+    }
+    let kind = match form {
+        BlessForm::Scalar { var } => Kind::Scalar(var.to_string()),
+        BlessForm::Indexed { binder, array } => Kind::Coll {
+            array: array.to_string(),
+            binders: vec![binder.to_string()],
+            is_map: false,
+        },
+        BlessForm::Map { key, val, map } => Kind::Coll {
+            array: map.to_string(),
+            binders: vec![key.to_string(), val.to_string()],
+            is_map: true,
+        },
     };
 
-    // Emit the test as a condition (non-fatal)
-    let test_expr_copy = test_expr.clone();
-    ssa.block_mut(block).insts.push(SsaInst::Test(test_expr));
+    // Emit the bless check into `block`, leaving pass/fail in the
+    // test-result var for the branch below.
+    match &kind {
+        Kind::Scalar(_) => {
+            ssa.block_mut(block).insts.push(SsaInst::Test(test.clone()));
+        }
+        Kind::Coll {
+            array,
+            binders,
+            is_map,
+        } => {
+            let source = state.lookup(array);
+            ssa.block_mut(block).insts.push(SsaInst::BlessAll {
+                source,
+                binders: binders.clone(),
+                test: test.clone(),
+                is_map: *is_map,
+                if_form: true,
+            });
+        }
+    }
 
     let then_block = ssa.new_block("if_bless.then");
     let merge_block = ssa.new_block("if_bless.merge");
@@ -74,15 +106,26 @@ fn lower_if_bless(
         condition: "bless".to_string(),
     };
 
-    // Then branch: bless var (copy source to target, marking clean)
-    let source_ref = state.lookup(&var_name);
-    let target_ref = state.define(&var_name);
-    // Use a trivial always-true test for the SSA taint verifier
-    ssa.block_mut(then_block).insts.push(SsaInst::Bless {
-        target: target_ref,
-        source: source_ref,
-        test: test_expr_copy,
-    });
+    // Then branch: retag the blessed entity clean (only reached on pass).
+    match &kind {
+        Kind::Scalar(var) => {
+            let source_ref = state.lookup(var);
+            let target_ref = state.define(var);
+            ssa.block_mut(then_block).insts.push(SsaInst::Bless {
+                target: target_ref,
+                source: source_ref,
+                test: test.clone(),
+            });
+        }
+        Kind::Coll { array, .. } => {
+            let source_ref = state.lookup(array);
+            let target_ref = state.define(array);
+            ssa.block_mut(then_block).insts.push(SsaInst::BlessRetag {
+                target: target_ref,
+                source: source_ref,
+            });
+        }
+    }
     let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
     ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
     let _then_snap = state.snapshot();

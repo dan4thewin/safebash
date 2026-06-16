@@ -292,6 +292,24 @@ pub enum SsaInst {
         source: VarRef,
         test: crate::ir::TestExpr,
     },
+    /// DD#61: `bless x in a [[…]]` / `bless k v in m [[…]]` — validate
+    /// every element of an array/map against a per-element predicate.
+    /// Binds each element (indexed: `[value_binder]`; map: `[key, value]`)
+    /// and evaluates `test`. Sets the test-result var to the all-passed
+    /// boolean (vacuously true for an empty collection). When `if_form`
+    /// is false (statement form) a failing element aborts with exit 1
+    /// instead; when true the boolean is left for a surrounding branch.
+    BlessAll {
+        source: VarRef,
+        binders: Vec<String>,
+        test: crate::ir::TestExpr,
+        is_map: bool,
+        if_form: bool,
+    },
+    /// DD#61: retag an array/map as clean after a successful `BlessAll` —
+    /// copies the source slot (the collection's backing table) to a new
+    /// clean SSA version. No runtime validation (already done by BlessAll).
+    BlessRetag { target: VarRef, source: VarRef },
 }
 
 impl SsaInst {

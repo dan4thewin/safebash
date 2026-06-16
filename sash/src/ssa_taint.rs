@@ -127,6 +127,10 @@ fn classify_inst_def(
             // Bless produces a clean version.
             taint.insert(var_key(target), Taint::Clean);
         }
+        SsaInst::BlessRetag { target, .. } => {
+            // DD#61: bless-all produces a clean version of the array/map.
+            taint.insert(var_key(target), Taint::Clean);
+        }
         SsaInst::ReadLine {
             target,
             redirects,
@@ -163,6 +167,7 @@ fn classify_inst_def(
         | SsaInst::Mapfile { .. }
         | SsaInst::ReadArray { .. }
         | SsaInst::CaptureStart
+        | SsaInst::BlessAll { .. } // validates in place; BlessRetag defines the clean version
         | SsaInst::Pipeline { .. } => {}
     }
 }
@@ -263,6 +268,23 @@ fn is_tainted(taint: &HashMap<String, Taint>, vref: &VarRef) -> bool {
     }
 }
 
+/// Taint of an array referenced by bare name (no version). Array reads
+/// resolve to the latest SSA version at runtime, so we report the taint
+/// of the highest-numbered classified version of `name`. Used for
+/// subscript / table-iteration reads (DD#61).
+fn taint_of_name(taint: &HashMap<String, Taint>, name: &str) -> Taint {
+    let prefix = format!("{}_", name);
+    let mut best: Option<(u32, Taint)> = None;
+    for (k, t) in taint {
+        if let Some(ver) = k.strip_prefix(&prefix).and_then(|v| v.parse::<u32>().ok()) {
+            if best.is_none_or(|(bv, _)| ver >= bv) {
+                best = Some((ver, *t));
+            }
+        }
+    }
+    best.map(|(_, t)| t).unwrap_or(Taint::Clean)
+}
+
 fn value_is_tainted(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -274,10 +296,14 @@ fn value_is_tainted(
         SsaValue::Literal(_)
         | SsaValue::Expr(_)
         | SsaValue::FuncCall(_)
-        | SsaValue::IntFuncCall { .. }
-        | SsaValue::Subscript { .. }
-        | SsaValue::TableValue { .. }
-        | SsaValue::TableKey { .. } => Taint::Clean,
+        | SsaValue::IntFuncCall { .. } => Taint::Clean,
+
+        // Array reads inherit the named array's taint (DD#61). The array
+        // name is unversioned in SSA; reads resolve to the latest version,
+        // so we consult the latest classified version of that name.
+        SsaValue::Subscript { array, .. }
+        | SsaValue::TableValue { array, .. }
+        | SsaValue::TableKey { array, .. } => taint_of_name(taint, array),
 
         // Always-tainted: program argv is external input by construction.
         SsaValue::ArgvIndex(_) => Taint::Tainted,
@@ -389,15 +415,14 @@ fn check_value_use(
     context: &str,
 ) {
     match value {
-        SsaValue::Var(vref) => {
-            if is_tainted(taint, vref) {
-                errors.push(format!(
-                    "ICE: tainted variable {}_{} used as {} — CST taint pass missed this",
-                    vref.name, vref.version, context
-                ));
-            }
+        SsaValue::Var(vref) => check_tainted_var(vref, "", context, taint, errors),
+        SsaValue::ArithExpr { var, .. } => {
+            check_tainted_var(var, " in arithmetic", context, taint, errors)
         }
-        SsaValue::Concat(parts) => {
+        SsaValue::ParamExpansion { var, .. } => {
+            check_tainted_var(var, " in param expansion", context, taint, errors)
+        }
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
             for p in parts {
                 check_value_use(p, taint, errors, context);
             }
@@ -407,34 +432,46 @@ fn check_value_use(
                 check_value_use(a, taint, errors, context);
             }
         }
-        SsaValue::ArithExpr { var, .. } => {
-            if is_tainted(taint, var) {
-                errors.push(format!(
-                    "ICE: tainted variable {}_{} used in arithmetic as {} — CST taint pass missed this",
-                    var.name, var.version, context
-                ));
-            }
-        }
         SsaValue::ArithBinOp { left, right, .. } => {
             check_value_use(left, taint, errors, context);
             check_value_use(right, taint, errors, context);
         }
-        SsaValue::ParamExpansion { var, .. } => {
-            if is_tainted(taint, var) {
-                errors.push(format!(
-                    "ICE: tainted variable {}_{} used in param expansion as {} — CST taint pass missed this",
-                    var.name, var.version, context
-                ));
-            }
-        }
-        SsaValue::IndexedArray(elems) => {
-            for e in elems {
-                check_value_use(e, taint, errors, context);
-            }
-        }
-        SsaValue::Subscript { index, .. } => {
+        SsaValue::Subscript { array, index, .. } => {
+            check_tainted_array(array, context, taint, errors);
             check_value_use(index, taint, errors, context);
         }
         _ => {} // Literal, Expr, FuncCall — no tainted reads
+    }
+}
+
+/// Emit the backstop ICE if `vref` is tainted at a use site. `where_` is
+/// an optional clause (e.g. " in arithmetic") describing the position.
+fn check_tainted_var(
+    vref: &VarRef,
+    where_: &str,
+    context: &str,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    if is_tainted(taint, vref) {
+        errors.push(format!(
+            "ICE: tainted variable {}_{} used{} as {} — CST taint pass missed this",
+            vref.name, vref.version, where_, context
+        ));
+    }
+}
+
+/// Emit the backstop ICE if array `array` is tainted at a subscript read.
+fn check_tainted_array(
+    array: &str,
+    context: &str,
+    taint: &HashMap<String, Taint>,
+    errors: &mut Vec<String>,
+) {
+    if taint_of_name(taint, array) == Taint::Tainted {
+        errors.push(format!(
+            "ICE: tainted array {}[...] used as {} — CST taint pass missed this",
+            array, context
+        ));
     }
 }

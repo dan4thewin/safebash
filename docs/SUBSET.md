@@ -290,12 +290,45 @@ If the test passes, `x` becomes clean from this point forward
 (SSA: a new clean version of `x` reaching downstream uses). A later
 re-assignment to `x` from a tainted source re-taints it.
 
-### Containers
+### Containers (DD#61)
 
-Arrays and maps are containers of variables. Each element carries its
-own taint, by the same rules as a scalar. `arr+=("$(getenv X)")`
-stores a tainted element; subsequent reads of that element (including
-`join`, iteration, subscript) are rejected unless blessed.
+Arrays and maps are containers of variables; each element carries its
+own taint. A tainted value may **not** be placed into an array through
+program syntax — array/map literals, `+=` append, and `a[i]=` subscript
+assignment all reject a tainted right-hand side (SB5021):
+
+```bash
+array a=( $(getenv HOME) )    # rejected — SB5021
+a+=( $(getenv X) )            # rejected
+a[0]=$(getenv X)              # rejected
+```
+
+A tainted array therefore only arises from a **bulk external read** —
+`read -a`, `mapfile` / `readarray` (and the planned `array a=$(argv)`).
+Every element of such an array shares one origin, so the array is
+homogeneous and whole-array taint is exact. To put external data into
+an array slot, bless a scalar first and assign the clean value:
+
+```bash
+h=$(getenv HOME); bless h [[ $h =~ ^/ ]]; array a=( "$h" )    # ok
+```
+
+**Bless-all** validates every element of a tainted array/map against a
+per-element predicate — the only bless form for collections (scalar
+`bless a [[…]]` on an array/map is a type error):
+
+```bash
+mapfile -t a < file
+bless x in a [[ $x =~ ^[0-9]+$ ]]          # indexed: binds each value
+
+mapfile -m m < file
+bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[[:print:]]*$ ]]   # map: key + value
+```
+
+A failing element aborts (exit 1); the `if bless …` form takes the
+false branch and leaves the collection tainted. An empty collection
+passes vacuously. The binder (`x`, or `k`/`v`) is fresh, scoped to the
+test, and shadows any same-named outer variable.
 
 ### Known Externals (Auto-Blessed)
 

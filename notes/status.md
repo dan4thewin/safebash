@@ -12,6 +12,34 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-15 — array taint construction restriction + bless-all (DD#61)
+
+DG reported `array a=( $(getenv HOME) $(getenv PATH) ); bless a [[ … ]];
+echo $a[1]` compiling when it shouldn't. Two blind spots: the IR taint
+pass didn't recurse into array/map/concat literals, and the SSA backstop
+didn't check the array name on subscript reads. Both closed.
+
+**DD#61 locked + implemented.** Tainted values may not enter an array via
+literal / `+=` / `a[i]=` (SB5021) — tainted arrays come only from bulk
+reads (read -a, mapfile). Whole-array taint is now exact. New bless-all
+syntax: `bless x in a [[ $x … ]]` (indexed), `bless k v in m [[ … ]]`
+(map, both validated). Scalar bless on a collection is a type error.
+Full pipeline: parser → classify_bless → BlessAll/BlessRetag SSA →
+Cranelift loop codegen. 31 new spec tests (taint.sh 60.*), all green
+native; compile-time checks cross-mode, runtime guarded to native.
+
+**Two coupled pre-existing bugs fixed:** `mapfile`/`read -a < file`
+silently dropped the redirect (now routed through __redirect_push/pop);
+`map m=()` built an indexed table (now respects the declared kind).
+
+**type_check now runs for all backends** (moved ahead of the janet/c
+emit branch) so bless-form errors fire everywhere. Migrated existing
+scalar-bless-on-collection tests (54.1, 22.6/8/9/10) to bless-all.
+
+Filed `oracle-blessall-mapfile` (P2): the c/janet oracles don't yet
+cover bless-all + mapfile (pre-existing gap). DD#60 stays reserved for
+the argv trio; vetting those tasks (join / `@a` spelling issues) next.
+
 ### Session 2026-06-07 — task hygiene sweep + cohort wave + DD#53 cruft
 
 Swept 14 non-done tasks; 6 closed (5 done, 1 done-via-supersede), 1

@@ -149,6 +149,20 @@ impl SsaInst {
             } => {
                 return self.emit_bless(source, target, test, builder, module, ctx);
             }
+            SsaInst::BlessAll {
+                source,
+                binders,
+                test,
+                is_map,
+                if_form,
+            } => {
+                return self.emit_bless_all(
+                    source, binders, test, *is_map, *if_form, builder, module, ctx,
+                );
+            }
+            SsaInst::BlessRetag { source, target } => {
+                return self.emit_bless_retag(source, target, builder, module, ctx);
+            }
         }
         false // block not terminated
     }
@@ -532,6 +546,213 @@ impl SsaInst {
             }
         }
         false
+    }
+
+    /// DD#61: retag an array/map clean after a successful `BlessAll`.
+    /// Copies the source slot (the collection's backing table pointer)
+    /// to a new clean SSA version. No runtime validation.
+    fn emit_bless_retag(
+        &self,
+        source: &VarRef,
+        target: &VarRef,
+        builder: &mut FunctionBuilder,
+        _module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let vars = &mut *ctx.vars;
+        let src_key = format!("{}_{}", source.name, source.version);
+        // Tables live in `_0`; fall back to that if the exact version slot
+        // isn't present (arrays are mutated in place, not re-versioned).
+        let slot = vars
+            .get(src_key.as_str())
+            .or_else(|| vars.get(format!("{}_0", source.name).as_str()))
+            .cloned();
+        if let Some(slot) = slot {
+            let tgt_key = format!("{}_{}", target.name, target.version);
+            match slot {
+                VarSlot::Str { ptr, len } => {
+                    let p = builder.use_var(ptr);
+                    let l = builder.use_var(len);
+                    let tp = builder.declare_var(I64);
+                    let tl = builder.declare_var(I64);
+                    builder.def_var(tp, p);
+                    builder.def_var(tl, l);
+                    vars.insert(tgt_key, VarSlot::Str { ptr: tp, len: tl });
+                }
+                VarSlot::Int(v) => {
+                    let val = builder.use_var(v);
+                    let tv = builder.declare_var(I64);
+                    builder.def_var(tv, val);
+                    vars.insert(tgt_key, VarSlot::Int(tv));
+                }
+            }
+        }
+        false
+    }
+
+    /// DD#61: `bless x in a [[…]]` / `bless k v in m [[…]]` — validate every
+    /// element of the array/map against the per-element `test`. Iterates the
+    /// backing table, binding the element value (and key, for maps) to fresh
+    /// codegen slots so the predicate can read them, and evaluates `test`.
+    ///
+    /// Statement form (`if_form == false`): a failing element writes the
+    /// bless error and exits 1; reaching the end sets the test-result var to
+    /// true. If form: AND-accumulates each result and leaves the boolean in
+    /// the test-result var for the surrounding branch. An empty collection
+    /// is vacuously true.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_bless_all(
+        &self,
+        source: &VarRef,
+        binders: &[String],
+        test: &crate::ir::TestExpr,
+        is_map: bool,
+        if_form: bool,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let externs = ctx.externs;
+        let exit_status_var = ctx.exit_status_var;
+        let test_result_var = ctx.test_result_var;
+
+        // Backing table pointer (tables live in `_0` slots).
+        let table_ptr = {
+            let sv = find_array_slot(ctx.vars, &source.name, "bless-all array");
+            builder.use_var(sv.str_ptr())
+        };
+        let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+        let len_call = builder.ins().call(len_ref, &[table_ptr]);
+        let len = builder.inst_results(len_call)[0];
+
+        // Loop-carried Variables: counter and (if-form) the all-passed flag.
+        let counter = builder.declare_var(I64);
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(counter, zero);
+        let all_passed = builder.declare_var(I64);
+        let init_true = builder.ins().iconst(I64, 1);
+        builder.def_var(all_passed, init_true);
+
+        // Fresh binder slots, versioned above any existing same-named var so
+        // they shadow inside the predicate; removed after the loop so the
+        // outer scope is unaffected (DD#61 shadow semantics).
+        let mut binder_keys = Vec::new();
+        let mut binder_ptrs = Vec::new();
+        let mut binder_lens = Vec::new();
+        for b in binders {
+            let ver = next_slot_version(ctx.vars, b);
+            let key = format!("{}_{}", b, ver);
+            let bp = builder.declare_var(I64);
+            let bl = builder.declare_var(I64);
+            ctx.vars
+                .insert(key.clone(), VarSlot::Str { ptr: bp, len: bl });
+            binder_keys.push(key);
+            binder_ptrs.push(bp);
+            binder_lens.push(bl);
+        }
+
+        let header = builder.create_block();
+        let body = builder.create_block();
+        let after = builder.create_block();
+        builder.ins().jump(header, &[]);
+
+        // header: counter < len ? body : after
+        builder.switch_to_block(header);
+        let c = builder.use_var(counter);
+        let cond = builder.ins().icmp(IntCC::SignedLessThan, c, len);
+        builder.ins().brif(cond, body, &[], after, &[]);
+
+        // body: bind element(s), evaluate the predicate.
+        builder.switch_to_block(body);
+        builder.seal_block(body);
+        let ci = builder.use_var(counter);
+        if is_map {
+            let (kp, kl) = emit_table_lookup(externs.table_key, table_ptr, ci, builder, module);
+            builder.def_var(binder_ptrs[0], kp);
+            builder.def_var(binder_lens[0], kl);
+            let (vp, vl) = emit_table_lookup(externs.table_value, table_ptr, ci, builder, module);
+            builder.def_var(binder_ptrs[1], vp);
+            builder.def_var(binder_lens[1], vl);
+        } else {
+            let (vp, vl) = emit_table_lookup(externs.table_value, table_ptr, ci, builder, module);
+            builder.def_var(binder_ptrs[0], vp);
+            builder.def_var(binder_lens[0], vl);
+        }
+        let result = lower_test_expr(
+            test,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            externs,
+            Some(exit_status_var),
+        );
+
+        if if_form {
+            let ap = builder.use_var(all_passed);
+            let ap2 = builder.ins().band(ap, result);
+            builder.def_var(all_passed, ap2);
+            let cnext = builder.ins().iadd_imm(ci, 1);
+            builder.def_var(counter, cnext);
+            builder.ins().jump(header, &[]);
+        } else {
+            let cont = builder.create_block();
+            let fail = builder.create_block();
+            builder.ins().brif(result, cont, &[], fail, &[]);
+            // fail: "bless: validation failed" → stderr, exit(1)
+            builder.switch_to_block(fail);
+            builder.seal_block(fail);
+            self.emit_bless_fail(builder, module, ctx.literals, externs);
+            // cont: counter++ ; loop
+            builder.switch_to_block(cont);
+            builder.seal_block(cont);
+            let cnext = builder.ins().iadd_imm(ci, 1);
+            builder.def_var(counter, cnext);
+            builder.ins().jump(header, &[]);
+        }
+
+        // header's predecessors (entry + back-edge) are now complete.
+        builder.seal_block(header);
+
+        builder.switch_to_block(after);
+        builder.seal_block(after);
+        let passed = if if_form {
+            builder.use_var(all_passed)
+        } else {
+            builder.ins().iconst(I64, 1)
+        };
+        builder.def_var(test_result_var, passed);
+
+        for key in binder_keys {
+            ctx.vars.remove(&key);
+        }
+        false
+    }
+
+    /// Emit the bless failure path: write "bless: validation failed" to
+    /// stderr and exit(1). Shared by scalar `Bless` and statement-form
+    /// `BlessAll`.
+    fn emit_bless_fail(
+        &self,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        literals: &std::collections::HashMap<String, cranelift_module::DataId>,
+        externs: &ExternFuncs,
+    ) {
+        let msg = "bless: validation failed\n";
+        let msg_id = literals[msg];
+        let msg_gv = module.declare_data_in_func(msg_id, builder.func);
+        let msg_ptr = builder.ins().global_value(I64, msg_gv);
+        let msg_len = builder.ins().iconst(I64, msg.len() as i64);
+        let fd_2 = builder.ins().iconst(I64, 2);
+        let write_ref = module.declare_func_in_func(externs.write, builder.func);
+        builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
+        let one = builder.ins().iconst(I64, 1);
+        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+        builder.ins().call(exit_ref, &[one]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
     }
 
     fn emit_wait(
@@ -1193,4 +1414,39 @@ fn finalize_exec(
     builder
         .ins()
         .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+}
+
+/// Highest existing slot version of `name`, plus one (0 if none). Gives a
+/// bless-all binder a slot version that shadows any same-named variable
+/// for the duration of the predicate (DD#61).
+fn next_slot_version(vars: &std::collections::HashMap<String, VarSlot>, name: &str) -> u32 {
+    let prefix = format!("{}_", name);
+    let mut max: Option<u32> = None;
+    for k in vars.keys() {
+        if let Some(v) = k.strip_prefix(&prefix).and_then(|s| s.parse::<u32>().ok()) {
+            if max.is_none_or(|m| v > m) {
+                max = Some(v);
+            }
+        }
+    }
+    max.map(|m| m + 1).unwrap_or(0)
+}
+
+/// Call `sash_table_value` / `sash_table_key` `(table, index)` and return
+/// the `(ptr, len)` pair, using a fresh stack slot for the out-length.
+fn emit_table_lookup(
+    func: cranelift_module::FuncId,
+    table_ptr: cranelift_codegen::ir::Value,
+    index: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+    let fref = module.declare_func_in_func(func, builder.func);
+    let call = builder.ins().call(fref, &[table_ptr, index, out_addr]);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, out_slot, 0);
+    (ptr, len)
 }

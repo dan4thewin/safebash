@@ -29,7 +29,7 @@ run_sash 'echo "a:b:c" | read -f: a b c; echo $a $b $c'
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk 22.5
 
 # 22.6 mapfile -t reads lines into array
-run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; bless arr [[ -n "${arr[0]}" ]]; echo ${arr[1]}'
+run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; bless x in arr [[ -n $x ]]; echo ${arr[1]}'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read
@@ -101,15 +101,15 @@ run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
 # --- DD#22 mapfile -m ---
 
 # 22.8 mapfile -m reads KEY=VALUE into map
-run_sash 'map m; printf "name=Alice\nage=30\n" | mapfile -m m; bless m [[ -n "${m[name]}" ]]; echo ${m[name]} ${m[age]}'
+run_sash 'map m; printf "name=Alice\nage=30\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[name]} ${m[age]}'
 [[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
 
 # 22.9 mapfile -m skips blank lines
-run_sash 'map m; printf "a=1\n\nb=2\n" | mapfile -m m; bless m [[ -n "${m[a]}" ]]; echo ${m[a]} ${m[b]}'
+run_sash 'map m; printf "a=1\n\nb=2\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[a]} ${m[b]}'
 [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
 
 # 22.10 mapfile -m splits on first = only
-run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; bless m [[ -n "${m[key]}" ]]; echo ${m[key]}'
+run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[key]}'
 [[ $rc = 0 && $out = "val=ue" && -z $err ]]; chk 22.10
 
 # 22.11 mapfile -m result is tainted

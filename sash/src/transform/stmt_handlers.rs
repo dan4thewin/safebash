@@ -160,21 +160,37 @@ fn handle_bless_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // First arg is variable name, remaining args should contain [[ test_expr ]]
-    if c.args.len() >= 2 {
-        let var_name = expr_to_string(&c.args[0]);
-        for arg in &c.args[1..] {
-            if let ExprKind::Test(test_expr) = &arg.kind {
-                let source_ref = state.lookup(&var_name);
-                let target_ref = state.define(&var_name);
+    // DD#24 scalar / DD#61 array & map bless forms.
+    if let Some((form, test)) = classify_bless(&c.args) {
+        let test = test.clone();
+        match form {
+            BlessForm::Scalar { var } => {
+                let var = var.to_string();
+                let source = state.lookup(&var);
+                let target = state.define(&var);
                 ssa.block_mut(block).insts.push(SsaInst::Bless {
-                    target: target_ref,
-                    source: source_ref,
-                    test: test_expr.clone(),
+                    target,
+                    source,
+                    test,
                 });
-                return block;
+            }
+            BlessForm::Indexed { binder, array } => {
+                push_bless_all(
+                    ssa,
+                    state,
+                    block,
+                    array,
+                    vec![binder.to_string()],
+                    test,
+                    false,
+                );
+            }
+            BlessForm::Map { key, val, map } => {
+                let binders = vec![key.to_string(), val.to_string()];
+                push_bless_all(ssa, state, block, map, binders, test, true);
             }
         }
+        return block;
     }
     // Fallback: no TestExpr — emit as regular command (caught by taint checker)
     let args: Vec<SsaValue> = c
@@ -198,6 +214,31 @@ fn handle_bless_stmt(
         .insts
         .push(SsaInst::command(name.to_string(), args, vec![], true));
     block
+}
+
+/// DD#61: emit a statement-form bless-all — `BlessAll` (exits on a failing
+/// element) followed by `BlessRetag` (produces the clean version).
+fn push_bless_all(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    array: &str,
+    binders: Vec<String>,
+    test: crate::ir::TestExpr,
+    is_map: bool,
+) {
+    let source = state.lookup(array);
+    ssa.block_mut(block).insts.push(SsaInst::BlessAll {
+        source: source.clone(),
+        binders,
+        test,
+        is_map,
+        if_form: false,
+    });
+    let target = state.define(array);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::BlessRetag { target, source });
 }
 
 fn handle_shift_stmt(

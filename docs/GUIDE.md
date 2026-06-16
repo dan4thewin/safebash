@@ -229,6 +229,14 @@ echo $port   # clean — blessed above
 **The rule:** you can write tainted data into a variable but cannot
 read it except inside `bless`. Diagnostic: SB4020.
 
+**Containers (DD#61):** a tainted value cannot enter an array/map via a
+literal, `+=` append, or `a[i]=` subscript (SB5021); tainted arrays come
+only from bulk reads (`read -a`, `mapfile`). Collections are blessed
+per-element with bless-all — `bless x in a [[ … ]]` (indexed, binds each
+value) or `bless k v in m [[ … ]]` (map, binds key and value). A failing
+element aborts; an empty collection passes vacuously. Scalar `bless` on
+a collection is a type error.
+
 ### Phase 4: Lower
 
 `lower.rs` converts CST → IR. This is where coercions happen:

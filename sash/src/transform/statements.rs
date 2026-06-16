@@ -145,22 +145,58 @@ fn lower_redirected_stmt(
         return lower_redirected_function(f, r, ssa, state, block);
     }
 
-    if is_compound_stmt(&r.body.kind) && !r.redirects.is_empty() {
+    // Compound bodies and bulk reads (mapfile / readarray / read -a) bracket
+    // with __redirect_push/pop. Bulk reads lower to Mapfile / ReadArray, which
+    // carry no redirect list, so attaching to the last inst (below) would
+    // silently drop a `< file` redirect (DD#61 fix — matches `read < file`).
+    let needs_bracket = is_compound_stmt(&r.body.kind) || is_bulk_read_cmd(&r.body.kind);
+    if needs_bracket && !r.redirects.is_empty() {
         return bracket_compound_with_redirects(r, ssa, state, block);
     }
 
     let result_block = lower_one(&r.body, ssa, state, block);
-    if !r.redirects.is_empty() {
-        let blocks_to_check = if result_block == block {
-            vec![block]
-        } else {
-            vec![block, result_block]
-        };
-        for blk_id in blocks_to_check {
-            attach_redirects_to_last_inst(ssa, blk_id, &r.redirects);
-        }
-    }
+    attach_redirects_to_result(ssa, block, result_block, &r.redirects);
     result_block
+}
+
+/// Attach a simple command's redirects to the last emitted instruction in
+/// the block(s) it produced (no-op when there are no redirects).
+fn attach_redirects_to_result(
+    ssa: &mut SsaProgram,
+    block: BlockId,
+    result_block: BlockId,
+    redirects: &[Redirect],
+) {
+    if redirects.is_empty() {
+        return;
+    }
+    let blocks_to_check = if result_block == block {
+        vec![block]
+    } else {
+        vec![block, result_block]
+    };
+    for blk_id in blocks_to_check {
+        attach_redirects_to_last_inst(ssa, blk_id, redirects);
+    }
+}
+
+/// True for `mapfile` / `readarray` / `read -a` commands, whose lowered
+/// SSA instructions (Mapfile / ReadArray) carry no redirect list.
+fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
+    let StmtKind::Command(c) = kind else {
+        return false;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return false;
+    };
+    match name.as_str() {
+        "mapfile" | "readarray" => true,
+        "read" => c
+            .args
+            .iter()
+            .any(|a| matches!(&a.kind, ExprKind::Literal(s) if s == "-a")),
+        _ => false,
+    }
 }
 
 fn is_compound_stmt(kind: &StmtKind) -> bool {
@@ -362,8 +398,13 @@ fn compute_declaration_value(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
-    if a.value.kind == ExprKind::Literal(String::new()) && (is_array || is_assoc) {
-        // Bare declaration like `array arr` or `map m` — empty table
+    let is_empty_init = a.value.kind == ExprKind::Literal(String::new())
+        || matches!(&a.value.kind, ExprKind::Array(e) if e.is_empty());
+    if is_empty_init && (is_array || is_assoc) {
+        // Empty init like `array arr` / `array arr=()` / `map m` / `map m=()`
+        // — create an empty table of the declared kind. (`()` parses as an
+        // empty indexed Array regardless of declaration, so a `map`'s empty
+        // init must be steered to an associative table here.)
         if is_assoc {
             state.assoc_arrays.insert(a.name.clone());
             state.collections.insert(a.name.clone());

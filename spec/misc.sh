@@ -131,10 +131,11 @@ run_sash 'x=HELLO; echo ${x,,}'
 
 # --- DD#54 sash-expand pipeline ---
 
-# 54.1 sash-expand | mapfile -m loads config into map
+# 54.1 sash-expand | mapfile -m loads config into map (DD#61: maps use
+# two-binder bless-all — scalar bless on a map is now a type error)
 printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
 EXPAND=$(which sash-expand)
-run_sash "map config; $EXPAND /tmp/sash_test_config.conf | mapfile -m config; bless config [[ -n \"\${config[NAME]}\" ]]; echo \${config[GREETING]}"
+run_sash "map config; $EXPAND /tmp/sash_test_config.conf | mapfile -m config; bless k v in config [[ \$k =~ ^[A-Z]+\$ && -n \$v ]]; echo \${config[GREETING]}"
 [[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
 
 set -e
