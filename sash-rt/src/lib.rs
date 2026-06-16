@@ -145,8 +145,6 @@ unsafe fn cstr_bytes(p: *const u8) -> &'static [u8] {
     core::slice::from_raw_parts(p, cstr_len(p))
 }
 
-
-
 /// Fork. Returns child pid in parent, 0 in child, -1 on error.
 #[no_mangle]
 pub extern "C" fn sash_fork() -> i64 {
@@ -248,7 +246,11 @@ pub extern "C" fn sash_dup2(src_fd: i64, dst_fd: i64) -> i64 {
             lateout("rcx") _,
             lateout("r11") _,
         );
-        if result < 0 { -1 } else { 0 }
+        if result < 0 {
+            -1
+        } else {
+            0
+        }
     }
 }
 
@@ -282,7 +284,11 @@ pub extern "C" fn sash_close(fd: i64) -> i64 {
             lateout("rcx") _,
             lateout("r11") _,
         );
-        if result < 0 { -1 } else { 0 }
+        if result < 0 {
+            -1
+        } else {
+            0
+        }
     }
 }
 
@@ -318,11 +324,7 @@ pub extern "C" fn sash_run(argv: *const *const u8, envp: *const *const u8) -> i6
 // ═══════════════════════════════════════════════════════════════
 
 #[no_mangle]
-pub extern "C" fn sash_getenv(
-    name: *const u8,
-    name_len: i64,
-    out_len: *mut i64,
-) -> *const u8 {
+pub extern "C" fn sash_getenv(name: *const u8, name_len: i64, out_len: *mut i64) -> *const u8 {
     let envp = unsafe { sash_envp };
     if envp.is_null() {
         unsafe { *out_len = 0 };
@@ -356,16 +358,14 @@ pub extern "C" fn sash_getenv(
 // sash_argv_get
 // ═══════════════════════════════════════════════════════════════
 
-/// Get positional parameter by 1-based index.
+/// Get program argument by 0-based index (DD#60 `$(arg N)`).
+/// `arg 0` is the program name (argv[0]); `arg 1` the first user arg.
 /// Panics (aborts) if index is out of range.
 #[no_mangle]
-pub extern "C" fn sash_argv_get(
-    idx: i64,
-    out_len: *mut i64,
-) -> *const u8 {
+pub extern "C" fn sash_argv_get(idx: i64, out_len: *mut i64) -> *const u8 {
     let argc = unsafe { sash_argc };
-    // idx is 1-based positional ($1..$N), argv[0] is program name
-    if idx < 1 || idx >= argc {
+    // idx is 0-based C argv: argv[0] is the program name, argv[1..] args.
+    if idx < 0 || idx >= argc {
         sash_panic_argv(idx, argc);
     }
     let argv = unsafe { sash_argv };
@@ -375,17 +375,43 @@ pub extern "C" fn sash_argv_get(
     ptr
 }
 
+// ═══════════════════════════════════════════════════════════════
+// sash_argv_snapshot — DD#60: array a=$(argv N)
+// ═══════════════════════════════════════════════════════════════
+
+/// Snapshot the program argv slice argv[start..argc] into a fresh indexed
+/// table (DD#60 `array a=$(argv N)`). The snapshot is 0-indexed: element 0
+/// is argv[start]. argv pointers reference static program memory, so only
+/// the keys are heap-copied (by sash_table_set). `start >= argc` yields an
+/// empty table. The result is a tainted indexed array (DD#61 bulk read).
+#[no_mangle]
+pub unsafe extern "C" fn sash_argv_snapshot(start: i64) -> *mut SashTable {
+    let argc = sash_argc;
+    let count = if start >= argc { 0 } else { argc - start };
+    let t = sash_table_new(if count < 4 { 4 } else { count });
+    let argv = sash_argv;
+    let mut i: i64 = 0;
+    while start + i < argc {
+        let key = i.to_ne_bytes();
+        let ptr = *argv.add((start + i) as usize);
+        let len = strlen(ptr) as i64;
+        sash_table_set(t, key.as_ptr(), 8, ptr, len);
+        i += 1;
+    }
+    t
+}
+
 #[cold]
 #[inline(never)]
 fn sash_panic_argv(idx: i64, argc: i64) -> ! {
-    // argc includes $0, so available range is 1..argc-1
+    // 0-based C argv: available range is 0..argc-1
     let max = argc - 1;
     let mut buf = [0u8; 128];
     let msg = b"sash: argv index out of range (requested ";
     let mut pos = msg.len();
     buf[..pos].copy_from_slice(msg);
     pos += write_i64(&mut buf[pos..], idx);
-    let mid = b", have 1..";
+    let mid = b", have 0..";
     buf[pos..pos + mid.len()].copy_from_slice(mid);
     pos += mid.len();
     pos += write_i64(&mut buf[pos..], max);
@@ -457,8 +483,14 @@ pub extern "C" fn sash_capture(
             let mut result = [0u8; 65536];
             let mut total = 0usize;
             loop {
-                let n = sash_read(pipe_r, result.as_mut_ptr().add(total), (result.len() - total) as i64);
-                if n <= 0 { break; }
+                let n = sash_read(
+                    pipe_r,
+                    result.as_mut_ptr().add(total),
+                    (result.len() - total) as i64,
+                );
+                if n <= 0 {
+                    break;
+                }
                 total += n as usize;
             }
             sash_close(pipe_r);
@@ -500,7 +532,8 @@ pub unsafe extern "C" fn sash_init_heap() {
         HEAP_SIZE,
         rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
         rustix::mm::MapFlags::PRIVATE,
-    ).expect("sash: mmap failed for heap");
+    )
+    .expect("sash: mmap failed for heap");
     sash_heap_init(ptr as *mut u8, HEAP_SIZE);
 }
 
@@ -508,20 +541,29 @@ pub unsafe extern "C" fn sash_init_heap() {
 #[no_mangle]
 pub extern "C" fn sash_trace_init() {
     let envp = unsafe { sash_envp };
-    if envp.is_null() { return; }
+    if envp.is_null() {
+        return;
+    }
     let mut i = 0;
     loop {
         let entry = unsafe { *envp.add(i) };
-        if entry.is_null() { break; }
+        if entry.is_null() {
+            break;
+        }
         let prefix = b"SASH_TRACE=";
         let mut matches = true;
         for (j, &b) in prefix.iter().enumerate() {
-            if unsafe { *entry.add(j) } != b { matches = false; break; }
+            if unsafe { *entry.add(j) } != b {
+                matches = false;
+                break;
+            }
         }
         if matches {
             let val = unsafe { *entry.add(prefix.len()) };
             if val != b'0' && val != 0 {
-                unsafe { sash_trace_flag = 1; }
+                unsafe {
+                    sash_trace_flag = 1;
+                }
             }
             return;
         }
@@ -604,11 +646,15 @@ pub unsafe extern "C" fn _start() -> ! {
 /// ${var%%pat} / ${var%pat} — returns new length (ptr unchanged)
 #[no_mangle]
 pub extern "C" fn sash_strip_suffix(
-    s: *const u8, s_len: i64,
-    pat: *const u8, pat_len: i64,
+    s: *const u8,
+    s_len: i64,
+    pat: *const u8,
+    pat_len: i64,
     longest: i64,
 ) -> i64 {
-    if s.is_null() || s_len <= 0 { return 0; }
+    if s.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
     let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
     strip_suffix_inner(s_bytes, pat_bytes, longest != 0) as i64
@@ -617,11 +663,15 @@ pub extern "C" fn sash_strip_suffix(
 /// ${var##pat} / ${var#pat} — returns offset (bytes to skip from start)
 #[no_mangle]
 pub extern "C" fn sash_strip_prefix(
-    s: *const u8, s_len: i64,
-    pat: *const u8, pat_len: i64,
+    s: *const u8,
+    s_len: i64,
+    pat: *const u8,
+    pat_len: i64,
     longest: i64,
 ) -> i64 {
-    if s.is_null() || s_len <= 0 { return 0; }
+    if s.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
     let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
     strip_prefix_inner(s_bytes, pat_bytes, longest != 0) as i64
@@ -630,14 +680,20 @@ pub extern "C" fn sash_strip_prefix(
 /// ${var:-default} — returns 0 if var is empty (use default), 1 if set
 #[no_mangle]
 pub extern "C" fn sash_default_value(s_len: i64) -> i64 {
-    if s_len <= 0 { 0 } else { 1 }
+    if s_len <= 0 {
+        0
+    } else {
+        1
+    }
 }
 
 /// Concatenate two strings into a new heap-allocated buffer.
 #[no_mangle]
 pub unsafe extern "C" fn sash_concat(
-    a_ptr: *const u8, a_len: i64,
-    b_ptr: *const u8, b_len: i64,
+    a_ptr: *const u8,
+    a_len: i64,
+    b_ptr: *const u8,
+    b_len: i64,
     out_len: *mut i64,
 ) -> *mut u8 {
     let total = a_len as usize + b_len as usize;
@@ -784,12 +840,22 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     let mut total = 0usize;
     let mut got_newline = false;
     loop {
-        if total >= buf.len() { break; }
-        let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
+        if total >= buf.len() {
+            break;
+        }
+        let n = unsafe {
+            rustix::io::read(
+                rustix::fd::BorrowedFd::borrow_raw(fd as i32),
+                &mut buf[total..total + 1],
+            )
+        };
         match n {
             Ok(0) => break,
             Ok(1) => {
-                if buf[total] == b'\n' { got_newline = true; break; }
+                if buf[total] == b'\n' {
+                    got_newline = true;
+                    break;
+                }
                 total += 1;
             }
             _ => break,
@@ -802,7 +868,9 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
     // Empty line (got_newline with total=0) or normal line
     let ptr = unsafe { sash_alloc(core::cmp::max(total, 1)) };
     if total > 0 {
-        unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+        unsafe {
+            core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
+        }
     }
     (ptr, total)
 }
@@ -812,7 +880,9 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
 pub extern "C" fn sash_redirect_s(fd: i64, path_ptr: *const u8, path_len: i64, flags: i64) -> i64 {
     unsafe {
         let len = path_len as usize;
-        if len >= 4095 { return -1; }
+        if len >= 4095 {
+            return -1;
+        }
         let mut buf: [u8; 4096] = [0; 4096];
         core::ptr::copy_nonoverlapping(path_ptr, buf.as_mut_ptr(), len);
         buf[len] = 0;
@@ -832,7 +902,9 @@ pub unsafe extern "C" fn sash_splice_argv(
 ) -> *const *const u8 {
     let mut prefix_count = 0usize;
     loop {
-        if (*prefix.add(prefix_count)).is_null() { break; }
+        if (*prefix.add(prefix_count)).is_null() {
+            break;
+        }
         prefix_count += 1;
     }
     let pos_count = if argc > 1 { (argc - 1) as usize } else { 0 };
@@ -847,7 +919,6 @@ pub unsafe extern "C" fn sash_splice_argv(
     *buf.add(prefix_count + pos_count) = core::ptr::null();
     buf
 }
-
 
 // ═══════════════════════════════════════════════════════════════
 // sash_table — unified hash table (DD#33)
@@ -879,7 +950,12 @@ pub struct SashTable {
 
 /// Safe view of the index array for table operations.
 /// entries_eq(i, key) returns true if entry i's key matches key.
-fn table_find_slot_inner(indices: &[i32], entries_eq: impl Fn(usize, &[u8]) -> bool, mask: u32, key: &[u8]) -> u32 {
+fn table_find_slot_inner(
+    indices: &[i32],
+    entries_eq: impl Fn(usize, &[u8]) -> bool,
+    mask: u32,
+    key: &[u8],
+) -> u32 {
     let h = table_hash_inner(key);
     let mut pos = h & mask;
     let mut first_deleted: Option<u32> = None;
@@ -890,7 +966,9 @@ fn table_find_slot_inner(indices: &[i32], entries_eq: impl Fn(usize, &[u8]) -> b
             return first_deleted.unwrap_or(pos);
         }
         if idx == TABLE_DELETED {
-            if first_deleted.is_none() { first_deleted = Some(pos); }
+            if first_deleted.is_none() {
+                first_deleted = Some(pos);
+            }
         } else if entries_eq(idx as usize, key) {
             return pos;
         }
@@ -911,12 +989,16 @@ unsafe fn table_grow(t: *mut SashTable) {
     let mut new_count = 0u32;
     for i in 0..(*t).entry_count as usize {
         let e = &*(*t).entries.add(i);
-        if e.deleted { continue; }
+        if e.deleted {
+            continue;
+        }
         if new_count as usize != i {
             let dst = &mut *(*t).entries.add(new_count as usize);
             *dst = TableEntry {
-                key_ptr: e.key_ptr, key_len: e.key_len,
-                val_ptr: e.val_ptr, val_len: e.val_len,
+                key_ptr: e.key_ptr,
+                key_len: e.key_len,
+                val_ptr: e.val_ptr,
+                val_len: e.val_len,
                 deleted: false,
             };
         }
@@ -940,7 +1022,11 @@ unsafe fn table_grow(t: *mut SashTable) {
 
 #[no_mangle]
 pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
-    let cap = if capacity < 4 { 4u32 } else { (capacity as u32).next_power_of_two() };
+    let cap = if capacity < 4 {
+        4u32
+    } else {
+        (capacity as u32).next_power_of_two()
+    };
     let index_size = (cap * 2).next_power_of_two();
     let t = sash_alloc(core::mem::size_of::<SashTable>()) as *mut SashTable;
     let indices = sash_alloc((index_size as usize) * 4) as *mut i32;
@@ -948,7 +1034,8 @@ pub unsafe extern "C" fn sash_table_new(capacity: i64) -> *mut SashTable {
     for slot in idx_slice.iter_mut() {
         *slot = TABLE_EMPTY;
     }
-    let entries = sash_alloc((cap as usize) * core::mem::size_of::<TableEntry>()) as *mut TableEntry;
+    let entries =
+        sash_alloc((cap as usize) * core::mem::size_of::<TableEntry>()) as *mut TableEntry;
     (*t).indices = indices;
     (*t).entries = entries;
     (*t).index_mask = index_size - 1;
@@ -973,10 +1060,16 @@ pub unsafe extern "C" fn sash_table_set(
     // NOTE: indices slice must be created AFTER potential grow, which reallocates
     let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
     let entries_ptr = (*t).entries;
-    let pos = table_find_slot_inner(indices, |i, k| {
-        let e = &*entries_ptr.add(i);
-        e.key_len == k.len() as i64 && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
-    }, (*t).index_mask, key);
+    let pos = table_find_slot_inner(
+        indices,
+        |i, k| {
+            let e = &*entries_ptr.add(i);
+            e.key_len == k.len() as i64
+                && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
+        },
+        (*t).index_mask,
+        key,
+    );
 
     let idx = *(*t).indices.add(pos as usize);
     if idx != TABLE_EMPTY {
@@ -986,7 +1079,8 @@ pub unsafe extern "C" fn sash_table_set(
     } else {
         if (*t).entry_count >= (*t).entry_capacity {
             let new_cap = (*t).entry_capacity * 2;
-            let new_entries = sash_alloc((new_cap as usize) * core::mem::size_of::<TableEntry>()) as *mut TableEntry;
+            let new_entries = sash_alloc((new_cap as usize) * core::mem::size_of::<TableEntry>())
+                as *mut TableEntry;
             core::ptr::copy_nonoverlapping((*t).entries, new_entries, (*t).entry_count as usize);
             (*t).entries = new_entries;
             (*t).entry_capacity = new_cap;
@@ -1017,10 +1111,16 @@ pub unsafe extern "C" fn sash_table_get(
     let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
     let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
     let entries_ptr = (*t).entries;
-    let pos = table_find_slot_inner(indices, |i, k| {
-        let e = &*entries_ptr.add(i);
-        e.key_len == k.len() as i64 && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
-    }, (*t).index_mask, key);
+    let pos = table_find_slot_inner(
+        indices,
+        |i, k| {
+            let e = &*entries_ptr.add(i);
+            e.key_len == k.len() as i64
+                && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
+        },
+        (*t).index_mask,
+        key,
+    );
 
     let idx = indices[pos as usize];
     if idx == TABLE_EMPTY {
@@ -1046,10 +1146,17 @@ pub unsafe extern "C" fn sash_table_delete(
     let key = core::slice::from_raw_parts(key_ptr, key_len as usize);
     let entries_ptr = (*t).entries;
     let indices = core::slice::from_raw_parts((*t).indices, ((*t).index_mask + 1) as usize);
-    let pos = table_find_slot_inner(indices, |i, k| {
-        let e = &*entries_ptr.add(i);
-        !e.deleted && e.key_len == k.len() as i64 && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
-    }, (*t).index_mask, key);
+    let pos = table_find_slot_inner(
+        indices,
+        |i, k| {
+            let e = &*entries_ptr.add(i);
+            !e.deleted
+                && e.key_len == k.len() as i64
+                && core::slice::from_raw_parts(e.key_ptr, e.key_len as usize) == k
+        },
+        (*t).index_mask,
+        key,
+    );
 
     let idx = *(*t).indices.add(pos as usize);
     if idx == TABLE_EMPTY || idx == TABLE_DELETED {
@@ -1072,7 +1179,9 @@ pub unsafe extern "C" fn sash_table_key(
     let mut live = 0i64;
     for i in 0..(*t).entry_count as usize {
         let e = &*(*t).entries.add(i);
-        if e.deleted { continue; }
+        if e.deleted {
+            continue;
+        }
         if live == index {
             *out_len = e.key_len;
             return e.key_ptr;
@@ -1092,7 +1201,9 @@ pub unsafe extern "C" fn sash_table_value(
     let mut live = 0i64;
     for i in 0..(*t).entry_count as usize {
         let e = &*(*t).entries.add(i);
-        if e.deleted { continue; }
+        if e.deleted {
+            continue;
+        }
         if live == index {
             *out_len = e.val_len;
             return e.val_ptr;
@@ -1174,8 +1285,10 @@ extern "C" {
 /// pattern and str must be null-terminated.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_match(
-    str_ptr: *const u8, str_len: i64,
-    pat_ptr: *const u8, pat_len: i64,
+    str_ptr: *const u8,
+    str_len: i64,
+    pat_ptr: *const u8,
+    pat_len: i64,
 ) -> i64 {
     // Need null-terminated copies for Plan 9 regex API
     let pat_buf = sash_alloc((pat_len + 1) as usize);
@@ -1194,7 +1307,11 @@ pub unsafe extern "C" fn sash_regex_match(
     // Resub is 4 pointers per entry, 10 entries = 320 bytes on 64-bit
     let mut resub = [0u8; 320];
     let result = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
-    if result > 0 { 1 } else { 0 }
+    if result > 0 {
+        1
+    } else {
+        0
+    }
 }
 
 /// Regex substitution: s/pattern/replacement/flags
@@ -1202,9 +1319,12 @@ pub unsafe extern "C" fn sash_regex_match(
 /// Returns new string (ptr, len). Caller owns the memory.
 #[no_mangle]
 pub unsafe extern "C" fn sash_regex_replace(
-    str_ptr: *const u8, str_len: i64,
-    pat_ptr: *const u8, pat_len: i64,
-    rep_ptr: *const u8, rep_len: i64,
+    str_ptr: *const u8,
+    str_len: i64,
+    pat_ptr: *const u8,
+    pat_len: i64,
+    rep_ptr: *const u8,
+    rep_len: i64,
     global: i64,
 ) -> (*mut u8, i64) {
     let src = core::slice::from_raw_parts(str_ptr, str_len as usize);
@@ -1230,7 +1350,9 @@ pub unsafe extern "C" fn sash_regex_replace(
     let mut offset: usize = 0;
 
     loop {
-        if offset >= src.len() { break; }
+        if offset >= src.len() {
+            break;
+        }
 
         // Null-terminate the remaining string
         let remaining_len = src.len() - offset;
@@ -1250,15 +1372,19 @@ pub unsafe extern "C" fn sash_regex_replace(
                 core::ptr::copy_nonoverlapping(result, new_buf, result_len);
                 result = new_buf;
             }
-            core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), remaining_len);
+            core::ptr::copy_nonoverlapping(
+                src.as_ptr().add(offset),
+                result.add(result_len),
+                remaining_len,
+            );
             result_len += remaining_len;
             break;
         }
 
         // Extract match start/end from resub[0] (first submatch = whole match)
         let ptrs = resub.as_ptr() as *const *const u8;
-        let match_start = *ptrs;       // sp
-        let match_end = *ptrs.add(1);   // ep
+        let match_start = *ptrs; // sp
+        let match_end = *ptrs.add(1); // ep
         let match_start_off = match_start as usize - str_buf as usize;
         let match_end_off = match_end as usize - str_buf as usize;
 
@@ -1306,7 +1432,11 @@ pub unsafe extern "C" fn sash_regex_replace(
                 core::ptr::copy_nonoverlapping(result, new_buf, result_len);
                 result = new_buf;
             }
-            core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), remaining);
+            core::ptr::copy_nonoverlapping(
+                src.as_ptr().add(offset),
+                result.add(result_len),
+                remaining,
+            );
             result_len += remaining;
             break;
         }
@@ -1326,10 +1456,12 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
         return 0;
     }
     let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
-    
+
     // We need a null-terminated path for syscalls
     let mut buf = [0u8; 4096];
-    if path.len() >= buf.len() { return 0; }
+    if path.len() >= buf.len() {
+        return 0;
+    }
     buf[..path.len()].copy_from_slice(path);
     buf[path.len()] = 0;
     let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
@@ -1345,14 +1477,30 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
         1 => {
             // -f: is regular file
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::RegularFile { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::RegularFile
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         2 => {
             // -d: is directory
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::Directory
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
@@ -1371,56 +1519,111 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
         6 => {
             // -s: non-empty file (size > 0)
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if st.st_size > 0 { 1 } else { 0 },
+                Ok(st) => {
+                    if st.st_size > 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         7 => {
             // -L / -h: is symlink (use lstat)
             match rustix::fs::lstat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Symlink { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::Symlink
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         8 => {
             // -c: is character device
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::CharacterDevice { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::CharacterDevice
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         9 => {
             // -p: is named pipe (fifo)
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Fifo { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Fifo
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         10 => {
             // -k: sticky bit set
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if st.st_mode & 0o1000 != 0 { 1 } else { 0 },
+                Ok(st) => {
+                    if st.st_mode & 0o1000 != 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         11 => {
             // -b: block device
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::BlockDevice { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::BlockDevice
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         12 => {
             // -g: setgid bit
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if st.st_mode & 0o2000 != 0 { 1 } else { 0 },
+                Ok(st) => {
+                    if st.st_mode & 0o2000 != 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         13 => {
             // -u: setuid bit
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if st.st_mode & 0o4000 != 0 { 1 } else { 0 },
+                Ok(st) => {
+                    if st.st_mode & 0o4000 != 0 {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
@@ -1429,8 +1632,12 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
             match rustix::fs::stat(path_cstr) {
                 Ok(st) => {
                     let egid = rustix::process::getegid().as_raw();
-                    if st.st_gid == egid { 1 } else { 0 }
-                },
+                    if st.st_gid == egid {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
@@ -1439,15 +1646,27 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
             match rustix::fs::stat(path_cstr) {
                 Ok(st) => {
                     let euid = rustix::process::geteuid().as_raw();
-                    if st.st_uid == euid { 1 } else { 0 }
-                },
+                    if st.st_uid == euid {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
         16 => {
             // -S: is socket
             match rustix::fs::stat(path_cstr) {
-                Ok(st) => if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Socket { 1 } else { 0 },
+                Ok(st) => {
+                    if rustix::fs::FileType::from_raw_mode(st.st_mode)
+                        == rustix::fs::FileType::Socket
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
@@ -1455,8 +1674,14 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
             // -N: modified since last read (mtime > atime)
             match rustix::fs::stat(path_cstr) {
                 Ok(st) => {
-                    if st.st_mtime > st.st_atime || (st.st_mtime == st.st_atime && st.st_mtime_nsec > st.st_atime_nsec) { 1 } else { 0 }
-                },
+                    if st.st_mtime > st.st_atime
+                        || (st.st_mtime == st.st_atime && st.st_mtime_nsec > st.st_atime_nsec)
+                    {
+                        1
+                    } else {
+                        0
+                    }
+                }
                 Err(_) => 0,
             }
         }
@@ -1468,8 +1693,12 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
 /// Returns base^exp. On overflow, returns i64::MAX (saturating).
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_pow(base: i64, exp: i64) -> i64 {
-    if exp < 0 { return 0; } // negative exponent → 0 in integer math
-    if exp == 0 { return 1; }
+    if exp < 0 {
+        return 0;
+    } // negative exponent → 0 in integer math
+    if exp == 0 {
+        return 1;
+    }
     let mut result: i64 = 1;
     for _ in 0..exp {
         match result.checked_mul(base) {
@@ -1485,33 +1714,52 @@ pub extern "C" fn sash_pow(base: i64, exp: i64) -> i64 {
 /// If length is 0 (not provided), returns from offset to end.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_substring(
-    s_ptr: *const u8, s_len: i64,
-    offset: i64, length: i64, has_length: i64,
+    s_ptr: *const u8,
+    s_len: i64,
+    offset: i64,
+    length: i64,
+    has_length: i64,
 ) -> (*const u8, i64) {
     let total = s_len as usize;
     // Resolve offset (negative = from end)
     let start = if offset < 0 {
         let from_end = (-offset) as usize;
-        if from_end > total { 0 } else { total - from_end }
+        if from_end > total {
+            0
+        } else {
+            total - from_end
+        }
     } else {
         let o = offset as usize;
-        if o > total { total } else { o }
+        if o > total {
+            total
+        } else {
+            o
+        }
     };
-    
+
     let remaining = total - start;
     let len = if has_length != 0 {
         if length < 0 {
             // Negative length: remove from end
             let trim = (-length) as usize;
-            if trim >= remaining { 0 } else { remaining - trim }
+            if trim >= remaining {
+                0
+            } else {
+                remaining - trim
+            }
         } else {
             let l = length as usize;
-            if l > remaining { remaining } else { l }
+            if l > remaining {
+                remaining
+            } else {
+                l
+            }
         }
     } else {
         remaining
     };
-    
+
     (unsafe { s_ptr.add(start) }, len as i64)
 }
 
@@ -1526,14 +1774,20 @@ pub extern "C" fn sash_isatty(fd: i64) -> i64 {
 /// Compare file modification times: returns 1 if file1 is newer than file2.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_file_newer(
-    p1_ptr: *const u8, p1_len: i64,
-    p2_ptr: *const u8, p2_len: i64,
+    p1_ptr: *const u8,
+    p1_len: i64,
+    p2_ptr: *const u8,
+    p2_len: i64,
 ) -> i64 {
     let get_mtime = |ptr: *const u8, len: i64| -> Option<i64> {
-        if ptr.is_null() || len <= 0 { return None; }
+        if ptr.is_null() || len <= 0 {
+            return None;
+        }
         let path = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let mut buf = [0u8; 4096];
-        if path.len() >= buf.len() { return None; }
+        if path.len() >= buf.len() {
+            return None;
+        }
         buf[..path.len()].copy_from_slice(path);
         buf[path.len()] = 0;
         let cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
@@ -1543,8 +1797,14 @@ pub extern "C" fn sash_file_newer(
         }
     };
     match (get_mtime(p1_ptr, p1_len), get_mtime(p2_ptr, p2_len)) {
-        (Some(t1), Some(t2)) => if t1 > t2 { 1 } else { 0 },
-        (Some(_), None) => 1,  // file1 exists, file2 doesn't → file1 newer
+        (Some(t1), Some(t2)) => {
+            if t1 > t2 {
+                1
+            } else {
+                0
+            }
+        }
+        (Some(_), None) => 1, // file1 exists, file2 doesn't → file1 newer
         _ => 0,
     }
 }
@@ -1553,14 +1813,20 @@ pub extern "C" fn sash_file_newer(
 /// Implements [[ file1 -ef file2 ]].
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_file_same_dev(
-    p1_ptr: *const u8, p1_len: i64,
-    p2_ptr: *const u8, p2_len: i64,
+    p1_ptr: *const u8,
+    p1_len: i64,
+    p2_ptr: *const u8,
+    p2_len: i64,
 ) -> i64 {
     let get_dev_ino = |ptr: *const u8, len: i64| -> Option<(u64, u64)> {
-        if ptr.is_null() || len <= 0 { return None; }
+        if ptr.is_null() || len <= 0 {
+            return None;
+        }
         let path = unsafe { core::slice::from_raw_parts(ptr, len as usize) };
         let mut buf = [0u8; 4096];
-        if path.len() >= buf.len() { return None; }
+        if path.len() >= buf.len() {
+            return None;
+        }
         buf[..path.len()].copy_from_slice(path);
         buf[path.len()] = 0;
         let cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
@@ -1570,7 +1836,13 @@ pub extern "C" fn sash_file_same_dev(
         }
     };
     match (get_dev_ino(p1_ptr, p1_len), get_dev_ino(p2_ptr, p2_len)) {
-        (Some((d1, i1)), Some((d2, i2))) => if d1 == d2 && i1 == i2 { 1 } else { 0 },
+        (Some((d1, i1)), Some((d2, i2))) => {
+            if d1 == d2 && i1 == i2 {
+                1
+            } else {
+                0
+            }
+        }
         _ => 0,
     }
 }
@@ -1578,10 +1850,14 @@ pub extern "C" fn sash_file_same_dev(
 /// Change directory. Returns 0 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {
-    if path_ptr.is_null() || path_len <= 0 { return -1; }
+    if path_ptr.is_null() || path_len <= 0 {
+        return -1;
+    }
     let path = unsafe { core::slice::from_raw_parts(path_ptr, path_len as usize) };
     let mut buf = [0u8; 4096];
-    if path.len() >= buf.len() { return -1; }
+    if path.len() >= buf.len() {
+        return -1;
+    }
     buf[..path.len()].copy_from_slice(path);
     buf[path.len()] = 0;
     let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
@@ -1624,7 +1900,9 @@ pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
 /// This works for small heredocs. Large ones would need fork.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_heredoc_redirect(fd: i64, body_ptr: *const u8, body_len: i64) {
-    if body_ptr.is_null() || body_len < 0 { return; }
+    if body_ptr.is_null() || body_len < 0 {
+        return;
+    }
     let (read_fd, write_fd) = match rustix::pipe::pipe() {
         Ok(pair) => pair,
         Err(_) => return,
@@ -1651,7 +1929,9 @@ pub extern "C" fn sash_heredoc_redirect(fd: i64, body_ptr: *const u8, body_len: 
 /// Convert first character to uppercase. Returns (ptr, len).
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_toupper_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    if s_ptr.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
     let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
     out.copy_from_slice(s);
@@ -1664,7 +1944,9 @@ pub extern "C" fn sash_toupper_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut
 /// Convert first character to lowercase. Returns len.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_tolower_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    if s_ptr.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
     let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
     out.copy_from_slice(s);
@@ -1677,11 +1959,17 @@ pub extern "C" fn sash_tolower_first(s_ptr: *const u8, s_len: i64, out_ptr: *mut
 /// Convert all characters to uppercase. Returns len.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_toupper_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    if s_ptr.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
     let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
     for i in 0..s.len() {
-        out[i] = if s[i] >= b'a' && s[i] <= b'z' { s[i] - 32 } else { s[i] };
+        out[i] = if s[i] >= b'a' && s[i] <= b'z' {
+            s[i] - 32
+        } else {
+            s[i]
+        };
     }
     s_len
 }
@@ -1689,15 +1977,20 @@ pub extern "C" fn sash_toupper_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u
 /// Convert all characters to lowercase. Returns len.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_tolower_all(s_ptr: *const u8, s_len: i64, out_ptr: *mut u8) -> i64 {
-    if s_ptr.is_null() || s_len <= 0 { return 0; }
+    if s_ptr.is_null() || s_len <= 0 {
+        return 0;
+    }
     let s = unsafe { core::slice::from_raw_parts(s_ptr, s_len as usize) };
     let out = unsafe { core::slice::from_raw_parts_mut(out_ptr, s_len as usize) };
     for i in 0..s.len() {
-        out[i] = if s[i] >= b'A' && s[i] <= b'Z' { s[i] + 32 } else { s[i] };
+        out[i] = if s[i] >= b'A' && s[i] <= b'Z' {
+            s[i] + 32
+        } else {
+            s[i]
+        };
     }
     s_len
 }
-
 
 /// Get process ID.
 #[unsafe(no_mangle)]
@@ -1735,16 +2028,25 @@ pub unsafe extern "C" fn sash_split_first_word(
     }
     let s = core::slice::from_raw_parts(ptr, len as usize);
     // Skip leading whitespace
-    let start = s.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(s.len());
+    let start = s
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(s.len());
     let after_start = &s[start..];
     // Find end of word
-    let word_end = after_start.iter().position(|&b| b == b' ' || b == b'\t').unwrap_or(after_start.len());
+    let word_end = after_start
+        .iter()
+        .position(|&b| b == b' ' || b == b'\t')
+        .unwrap_or(after_start.len());
     let word_ptr = ptr.add(start);
     let word_len = word_end as i64;
     // Skip whitespace after word
     let rest_start = start + word_end;
     let after_word = &s[rest_start..];
-    let rest_skip = after_word.iter().position(|&b| b != b' ' && b != b'\t').unwrap_or(after_word.len());
+    let rest_skip = after_word
+        .iter()
+        .position(|&b| b != b' ' && b != b'\t')
+        .unwrap_or(after_word.len());
     let rest_offset = rest_start + rest_skip;
     *rest_ptr_out = ptr.add(rest_offset);
     *rest_len_out = (s.len() - rest_offset) as i64;
@@ -1775,7 +2077,11 @@ pub unsafe extern "C" fn sash_split_field(
     let field_ptr = ptr;
     let field_len = field_end as i64;
     // Rest starts after the delimiter
-    let rest_offset = if field_end < s.len() { field_end + 1 } else { s.len() };
+    let rest_offset = if field_end < s.len() {
+        field_end + 1
+    } else {
+        s.len()
+    };
     *rest_ptr_out = ptr.add(rest_offset);
     *rest_len_out = (s.len() - rest_offset) as i64;
     (field_ptr, field_len)
@@ -1792,12 +2098,22 @@ pub extern "C" fn sash_read_delim(fd: i64, delim: i64) -> (*mut u8, usize) {
     let mut total = 0usize;
     let mut found_delim = false;
     loop {
-        if total >= buf.len() { break; }
-        let n = unsafe { rustix::io::read(rustix::fd::BorrowedFd::borrow_raw(fd as i32), &mut buf[total..total+1]) };
+        if total >= buf.len() {
+            break;
+        }
+        let n = unsafe {
+            rustix::io::read(
+                rustix::fd::BorrowedFd::borrow_raw(fd as i32),
+                &mut buf[total..total + 1],
+            )
+        };
         match n {
             Ok(0) => break,
             Ok(1) => {
-                if buf[total] == delim_byte { found_delim = true; break; }
+                if buf[total] == delim_byte {
+                    found_delim = true;
+                    break;
+                }
                 total += 1;
             }
             _ => break,
@@ -1816,7 +2132,9 @@ pub extern "C" fn sash_read_delim(fd: i64, delim: i64) -> (*mut u8, usize) {
         return (core::ptr::null_mut(), 0);
     }
     let ptr = unsafe { sash_alloc(total) };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
+    }
     (ptr, total)
 }
 
@@ -1841,10 +2159,11 @@ pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
     }
     let len = buf.len() - i;
     let ptr = unsafe { sash_alloc(len) };
-    unsafe { core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len); }
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len);
+    }
     (ptr, len)
 }
-
 
 /// Start capturing stdout: create pipe, save stdout, redirect stdout to pipe.
 /// Returns (saved_stdout_fd, pipe_read_fd).
@@ -1872,8 +2191,14 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
     let mut buf = [0u8; 65536];
     let mut total = 0usize;
     loop {
-        let n = sash_read(pipe_read, unsafe { buf.as_mut_ptr().add(total) }, (buf.len() - total) as i64);
-        if n <= 0 { break; }
+        let n = sash_read(
+            pipe_read,
+            unsafe { buf.as_mut_ptr().add(total) },
+            (buf.len() - total) as i64,
+        );
+        if n <= 0 {
+            break;
+        }
         total += n as usize;
     }
     sash_close(pipe_read);
@@ -1888,7 +2213,9 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
     }
 
     let ptr = unsafe { sash_alloc(total) };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total); }
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
+    }
     (ptr, total)
 }
 
@@ -1908,7 +2235,7 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
         sa_handler: u64,
         sa_flags: u64,
         sa_restorer: u64,
-        sa_mask: [u64; 16],  // 128 bytes = 1024 bits
+        sa_mask: [u64; 16], // 128 bytes = 1024 bits
     }
 
     let mut act: KernelSigaction = unsafe { mem::zeroed() };
@@ -1920,14 +2247,16 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
     extern "C" fn restorer() {
         unsafe {
             core::arch::asm!(
-                "mov rax, 15",  // __NR_rt_sigreturn
+                "mov rax, 15", // __NR_rt_sigreturn
                 "syscall",
                 options(noreturn)
             );
         }
     }
     #[allow(clippy::fn_to_numeric_cast)]
-    { act.sa_restorer = restorer as u64; }
+    {
+        act.sa_restorer = restorer as u64;
+    }
 
     // rt_sigaction syscall (13)
     let ret: i64;
@@ -1944,7 +2273,11 @@ pub extern "C" fn sash_trap(signum: i64, handler: i64) -> i64 {
             lateout("r11") _,
         );
     }
-    if ret < 0 { -1 } else { 0 }
+    if ret < 0 {
+        -1
+    } else {
+        0
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1971,7 +2304,9 @@ pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
     // SA_RESTORER = 0x04000000, SA_RESTART = 0x10000000
     act.sa_flags = 0x04000000 | 0x10000000;
     #[allow(clippy::fn_to_numeric_cast)]
-    { act.sa_restorer = sash_flag_restorer as u64; }
+    {
+        act.sa_restorer = sash_flag_restorer as u64;
+    }
 
     let ret: i64;
     unsafe {
@@ -1987,17 +2322,23 @@ pub extern "C" fn sash_signal_flag(signum_val: i64) -> i64 {
             lateout("r11") _,
         );
     }
-    if ret < 0 { -1 } else { 0 }
+    if ret < 0 {
+        -1
+    } else {
+        0
+    }
 }
 
 extern "C" fn sash_flag_handler(sig: i32) {
-    unsafe { sash_signum = sig as i64; }
+    unsafe {
+        sash_signum = sig as i64;
+    }
 }
 
 #[unsafe(naked)]
 extern "C" fn sash_flag_restorer() {
     core::arch::naked_asm!(
-        "mov rax, 15",  // __NR_rt_sigreturn
+        "mov rax, 15", // __NR_rt_sigreturn
         "syscall",
     );
 }
@@ -2011,8 +2352,10 @@ extern "C" fn sash_flag_restorer() {
 /// pat_ptr/pat_len: glob pattern (e.g. "*.sh")
 #[no_mangle]
 pub extern "C" fn sash_glob(
-    dir_ptr: *const u8, dir_len: usize,
-    pat_ptr: *const u8, pat_len: usize,
+    dir_ptr: *const u8,
+    dir_len: usize,
+    pat_ptr: *const u8,
+    pat_len: usize,
 ) -> *mut u8 {
     let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
     let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
@@ -2020,8 +2363,8 @@ pub extern "C" fn sash_glob(
     // Parse pattern into prefix/suffix around '*'
     let star_pos = pat.iter().position(|&b| b == b'*');
     let (prefix, suffix) = match star_pos {
-        Some(pos) => (&pat[..pos], &pat[pos+1..]),
-        None => (pat, &[] as &[u8]),  // no star = exact match
+        Some(pos) => (&pat[..pos], &pat[pos + 1..]),
+        None => (pat, &[] as &[u8]), // no star = exact match
     };
 
     // Open directory
@@ -2066,14 +2409,17 @@ pub extern "C" fn sash_glob(
                 lateout("r11") _,
             );
         }
-        if nread <= 0 { break; }
+        if nread <= 0 {
+            break;
+        }
 
         let mut pos = 0usize;
         while pos < nread as usize {
             // struct linux_dirent64: d_ino(8), d_off(8), d_reclen(2), d_type(1), d_name(...)
             let reclen = u16::from_ne_bytes([buf[pos + 16], buf[pos + 17]]) as usize;
             let name_start = pos + 19;
-            let name_end = buf[name_start..pos + reclen].iter()
+            let name_end = buf[name_start..pos + reclen]
+                .iter()
                 .position(|&b| b == 0)
                 .map(|p| name_start + p)
                 .unwrap_or(pos + reclen);
@@ -2094,8 +2440,18 @@ pub extern "C" fn sash_glob(
                     let idx_bytes = idx.to_ne_bytes();
                     // Copy name to heap — buf is stack-local and will be overwritten
                     let name_copy = unsafe { sash_alloc(name.len()) };
-                    unsafe { core::ptr::copy_nonoverlapping(name.as_ptr(), name_copy, name.len()); }
-                    unsafe { sash_table_set(table as *mut SashTable, idx_bytes.as_ptr(), 8, name_copy, name.len() as i64); }
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(name.as_ptr(), name_copy, name.len());
+                    }
+                    unsafe {
+                        sash_table_set(
+                            table as *mut SashTable,
+                            idx_bytes.as_ptr(),
+                            8,
+                            name_copy,
+                            name.len() as i64,
+                        );
+                    }
                     idx += 1;
                 }
             }
@@ -2112,8 +2468,10 @@ pub extern "C" fn sash_glob(
 /// Returns a SashTable with integer keys and matching filenames as values.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_glob_regex(
-    dir_ptr: *const u8, dir_len: usize,
-    pat_ptr: *const u8, pat_len: usize,
+    dir_ptr: *const u8,
+    dir_len: usize,
+    pat_ptr: *const u8,
+    pat_len: usize,
 ) -> *mut u8 {
     let dir = unsafe { core::slice::from_raw_parts(dir_ptr, dir_len) };
 
@@ -2169,13 +2527,16 @@ pub extern "C" fn sash_glob_regex(
                 lateout("r11") _,
             );
         }
-        if nread <= 0 { break; }
+        if nread <= 0 {
+            break;
+        }
 
         let mut pos = 0usize;
         while pos < nread as usize {
             let reclen = u16::from_ne_bytes([buf[pos + 16], buf[pos + 17]]) as usize;
             let name_start = pos + 19;
-            let name_end = buf[name_start..pos + reclen].iter()
+            let name_end = buf[name_start..pos + reclen]
+                .iter()
                 .position(|&b| b == 0)
                 .map(|p| name_start + p)
                 .unwrap_or(pos + reclen);
@@ -2193,7 +2554,15 @@ pub extern "C" fn sash_glob_regex(
                 if matched > 0 {
                     let idx_bytes = idx.to_ne_bytes();
                     // name_buf is already heap-allocated, reuse it (just don't free it)
-                    unsafe { sash_table_set(table as *mut SashTable, idx_bytes.as_ptr(), 8, name_buf, name.len() as i64); }
+                    unsafe {
+                        sash_table_set(
+                            table as *mut SashTable,
+                            idx_bytes.as_ptr(),
+                            8,
+                            name_buf,
+                            name.len() as i64,
+                        );
+                    }
                     idx += 1;
                 }
             }
@@ -2212,15 +2581,23 @@ fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
         return 1;
     }
     let neg = n < 0;
-    if neg { n = -n; }
+    if neg {
+        n = -n;
+    }
     let mut pos = 19;
     while n > 0 {
         buf[pos] = b'0' + (n % 10) as u8;
         n /= 10;
-        if pos == 0 { break; }
+        if pos == 0 {
+            break;
+        }
         pos -= 1;
     }
-    if neg { buf[pos] = b'-'; } else { pos += 1; }
+    if neg {
+        buf[pos] = b'-';
+    } else {
+        pos += 1;
+    }
     let len = 20 - pos;
     // Manual copy to avoid memmove
     for j in 0..len {
@@ -2233,9 +2610,14 @@ fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
 /// Each token becomes an entry with integer index key (0, 1, 2, ...).
 #[no_mangle]
 pub unsafe extern "C" fn sash_split_into_array(
-    ptr: *const u8, len: usize, delim: i64, table: *mut u8,
+    ptr: *const u8,
+    len: usize,
+    delim: i64,
+    table: *mut u8,
 ) {
-    if ptr.is_null() || len == 0 { return; }
+    if ptr.is_null() || len == 0 {
+        return;
+    }
     let data = core::slice::from_raw_parts(ptr, len);
     let d = delim as u8;
     let mut idx: i64 = 0;
@@ -2249,8 +2631,10 @@ pub unsafe extern "C" fn sash_split_into_array(
             let key_bytes = idx.to_ne_bytes();
             sash_table_set(
                 table as *mut SashTable,
-                key_bytes.as_ptr(), 8_i64,
-                token_ptr, token_len as i64,
+                key_bytes.as_ptr(),
+                8_i64,
+                token_ptr,
+                token_len as i64,
             );
             idx += 1;
             start = i + 1;
@@ -2264,15 +2648,21 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
     let mut buf = [0u8; 65536];
     let mut total = 0usize;
     loop {
-        if total >= buf.len() { break; }
+        if total >= buf.len() {
+            break;
+        }
         let chunk = total + 1024.min(buf.len() - total);
-        let n = unsafe { rustix::io::read(
-            rustix::fd::BorrowedFd::borrow_raw(fd as i32),
-            &mut buf[total..chunk]
-        ) };
+        let n = unsafe {
+            rustix::io::read(
+                rustix::fd::BorrowedFd::borrow_raw(fd as i32),
+                &mut buf[total..chunk],
+            )
+        };
         match n {
             Ok(0) => break,
-            Ok(count) => { total += count; }
+            Ok(count) => {
+                total += count;
+            }
             Err(_) => break,
         }
     }
@@ -2280,7 +2670,9 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
         return (core::ptr::null_mut(), 0);
     }
     let out = unsafe { sash_alloc(total) };
-    unsafe { core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total); }
+    unsafe {
+        core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total);
+    }
     (out, total)
 }
 
@@ -2290,12 +2682,18 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
 /// Returns 1 if matched, 0 if not.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_fnmatch(
-    pat_ptr: *const u8, pat_len: usize,
-    str_ptr: *const u8, str_len: usize,
+    pat_ptr: *const u8,
+    pat_len: usize,
+    str_ptr: *const u8,
+    str_len: usize,
 ) -> i64 {
     let pat = unsafe { core::slice::from_raw_parts(pat_ptr, pat_len) };
     let s = unsafe { core::slice::from_raw_parts(str_ptr, str_len) };
-    if fnmatch_impl(pat, s) { 1 } else { 0 }
+    if fnmatch_impl(pat, s) {
+        1
+    } else {
+        0
+    }
 }
 
 /// Glob match with only `*` as a glob operator.
@@ -2329,5 +2727,3 @@ fn fnmatch_impl(pat: &[u8], s: &[u8]) -> bool {
     }
     true
 }
-
-

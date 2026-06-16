@@ -742,7 +742,7 @@ fn pos_array_assign_element() {
 fn pos_array_for_loop() {
     let script = r#"#!/bin/bash
 arr=(alpha beta gamma)
-for x in "${arr[@]}"; do
+for x in @arr; do
     echo $x
 done
 "#;

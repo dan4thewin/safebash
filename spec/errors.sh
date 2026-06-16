@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=28
+plan=32
 echo "1..$plan" >&3
 
 set +e
@@ -145,6 +145,28 @@ run_sash '/bin/false || echo $?'
 # 55.19 $! is sugar for $(getcpid)
 run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.19
+
+# --- DD#46 top-level positional rejection: directed error text (DD#60) ---
+
+# e.dd46.t1 top-level $@ → directs to $(argv)
+run_sash 'echo "$@"'
+[[ $rc != 0 && -z $out && $err == *'use $(argv)'* ]]; chk e.dd46.t1
+
+# e.dd46.t2 top-level $1 → directs to $(arg 1)
+run_sash 'echo "$1"'
+[[ $rc != 0 && -z $out && $err == *'use $(arg 1)'* ]]; chk e.dd46.t2
+
+# e.dd46.t3 top-level $* → directs to $(argv)
+run_sash 'echo "$*"'
+[[ $rc != 0 && -z $out && $err == *'use $(argv)'* ]]; chk e.dd46.t3
+
+# e.dd46.t4 top-level $# → directs to $(argc)
+run_sash 'echo "$#"'
+[[ $rc != 0 && -z $out && $err == *'use $(argc)'* ]]; chk e.dd46.t4
+
+# e.dd46.t5 top-level $0 → directs to $(arg 0)
+run_sash 'echo "$0"'
+[[ $rc != 0 && -z $out && $err == *'use $(arg 0)'* ]]; chk e.dd46.t5
 
 set -e
 tally

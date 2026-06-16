@@ -12,6 +12,33 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-16 — argv/arg/argc trio (DD#60) + two latent bugs
+
+Implemented the full argv-trio chain (argv-trio-*, all 7 tasks done),
+closing `bug-for-in-dollar-at-taint-ice` (top-level `for x in "$@"` ICE).
+See [journal 112](journal/112-argv-trio.md).
+
+**DD#60 locked + implemented** (supersedes the argv half of DD#42).
+`$(argc)` = C argc (clean); `$(arg N)` = scalar 0-based tainted;
+`$(argv)`/`$(argv N)` = tainted array splat (for-in / snapshot only);
+`array a=$(argv N)` = tainted snapshot. Native + c backends both pass
+`spec/argv.sh`. Validator gained SB5024 (top-level positional, DD#46),
+SB5025 (splat misuse), SB5026 (quoted splat, DD#22), SB5027 (mixed
+for-in), plus a bare-tainted-cmdsub use-site reject that closed a
+**pre-existing getenv leak** (`echo $(getenv HOME)` printed `$HOME`).
+
+**Two latent bugs fixed beyond the documented ICE:** inside-function
+`$@` was splicing program argv (not the caller's args) — fixed by
+expanding `$@`→`$1..$N` at inline time; and the getenv use-site leak.
+
+**Spec:** native 402 passing / 2 failing (only pre-existing `cf.c7`/`cf.c8`
+case-glob). Zero regressions in any mode; c improved 66→62 failing.
+
+**Filed:** `emit-janet-argv-parity` (janet has no argv backend),
+`rust-test-suite-rot` (mk test ~158-red at HEAD, pre-existing — argv-trio
+added zero net rust regressions), `converter-command-arg-splat`
+(`cmd "$@"` → no clean target).
+
 ### Session 2026-06-15 — array taint construction restriction + bless-all (DD#61)
 
 DG reported `array a=( $(getenv HOME) $(getenv PATH) ); bless a [[ … ]];

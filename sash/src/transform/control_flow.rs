@@ -2,7 +2,7 @@
 
 use super::expressions::{expr_to_string, expr_to_value};
 use super::helpers::insert_phis_two_branch;
-use super::pipelines::{lower_for_array, lower_for_dollar_at};
+use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
@@ -319,7 +319,7 @@ pub(super) fn lower_for(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if let Some(b) = try_dispatch_dollar_at(f, ssa, state, block) {
+    if let Some(b) = try_dispatch_argv_splat(f, ssa, state, block) {
         return b;
     }
     if let Some(b) = try_dispatch_array(f, ssa, state, block) {
@@ -339,23 +339,43 @@ fn is_dynamic_single_word(f: &For) -> bool {
     is_dynamic && f.words.len() == 1
 }
 
-fn try_dispatch_dollar_at(
+/// Dispatch `for x in $(argv)` / `for x in $(argv N)` to the argv-slice
+/// loop (DD#60). The validator guarantees the splat is the sole for-in
+/// source; here we extract the start index (0 for bare `$(argv)`).
+fn try_dispatch_argv_splat(
     f: &For,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> Option<BlockId> {
-    if !is_dynamic_single_word(f) {
+    if f.words.len() != 1 {
         return None;
     }
-    let is_dollar_at = match &f.words[0].kind {
-        ExprKind::SimpleExpansion(v) if v == "@" => true,
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
-            matches!(&parts[0].kind, ExprKind::SimpleExpansion(v) if v == "@")
-        }
-        _ => false,
+    let start = argv_splat_start(&f.words[0])?;
+    Some(lower_for_argv_slice(f, start, ssa, state, block))
+}
+
+/// If `word` is `$(argv)` or `$(argv N)`, return the start index
+/// (0 for bare `$(argv)`, N for `$(argv N)` with a literal N).
+fn argv_splat_start(word: &Expr) -> Option<i64> {
+    let ExprKind::CommandSubstitution(stmts) = &word.kind else {
+        return None;
     };
-    is_dollar_at.then(|| lower_for_dollar_at(f, ssa, state, block))
+    let inner = match stmts.first().map(|s| &s.kind) {
+        Some(StmtKind::Redirected(r)) => &r.body.kind,
+        Some(other) => other,
+        None => return None,
+    };
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    if expr_to_string(&c.name) != "argv" {
+        return None;
+    }
+    match c.args.first() {
+        None => Some(0),
+        Some(a) => expr_to_string(a).parse::<i64>().ok().filter(|n| *n >= 0),
+    }
 }
 
 fn try_dispatch_array(

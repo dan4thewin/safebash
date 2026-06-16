@@ -174,16 +174,20 @@ fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
     // Check glob patterns and unquoted expansions in for-loop words
     for w in &f.words {
         check_unquoted_glob(w, diags);
-        // SB5009: unquoted $var in for-loop words implies word splitting
+        // SB5009: unquoted $var in for-loop words implies word splitting.
+        // `$@`/`$*` are array splats (handled by the positional/splat
+        // passes), not word-splitting scalars, so they are exempt here.
         if let ExprKind::SimpleExpansion(var) = &w.kind {
-            diags.push(Diagnostic::error_span(
-                w.span,
-                "SB5009",
-                format!(
-                    "unquoted ${} in for-loop would word-split — quote it or use an array",
-                    var
-                ),
-            ));
+            if var != "@" && var != "*" {
+                diags.push(Diagnostic::error_span(
+                    w.span,
+                    "SB5009",
+                    format!(
+                        "unquoted ${} in for-loop would word-split — quote it or use an array",
+                        var
+                    ),
+                ));
+            }
         }
     }
     for s in &f.body {
@@ -381,8 +385,7 @@ const REJECTED_VARS: &[(&str, &str)] = &[
     ),
 ];
 
-const REJECTED_POSITIONAL: &[(&str, &str)] =
-    &[("0", "$0 is not available in sash — use $(argv 0)")];
+const REJECTED_POSITIONAL: &[(&str, &str)] = &[("0", "$0 is not available in sash — use $(arg 0)")];
 
 /// SB5018: Bare env vars require $(getenv NAME)
 const ENV_VARS: &[&str] = &[
@@ -993,6 +996,7 @@ const BUILTINS: &[&str] = &[
     // Positional/args
     "argv",
     "argc",
+    "arg",
     "shift",
     // Variables
     "unset",
@@ -1152,10 +1156,6 @@ use std::collections::HashSet;
 /// reject any use of tainted variables outside bless expressions.
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
-    // $1-$9 at top level are implicitly tainted (from argv)
-    for i in 1..=9 {
-        tainted.insert(i.to_string());
-    }
     let mut diags = Vec::new();
     for stmt in &program.statements {
         taint_stmt(stmt, &mut tainted, &mut diags);
@@ -1166,6 +1166,331 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
         }
     }
     diags
+}
+
+// ── DD#46 / DD#60: top-level positional rejection (SB5024) ────────
+//
+// `$@`, `$*`, `$1..$N`, `$#` are function-local — they refer to the
+// nearest enclosing call's arguments, never to program argv. At top
+// level they are a compile error directing to the argv/arg/argc
+// builtins. Inside a function body they are clean and accepted (the
+// caller's args are statically visible). `$0` is handled separately by
+// REJECTED_POSITIONAL (SB5017) because it is unsupported everywhere,
+// not just at top level.
+
+/// Reject top-level positional parameters, directing to the DD#60 builtins.
+pub fn check_positionals(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in &program.statements {
+        check_positionals_stmt(stmt, false, &mut diags);
+    }
+    if let Some(ref end) = program.end_block {
+        for stmt in end {
+            check_positionals_stmt(stmt, false, &mut diags);
+        }
+    }
+    diags
+}
+
+fn check_positionals_stmt(stmt: &Statement, in_function: bool, diags: &mut Vec<Diagnostic>) {
+    // A function body switches context: its positionals are the caller's
+    // statically-known args, so they are accepted (clean).
+    if let StmtKind::Function(f) = &stmt.kind {
+        for s in &f.body {
+            check_positionals_stmt(s, true, diags);
+        }
+        return;
+    }
+    if !in_function {
+        stmt.direct_exprs(&mut |expr| check_positionals_expr(expr, diags));
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_positionals_stmt(s, in_function, diags);
+        }
+    }
+}
+
+/// Walk a top-level expression tree, flagging positional reads. A nested
+/// command substitution runs in the same (top-level) context, so it is
+/// re-entered at the statement level to keep any nested function body's
+/// positionals correctly scoped.
+fn check_positionals_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) => flag_positional(name, expr.span, diags),
+        ExprKind::ParameterExpansion(pe) => {
+            flag_positional(&pe.name, expr.span, diags);
+            check_positionals_opt(pe.operand.as_deref(), diags);
+        }
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            check_positionals_seq(parts, diags)
+        }
+        ExprKind::AssocArray(pairs) => check_positionals_seq(pairs.iter().map(|(_, v)| v), diags),
+        ExprKind::Subscript { index, .. } => check_positionals_expr(index, diags),
+        ExprKind::Test(t) => check_positionals_test(t, diags),
+        ExprKind::CommandSubstitution(stmts) => check_positionals_stmt_seq(stmts, diags),
+        _ => {}
+    }
+}
+
+fn check_positionals_seq<'a>(
+    exprs: impl IntoIterator<Item = &'a Expr>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for e in exprs {
+        check_positionals_expr(e, diags);
+    }
+}
+
+fn check_positionals_opt(expr: Option<&Expr>, diags: &mut Vec<Diagnostic>) {
+    if let Some(e) = expr {
+        check_positionals_expr(e, diags);
+    }
+}
+
+/// A command substitution at top level runs in top-level context; recurse
+/// at the statement level so nested function bodies are correctly scoped.
+fn check_positionals_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for s in stmts {
+        check_positionals_stmt(s, false, diags);
+    }
+}
+
+fn check_positionals_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match t {
+        TestExpr::Unary { operand, .. } => check_positionals_expr(operand, diags),
+        TestExpr::Binary { left, right, .. } => {
+            check_positionals_expr(left, diags);
+            check_positionals_expr(right, diags);
+        }
+        TestExpr::Not(inner) | TestExpr::Paren(inner) => check_positionals_test(inner, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_positionals_test(l, diags);
+            check_positionals_test(r, diags);
+        }
+    }
+}
+
+/// Emit SB5024 if `name` is a function-local positional form. `$0` is
+/// excluded — it is rejected everywhere by REJECTED_POSITIONAL (SB5017).
+fn flag_positional(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    let directive = if name == "@" || name == "*" {
+        format!(
+            "${} is function-local — use $(argv) for iteration or $(arg N) at top level",
+            name
+        )
+    } else if name == "#" {
+        "$# is function-local — use $(argc) at top level \
+         (C argc; subtract 1 for the user-arg count)"
+            .to_string()
+    } else if name != "0" && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+        format!(
+            "${} is function-local — use $(arg {}) at top level",
+            name, name
+        )
+    } else {
+        return;
+    };
+    diags.push(Diagnostic::error_span(span, "SB5024", directive));
+}
+
+// ── DD#60 splat context (SB5025), DD#22 quoted splat (SB5026),
+//    DD#60 for-in single-source rule (SB5027) ──────────────────────
+//
+// `$(argv)` / `$(argv N)` are array-returning splats. They are legal only
+// as the sole source of a for-in header or as the right-hand side of an
+// `array a=$(argv …)` snapshot. Every other appearance is SB5025. Quoting
+// any array splat ("${a[@]}" / "$a[@]" / "$(argv)") is SB5026 (DD#22:
+// quotes always yield a single string). A for-in header that mixes a
+// tainted argv splat with any other word is SB5027.
+
+/// Reject misuse of array splats and quoted splats.
+pub fn check_argv_splat(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in &program.statements {
+        check_argv_splat_stmt(stmt, &mut diags);
+    }
+    if let Some(ref end) = program.end_block {
+        for stmt in end {
+            check_argv_splat_stmt(stmt, &mut diags);
+        }
+    }
+    diags
+}
+
+fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::For(f) => {
+            check_for_header_splat(f, diags);
+            check_argv_splat_body(&f.body, diags);
+        }
+        StmtKind::Declaration(d) => check_argv_splat_decl(d, diags),
+        _ => {
+            stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
+            for body in stmt.child_bodies() {
+                check_argv_splat_body(body, diags);
+            }
+        }
+    }
+}
+
+fn check_argv_splat_body(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for s in stmts {
+        check_argv_splat_stmt(s, diags);
+    }
+}
+
+/// `array a=$(argv …)` snapshots are allowed; every other assignment value
+/// (and subscript index) is checked for splat misuse.
+fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
+    let is_array_decl = d.flags.iter().any(|fl| fl == "-a" || fl == "-A");
+    for a in &d.assignments {
+        if is_array_decl && is_argv_splat_expr(&a.value) {
+            continue;
+        }
+        check_argv_splat_expr(&a.value, diags);
+        check_argv_splat_opt(a.index.as_ref(), diags);
+    }
+}
+
+/// Validate a for-in header: reject quoted splats (SB5026), and require an
+/// argv splat to be the sole source (SB5027). The argv-splat word itself
+/// is an allowed source and is not flagged SB5025.
+fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
+    let mut argv_splats = 0;
+    for w in &f.words {
+        if is_argv_splat_expr(w) {
+            argv_splats += 1;
+        } else {
+            // Catches a quoted splat word (SB5026) and any nested misuse.
+            check_argv_splat_expr(w, diags);
+        }
+    }
+    if argv_splats > 0 && f.words.len() > 1 {
+        diags.push(Diagnostic::error_span(
+            f.words[0].span,
+            "SB5027",
+            "a for-in over $(argv) must use $(argv) as its sole source — it \
+             cannot be mixed with other words or sources (DD#60)"
+                .to_string(),
+        ));
+    }
+}
+
+/// SB5026 (quoted splat) or SB5025 (bare argv splat in a non-splat context)
+/// for `expr` itself — `None` if `expr` is not a splat leaf.
+fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
+    if let ExprKind::DoubleQuoted(parts) = &expr.kind {
+        if parts.len() == 1 && is_splat_form(&parts[0]) {
+            return Some(quoted_splat_diag(expr.span));
+        }
+    }
+    if is_argv_splat_expr(expr) {
+        return Some(Diagnostic::error_span(
+            expr.span,
+            "SB5025",
+            "$(argv) is an array splat — it is valid only as the sole source of \
+             a for-in loop or the RHS of `array a=$(argv …)`; use $(arg N) for a \
+             single argument"
+                .to_string(),
+        ));
+    }
+    None
+}
+
+/// Walk an expression, flagging quoted splats (SB5026) and bare argv splats
+/// in a non-splat context (SB5025).
+fn check_argv_splat_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let Some(diag) = argv_splat_self_diag(expr) {
+        diags.push(diag);
+        return;
+    }
+    match &expr.kind {
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            check_argv_splat_seq(parts, diags)
+        }
+        ExprKind::AssocArray(pairs) => check_argv_splat_seq(pairs.iter().map(|(_, v)| v), diags),
+        ExprKind::Subscript { index, .. } => check_argv_splat_expr(index, diags),
+        ExprKind::ParameterExpansion(pe) => check_argv_splat_opt(pe.operand.as_deref(), diags),
+        ExprKind::Test(t) => check_argv_splat_test(t, diags),
+        ExprKind::CommandSubstitution(stmts) => check_argv_splat_stmt_seq(stmts, diags),
+        _ => {}
+    }
+}
+
+fn check_argv_splat_seq<'a>(
+    exprs: impl IntoIterator<Item = &'a Expr>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for e in exprs {
+        check_argv_splat_expr(e, diags);
+    }
+}
+
+fn check_argv_splat_opt(expr: Option<&Expr>, diags: &mut Vec<Diagnostic>) {
+    if let Some(e) = expr {
+        check_argv_splat_expr(e, diags);
+    }
+}
+
+fn check_argv_splat_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for s in stmts {
+        check_argv_splat_stmt(s, diags);
+    }
+}
+
+fn check_argv_splat_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match t {
+        TestExpr::Unary { operand, .. } => check_argv_splat_expr(operand, diags),
+        TestExpr::Binary { left, right, .. } => {
+            check_argv_splat_expr(left, diags);
+            check_argv_splat_expr(right, diags);
+        }
+        TestExpr::Not(inner) | TestExpr::Paren(inner) => check_argv_splat_test(inner, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_argv_splat_test(l, diags);
+            check_argv_splat_test(r, diags);
+        }
+    }
+}
+
+fn quoted_splat_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5026",
+        "quoting an array splat is not allowed — quotes yield a single string \
+         (DD#22); use the bare form (@arr or $(argv))"
+            .to_string(),
+    )
+}
+
+/// `$(argv)` / `$(argv N)` — the array-splat command substitution.
+fn is_argv_splat_expr(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "argv"))
+}
+
+/// A bare splat form: `$(argv …)`, an `arrvals`/`arrkeys` parameter
+/// expansion (`@a` / `${a[@]}` / `$a[@]`), or `$(keys a)`.
+fn is_splat_form(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) => {
+            cmdsub_command_is(stmts, "argv") || cmdsub_command_is(stmts, "keys")
+        }
+        ExprKind::ParameterExpansion(pe) => {
+            matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys"))
+        }
+        _ => false,
+    }
+}
+
+/// True if the single-command substitution invokes `name`.
+fn cmdsub_command_is(stmts: &[Statement], name: &str) -> bool {
+    let inner = match stmts.first().map(|s| &s.kind) {
+        Some(StmtKind::Redirected(r)) => &r.body.kind,
+        Some(other) => other,
+        None => return false,
+    };
+    matches!(inner, StmtKind::Command(c) if expr_literal_str(&c.name) == name)
 }
 
 /// Like taint_stmt but doesn't mark read/mapfile as tainted
@@ -1287,12 +1612,12 @@ fn reject_tainted_into_array(
     }
 }
 
-/// Taint a function body: $1-$9 are function args (clean), not top-level argv.
+/// Taint a function body. Positional params ($1-$9, $@) are clean within
+/// a function (the caller's args are statically visible — DD#46); they are
+/// never added to the tainted set, so the body simply inherits the outer
+/// tainted set unchanged.
 fn taint_function_body(body: &[Statement], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     let mut fn_tainted = tainted.clone();
-    for i in 1..=9 {
-        fn_tainted.remove(&i.to_string());
-    }
     for s in body {
         taint_stmt(s, &mut fn_tainted, diags);
     }
@@ -1447,15 +1772,30 @@ fn is_taint_source(expr: &Expr) -> bool {
     }
 }
 
-/// A command substitution is a taint source when it runs `getenv`/`argv`
-/// or an external (absolute-path) command. Unknown PATH-resolved names
-/// can't be classified here (might be a user function), so default clean.
+/// A command substitution is a taint source when it runs `getenv`/`argv`/
+/// `arg` or an external (absolute-path) command. Unknown PATH-resolved
+/// names can't be classified here (might be a user function), so default
+/// clean.
 fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
     let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
         return false;
     };
     let name = expr_literal_str(&c.name);
-    name == "getenv" || name == "argv" || name.starts_with('/')
+    name == "getenv" || name == "argv" || name == "arg" || name.starts_with('/')
+}
+
+/// A command substitution that yields a tainted **scalar** used directly
+/// at a read site (command argument, quoted interpolation) is rejected by
+/// the use-site taint check — DD#24 admits only assignment-from-source or
+/// a `bless` predicate. This covers `$(getenv …)`, `$(arg N)`, and
+/// external `$(/abs …)`. `$(argv …)` is deliberately excluded: it is an
+/// array splat governed by the splat-context check (SB5025), not a scalar.
+fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return false;
+    };
+    let name = expr_literal_str(&c.name);
+    name == "getenv" || name == "arg" || name.starts_with('/')
 }
 
 /// Check if an expression uses any tainted variable.
@@ -1475,43 +1815,61 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
 /// Check an expression for tainted variable use, emitting diagnostics.
 fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
-        ExprKind::SimpleExpansion(var) => {
-            if tainted.contains(var.as_str()) {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5020",
-                    format!("tainted variable ${} used without bless", var),
-                ));
-            }
-        }
-        ExprKind::ParameterExpansion(pe) => {
-            if tainted.contains(pe.name.as_str()) {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5020",
-                    format!("tainted variable ${{{} ...}} used without bless", pe.name),
-                ));
-            }
-        }
-        ExprKind::Subscript { name, .. } => {
-            if tainted.contains(name.as_str()) {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5020",
-                    format!("tainted array ${{{}[...]}} used without bless", name),
-                ));
-            }
-        }
-        ExprKind::DoubleQuoted(parts) => {
+        ExprKind::SimpleExpansion(var) => push_taint_use(
+            tainted,
+            var,
+            expr.span,
+            format!("tainted variable ${} used without bless", var),
+            diags,
+        ),
+        ExprKind::ParameterExpansion(pe) => push_taint_use(
+            tainted,
+            &pe.name,
+            expr.span,
+            format!("tainted variable ${{{} ...}} used without bless", pe.name),
+            diags,
+        ),
+        ExprKind::Subscript { name, .. } => push_taint_use(
+            tainted,
+            name,
+            expr.span,
+            format!("tainted array ${{{}[...]}} used without bless", name),
+            diags,
+        ),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
             for p in parts {
                 check_expr_taint(p, tainted, diags);
             }
         }
-        ExprKind::Concat(parts) => {
-            for p in parts {
-                check_expr_taint(p, tainted, diags);
-            }
-        }
+        // DD#24: a bare tainted command substitution used directly at a
+        // read site (not assigned, not inside a bless predicate) is a use
+        // of external data without bless — rejected (e.g. `echo $(getenv
+        // HOME)` would otherwise slip through, never bound to a variable).
+        ExprKind::CommandSubstitution(stmts) => check_bare_cmdsub_taint(stmts, expr.span, diags),
         _ => {}
+    }
+}
+
+fn push_taint_use(
+    tainted: &HashSet<String>,
+    name: &str,
+    span: Span,
+    msg: String,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if tainted.contains(name) {
+        diags.push(Diagnostic::error_span(span, "SB5020", msg));
+    }
+}
+
+fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diagnostic>) {
+    if cmdsub_is_scalar_taint_source(stmts) {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5020",
+            "tainted command substitution used without bless — assign it \
+             to a variable and bless before use"
+                .to_string(),
+        ));
     }
 }

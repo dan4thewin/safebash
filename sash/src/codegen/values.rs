@@ -448,6 +448,14 @@ pub(super) fn lower_value(
         SsaValue::ArgvIndex(idx_ref) => {
             lower_argv_index_value(idx_ref, builder, module, vars, externs)
         }
+        SsaValue::ArgvSnapshot { start } => {
+            let start_val = builder.ins().iconst(I64, *start);
+            let snap_ref = module.declare_func_in_func(externs.argv_snapshot, builder.func);
+            let call = builder.ins().call(snap_ref, &[start_val]);
+            let table_ptr = builder.inst_results(call)[0];
+            let zero = builder.ins().iconst(I64, 0);
+            (table_ptr, zero)
+        }
         SsaValue::TableValue { array, index } => {
             lower_table_value_value(array, index, builder, module, vars, externs)
         }
@@ -739,11 +747,9 @@ fn lower_argv_index_value(
     let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
     let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
     let idx_int = builder.inst_results(call)[0];
-    // offset = (idx + 1) * 8 — positional params are 1-indexed
-    let one = builder.ins().iconst(I64, 1);
-    let idx_plus_1 = builder.ins().iadd(idx_int, one);
+    // DD#60: argv slice is 0-based — argv[idx] directly (idx 0 = program name).
     let eight = builder.ins().iconst(I64, 8);
-    let offset = builder.ins().imul(idx_plus_1, eight);
+    let offset = builder.ins().imul(idx_int, eight);
     let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
     let argv_ptr = builder.ins().global_value(I64, argv_gv);
     let argv_val = builder.ins().load(I64, MemFlags::trusted(), argv_ptr, 0);

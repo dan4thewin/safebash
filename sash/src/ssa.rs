@@ -509,6 +509,11 @@ pub enum SsaValue {
     },
     /// Positional parameter by index: argv[i+1] (for dynamic for loops)
     ArgvIndex(VarRef),
+    /// DD#60: `array a=$(argv N)` snapshot — build an indexed table from
+    /// the program argv slice argv[start..argc] (0-indexed). Tainted.
+    ArgvSnapshot {
+        start: i64,
+    },
     /// Indexed array literal: (val0, val1, val2, ...)
     /// Creates a hash table with integer keys "0", "1", "2", ...
     IndexedArray(Vec<SsaValue>),

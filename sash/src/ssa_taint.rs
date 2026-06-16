@@ -306,7 +306,7 @@ fn value_is_tainted(
         | SsaValue::TableKey { array, .. } => taint_of_name(taint, array),
 
         // Always-tainted: program argv is external input by construction.
-        SsaValue::ArgvIndex(_) => Taint::Tainted,
+        SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => Taint::Tainted,
 
         // Var-rooted: taint inherited from the named variable's status.
         SsaValue::Var(vref)
@@ -387,7 +387,7 @@ fn cmd_subst_taint(
     };
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
-        "getenv" | "argv" => Taint::Tainted,
+        "getenv" | "argv" | "arg" => Taint::Tainted,
         "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
         | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => Taint::Clean,
         "echo" | "printf" | "pwd" => {
@@ -419,8 +419,13 @@ fn check_value_use(
         SsaValue::ArithExpr { var, .. } => {
             check_tainted_var(var, " in arithmetic", context, taint, errors)
         }
-        SsaValue::ParamExpansion { var, .. } => {
-            check_tainted_var(var, " in param expansion", context, taint, errors)
+        SsaValue::ParamExpansion { var, operator, .. } => {
+            // DD#60: a length/count operator (`${#a[@]}` / `len a`,
+            // `${#s}`) exposes only the element count or byte length, not
+            // any tainted element data — clean even on a tainted array.
+            if operator != "arrlen" && operator != "strlen" {
+                check_tainted_var(var, " in param expansion", context, taint, errors)
+            }
         }
         SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
             for p in parts {

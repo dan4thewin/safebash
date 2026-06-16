@@ -932,10 +932,8 @@ fn try_native_intrinsic(
             let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
             let argc_base = builder.ins().global_value(I64, argc_gv);
             let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
-            // argc includes $0, so subtract 1 for $# equivalence
-            let one = builder.ins().iconst(I64, 1);
-            let count = builder.ins().isub(argc_val, one);
-            Some(emit_int_to_str(builder, module, externs, count))
+            // DD#60: $(argc) is C argc (includes the program name at argv[0]).
+            Some(emit_int_to_str(builder, module, externs, argc_val))
         }
         "signum" => {
             let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
@@ -943,7 +941,8 @@ fn try_native_intrinsic(
             let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
             Some(emit_int_to_str(builder, module, externs, signum_val))
         }
-        "argv" if argv_values.len() >= 2 => {
+        "arg" if argv_values.len() >= 2 => {
+            // DD#60: $(arg N) — scalar program argument, 0-based.
             let (idx_ptr, idx_len) = lower_value(
                 &argv_values[1],
                 builder,

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=26
+plan=31
 echo "1..$plan" >&3
 
 set +e
@@ -40,8 +40,8 @@ run_sash 'echo "hello" | read line; echo $line'
 run_sash 'choices="a b c"; for x in $choices; do echo $x; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 28.1
 
-# 28.2 for x in "${arr[@]}" accepted
-run_sash 'array a=(one two three); for x in "${a[@]}"; do echo $x; done'
+# 28.2 for x in @a accepted (sash-native bare splat — DD#41)
+run_sash 'array a=(one two three); for x in @a; do echo $x; done'
 [[ $rc = 0 && $out == *"one"* && -z $err ]]; chk 28.2
 
 # 39.1 only * glob supported, ? and [abc] rejected
@@ -115,6 +115,29 @@ run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; bless k v in m [[ -n $k &
 # 22.11 mapfile -m result is tainted
 run_sash 'map m; printf "k=v\n" | mapfile -m m; echo ${m[k]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.11
+
+# --- DD#22 addendum: quotes always yield a single string ---
+# Quoting an array splat is a compile error (no decorative-quote unwrap).
+
+# ws.q1 quoted brace splat "${a[@]}" rejected
+run_sash 'array a=(x y); for x in "${a[@]}"; do echo "$x"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk ws.q1
+
+# ws.q2 quoted dollar splat "$a[@]" rejected
+run_sash 'array a=(x y); for x in "$a[@]"; do echo "$x"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk ws.q2
+
+# ws.q3 quoted argv splat "$(argv)" rejected
+run_sash 'for x in "$(argv)"; do echo "$x"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk ws.q3
+
+# ws.q4 bare dollar splat $a[@] accepted (input convenience; canonical is @a)
+run_sash 'array a=(x y); for x in $a[@]; do echo "$x"; done'
+[[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk ws.q4
+
+# ws.q5 bare brace splat ${a[@]} accepted (input convenience; canonical is @a)
+run_sash 'array a=(x y); for x in ${a[@]}; do echo "$x"; done'
+[[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk ws.q5
 
 set -e
 tally

@@ -617,16 +617,21 @@ fn strip_dollar(s: &str) -> &str {
 // ── Expansion conversions ─────────────────────────────────────
 
 fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
-    // Convert positional parameters: $1 → $(argv 1), $@ → $(argv @), $# → $(argc), $0 → $(argv 0)
+    // DD#46/DD#60: positionals are function-local. Inside a function body
+    // they are the caller's args (clean) and pass through unchanged; only
+    // top-level positionals are rewritten to the argv/arg/argc builtins.
+    let in_function = has_ancestor_kind(node, "function_definition");
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
         match child.kind() {
             "variable_name" => {
                 let name = node_text(child, source);
-                // Check if it's a numeric positional parameter
+                // Numeric positional parameter: $0 → $(arg 0), $N → $(arg N).
                 if name.chars().all(|c| c.is_ascii_digit()) {
-                    let replacement = format!("$(argv {})", name);
-                    patches.push(Patch::replace_node(node, replacement, None));
+                    if !in_function {
+                        let replacement = format!("$(arg {})", name);
+                        patches.push(Patch::replace_node(node, replacement, None));
+                    }
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
                     // Known env var: $HOME → $(getenv HOME) + bless
                     let var = name.to_lowercase();
@@ -646,14 +651,28 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                 }
             }
             "special_variable_name" => {
+                if in_function {
+                    continue;
+                }
                 let name = node_text(child, source);
-                let replacement = match name {
-                    "@" | "*" => Some("$(argv @)".to_string()),
-                    "#" => Some("$(argc)".to_string()),
-                    _ => None,
-                };
-                if let Some(replacement) = replacement {
-                    patches.push(Patch::replace_node(node, replacement, None));
+                // DD#60: $@/$* → $(argv) (array splat); $# → user-arg count
+                // ($(argc) is C argc, so subtract the program-name slot).
+                // A splat is unquoted in sash-native (DD#22), so when the
+                // splat sits inside a double-quoted string ("$@") replace
+                // the whole string to drop the quotes.
+                match name {
+                    "@" | "*" => {
+                        let target = splat_replace_node(node);
+                        patches.push(Patch::replace_node(target, "$(argv)".to_string(), None));
+                    }
+                    "#" => {
+                        patches.push(Patch::replace_node(
+                            node,
+                            "$(($(argc) - 1))".to_string(),
+                            None,
+                        ));
+                    }
+                    _ => {}
                 }
             }
             _ => {}
@@ -669,23 +688,32 @@ fn convert_expansion(
 ) {
     let text = node_text(node, source);
 
-    // ${1}, ${2}, etc. → $(argv N); ${@} → $(argv @); ${#} → $(argc)
+    // ${1}, ${2}, etc. → $(arg N); ${@} → $(argv); ${#} → user-arg count.
+    // Function-local positionals (inside a function body) pass through.
     if text.starts_with("${") && text.ends_with('}') {
         let inner = &text[2..text.len() - 1];
+        let in_function = has_ancestor_kind(node, "function_definition");
         if inner.chars().all(|c| c.is_ascii_digit()) {
-            patches.push(Patch::replace_node(
-                node,
-                format!("$(argv {})", inner),
-                None,
-            ));
+            if !in_function {
+                patches.push(Patch::replace_node(node, format!("$(arg {})", inner), None));
+            }
             return;
         }
         if inner == "@" || inner == "*" {
-            patches.push(Patch::replace_node(node, "$(argv @)".to_string(), None));
+            if !in_function {
+                let target = splat_replace_node(node);
+                patches.push(Patch::replace_node(target, "$(argv)".to_string(), None));
+            }
             return;
         }
         if inner == "#" {
-            patches.push(Patch::replace_node(node, "$(argc)".to_string(), None));
+            if !in_function {
+                patches.push(Patch::replace_node(
+                    node,
+                    "$(($(argc) - 1))".to_string(),
+                    None,
+                ));
+            }
             return;
         }
     }
@@ -975,6 +1003,22 @@ fn sig_to_num(name: &str) -> Option<u8> {
         "TERM" => Some(15),
         _ => s.parse().ok(),
     }
+}
+
+/// For a `$@`/`$*`/`${@}` splat that sits inside a double-quoted string
+/// that contains nothing else (`"$@"`), return the enclosing string node so
+/// the replacement drops the quotes — sash-native splats are bare (DD#22).
+/// Otherwise return the node itself.
+fn splat_replace_node(node: Node) -> Node {
+    if let Some(parent) = node.parent() {
+        if parent.kind() == "string"
+            && parent.start_byte() + 1 == node.start_byte()
+            && parent.end_byte() == node.end_byte() + 1
+        {
+            return parent;
+        }
+    }
+    node
 }
 
 fn has_ancestor_kind(node: Node, kind: &str) -> bool {

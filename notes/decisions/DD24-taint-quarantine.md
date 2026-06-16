@@ -10,7 +10,8 @@ incorporating DD#43, DD#44, DD#47, DD#49.
 A variable is tainted iff its defining instruction is one of:
 
 - `x=$(getenv VAR)` — environment variable read
-- `x=$(argv N)` / `x=$(argv)` — program positional params (DD#46)
+- `x=$(arg N)` — single program positional param (DD#60)
+- `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
 - `read x [...]` from any inherited fd, opened fd, or pipe
 - `mapfile -t x` / `readarray` from any inherited fd, opened fd, or pipe
 - `$(cmd)` where `cmd` is an external command
@@ -31,10 +32,17 @@ expressions.
 Function positional params (`$1`..`$9`, `$@`) are clean within
 functions — the compiler sees the caller's arguments and knows
 their taint status. Top-level positionals are program argv (tainted,
-use `$(argv N)`).
+use `$(arg N)`).
 
 `$0` is not supported by the compiler — the converter rewrites it
-to `$(argv 0)`.
+to `$(arg 0)`.
+
+For-in iteration is a **bind** or a **read** by iterand. Iterating a
+*source* (`for x in $(argv)`, `while read x`) binds each element to the
+loop var from the source — assignment-from-source, so per-iteration
+body-bless is valid. Iterating a stored tainted *variable* (`for x in @a`
+where `a` is a tainted named array) reads its elements (the `b=$a` case)
+and is rejected; bless-all the array first (DD#61).
 
 ## Quarantine (DD#44)
 
@@ -58,7 +66,7 @@ Per-definition classification with use-site rejection.
 Assign first, validate second:
 
 ```bash
-port=$(argv 1)
+port=$(arg 1)
 bless port [[ $port =~ ^[0-9]+$ ]]
 ```
 

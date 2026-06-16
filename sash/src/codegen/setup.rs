@@ -72,6 +72,14 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_argv_get", Linkage::Import, &argv_get_sig)
         .expect("declare sash_argv_get");
 
+    // sash_argv_snapshot(start) -> *mut SashTable  (DD#60 array a=$(argv N))
+    let mut argv_snapshot_sig = Signature::new(CallConv::SystemV);
+    argv_snapshot_sig.params.push(AbiParam::new(I64)); // start
+    argv_snapshot_sig.returns.push(AbiParam::new(I64)); // table ptr
+    let argv_snapshot_func = module
+        .declare_function("sash_argv_snapshot", Linkage::Import, &argv_snapshot_sig)
+        .expect("declare sash_argv_snapshot");
+
     // sash_signal_flag(signum) -> i64
     let mut signal_flag_sig = Signature::new(CallConv::SystemV);
     signal_flag_sig.params.push(AbiParam::new(I64)); // signum
@@ -722,6 +730,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argc: argc_data,
         argv: argv_data,
         argv_get: argv_get_func,
+        argv_snapshot: argv_snapshot_func,
         signal_flag: signal_flag_func,
         dtoi: dtoi_func,
         itod: itod_func,

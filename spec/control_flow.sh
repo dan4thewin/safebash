@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=32
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -101,12 +101,12 @@ run_sash 'for x in a b c; do echo $x; done'
 run_sash 'for x in solo; do echo $x; done'
 [[ $rc = 0 && $out = "solo" && -z $err ]]; chk cf.f2
 
-# cf.f3 for over array expansion
-run_sash 'array a=(one two three); for x in "${a[@]}"; do echo $x; done'
+# cf.f3 for over array expansion (sash-native bare splat — DD#41)
+run_sash 'array a=(one two three); for x in @a; do echo $x; done'
 [[ $rc = 0 && $out = $'one\ntwo\nthree' && -z $err ]]; chk cf.f3
 
-# cf.f4 for over $@ (positional params passed via argv)
-run_sash 'for x in "$@"; do echo $x; done' alpha beta gamma
+# cf.f4 for over the user-arg slice via $(argv 1) (was top-level "$@", which ICEd)
+run_sash 'for x in $(argv 1); do bless x [[ $x =~ . ]]; echo "$x"; done' alpha beta gamma
 [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk cf.f4
 
 # cf.f5 for body references loop variable in arithmetic
@@ -117,8 +117,8 @@ run_sash 'int sum=0; for x in 10 20 30; do (( sum += x )); done; echo $sum'
 run_sash 'for i in 1 2; do for j in a b; do echo "$i$j"; done; done'
 [[ $rc = 0 && $out = $'1a\n1b\n2a\n2b' && -z $err ]]; chk cf.f6
 
-# cf.f7 for with no positional args
-run_sash 'for x in "$@"; do echo never; done; echo done'
+# cf.f7 for over an empty user-arg slice runs zero iterations
+run_sash 'for x in $(argv 1); do echo never; done; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.f7
 
 # cf.f8 C-style for in arithmetic context
@@ -132,6 +132,50 @@ run_sash 'for (( i=0, j=10; i < 3; i++, j-- )); do echo "$i $j"; done'
 # cf.f10 for-loop variable persists after loop ends (sash semantics)
 run_sash 'for x in a b c; do :; done; echo $x'
 [[ $rc = 0 && $out = "c" && -z $err ]]; chk cf.f10
+
+# --- inside-function positionals stay clean (DD#46) ---
+
+# cf.f11 $@ inside a function is the caller's args (clean)
+run_sash 'fn greet { echo "$@"; }; greet alpha beta gamma'
+[[ $rc = 0 && $out = "alpha beta gamma" && -z $err ]]; chk cf.f11
+
+# cf.f12 for over $@ inside a function iterates the caller's args
+run_sash 'fn each { for x in $@; do echo "$x"; done }; each a b c'
+[[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk cf.f12
+
+# cf.f13 $# inside a function is the caller's arg count
+run_sash 'fn n { echo "$#"; }; n a b'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk cf.f13
+
+# cf.f14 $1 inside a function is the caller's first arg
+run_sash 'fn one { echo "$1"; }; one alpha'
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk cf.f14
+
+# --- DD#46 top-level positional rejection (directed to DD#60 builtins) ---
+
+# cf.dd46.1 top-level $@ rejected (use $(argv))
+run_sash 'echo "$@"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.1
+
+# cf.dd46.2 top-level $1 rejected (use $(arg 1))
+run_sash 'echo "$1"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.2
+
+# cf.dd46.3 top-level $* rejected (use $(argv))
+run_sash 'echo "$*"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.3
+
+# cf.dd46.4 top-level $# rejected (use $(argc))
+run_sash 'echo "$#"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.4
+
+# cf.dd46.5 top-level $0 rejected (use $(arg 0))
+run_sash 'echo "$0"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.5
+
+# cf.dd46.6 top-level for-in over "$@" rejected (was an ICE — bug closure)
+run_sash 'for x in "$@"; do echo "$x"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.6
 
 # --- if/elif chains (covers flatten_elif) ---
 

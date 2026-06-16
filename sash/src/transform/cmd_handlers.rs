@@ -364,6 +364,89 @@ pub(super) fn handle_unset(
     block
 }
 
+/// DD#60: inside a function, $@/$* expand to the caller's args ($1..$N),
+/// which are statically known at the inline site. The (cloned) body is
+/// rewritten so $@/"$@"/$*/"$*" in command args and for-words become the
+/// explicit positional list, then lowered normally.
+pub(super) fn expand_dollar_at_in_body(body: &mut [Statement], argc: usize) {
+    for stmt in body.iter_mut() {
+        expand_dollar_at_in_stmt(stmt, argc);
+    }
+}
+
+fn expand_dollar_at_in_if(i: &mut If, argc: usize) {
+    expand_dollar_at_in_body(&mut i.condition, argc);
+    expand_dollar_at_in_body(&mut i.then_body, argc);
+    for elif in &mut i.elif_clauses {
+        expand_dollar_at_in_body(&mut elif.condition, argc);
+        expand_dollar_at_in_body(&mut elif.body, argc);
+    }
+    if let Some(eb) = &mut i.else_body {
+        expand_dollar_at_in_body(eb, argc);
+    }
+}
+
+fn expand_dollar_at_in_stmt(stmt: &mut Statement, argc: usize) {
+    match &mut stmt.kind {
+        StmtKind::Command(c) => {
+            c.args = expand_dollar_at_words(std::mem::take(&mut c.args), argc);
+        }
+        StmtKind::For(f) => {
+            f.words = expand_dollar_at_words(std::mem::take(&mut f.words), argc);
+            expand_dollar_at_in_body(&mut f.body, argc);
+        }
+        StmtKind::If(i) => expand_dollar_at_in_if(i, argc),
+        StmtKind::While(w) => {
+            expand_dollar_at_in_body(&mut w.condition, argc);
+            expand_dollar_at_in_body(&mut w.body, argc);
+        }
+        StmtKind::Case(cs) => {
+            for item in &mut cs.items {
+                expand_dollar_at_in_body(&mut item.body, argc);
+            }
+        }
+        StmtKind::Pipeline(p) => expand_dollar_at_in_body(&mut p.commands, argc),
+        StmtKind::Redirected(r) => expand_dollar_at_in_stmt(&mut r.body, argc),
+        StmtKind::List(l) => {
+            expand_dollar_at_in_stmt(&mut l.left, argc);
+            expand_dollar_at_in_stmt(&mut l.right, argc);
+        }
+        StmtKind::Group(g) => expand_dollar_at_in_body(&mut g.body, argc),
+        StmtKind::Subshell(s) => expand_dollar_at_in_body(&mut s.body, argc),
+        StmtKind::Suppressed(inner) => expand_dollar_at_in_stmt(inner, argc),
+        // Nested function definitions keep their own $@; everything else
+        // has no $@-splat position.
+        _ => {}
+    }
+}
+
+/// Replace each `$@`/`$*` (bare or single double-quoted) word with the
+/// explicit positional list `$1..$argc`. Other words pass through.
+fn expand_dollar_at_words(words: Vec<Expr>, argc: usize) -> Vec<Expr> {
+    let mut out = Vec::with_capacity(words.len());
+    for w in words {
+        if is_dollar_at_word(&w) {
+            for i in 1..=argc {
+                out.push(Expr {
+                    kind: ExprKind::SimpleExpansion(i.to_string()),
+                    span: w.span,
+                });
+            }
+        } else {
+            out.push(w);
+        }
+    }
+    out
+}
+
+fn is_dollar_at_word(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::SimpleExpansion(v) => v == "@" || v == "*",
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_dollar_at_word(&parts[0]),
+        _ => false,
+    }
+}
+
 /// Handle function call (inline expansion) or external command emit.
 ///
 /// If the command name matches a known function, the function body is
@@ -408,6 +491,13 @@ fn inline_function_call(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    // DD#60: inside a function, $@/$* are the caller's args, which are
+    // statically known here. Rewrite the (cloned) body so $@/"$@" expand
+    // to the explicit positional list $1..$N before lowering.
+    let mut owned_body = body.to_vec();
+    expand_dollar_at_in_body(&mut owned_body, c.args.len());
+    let body = owned_body.as_slice();
+
     let locals = collect_local_vars(body);
 
     // DD#18: save local function scope before inlining

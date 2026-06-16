@@ -1,5 +1,11 @@
 title: DD#42 — getenv and argv as builtins
-status: implemented
+status: superseded
+superseded-by: DD60
+
+**The argv/argc half of this DD is superseded by [DD#60](DD60-argv-trio.md)**
+(C-semantics `argv`/`arg`/`argc` trio). `$(getenv VAR)` is unchanged and
+remains the canonical env-var read. The historical argv/argc text below is
+retained for context; for current behavior see DD#60.
 
 `$(getenv VAR)` reads an environment variable. `$(argv N)` reads
 positional parameter N (1-based). `$(argc)` returns the count of

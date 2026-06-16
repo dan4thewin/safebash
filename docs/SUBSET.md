@@ -222,6 +222,10 @@ handled).
 | SB4002 | `source` / `.` | Use `sash-expand file \| mapfile -m var` + `bless` instead |
 | SB5001 | `export` / `declare -x` | Use `FOO=bar cmd` instead |
 | SB5002 | `$(cmd)` inside heredoc bodies | Extract to variable, bless, then reference |
+| SB5024 | top-level `$@`/`$*`/`$1..$N`/`$#`/`$0` | function-local (DD#46) — use `$(argv)` / `$(arg N)` / `$(argc)` (DD#60) |
+| SB5025 | `$(argv)`/`$(argv N)` in non-splat context | array splat — only a for-in sole source or `array a=$(argv N)` snapshot; use `$(arg N)` for one arg |
+| SB5026 | `"${a[@]}"` / `"$(argv)"` (quoted splat) | quotes yield one string (DD#22) — use the bare `@a` / `$(argv)` |
+| SB5027 | for-in mixing `$(argv)` with other words | a tainted argv splat must be the sole for-in source (DD#60) |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |
 | SB4015 | `${var@...}` transforms | Use `${var^^}` / `${var,,}` instead |
 | — | `[ ]` single bracket | Coerced to `[[ ]]` |
@@ -245,16 +249,23 @@ only legal operation on a tainted value is to validate it.
 A variable is tainted iff its defining instruction is one of:
 
 - `x=$(getenv VAR)` — environment variable read
-- `x=$(argv N)` / `x=$(argv)` — program positional params (DD#46)
+- `x=$(arg N)` — single program positional param (DD#60)
+- `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
 - `read x [...]` from any inherited or opened fd, or any pipe
 - `mapfile -t x` / `readarray` from any inherited or opened fd, or any pipe
 - `$(cmd)` where `cmd` is an external command
 
 Note: `$1..$9`, `$@`, `$*`, `$#` are **function-local only** in
 sash-native mode (DD#46) — they refer to the nearest enclosing call's
-arguments, never to program argv. Top-level use is a compile error;
-bash-mode input is coerced to `$(argv N)` etc. Reading `$K` where `K`
+arguments, never to program argv. Top-level use is a compile error
+directing to the DD#60 builtins (`$(argv)` / `$(arg N)` / `$(argc)`);
+bash-mode input is coerced to those forms. Reading `$K` where `K`
 exceeds the call's actual `$#` is a compile error in both modes.
+
+`$(argc)` is **clean** (a count, like `$#`); `$(arg N)`, `$(argv)`, and
+`$(argv N)` are **tainted**. `$(argv)` / `$(argv N)` are array-returning
+splats, legal only in a for-in header (sole source) or as an `array a=…`
+snapshot RHS — see DD#60.
 
 `read` / `mapfile` from a heredoc or a here-string of clean data
 produce clean values.

@@ -151,8 +151,14 @@ pub(super) fn lower_for_array(
     exit_block
 }
 
-pub(super) fn lower_for_dollar_at(
+/// Lower a `for x in $(argv N)` loop: iterate the program argv slice
+/// argv[start..argc-1] (DD#60). `$(argv)` passes start=0 (whole array,
+/// program name first); `$(argv N)` passes start=N. Out-of-range N yields
+/// zero iterations (not an abort). The loop variable is bound directly to
+/// argv[__fi] (0-based) and is tainted (program input).
+pub(super) fn lower_for_argv_slice(
     f: &For,
+    start: i64,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -161,11 +167,23 @@ pub(super) fn lower_for_dollar_at(
     let body_block = ssa.new_block("for_at.body");
     let exit_block = ssa.new_block("for_at.exit");
 
-    // Initialize index: __fi = 0
+    // Initialize index: __fi = start
     let idx_var = state.define("__fi");
     ssa.block_mut(block).insts.push(SsaInst::Assign {
         target: idx_var,
-        value: SsaValue::Literal("0".to_string()),
+        value: SsaValue::Literal(start.to_string()),
+    });
+
+    // Capture the loop bound once: __argc = $(argc) (C argc, loop-invariant).
+    // Materialising it into a variable keeps the loop condition a simple
+    // var-vs-var numeric test that the codegen test handler evaluates.
+    let argc_var = state.define("__argc");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: argc_var,
+        value: SsaValue::CmdSubst {
+            argv: vec![SsaValue::Literal("argc".to_string())],
+            redirects: vec![],
+        },
     });
 
     ssa.block_mut(block).terminator = Terminator::Goto(header);
@@ -173,8 +191,7 @@ pub(super) fn lower_for_dollar_at(
     let pre_state = state.snapshot();
 
     // --- Pass 1: discover modified variables ---
-    // Emit condition: __fi < $#
-    let _argc_ref = state.lookup("#");
+    // Emit condition: __fi < __argc  (C argc — includes the program name)
     let cond_test = crate::ir::TestExpr::Binary {
         left: Box::new(Expr {
             kind: ExprKind::SimpleExpansion("__fi".to_string()),
@@ -182,7 +199,7 @@ pub(super) fn lower_for_dollar_at(
         }),
         op: "-lt".to_string(),
         right: Box::new(Expr {
-            kind: ExprKind::SimpleExpansion("#".to_string()),
+            kind: ExprKind::SimpleExpansion("__argc".to_string()),
             span: Span::default(),
         }),
     };

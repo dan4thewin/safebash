@@ -759,7 +759,9 @@ add_echo a b c
 
 #[test]
 fn for_dollar_at() {
-    let src = r#"for arg in "$@"; do
+    // DD#46/DD#60: top-level positionals use $(argv N); $@ is function-local.
+    let src = r#"for arg in $(argv 1); do
+    bless arg [[ $arg =~ . ]]
     echo "$arg"
 done
 "#;
@@ -769,7 +771,8 @@ done
 
 #[test]
 fn for_dollar_at_empty() {
-    let src = r#"for arg in "$@"; do
+    let src = r#"for arg in $(argv 1); do
+    bless arg [[ $arg =~ . ]]
     echo "$arg"
 done
 echo "done"
@@ -2934,7 +2937,8 @@ echo $x"#;
 
 #[test]
 fn argv_basic() {
-    let src = r#"name=$(argv 1)
+    let src = r#"name=$(arg 1)
+bless name [[ -n $name ]]
 echo "hello $name""#;
     let (out, _) = run_bash_native(src, &["world"]);
     assert_eq!(out.trim(), "hello world");
@@ -2942,8 +2946,10 @@ echo "hello $name""#;
 
 #[test]
 fn argv_multiple() {
-    let src = r#"a=$(argv 1)
-b=$(argv 2)
+    let src = r#"a=$(arg 1)
+bless a [[ -n $a ]]
+b=$(arg 2)
+bless b [[ -n $b ]]
 echo "$a $b""#;
     let (out, _) = run_bash_native(src, &["foo", "bar"]);
     assert_eq!(out.trim(), "foo bar");
@@ -2951,15 +2957,18 @@ echo "$a $b""#;
 
 #[test]
 fn argv_bounds_checked() {
-    let src = r#"x=$(argv 5) || x="fallback"
+    // DD#60: out-of-range $(arg N) aborts at runtime (no silent fallback).
+    let src = r#"x=$(arg 5)
+bless x [[ -n $x ]]
 echo $x"#;
-    let (out, _) = run_bash_native(src, &["a", "b"]);
-    assert_eq!(out.trim(), "fallback");
+    let (_out, code) = run_bash_native(src, &["a", "b"]);
+    assert_ne!(code, 0);
 }
 
 #[test]
 fn argv_exact_boundary() {
-    let src = r#"x=$(argv 2)
+    let src = r#"x=$(arg 2)
+bless x [[ -n $x ]]
 echo "[$x]""#;
     let (out, _) = run_bash_native(src, &["one", "two"]);
     assert_eq!(out.trim(), "[two]");
@@ -2969,14 +2978,16 @@ echo "[$x]""#;
 fn argc_builtin() {
     let src = r#"echo $(argc)"#;
     let (out, _) = run_bash_native(src, &["a", "b", "c"]);
-    assert_eq!(out.trim(), "3");
+    // DD#60: $(argc) is C argc (1 + user args).
+    assert_eq!(out.trim(), "4");
 }
 
 #[test]
 fn argc_zero_args() {
     let src = r#"echo $(argc)"#;
     let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out.trim(), "0");
+    // DD#60: C argc is 1 even with no user args (program name slot).
+    assert_eq!(out.trim(), "1");
 }
 
 // ═══════════════════════════════════════════════════════════════

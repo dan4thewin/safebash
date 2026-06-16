@@ -136,6 +136,8 @@ fn apply_and_check_flags(flags: &[&str]) {
 fn run_front_end_checks(input: &str, program: &crate::ir::Program) {
     let vdiags = validate::validate(program);
     let mut tdiags = validate::check_taint(program);
+    tdiags.extend(validate::check_positionals(program));
+    tdiags.extend(validate::check_argv_splat(program));
     tdiags.extend(vdiags);
     if !tdiags.is_empty() {
         print_diags(input, &tdiags);

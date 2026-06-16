@@ -15,3 +15,21 @@ Read taxonomy (finalized):
 | `mapfile -t arr` | Many lines → array | newline |
 
 `-r` always implied. `-d` replaces all `IFS=x read` patterns.
+
+## Addendum 2026-06-13: quotes always yield a single string
+
+Quoting an array splat is a compile error — no exceptions:
+
+    "${a[@]}"    rejected
+    "$a[@]"      rejected
+    "$(argv)"    rejected
+    "$(argv N)"  rejected
+
+The previous tolerance for decorative quotes (the `DoubleQuoted`-unwrap
+path in `transform/control_flow.rs::detect_array_iter`) is removed. Quotes
+exist for string concatenation, interpolation, and int-to-string
+conversion only. Array-context splat is a separate syntactic category
+expressed by `@arr` / `$(argv)` / `$(argv N)` (DD#41, DD#60).
+
+Bash-mode source uses the bash-style quoted spelling; sash-convert coerces
+it to the sash-native unquoted form.

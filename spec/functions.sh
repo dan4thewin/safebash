@@ -64,22 +64,22 @@ echo $x'
 run_sash 'x=$(getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 42.2
 
-# 42.3 $(argv N) reads program arg
-run_sash 'x=$(argv 1)
+# 42.3 $(arg N) reads program arg
+run_sash 'x=$(arg 1)
 bless x [[ $x =~ ^[a-z]+$ ]]
 echo $x' hello
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 42.3
 
-# 42.4 $(argv N) result is tainted (at top level)
-run_sash 'x=$(argv 1); echo $x'
+# 42.4 $(arg N) result is tainted (rejected without bless)
+run_sash 'x=$(arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 42.4
 
-# 42.5 $(argc) returns count of program args
+# 42.5 $(argc) returns C argc (1 + user-arg count)
 run_sash 'echo $(argc)' a b c
-[[ $rc = 0 && $out = "3" && -z $err ]]; chk 42.5
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk 42.5
 
-# 42.6 out-of-range $(argv N) aborts with error
-run_sash 'echo $(argv 99)' hello
+# 42.6 out-of-range $(arg N) aborts at runtime
+run_sash 'x=$(arg 99); bless x [[ -n $x ]]; echo $x' hello
 [[ $rc != 0 && -z $out ]]; chk 42.6
 
 # 46.1 top-level $1..$N → compile error

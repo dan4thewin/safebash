@@ -103,33 +103,47 @@ fn lower_function_stmt(
     if f.return_type == crate::ir::VarType::Int {
         state.function_int_typed.insert(f.name.clone());
     }
-    let returns = collect_returns(&f.body);
-    if !returns.is_empty() {
-        if f.return_type == crate::ir::VarType::Int {
-            let all_literal_zero = returns
-                .iter()
-                .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
-            if all_literal_zero {
-                state.diagnostics.push(format!(
-                    "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
-                    stmt.span.line, stmt.span.col, f.name
-                ));
-            }
-        }
-        let has_nonzero = returns.iter().any(|v| match v {
-            Some(s) => !s.is_empty() && s != "0",
-            None => true,
-        });
-        if has_nonzero && f.return_type == crate::ir::VarType::Int {
-            state.function_non_void.insert(f.name.clone());
-        }
-    }
+    analyze_function_returns(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
     let saved_scope = state.local_fn_scope.clone();
-    let fn_exit = lower_stmts(&f.body, ssa, state, fn_entry);
+    // The standalone function block is a template lowered without a call
+    // site; its $@/$* have no caller args here (every real call is inlined
+    // with the args known). Expand them to empty so this template never
+    // produces a program-argv splat (DD#60). Per-call $@ is expanded with
+    // the real argc in inline_function_call.
+    let mut template_body = f.body.clone();
+    super::cmd_handlers::expand_dollar_at_in_body(&mut template_body, 0);
+    let fn_exit = lower_stmts(&template_body, ssa, state, fn_entry);
     state.local_fn_scope = saved_scope;
     ssa.block_mut(fn_exit).terminator = Terminator::Return;
     block
+}
+
+/// DD#55: for an `-> int` function, flag SB4017 when every return is a
+/// literal 0 (it should be void), and record non-void status otherwise.
+fn analyze_function_returns(f: &Function, stmt: &Statement, state: &mut VersionState) {
+    if f.return_type != crate::ir::VarType::Int {
+        return;
+    }
+    let returns = collect_returns(&f.body);
+    if returns.is_empty() {
+        return;
+    }
+    let all_literal_zero = returns
+        .iter()
+        .all(|v| matches!(v, Some(s) if s.is_empty() || s == "0"));
+    if all_literal_zero {
+        state.diagnostics.push(format!(
+            "{}:{}: error [SB4017] function '{}' only returns 0 — omit the return (void function) or return a meaningful status",
+            stmt.span.line, stmt.span.col, f.name
+        ));
+    }
+    let has_nonzero = returns
+        .iter()
+        .any(|v| !matches!(v, Some(s) if s.is_empty() || s == "0"));
+    if has_nonzero {
+        state.function_non_void.insert(f.name.clone());
+    }
 }
 
 /// Statement wrapped in a redirect. For compound bodies (while/for/if/case/group/
@@ -398,26 +412,68 @@ fn compute_declaration_value(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
-    let is_empty_init = a.value.kind == ExprKind::Literal(String::new())
-        || matches!(&a.value.kind, ExprKind::Array(e) if e.is_empty());
-    if is_empty_init && (is_array || is_assoc) {
-        // Empty init like `array arr` / `array arr=()` / `map m` / `map m=()`
-        // — create an empty table of the declared kind. (`()` parses as an
-        // empty indexed Array regardless of declaration, so a `map`'s empty
-        // init must be steered to an associative table here.)
-        if is_assoc {
-            state.assoc_arrays.insert(a.name.clone());
+    // Empty init like `array arr` / `array arr=()` / `map m` / `map m=()`
+    // — an empty table of the declared kind.
+    if is_empty_collection_init(a, is_array, is_assoc) {
+        return empty_collection_value(&a.name, is_assoc, state);
+    }
+    // DD#60: `array a=$(argv N)` snapshots the program argv slice into a
+    // tainted indexed array (DD#61 bulk-read source).
+    if is_array {
+        if let Some(start) = argv_snapshot_start(&a.value) {
             state.collections.insert(a.name.clone());
-            SsaValue::AssocArray(vec![])
-        } else {
-            state.collections.insert(a.name.clone());
-            SsaValue::IndexedArray(vec![])
+            return SsaValue::ArgvSnapshot { start };
         }
+    }
+    let val = expr_to_value(&a.value, state);
+    let val = lift_int_func_calls(val, ssa, state, block);
+    track_collection_kind(&a.name, &val, state);
+    val
+}
+
+/// True for `array arr` / `array arr=()` / `map m` / `map m=()`.
+fn is_empty_collection_init(a: &Assignment, is_array: bool, is_assoc: bool) -> bool {
+    let is_empty = a.value.kind == ExprKind::Literal(String::new())
+        || matches!(&a.value.kind, ExprKind::Array(e) if e.is_empty());
+    is_empty && (is_array || is_assoc)
+}
+
+/// Empty table of the declared kind. (`()` parses as an empty indexed
+/// Array regardless of declaration, so a `map`'s empty init is steered to
+/// an associative table here.)
+fn empty_collection_value(name: &str, is_assoc: bool, state: &mut VersionState) -> SsaValue {
+    state.collections.insert(name.to_string());
+    if is_assoc {
+        state.assoc_arrays.insert(name.to_string());
+        SsaValue::AssocArray(vec![])
     } else {
-        let val = expr_to_value(&a.value, state);
-        let val = lift_int_func_calls(val, ssa, state, block);
-        track_collection_kind(&a.name, &val, state);
-        val
+        SsaValue::IndexedArray(vec![])
+    }
+}
+
+/// If `value` is `$(argv)` / `$(argv N)`, return the slice start index
+/// (0 for bare `$(argv)`, N for a literal `$(argv N)`).
+fn argv_snapshot_start(value: &Expr) -> Option<i64> {
+    let ExprKind::CommandSubstitution(stmts) = &value.kind else {
+        return None;
+    };
+    let inner = match stmts.first().map(|s| &s.kind) {
+        Some(StmtKind::Redirected(r)) => &r.body.kind,
+        Some(other) => other,
+        None => return None,
+    };
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    if !matches!(&c.name.kind, ExprKind::Literal(s) if s == "argv") {
+        return None;
+    }
+    match c.args.first() {
+        None => Some(0),
+        Some(a) => match &a.kind {
+            ExprKind::Literal(s) => s.parse::<i64>().ok().filter(|n| *n >= 0),
+            _ => None,
+        },
     }
 }
 

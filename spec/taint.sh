@@ -12,8 +12,8 @@ set +e
 run_sash 'x=$(getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.1
 
-# 24.2 argv produces tainted var
-run_sash 'x=$(argv 1); echo $x'
+# 24.2 arg produces tainted var
+run_sash 'x=$(arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.2
 
 # 24.3 read produces tainted var
@@ -110,7 +110,7 @@ f'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 50.1
 
 # 51.1 SSA backstop — tainted use caught before codegen
-run_sash 'x=$(argv 1); echo $x'
+run_sash 'x=$(arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 51.1
 
 # 53.1 $HOME is an env var — must use $(getenv HOME)
@@ -137,7 +137,7 @@ run_sash 'export PATH=/usr/bin'
 run_sash '/usr/bin/env FOO=bar /bin/echo hello'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 53.6
 
-# 53.10 $0 rejected — use $(argv 0)
+# 53.10 $0 rejected — use $(arg 0)
 run_sash 'echo $0'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 53.10
 

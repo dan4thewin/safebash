@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=57
+plan=61
 echo "1..$plan" >&3
 
 set +e
@@ -155,17 +155,37 @@ err=$(<err)
 diff -q .converted.sash .extracted.sash > /dev/null 2>&1
 [[ $? = 0 && -z $err ]]; chk 57.38
 
-# --- DD#57: Positional conversion ---
+# --- DD#57 / DD#60: Positional conversion ---
 
-# 57.13 $1 → $(argv 1)
+# 57.13 top-level $1 → $(arg 1)
 run_convert '#!/bin/bash
 echo $1'
-[[ $rc = 0 && $out == *'$(argv 1)'* && -z $err ]]; chk 57.13a
+[[ $rc = 0 && $out == *'$(arg 1)'* && -z $err ]]; chk 57.13a
 
-# 57.13b ${1} → $(argv 1), ${@} → $(argv @), ${#} → $(argc)
+# 57.13b ${1} → $(arg 1), ${@} → $(argv), ${#} → $(($(argc) - 1))
 run_convert '#!/bin/bash
-echo ${1} ${@} ${#}'
-[[ $rc = 0 && $out == *'$(argv 1)'* && $out == *'$(argv @)'* && $out == *'$(argc)'* && -z $err ]]; chk 57.13b
+echo ${1} ; for x in ${@}; do echo $x; done ; echo ${#}'
+[[ $rc = 0 && $out == *'$(arg 1)'* && $out == *'$(argv)'* && $out == *'$(($(argc) - 1))'* && -z $err ]]; chk 57.13b
+
+# conv.f1 $@ inside a function is preserved (function-local, DD#46)
+run_convert '#!/bin/bash
+greet() { echo "$@"; }'
+[[ $rc = 0 && $out == *'"$@"'* && $out != *'argv'* && -z $err ]]; chk conv.f1
+
+# conv.f2 $1 inside a function is preserved
+run_convert '#!/bin/bash
+one() { echo "$1"; }'
+[[ $rc = 0 && $out == *'"$1"'* && $out != *'arg 1'* && -z $err ]]; chk conv.f2
+
+# conv.f3 $# inside a function is preserved
+run_convert '#!/bin/bash
+n() { echo "$#"; }'
+[[ $rc = 0 && $out == *'"$#"'* && $out != *'argc'* && -z $err ]]; chk conv.f3
+
+# conv.q1 top-level for-in over "$@" → bare $(argv) (quotes dropped, DD#22)
+run_convert '#!/bin/bash
+for x in "$@"; do echo "$x"; done'
+[[ $rc = 0 && $out == *'for x in $(argv)'* && -z $err ]]; chk conv.q1
 
 # --- DD#57: Trap conversion ---
 

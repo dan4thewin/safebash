@@ -157,6 +157,10 @@ fn emit_prologue(out: &mut String) {
         "extern char* sash_getenv(const char* np, i64 nl, i64* out_len);"
     )
     .unwrap();
+    // DD#60: program-argument access.
+    writeln!(out, "extern i64 sash_argc;").unwrap();
+    writeln!(out, "extern char* sash_argv_get(i64 idx, i64* out_len);").unwrap();
+    writeln!(out, "extern void* sash_argv_snapshot(i64 start);").unwrap();
     writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
@@ -538,26 +542,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
-        SsaValue::Var(vref) => {
-            // Special vars `$?` (exit status) and `$$` (pid) match
-            // codegen/values.rs:514-525 — go through sash_itoa on
-            // the live int value, not through a string slot.
-            if vref.name == "?" {
-                return emit_itoa_temp(e, "__exit_status");
-            }
-            if vref.name == "$" {
-                let t = e.fresh();
-                writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
-                return emit_itoa_temp(e, &format!("{}_pid", t));
-            }
-            match vref.var_type {
-                VarType::String => {
-                    let base = c_var_name(&vref.name, vref.version);
-                    (format!("{}_ptr", base), format!("{}_len", base))
-                }
-                VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
-            }
-        }
+        SsaValue::Var(vref) => emit_var_value(e, vref),
         SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
@@ -580,6 +565,8 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // lower_assoc_array_value).
         SsaValue::IndexedArray(elems) => emit_indexed_array(e, elems, types),
         SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
+        // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
+        SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => emit_c_argv_value(e, value),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
         // Mirrors lower_subscript_value (codegen/values.rs:654).
         SsaValue::Subscript {
@@ -599,6 +586,58 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             .unwrap();
             ("\"\"".to_string(), "0".to_string())
         }
+    }
+}
+
+/// Lower an `SsaValue::Var` to a (ptr, len) pair. `$?`/`$$` route through
+/// `sash_itoa` on the live int value (codegen/values.rs:514-525).
+fn emit_var_value(e: &mut Emit, vref: &VarRef) -> CStr {
+    if vref.name == "?" {
+        return emit_itoa_temp(e, "__exit_status");
+    }
+    if vref.name == "$" {
+        let t = e.fresh();
+        writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
+        return emit_itoa_temp(e, &format!("{}_pid", t));
+    }
+    match vref.var_type {
+        VarType::String => {
+            let base = c_var_name(&vref.name, vref.version);
+            (format!("{}_ptr", base), format!("{}_len", base))
+        }
+        VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
+    }
+}
+
+/// DD#60: `ArgvIndex` (argv[idx], 0-based — the loop guard keeps idx in
+/// range) and `ArgvSnapshot` (`array a=$(argv N)` → `sash_argv_snapshot`).
+fn emit_c_argv_value(e: &mut Emit, value: &SsaValue) -> CStr {
+    match value {
+        SsaValue::ArgvIndex(idx_ref) => {
+            let iv = c_var_name(&idx_ref.name, idx_ref.version);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_i = sash_atoi({iv}_ptr, {iv}_len); i64 {t}_l; \
+                 const char* {t}_p = sash_argv_get({t}_i, &{t}_l);",
+                t = t,
+                iv = iv
+            )
+            .unwrap();
+            (format!("{}_p", t), format!("{}_l", t))
+        }
+        SsaValue::ArgvSnapshot { start } => {
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    void* {t}_tab = sash_argv_snapshot({start});",
+                t = t,
+                start = start
+            )
+            .unwrap();
+            (format!("(const char*){}_tab", t), "0".to_string())
+        }
+        _ => unreachable!("emit_c_argv_value: non-argv value"),
     }
 }
 
@@ -1409,6 +1448,25 @@ fn try_native_intrinsic_c(
                 e.out,
                 "    i64 {t}_l; const char* {t}_p = sash_getcwd(&{t}_l);",
                 t = t
+            )
+            .unwrap();
+            Some((format!("{}_p", t), format!("{}_l", t)))
+        }
+        "argc" => {
+            // DD#60: $(argc) is C argc (program argv length).
+            Some(emit_itoa_temp(e, "sash_argc"))
+        }
+        "arg" if argv.len() >= 2 => {
+            // DD#60: $(arg N) — scalar program argument, 0-based.
+            let (ip, il) = lower_value_as_str(e, &argv[1], types);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_i = sash_atoi({ip}, {il}); i64 {t}_l; \
+                 const char* {t}_p = sash_argv_get({t}_i, &{t}_l);",
+                t = t,
+                ip = ip,
+                il = il
             )
             .unwrap();
             Some((format!("{}_p", t), format!("{}_l", t)))
