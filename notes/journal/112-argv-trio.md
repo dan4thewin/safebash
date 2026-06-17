@@ -105,3 +105,30 @@ all new argv tests on the unsupported backend (no janet test regressed).
   should be a converter MANUAL marker, not non-compiling `cmd $(argv)`.
 
 ## SB codes added: 5024, 5025, 5026, 5027.
+
+## Follow-up 2026-06-16 — for-in-over-tainted-splat ICE (found via converter review)
+
+DG probed the converter output and surfaced that `echo "$(arg 1)"` (the
+converter's rewrite of `echo "$1"`) fails SB5020 — correct (tainted use
+without bless), but it means the converter produces non-compiling output
+for positional *uses*. Chasing that uncovered a **real ICE I had missed**:
+
+```
+for x in $(argv);   do echo "$x"; done            # ICE (unblessed body use)
+array a=$(argv); for x in @a; do echo "$x"; done  # ICE (tainted array iter)
+```
+
+Same class as the closed bug-for-in-dollar-at-taint-ice — my `av.s*`/`av.n*`
+tests all had a body bless, masking it. The CST taint pass never marked the
+for-loop variable, so the SSA backstop ICE'd.
+
+**Fix** (`validate.rs` `taint_for`): a for-loop over a direct tainted source
+splat (`$(argv)`) seeds the loop var tainted (body-bless valid, DD#60 Q5);
+iterating a stored tainted array (`@a`) is rejected with SB5020 directing to
+bless-all (DD#61). Clean sources rebind the loop var clean. Now both cases
+are clean SB5020s, never ICEs. Regression tests: argv.sh av.s5 (splat
+unblessed) and av.n5 (tainted-array iter).
+
+The converter gap was re-scoped: `converter-command-arg-splat` →
+`converter-positional-use-needs-bless` (every top-level positional read
+needs a bless the converter can't author; model on the `$HOME` hoist).

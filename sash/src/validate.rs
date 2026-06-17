@@ -1547,6 +1547,7 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
         StmtKind::Pipeline(p) => taint_pipeline(p, tainted, diags),
         StmtKind::Redirected(r) => taint_redirected(r, tainted, diags),
         StmtKind::Case(c) => taint_case_arms(c, tainted, diags),
+        StmtKind::For(f) => taint_for(f, tainted, diags),
         _ => {
             for body in stmt.child_bodies() {
                 for s in body {
@@ -1555,6 +1556,61 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
             }
         }
     }
+}
+
+/// DD#60/DD#61: track the taint of a for-loop variable.
+///
+/// - A direct tainted **source** splat (`for x in $(argv)`) binds each
+///   element to the loop var *from the source* — assignment-from-source, so
+///   the loop var is tainted and a per-iteration body `bless x` is valid
+///   (DD#60 Q5). Seeding the taint here makes an unblessed body use a clean
+///   SB5020 instead of an SSA-backstop ICE.
+/// - Iterating a stored tainted **array** (`for x in @a` where `a` is
+///   tainted) is a read of a stored variable — DD#61 rejects it; the array
+///   must be bless-all'd first. Emitted as SB5020 directing to bless-all.
+/// - A clean source rebinds the loop var to clean values (it is removed
+///   from the tainted set, e.g. `for x in a b c`).
+fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for w in &f.words {
+        reject_tainted_array_iter(w, tainted, diags);
+    }
+    if f.words.iter().any(is_taint_source) {
+        tainted.insert(f.variable.clone());
+    } else {
+        tainted.remove(&f.variable);
+    }
+    for s in &f.body {
+        taint_stmt(s, tainted, diags);
+    }
+}
+
+/// DD#61: `for x in @a` where `a` is a stored tainted array is a read of a
+/// stored variable — rejected; the array must be bless-all'd first.
+fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let Some(arr) = splat_array_name(w) else {
+        return;
+    };
+    if tainted.contains(arr) {
+        diags.push(Diagnostic::error_span(
+            w.span,
+            "SB5020",
+            format!(
+                "iterating tainted array '{arr}' without bless — bless-all \
+                 it first: `bless x in {arr} [[ … ]]` (DD#61)"
+            ),
+        ));
+    }
+}
+
+/// The named array of a value/key splat for-word (`@a` / `${a[@]}` /
+/// `${!a[@]}`), if the word is one.
+fn splat_array_name(w: &Expr) -> Option<&str> {
+    if let ExprKind::ParameterExpansion(pe) = &w.kind {
+        if matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys")) {
+            return Some(&pe.name);
+        }
+    }
+    None
 }
 
 /// Apply taint rules to an assignment.

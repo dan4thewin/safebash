@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=26
+plan=28
 echo "1..$plan" >&3
 
 set +e
@@ -59,6 +59,11 @@ run_sash 'for x in $(argv 99); do echo iter; done' a b c
 run_sash 'for x in $(argv 0); do bless x [[ -n $x ]]; echo "$x"; done' a b c
 [[ $rc = 0 && $out == *$'\na\nb\nc' ]]; chk av.s4
 
+# av.s5 unblessed use of an argv-splat loop var is a clean error, not an ICE
+# (the loop binds tainted argv elements — body must bless before use).
+run_sash 'for x in $(argv 1); do echo "$x"; done' a b c
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.s5
+
 # ── Snapshot to named array ──────────────────────────────────────
 
 # av.n1 array a=$(argv) snapshots the whole array; bless-all then iterate @a
@@ -76,6 +81,11 @@ run_sash 'array a=$(argv 1); array b=$(argv); echo $(len a) $(len b)' a b
 # av.n4 join over a blessed snapshot (DD#41 collection builtin)
 run_sash 'array a=$(argv 1); bless x in a [[ -n $x ]]; echo $(join @a)' a b c
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk av.n4
+
+# av.n5 iterating a tainted snapshot @a without bless-all is a clean error,
+# not an ICE — DD#61 requires bless-all the array before reading it.
+run_sash 'array a=$(argv 1); for x in @a; do echo "$x"; done' a b c
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n5
 
 # ── Taint rules ──────────────────────────────────────────────────
 

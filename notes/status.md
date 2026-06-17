@@ -36,8 +36,15 @@ case-glob). Zero regressions in any mode; c improved 66→62 failing.
 
 **Filed:** `emit-janet-argv-parity` (janet has no argv backend),
 `rust-test-suite-rot` (mk test ~158-red at HEAD, pre-existing — argv-trio
-added zero net rust regressions), `converter-command-arg-splat`
-(`cmd "$@"` → no clean target).
+added zero net rust regressions), `converter-positional-use-needs-bless`
+(every top-level positional read needs a bless the converter can't author).
+
+**Follow-up (same day):** a converter review surfaced a missed ICE —
+`for x in $(argv); do echo "$x"; done` (unblessed) and `for x in @a` (a
+tainted) ICE'd (the `av.s*`/`av.n*` tests masked it with body blesses).
+Fixed in `validate.rs` `taint_for`: splat sources seed the loop var
+tainted (body-bless valid, DD#60 Q5), tainted-array iteration is rejected
+(DD#61 bless-all). Regression tests av.s5/av.n5.
 
 ### Session 2026-06-15 — array taint construction restriction + bless-all (DD#61)
 
