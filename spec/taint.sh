@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=62
+plan=64
 echo "1..$plan" >&3
 
 set +e
@@ -204,6 +204,14 @@ run_sash 'array a=(); mapfile -t a < d60a.txt; echo ${a[0]}'
 # 60.14 read -a → tainted
 run_sash 'array a=(); read -a a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.14
+
+# 60.32 tainted array iterated without bless-all → reject (negative for 60.25)
+run_sash 'array a=(); mapfile -t a < d60b.txt; for x in @a; do echo $x; done'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
+
+# 60.33 tainted array joined without bless-all → reject (cmdsub-arg use site)
+run_sash 'array a=(); mapfile -t a < d60b.txt; echo $(join @a)'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
 # 60.19 bless-all binder must be on the LHS (anti-tautology)
 run_sash 'array a=(); mapfile -t a < d60b.txt

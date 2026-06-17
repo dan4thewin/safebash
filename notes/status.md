@@ -39,6 +39,30 @@ case-glob). Zero regressions in any mode; c improved 66→62 failing.
 added zero net rust regressions), `converter-positional-use-needs-bless`
 (every top-level positional read needs a bless the converter can't author).
 
+### Session 2026-06-17 — bless-shape negative-test audit
+
+Per DG's rule (*every blessed spec shape needs a no-bless negative*),
+audited all `bless` usages and closed **one more taint hole** plus filed
+another. See [journal 112](journal/112-argv-trio.md) follow-up.
+
+**Fixed:** `$(join @a)` / `$(join @arr)` over a tainted-but-unblessed
+array escaped the CST taint pass (silent compile for stored arrays, ICE
+for argv snapshots). `check_expr_taint` now recurses into a command
+substitution's inner command args (`check_cmdsub_use_taint`), so any
+tainted read inside `$(… @x …)` rejects SB5020 cleanly. `$(len a)` stays
+exempt; blessed/clean joins still compile.
+
+**Negatives added** (4): av.n6 (snapshot join no-bless), av.n7 (snapshot
+subscript no-bless), 60.32 (mapfile-array iter no-bless), 60.33
+(mapfile-array join no-bless). Every blessed collection shape now paired.
+
+**Filed:** `map-iteration-builtins-broken` (P1) — `keys` emits garbage on
+a clean map, `values` ICEs on a clean map, and both leak a tainted map's
+data; not spec-covered, needs a key-vs-value taint DD + a codegen fix.
+
+**Spec:** native 408 passing / 2 failing (only pre-existing cf.c7/cf.c8).
+Zero regressions.
+
 **Follow-up (same day):** a converter review surfaced a missed ICE —
 `for x in $(argv); do echo "$x"; done` (unblessed) and `for x in @a` (a
 tainted) ICE'd (the `av.s*`/`av.n*` tests masked it with body blesses).

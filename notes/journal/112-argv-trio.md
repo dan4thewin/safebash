@@ -132,3 +132,54 @@ unblessed) and av.n5 (tainted-array iter).
 The converter gap was re-scoped: `converter-command-arg-splat` →
 `converter-positional-use-needs-bless` (every top-level positional read
 needs a bless the converter can't author; model on the `$HOME` hoist).
+
+## Follow-up 2026-06-17 — bless-shape negative-test audit
+
+DG's rule: *every spec shape that uses `bless` must have a paired negative
+test that omits the bless and asserts the proper error.* Auditing turned a
+classifier loose on each distinct blessed shape (strip the bless, observe
+ICE / silent-compile / clean-reject). It surfaced **three more masked
+holes**, all in the collection-use sites that my body-blessed tests hid:
+
+```
+array a=$(argv 1); echo $(join @a)              # ICE  (tainted argv snapshot)
+mapfile -t arr < f; echo $(join @arr)           # COMPILES — taint escape
+for k in $(keys m); … (m tainted via mapfile-m) # COMPILES — taint escape
+```
+
+**Root cause** of the first two: `check_expr_taint`'s `CommandSubstitution`
+arm only ran `check_bare_cmdsub_taint` (does the *substitution itself* name a
+bare scalar source like `$(getenv)`/`$(arg)`?). It never recursed into the
+**inner command's arguments**, so the tainted `@a` read inside `$(join @a)`
+was invisible to the CST pass — silent escape for stored arrays, ICE for the
+argv snapshot (SSA backstop caught it). **Fix:** extracted
+`check_cmdsub_use_taint`, which runs the bare check *and* `check_expr_taint`s
+each inner `Command` arg. Now `$(join @a)`/`$(join @arr)` reject SB5020 cleanly;
+`$(len a)` stays exempt (its arg is the literal name `a`, not `@a`); blessed
+and clean-array joins still compile.
+
+**Negatives added** (every blessed collection shape now paired):
+
+| blessed shape (existing) | negative (new) |
+|---|---|
+| av.n4 `join @a` over blessed snapshot | **av.n6** `join @a` no bless → SB5020 |
+| av.x5 `$a[0]` over blessed snapshot | **av.n7** `$a[0]` no bless → SB5020 |
+| 60.25 `for w in @a` over blessed mapfile array | **60.32** iter no bless → SB5020 |
+| (join sibling of 60.25) | **60.33** `$(join @a)` no bless → SB5020 |
+
+Subscript negatives for mapfile arrays already existed (60.13/60.14); the
+gaps were exactly the iter/join sites.
+
+**Third hole filed, not fixed:** `keys`/`values` map-iteration builtins are
+independently broken — `keys` emits blank/garbage on a *clean* map, `values`
+ICEs on a *clean* map, and both leak a tainted (unblessed `mapfile -m`) map's
+data. Neither is used in any spec test, which is why it stayed invisible.
+The cmdsub-arg recursion does **not** cover it (the arg is the literal map
+name `m`, not `@m`; the output taint is dataflow-dependent on the map). Needs
+a DD on key-vs-value taint status before fixing the escape, plus a plain
+codegen fix for the garbage output. See
+`notes/tasks/map-iteration-builtins-broken.md` (P1, full repros + proposed
+mi.* spec tests).
+
+**Spec:** native 408 passing / 2 failing (unchanged pre-existing cf.c7/c8).
+Zero regressions.

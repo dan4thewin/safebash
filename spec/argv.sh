@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=28
+plan=30
 echo "1..$plan" >&3
 
 set +e
@@ -86,6 +86,16 @@ run_sash 'array a=$(argv 1); bless x in a [[ -n $x ]]; echo $(join @a)' a b c
 # not an ICE — DD#61 requires bless-all the array before reading it.
 run_sash 'array a=$(argv 1); for x in @a; do echo "$x"; done' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n5
+
+# av.n6 joining a tainted snapshot @a without bless-all is a clean error
+# (negative for av.n4) — the cmdsub arg `@a` is a use site of tainted data.
+run_sash 'array a=$(argv 1); echo $(join @a)' a b c
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n6
+
+# av.n7 subscripting a tainted snapshot without bless-all is a clean error
+# (negative for av.x5) — reading $a[0] exposes an element, needs bless-all.
+run_sash 'array a=$(argv); echo $a[0]' a b c
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n7
 
 # ── Taint rules ──────────────────────────────────────────────────
 

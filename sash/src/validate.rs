@@ -1897,11 +1897,16 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
                 check_expr_taint(p, tainted, diags);
             }
         }
-        // DD#24: a bare tainted command substitution used directly at a
-        // read site (not assigned, not inside a bless predicate) is a use
-        // of external data without bless — rejected (e.g. `echo $(getenv
-        // HOME)` would otherwise slip through, never bound to a variable).
-        ExprKind::CommandSubstitution(stmts) => check_bare_cmdsub_taint(stmts, expr.span, diags),
+        // DD#24: a command substitution at a read site is checked two ways:
+        //   1. a bare scalar source ($(getenv …)/$(arg N)) used directly is
+        //      a use of external data without bless — rejected.
+        //   2. reads *inside* the substitution (e.g. `$(join @a)` where `a`
+        //      is tainted) are themselves use-sites — recurse into the inner
+        //      command args. Without this, `echo $(join @a)` slips through
+        //      the CST pass (silent escape or SSA-backstop ICE).
+        ExprKind::CommandSubstitution(stmts) => {
+            check_cmdsub_use_taint(stmts, expr.span, tainted, diags)
+        }
         _ => {}
     }
 }
@@ -1915,6 +1920,22 @@ fn push_taint_use(
 ) {
     if tainted.contains(name) {
         diags.push(Diagnostic::error_span(span, "SB5020", msg));
+    }
+}
+
+fn check_cmdsub_use_taint(
+    stmts: &[Statement],
+    span: Span,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    check_bare_cmdsub_taint(stmts, span, diags);
+    for s in stmts {
+        if let StmtKind::Command(c) = &s.kind {
+            for arg in &c.args {
+                check_expr_taint(arg, tainted, diags);
+            }
+        }
     }
 }
 
