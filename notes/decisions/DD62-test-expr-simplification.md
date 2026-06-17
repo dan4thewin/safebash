@@ -73,19 +73,15 @@ closing the `dynamic-map-subscript-in-test` bug by construction.
 
 ## Open questions (resolve before the regex-quoting/sed work)
 
-These were raised but not decided; the task's regex/sed spec tests are
-blocked on them:
+The regex quoting/interpolation/delimiter/`\` design **moved to DD#63**
+(`regex-quoting-interpolation`), which records the decisions taken
+2026-06-17 (interpolation is a textual first pass; `''` disables;
+literal containment → `fgrep`) and its remaining open items (delimiter
+escape rule, match-form `/`, `}` in the expression form). DD#62's
+`==`/`!=`-exact and `=~`-quoting-is-grouping decisions feed it.
 
-- **Meaning of `\`.** One coherent rule is needed. Is `\` a
-  pass-through *engine* escape (so `\.` reaches Plan 9 regexp as
-  "literal dot"), or a sash-level *literalizer* the engine never sees?
-  This determines `\.`, `\/`, `\ `, `\\` uniformly.
-- **`/` delimiter in `${var:s/re/repl/}`.** Today the parser splits on
-  raw `/` with `find`/`rfind`, no escaping — a `/` in the regex or
-  replacement corrupts the split (`${v:s/a\/b/c/}` → garbage). Decide:
-  `\/` escape, alternate delimiters (`s|re|repl|`), or quoting.
-- **Does quoting suppress metachar interpretation**, or only group
-  whitespace? (Interacts with the `\` rule above.)
+Remaining open here (zero-value model, from decision #3):
+
 - **Undeclared scalar read** currently yields empty silently
   (`echo $foo` compiles). Adjacent to the zero-value model behind
   decision #3 — should an undeclared scalar read be a compile error

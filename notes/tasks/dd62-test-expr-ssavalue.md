@@ -86,15 +86,13 @@ rejections (`[[ $rc != 0 && -z $out && $err == *SBxxxx* ]]`).
   *separate* root cause from the operand refactor — verify; split into
   its own fix if so, but the spec test belongs here since it was found here.
 
-### G. sed `/` delimiter + `\` — BLOCKED on DD#62 open questions
+### G. sed `/` delimiter + `\` — MOVED to DD#63 / `regex-interpolation-delimiters`
 
-Write these only once the `\` / `/` rule is decided (DD#62 "Open
-questions"). Placeholders so they are not forgotten:
-
-- **G1** literal `/` in pattern: `v="a/b"; echo ${v:s/<escaped-slash>/c/}` → `c`
-  (today `${v:s/a\/b/c/}` → garbage `b/c/b`; naive `find`/`rfind` split).
-- **G2** literal `/` in replacement.
-- **G3** the chosen `\` semantics (engine-escape vs literalizer): `\.`, `\\`, `\ `.
+The regex quoting/interpolation/delimiter/`\` work (and `=~` pattern
+interpolation, which is also unimplemented) is owned by DD#63 and the
+`regex-interpolation-delimiters` task. This task keeps only the `=~`
+*operand-lowering* changes; the `=~` pattern RHS stays raw text here
+regardless. Coordinate the `parse_regex_rhs` edits between the two.
 
 ## Implementation outline (after specs are red)
 
@@ -117,7 +115,8 @@ questions"). Placeholders so they are not forgotten:
    lexing for `a[[:space:]]b` (D1).
 6. **`&& / ||` chain (F1)**: investigate the false-then-`||` terminator
    lowering; fix or split out.
-7. **sed `/` / `\` (G)**: implement once DD#62 open questions resolve.
+7. **sed `/` / `\` + regex interpolation**: owned by DD#63 /
+   `regex-interpolation-delimiters` (out of scope here).
 
 ## Cross-refs
 

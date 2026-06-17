@@ -42,6 +42,24 @@ broken); `a[[:space:]]b` mis-terminates at the internal `]]`;
 delimiter escaping in `:s/`, and whether undeclared scalar reads should
 be a compile error.
 
+### Session 2026-06-17 (cont.) — DD#63 regex quoting/interpolation
+
+Walking the regex-quoting design surfaced that **field interpolation is
+unimplemented on every regex surface** — `$var` in a pattern/replacement
+is taken literally (`[[ $x =~ $pat ]]` doesn't interpolate; `${pat}` →
+SB4014; `${v:s/$x/Y/}` no-ops; mutation `v =~ s/$x/Y/` → `sash: bug:`).
+DD#39's "dynamic patterns compiled at runtime" was aspirational; DD#39 is
+also stale on `{n,m}` (counted repetition now works).
+
+Captured as **DD#63** (`regex-quoting-interpolation`, candidate) + task
+`regex-interpolation-delimiters`. Decisions: interpolation is a textual
+first pass (`$name`/`${name}` interpolate, `$`-before-non-name is a
+literal anchor, `''` disables, collisions are the user's concern);
+literal containment → `fgrep`. Proposed (pending walkthrough): `/`/`"`/`'`
+delimiters for `s///` with delimiter-switching (no `\<delim>` escape),
+`\` passed verbatim to the engine. DD#62's regex open-questions moved to
+DD#63.
+
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 
 DG: "fix the map iteration bugs." The filed `map-iteration-builtins-broken`
