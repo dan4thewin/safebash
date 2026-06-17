@@ -51,14 +51,27 @@ SB4014; `${v:s/$x/Y/}` no-ops; mutation `v =~ s/$x/Y/` → `sash: bug:`).
 DD#39's "dynamic patterns compiled at runtime" was aspirational; DD#39 is
 also stale on `{n,m}` (counted repetition now works).
 
-Captured as **DD#63** (`regex-quoting-interpolation`, candidate) + task
-`regex-interpolation-delimiters`. Decisions: interpolation is a textual
-first pass (`$name`/`${name}` interpolate, `$`-before-non-name is a
-literal anchor, `''` disables, collisions are the user's concern);
-literal containment → `fgrep`. Proposed (pending walkthrough): `/`/`"`/`'`
-delimiters for `s///` with delimiter-switching (no `\<delim>` escape),
-`\` passed verbatim to the engine. DD#62's regex open-questions moved to
-DD#63.
+**DD#63 reframed to a builtin family** (`match`/`sub`/`gsub`) with the
+three syntaxes (`[[ =~ ]]`, `s/re/sub/`, `${var:s/…}`) as **thin sugar**
+that desugars to them. Because args are ordinary strings, quoting/
+interpolation = normal argument evaluation — the bespoke regex-field
+parser (and its open `\`/`/` questions) disappears. Decisions:
+- `match SUBJ PAT` (boolean exit); `$(match …)` = whole match (`resub[0]`);
+  `match ARR SUBJ PAT` fills `ARR=[whole,g1..g9]` (mapfile-style out-array).
+- `sub`/`gsub` (awk) — `g` = the function choice, no flag arg. Engine has
+  **no flags at all** (regcomp9 takes only a pattern; no ICASE) — case-
+  insensitive unsupported, punted.
+- Replacement backrefs `\0` (whole) / `\1..\9` (groups) — template subst
+  from `resub`, *not* engine pattern-backrefs (Plan 9 still lacks those).
+- `\xnn` (2 hex) in regcomp; `\x`+non-hex = error.
+- Thin `s///` sugar: `/`-delimited, always interpolating; anything else →
+  `$(sub|gsub …)`. `=~` RHS is just an argument (no special parsing).
+- Literal containment → `fgrep`. The engine already captures submatches
+  (10-slot `Resub`); `sash_regex_match` discards them today.
+
+**Synergy:** `=~`-as-`match`-command means `=~` leaves the `[[ ]]`
+TestExpr, simplifying the DD#62 value-operand→SsaValue refactor. Captured
+in DD#63 + task `regex-interpolation-delimiters` (rewritten).
 
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 

@@ -120,6 +120,12 @@ regardless. Coordinate the `parse_regex_rhs` edits between the two.
 
 ## Cross-refs
 
+- **DD#63 synergy:** under the regex-builtin-family model, `[[ $x =~ re ]]`
+  desugars to a `match` *command*, so `=~` leaves the `TestExpr` entirely.
+  That removes the only pattern operand from the test path — every `[[ ]]`
+  operand becomes a value, `emit_regex`/`right_is_quoted` disappear, and
+  this refactor gets *simpler*. Coordinate the seam with
+  `regex-interpolation-delimiters`; ideally land `=~`-desugaring first.
 - Subsumes `dynamic-map-subscript-in-test` (closed by step 3).
 - Adjacent pre-existing, separately filed (verify they stay green / get
   swept in): `nonbrace-dynamic-subscript`, `subscript-append-broken`,
