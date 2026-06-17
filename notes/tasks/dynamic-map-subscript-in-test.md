@@ -1,15 +1,21 @@
 ---
 title: BUG — dynamic map subscript inside `[[ ]]` does an integer lookup (test-path)
-status: ready
+status: superseded
 priority: P2
 kind: bug
 depends: []
+superseded_by: dd62-test-expr-ssavalue
 gates:
   - "[[ ${m[$k]} = v ]] evaluates the map string key (parity with echo/assign)"
   - a types.sh test locks dynamic map subscript in a test expression
 ---
 
 # `[[ ${m[$k]} ]]` does an integer lookup on a map
+
+> **Superseded 2026-06-17** by `dd62-test-expr-ssavalue` (DD#62).
+> The clean fix is to lower `[[ ]]` value operands to `SsaValue` and
+> delete the duplicate test-path `lower_subscript` entirely, rather than
+> threading map-type info into it. Kept for the repro/analysis below.
 
 Found 2026-06-17 implementing dynamic subscript (journal 113). The
 map-iteration idiom works in command/assignment contexts —

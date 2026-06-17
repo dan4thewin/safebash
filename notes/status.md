@@ -12,6 +12,36 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-17 — [[ ]] design discussion → DD#62 + refactor task
+
+Design discussion (no code) auditing `[[ ]]` operator semantics and the
+duplicate test-path lowering. Captured as **DD#62**
+(`test-expr-simplification`, candidate) + task `dd62-test-expr-ssavalue`.
+
+**Decisions (DD#62):** (1) `==`/`!=`/`=` are exact-only — drop the
+unquoted-RHS glob holdover; pattern-match via `=~`. (2) `=~` quoting is
+grouping, not literalization (the bash quoted-regex-is-literal branch is
+already dead/broken — quoted regex doesn't even parse, SB4014). (3)
+Remove `-v` — sash has no unset state (undeclared scalar = zero value,
+`unset` scalar rejected), so it's a misnamed alias for `-n` and broken
+for arrays.
+
+**Architectural payoff:** removing those eliminates `right_is_quoted`,
+the only syntactic property of a *value* operand `SsaValue` can't carry.
+Then `[[ ]]` value operands lower to `SsaValue`, subscripts use the SSA
+path, and the duplicate `lower_subscript` is deleted — closing
+`dynamic-map-subscript-in-test` (now superseded) by construction.
+
+**Misses logged for the task's spec-first plan:** quoted `=~` is SB4014;
+no way to put a space in a regex (quoted/unquoted/`[[:space:]]`/`\ ` all
+broken); `a[[:space:]]b` mis-terminates at the internal `]]`;
+`${var:s/re/repl/}` corrupts on a `/` in the regex/replacement (naive
+`find`/`rfind`, no `\/`); `[[ 1 = 2 ]] && X || Y` drops `|| Y`.
+
+**Open (DD#62):** the `\` meaning (engine-escape vs literalizer), `/`
+delimiter escaping in `:s/`, and whether undeclared scalar reads should
+be a compile error.
+
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 
 DG: "fix the map iteration bugs." The filed `map-iteration-builtins-broken`
