@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=41
+plan=47
 echo "1..$plan" >&3
 
 set +e
@@ -90,6 +90,30 @@ run_sash 'array a=(one two); echo ${a[foo]}'
 # 33.4 integer key on map → compile error
 run_sash 'map m=([a]=1); echo ${m[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 33.4
+
+# 33.5 dynamic integer index ${a[$i]} expands the variable (read)
+run_sash 'array a=(x y z); i=1; echo ${a[$i]}'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 33.5
+
+# 33.6 dynamic string key ${m[$k]} expands the variable (read)
+run_sash 'map m=([a]=1 [b]=2); k=b; echo ${m[$k]}'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.6
+
+# 33.7 dynamic index assignment a[$i]=v (write, indexed)
+run_sash 'array a=(x y z); i=1; a[$i]=ZZ; echo ${a[1]}'
+[[ $rc = 0 && $out = "ZZ" && -z $err ]]; chk 33.7
+
+# 33.8 dynamic key assignment m[$k]=v (write, map)
+run_sash 'map m=([a]=1); k=b; m[$k]=2; echo ${m[b]}'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.8
+
+# 33.9 flat map literal map m=(a 1 b 2) → reject; require [k]=v form
+run_sash 'map m=(a 1 b 2); echo ${m[a]}'
+[[ $rc != 0 && -z $out && $err == *SB4031* ]]; chk 33.9
+
+# 33.10 keys + dynamic subscript idiom iterates key/value pairs
+run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k=${m[$k]}"; done'
+[[ $rc = 0 && $out = $'a=1\nb=2' && -z $err ]]; chk 33.10
 
 # 35.1 stackable: local const int
 run_sash 'fn f { local const int x=5; echo $x; }; f'

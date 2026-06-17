@@ -1293,7 +1293,33 @@ fn looks_like_assignment(scanner: &mut Scanner) -> bool {
     };
     let w = w.clone();
     let next = scanner.peek_n(1);
-    matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w)
+    if matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w) {
+        return true;
+    }
+    looks_like_dynamic_subscript_assign(scanner, &w)
+}
+
+/// `name[$var]=` / `name[${var}]=` (and `+=`): a subscript assignment
+/// whose `$var` index the lexer split off as its own token(s), leaving
+/// `name[` as the first word. The closed single-Word form `name[lit]=`
+/// is handled by the `is_identifier_or_subscript` path above.
+fn looks_like_dynamic_subscript_assign(scanner: &mut Scanner, w: &str) -> bool {
+    let Some(name) = w.strip_suffix('[') else {
+        return false;
+    };
+    if !is_identifier(name) {
+        return false;
+    }
+    if !matches!(
+        scanner.peek_n(1).token,
+        Tok::Dollar(_) | Tok::DollarBrace(_)
+    ) {
+        return false;
+    }
+    let Tok::Word(rb) = &scanner.peek_n(2).token else {
+        return false;
+    };
+    rb == "]" && matches!(scanner.peek_n(3).token, Tok::Eq | Tok::PlusAssign)
 }
 
 /// `var =~ s/pat/rep/` shape probe. Returns the var name (cloned) if
@@ -1329,25 +1355,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
         }
     };
 
-    // Parse optional subscript: name[idx]
-    let (name, index) = if let Some(bracket_pos) = raw_name.find('[') {
-        let n = raw_name[..bracket_pos].to_string();
-        let rest = &raw_name[bracket_pos + 1..];
-        let idx = if let Some(close) = rest.find(']') {
-            rest[..close].to_string()
-        } else {
-            rest.to_string()
-        };
-        (
-            n,
-            Some(Expr {
-                kind: ExprKind::Literal(idx),
-                span,
-            }),
-        )
-    } else {
-        (raw_name, None)
-    };
+    let (name, index) = parse_assignment_lhs(scanner, raw_name, span)?;
 
     let op = if matches!(scanner.peek().token, Tok::PlusAssign) {
         scanner.next();
@@ -1399,6 +1407,75 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
         }),
         span,
     }))
+}
+
+/// Parse the optional subscript on an assignment LHS. A bare `name[`
+/// means the `]` and a `$var` index were split into following tokens by
+/// the lexer (dynamic subscript, DD#33); the closed single-Word
+/// `name[lit]` form is handled by the `find('[')` branch; a plain
+/// `name` has no subscript.
+fn parse_assignment_lhs(
+    scanner: &mut Scanner,
+    raw_name: String,
+    span: Span,
+) -> Result<(String, Option<Expr>), Diagnostic> {
+    if let Some(base) = raw_name.strip_suffix('[') {
+        let idx = parse_split_subscript_index(scanner, span)?;
+        return Ok((base.to_string(), Some(idx)));
+    }
+    let Some(bracket_pos) = raw_name.find('[') else {
+        return Ok((raw_name, None));
+    };
+    let name = raw_name[..bracket_pos].to_string();
+    let rest = &raw_name[bracket_pos + 1..];
+    let idx = match rest.find(']') {
+        Some(close) => rest[..close].to_string(),
+        None => rest.to_string(),
+    };
+    Ok((
+        name,
+        Some(Expr {
+            kind: ExprKind::Literal(idx),
+            span,
+        }),
+    ))
+}
+
+/// Consume a dynamic subscript index that the lexer split into its own
+/// tokens — `$var` (`Tok::Dollar`) or `${var}` (`Tok::DollarBrace` with a
+/// bare identifier) — followed by the closing `]` word. Used for
+/// `name[$var]=value` assignments (DD#33).
+fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
+    let idx = match scanner.next().token {
+        Tok::Dollar(v) => Expr {
+            kind: ExprKind::SimpleExpansion(v),
+            span,
+        },
+        Tok::DollarBrace(content) if is_identifier(&content) => Expr {
+            kind: ExprKind::SimpleExpansion(content),
+            span,
+        },
+        _ => {
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "unsupported dynamic subscript index in assignment".to_string(),
+            ))
+        }
+    };
+    match &scanner.peek().token {
+        Tok::Word(w) if w == "]" => {
+            scanner.next();
+        }
+        _ => {
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "expected ']' after subscript index".to_string(),
+            ))
+        }
+    }
+    Ok(idx)
 }
 
 /// Parse regex mutation: var =~ s/pat/rep/ or var =~ s/pat/rep/flags

@@ -1,94 +1,55 @@
 ---
-title: keys/values map-iteration builtins are broken (wrong output, taint hole, ICE)
-status: ready
+title: map iteration ("keys"/"values" broken) — RESOLVED, diagnosis was wrong
+status: done
 priority: P1
 kind: bug
 depends: []
+resolved: 2026-06-17
 gates:
-  - keys on a clean map emits the actual keys (one per line), not blank/garbage
-  - values on a clean map emits the actual values, no ICE
-  - keys/values over a tainted (mapfile -m, unblessed) map is rejected SB5020, not compiled
-  - mi.* spec tests in spec/argv.sh or spec/taint.sh lock all three above
+  - keys + dynamic subscript idiom iterates a clean map (types.sh 33.10)
+  - keys of a tainted unblessed map rejects SB5020 (taint.sh 60.35)
+  - blessed map keys idiom works (taint.sh 60.36)
 ---
 
-# keys / values map-iteration builtins are broken
+# map iteration — RESOLVED (corrected diagnosis)
 
-Found 2026-06-16 during the bless-shape negative-test audit (every blessed
-spec shape must have a no-bless negative). `keys`/`values` are **not used in
-any spec test**, so these defects were invisible. Three distinct defects:
+Filed 2026-06-16 as "keys emits garbage / values ICEs / keys leaks
+tainted map." On investigation (2026-06-17, with DG) **the original
+diagnosis was wrong**. The actual story:
 
-## 1. `keys` emits garbage on a CLEAN map (correctness)
+## What was really happening
 
-```
-$ sash -c 'map m=(a 1 b 2); for k in $(keys m); do echo "k=$k"; done'
-k=
-k=
-k=
-k=          # four blank lines for a two-key map — wrong count and wrong values
-```
+1. **`values` is not a builtin.** DD#41 defines `len`/`keys`/`join`
+   only. `$(values m)` was just calling a nonexistent external command
+   `values`; the "ICE" was the generic *for-in-over-external-cmdsub*
+   ICE (`for v in $(ls)` ICEs identically), not a map bug. No `values`
+   builtin was added — values are retrieved via `${m[$k]}`.
 
-Expected: `k=a` / `k=b` (two lines, the keys). Output is blank and the
-cardinality is wrong (4, not 2). `keys` codegen / iteration is broken even on
-clean data.
+2. **`keys` was never broken.** On a correctly-built map (`mapfile -m`
+   or `[k]=v` literal) `keys` yields the keys in insertion order. The
+   "garbage" (4 blank iterations for a 2-key map) came entirely from
+   the flat literal `map m=(a 1 b 2)` being **silently mis-stored** as
+   a 4-element indexed array — see bug (A) below.
 
-## 2. `values` ICEs on a CLEAN map (taint backstop fires on clean data)
+## The three real bugs (all fixed 2026-06-17)
 
-```
-$ sash -c 'map m=(a 1 b 2); for v in $(values m); do echo "v=$v"; done'
--c: ICE: tainted variable v_1 used as argument to command 'echo' —
-    CST taint pass missed this
-```
+- **(A) Flat map literal mis-stored.** `map m=(a 1 b 2)` parsed as an
+  indexed `Array` (len=4, `${m[a]}` -> `a`), not a 2-entry map. Now
+  **rejected SB4031** (DD#33) directing to the `[k]=v` form.
+  `validate.rs::reject_flat_map_literal`. Spec types.sh 33.9.
 
-The map is clean literals, yet the SSA taint backstop marks the `values`
-output tainted and the CST pass never saw it → ICE. Either `values` output
-should be clean for a clean map (and the SSA classifier is wrong), or it is
-genuinely tainted (DD-level decision — see below) and the CST pass must mark
-it so it becomes a clean SB5020 instead of an ICE.
+- **(B) Dynamic subscript was unimplemented.** The parser literalised
+  the index, so `${m[$k]}` missed (empty), `${a[$i]}` hit SB4030, and
+  `a[$i]=v` / `m[$k]=v` mis-parsed as a command (`sash: bug:` abort).
+  Now the `$var`/`${var}` index expands at the three read sites
+  (`expr.rs::subscript_index_expr`) and the split-token write LHS is
+  recognised (`parser.rs::parse_split_subscript_index`). Spec
+  types.sh 33.5-33.8, 33.10.
 
-## 3. `keys`/`values` over a TAINTED map ESCAPES taint (security hole)
+- **(C) `keys` of a tainted unblessed map escaped taint.** `keys m`
+  takes a bare name arg, so the cmdsub-arg recursion didn't see it.
+  Now `validate.rs::check_collection_reader_taint` treats it as a use
+  site -> SB5020 (`len` stays exempt). Spec taint.sh 60.35; blessed
+  positive 60.36.
 
-```
-$ printf 'NAME=Alice\n' > km.txt
-$ sash -c 'map m=(); mapfile -m m < km.txt; for k in $(keys m); do echo "k=$k"; done'
-[COMPILES]   # should be rejected SB5020 — m is tainted, unblessed
-```
-
-A tainted map (populated by `mapfile -m`, no `bless k v in m [[…]]`) flows its
-keys out through `keys` with no bless. `for k in $(keys m)` is a use site of
-tainted-map data and must be rejected. (Contrast `values`, which ICEs at #2 —
-inconsistent handling of the same hole.)
-
-## Root cause (preliminary)
-
-`check_expr_taint`'s `CommandSubstitution` arm now recurses into inner command
-args (fixed `$(join @a)` this session), but `keys m` / `values m` take the map
-name `m` as a **bare literal argument**, not `@m`. So the recursion sees the
-literal `m`, not a tainted ParameterExpansion, and doesn't flag it. The
-taint of `keys`/`values` **output** is dataflow-dependent on the map's taint —
-it needs source-classification (like `cmdsub_is_scalar_taint_source`) that
-knows "keys/values of a tainted map is tainted", plus a DD on whether keys are
-even tainted (a key like `NAME` may be considered structural, the value `Alice`
-clearly tainted — DG to decide). And `keys` codegen (#1) is independently
-broken regardless of taint.
-
-## Proposed spec tests (write first, TDD)
-
-In spec/taint.sh (native-only, alongside the 60.x mapfile block):
-
-- `mi.1` clean keys: `map m=(a 1 b 2); for k in $(keys m); do echo $k; done`
-  → sorted/insertion-order keys, two lines.
-- `mi.2` clean values: `map m=(a 1 b 2); for v in $(values m); do echo $v; done`
-  → two lines, no ICE.
-- `mi.3` tainted keys no-bless: `map m=(); mapfile -m m < f; for k in $(keys m); …`
-  → reject SB5020 (`$rc!=0 && -z $out && $err==*SB5020*`).
-- `mi.4` tainted values no-bless → reject SB5020.
-- `mi.5` blessed map then keys/values iterate → accepted, correct output
-  (negative/positive pair, per the bless-shape rule).
-
-## Notes
-
-- Needs a DD (or DD#41/DD#61 addendum) on the taint status of map keys vs.
-  values before #2/#3 can be fixed correctly — present options to DG.
-- #1 (`keys` garbage output) is a plain codegen bug and can be fixed first.
-- Discovered alongside the join-on-tainted-array fix (commit pending) which
-  closed the `$(join @a)` sibling of hole #3 for arrays.
+See journal 113.

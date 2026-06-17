@@ -12,6 +12,39 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
+
+DG: "fix the map iteration bugs." The filed `map-iteration-builtins-broken`
+diagnosis (keys garbage / values ICE / keys escape) was **wrong**;
+discussion with DG corrected it before coding. See
+[journal 113](journal/113-map-iteration.md).
+
+**Three real bugs, all fixed:**
+- **(A) Flat map literal `map m=(a 1 b 2)`** was silently stored as a
+  4-element indexed array. DG chose **reject** → new **SB4031** (DD#33),
+  `validate.rs::reject_flat_map_literal`. (`[k]=v` and empty `()` OK.)
+- **(B) Dynamic subscript was unimplemented.** The parser literalised the
+  bracket index, so `${m[$k]}` was empty, `${a[$i]}` SB4030-false-rejected,
+  and `a[$i]=v`/`m[$k]=v` writes mis-parsed as a command (`sash: bug:`).
+  Read fix: `expr.rs::subscript_index_expr` expands `$var`/`${var}` at the
+  three subscript sites (downstream already handled `SimpleExpansion`).
+  Write fix: `parser.rs` recognises the split-token `name[$var]=` LHS.
+- **(C) `keys` of a tainted unblessed map escaped taint** (bare-name arg).
+  `validate.rs::check_collection_reader_taint` + `taint_for` cmdsub check
+  → SB5020; `len` stays exempt.
+
+The map-iteration idiom now works:
+`for k in $(keys m); do echo "$k=${m[$k]}"; done`.
+
+**Spec:** native **414 passing / 2 failing** of 416 (only pre-existing cf.c7/c8).
+8 new tests (types.sh 33.5–33.10, taint.sh 60.35/60.36). Rust suite:
+identical 167-failing set vs baseline — zero net regression.
+
+**Filed (pre-existing, found here):** `subscript-append-broken` (P2,
+`a[i]+=v` discards the element), `nonbrace-dynamic-subscript` (P3, `$a[$i]`
+non-brace read — brace form works). `map-iteration-builtins-broken` marked
+done with corrected diagnosis.
+
 ### Session 2026-06-16 — argv/arg/argc trio (DD#60) + two latent bugs
 
 Implemented the full argv-trio chain (argv-trio-*, all 7 tasks done),
@@ -60,6 +93,7 @@ Every blessed collection shape now paired.
 **Filed:** `map-iteration-builtins-broken` (P1) — `keys` emits garbage on
 a clean map, `values` ICEs on a clean map, and both leak a tainted map's
 data; not spec-covered, needs a key-vs-value taint DD + a codegen fix.
+_(Diagnosis later corrected — see 2026-06-17 map-iteration session below.)_
 
 **Spec:** native 409 passing / 2 failing (only pre-existing cf.c7/cf.c8).
 Zero regressions.

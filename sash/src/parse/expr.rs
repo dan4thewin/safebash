@@ -219,10 +219,7 @@ fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut 
         parts.push(Expr {
             kind: ExprKind::Subscript {
                 name: name.to_string(),
-                index: Box::new(Expr {
-                    kind: ExprKind::Literal(idx),
-                    span,
-                }),
+                index: Box::new(subscript_index_expr(&idx, span)),
             },
             span,
         });
@@ -351,7 +348,7 @@ fn try_emit_array_subscript_in_string(
 
 /// Build the subscript / arrvals expansion for `$name[idx]`.
 /// `idx` of `@` or `*` becomes arrvals; anything else becomes a
-/// literal subscript.
+/// subscript whose index is parsed by `subscript_index_expr`.
 fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
     if idx == "@" || idx == "*" {
         Expr::param(name.to_string(), Some("arrvals"), None, span)
@@ -359,13 +356,47 @@ fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
         Expr {
             kind: ExprKind::Subscript {
                 name: name.to_string(),
-                index: Box::new(Expr {
-                    kind: ExprKind::Literal(idx.to_string()),
-                    span,
-                }),
+                index: Box::new(subscript_index_expr(idx, span)),
             },
             span,
         }
+    }
+}
+
+/// Build the index expression for a subscript `name[idx]`. A `$var` or
+/// `${var}` index expands the variable at runtime (dynamic subscript,
+/// DD#33): for an indexed array it yields the integer index, for a map
+/// the string key. Any other text is a literal key (a bare integer for
+/// indexed arrays, a bare string for maps).
+fn subscript_index_expr(idx: &str, span: Span) -> Expr {
+    if let Some(var) = dynamic_subscript_var(idx) {
+        return Expr {
+            kind: ExprKind::SimpleExpansion(var.to_string()),
+            span,
+        };
+    }
+    Expr {
+        kind: ExprKind::Literal(idx.to_string()),
+        span,
+    }
+}
+
+/// If `idx` is `$name` or `${name}` with `name` a valid identifier,
+/// return `name`; otherwise `None`.
+fn dynamic_subscript_var(idx: &str) -> Option<&str> {
+    let rest = idx.strip_prefix('$')?;
+    let var = match rest.strip_prefix('{') {
+        Some(inner) => inner.strip_suffix('}')?,
+        None => rest,
+    };
+    let mut chars = var.chars();
+    let first = chars.next()?;
+    if (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+    {
+        Some(var)
+    } else {
+        None
     }
 }
 
@@ -495,10 +526,7 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     Some(Expr {
         kind: ExprKind::Subscript {
             name: name.to_string(),
-            index: Box::new(Expr {
-                kind: ExprKind::Literal(idx.to_string()),
-                span,
-            }),
+            index: Box::new(subscript_index_expr(idx, span)),
         },
         span,
     })

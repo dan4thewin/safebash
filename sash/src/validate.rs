@@ -320,6 +320,34 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
             "'export' is not allowed — use int/const/array/map instead".to_string(),
         ));
     }
+    // SB4031 (DD#33): a map literal must use the `[key]=value` form.
+    if d.flags.iter().any(|f| f == "-A") {
+        for a in &d.assignments {
+            reject_flat_map_literal(a, diags);
+        }
+    }
+}
+
+/// SB4031 (DD#33): a flat `(a 1 b 2)` list parses as an indexed-array
+/// literal, silently building an N-element array instead of a map — so a
+/// `map` whose initializer is a non-empty plain `Array` is rejected. The
+/// `[key]=value` form parses as `AssocArray` and an empty `()` is allowed.
+fn reject_flat_map_literal(a: &Assignment, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::Array(elems) = &a.value.kind else {
+        return;
+    };
+    if elems.is_empty() {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        a.value.span,
+        "SB4031",
+        format!(
+            "map `{}` must use the [key]=value form \
+             (e.g. `map {}=([k]=v …)`) — a flat list is not a map literal",
+            a.name, a.name,
+        ),
+    ));
 }
 
 fn validate_assignment(a: &Assignment, span: Span, diags: &mut Vec<Diagnostic>) {
@@ -1573,6 +1601,11 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
 fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     for w in &f.words {
         reject_tainted_array_iter(w, tainted, diags);
+        // `for k in $(keys m)` etc.: a tainted read *inside* the iterated
+        // command substitution is a use site (e.g. keys of an unblessed map).
+        if let ExprKind::CommandSubstitution(stmts) = &w.kind {
+            check_cmdsub_use_taint(stmts, w.span, tainted, diags);
+        }
     }
     if f.words.iter().any(is_taint_source) {
         tainted.insert(f.variable.clone());
@@ -1932,9 +1965,43 @@ fn check_cmdsub_use_taint(
     check_bare_cmdsub_taint(stmts, span, diags);
     for s in stmts {
         if let StmtKind::Command(c) = &s.kind {
+            check_collection_reader_taint(c, tainted, diags);
             for arg in &c.args {
                 check_expr_taint(arg, tainted, diags);
             }
+        }
+    }
+}
+
+/// `keys m` exposes the keys of map `m`; if `m` is a tainted collection
+/// (e.g. populated by `mapfile -m` without bless-all) this is a read of
+/// external data without bless — rejected (SB5020). The map name is a
+/// bare argument literal, so the generic `check_expr_taint` path (which
+/// only flags variable-expansion reads) doesn't catch it. `len` is
+/// exempt — it exposes only cardinality, not element data.
+fn check_collection_reader_taint(
+    c: &Command,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let ExprKind::Literal(cmd) = &c.name.kind else {
+        return;
+    };
+    if cmd != "keys" {
+        return;
+    }
+    if let Some(arg) = c.args.first() {
+        if let ExprKind::Literal(name) = &arg.kind {
+            push_taint_use(
+                tainted,
+                name,
+                arg.span,
+                format!(
+                    "keys of tainted map '{name}' without bless — bless-all \
+                     it first: `bless k v in {name} [[ … ]]` (DD#61)"
+                ),
+                diags,
+            );
         }
     }
 }

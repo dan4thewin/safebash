@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=65
+plan=67
 echo "1..$plan" >&3
 
 set +e
@@ -218,6 +218,11 @@ run_sash 'array a=(); mapfile -t a < d60b.txt; echo $(join @a)'
 run_sash 'map m=(); mapfile -m m < d60m.txt; echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.34
 
+# 60.35 keys of a tainted (mapfile -m) map without bless-all → reject.
+# keys exposes the file-derived keys; a use site like ${m[…]} (60.34).
+run_sash 'map m=(); mapfile -m m < d60m.txt; for k in $(keys m); do echo "$k"; done'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.35
+
 # 60.19 bless-all binder must be on the LHS (anti-tautology)
 run_sash 'array a=(); mapfile -t a < d60b.txt
 bless x in a [[ "foo" = $x ]]
@@ -342,6 +347,12 @@ bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
 
+    # 60.36 blessed map: keys + dynamic subscript idiom iterates pairs
+    run_sash 'map m=(); mapfile -m m < d60m.txt
+bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
+for k in $(keys m); do echo "$k=${m[$k]}"; done'
+    [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
+
     # 60.31 map bless-all runtime failure: a value fails its predicate → exit 1
     run_sash 'map m=(); mapfile -m m < d60m2.txt
 bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
@@ -349,7 +360,7 @@ echo ${m[NAME]}'
     [[ $rc != 0 && -z $out ]]; chk 60.31
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
-              60.21 60.22 60.23 60.25 60.29 60.31; do
+              60.21 60.22 60.23 60.25 60.29 60.31 60.36; do
         skip_chk "$id"
     done
 fi
