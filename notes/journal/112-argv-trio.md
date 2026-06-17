@@ -166,9 +166,11 @@ and clean-array joins still compile.
 | av.x5 `$a[0]` over blessed snapshot | **av.n7** `$a[0]` no bless → SB5020 |
 | 60.25 `for w in @a` over blessed mapfile array | **60.32** iter no bless → SB5020 |
 | (join sibling of 60.25) | **60.33** `$(join @a)` no bless → SB5020 |
+| 60.29 `${m[NAME]}` over blessed mapfile map | **60.34** map subscript no bless → SB5020 |
 
 Subscript negatives for mapfile arrays already existed (60.13/60.14); the
-gaps were exactly the iter/join sites.
+gaps were exactly the iter/join sites and the mapfile **map** subscript
+(arrays had 60.13, maps had only the literal-element 60.7).
 
 **Third hole filed, not fixed:** `keys`/`values` map-iteration builtins are
 independently broken — `keys` emits blank/garbage on a *clean* map, `values`
@@ -181,5 +183,5 @@ codegen fix for the garbage output. See
 `notes/tasks/map-iteration-builtins-broken.md` (P1, full repros + proposed
 mi.* spec tests).
 
-**Spec:** native 408 passing / 2 failing (unchanged pre-existing cf.c7/c8).
+**Spec:** native 409 passing / 2 failing (unchanged pre-existing cf.c7/c8).
 Zero regressions.

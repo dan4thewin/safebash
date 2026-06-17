@@ -52,15 +52,16 @@ substitution's inner command args (`check_cmdsub_use_taint`), so any
 tainted read inside `$(… @x …)` rejects SB5020 cleanly. `$(len a)` stays
 exempt; blessed/clean joins still compile.
 
-**Negatives added** (4): av.n6 (snapshot join no-bless), av.n7 (snapshot
+**Negatives added** (5): av.n6 (snapshot join no-bless), av.n7 (snapshot
 subscript no-bless), 60.32 (mapfile-array iter no-bless), 60.33
-(mapfile-array join no-bless). Every blessed collection shape now paired.
+(mapfile-array join no-bless), 60.34 (mapfile-map subscript no-bless).
+Every blessed collection shape now paired.
 
 **Filed:** `map-iteration-builtins-broken` (P1) — `keys` emits garbage on
 a clean map, `values` ICEs on a clean map, and both leak a tainted map's
 data; not spec-covered, needs a key-vs-value taint DD + a codegen fix.
 
-**Spec:** native 408 passing / 2 failing (only pre-existing cf.c7/cf.c8).
+**Spec:** native 409 passing / 2 failing (only pre-existing cf.c7/cf.c8).
 Zero regressions.
 
 **Follow-up (same day):** a converter review surfaced a missed ICE —
