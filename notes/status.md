@@ -80,6 +80,18 @@ to `argv [N] a` (array last). Deletes the `ArgvSnapshot` command-sub→array
 machinery; splat `$(argv)` for-in and scalars `$(arg N)`/`$(argc)`
 unchanged. DD#60 revision note + task `argv-snapshot-to-outparam`.
 
+**DD#64 (no shell backslash):** the backslash thread resolved to "shell
+reads `\` only in `$'…'` and at EOL; verbatim everywhere else; escape via
+quoting + concatenation (`'"'`, `'$'`); `\xNN` for literal regex bytes."
+Removes the `\\`→`\` collapse / `"\\\\"` wart, `a\ b`≠`'a b'`, `\/`-broken,
+dropped-standalone-`\`. Backslash *inside* `${var:OP}` operands is deferred
+to the **var-modifier vet** (task `vet-var-modifiers`): the `${var:OP}`
+family (`:-` `:=` `:+` `:?` `#` `##` `%` `%%` `^` `^^` `,` `,,` `/`…) is
+being reviewed for bash-creep — the `/` glob-replace (redundant with
+`sub`/`gsub`, only var-op using `\`) is the strongest drop candidate; no
+DD currently drops any (DD#61 only restricts `#`/`%` for taint). DD#63's
+backslash section now defers to DD#64.
+
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 
 DG: "fix the map iteration bugs." The filed `map-iteration-builtins-broken`
