@@ -11,7 +11,7 @@ gates:
   - "var =~ s/RE/SUB/ -> var=$(sub $var RE SUB); .../g -> gsub; ${var:s/...} -> $(sub|gsub ...)"
   - "captures: $(match x p)=whole match; `match x p arr` fills arr=[whole,g1..g9] (array last, like mapfile/read -a); sub/gsub replacement \\0..\\9"
   - "\\xnn (2 hex) in regcomp; \\x + non-hex = error"
-  - "Path B: lexer treats / as a quote-delimiter after :s — bare {/} in RE/SUB are literal; malformed :s payload is a compile error (not a silent fallback)"
+  - "Path B: lexer treats / as a quote-delimiter after :s — bare {/} in RE/SUB are literal; malformed :s payload (incl. missing mandatory trailing /) is SB4032, not a silent fallback"
   - "native spec clean (only cf.c7/cf.c8); rust suite no net regression; complexity gate green"
 ---
 
@@ -91,9 +91,12 @@ miscompiled before — `${var:s/a}b/z/}` → `a}bb/z/}`, rc 0.)
 - **G3** bare `{` in RE is literal: `var='a{b'; echo "${var:s/a{b/z/}"` → `z`.
 - **G4** literal text after a valid close concatenates (NOT an error):
   `var=axb; echo "${var:s/x/z/}tail"` → `azbtail`.
-- **G5** malformed/unterminated `:s` → compile error:
+- **G5** malformed/unterminated `:s` → **SB4032**:
   `var=ab; echo "${var:s/a}"` → rejected (`rc != 0`, non-empty err),
   *not* a silent `$var`+literal fallback.
+- **G8** missing mandatory trailing `/` → **SB4032**:
+  `var=ab; echo "${var:s/a/b}"` → rejected (only two delimiters; `s///`
+  requires exactly three).
 - **G6** literal `/` (the delimiter) via `\xnn`:
   `var='a/b'; echo "${var:s/a\\x2fb/z/}"` → `z` (depends on E1's `\xnn`).
 - **G7** no-brace regression unchanged: `x="hello world"; echo "${x:s/world/earth/}"`
@@ -133,12 +136,17 @@ miscompiled before — `${var:s/a}b/z/}` → `a}bb/z/}`, rc 0.)
 ## Open (DD#63)
 
 `case` `=glob` desugaring to a glob/match builtin; `\` + non-digit in the
-replacement (literal vs error); the `Resub` stride. **Path B opens:** the
-diagnostic code for a malformed `:s` payload (new SB code vs. reuse); and
-whether the trailing `/` in `s/RE/SUB/` is mandatory (so `${var:s/a/b}`,
-missing the third delimiter, is the G5 error) or optional (treat a missing
-third `/` as empty flags). Recommend mandatory — it makes "three fields"
-the single well-formedness rule — but DG decides.
+replacement (literal vs error); the `Resub` stride.
+
+**Path B decisions (DG 2026-06-18):**
+- Malformed `:s` payload → **new code SB4032** ("malformed/unterminated
+  `s///` substitution"). SB5023 is *invalid-regex-content* (regcomp
+  failure) — a different failure; structure errors need their own code.
+  (SB4032 is provisional — next free SB40xx after 4031; renumber if a
+  range is reserved.)
+- The trailing `/` in `s/RE/SUB/` is **mandatory**: exactly three
+  delimiters. `${var:s/a/b}` (two delimiters) is the SB4032 error, same as
+  `${var:s/a}` — "three fields" is the single well-formedness rule.
 
 ## Cross-refs
 

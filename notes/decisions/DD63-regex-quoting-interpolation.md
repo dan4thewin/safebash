@@ -131,7 +131,9 @@ quote-delimiter after `:s`** (Path B, 2026-06-18): exactly as `'…'` and
 `"…"` already suppress brace-counting inside `${…}`, the `:s/RE/SUB/[g]`
 payload is scanned as three `/`-delimited fields, so a bare `{`/`}` inside
 RE or SUB is literal and does **not** close the expansion. The closing
-`}` is recognised only after the third `/` (and optional flags). A
+`}` is recognised only after the third `/` (and optional flags); the
+trailing `/` is **mandatory** — `s/RE/SUB/` has exactly three delimiters,
+so `${var:s/a/b}` with only two is malformed. A
 **malformed** payload — fewer than the required delimiters, or
 unterminated before the close — is a **compile error**, not a silent
 fallback (see Compromises). A literal `/` (the delimiter itself) is
@@ -150,7 +152,8 @@ in lower/transform (like the other builtins), keeping the parser thin.
   `:s`-payload as `/`-delimited fields, so `${var:s/a}b/z/}` substitutes
   `a}b`→`z` — it does *not* truncate. The closing `}` is the one after the
   third `/`. A **malformed** `:s` payload — e.g. `${var:s/a}` (one
-  delimiter, unterminated) — is a **compile error** (the `:s` structure is
+  delimiter, unterminated) — is a **compile error** (**SB4032**; the `:s`
+  structure is
   incomplete), whereas a *well-formed* `${…}` followed by ordinary text —
   e.g. `${var:s/x/z/}tail` — simply **concatenates** the literal `tail`.
   The error is localised to the `:s` payload shape; it is never "leftover

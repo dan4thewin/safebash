@@ -50,9 +50,18 @@ wrong output.
    rejected for case patterns, so they reach runtime and silently
    never match.
 
-## Decision required (file separately or here)
+## Decision — fix (a) [DG confirmed 2026-06-18]
 
-Pick one:
+> **Resolved direction.** DG: "globs support was intentionally simplified
+> to `*` only." So `?` and `[...]` are **not** implemented — they are
+> rejected at compile time (SB5006), matching the `fnmatch_impl` header
+> comment and the `for`-loop path. The fix is the **validator gap only**;
+> the runtime `fnmatch_impl` (`*`-only) is correct by design. **Timing
+> open:** fix now vs. fold into the DD#63 `case`-glob desugar (which is
+> still glob/`*`-only, just routed through a builtin — the SB5006 check
+> applies either way).
+
+Original options — (a) chosen, (b) rejected:
 
 - **(a) Extend SB5006 to case patterns.** Reject `?` and `[...]`
   in case arms at compile time. Matches the existing claim in
