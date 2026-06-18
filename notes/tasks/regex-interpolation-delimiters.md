@@ -9,7 +9,7 @@ gates:
   - "match/sub/gsub are builtins taking ordinary string args (interpolation = normal arg eval)"
   - "[[ $x =~ RE ]] desugars to `match $x RE` (boolean); RE is just an argument"
   - "var =~ s/RE/SUB/ -> var=$(sub $var RE SUB); .../g -> gsub; ${var:s/...} -> $(sub|gsub ...)"
-  - "captures: $(match x p)=whole match; `match arr x p` fills arr=[whole,g1..g9]; sub/gsub replacement \\0..\\9"
+  - "captures: $(match x p)=whole match; `match x p arr` fills arr=[whole,g1..g9] (array last, like mapfile/read -a); sub/gsub replacement \\0..\\9"
   - "\\xnn (2 hex) in regcomp; \\x + non-hex = error"
   - "native spec clean (only cf.c7/cf.c8); rust suite no net regression; complexity gate green"
 ---
@@ -31,7 +31,7 @@ false test is separately broken — `dd62-test-expr-ssavalue` F1).
   `echo $(match aXXb "X+")` → `XX`.
 - **A2** boolean: `if match abc "^a"; then echo y; else echo n; fi` → `y`;
   `if match abc "^z"; then echo y; else echo n; fi` → `n`.
-- **A3** capture out-array: `match g "aXXb" "a(X+)b"; echo ${g[0]} ${g[1]}` → `aXXb XX`.
+- **A3** capture out-array (array last): `match "aXXb" "a(X+)b" g; echo ${g[0]} ${g[1]}` → `aXXb XX`.
 - **A4** `$(sub …)` first: `echo $(sub abab "b" "B")` → `aBab`.
 - **A5** `$(gsub …)` all: `echo $(gsub abab "b" "B")` → `aBaB`.
 
@@ -81,8 +81,8 @@ false test is separately broken — `dd62-test-expr-ssavalue` F1).
 1. **Builtins** `match` / `sub` / `gsub` (BuiltinCmd variants, like
    `keys`/`join`): args are ordinary lowered values. `sub`/`gsub` print to
    stdout; `match` sets exit status, prints `resub[0]` for `$(…)`, and in
-   the 3-arg `match ARR S P` form fills `ARR` (mapfile/read-a-style
-   out-array) with `[whole, g1..g9]`.
+   the 3-arg `match S P ARR` form fills `ARR` (array last, mapfile/read-a
+   convention) with `[whole, g1..g9]`.
 2. **Captures**: extend `sash_regex_match` to surface `resub[0..9]`
    (currently discarded). Confirm the `Resub` stride first (32 vs 16).
 3. **Replacement backrefs** `\0..\9` in `sash_regex_replace` (template

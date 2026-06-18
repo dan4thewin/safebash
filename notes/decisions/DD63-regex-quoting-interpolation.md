@@ -36,8 +36,9 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
     boolean form, used by `if` / `&&` / the `[[ =~ ]]` sugar).
   - As `$(match SUBJECT PATTERN)`: prints the whole match (`resub[0]`)
     to stdout — an ordinary scalar command substitution.
-  - **`match OUTARRAY SUBJECT PATTERN`** — out-array form (mapfile /
-    `read -a` style): fills `OUTARRAY` with `[whole, g1 … g9]` and returns
+  - **`match SUBJECT PATTERN OUTARRAY`** — out-array form (the array is
+    the trailing positional, consistent with `mapfile -m m` / `read -a a`):
+    fills `OUTARRAY` with `[whole, g1 … g9]` and returns
     the boolean exit status. This is how capture groups are surfaced — no
     array-returning command-subs, no scalar-vs-array context detection.
 - **`sub SUBJECT PATTERN REPLACEMENT`** — replace the **first** match,
