@@ -122,9 +122,12 @@ the other builtins), keeping the parser thin.
   use `fgrep` / `grep -F "$needle"`. `==` is exact (DD#62), `=~`/`match`
   is regex; there is no literal-regex mode.
 - **No case-insensitive** flag (engine limitation).
-- A literal `}` cannot appear inside the `${var:s/…}` **expression**
-  sugar (the brace scanner closes at it); the statement form
-  `var =~ s/…` and the function form are immune.
+- A literal **unescaped** `}` inside the `${var:s/…}` **expression** sugar
+  closes the expansion early (SB4014) — the lexer depth-counts braces at
+  scan time, *before* desugaring. Escape it as `\}` (the lexer passes
+  `\`+char through and the engine reads `\}` as a literal `}`), or use the
+  statement form `var =~ s/…` or the function form `$(sub …)` — both have
+  no enclosing braces.
 
 ## Reality check (why interpolation "just works" here)
 
