@@ -9,13 +9,25 @@ dropped or moved into the awk-style string-builtin family
 ## Kept
 
 - **`${var:-default}`** — default if unset/empty. Pure, useful, no glob.
+  The default is a **normal word/value** (filling the current
+  literal-only gap): `$name`/`${name}` interpolation, concatenation
+  (`$foo$bar`, `${foo}bar`), and quoting (`'$bar'` = literal). It is *not*
+  a restricted grammar — it behaves like any command argument or
+  assignment RHS. Taint flows: `${n:-$clean}` is clean, `${n:-$tainted}`
+  is tainted (bless before use). An **unquoted `}` ends the expansion**
+  (DD#64: single-quote to include one — `${n:-'a}b'}`; no `\}`).
+  **Command substitution is rejected** in the default — an external
+  capture is always tainted, so `${n:-$(cmd)}` would always need bless,
+  making it useless as a convenience; use a variable/literal. (Arithmetic
+  `$((…))` is clean and allowed.)
 - **`${var:off:len}`** — substring. Useful, no glob/regex.
 - **`${var:s/re/sub/[g]}`** — regex replace; per DD#63 this is sugar for
   `$(sub|gsub var "re" "sub")`.
 
-(Operand interpolation is currently unimplemented for these — `${x:-$y}`
-yields literal `$y`. Implement textual-first-pass interpolation when
-these are touched.)
+(Operand interpolation is currently unimplemented — `${x:-$y}` yields
+literal `$y` today; the `:-` rule above (default = word) fixes it. The
+`:s/` operand interpolation is DD#63's textual-first-pass; `:off:len`
+takes integer operands. Implement when these are touched.)
 
 ## Dropped (reject with a diagnostic pointing at the replacement)
 
