@@ -41,13 +41,19 @@ these are touched.)
   flag): `match $(tolower $x) $(tolower $pat)`. `/usr/bin/tr` remains for
   arbitrary character translation.
 
+## Resolved
+
+- **No `basename`/`dirname` builtins.** Use `${var:s/…/…/}` / `sub`, or the
+  external `basename`/`dirname` (DG: fork cost is fine). **Caveat:** DD#23
+  (compile-time path resolution) is `status: partial` — `grep`/`ls`
+  resolve, but `basename`/`dirname` currently hit the runtime
+  `bare command passed to sash_exec` bug, and external capture is tainted
+  (`$(basename …)` → SB5020, needs bless). So the external path-manip story
+  needs DD#23 completed; filed as a dependency, not a blocker (DG uses
+  `:s/`).
+
 ## Open
 
-- **`basename` / `dirname`**: the chosen replacement for the strip ops.
-  Provide them as **builtins** (pure, no fork, no absolute-path dance), or
-  rely on `/usr/bin/{basename,dirname}` (external, needs absolute path in
-  the subset)? Leaning builtins given how common they are, but they're not
-  awk string functions, so decide deliberately.
 - Confirm `${#var}` (length) and `@X` transforms (already SB4015) status.
 
 ## See also
