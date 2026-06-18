@@ -68,6 +68,27 @@ consistent). So `\` has two meanings by field: in the **pattern** it is
 an engine escape (handed to `regcomp9`); in the **replacement** it
 introduces a backref. `\\` is a literal backslash in the replacement.
 
+**Backslash and quoting (function form).** `\` is *not* regex-special at
+the parser level — in the function form it follows the **host string's
+quoting rules first**, then whatever survives reaches the engine:
+
+- `'a\.b'` / `'a\\b'` — single quotes are fully verbatim, so the engine
+  sees exactly `a\.b` / `a\\b`. This is the clean way to write a
+  backslashed regex (no double-escaping, no interpolation surprises).
+- `"a\\b"` — double quotes apply `scan_dq_escape` first: `\\`→`\`,
+  `\$`→`$`, `\"`→`"`, `` \` ``→`` ` ``, `\X`→`\X`. So a literal-backslash
+  regex needs `"\\\\"`, and `\$` is how you put a literal `$` (anchor)
+  next to interpolation.
+
+So "`\` passes to the engine" is exactly true for single-quoted args and
+"to the engine minus the four `\\`/`\$`/`\"`/`` \` `` escapes" for
+double-quoted ones. This replaces today's inconsistent, surface-specific
+handling: on `=~` (`parse_regex_rhs`) `\` survives only as a word char
+(`\.`, `\\` reach the engine; a standalone `\` token is dropped; `\ ` is
+lost to the space-split); in `${var:s/…}` the brace-scan keeps `\}` but
+`try_sed_op`'s `/`-split still breaks `\/`. The builtin family removes
+all of that — `\` is just string quoting + engine.
+
 ## Interpolation (textual first pass)
 
 A pattern/replacement is a string first, a regex only when it reaches the
