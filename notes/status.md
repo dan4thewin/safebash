@@ -84,13 +84,17 @@ unchanged. DD#60 revision note + task `argv-snapshot-to-outparam`.
 reads `\` only in `$'…'` and at EOL; verbatim everywhere else; escape via
 quoting + concatenation (`'"'`, `'$'`); `\xNN` for literal regex bytes."
 Removes the `\\`→`\` collapse / `"\\\\"` wart, `a\ b`≠`'a b'`, `\/`-broken,
-dropped-standalone-`\`. Backslash *inside* `${var:OP}` operands is deferred
-to the **var-modifier vet** (task `vet-var-modifiers`): the `${var:OP}`
-family (`:-` `:=` `:+` `:?` `#` `##` `%` `%%` `^` `^^` `,` `,,` `/`…) is
-being reviewed for bash-creep — the `/` glob-replace (redundant with
-`sub`/`gsub`, only var-op using `\`) is the strongest drop candidate; no
-DD currently drops any (DD#61 only restricts `#`/`%` for taint). DD#63's
-backslash section now defers to DD#64.
+dropped-standalone-`\`. Backslash *inside* `${var:OP}` operands deferred to
+the var-modifier vet.
+
+**DD#65 (prune `${var:OP}`):** vetted the family. Keep `:-`, `:off:len`,
+`:s/`. Drop `:=` `:+` `:?` (broken/redundant), `#`/`##`/`%`/`%%` strip
+(use `basename`/`dirname` — the community idiom), `/`-family glob-replace
+(redundant with `sub`/`gsub`, glob holdover, only var-op using `\`), and
+`^`/`,` first-char case. Move `^^`/`,,` → **`toupper`/`tolower` builtins**
+(awk names, joining `match`/`sub`/`gsub`; gives case-insensitive matching
+the engine's missing `i` flag can't). Open: `basename`/`dirname` builtin
+vs external. Task `vet-var-modifiers` → DD#65.
 
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 

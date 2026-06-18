@@ -12,6 +12,13 @@ gates:
 
 # vet the `${var:OP}` modifier family
 
+> **Verdict 2026-06-18 → DD#65.** Keep `:-`, `:off:len`, `:s/`. Drop
+> `:=` `:+` `:?`, the `#`/`##`/`%`/`%%` strip ops (use `basename`/`dirname`),
+> the `/`-family glob-replace (use `sub`/`gsub`), and `^`/`,` first-char
+> case. Move `^^`/`,,` to `toupper`/`tolower` builtins. Open:
+> `basename`/`dirname` as builtins vs external. The inventory below is
+> retained as reference / for the dropping-implementation.
+
 Several of these look like unintentional bash creep. Go through each,
 decide keep / drop / rework, and (for kept ones) pin down operand
 interpolation, brace-`}`, and DD#64 backslash behaviour. No DD currently

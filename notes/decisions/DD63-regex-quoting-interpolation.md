@@ -29,7 +29,7 @@ and delete `right_is_quoted` + the duplicate `lower_subscript`.
 ## The builtins
 
 Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
-`match`, `sub`, `gsub`.
+`match`, `sub`, `gsub`, `toupper`, `tolower`.
 
 - **`match SUBJECT PATTERN`** — regex match (unanchored).
   - As a command: exit status 0 if it matched, non-zero otherwise (the
@@ -44,6 +44,9 @@ Join the existing builtin family (`keys`/`join`/`len`). Reserved names:
 - **`sub SUBJECT PATTERN REPLACEMENT`** — replace the **first** match,
   print the result to stdout.
 - **`gsub SUBJECT PATTERN REPLACEMENT`** — replace **all** matches.
+- **`toupper STRING`** / **`tolower STRING`** — case fold (awk names;
+  DD#65). Compensates for the engine's missing `i` flag — case-insensitive
+  match is `match $(tolower $x) $(tolower $pat)`.
 
 `g` is therefore the `sub`/`gsub` choice, not a flag argument. There are
 **no other flags** — `regcomp9` takes only a pattern and the vendored
