@@ -73,6 +73,13 @@ parser (and its open `\`/`/` questions) disappears. Decisions:
 TestExpr, simplifying the DD#62 value-operand→SsaValue refactor. Captured
 in DD#63 + task `regex-interpolation-delimiters` (rewritten).
 
+**DD#60 #1 (argv snapshot → out-param):** surfacing the array-last
+out-param pattern (mapfile/read -a/`match S P arr`) prompted reworking the
+argv snapshot from `array a=$(argv N)` (the lone command-sub→array case)
+to `argv [N] a` (array last). Deletes the `ArgvSnapshot` command-sub→array
+machinery; splat `$(argv)` for-in and scalars `$(arg N)`/`$(argc)`
+unchanged. DD#60 revision note + task `argv-snapshot-to-outparam`.
+
 ### Session 2026-06-17 — map iteration: dynamic subscript + flat-literal + keys taint
 
 DG: "fix the map iteration bugs." The filed `map-iteration-builtins-broken`
