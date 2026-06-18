@@ -125,11 +125,19 @@ function form.
   **`${var:s/RE/SUB/g}`** → `$(gsub $var "RE" "SUB")`.
 
 The `s///` sugar is `/`-delimited **only** and **always interpolating**
-(the fields desugar to double-quoted, i.e. interpolating, args). A `/`
-inside RE/SUB, a non-interpolating field, or any other delimiter → drop
-to `$(sub …)` / `$(gsub …)` and quote the args however you like (or use
-`\x2f` for a literal `/`). Desugaring happens in lower/transform (like
-the other builtins), keeping the parser thin.
+(the fields desugar to double-quoted, i.e. interpolating, args). To make
+this work inside the `${var:s/…}` form, the **lexer treats `/` as a
+quote-delimiter after `:s`** (Path B, 2026-06-18): exactly as `'…'` and
+`"…"` already suppress brace-counting inside `${…}`, the `:s/RE/SUB/[g]`
+payload is scanned as three `/`-delimited fields, so a bare `{`/`}` inside
+RE or SUB is literal and does **not** close the expansion. The closing
+`}` is recognised only after the third `/` (and optional flags). A
+**malformed** payload — fewer than the required delimiters, or
+unterminated before the close — is a **compile error**, not a silent
+fallback (see Compromises). A literal `/` (the delimiter itself) is
+`\x2f`, or drop to the `$(sub …)` / `$(gsub …)` function form, which needs
+no delimiter and can quote the args however you like. Desugaring happens
+in lower/transform (like the other builtins), keeping the parser thin.
 
 ## Compromises (deliberate)
 
@@ -137,12 +145,19 @@ the other builtins), keeping the parser thin.
   use `fgrep` / `grep -F "$needle"`. `==` is exact (DD#62), `=~`/`match`
   is regex; there is no literal-regex mode.
 - **No case-insensitive** flag (engine limitation).
-- A literal **unescaped** `}` inside the `${var:s/…}` **expression** sugar
-  closes the expansion early (SB4014) — the lexer depth-counts braces at
-  scan time, *before* desugaring. Escape it as `\}` (the lexer passes
-  `\`+char through and the engine reads `\}` as a literal `}`), or use the
-  statement form `var =~ s/…` or the function form `$(sub …)` — both have
-  no enclosing braces.
+- A bare `{`/`}` inside the `${var:s/RE/SUB/}` payload is **literal**, not
+  a brace-count event: under Path B (above) the lexer scans the
+  `:s`-payload as `/`-delimited fields, so `${var:s/a}b/z/}` substitutes
+  `a}b`→`z` — it does *not* truncate. The closing `}` is the one after the
+  third `/`. A **malformed** `:s` payload — e.g. `${var:s/a}` (one
+  delimiter, unterminated) — is a **compile error** (the `:s` structure is
+  incomplete), whereas a *well-formed* `${…}` followed by ordinary text —
+  e.g. `${var:s/x/z/}tail` — simply **concatenates** the literal `tail`.
+  The error is localised to the `:s` payload shape; it is never "leftover
+  chars after `}`". No `\}` is needed (DD#64 removes it). A literal `/`
+  (the delimiter) is `\x2f`; for anything more, use the statement form
+  `var =~ s/…` or the function form `$(sub …)`, which have no enclosing
+  braces.
 
 ## Reality check (why interpolation "just works" here)
 

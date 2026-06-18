@@ -63,14 +63,25 @@ replaces every backslash escape:
 - Removes `scan_dq_escape`, the `parse_regex_rhs` standalone-`\` drop, and
   the word-char escape. (`$'…'` and EOL handlers stay.)
 
-## Deferred to the var-modifier vet
+## Resolved by the var-modifier vet (DD#65) + Path B (DD#63)
 
-How `\` behaves *inside* `${var:OP}` operands — the brace-scan `\}`
-(lexer.rs:660) and the `/`-operator `\/` (`find_unescaped_slash`,
-expr.rs:741) — is resolved during the vet of the `${var:OP}` family
-(`vet-var-modifiers`); some operators (e.g. the `/` glob-replace) are
-drop candidates. The brace `}` residual is covered there (`\x7d`, a
-variable, or the `$(sub …)` form).
+How `\` behaves *inside* `${var:OP}` operands is now settled, and **both**
+in-operand backslash handlers are removed:
+
+- The `/`-operator `\/` (`find_unescaped_slash`, expr.rs:741) goes with the
+  `/`-glob-replace op itself — DD#65 **drops** `${v/a/b}` (redundant with
+  `sub`/`gsub`), which deletes `find_unescaped_slash`.
+- The brace-scan `\}` (lexer.rs:660) is **removed outright** — no kept
+  operator needs it. `:s/…}` protects a bare `{`/`}` via **Path B**
+  (DD#63: the lexer treats `/` as a quote-delimiter after `:s`); `:-`
+  includes a literal `}` by **quoting** (`${foo:-'a}b'}` → `a}b`, since the
+  lexer already skips `'…'`); `:off:len` takes integer operands. A literal
+  `}` that still needs a byte escape is `\x7d` (DD#63 `\xnn`), but it is no
+  longer load-bearing for either kept operator.
+
+So the `${var:OP}` family is fully clean under "no shell backslash": the
+only backslash interpreters left anywhere are `$'…'`, `\`-at-EOL, and the
+regex engine.
 
 ## See also
 - DD#63 — regex builtins; `\` in regex args follows this DD.

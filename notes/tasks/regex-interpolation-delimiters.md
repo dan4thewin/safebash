@@ -11,6 +11,7 @@ gates:
   - "var =~ s/RE/SUB/ -> var=$(sub $var RE SUB); .../g -> gsub; ${var:s/...} -> $(sub|gsub ...)"
   - "captures: $(match x p)=whole match; `match x p arr` fills arr=[whole,g1..g9] (array last, like mapfile/read -a); sub/gsub replacement \\0..\\9"
   - "\\xnn (2 hex) in regcomp; \\x + non-hex = error"
+  - "Path B: lexer treats / as a quote-delimiter after :s — bare {/} in RE/SUB are literal; malformed :s payload is a compile error (not a silent fallback)"
   - "native spec clean (only cf.c7/cf.c8); rust suite no net regression; complexity gate green"
 ---
 
@@ -76,6 +77,28 @@ false test is separately broken — `dd62-test-expr-ssavalue` F1).
 - **F2** no case-insensitive flag: there is no `i` — `match ABC "abc"` does NOT match
   (assert `n`), documenting the limitation.
 
+### G. `${var:s/…}` brace handling (Path B) + malformed → error
+
+The lexer treats `/` as a quote-delimiter after `:s` (DD#63 Path B), so a
+bare `{`/`}` inside RE/SUB is literal and does **not** close the `${…}`.
+A malformed `:s` payload is a **compile error**; legitimate literal text
+after a *valid* `}` still concatenates. (This is the family that silently
+miscompiled before — `${var:s/a}b/z/}` → `a}bb/z/}`, rc 0.)
+
+- **G1** bare `}` in RE is literal: `var='a}b'; echo "${var:s/a}b/z/}"` → `z`
+  (today: truncates to `a}bb/z/}`).
+- **G2** bare `}` in SUB is literal: `var=axb; echo "${var:s/x/}/}"` → `a}b`.
+- **G3** bare `{` in RE is literal: `var='a{b'; echo "${var:s/a{b/z/}"` → `z`.
+- **G4** literal text after a valid close concatenates (NOT an error):
+  `var=axb; echo "${var:s/x/z/}tail"` → `azbtail`.
+- **G5** malformed/unterminated `:s` → compile error:
+  `var=ab; echo "${var:s/a}"` → rejected (`rc != 0`, non-empty err),
+  *not* a silent `$var`+literal fallback.
+- **G6** literal `/` (the delimiter) via `\xnn`:
+  `var='a/b'; echo "${var:s/a\\x2fb/z/}"` → `z` (depends on E1's `\xnn`).
+- **G7** no-brace regression unchanged: `x="hello world"; echo "${x:s/world/earth/}"`
+  → `hello earth` (existing 39.3 — Path B scans the 3 fields identically).
+
 ## Implementation outline (after specs are red)
 
 1. **Builtins** `match` / `sub` / `gsub` (BuiltinCmd variants, like
@@ -98,10 +121,24 @@ false test is separately broken — `dd62-test-expr-ssavalue` F1).
    `=~`/regex paths in the test codegen (they move to the `match`
    command). Coordinate with `dd62-test-expr-ssavalue`.
 
+7. **Lexer Path B** (`scan_brace_expansion`): when the operator after the
+   var name is `:s`, scan the payload as three `/`-delimited fields (then
+   optional flags, then `}`), suppressing brace-depth counting inside the
+   fields — `/` acts like `'…'`/`"…"` already do (lexer.rs:658-659). The
+   closing `}` is recognised only after the third `/`. An incomplete
+   payload (missing delimiters / unterminated before `}` or newline) emits
+   a diagnostic, not a silent fallback to `$var`+literal. This is what
+   makes G1–G5 pass and lets DD#64 delete the brace-scan `\}` (lexer.rs:660).
+
 ## Open (DD#63)
 
 `case` `=glob` desugaring to a glob/match builtin; `\` + non-digit in the
-replacement (literal vs error); the `Resub` stride.
+replacement (literal vs error); the `Resub` stride. **Path B opens:** the
+diagnostic code for a malformed `:s` payload (new SB code vs. reuse); and
+whether the trailing `/` in `s/RE/SUB/` is mandatory (so `${var:s/a/b}`,
+missing the third delimiter, is the G5 error) or optional (treat a missing
+third `/` as empty flags). Recommend mandatory — it makes "three fields"
+the single well-formedness rule — but DG decides.
 
 ## Cross-refs
 

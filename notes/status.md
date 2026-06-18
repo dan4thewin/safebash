@@ -12,6 +12,34 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-18 — Path B (`/`-quote after `:s`) + `${var:-}` is a word
+
+Empirically re-checked the brace-`}` cases. Two findings: (1) the
+`${var:OP}` lexer **does** look inside `${}` — `scan_brace_expansion`
+brace-counts and skips `'…'`/`"…"`/`\…`, which is why `${foo:-'a}b'}`
+finds the right close but `${var:s/a}b/z/}` silently miscompiles to
+`a}bb/z/}` (the bare regex `}` ends the count). (2) `:-` defaults are
+taken **verbatim** today — quotes leak (`${foo:-'abc'}` → `'abc'`), no
+interpolation (`${foo:-$bar}` → `$bar`).
+
+**DG decisions captured:**
+- **Path B** (DD#63): the lexer treats `/` as a quote-delimiter after
+  `:s`, so a bare `{`/`}` inside RE/SUB is literal — `${var:s/a}b/z/}`
+  becomes a *valid* substitution. A malformed `:s` payload is a **compile
+  error**; literal text after a valid `}` still concatenates. This +
+  DD#65 dropping the `/`-glob op makes **both** in-operand backslash
+  handlers removable (`\}` lexer.rs:660, `\/` find_unescaped_slash) —
+  recorded in DD#64 (deferred → resolved).
+- **`${var:-default}` is a word** (DD#65): interpolation + concat +
+  quoting; unquoted `}` closes (single-quote to include), command-subs
+  rejected, arith allowed.
+
+Spec tests specified (TDD, spec-first): `regex-interpolation-delimiters`
+§G (G1–G7: brace handling + malformed→error) and `vet-var-modifiers`
+(V1–V11: `:-`-as-word incl. the `${foo:-'a}b'}` regression, + drop
+diagnostics). Open for DG: malformed-`:s` diagnostic code; whether the
+trailing `/` in `s/RE/SUB/` is mandatory. Notes-only; no code yet.
+
 ### Session 2026-06-17 — [[ ]] design discussion → DD#62 + refactor task
 
 Design discussion (no code) auditing `[[ ]]` operator semantics and the

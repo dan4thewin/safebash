@@ -8,6 +8,7 @@ gates:
   - "each ${var:OP} operator has a recorded keep/drop/rework decision (a DD or addendum)"
   - "for each kept operator: backslash handling under DD#64, operand interpolation, and brace-} behaviour are specified"
   - "dropped operators are rejected with a diagnostic pointing at the replacement"
+  - "TDD: spec tests below (V1-) written first and red before code; :- is a word (interpolation+concat+quoting), unquoted } closes, quoted } is literal"
 ---
 
 # vet the `${var:OP}` modifier family
@@ -56,13 +57,49 @@ core but note interactions.
 For each KEEP:
 - DD#64 backslash: operands are verbatim `\` (no `find_unescaped_slash`);
   escaping via quoting + concat; `\xNN` for literal bytes.
-- Operand interpolation: implement textual-first-pass (`$name`/`${name}`)
-  or leave literal? (Currently literal — a gap.)
-- Brace `}`: unbalanced `}` in the operand closes early; `\x7d` / variable
-  / function form as the escape (no `\}` under DD#64).
+- Operand interpolation: `:-` is a **word** — interpolation + concat +
+  quoting (DD#65), implemented as part of the `:-` rework. `:s/` fields
+  interpolate (DD#63). `:off:len` operands are integers.
+- Brace `}`: handled per-operator, **not** by `\}` (DD#64 removes it).
+  `:-` includes a literal `}` by **quoting** (`${foo:-'a}b'}` → `a}b`);
+  `:s/` protects `{`/`}` via **Path B** (`/`-delimited payload, DD#63);
+  `:off:len` takes integers. `\x7d` remains a byte-escape but is required
+  by neither.
 
 For each DROP: reject with a diagnostic naming the replacement
 (`/`-replace → `${v:s/…}` or `sub`/`gsub`; strip/case → builtin or regex).
+
+## Spec tests to write first
+
+Spec-first (TDD). Kept-op behaviour from DD#65; `:s/` brace handling lives
+in `regex-interpolation-delimiters` section G (don't duplicate it here).
+
+### `:-` default is a word (DD#65)
+
+- **V1** plain literal: `echo "${foo:-abc}"` → `abc`.
+- **V2** single-quote strips the quotes and protects `}`:
+  `echo "${foo:-'a}b'}"` → `a}b` (today: literal `'a}b'`). Canonical
+  regression (the original report):
+  `a=${foo:-'a}b'}; b='a}b'; [[ $a == $b ]] && echo yes` → `yes`.
+- **V3** interpolation: `bar=hi; echo "${foo:-$bar}"` → `hi`
+  (today: literal `$bar`).
+- **V4** concatenation: `x=a; y=b; echo "${foo:-$x$y}"` → `ab`.
+- **V5** unquoted `}` closes; trailing text concatenates:
+  `echo "${foo:-a}b"` → `ab`.
+- **V6** command-sub rejected in a default: `echo "${foo:-$(echo x)}"` →
+  compile error (external capture is always tainted → would always need
+  bless → useless; DD#65).
+- **V7** set var ignores the default: `foo=hi; echo "${foo:-x}"` → `hi`.
+
+### Drops reject with a diagnostic (DD#65, exact codes TBD)
+
+- **V8** `:=` rejected: `echo "${foo:=x}"` → `rc != 0`, err names `:-`.
+- **V9** prefix/suffix strip rejected: `x=abc; echo "${x#a}"` → `rc != 0`,
+  err names `basename`/`dirname` or `${x:s/…}`.
+- **V10** `/`-glob-replace rejected: `x=abc; echo "${x/a/Z}"` → `rc != 0`,
+  err names `${x:s/…}` / `sub`.
+- **V11** first-char case rejected: `x=abc; echo "${x^}"` → `rc != 0`, err
+  names `toupper`/`tolower`.
 
 ## Notes
 
