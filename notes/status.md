@@ -12,6 +12,40 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-18 (cont.) — `case` redesign direction + 2 Janet case bugs
+
+Design discussion (DG-driven) on `case`. Confirmed `case` is **literally
+sugar for an if-chain**: `build_dispatch_chain` emits, per arm, a
+`TestExpr value =glob pattern` → `Branch{body, next}`; `*` = uncond goto;
+`a|b` = OR-chain; `;&`/`;;&` add fall-through/resume edges. `=glob` →
+`sash_fnmatch` (whole-string, `*`-only) is **case's sole user** of
+`fnmatch_impl` (after DD#62 removes `[[ ]]` glob). Filename globbing is a
+*separate* fn (`sash_glob`, getdents) used by `arr=(*.sh)` — it survives.
+
+**Direction (DG):**
+- `case` becomes **exact-match** dispatch — not glob, not regex. Glob was
+  only ever meant for filenames (`*`/`*.ext`). This dissolves the P0
+  glob-pattern bug (`bug-case-pattern-glob-not-validated`) and supersedes
+  the fix-(a) glob-rejection note + the case-as-regex idea.
+- **Abandon `;&` and `;;&`** (fall-through/resume): untested, and the
+  Janet/C backends never honoured them. Removing them simplifies
+  `lower_case` (drops `resume` check-blocks, fall-through wiring) and the
+  `SemiAmp`/`DblSemiAmp` tokens + `CaseItem.fallthrough/resume`.
+- Envisioned core: a clean **(key → command-group) pairs** primitive
+  (exact, first-match, no fall-through), with bash `case…esac` (literal +
+  `|` + `*` + `;;` subset) as **sugar** over it. Glob/regex patterns and
+  `;&`/`;;&` are dropped, not sugar.
+
+**Open (DG to settle):** the clean-core surface syntax (new keyword
+`match`/`switch`/`when` + brace groups vs. regularized `case…esac`);
+keep bash `case` as sugar vs. clean break (converter rewrites); default
+token (`*`/`else`/`default`); multi-key spelling; literal-only vs
+interpolated keys. **No DD yet** — write once syntax is locked.
+
+**Bugs found:** (1) Janet miscompiles multi-pattern arms `a|b)` → `_`
+catch-all → filed `bug-janet-case-multipattern` (P1; affects arms we're
+keeping). (2) Janet/C ignore `;&`/`;;&` — mooted by the abandonment.
+
 ### Session 2026-06-18 — Path B (`/`-quote after `:s`) + `${var:-}` is a word
 
 Empirically re-checked the brace-`}` cases. Two findings: (1) the
