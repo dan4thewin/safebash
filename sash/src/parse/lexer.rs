@@ -729,28 +729,18 @@ impl Scanner {
         }
     }
 
-    /// Handle a `\` inside a `"…"` string. Per POSIX, `\` is literal
-    /// except before `"`, `\`, `$`, `` ` ``, or newline (line continuation).
+    /// Handle a `\` inside a `"…"` string. Per DD#64 the shell does **no**
+    /// backslash processing in `"…"` — `\` is a verbatim literal byte. The
+    /// one exception is `\<newline>` (line continuation), where both bytes
+    /// vanish. `\"`, `\\`, `\$`, `` \` `` no longer collapse; a literal `"`,
+    /// `$`, etc. is produced by quoting + concatenation (`'"'`, `'$'`).
     fn scan_dq_escape(&mut self, literal: &mut String) {
-        if self.pos + 1 >= self.source.len() {
+        if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'\n' {
+            // Line continuation — both bytes vanish.
+            self.pos += 2;
+        } else {
             literal.push('\\');
             self.pos += 1;
-            return;
-        }
-        let next = self.source[self.pos + 1];
-        match next {
-            b'"' | b'\\' | b'$' | b'`' => {
-                literal.push(next as char);
-                self.pos += 2;
-            }
-            b'\n' => {
-                // Line continuation — both bytes vanish.
-                self.pos += 2;
-            }
-            _ => {
-                literal.push('\\');
-                self.pos += 1;
-            }
         }
     }
 

@@ -1010,9 +1010,9 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
 /// Emit an expression as an inline Janet value.
 fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
     match &expr.kind {
-        ExprKind::Literal(s) => format!("\"{}\"", s),
+        ExprKind::Literal(s) => format!("\"{}\"", escape_for_janet_string(s)),
         ExprKind::SimpleExpansion(var) => emit_expr_simple_expansion(var, ctx),
-        ExprKind::SingleQuoted(s) => format!("\"{}\"", s),
+        ExprKind::SingleQuoted(s) => format!("\"{}\"", escape_for_janet_string(s)),
         ExprKind::DoubleQuoted(parts) => emit_expr_double_quoted(parts, ctx),
         ExprKind::ParameterExpansion(pe) => emit_param_expansion_inline(pe, ctx),
         ExprKind::CommandSubstitution(stmts) => emit_expr_command_substitution(stmts, ctx),

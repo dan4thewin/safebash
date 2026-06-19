@@ -7,6 +7,25 @@ unquoted, `'…'`, `"…"` — `\` is a verbatim literal byte. Escaping shell
 metacharacters is done by **quoting and string concatenation**, not
 backslashes. From the 2026-06-17/18 discussion.
 
+## Implementation status (2026-06-19)
+
+**Done** — the core change is `lexer.rs::scan_dq_escape`: inside `"…"`,
+`\` is now a verbatim byte (only `\<newline>` continuation survives), so
+`"a\\b"`→`a\\b`, `"a\$x"`→`a\`+interp, `"a\"…`→`a\`+close. Spec tests
+`spec/wordsplit.sh` 64.1–64.3. Verified zero net regression (native specs
+417/2 unchanged; rust clean baseline 186, only flaky `oracle_pipeline`).
+
+**Already compliant (no change needed)** — bare words (`scan_word_chars`
+pushes `\` verbatim and breaks at spaces, so `a\b`→`a\b`, `a\ b`→two
+words) and regex-within-a-word (`a\.b` tokenises as one `Word`, the `\`
+survives). The DD over-counted these as removals.
+
+**Still deferred** to DD#63/DD#65 — the brace-scan `\}` (lexer.rs:660,
+plus the in-`"…"` `${}` skip at ~824 and `skip_balanced_dquote`) and the
+`/`-operator `\/` (`find_unescaped_slash`). These are `${var:OP}`
+brace/glob-matching machinery removed when Path B (DD#63) and the
+`/`-glob-replace drop (DD#65) land.
+
 > Scope: this covers backslash in *string* and *regex-argument* contexts.
 > Backslash *inside* `${var:OP}` expansions — the brace-scan `\}` and the
 > `/`-operator `\/` (`find_unescaped_slash`) — is **deferred to the

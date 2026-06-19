@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=31
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -138,6 +138,18 @@ run_sash 'array a=(x y); for x in $a[@]; do echo "$x"; done'
 # ws.q5 bare brace splat ${a[@]} accepted (input convenience; canonical is @a)
 run_sash 'array a=(x y); for x in ${a[@]}; do echo "$x"; done'
 [[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk ws.q5
+
+# 64.1 DD#64: backslash is a literal byte in "..." — no \\ collapse
+run_sash 'echo "a\\b"'
+[[ $rc = 0 && $out = 'a\\b' && -z $err ]]; chk 64.1
+
+# 64.2 DD#64: $ still interpolates in "..."; the preceding \ stays literal
+run_sash 'x=hi; echo "v\$x"'
+[[ $rc = 0 && $out = 'v\hi' && -z $err ]]; chk 64.2
+
+# 64.3 DD#64: a literal " comes from single-quote concatenation
+run_sash 'echo a'\''"'\''b'
+[[ $rc = 0 && $out = 'a"b' && -z $err ]]; chk 64.3
 
 set -e
 tally
