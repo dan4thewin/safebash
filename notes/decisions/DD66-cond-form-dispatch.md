@@ -70,6 +70,17 @@ Mechanically the dispatch merge block joins the catching-construct set in
 the SB5012 `$?` state machine (`validate.rs` ~763-811). This is the same
 machinery `case.merge` already used — it transfers, it is not new.
 
+**Composition: statement-only (decided (b), 2026-06-19).** Because the
+dispatch form is a *statement*, not a test, it may **not** appear where a
+boolean is expected — it is a **diagnostic** (new SB code) to use a
+dispatch `[[ … ]]` (groups present) as the condition of `if`/`while`/
+`until`, as the operand of `!`, or as an operand of `&&`/`||`. Otherwise
+its always-`0` status would make such chains silently always-succeed —
+exactly the footgun this construct removes. The fix the diagnostic points
+to: make the dispatch a standalone statement (move the conditional logic
+*inside* a group, or use `if BOOLEAN; then DISPATCH; fi`). The boolean
+form (no groups) remains usable as a condition everywhere, unchanged.
+
 ## Removed
 
 - The `case`/`esac` surface (`parse_case`, `parse_case_item`), the
@@ -125,6 +136,8 @@ arm intends). Bash `*)` → `|| { … }`.
   `is_catching_construct_exit`.
 - Numeric dispatch (`[[ $n -eq 1 { } 2 { } || { } ]]`) — deferred; start
   with `==`/`=~` only.
-- The `case`-removed diagnostic code (new SB code).
+- Two new SB codes to assign: the `case`-removed reserved-word
+  diagnostic, and the "dispatch `[[ … ]]` used as a condition" diagnostic
+  (statement-only rule, (b)).
 
 See task `dd66-cond-form-dispatch` for the spec-first implementation.

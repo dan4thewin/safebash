@@ -10,6 +10,7 @@ gates:
   - "== is exact equality only (no alternation) in BOTH forms; =~ unanchored regex"
   - "dispatch is a statement + catching construct: $? resets to 0 after (no group-status leak)"
   - "|| { } is the optional default; first-match-wins; no fall-through"
+  - "dispatch form is statement-only — using it as a condition (if/while/until/!/&&/||) is a diagnostic"
   - "case/esac removed (reserved-word diagnostic); =glob/fnmatch_impl/;&/;;& deleted; sash_glob (filenames) untouched"
   - "converter rewrites bash case -> [[ ]] dispatch"
   - "native spec clean; rust suite no net regression; complexity gate green"
@@ -79,10 +80,18 @@ Spec-first. Use the function/`if` forms for booleans where needed.
 
 - **G1** no `{` ⇒ boolean: `x=a; if [[ $x == a && $x != b ]]; then echo y; fi` → `y` (compound boolean intact).
 - **G2** `{` after pattern ⇒ dispatch: A1 above.
-- **G3** outer `||` after `]]` is the normal list-OR, not the default:
-  `x=q; [[ $x == a { echo hit; } ]] || echo outer` → `outer`?  **NOTE:** dispatch resets `$?`=0,
-  so the external `||` does NOT fire — assert output is empty (the dispatch "succeeded" as a statement).
-  (Lock this with DG — it is the statement-form consequence.)
+- **G3** dispatch form is **statement-only** (DD#66 (b)): using it where a
+  boolean is expected is a diagnostic (new SB code), not a silent
+  always-success. All rejected (`rc != 0`, err names the dispatch form):
+  - `[[ $x == a { echo hit; } ]] || echo outer`
+  - `[[ $x == a { echo hit; } ]] && echo outer`
+  - `if [[ $x == a { echo hit; } ]]; then echo t; fi`
+  - `! [[ $x == a { echo hit; } ]]`
+  Fix the diagnostic points to: make the dispatch a standalone statement
+  (logic inside a group, or `if BOOLEAN; then DISPATCH; fi`).
+- **G4** the boolean form is unaffected — `[[ $x == a ]] || echo o`,
+  `if [[ $x == a ]]; then …`, `! [[ $x == a ]]` all still compile
+  (regression).
 
 ## Implementation outline (after specs are red)
 
