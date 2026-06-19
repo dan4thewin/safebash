@@ -12,6 +12,14 @@ gates:
 
 # BUG — case patterns ? and [...] silently produce no-match
 
+> **Superseded by DD#66 (2026-06-19).** `case`/`esac` and glob string-
+> matching are being **removed** — `case` becomes the `[[ … ]]` dispatch
+> form (`==` exact / `=~` regex). This bug dissolves: there is no `case`
+> glob to validate or mis-match. The earlier fix-(a) (extend SB5006 to
+> case patterns) is moot. If DD#66 is deferred, the validator one-liner
+> remains the interim fix; otherwise close this on DD#66 landing. cf.c7/c8
+> get rewritten/removed by `dd66-cond-form-dispatch`.
+
 ## Discovery
 
 Found while writing `spec/control_flow.sh` (cf.c7, cf.c8). Adjacent

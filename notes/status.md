@@ -12,6 +12,38 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-19 — DD#66: `[[ ]]` dispatch form replaces `case`
+
+The `case` redesign converged. Instead of a new `switch` keyword (brace-
+overload) or regularized `case`, **`[[ ]]` becomes sash's single match
+construct in two forms** (DG's idea):
+- **boolean test** `[[ $x == foo ]]` — yields `$?` (unchanged).
+- **dispatch statement** `[[ $x == foo { … } bar { … } || { … } ]]` —
+  runs one matching group. `{` after the first pattern selects dispatch.
+
+Decisions (DD#66): `==` is **strict exact equality** in both forms (no
+alternation — that would make the boolean form a degenerate glob); `=~`
+is **unanchored** regex (alternation = `^(a|b)$`, not `^a|b$`); first-
+match-wins, **no fall-through**; `|| { }` is the optional default (`||`
+can't collide with a pattern; literal is `'||'`). The dispatch form is a
+**catching construct** — `$?` resets to 0 after (the existing
+`is_catching_construct_exit` machinery, `codegen/entry.rs:263`), so there
+is no ambiguity over "which group set `$?`"; the boolean form yields the
+test result. This is DG's clean statement-vs-test separation.
+
+**Removed:** `case`/`esac` (keyword → reserved-word diagnostic), `;&`/`;;&`
+(`SemiAmp`/`DblSemiAmp`, `CaseItem.fallthrough/resume`), the `=glob` op +
+`emit_glob` + **`fnmatch_impl`** (case's sole user). **Kept:** filename
+glob `sash_glob` (separate fn — glob stays for *filenames*, its intent).
+Lowering reuses `ir::Case`/`build_dispatch_chain` with the op carried from
+the `[[ ]]` operator (`==`/`=~` instead of `=glob`). Converter rewrites
+bash `case` → dispatch.
+
+Captured in **DD#66** (`cond-form-dispatch`, candidate) + task
+`dd66-cond-form-dispatch` (spec-first). Supersedes the case-as-regex idea,
+the fix-(a) glob note, and DD#63's open case-desugar; subsumes the Janet
+multi-pattern bug. No compiler code yet.
+
 ### Session 2026-06-18 (cont.) — `case` redesign direction + 2 Janet case bugs
 
 Design discussion (DG-driven) on `case`. Confirmed `case` is **literally

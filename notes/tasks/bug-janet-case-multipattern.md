@@ -63,11 +63,13 @@ Emit a real alternation for multi-pattern arms — Janet `match` accepts
 body. Add janet_tests coverage (a multi-key arm + a subject that must
 fall to a later arm).
 
-**Likely subsumed by the case redesign.** The exact-match `case`
-rework (clean key→command-group core + bash sugar) rewrites the Janet
-case emitter anyway; this repro should become a regression gate for
-that work. If the redesign lands first, fix it there; otherwise fix
-`emit_case_item` directly.
+**Subsumed by DD#66** (`dd66-cond-form-dispatch`). The exact-match `case`
+rework — `case` becomes the `[[ … ]]` dispatch form — rewrites the Janet
+case emitter entirely; this repro is a **regression gate** for that work.
+Under DD#66 `==` has no alternation (so `a|b` literal multi-key goes away)
+and `=~` alternation is a single regex `^(a|b)$` — either way the
+`patterns.len() > 1 → _` bug cannot recur. If DD#66 lands first, fix it
+there; otherwise fix `emit_case_item` directly.
 
 ## References
 
