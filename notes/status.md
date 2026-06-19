@@ -12,6 +12,30 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-19 — DD#68 brace-block control flow + sweep task
+
+DG green-lit brace `{ }` bodies for `if`/`while`/`until`/`for` (matching
+`fn name { }` and DD#66 dispatch), with `then/fi`/`do/done` kept as DD#67
+1-to-1 sugar. **Parser-only** — both forms build the existing
+`If`/`While`/`For` IR, so `$?`-catching, `break`/`continue`, redirects are
+unchanged.
+
+The `if`-condition ambiguity was resolved: **the condition is a command
+list ending at the first top-level `{` (the body); a `{ }` group may not be
+a condition.** Unambiguous because sash already (1) reserves `{` (`echo {`,
+`echo a{` are SB4014; literal is `'{'`), (2) has no `{a,b}` brace-
+expansion, (3) bans dispatch-`[[ ]]` as a condition (DD#66 b). Group
+conditions cost nothing to drop — `if { a; b; }; then c` ≡ `if a; b { c }`.
+`else if` accepted (= `else` + nested `if`); no mixing `then`↔`{` in one
+construct.
+
+Captured: **DD#68** (`brace-control-flow`, candidate) + spec-first task
+`dd68-brace-control-flow`. Also filed `dd67-bash-sugar-sweep` (DG-approved):
+re-add `name() { }` as 1-to-1 sugar for `fn name { }`, add the convert/
+canonicalize switch (default preserves, `--native` normalizes), and sweep
+the rejected bash forms (backticks, `[ ]`, `let`, …) against the DD#67
+test. No compiler code yet.
+
 ### Session 2026-06-19 (cont.) — DD#67 native-syntax / 1-to-1 sugar policy
 
 DG set an adoption-hedging **syntax policy**: a bash form that is an
