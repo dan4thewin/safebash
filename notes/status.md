@@ -12,6 +12,30 @@ _Regenerated 2026-06-03 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-19 (cont.) — DD#67 native-syntax / 1-to-1 sugar policy
+
+DG set an adoption-hedging **syntax policy**: a bash form that is an
+**unambiguous 1-to-1 thin sugar** over a native sash form is **kept** (both
+accepted); the **default preserves** the user's familiar form, and a
+**convert switch** normalizes to native-only. Forms that can't map 1-to-1
+(need semantic translation or are ambiguous) are **dropped**, and the
+converter rewrites them.
+
+The 1-to-1 test resolves the open `then/fi/do/done` question (**keep** —
+pure bracket alias over `{ }`, DD#68) and confirms the `case…esac` /
+`;&`/`;;&` **drops** (DD#66 — glob≠exact/regex isn't 1-to-1). It also
+surfaces re-add candidates the policy invites reconsidering: `name() { }`
+(currently only `fn name { }` is accepted) and backticks `` `…` `` for
+`$(…)`. Semantic breaks (DD#64 no-backslash, DD#62 `==` exact) are NOT
+sugar candidates — they change meaning, not spelling.
+
+Captured as **DD#67** (`native-syntax-sugar-policy`, candidate). Default =
+preserve (sugar round-trips through `--emit-source`); convert switch =
+native-only (build on `--emit-source`/`sash-convert`). Next: DD#68
+brace-block control flow applies it (`if/while/until/for` brace bodies,
+`then/fi/do/done` as sugar). Open: `name()` re-add, backticks, flag name,
+a rejection sweep. No compiler code yet.
+
 ### Session 2026-06-19 — DD#66: `[[ ]]` dispatch form replaces `case`
 
 The `case` redesign converged. Instead of a new `switch` keyword (brace-
