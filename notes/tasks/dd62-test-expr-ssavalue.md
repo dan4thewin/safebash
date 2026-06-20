@@ -149,3 +149,50 @@ regardless. Coordinate the `parse_regex_rhs` edits between the two.
   and the arithmetic-subscript / `${!a[@]}` gaps noted there.
 - Mirror the same operand changes in `emit_c.rs` (c backend has its own
   `[[ ]]` lowering: emit_c.rs:1040 fnmatch, subscript emit) for parity.
+
+## Section A — concrete refactor plan (scoped 2026-06-19)
+
+Goal: `[[ ]]` value operands reach codegen as **pre-lowered `SsaValue`**
+(so subscripts use `assoc_arrays` key-typing via `lower_value` →
+`lower_subscript_value`), killing the duplicate `lower_subscript` and the
+`[[ ${m[$k]} ]]` bug. The SSA value path already does subscripts right
+(`subscript_to_value` sets `is_integer_key = !assoc_arrays.contains`).
+
+**New SSA repr** (`ssa.rs`, near SsaValue:459):
+```rust
+pub enum SsaTest {
+    Unary { op: String, operand: SsaValue },
+    Binary { left: SsaValue, op: String, right: SsaTestRhs },
+    Not(Box<SsaTest>), And(Box<SsaTest>, Box<SsaTest>),
+    Or(Box<SsaTest>, Box<SsaTest>), Paren(Box<SsaTest>),
+}
+pub enum SsaTestRhs { Value(SsaValue), Pattern(String) } // Pattern = =~ / =glob raw text
+```
+Change `SsaInst::Test(TestExpr)` → `Test(SsaTest)` (ssa.rs:228) AND the
+bless inst `test: TestExpr` (ssa.rs:293) → `SsaTest` (same lowering path).
+
+**Transform** (`transform/expressions.rs` or a new `tests.rs`): add
+`pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest`.
+Value leaves via `expr_to_value`; for `Binary` right, `=~`/`=glob` →
+`SsaTestRhs::Pattern(expr_to_string(right))`, else `Value(expr_to_value)`.
+Apply at the 7 creation sites — control_flow.rs:79,715,739;
+pipelines.rs:50,104,208,255 — and the bless site. `statements.rs:77`
+`TestExpr::Not` → `SsaTest::Not`.
+
+**setup.rs**: rewrite `intern_test_expr` to walk `SsaTest` using
+`intern_value` for value leaves and `intern_value(&SsaValue::Literal(p))`
+for Pattern leaves. Replace `scan_test_for_vars` body with
+`scan_value_for_vars` over the value leaves (Pattern has no vars).
+
+**codegen/tests.rs**: `lower_test_expr` consumes `&SsaTest`; add a
+`func_constants` param (dispatch.rs:98 has `ctx.func_constants`). Value
+operands → `lower_value`; `=~`/`=glob` Pattern → lower the raw string as a
+literal (reuse `lower_literal_value`). emit_eq/ne use two `lower_value`s.
+**Delete** `lower_pair`, `lower_expr_value`(values.rs:20)/`lower_subscript`
+(values.rs:182) once the test path no longer calls them (check no other
+callers — `lower_concat` uses `lower_expr_value`, so it may need rerouting
+to `lower_value`, OR keep `lower_expr_value` if still used elsewhere; the
+gate is specifically `lower_subscript` deleted).
+
+**Verify**: `[[ ${m[$k]} ]]` spec (task A1–A5 in `spec/types.sh`); full
+native+janet+c spec clean; rust suite no net regression; complexity gate.
