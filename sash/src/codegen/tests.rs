@@ -320,13 +320,6 @@ fn lower_pair(
     (l_ptr, l_len, r_ptr, r_len)
 }
 
-fn right_is_quoted(right: &crate::ir::Expr) -> bool {
-    matches!(
-        &right.kind,
-        crate::ir::ExprKind::DoubleQuoted(_) | crate::ir::ExprKind::SingleQuoted(_)
-    )
-}
-
 #[allow(clippy::too_many_arguments)]
 fn emit_eq(
     left: &crate::ir::Expr,
@@ -338,8 +331,8 @@ fn emit_eq(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    // In [[ ]] context: quoted RHS → exact match, unquoted → glob match.
-    let is_quoted = right_is_quoted(right);
+    // DD#62: `==`/`=` are exact string equality — no glob. Pattern
+    // matching is via `=~`.
     let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
         left,
         right,
@@ -350,15 +343,7 @@ fn emit_eq(
         externs,
         exit_status_var,
     );
-    if is_quoted {
-        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-    } else {
-        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-        let call = builder
-            .ins()
-            .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
-        builder.inst_results(call)[0]
-    }
+    emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -401,7 +386,8 @@ fn emit_regex(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    let is_quoted = right_is_quoted(right);
+    // DD#62: `=~` RHS is always a regex — quoting is grouping, not
+    // literalization.
     let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
         left,
         right,
@@ -412,13 +398,9 @@ fn emit_regex(
         externs,
         exit_status_var,
     );
-    if is_quoted {
-        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-    } else {
-        let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
-        let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
-        builder.inst_results(call)[0]
-    }
+    let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
+    let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
+    builder.inst_results(call)[0]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -432,7 +414,7 @@ fn emit_ne(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    let is_quoted = right_is_quoted(right);
+    // DD#62: `!=` is exact string inequality — no glob.
     let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
         left,
         right,
@@ -443,15 +425,7 @@ fn emit_ne(
         externs,
         exit_status_var,
     );
-    let matched = if is_quoted {
-        emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-    } else {
-        let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-        let call = builder
-            .ins()
-            .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
-        builder.inst_results(call)[0]
-    };
+    let matched = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
     let one = builder.ins().iconst(I64, 1);
     builder.ins().isub(one, matched)
 }

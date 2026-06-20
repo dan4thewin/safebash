@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=34
+plan=38
 echo "1..$plan" >&3
 
 set +e
@@ -150,6 +150,22 @@ run_sash 'x=hi; echo "v\$x"'
 # 64.3 DD#64: a literal " comes from single-quote concatenation
 run_sash 'echo a'\''"'\''b'
 [[ $rc = 0 && $out = 'a"b' && -z $err ]]; chk 64.3
+
+# 62.1 DD#62: == is exact equality (regression)
+run_sash 'if [[ abc == abc ]]; then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 62.1
+
+# 62.2 DD#62: unquoted RHS of == is NO LONGER a glob — literal
+run_sash 'if [[ abc == ab* ]]; then echo glob; else echo exact; fi'
+[[ $rc = 0 && $out = exact && -z $err ]]; chk 62.2
+
+# 62.3 DD#62: literal star matches literal star
+run_sash 'if [[ "ab*" == ab* ]]; then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 62.3
+
+# 62.4 DD#62: != is exact too (abc != literal ab*)
+run_sash 'if [[ abc != ab* ]]; then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 62.4
 
 set -e
 tally

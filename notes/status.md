@@ -12,6 +12,25 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-19 (cont.) — DD#62 sub-unit 1 + janet printf fix
+
+**DD#62 sub-unit 1** (of several): `==`/`!=` are now **exact-only** in
+native codegen (`emit_eq`/`emit_ne` drop the `fnmatch` glob branch — the c
+backend was already exact via `sash_strcmp`, so this aligns native↔c);
+`emit_regex` is always regex (dead quoted-literal branch removed); and
+`right_is_quoted` is **deleted** (zero callers). Spec `wordsplit.sh`
+62.1–62.4. `case`'s `=glob`/`fnmatch` is untouched (its own op). Remaining
+DD#62: operand→`SsaValue` + delete `lower_subscript`, remove `-v`, `=~`
+quoting/spaces, the `&&/||` chain.
+
+Also fixed a **janet printf regression** the DD#64 escape fix introduced
+(`printf '%s\n'` got a literal `\n` once literals were escaped): the
+format string now has printf escapes interpreted before Janet-escaping
+(`interpret_printf_escapes`). Caught by `oracle_general_command`.
+
+Verified zero net regression: native 417/2 (cf.c7/c8), janet 125, c 62,
+rust 186 (only flaky `oracle_*`). Next DD#62 sub-units, then DD#63.
+
 ### Session 2026-06-19 (cont.) — DD#64 implemented (no shell backslash in "…")
 
 First implementation phase of the DD#62–68 arc. **DD#64 done.** The only
