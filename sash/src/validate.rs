@@ -305,7 +305,7 @@ fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Di
     }
     for arg in &c.args {
         if let ExprKind::Test(ref test) = arg.kind {
-            check_numeric_test_ops(test, diags);
+            check_unsupported_test_ops(test, diags);
             check_regex_literal(test, span, diags);
         }
     }
@@ -523,9 +523,21 @@ fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>)
     }
 }
 
-/// SB5019: reject numeric comparison operators in [[ ]]
-fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
+/// SB5019/SB5028: reject operators that are not supported in `[[ ]]`
+/// (numeric comparisons → `(( ))`; `-v` → `-n`).
+fn check_unsupported_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
     match test {
+        TestExpr::Unary { op, operand } => {
+            // DD#62: `-v` is removed — an unset/empty variable is just the
+            // empty string, so `-n` is the test.
+            if op == "-v" {
+                diags.push(Diagnostic::error_span(
+                    operand.span,
+                    "SB5028",
+                    "'-v' is not supported — use -n to test for a non-empty value".to_string(),
+                ));
+            }
+        }
         TestExpr::Binary { left, op, right: _ } => {
             const NUMERIC_OPS: &[&str] = &["-gt", "-lt", "-ge", "-le", "-eq", "-ne"];
             if NUMERIC_OPS.contains(&op.as_str()) {
@@ -535,13 +547,12 @@ fn check_numeric_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
                 ));
             }
         }
-        TestExpr::Not(inner) => check_numeric_test_ops(inner, diags),
+        TestExpr::Not(inner) => check_unsupported_test_ops(inner, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            check_numeric_test_ops(l, diags);
-            check_numeric_test_ops(r, diags);
+            check_unsupported_test_ops(l, diags);
+            check_unsupported_test_ops(r, diags);
         }
-        TestExpr::Paren(inner) => check_numeric_test_ops(inner, diags),
-        _ => {}
+        TestExpr::Paren(inner) => check_unsupported_test_ops(inner, diags),
     }
 }
 

@@ -16,14 +16,17 @@ gates:
 
 # [[ ]] value operands → SsaValue (DD#62)
 
-> **Progress (2026-06-19).** Sub-unit 1 landed: **`==`/`!=` are exact-only**
+> **Progress (2026-06-19).** Sub-units landed: (1) **`==`/`!=` exact-only**
 > (native `emit_eq`/`emit_ne` drop the `fnmatch` glob branch — c was
-> already exact; this aligns them), **`emit_regex` is always regex** (the
-> dead quoted-literal branch removed), and **`right_is_quoted` is deleted**
-> (zero callers). Spec `wordsplit.sh` 62.1–62.4. Verified zero net
-> regression. **Still TODO:** the operand→`SsaValue` refactor + delete
-> `lower_subscript` (section A), remove `-v` (E), `=~` quoting/spaces
-> (C/D, needs `parse_regex_rhs`), and the `&&/||` chain (F).
+> already exact; this aligns them), `emit_regex` always regex (dead
+> quoted-literal branch removed), `right_is_quoted` deleted (zero callers);
+> spec `wordsplit.sh` 62.1–62.4. (2) **`-v` removed** — rejected in
+> validation with **SB5028** (`check_unsupported_test_ops`, extends the
+> SB5019 numeric-op check), `emit_var_set_test` deleted; spec 62.5/62.6,
+> SUBSET.md row. Verified zero net regression both times. **Still TODO:**
+> the operand→`SsaValue` refactor + delete `lower_subscript` (section A),
+> `=~` quoting/spaces (C/D, needs `parse_regex_rhs`), and the `&&/||`
+> chain (F).
 
 Implements DD#62 and, as a consequence, retires the duplicate test-path
 lowering subsystem. Spec-first per repo convention: **write all the

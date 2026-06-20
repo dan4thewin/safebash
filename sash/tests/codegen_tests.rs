@@ -3172,18 +3172,23 @@ echo "${x:(-5)}""#,
 }
 
 #[test]
-fn test_v_set() {
-    let (out, _) = run_bash_native(
-        r#"x="hello"; [[ -v x ]] && echo "set" || echo "unset""#,
-        &[],
+fn test_v_rejected() {
+    // DD#62: `-v` is removed — rejected at compile time with SB5028 (use -n).
+    use std::io::Write;
+    let tmp = "/tmp/sash_v_rejected.sh";
+    let mut f = std::fs::File::create(tmp).unwrap();
+    writeln!(f, "#!/bin/bash").unwrap();
+    writeln!(f, r#"x="hello"; [[ -v x ]] && echo set"#).unwrap();
+    drop(f);
+    let sash = env!("CARGO_BIN_EXE_sash");
+    let output = Command::new(sash).arg(tmp).output().expect("run sash");
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !output.status.success(),
+        "expected compile failure, got success"
     );
-    assert_eq!(out, "set\n");
-}
-
-#[test]
-fn test_v_unset() {
-    let (out, _) = run_bash_native(r#"[[ -v y ]] && echo "set" || echo "unset""#, &[]);
-    assert_eq!(out, "unset\n");
+    common::expect_diag(&stderr, "SB5028");
+    let _ = std::fs::remove_file(tmp);
 }
 
 #[test]

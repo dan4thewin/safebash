@@ -227,6 +227,7 @@ handled).
 | SB5025 | `$(argv)`/`$(argv N)` in non-splat context | array splat — only a for-in sole source or `array a=$(argv N)` snapshot; use `$(arg N)` for one arg |
 | SB5026 | `"${a[@]}"` / `"$(argv)"` (quoted splat) | quotes yield one string (DD#22) — use the bare `@a` / `$(argv)` |
 | SB5027 | for-in mixing `$(argv)` with other words | a tainted argv splat must be the sole for-in source (DD#60) |
+| SB5028 | `[[ -v x ]]` | removed (DD#62) — an unset/empty variable is the empty string; use `[[ -n $x ]]` |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |
 | SB4015 | `${var@...}` transforms | Use `${var^^}` / `${var,,}` instead |
 | — | `[ ]` single bracket | Coerced to `[[ ]]` |

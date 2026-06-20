@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=38
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -166,6 +166,14 @@ run_sash 'if [[ "ab*" == ab* ]]; then echo y; fi'
 # 62.4 DD#62: != is exact too (abc != literal ab*)
 run_sash 'if [[ abc != ab* ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.4
+
+# 62.5 DD#62: -v is removed (rejected, not silently -n)
+run_sash 'x=5; if [[ -v x ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.5
+
+# 62.6 DD#62: -n is the way to test a non-empty value
+run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk 62.6
 
 set -e
 tally

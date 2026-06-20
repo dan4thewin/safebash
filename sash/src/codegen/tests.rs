@@ -186,7 +186,6 @@ fn lower_test_unary(
         "-n" | "?" => emit_len_cmp(builder, len, IntCC::SignedGreaterThan),
         "-z" => emit_len_cmp(builder, len, IntCC::Equal),
         "-t" => emit_isatty_test(builder, module, externs, ptr, len),
-        "-v" => emit_var_set_test(builder, vars, operand),
         other => match file_test_op_code(other) {
             Some(code) => emit_file_test(builder, module, externs, ptr, len, code),
             None => panic!("ICE: unimplemented unary test operator: {}", other),
@@ -257,30 +256,6 @@ fn emit_isatty_test(
     let isatty_ref = module.declare_func_in_func(externs.isatty, builder.func);
     let call2 = builder.ins().call(isatty_ref, &[fd_val]);
     builder.inst_results(call2)[0]
-}
-
-/// `-v name`: 1 ⇔ highest-version slot for `name` exists and holds a
-/// non-empty value; 0 otherwise (including any non-name operand).
-fn emit_var_set_test(
-    builder: &mut FunctionBuilder,
-    vars: &HashMap<String, VarSlot>,
-    operand: &crate::ir::Expr,
-) -> cranelift_codegen::ir::Value {
-    let var_name = match &operand.kind {
-        crate::ir::ExprKind::Literal(s) => s.as_str(),
-        crate::ir::ExprKind::SimpleExpansion(s) => s.as_str(),
-        _ => "",
-    };
-    if var_name.is_empty() {
-        return builder.ins().iconst(I64, 0);
-    }
-    let Some(sv) = super::types::find_var_slot(vars, var_name) else {
-        return builder.ins().iconst(I64, 0);
-    };
-    let v_len = builder.use_var(sv.str_len());
-    let zero = builder.ins().iconst(I64, 0);
-    let cmp = builder.ins().icmp(IntCC::SignedGreaterThan, v_len, zero);
-    builder.ins().uextend(I64, cmp)
 }
 
 #[allow(clippy::too_many_arguments)]
