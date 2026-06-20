@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=40
+plan=44
 echo "1..$plan" >&3
 
 set +e
@@ -174,6 +174,28 @@ run_sash 'x=5; if [[ -v x ]]; then echo y; fi'
 # 62.6 DD#62: -n is the way to test a non-empty value
 run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.6
+
+# 62.7 && / || are left-associative: (false && A) || B runs B
+run_sash 'false && echo A || echo B'
+[[ $rc = 0 && $out = B && -z $err ]]; chk 62.7
+
+# 62.8-62.10 nested && / || chains — NATIVE only. The janet/c backends
+# evaluate chains by language value-truthiness, not exit status (and
+# don't set the status after every command), so a nested chain mis-runs
+# branches. Pre-existing; see bug-andor-backend-chain-status. Native
+# (primary) is the reference.
+if in_modes native; then
+    run_sash '[[ 1 = 1 ]] && echo A || echo B'
+    [[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
+    run_sash 'false && echo A || echo B && echo C'
+    [[ $rc = 0 && $out = $'B\nC' && -z $err ]]; chk 62.9
+    run_sash 'true || echo A && echo B'
+    [[ $rc = 0 && $out = B && -z $err ]]; chk 62.10
+else
+    skip_chk 62.8
+    skip_chk 62.9
+    skip_chk 62.10
+fi
 
 set -e
 tally

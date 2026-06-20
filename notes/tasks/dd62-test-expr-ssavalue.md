@@ -25,8 +25,10 @@ gates:
 > SB5019 numeric-op check), `emit_var_set_test` deleted; spec 62.5/62.6,
 > SUBSET.md row. Verified zero net regression both times. **Still TODO:**
 > the operand→`SsaValue` refactor + delete `lower_subscript` (section A),
-> `=~` quoting/spaces (C/D, needs `parse_regex_rhs`), and the `&&/||`
-> chain (F).
+> and `=~` quoting/spaces (C/D, needs `parse_regex_rhs`). The `&&/||`
+> chain (F) was a separate root cause — **fixed** (left-associative parse,
+> `bug-andor-right-associative`) and it surfaced a janet/c backend chain
+> bug, **filed** (`bug-andor-backend-chain-status`).
 
 Implements DD#62 and, as a consequence, retires the duplicate test-path
 lowering subsystem. Spec-first per repo convention: **write all the

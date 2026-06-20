@@ -12,6 +12,27 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-19 (cont.) — &&/|| left-associativity fix (DD#62 F)
+
+`A && B || C` parsed **right-associative** (`A && (B || C)`), so
+`false && echo A || echo B` ran neither branch. Root cause:
+`parser.rs::binary_list_op` parsed the RHS via the full `parse_statement`
+(recursing into more list ops). Fixed: `parse_trailing_list_op` is now a
+left-associative loop over single operands (`parse_list_operand` =
+command + pipeline/redirects, no trailing list op); `binary_list_op`
+removed. Compound operands still rejected (SB4023). Native verified across
+mixed/deep chains. Filed `bug-andor-right-associative` for the analysis.
+
+Surfaced (and filed) a **pre-existing** janet/c backend bug
+(`bug-andor-backend-chain-status`): those backends evaluate chains by
+language value-truthiness, not exit status (e.g. `print`→nil makes `||`
+mis-fire), and don't set the status after every command. Native (SSA
+`lower_list_stmt`) is correct. The nested-chain spec tests (wordsplit
+62.8–62.10) are guarded `in_modes native`; 62.7 runs all modes.
+
+Zero net regression: native 417/2 (cf.c7/c8), janet 125, c 62, rust 186
+(flaky oracle only).
+
 ### Session 2026-06-19 (cont.) — DD#62 sub-unit 1 + janet printf fix
 
 **DD#62 sub-unit 1** (of several): `==`/`!=` are now **exact-only** in

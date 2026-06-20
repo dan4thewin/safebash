@@ -1622,9 +1622,7 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
 
 /// Check for trailing redirects, pipes, and list operators after any statement.
 fn maybe_wrap_redirects(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
-    let redirects = parse_trailing_redirects(scanner, stmt.span)?;
-    let mut result = wrap_with_redirects(stmt, redirects);
-    result = parse_trailing_pipeline(scanner, result)?;
+    let result = wrap_pipeline_part(scanner, stmt)?;
     parse_trailing_list_op(scanner, result)
 }
 
@@ -1726,32 +1724,61 @@ fn parse_trailing_pipeline(
 /// matching `ListOp`. `&` produces `Background` with a synthetic
 /// `true` right-hand side; the binary ops parse one more statement
 /// (defaulting to `true` if the input is malformed).
-fn parse_trailing_list_op(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
-    match scanner.peek().token {
-        Tok::AndAnd => binary_list_op(scanner, stmt, ListOp::And),
-        Tok::OrOr => binary_list_op(scanner, stmt, ListOp::Or),
-        Tok::Amp => Ok(background_list_op(scanner, stmt)),
-        _ => Ok(stmt),
+fn parse_trailing_list_op(
+    scanner: &mut Scanner,
+    mut left: Statement,
+) -> Result<Statement, Diagnostic> {
+    // `&&` / `||` are equal-precedence and LEFT-associative:
+    // `A && B || C` is `(A && B) || C`. Loop, folding left.
+    loop {
+        let op = match scanner.peek().token {
+            Tok::AndAnd => ListOp::And,
+            Tok::OrOr => ListOp::Or,
+            Tok::Amp => return Ok(background_list_op(scanner, left)),
+            _ => return Ok(left),
+        };
+        let span = left.span;
+        scanner.next(); // consume && / ||
+        skip_terminators(scanner);
+        let right = parse_list_operand(scanner)?.unwrap_or_else(|| Statement::true_cmd(span));
+        left = Statement {
+            kind: StmtKind::List(List {
+                op,
+                left: Box::new(left),
+                right: Box::new(right),
+            }),
+            span,
+        };
     }
 }
 
-fn binary_list_op(
-    scanner: &mut Scanner,
-    left: Statement,
-    op: ListOp,
-) -> Result<Statement, Diagnostic> {
-    let span = left.span;
-    scanner.next();
+/// Parse one `&&`/`||` chain operand: a command + its pipeline/redirects,
+/// but NOT a trailing list operator (the caller loops, left-associative).
+fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     skip_terminators(scanner);
-    let right = parse_statement(scanner)?.unwrap_or(Statement::true_cmd(span));
-    Ok(Statement {
-        kind: StmtKind::List(List {
-            op,
-            left: Box::new(left),
-            right: Box::new(right),
-        }),
-        span,
-    })
+    if scanner.at_eof() {
+        return Ok(None);
+    }
+    let start = scanner.peek().span.start;
+    let tok = scanner.peek().token.clone();
+    let span = span_from(scanner, start);
+    let stmt = match dispatch_statement(scanner, tok, span)? {
+        Some(s) => s,
+        None => return Ok(None),
+    };
+    if is_compound(&stmt.kind) {
+        // Compounds can't take a postfix `&&`/`||`/redirect/pipe (SB4023/…).
+        reject_compound_postfix(stmt, scanner)
+    } else {
+        Ok(Some(wrap_pipeline_part(scanner, stmt)?))
+    }
+}
+
+/// Redirects + pipeline (`|`), but NOT trailing list operators.
+fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
+    let redirects = parse_trailing_redirects(scanner, stmt.span)?;
+    let result = wrap_with_redirects(stmt, redirects);
+    parse_trailing_pipeline(scanner, result)
 }
 
 fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {
