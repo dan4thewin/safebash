@@ -196,3 +196,28 @@ gate is specifically `lower_subscript` deleted).
 
 **Verify**: `[[ ${m[$k]} ]]` spec (task A1–A5 in `spec/types.sh`); full
 native+janet+c spec clean; rust suite no net regression; complexity gate.
+
+### A — the bless-all wrinkle (handle with care)
+
+Three consumers share the test-lowering path: `SsaInst::Test` (`[[ ]]`),
+`Bless` (ssa.rs:290), and **`BlessAll`** (ssa.rs:302). `Test`/`Bless` are
+mechanical. `BlessAll`'s `test` references per-element **binders**
+(`binders: Vec<String>`, e.g. `$x` / `$k`,`$v`) that are bound at runtime
+in the codegen loop, *not* regular SSA vars — so `expr_to_value`'s
+`state.lookup(binder)` would mis-resolve them.
+
+Options for `BlessAll`:
+- **(a)** Make `test_to_ssa` binder-aware: pass the binder names; emit
+  `SsaValue::Var(VarRef::raw(binder))` (an unversioned ref the BlessAll
+  codegen already binds) instead of `state.lookup`. Cleanest — keeps one
+  lowering path. Requires a `VarRef` form that codegen resolves against the
+  loop-bound binder slots.
+- **(b)** Keep `BlessAll.test` raw `TestExpr` and give it a *narrow*
+  bless-only test lowering that doesn't touch `lower_subscript` (binder
+  tests are scalar predicates — `[[ $x =~ p ]]`, `[[ -n $v ]]` — and rarely
+  subscript). Then `lower_subscript` can still be deleted for the `[[ ]]`
+  path. Less clean (two paths) but lower-risk.
+
+Recommend (a) if the `VarRef::raw` form is easy; else (b). This is the one
+part that is not a mechanical conversion — do it deliberately and verify
+the DD#61 bless-all spec (`taint.sh`) stays green.
