@@ -225,7 +225,7 @@ pub enum SsaInst {
     },
     /// Test expression from [[ ]]. Preserved through SSA so codegen
     /// can emit inline comparisons instead of shelling out.
-    Test(crate::ir::TestExpr),
+    Test(SsaTest),
 
     /// phi node
     Phi(PhiNode),
@@ -290,7 +290,7 @@ pub enum SsaInst {
     Bless {
         target: VarRef,
         source: VarRef,
-        test: crate::ir::TestExpr,
+        test: SsaTest,
     },
     /// DD#61: `bless x in a [[…]]` / `bless k v in m [[…]]` — validate
     /// every element of an array/map against a per-element predicate.
@@ -301,8 +301,12 @@ pub enum SsaInst {
     /// instead; when true the boolean is left for a surrounding branch.
     BlessAll {
         source: VarRef,
-        binders: Vec<String>,
-        test: crate::ir::TestExpr,
+        /// Versioned, globally-unique loop-binder refs (indexed: `[value]`;
+        /// map: `[key, value]`). Transform assigns fresh versions so the
+        /// predicate's operands resolve to the binder slots codegen creates,
+        /// not to an unrelated same-named SSA version (DD#61 shadowing).
+        binders: Vec<VarRef>,
+        test: SsaTest,
         is_map: bool,
         if_form: bool,
     },
@@ -535,6 +539,35 @@ pub enum SsaValue {
         array: String,
         index: VarRef,
     },
+}
+
+/// A `[[ ]]` test with operands **pre-lowered to `SsaValue`** (DD#62).
+/// Value operands take the ordinary SSA value path at codegen
+/// (`lower_value`), so subscripts use `assoc_arrays` key-typing. Only
+/// `=~` / `=glob` keep a raw pattern string.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SsaTest {
+    Unary {
+        op: String,
+        operand: SsaValue,
+    },
+    Binary {
+        left: SsaValue,
+        op: String,
+        right: SsaTestRhs,
+    },
+    Not(Box<SsaTest>),
+    And(Box<SsaTest>, Box<SsaTest>),
+    Or(Box<SsaTest>, Box<SsaTest>),
+    Paren(Box<SsaTest>),
+}
+
+/// The right operand of a `[[ ]]` binary test: a value (`==`/`!=`/`<`/`>`)
+/// or a raw pattern (`=~` regex / `=glob` case glob).
+#[derive(Debug, Clone, PartialEq)]
+pub enum SsaTestRhs {
+    Value(SsaValue),
+    Pattern(String),
 }
 
 /// A basic block: a straight-line sequence of instructions with

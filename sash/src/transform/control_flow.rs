@@ -1,6 +1,6 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{expr_to_string, expr_to_value};
+use super::expressions::{expr_to_string, expr_to_value, test_to_ssa};
 use super::helpers::insert_phis_two_branch;
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
@@ -76,7 +76,9 @@ fn lower_if_bless(
     // test-result var for the branch below.
     match &kind {
         Kind::Scalar(_) => {
-            ssa.block_mut(block).insts.push(SsaInst::Test(test.clone()));
+            ssa.block_mut(block)
+                .insts
+                .push(SsaInst::Test(test_to_ssa(&test, state)));
         }
         Kind::Coll {
             array,
@@ -84,10 +86,16 @@ fn lower_if_bless(
             is_map,
         } => {
             let source = state.lookup(array);
+            // Fresh, unique binder versions (see push_bless_all); restore so
+            // the binders stay loop-local.
+            let snap = state.snapshot();
+            let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
+            let ssa_test = test_to_ssa(&test, state);
+            state.restore(&snap);
             ssa.block_mut(block).insts.push(SsaInst::BlessAll {
                 source,
-                binders: binders.clone(),
-                test: test.clone(),
+                binders: binder_refs,
+                test: ssa_test,
                 is_map: *is_map,
                 if_form: true,
             });
@@ -110,11 +118,15 @@ fn lower_if_bless(
     match &kind {
         Kind::Scalar(var) => {
             let source_ref = state.lookup(var);
+            // Resolve the predicate before defining the target version so
+            // `$var` binds to the source (emit_bless evaluates the test
+            // before the target slot exists). See dispatch.rs::emit_bless.
+            let ssa_test = test_to_ssa(&test, state);
             let target_ref = state.define(var);
             ssa.block_mut(then_block).insts.push(SsaInst::Bless {
                 target: target_ref,
                 source: source_ref,
-                test: test.clone(),
+                test: ssa_test,
             });
         }
         Kind::Coll { array, .. } => {
@@ -572,7 +584,7 @@ pub(super) fn lower_case(
         merge_block,
     );
 
-    build_dispatch_chain(c, ssa, &case_blocks, &check_blocks, merge_block);
+    build_dispatch_chain(c, ssa, state, &case_blocks, &check_blocks, merge_block);
 
     let no_match_path = wire_no_match_path(c, ssa, state, &pre_state, &check_blocks, merge_block);
 
@@ -651,45 +663,65 @@ fn wire_case_exits(
 fn build_dispatch_chain(
     c: &Case,
     ssa: &mut SsaProgram,
+    state: &VersionState,
     case_blocks: &[BlockId],
     check_blocks: &[BlockId],
     merge_block: BlockId,
 ) {
-    let case_value_expr = c.value.clone();
+    let value_ssa = expr_to_value(&c.value, state);
 
     for (i, item) in c.items.iter().enumerate() {
-        let current = check_blocks[i];
         let next_check = if i + 1 < check_blocks.len() {
             check_blocks[i + 1]
         } else {
             merge_block
         };
+        emit_dispatch_arm(
+            ssa,
+            i,
+            item,
+            &value_ssa,
+            check_blocks[i],
+            case_blocks[i],
+            next_check,
+        );
+    }
+}
 
-        if is_wildcard_arm(item) {
-            ssa.block_mut(current).terminator = Terminator::Goto(case_blocks[i]);
-            continue;
-        }
-
-        if item.patterns.len() == 1 {
-            emit_single_pattern_branch(
-                ssa,
-                current,
-                &case_value_expr,
-                &item.patterns[0],
-                case_blocks[i],
-                next_check,
-            );
-        } else {
-            emit_multi_pattern_chain(
-                ssa,
-                i,
-                current,
-                &case_value_expr,
-                &item.patterns,
-                case_blocks[i],
-                next_check,
-            );
-        }
+/// Wire one `case` arm's check block: wildcard → unconditional goto;
+/// single pattern → one glob branch; multiple → a `=glob` test chain.
+fn emit_dispatch_arm(
+    ssa: &mut SsaProgram,
+    arm_idx: usize,
+    item: &CaseItem,
+    value: &SsaValue,
+    current: BlockId,
+    case_block: BlockId,
+    next_check: BlockId,
+) {
+    if is_wildcard_arm(item) {
+        ssa.block_mut(current).terminator = Terminator::Goto(case_block);
+        return;
+    }
+    if item.patterns.len() == 1 {
+        emit_single_pattern_branch(
+            ssa,
+            current,
+            value,
+            &item.patterns[0],
+            case_block,
+            next_check,
+        );
+    } else {
+        emit_multi_pattern_chain(
+            ssa,
+            arm_idx,
+            current,
+            value,
+            &item.patterns,
+            case_block,
+            next_check,
+        );
     }
 }
 
@@ -699,20 +731,25 @@ fn is_wildcard_arm(item: &CaseItem) -> bool {
         .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
 }
 
+fn glob_test(value: &SsaValue, pattern: &Expr) -> SsaTest {
+    SsaTest::Binary {
+        left: value.clone(),
+        op: "=glob".to_string(),
+        right: SsaTestRhs::Pattern(expr_to_string(pattern)),
+    }
+}
+
 fn emit_single_pattern_branch(
     ssa: &mut SsaProgram,
     current: BlockId,
-    value: &Expr,
+    value: &SsaValue,
     pattern: &Expr,
     true_block: BlockId,
     false_block: BlockId,
 ) {
-    let test = crate::ir::TestExpr::Binary {
-        left: Box::new(value.clone()),
-        op: "=glob".to_string(),
-        right: Box::new(pattern.clone()),
-    };
-    ssa.block_mut(current).insts.push(SsaInst::Test(test));
+    ssa.block_mut(current)
+        .insts
+        .push(SsaInst::Test(glob_test(value, pattern)));
     ssa.block_mut(current).terminator = Terminator::Branch {
         condition: "__test".to_string(),
         true_block,
@@ -724,19 +761,16 @@ fn emit_multi_pattern_chain(
     ssa: &mut SsaProgram,
     arm_idx: usize,
     current: BlockId,
-    value: &Expr,
+    value: &SsaValue,
     patterns: &[Expr],
     case_block: BlockId,
     next_check: BlockId,
 ) {
     let mut pat_current = current;
     for (pi, pat) in patterns.iter().enumerate() {
-        let test = crate::ir::TestExpr::Binary {
-            left: Box::new(value.clone()),
-            op: "=glob".to_string(),
-            right: Box::new(pat.clone()),
-        };
-        ssa.block_mut(pat_current).insts.push(SsaInst::Test(test));
+        ssa.block_mut(pat_current)
+            .insts
+            .push(SsaInst::Test(glob_test(value, pat)));
 
         let (true_block, false_block) = if pi + 1 < patterns.len() {
             let next_pat = ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1));

@@ -698,7 +698,12 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             let r = lower_value_as_int(e, right, types);
             emit_arith_op_c(e, *op, &l, &r)
         }
-        _ => "0 /* TODO value_as_int */".to_string(),
+        _ => {
+            // Fallback (e.g. ${arr arrlen}, subscripts): lower as a string
+            // then sash_atoi. Mirrors codegen's lower_value_as_int fallback.
+            let (ptr, len) = lower_value_as_str(e, value, types);
+            format!("sash_atoi({}, {})", ptr, len)
+        }
     }
 }
 
@@ -959,104 +964,123 @@ fn emit_terminator(out: &mut String, term: &Terminator) {
 // Test expressions ([[ ... ]])
 // ═══════════════════════════════════════════════════════════════
 
-/// Lower a `TestExpr` to a C i64 expression returning 0 or 1.
-/// Mirrors `lower_test_expr` from codegen/tests.rs:98.
+/// Lower an `SsaTest` to a C i64 expression returning 0 or 1.
+/// Mirrors `lower_test_expr` from codegen/tests.rs.
 ///
-/// Phase 2 scope: -n, -z, -eq/-ne/-gt/-lt/-ge/-le, = and != with
-/// quoted RHS, And/Or/Not/Paren. Unquoted-RHS pattern matching
-/// (fnmatch path) and file tests (-f, -d, etc.) routed through
-/// sash_fnmatch / sash_file_test deferred to Phase 3.
-fn lower_test_expr(e: &mut Emit, test: &crate::ir::TestExpr, types: &VarTypes) -> String {
-    use crate::ir::TestExpr;
+/// DD#62: operands are pre-lowered `SsaValue`s; the binary RHS may be a
+/// literal regex/glob `Pattern`. Numeric ops (`-eq` etc.) are rejected by
+/// SB5019 before codegen, so no integer-comparison path is emitted here.
+fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
     match test {
-        TestExpr::Binary { left, op, right } => lower_test_binary(e, left, op, right, types),
-        TestExpr::Unary { op, operand } => lower_test_unary(e, op, operand, types),
-        TestExpr::Not(inner) => {
-            // codegen/tests.rs:129: result = isub(iconst(1), inner_val).
+        SsaTest::Binary { left, op, right } => lower_test_binary(e, left, op, right, types),
+        SsaTest::Unary { op, operand } => lower_test_unary(e, op, operand, types),
+        SsaTest::Not(inner) => {
+            // codegen/tests.rs: result = isub(iconst(1), inner_val).
             // C: (1 - inner). Since inner is 0/1, this yields 1/0.
             let v = lower_test_expr(e, inner, types);
             format!("(1 - ({}))", v)
         }
-        TestExpr::And(a, b) => {
-            // codegen/tests.rs:142: band(va, vb). Bitwise AND of 0/1
-            // values. C: (a & b). Use & rather than && to mirror
-            // codegen's bit-level op exactly.
+        SsaTest::And(a, b) => {
+            // codegen: band(va, vb). Bitwise AND of 0/1 values.
             let va = lower_test_expr(e, a, types);
             let vb = lower_test_expr(e, b, types);
             format!("(({}) & ({}))", va, vb)
         }
-        TestExpr::Or(a, b) => {
+        SsaTest::Or(a, b) => {
             let va = lower_test_expr(e, a, types);
             let vb = lower_test_expr(e, b, types);
             format!("(({}) | ({}))", va, vb)
         }
-        TestExpr::Paren(inner) => lower_test_expr(e, inner, types),
+        SsaTest::Paren(inner) => lower_test_expr(e, inner, types),
     }
 }
 
-/// Lower a binary test expression. Numeric ops (-eq..-le) → integer
-/// comparison via lower_value_as_int on both sides. String ops
-/// (=, ==, !=) → sash_strcmp. Unquoted RHS for = / ==
-/// would route through sash_fnmatch (pattern match) — Phase 3.
-fn lower_test_binary(
+/// C comparison operator for a numeric `[[ ]]` test operator, or `None`
+/// if `op` is not numeric. Mirrors codegen/tests.rs::numeric_cc.
+fn numeric_c_op(op: &str) -> Option<&'static str> {
+    Some(match op {
+        "-eq" => "==",
+        "-ne" => "!=",
+        "-lt" => "<",
+        "-le" => "<=",
+        "-gt" => ">",
+        "-ge" => ">=",
+        _ => return None,
+    })
+}
+
+/// Lower a numeric binary test (operands as integers). Reached via
+/// synthesized loop-bound tests (`__ai -lt ${arr arrlen}`); user numeric
+/// ops in `[[ ]]` are rejected by SB5019 before codegen.
+fn lower_numeric_test_c(
     e: &mut Emit,
-    left: &crate::ir::Expr,
-    op: &str,
-    right: &crate::ir::Expr,
+    left: &SsaValue,
+    c_op: &str,
+    right: &SsaTestRhs,
     types: &VarTypes,
 ) -> String {
-    if matches!(op, "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le") {
-        let l = ir_expr_as_int(e, left, types);
-        let r = ir_expr_as_int(e, right, types);
-        let c_op = match op {
-            "-eq" => "==",
-            "-ne" => "!=",
-            "-gt" => ">",
-            "-lt" => "<",
-            "-ge" => ">=",
-            "-le" => "<=",
-            _ => unreachable!(),
-        };
-        return format!("(({}) {} ({}) ? 1 : 0)", l, c_op, r);
-    }
-    if matches!(op, "=" | "==" | "!=") {
-        let (lp, ll) = ir_expr_as_str(e, left, types);
-        let (rp, rl) = ir_expr_as_str(e, right, types);
-        let cmp = format!("sash_strcmp({}, {}, {}, {})", lp, ll, rp, rl);
-        return if op == "!=" {
-            format!("(({}) != 0 ? 1 : 0)", cmp)
-        } else {
-            // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match.
-            // We invert: (cmp == 0) ? 1 : 0.
-            format!("(({}) == 0 ? 1 : 0)", cmp)
-        };
-    }
-    // case pattern matching: =glob and !=glob. Mirrors codegen
-    // emit_glob (codegen/tests.rs:367) — sash_fnmatch(pattern, str).
-    // Note arg order: pattern is RHS, string is LHS.
-    if matches!(op, "=glob" | "!=glob") {
-        let (lp, ll) = ir_expr_as_str(e, left, types);
-        let (rp, rl) = ir_expr_as_str(e, right, types);
-        let cmp = format!("sash_fnmatch({}, {}, {}, {})", rp, rl, lp, ll);
-        return if op == "!=glob" {
-            format!("(({}) == 0 ? 1 : 0)", cmp)
-        } else {
-            format!("({})", cmp)
-        };
-    }
-    writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
-    "0".to_string()
+    let l = lower_value_as_int(e, left, types);
+    let r = match right {
+        SsaTestRhs::Value(v) => lower_value_as_int(e, v, types),
+        SsaTestRhs::Pattern(_) => "0".to_string(),
+    };
+    format!("(({}) {} ({}) ? 1 : 0)", l, c_op, r)
 }
 
-/// Lower a unary test expression. Phase 2 implements -n and -z;
-/// later phases add -f, -d, -e via sash_file_test (codegen
-/// tests.rs:190 → file_test_op_code).
-fn lower_test_unary(e: &mut Emit, op: &str, operand: &crate::ir::Expr, types: &VarTypes) -> String {
-    let (_ptr, len) = ir_expr_as_str(e, operand, types);
+/// Lower a binary test. Numeric ops (-eq..-le, incl. compiler-synthesized
+/// loop bounds) → integer comparison; string ops (=, ==, !=) → sash_strcmp;
+/// case-dispatch glob (=glob) → sash_fnmatch(pattern, str). Other ops
+/// (=~, <, >, -nt, -ot, -ef) are not yet implemented in the C backend.
+fn lower_test_binary(
+    e: &mut Emit,
+    left: &SsaValue,
+    op: &str,
+    right: &SsaTestRhs,
+    types: &VarTypes,
+) -> String {
+    if let Some(c_op) = numeric_c_op(op) {
+        return lower_numeric_test_c(e, left, c_op, right, types);
+    }
+    let (lp, ll) = lower_value_as_str(e, left, types);
+    let (rp, rl) = test_rhs_as_str(e, right, types);
+    // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match (so invert).
+    // For =glob/!=glob the pattern is the RHS, string the LHS (arg swap).
     match op {
-        // codegen/tests.rs:186: emit_len_cmp(len, IntCC::SignedGreaterThan)
+        "=" | "==" => format!(
+            "((sash_strcmp({}, {}, {}, {})) == 0 ? 1 : 0)",
+            lp, ll, rp, rl
+        ),
+        "!=" => format!(
+            "((sash_strcmp({}, {}, {}, {})) != 0 ? 1 : 0)",
+            lp, ll, rp, rl
+        ),
+        "=glob" => format!("(sash_fnmatch({}, {}, {}, {}))", rp, rl, lp, ll),
+        "!=glob" => format!(
+            "((sash_fnmatch({}, {}, {}, {})) == 0 ? 1 : 0)",
+            rp, rl, lp, ll
+        ),
+        _ => {
+            writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
+            "0".to_string()
+        }
+    }
+}
+
+/// Lower a binary test's RHS to a `(ptr, len)` C expression pair.
+/// A `Pattern` RHS (regex/glob) is a literal string.
+fn test_rhs_as_str(e: &mut Emit, right: &SsaTestRhs, types: &VarTypes) -> CStr {
+    match right {
+        SsaTestRhs::Value(v) => lower_value_as_str(e, v, types),
+        SsaTestRhs::Pattern(p) => (format!("\"{}\"", c_escape(p)), format!("{}", p.len())),
+    }
+}
+
+/// Lower a unary test. Implements -n / -z (and implicit-? bare word);
+/// file tests (-f, -d, -e, …) are not yet implemented in the C backend.
+fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes) -> String {
+    let (_ptr, len) = lower_value_as_str(e, operand, types);
+    match op {
         "-n" | "?" => format!("(({}) > 0 ? 1 : 0)", len),
-        // codegen/tests.rs:187: emit_len_cmp(len, IntCC::Equal)
         "-z" => format!("(({}) == 0 ? 1 : 0)", len),
         _ => {
             writeln!(e.out, "    /* TODO test unary op: {} */", op).unwrap();
@@ -1088,44 +1112,6 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
     }
 }
 
-/// IR Expr → C i64 expression. Mirrors codegen's
-/// `lower_expr_value_as_int` from codegen/values.rs:235.
-fn ir_expr_as_int(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> String {
-    use crate::ir::ExprKind;
-    match &expr.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s
-            .parse::<i64>()
-            .map(|n| n.to_string())
-            .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
-        ExprKind::SimpleExpansion(name) => latest_var_as_int(name, types),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => ir_expr_as_int(e, &parts[0], types),
-        // Special case: ${#arr[@]} (arrlen) calls table_len directly
-        // rather than going through atoi(value-as-string). Mirrors
-        // codegen/values.rs:262-279.
-        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrlen") => {
-            let table_expr = lookup_table_var(&pe.name, types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_n = sash_table_len((SashTable*){tbl});",
-                t = t,
-                tbl = table_expr
-            )
-            .unwrap();
-            format!("{}_n", t)
-        }
-        _ => {
-            writeln!(
-                e.out,
-                "    /* TODO ir_expr_as_int: {:?} */",
-                std::mem::discriminant(&expr.kind)
-            )
-            .unwrap();
-            "0".to_string()
-        }
-    }
-}
-
 /// Look up the highest-version slot for `name` and return its
 /// (ptr, len) C expression pair. For Int vars: route through
 /// sash_itoa via emit_itoa_temp (which requires `e` to emit setup).
@@ -1143,20 +1129,6 @@ fn latest_var_as_str(name: &str, types: &VarTypes) -> CStr {
         // sash_itoa. Currently the test ops requiring this (e.g.
         // [[ "$intvar" = "5" ]]) are rare enough to defer.
         VarType::Int => ("\"\"".to_string(), "0".to_string()),
-    }
-}
-
-/// Look up the highest-version slot for `name` and return its i64
-/// C expression. String vars route through sash_atoi at the use
-/// site; int vars pass through.
-fn latest_var_as_int(name: &str, types: &VarTypes) -> String {
-    let Some(((n, v), vtype)) = highest_version(name, types) else {
-        return "0".to_string();
-    };
-    let base = c_var_name(&n, v);
-    match vtype {
-        VarType::Int => base,
-        VarType::String => format!("sash_atoi({}_ptr, {}_len)", base, base),
     }
 }
 

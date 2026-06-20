@@ -12,8 +12,8 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{atoi_call, lower_expr_value, lower_expr_value_as_int};
-use crate::ir::TestExpr;
+use super::values::{atoi_call, lower_literal_value, lower_value, lower_value_as_int};
+use crate::ssa::{SsaTest, SsaTestRhs, SsaValue};
 
 pub(super) fn emit_string_eq(
     builder: &mut FunctionBuilder,
@@ -94,18 +94,21 @@ pub(super) fn emit_string_eq(
     builder.use_var(result_var)
 }
 
-/// Lower a TestExpr to a Cranelift i64 value (1=true, 0=false).
+/// Lower a `[[ ]]` test (operands pre-lowered to `SsaValue`) to a
+/// Cranelift i64 value (1=true, 0=false).
+#[allow(clippy::too_many_arguments)]
 pub(super) fn lower_test_expr(
-    test: &TestExpr,
+    test: &SsaTest,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
-    #[allow(unused_variables)] exit_status_var: Option<Variable>,
+    exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     match test {
-        TestExpr::Binary { left, op, right } => lower_test_binary(
+        SsaTest::Binary { left, op, right } => lower_test_binary(
             left,
             op,
             right,
@@ -113,48 +116,88 @@ pub(super) fn lower_test_expr(
             module,
             vars,
             literals,
+            func_constants,
             externs,
             exit_status_var,
         ),
-        TestExpr::Unary { op, operand } => lower_test_unary(
+        SsaTest::Unary { op, operand } => lower_test_unary(
             op.as_str(),
             operand,
             builder,
             module,
             vars,
             literals,
+            func_constants,
             externs,
             exit_status_var,
         ),
-        TestExpr::Not(inner) => {
+        SsaTest::Not(inner) => {
             let val = lower_test_expr(
                 inner,
                 builder,
                 module,
                 vars,
                 literals,
+                func_constants,
                 externs,
                 exit_status_var,
             );
             let one = builder.ins().iconst(I64, 1);
             builder.ins().isub(one, val)
         }
-        TestExpr::And(a, b) => {
-            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
-            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
+        SsaTest::And(a, b) => {
+            let va = lower_test_expr(
+                a,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let vb = lower_test_expr(
+                b,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
             builder.ins().band(va, vb)
         }
-        TestExpr::Or(a, b) => {
-            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
-            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
+        SsaTest::Or(a, b) => {
+            let va = lower_test_expr(
+                a,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let vb = lower_test_expr(
+                b,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
             builder.ins().bor(va, vb)
         }
-        TestExpr::Paren(inner) => lower_test_expr(
+        SsaTest::Paren(inner) => lower_test_expr(
             inner,
             builder,
             module,
             vars,
             literals,
+            func_constants,
             externs,
             exit_status_var,
         ),
@@ -164,20 +207,22 @@ pub(super) fn lower_test_expr(
 #[allow(clippy::too_many_arguments)]
 fn lower_test_unary(
     op: &str,
-    operand: &crate::ir::Expr,
+    operand: &SsaValue,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    let (ptr, len) = lower_expr_value(
+    let (ptr, len) = lower_value(
         operand,
         builder,
         module,
         vars,
         literals,
+        func_constants,
         externs,
         exit_status_var,
     );
@@ -258,14 +303,18 @@ fn emit_isatty_test(
     builder.inst_results(call2)[0]
 }
 
+/// Lower a Binary test's operands to `(l_ptr, l_len, r_ptr, r_len)`.
+/// DD#62: operands are pre-lowered `SsaValue`s (the right side may be a
+/// literal regex/glob `Pattern`). All comparisons consume `(ptr, len)`.
 #[allow(clippy::too_many_arguments)]
 fn lower_pair(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
+    left: &SsaValue,
+    right: &SsaTestRhs,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (
@@ -274,380 +323,162 @@ fn lower_pair(
     cranelift_codegen::ir::Value,
     cranelift_codegen::ir::Value,
 ) {
-    let (l_ptr, l_len) = lower_expr_value(
+    let (l_ptr, l_len) = lower_value(
         left,
         builder,
         module,
         vars,
         literals,
+        func_constants,
         externs,
         exit_status_var,
     );
-    let (r_ptr, r_len) = lower_expr_value(
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
+    let (r_ptr, r_len) = match right {
+        SsaTestRhs::Value(v) => lower_value(
+            v,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
+        SsaTestRhs::Pattern(p) => lower_literal_value(p, builder, module, literals),
+    };
     (l_ptr, l_len, r_ptr, r_len)
 }
 
 #[allow(clippy::too_many_arguments)]
-fn emit_eq(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    // DD#62: `==`/`=` are exact string equality — no glob. Pattern
-    // matching is via `=~`.
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_glob(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    // Case pattern glob matching: fnmatch(pattern, string). Note swap.
-    let (s_ptr, s_len, p_ptr, p_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-    let call = builder
-        .ins()
-        .call(fnmatch_ref, &[p_ptr, p_len, s_ptr, s_len]);
-    builder.inst_results(call)[0]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_regex(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    // DD#62: `=~` RHS is always a regex — quoting is grouping, not
-    // literalization.
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
-    let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
-    builder.inst_results(call)[0]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_ne(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    // DD#62: `!=` is exact string inequality — no glob.
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let matched = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
-    let one = builder.ins().iconst(I64, 1);
-    builder.ins().isub(one, matched)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_lex_cmp(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    op: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let strcmp_ref = module.declare_func_in_func(externs.strcmp, builder.func);
-    let call = builder
-        .ins()
-        .call(strcmp_ref, &[l_ptr, l_len, r_ptr, r_len]);
-    let cmp_result = builder.inst_results(call)[0];
-    let zero = builder.ins().iconst(I64, 0);
-    let cc = if op == ">" {
-        IntCC::SignedGreaterThan
-    } else {
-        IntCC::SignedLessThan
-    };
-    let cmp = builder.ins().icmp(cc, cmp_result, zero);
-    builder.ins().uextend(I64, cmp)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_numeric_cmp(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    op: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> cranelift_codegen::ir::Value {
-    let l_int = lower_expr_value_as_int(left, builder, module, vars, literals, externs);
-    let r_int = lower_expr_value_as_int(right, builder, module, vars, literals, externs);
-    let cc = numeric_cc(op);
-    let cmp = builder.ins().icmp(cc, l_int, r_int);
-    builder.ins().uextend(I64, cmp)
-}
-
-fn numeric_cc(op: &str) -> IntCC {
-    match op {
-        "-eq" | "==" => IntCC::Equal,
-        "-ne" | "!=" => IntCC::NotEqual,
-        "-lt" | "<" => IntCC::SignedLessThan,
-        "-le" | "<=" => IntCC::SignedLessThanOrEqual,
-        "-gt" | ">" => IntCC::SignedGreaterThan,
-        "-ge" | ">=" => IntCC::SignedGreaterThanOrEqual,
-        _ => unreachable!(),
-    }
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_file_newer(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
-    let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
-    builder.inst_results(call)[0]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_file_older(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
-    // Swap args: file2 -nt file1.
-    let call = builder.ins().call(fn_ref, &[r_ptr, r_len, l_ptr, l_len]);
-    builder.inst_results(call)[0]
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_file_same(
-    left: &crate::ir::Expr,
-    right: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
-) -> cranelift_codegen::ir::Value {
-    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
-        left,
-        right,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        exit_status_var,
-    );
-    let fn_ref = module.declare_func_in_func(externs.file_same_dev, builder.func);
-    let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
-    builder.inst_results(call)[0]
-}
-
-#[allow(clippy::too_many_arguments)]
 fn lower_test_binary(
-    left: &crate::ir::Expr,
+    left: &SsaValue,
     op: &str,
-    right: &crate::ir::Expr,
+    right: &SsaTestRhs,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
+    // Numeric comparisons compare operands as integers, not strings. These
+    // reach codegen via compiler-synthesized loop-bound tests (e.g. for-in
+    // lowers `__ai -lt ${arr arrlen}`); user-written numeric ops in `[[ ]]`
+    // are rejected earlier by SB5019, but the synthetic ones are not.
+    if let Some(cc) = numeric_cc(op) {
+        let r_val = match right {
+            SsaTestRhs::Value(v) => v,
+            SsaTestRhs::Pattern(_) => {
+                panic!("ICE: numeric test operator {} with a pattern operand", op)
+            }
+        };
+        let l_int = lower_value_as_int(
+            left,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+        );
+        let r_int = lower_value_as_int(
+            r_val,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+        );
+        let cmp = builder.ins().icmp(cc, l_int, r_int);
+        return builder.ins().uextend(I64, cmp);
+    }
+    let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
+        left,
+        right,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
     match op {
-        "=" | "==" => emit_eq(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "=glob" => emit_glob(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "=~" => emit_regex(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "!=" => emit_ne(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        ">" | "<" => emit_lex_cmp(
-            left,
-            right,
-            op,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "-eq" | "-ne" | "-lt" | "-le" | "-gt" | "-ge" | ">=" | "<=" => {
-            emit_numeric_cmp(left, right, op, builder, module, vars, literals, externs)
+        // DD#62: `==`/`=` are exact string equality — no glob. Pattern
+        // matching is via `=~`.
+        "=" | "==" => emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len),
+        // DD#62: `!=` is exact string inequality — no glob.
+        "!=" => {
+            let matched = emit_string_eq(builder, l_ptr, l_len, r_ptr, r_len);
+            let one = builder.ins().iconst(I64, 1);
+            builder.ins().isub(one, matched)
         }
-        "-nt" => emit_file_newer(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "-ot" => emit_file_older(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
-        "-ef" => emit_file_same(
-            left,
-            right,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        ),
+        // Case-dispatch glob (injected by lowering): fnmatch(pattern,
+        // string). Note the arg swap — pattern is the right operand.
+        "=glob" => {
+            let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
+            let call = builder
+                .ins()
+                .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
+            builder.inst_results(call)[0]
+        }
+        // DD#62: `=~` RHS is always a regex — quoting is grouping, not
+        // literalization.
+        "=~" => {
+            let regex_ref = module.declare_func_in_func(externs.regex_match, builder.func);
+            let call = builder.ins().call(regex_ref, &[l_ptr, l_len, r_ptr, r_len]);
+            builder.inst_results(call)[0]
+        }
+        ">" | "<" => {
+            let strcmp_ref = module.declare_func_in_func(externs.strcmp, builder.func);
+            let call = builder
+                .ins()
+                .call(strcmp_ref, &[l_ptr, l_len, r_ptr, r_len]);
+            let cmp_result = builder.inst_results(call)[0];
+            let zero = builder.ins().iconst(I64, 0);
+            let cc = if op == ">" {
+                IntCC::SignedGreaterThan
+            } else {
+                IntCC::SignedLessThan
+            };
+            let cmp = builder.ins().icmp(cc, cmp_result, zero);
+            builder.ins().uextend(I64, cmp)
+        }
+        "-nt" => {
+            let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
+            let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
+            builder.inst_results(call)[0]
+        }
+        "-ot" => {
+            // Swap args: file2 -nt file1.
+            let fn_ref = module.declare_func_in_func(externs.file_newer, builder.func);
+            let call = builder.ins().call(fn_ref, &[r_ptr, r_len, l_ptr, l_len]);
+            builder.inst_results(call)[0]
+        }
+        "-ef" => {
+            let fn_ref = module.declare_func_in_func(externs.file_same_dev, builder.func);
+            let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
+            builder.inst_results(call)[0]
+        }
+        // `=glob`/`=~`/`==`/`!=`/`<`/`>`/file ops are handled above; any
+        // other operator reaching codegen is a compiler bug.
         other => panic!("ICE: unimplemented test operator: {}", other),
     }
+}
+
+/// Condition code for a numeric `[[ ]]` comparison operator, or `None`
+/// if `op` is not a numeric comparison. Only the dash forms occur — the
+/// parser never emits `>=`/`<=` as test operators.
+fn numeric_cc(op: &str) -> Option<IntCC> {
+    Some(match op {
+        "-eq" => IntCC::Equal,
+        "-ne" => IntCC::NotEqual,
+        "-lt" => IntCC::SignedLessThan,
+        "-le" => IntCC::SignedLessThanOrEqual,
+        "-gt" => IntCC::SignedGreaterThan,
+        "-ge" => IntCC::SignedGreaterThanOrEqual,
+        _ => return None,
+    })
 }

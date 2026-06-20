@@ -31,6 +31,7 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
+        let func_constants = ctx.func_constants;
         let test_result_var = ctx.test_result_var;
         let exit_status_var = ctx.exit_status_var;
         let capture_saved_var = ctx.capture_saved_var;
@@ -102,6 +103,7 @@ impl SsaInst {
                     module,
                     vars,
                     literals,
+                    func_constants,
                     externs,
                     Some(exit_status_var),
                 );
@@ -474,7 +476,7 @@ impl SsaInst {
         &self,
         source: &VarRef,
         target: &VarRef,
-        test: &crate::ir::TestExpr,
+        test: &crate::ssa::SsaTest,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -482,6 +484,7 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
+        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         // Runtime bless enforcement: evaluate test on source, abort if false.
         // On pass, copy source value to target (new clean SSA version).
@@ -491,6 +494,7 @@ impl SsaInst {
             module,
             vars,
             literals,
+            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -604,8 +608,8 @@ impl SsaInst {
     fn emit_bless_all(
         &self,
         source: &VarRef,
-        binders: &[String],
-        test: &crate::ir::TestExpr,
+        binders: &[VarRef],
+        test: &crate::ssa::SsaTest,
         is_map: bool,
         if_form: bool,
         builder: &mut FunctionBuilder,
@@ -613,6 +617,7 @@ impl SsaInst {
         ctx: &mut InstCtx,
     ) -> bool {
         let externs = ctx.externs;
+        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
 
@@ -633,15 +638,15 @@ impl SsaInst {
         let init_true = builder.ins().iconst(I64, 1);
         builder.def_var(all_passed, init_true);
 
-        // Fresh binder slots, versioned above any existing same-named var so
-        // they shadow inside the predicate; removed after the loop so the
-        // outer scope is unaffected (DD#61 shadow semantics).
+        // Binder slots use the binders' own (globally-unique) SSA versions,
+        // so the predicate's pre-lowered operand refs resolve to exactly
+        // these slots. Removed after the loop so the outer scope is
+        // unaffected (DD#61 shadow semantics).
         let mut binder_keys = Vec::new();
         let mut binder_ptrs = Vec::new();
         let mut binder_lens = Vec::new();
         for b in binders {
-            let ver = next_slot_version(ctx.vars, b);
-            let key = format!("{}_{}", b, ver);
+            let key = b.display();
             let bp = builder.declare_var(I64);
             let bl = builder.declare_var(I64);
             ctx.vars
@@ -684,6 +689,7 @@ impl SsaInst {
             module,
             ctx.vars,
             ctx.literals,
+            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -1414,22 +1420,6 @@ fn finalize_exec(
     builder
         .ins()
         .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-}
-
-/// Highest existing slot version of `name`, plus one (0 if none). Gives a
-/// bless-all binder a slot version that shadows any same-named variable
-/// for the duration of the predicate (DD#61).
-fn next_slot_version(vars: &std::collections::HashMap<String, VarSlot>, name: &str) -> u32 {
-    let prefix = format!("{}_", name);
-    let mut max: Option<u32> = None;
-    for k in vars.keys() {
-        if let Some(v) = k.strip_prefix(&prefix).and_then(|s| s.parse::<u32>().ok()) {
-            if max.is_none_or(|m| v > m) {
-                max = Some(v);
-            }
-        }
-    }
-    max.map(|m| m + 1).unwrap_or(0)
 }
 
 /// Call `sash_table_value` / `sash_table_key` `(table, index)` and return

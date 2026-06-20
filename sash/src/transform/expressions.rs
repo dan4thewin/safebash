@@ -25,7 +25,40 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     }
 }
 
-/// DD#40: $EPOCHSECONDS coerces to a sash-native builtin call.
+/// DD#62: pre-lower a `[[ ]]` `TestExpr` into an `SsaTest` whose value
+/// operands are `SsaValue` (so codegen uses the ordinary value path,
+/// with `assoc_arrays`-correct subscript key-typing). `=~`/`=glob` right
+/// operands stay as a raw pattern string.
+pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
+    match test {
+        TestExpr::Unary { op, operand } => SsaTest::Unary {
+            op: op.clone(),
+            operand: expr_to_value(operand, state),
+        },
+        TestExpr::Binary { left, op, right } => {
+            let rhs = if op == "=~" || op == "=glob" {
+                SsaTestRhs::Pattern(expr_to_string(right))
+            } else {
+                SsaTestRhs::Value(expr_to_value(right, state))
+            };
+            SsaTest::Binary {
+                left: expr_to_value(left, state),
+                op: op.clone(),
+                right: rhs,
+            }
+        }
+        TestExpr::Not(inner) => SsaTest::Not(Box::new(test_to_ssa(inner, state))),
+        TestExpr::And(a, b) => SsaTest::And(
+            Box::new(test_to_ssa(a, state)),
+            Box::new(test_to_ssa(b, state)),
+        ),
+        TestExpr::Or(a, b) => SsaTest::Or(
+            Box::new(test_to_ssa(a, state)),
+            Box::new(test_to_ssa(b, state)),
+        ),
+        TestExpr::Paren(inner) => SsaTest::Paren(Box::new(test_to_ssa(inner, state))),
+    }
+}
 fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
     if var == "EPOCHSECONDS" {
         return SsaValue::CmdSubst {

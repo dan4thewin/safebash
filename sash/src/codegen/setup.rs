@@ -12,7 +12,6 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{emit_int_to_str, ExternFuncs};
-use crate::ir::TestExpr;
 use crate::ssa::*;
 
 /// Declare all runtime function signatures and return the ExternFuncs struct.
@@ -904,37 +903,24 @@ impl<'a> Interner<'a> {
         }
     }
 
-    fn intern_test_ir_expr(&mut self, expr: &crate::ir::Expr) {
-        match &expr.kind {
-            crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-                self.intern(s);
-            }
-            crate::ir::ExprKind::DoubleQuoted(parts) | crate::ir::ExprKind::Concat(parts) => {
-                for p in parts {
-                    self.intern_test_ir_expr(p);
+    fn intern_test_expr(&mut self, test: &SsaTest) {
+        match test {
+            SsaTest::Binary { left, right, .. } => {
+                self.intern_value(left);
+                match right {
+                    SsaTestRhs::Value(v) => self.intern_value(v),
+                    SsaTestRhs::Pattern(p) => {
+                        self.intern(p);
+                    }
                 }
             }
-            crate::ir::ExprKind::Subscript { name, index } => {
-                self.intern(name);
-                self.intern_test_ir_expr(index);
+            SsaTest::Unary { operand, .. } => {
+                self.intern_value(operand);
             }
-            _ => {}
-        }
-    }
-
-    fn intern_test_expr(&mut self, test: &TestExpr) {
-        match test {
-            TestExpr::Binary { left, op: _, right } => {
-                self.intern_test_ir_expr(left);
-                self.intern_test_ir_expr(right);
-            }
-            TestExpr::Unary { operand, .. } => {
-                self.intern_test_ir_expr(operand);
-            }
-            TestExpr::Not(inner) | TestExpr::Paren(inner) => {
+            SsaTest::Not(inner) | SsaTest::Paren(inner) => {
                 self.intern_test_expr(inner);
             }
-            TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            SsaTest::And(a, b) | SsaTest::Or(a, b) => {
                 self.intern_test_expr(a);
                 self.intern_test_expr(b);
             }

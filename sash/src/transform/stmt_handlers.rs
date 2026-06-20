@@ -1,6 +1,6 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::expressions::{expr_to_string, expr_to_value};
+use super::expressions::{expr_to_string, expr_to_value, test_to_ssa};
 use super::functions::{collect_local_vars, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
@@ -53,7 +53,7 @@ fn try_builtin(
 ) -> Option<BlockId> {
     match kind {
         BuiltinCmd::Bless => Some(handle_bless_stmt(name, c, ssa, state, *block)),
-        BuiltinCmd::Test => try_test_arg_capture(c, ssa, *block),
+        BuiltinCmd::Test => try_test_arg_capture(c, ssa, state, *block),
         BuiltinCmd::Shift => Some(handle_shift_stmt(c, ssa, state, *block)),
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
@@ -79,12 +79,16 @@ fn try_builtin(
 /// `[` commands whose first/only arg carries the `Test` expression
 /// kind). The first matching arg wins. Returns `None` when no
 /// `ExprKind::Test` is found so the caller falls through.
-fn try_test_arg_capture(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Option<BlockId> {
+fn try_test_arg_capture(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
     for arg in &c.args {
         if let ExprKind::Test(test_expr) = &arg.kind {
-            ssa.block_mut(block)
-                .insts
-                .push(SsaInst::Test(test_expr.clone()));
+            let ssa_test = test_to_ssa(test_expr, state);
+            ssa.block_mut(block).insts.push(SsaInst::Test(ssa_test));
             return Some(block);
         }
     }
@@ -167,11 +171,16 @@ fn handle_bless_stmt(
             BlessForm::Scalar { var } => {
                 let var = var.to_string();
                 let source = state.lookup(&var);
+                // Resolve the predicate's operands BEFORE defining the target
+                // version, so `$var` in the test binds to the source (the
+                // value being blessed). emit_bless evaluates the test before
+                // the target slot exists. See dispatch.rs::emit_bless.
+                let ssa_test = test_to_ssa(&test, state);
                 let target = state.define(&var);
                 ssa.block_mut(block).insts.push(SsaInst::Bless {
                     target,
                     source,
-                    test,
+                    test: ssa_test,
                 });
             }
             BlessForm::Indexed { binder, array } => {
@@ -228,10 +237,19 @@ fn push_bless_all(
     is_map: bool,
 ) {
     let source = state.lookup(array);
+    // Define the binders so they receive globally-unique SSA versions,
+    // resolve the predicate against them, then restore current versions so
+    // the binders stay loop-local (DD#61 shadow semantics). The version
+    // counter is not rewound by restore, so the binder versions remain
+    // unique and match the slots emit_bless_all creates for them.
+    let snap = state.snapshot();
+    let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
+    let ssa_test = test_to_ssa(&test, state);
+    state.restore(&snap);
     ssa.block_mut(block).insts.push(SsaInst::BlessAll {
         source: source.clone(),
-        binders,
-        test,
+        binders: binder_refs,
+        test: ssa_test,
         is_map,
         if_form: false,
     });

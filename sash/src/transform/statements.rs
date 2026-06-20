@@ -74,7 +74,7 @@ fn lower_while_stmt(
         let insts = &mut ssa.block_mut(header_id).insts;
         for inst in insts.iter_mut() {
             if let SsaInst::Test(ref mut test) = inst {
-                *test = TestExpr::Not(Box::new(test.clone()));
+                *test = SsaTest::Not(Box::new(test.clone()));
             }
         }
     }

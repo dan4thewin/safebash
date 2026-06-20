@@ -1,6 +1,6 @@
 ---
 title: "[[ ]] value operands → SsaValue: drop right_is_quoted + lower_subscript (DD#62)"
-status: ready
+status: done
 priority: P2
 kind: refactor
 depends: [DD62-test-expr-simplification]
@@ -13,6 +13,24 @@ gates:
   - "==/!= are exact-only (no glob); =~ quoted RHS is regex-grouping (not literal); -v is removed"
   - "native spec clean (only pre-existing cf.c7/cf.c8); rust suite no net regression (--test-threads=1); complexity gate green"
 ---
+
+> **DONE (2026-06-20, section A).** Operand→`SsaValue` refactor landed —
+> see [journal 114](../journal/114-dd62-section-a.md). `SsaTest`/
+> `SsaTestRhs` carry pre-lowered `SsaValue` operands; `test_to_ssa` in
+> transform; codegen + emit_c consume them; the duplicate IR-`Expr`
+> test-lowering subtree (`lower_subscript` & friends, ~330 LOC) is
+> deleted. Fixes `[[ ${m[$k]} ]]` in native **and** C (closes
+> `dynamic-map-subscript-in-test`); specs `types.sh` 62.11–62.15. Three
+> refactor-introduced bugs were caught + fixed pre-commit: synthetic
+> for-loop numeric tests (restored numeric arm), scalar-bless
+> source-vs-target resolution (`test_to_ssa` before `state.define`), and
+> bless-all binder versioning (`BlessAll.binders` → `Vec<VarRef>`).
+> Zero net regression (native baseline cf.c7/c8; c/janet improved; rust
+> 186 flake-only). **B/E** (==/!= exact, -v removal) landed earlier;
+> **C/D** (=~ quoting/spaces) remain folded into **DD#63**; **F** (&&/||)
+> fixed separately.
+
+
 
 # [[ ]] value operands → SsaValue (DD#62)
 

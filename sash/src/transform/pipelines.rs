@@ -1,6 +1,7 @@
 //! Pipeline and for-loop variant lowering.
 
 use super::control_flow::lower_while;
+use super::expressions::test_to_ssa;
 use super::helpers::insert_phis_two_branch;
 use super::statements::{lower_one, lower_stmts};
 use crate::ir::*;
@@ -47,7 +48,7 @@ pub(super) fn lower_for_array(
     };
     ssa.block_mut(header)
         .insts
-        .push(SsaInst::Test(cond_test.clone()));
+        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -101,7 +102,9 @@ pub(super) fn lower_for_array(
     ssa.block_mut(header).insts.clear();
     ssa.block_mut(body_block).insts.clear();
 
-    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test));
+    ssa.block_mut(header)
+        .insts
+        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -205,7 +208,7 @@ pub(super) fn lower_for_argv_slice(
     };
     ssa.block_mut(header)
         .insts
-        .push(SsaInst::Test(cond_test.clone()));
+        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -252,7 +255,9 @@ pub(super) fn lower_for_argv_slice(
     ssa.block_mut(body_block).insts.clear();
 
     // Re-emit condition
-    ssa.block_mut(header).insts.push(SsaInst::Test(cond_test));
+    ssa.block_mut(header)
+        .insts
+        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,

@@ -12,6 +12,37 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-20 — DD#62 section A: `[[ ]]` operands → `SsaValue`
+
+The operand→`SsaValue` refactor (the last piece of DD#62). `SsaInst::Test`
+/ `Bless` / `BlessAll` now carry `SsaTest`/`SsaTestRhs` whose value
+operands are pre-lowered `SsaValue` (only `=~`/`=glob` patterns stay raw
+text). `test_to_ssa` does the lowering in transform; codegen `tests.rs`
++ `emit_c.rs` consume it. This routes `[[ ]]` subscripts through the SSA
+value path (`subscript_to_value` → `lower_subscript_value`, which knows
+`assoc_arrays`), **fixing `[[ ${m[$k]} ]]`** (map dynamic key did an int
+lookup) in native **and** C. Deleted the duplicate IR-`Expr` test-lowering
+subtree (`lower_subscript` & ~9 siblings, `find_var_slot`/`find_var_key`,
+`next_slot_version`, emit_c's `ir_expr_as_int`/`latest_var_as_int`) —
+~330 LOC. Closes `dynamic-map-subscript-in-test`. Specs `types.sh`
+62.11–62.15. See [journal 114](journal/114-dd62-section-a.md).
+
+Three refactor-introduced bugs caught + fixed before commit (none
+shipped): (1) synthetic for-in `[[ __ai -lt ${arr arrlen} ]]` bound
+checks ICE'd after I dropped codegen's numeric arm (SB5019 only rejects
+*user* numeric ops) — restored it both backends; (2) scalar
+`bless x [[ … $x … ]]` resolved `$x` to the not-yet-populated target —
+`test_to_ssa` now runs before `state.define`; (3) bless-all binders
+mis-versioned (`x_0` vs codegen's `x_4`) — `BlessAll.binders` is now
+`Vec<VarRef>` with transform-assigned unique versions.
+
+Zero net regression: native back to baseline (cf.c7/c8 only); c/janet no
+new failures (both improved); rust 186 (flaky `oracle_pipeline_grep`
+only). Next in the DD#62→68 implementation order: **DD#63** (regex
+builtins; absorbs DD#62 C/D).
+
+
+
 ### Session 2026-06-19 (cont.) — &&/|| left-associativity fix (DD#62 F)
 
 `A && B || C` parsed **right-associative** (`A && (B || C)`), so
