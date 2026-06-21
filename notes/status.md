@@ -12,6 +12,41 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-21 (cont.) — DD decision review
+
+Walked every candidate DD with DG; **all now resolved** (DD#57 implemented;
+DD#62–69 accepted). Commits `ed4a1e4`…`2a68f2b`. Highlights:
+
+- **DD#64 addendum** (new): `$'…'` is recognized **inside `"…"`** as an
+  escape-aware, compile-time-constant expansion — every `$`-form now
+  expands in `"…"`. A C-string is a universal literal-byte encoder, giving
+  full literal control inside an interpolated string (even a literal `"`),
+  no concatenation. Resolves the DD#63/#65 default-vs-replacement context
+  uniformly. Task `cstring-in-double-quotes`.
+- **DD#62**: undeclared scalar read → compile error under **strict
+  definite-assignment** (`${x:-}` is the opt-out). Task
+  `reject-undeclared-scalar-read`.
+- **DD#63**: `\`+non-digit in a `sub`/`gsub` replacement is an error
+  (`Resub` stride = 16B); replacement/`:-default` are one word context
+  (replacement adds only the `\0`–`\9` pass); `$(cmd)` allowed (only
+  external captures taint).
+- **DD#65**: prune accepted; `$(cmd)` allowed in `:-default`; `:?` is
+  scalar-only (`@{a:?W}` splat is DD#69); `${#var}` kept, `@X` rejected.
+- **DD#66**: `[[ ]]` two-form + `case` removal; **numeric dispatch dropped**
+  (==/=~ only). **DD#67**: re-add `name()`/`function name`; flat backticks
+  kept (nested rejected); canonicalize switch in `sash-convert`; sweep →
+  keep/drop table DG ratifies first. **DD#68**: brace control flow,
+  converter default preserves `then/do`. **DD#69**: ratified.
+
+Doc fixes (`c15b430`, `d9f28ce`): corrected stale tree-sitter/CST docs
+(hand-parser is AST-based; `emit_source` coercion path is dormant →
+`.sash_source` is verbatim). Tasks filed:
+`excise-dormant-coercion-machinery`, `cstring-in-double-quotes`,
+`reject-undeclared-scalar-read`.
+
+**Still-pending non-DD decisions:** array-splat native runtime-argv ABI
+(B1/B2), `bug-janet-int-overflow` approach, `tilde-vs-dd53`.
+
 ### Session 2026-06-21 — autonomous backlog sweep (cont.)
 
 Five tasks landed (journal 115), all multi-backend verified with zero net
