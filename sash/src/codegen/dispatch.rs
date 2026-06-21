@@ -1053,30 +1053,29 @@ impl SsaInst {
     ) -> bool {
         let vars = &mut *ctx.vars;
         let externs = ctx.externs;
+        let literals = ctx.literals;
+        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
-        // let builtin: exit status 0 if value != 0, 1 if value == 0
-        if let Some(SsaValue::Var(vr)) = args.first() {
-            let key = format!("{}_{}", vr.name, vr.version);
-            let int_val = if let Some(slot) = vars.get(&key) {
-                if slot.is_int() {
-                    builder.use_var(*slot.as_int())
-                } else {
-                    let ptr = builder.use_var(slot.str_ptr());
-                    let len = builder.use_var(slot.str_len());
-                    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                    let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                    builder.inst_results(call)[0]
-                }
-            } else {
-                builder.ins().iconst(I64, 0)
-            };
+        // let builtin / loop bound: exit status 0 if value != 0, 1 if == 0.
+        // The arg is any integer-valued SsaValue (a `(( ))` result, or a
+        // for-loop bound comparison `__ai < ${arr arrlen}`).
+        if let Some(arg) = args.first() {
+            let int_val = super::values::lower_value_as_int(
+                arg,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+            );
             let zero = builder.ins().iconst(I64, 0);
             let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);
             let one = builder.ins().iconst(I64, 1);
             let es = builder.ins().select(is_zero, one, zero);
             builder.def_var(exit_status_var, es);
-            // Also set test_result_var for branch terminators (if/while)
+            // Also set test_result_var for branch terminators (if/while/for).
             let tr = builder.ins().select(is_zero, zero, one);
             builder.def_var(test_result_var, tr);
         }

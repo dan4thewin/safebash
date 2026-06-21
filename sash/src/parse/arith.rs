@@ -1017,6 +1017,14 @@ fn step_default_token(scanner: &mut Scanner, tok: &Tok, content: &mut String) ->
 }
 
 fn needs_separator_space(next: &Tok, prev_text: &str) -> bool {
+    // The bash lexer splits `<=`/`>=` into `<`/`>` + `=` (it has no arith
+    // context). A separator space here would turn `5 <= 5` into `5 < = 5`,
+    // which the arith byte-lexer mis-parses as `5 < (=→0)`. Keep them
+    // adjacent so it recombines into one `<=`/`>=` operator. (`==`/`!=` are
+    // already single `Word` tokens, so they don't hit this.)
+    if matches!(next, Tok::Eq) && (prev_text.ends_with('<') || prev_text.ends_with('>')) {
+        return false;
+    }
     !matches!(
         next,
         Tok::DblParenClose

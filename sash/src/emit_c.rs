@@ -462,7 +462,14 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
 fn is_catching_construct_exit(label: &str) -> bool {
     matches!(
         label,
-        "if.merge" | "if_bless.merge" | "while.exit" | "for.exit" | "for_cmd.exit" | "case.merge"
+        "if.merge"
+            | "if_bless.merge"
+            | "while.exit"
+            | "for.exit"
+            | "for_cmd.exit"
+            | "for_arr.exit"
+            | "for_at.exit"
+            | "case.merge"
     )
 }
 
@@ -995,42 +1002,11 @@ fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
     }
 }
 
-/// C comparison operator for a numeric `[[ ]]` test operator, or `None`
-/// if `op` is not numeric. Mirrors codegen/tests.rs::numeric_cc.
-fn numeric_c_op(op: &str) -> Option<&'static str> {
-    Some(match op {
-        "-eq" => "==",
-        "-ne" => "!=",
-        "-lt" => "<",
-        "-le" => "<=",
-        "-gt" => ">",
-        "-ge" => ">=",
-        _ => return None,
-    })
-}
-
-/// Lower a numeric binary test (operands as integers). Reached via
-/// synthesized loop-bound tests (`__ai -lt ${arr arrlen}`); user numeric
-/// ops in `[[ ]]` are rejected by SB5019 before codegen.
-fn lower_numeric_test_c(
-    e: &mut Emit,
-    left: &SsaValue,
-    c_op: &str,
-    right: &SsaTestRhs,
-    types: &VarTypes,
-) -> String {
-    let l = lower_value_as_int(e, left, types);
-    let r = match right {
-        SsaTestRhs::Value(v) => lower_value_as_int(e, v, types),
-        SsaTestRhs::Pattern(_) => "0".to_string(),
-    };
-    format!("(({}) {} ({}) ? 1 : 0)", l, c_op, r)
-}
-
-/// Lower a binary test. Numeric ops (-eq..-le, incl. compiler-synthesized
-/// loop bounds) → integer comparison; string ops (=, ==, !=) → sash_strcmp;
-/// case-dispatch glob (=glob) → sash_fnmatch(pattern, str). Other ops
-/// (=~, <, >, -nt, -ot, -ef) are not yet implemented in the C backend.
+/// Lower a binary test. String ops (=, ==, !=) → sash_strcmp; case-dispatch
+/// glob (=glob) → sash_fnmatch(pattern, str). Numeric ops never reach here
+/// (user ones rejected by SB5019; synthesized loop bounds use the `(( ))`
+/// arith path). Other ops (=~, <, >, -nt, -ot, -ef) are not yet implemented
+/// in the C backend.
 fn lower_test_binary(
     e: &mut Emit,
     left: &SsaValue,
@@ -1038,9 +1014,6 @@ fn lower_test_binary(
     right: &SsaTestRhs,
     types: &VarTypes,
 ) -> String {
-    if let Some(c_op) = numeric_c_op(op) {
-        return lower_numeric_test_c(e, left, c_op, right, types);
-    }
     let (lp, ll) = lower_value_as_str(e, left, types);
     let (rp, rl) = test_rhs_as_str(e, right, types);
     // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match (so invert).

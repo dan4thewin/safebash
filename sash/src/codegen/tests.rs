@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
 use super::types::{ExternFuncs, VarSlot};
-use super::values::{atoi_call, lower_literal_value, lower_value, lower_value_as_int};
+use super::values::{atoi_call, lower_literal_value, lower_value};
 use crate::ssa::{SsaTest, SsaTestRhs, SsaValue};
 
 pub(super) fn emit_string_eq(
@@ -362,38 +362,6 @@ fn lower_test_binary(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    // Numeric comparisons compare operands as integers, not strings. These
-    // reach codegen via compiler-synthesized loop-bound tests (e.g. for-in
-    // lowers `__ai -lt ${arr arrlen}`); user-written numeric ops in `[[ ]]`
-    // are rejected earlier by SB5019, but the synthetic ones are not.
-    if let Some(cc) = numeric_cc(op) {
-        let r_val = match right {
-            SsaTestRhs::Value(v) => v,
-            SsaTestRhs::Pattern(_) => {
-                panic!("ICE: numeric test operator {} with a pattern operand", op)
-            }
-        };
-        let l_int = lower_value_as_int(
-            left,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-        );
-        let r_int = lower_value_as_int(
-            r_val,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-        );
-        let cmp = builder.ins().icmp(cc, l_int, r_int);
-        return builder.ins().uextend(I64, cmp);
-    }
     let (l_ptr, l_len, r_ptr, r_len) = lower_pair(
         left,
         right,
@@ -462,23 +430,10 @@ fn lower_test_binary(
             let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
             builder.inst_results(call)[0]
         }
-        // `=glob`/`=~`/`==`/`!=`/`<`/`>`/file ops are handled above; any
-        // other operator reaching codegen is a compiler bug.
+        // `=glob`/`=~`/`==`/`!=`/`<`/`>`/file ops are handled above. Numeric
+        // ops (`-eq`/`-lt`/…) never reach codegen: user-written ones are
+        // rejected by SB5019, and synthesized loop bounds use the `(( ))`
+        // arith path (transform/pipelines.rs::emit_for_bound), not tests.
         other => panic!("ICE: unimplemented test operator: {}", other),
     }
-}
-
-/// Condition code for a numeric `[[ ]]` comparison operator, or `None`
-/// if `op` is not a numeric comparison. Only the dash forms occur — the
-/// parser never emits `>=`/`<=` as test operators.
-fn numeric_cc(op: &str) -> Option<IntCC> {
-    Some(match op {
-        "-eq" => IntCC::Equal,
-        "-ne" => IntCC::NotEqual,
-        "-lt" => IntCC::SignedLessThan,
-        "-le" => IntCC::SignedLessThanOrEqual,
-        "-gt" => IntCC::SignedGreaterThan,
-        "-ge" => IntCC::SignedGreaterThanOrEqual,
-        _ => return None,
-    })
 }

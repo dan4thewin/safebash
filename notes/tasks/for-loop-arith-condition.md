@@ -1,6 +1,6 @@
 ---
 title: "for-loop bound check should use the (( )) arith path, not a synthesized [[ -lt ]] test"
-status: ready
+status: done
 priority: P2
 kind: refactor
 depends: [dd62-test-expr-ssavalue]
@@ -10,6 +10,18 @@ gates:
   - "for-loops, while-(( )), and (( ))-as-condition all drive the loop/branch via the same test_result_var mechanism (LetExit), not via SsaInst::Test"
   - "spec native back to baseline (cf.c7/cf.c8 only); c/janet no regression; rust suite no net regression; complexity gate green"
 ---
+
+> **DONE (2026-06-20).** `pipelines.rs::emit_for_bound` builds both for-in
+> bounds as an `ArithBinOp` + `LetExit` (the `(( ))` path); `emit_let_exit`
+> generalized to any `SsaValue`; `[[ ]]` numeric arm deleted both backends;
+> direct `arrlen` → `sash_table_len` arm added to `lower_value_as_int`.
+> Latent bug fixed: `for_arr.exit`/`for_at.exit` added to
+> `is_catching_construct_exit` (rc=0). Surfaced + fixed a real `(( <= ))`/
+> `(( >= ))` mis-lex bug (`needs_separator_space`). 10 numeric-`[[ ]]`
+> codegen_tests converted to `(( ))` (4 `#[ignore]`d on
+> bug-until-arith-condition / bug-dollar-hash-in-arith). Spec arithmetic.sh
+> 31.15–31.18. Zero net regression. See journal 115.
+
 
 # for-loop bound → arithmetic `(( ))` path (drop the `[[ -lt ]]` synth)
 

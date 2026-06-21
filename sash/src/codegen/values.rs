@@ -723,6 +723,18 @@ pub(super) fn lower_value_as_int(
             );
             builder.ins().select(is_true, t, f)
         }
+        // `${#arr[@]}` (array length) is already an integer — call
+        // sash_table_len directly instead of round-tripping through a
+        // decimal string + atoi (the generic fallback below). Matters for
+        // synthesized for-loop bounds (`__ai < ${arr arrlen}`), re-evaluated
+        // every iteration.
+        SsaValue::ParamExpansion { var, operator, .. } if operator == "arrlen" => {
+            let sv = find_array_slot(vars, &var.name, "arrlen");
+            let table_ptr = builder.use_var(sv.str_ptr());
+            let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+            let call = builder.ins().call(len_ref, &[table_ptr]);
+            builder.inst_results(call)[0]
+        }
         _ => {
             // Fallback: lower as string, atoi
             let (ptr, len) = lower_value(

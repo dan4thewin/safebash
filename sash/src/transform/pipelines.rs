@@ -1,11 +1,34 @@
 //! Pipeline and for-loop variant lowering.
 
 use super::control_flow::lower_while;
-use super::expressions::test_to_ssa;
+use super::expressions::expr_to_value;
 use super::helpers::insert_phis_two_branch;
 use super::statements::{lower_one, lower_stmts};
 use crate::ir::*;
 use crate::ssa::*;
+
+/// Emit a for-loop bound check `left < right` on the `(( ))` arithmetic
+/// path: an `ArithBinOp` comparison fed to `LetExit`, which sets
+/// `test_result_var` for the enclosing `Terminator::Loop`. Keeps integer
+/// comparisons out of `[[ ]]` (the synthesized loop bound is arithmetic,
+/// not a test). Re-run per lowering pass so operands pick up phi-merged
+/// versions; defines no SSA temp, so it doesn't perturb phi insertion.
+fn emit_for_bound(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    header: BlockId,
+    left: &Expr,
+    right: &Expr,
+) {
+    let cond = SsaValue::ArithBinOp {
+        left: Box::new(expr_to_value(left, state)),
+        op: ArithOp::Lt,
+        right: Box::new(expr_to_value(right, state)),
+    };
+    ssa.block_mut(header)
+        .insts
+        .push(SsaInst::sigil(BuiltinCmd::LetExit, vec![cond], true));
+}
 
 pub(super) fn lower_for_array(
     f: &For,
@@ -29,26 +52,22 @@ pub(super) fn lower_for_array(
     ssa.block_mut(block).terminator = Terminator::Goto(header);
     let pre_state = state.snapshot();
 
-    // Condition: __ai < sash_table_len(arr)
-    // We use arrlen as a ParamExpansion that codegen already handles
-    let cond_test = crate::ir::TestExpr::Binary {
-        left: Box::new(Expr {
-            kind: ExprKind::SimpleExpansion("__ai".to_string()),
-            span: Span::default(),
-        }),
-        op: "-lt".to_string(),
-        right: Box::new(Expr {
-            kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
-                name: array_name.to_string(),
-                operator: Some("arrlen".to_string()),
-                operand: None,
-            }),
-            span: Span::default(),
-        }),
+    // Condition: __ai < ${#arr[@]}, on the (( )) arith path (see
+    // emit_for_bound) — synthesized loop bounds are arithmetic, not [[ ]]
+    // tests. Built once, re-emitted per pass.
+    let bound_left = Expr {
+        kind: ExprKind::SimpleExpansion("__ai".to_string()),
+        span: Span::default(),
     };
-    ssa.block_mut(header)
-        .insts
-        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
+    let bound_right = Expr {
+        kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
+            name: array_name.to_string(),
+            operator: Some("arrlen".to_string()),
+            operand: None,
+        }),
+        span: Span::default(),
+    };
+    emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -102,9 +121,7 @@ pub(super) fn lower_for_array(
     ssa.block_mut(header).insts.clear();
     ssa.block_mut(body_block).insts.clear();
 
-    ssa.block_mut(header)
-        .insts
-        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
+    emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -194,21 +211,17 @@ pub(super) fn lower_for_argv_slice(
     let pre_state = state.snapshot();
 
     // --- Pass 1: discover modified variables ---
-    // Emit condition: __fi < __argc  (C argc — includes the program name)
-    let cond_test = crate::ir::TestExpr::Binary {
-        left: Box::new(Expr {
-            kind: ExprKind::SimpleExpansion("__fi".to_string()),
-            span: Span::default(),
-        }),
-        op: "-lt".to_string(),
-        right: Box::new(Expr {
-            kind: ExprKind::SimpleExpansion("__argc".to_string()),
-            span: Span::default(),
-        }),
+    // Condition: __fi < __argc (C argc — includes the program name), on the
+    // (( )) arith path (see emit_for_bound).
+    let bound_left = Expr {
+        kind: ExprKind::SimpleExpansion("__fi".to_string()),
+        span: Span::default(),
     };
-    ssa.block_mut(header)
-        .insts
-        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
+    let bound_right = Expr {
+        kind: ExprKind::SimpleExpansion("__argc".to_string()),
+        span: Span::default(),
+    };
+    emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,
@@ -255,9 +268,7 @@ pub(super) fn lower_for_argv_slice(
     ssa.block_mut(body_block).insts.clear();
 
     // Re-emit condition
-    ssa.block_mut(header)
-        .insts
-        .push(SsaInst::Test(test_to_ssa(&cond_test, state)));
+    emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
         body_block,

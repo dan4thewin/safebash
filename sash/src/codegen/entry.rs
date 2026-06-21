@@ -263,7 +263,14 @@ struct EmitCtx<'a, 'b> {
 fn is_catching_construct_exit(label: &str) -> bool {
     matches!(
         label,
-        "if.merge" | "if_bless.merge" | "while.exit" | "for.exit" | "for_cmd.exit" | "case.merge"
+        "if.merge"
+            | "if_bless.merge"
+            | "while.exit"
+            | "for.exit"
+            | "for_cmd.exit"
+            | "for_arr.exit"
+            | "for_at.exit"
+            | "case.merge"
     )
 }
 

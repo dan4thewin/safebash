@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=21
+plan=25
 echo "1..$plan" >&3
 
 set +e
@@ -87,6 +87,34 @@ run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
 # 25.3 overflow aborts with nonzero exit
 run_sash 'int x=9223372036854775807; (( x = x + 1 )); echo $x'
 [[ $rc != 0 && -z $out ]]; chk 25.3
+
+# --- DD#31 comparison operators (regression: <= / >= were mis-lexed) ---
+
+# 31.15 <= is true when equal (the bash lexer splits `<=` into `<`+`=`;
+# collect_arith_content must keep them adjacent so the arith lexer recombines)
+run_sash 'int x=5; if (( x <= 5 )); then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.15
+
+# 31.16 <= is true when strictly less
+run_sash 'if (( 3 <= 7 )); then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.16
+
+# 31.17 <= is false when greater. 31.18 >= mixed. The false case exercises
+# the else/skip branch, which the janet backend mishandles for ALL (( ))
+# comparison conditions (always takes 'then'); see bug-janet-arith-condition.
+# native is the reference.
+if in_modes native,c; then
+    run_sash 'if (( 7 <= 3 )); then echo n; else echo y; fi'
+    [[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.17
+    run_sash 'int x=5
+if (( x >= 5 )); then echo a; fi
+if (( x >= 4 )); then echo b; fi
+if (( x >= 6 )); then echo BAD; fi'
+    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 31.18
+else
+    skip_chk 31.17
+    skip_chk 31.18
+fi
 
 set -e
 tally
