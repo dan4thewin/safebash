@@ -147,3 +147,15 @@ helpers), `_stmt_uses_args` (now via direct_exprs/child_bodies), and
 gate. Un-guarded 31.17/31.18/av.h3. Spec: janet −8 failing (cf.w1–w7,
 cf.i3), zero regressions native/c/janet. rust codegen 188/68, janet 24/11
 (unchanged).
+
+## nonbrace-dynamic-subscript — done (decision B)
+
+`$a[$i]` now reads like `${a[$i]}` (decision B — diverges from bash).
+The lexer splits `$a[$i]` into `$a` `[` `$i` `]`; `try_subscript_arm`
+previously bailed when the post-`$a` word `[` had no `]`. Added
+`try_split_subscript_arm` doing speculative 3-token lookahead via
+`peek_n` (`[` `$var`/`${var}` `]`), building the same `Subscript` IR as
+the brace form. Specs types.sh 33.14/33.15 (native passes; c/janet share
+the pre-existing dynamic-read gap with 33.5/33.6). Static/brace forms and
+the spaced `$a [foo]` case unchanged. codegen 188/68, e2e unrelated —
+no regression.

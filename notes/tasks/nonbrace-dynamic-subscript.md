@@ -1,6 +1,6 @@
 ---
 title: non-brace dynamic subscript `$a[$i]` not recognised (brace form works)
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -10,6 +10,22 @@ gates:
 ---
 
 # non-brace dynamic subscript read `$a[$i]`
+
+## Resolution (2026-06-21) — option B, done
+
+`try_subscript_arm` (parse/expr.rs) now delegates to a new
+`try_split_subscript_arm` when the post-`$name` word is a bare `[` (no
+`]` — the lexer split `[`, `$idx`, `]` into separate tokens). It uses
+`peek_n` for speculative 3-token lookahead (`[` `$var`/`${var}` `]`),
+consuming nothing unless the full shape is present, and builds a
+`Subscript{ name, index: SimpleExpansion(var) }` — the same IR the brace
+form produces. So `$a[$i]` now reads `${a[$i]}`.
+
+Specs types.sh 33.14/33.15 (unguarded, mirroring 33.5/33.6): native
+passes; c/janet fail on the same pre-existing dynamic-subscript value-read
+gap that 33.5/33.6 hit (not specific to the non-brace form). Static
+`$a[1]` and brace `${a[$i]}` unchanged; `$a [foo]` (spaced) keeps its
+pre-existing SB4030 behavior (static `]`-word path untouched).
 
 > **Decision (DG, 2026-06-21): option B — support it as a subscript.**
 > `$a[$i]` reads `${a[$i]}` (so `array a=(x y z); i=2; echo $a[$i]` → `z`),

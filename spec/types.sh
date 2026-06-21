@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=55
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -98,6 +98,17 @@ run_sash 'array a=(x y z); i=1; echo ${a[$i]}'
 # 33.6 dynamic string key ${m[$k]} expands the variable (read)
 run_sash 'map m=([a]=1 [b]=2); k=b; echo ${m[$k]}'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.6
+
+# 33.14 non-brace dynamic integer index $a[$i] reads like ${a[$i]} (decision B,
+# 2026-06-21 — deliberately diverging from bash, where $a[$i] is ${a[0]} plus
+# literal "[$i]"). native is the reference; c/janet lack dynamic-subscript value
+# reads (same pre-existing gap as 33.5/33.6).
+run_sash 'array a=(x y z); i=2; echo $a[$i]'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 33.14
+
+# 33.15 non-brace dynamic string key $m[$k] reads like ${m[$k]}
+run_sash 'map m=([a]=1 [b]=2); k=b; echo $m[$k]'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.15
 
 # 33.7 dynamic index assignment a[$i]=v (write, indexed)
 run_sash 'array a=(x y z); i=1; a[$i]=ZZ; echo ${a[1]}'

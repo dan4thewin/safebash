@@ -208,7 +208,10 @@ fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut 
         return false;
     }
     let Some(close) = w.find(']') else {
-        return false;
+        // The lexer split a dynamic subscript `[`, `$idx`, `]` into separate
+        // tokens (DD#33 read side, decision B 2026-06-21). Gather them into a
+        // Subscript read so `$a[$i]` matches `${a[$i]}`.
+        return try_split_subscript_arm(scanner, name, span, parts);
     };
     let idx = w[1..close].to_string();
     let rest = w[close + 1..].to_string();
@@ -368,6 +371,47 @@ fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
 /// DD#33): for an indexed array it yields the integer index, for a map
 /// the string key. Any other text is a literal key (a bare integer for
 /// indexed arrays, a bare string for maps).
+/// Gather a lexer-split dynamic subscript read `name[$idx]` into a
+/// `Subscript`. The current token is a bare `[` (the index `$var`/`${var}`
+/// and the closing `]` were split into following tokens by the lexer).
+/// Speculative: consumes nothing unless the full `[ $idx ]` shape is present.
+fn try_split_subscript_arm(
+    scanner: &mut Scanner,
+    name: &str,
+    span: Span,
+    parts: &mut Vec<Expr>,
+) -> bool {
+    if !matches!(&scanner.peek().token, Tok::Word(w) if w == "[") {
+        return false;
+    }
+    let idx_str = match &scanner.peek_n(1).token {
+        Tok::Dollar(v) => format!("${}", v),
+        Tok::DollarBrace(content) => format!("${{{}}}", content),
+        _ => return false,
+    };
+    if !matches!(&scanner.peek_n(2).token, Tok::Word(w) if w == "]") {
+        return false;
+    }
+    let Some(var) = dynamic_subscript_var(&idx_str) else {
+        return false;
+    };
+    let index = Expr {
+        kind: ExprKind::SimpleExpansion(var.to_string()),
+        span,
+    };
+    scanner.next(); // [
+    scanner.next(); // $idx
+    scanner.next(); // ]
+    parts.push(Expr {
+        kind: ExprKind::Subscript {
+            name: name.to_string(),
+            index: Box::new(index),
+        },
+        span,
+    });
+    true
+}
+
 fn subscript_index_expr(idx: &str, span: Span) -> Expr {
     if let Some(var) = dynamic_subscript_var(idx) {
         return Expr {
