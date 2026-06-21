@@ -53,34 +53,25 @@ fn needs_args_preamble(stmts: &[Statement]) -> bool {
 }
 
 fn _stmt_uses_args(stmt: &Statement) -> bool {
-    match &stmt.kind {
-        StmtKind::Command(c) => {
-            let name = expr_to_literal(&c.name);
-            if name == "shift" {
-                return true;
-            }
-            for arg in &c.args {
-                if _expr_uses_args(arg) {
-                    return true;
-                }
-            }
-            _expr_uses_args(&c.name)
+    _stmt_direct_uses_args(stmt) || stmt.child_bodies().iter().any(|b| needs_args_preamble(b))
+}
+
+/// Args referenced by a statement's own exprs/condition, not its child
+/// bodies (those are covered by recursing `child_bodies`). `shift` and a
+/// bare `(( … ))` (`ArithTest`, whose `ArithExpr` `direct_exprs` cannot
+/// surface) are handled explicitly.
+fn _stmt_direct_uses_args(stmt: &Statement) -> bool {
+    if let StmtKind::Command(c) = &stmt.kind {
+        if expr_to_literal(&c.name) == "shift" {
+            return true;
         }
-        StmtKind::Assignment(a) => _expr_uses_args(&a.value),
-        StmtKind::Declaration(d) => d.assignments.iter().any(|a| _expr_uses_args(&a.value)),
-        StmtKind::If(i) => {
-            i.condition.iter().any(_stmt_uses_args)
-                || needs_args_preamble(&i.then_body)
-                || i.else_body.as_ref().is_some_and(|e| needs_args_preamble(e))
-        }
-        StmtKind::While(w) => {
-            w.condition.iter().any(_stmt_uses_args) || needs_args_preamble(&w.body)
-        }
-        StmtKind::For(f) => f.words.iter().any(_expr_uses_args) || needs_args_preamble(&f.body),
-        StmtKind::Redirected(r) => _stmt_uses_args(&r.body),
-        StmtKind::List(l) => _stmt_uses_args(&l.left) || _stmt_uses_args(&l.right),
-        _ => false,
     }
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        return _arith_uses_args(a);
+    }
+    let mut found = false;
+    stmt.direct_exprs(&mut |e| found = found || _expr_uses_args(e));
+    found
 }
 
 fn _expr_uses_args(expr: &Expr) -> bool {
@@ -220,7 +211,14 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
 
 fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: usize) {
     indent(out, depth);
-    let val = emit_expr_inline(&a.value, ctx);
+    // An int-typed target keeps arithmetic numeric so later `(( ))` reads and
+    // comparisons work (string-wrapping would make `(( i += 1 ))` set i to a
+    // string and break the next comparison). String targets stay strings.
+    let val = if ctx.is_int(&a.name) {
+        emit_expr_as_int(&a.value, ctx)
+    } else {
+        emit_expr_inline(&a.value, ctx)
+    };
     if ctx.is_declared(&a.name) {
         writeln!(out, "(set {} {})", a.name, val).unwrap();
     } else {
@@ -972,29 +970,34 @@ fn emit_redirected_no_heredoc(out: &mut String, ctx: &mut EmitCtx, r: &Redirecte
 /// Emit a condition (test_command) inline for if/while.
 fn emit_condition_inline(out: &mut String, ctx: &EmitCtx, stmt: &Statement) {
     match &stmt.kind {
-        StmtKind::Command(c) => {
-            let name = expr_to_literal(&c.name);
-            if name == "[[" {
-                if let Some(arg) = c.args.first() {
-                    write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
-                } else {
-                    write!(out, "true").unwrap();
-                }
-            } else {
-                // Non-test condition — command success
-                let mut parts = vec![format!("\"{}\"", name)];
-                for arg in &c.args {
-                    parts.push(emit_expr_inline(arg, ctx));
-                }
-                write!(out, "(zero? (os/execute [{}] :p))", parts.join(" ")).unwrap();
-            }
-        }
+        StmtKind::Command(c) => emit_command_condition(out, ctx, c),
+        // `(( … ))` condition: true iff the arith value is non-zero. Arith
+        // comparisons/logicals now yield 1/0 integers (arith_binop_to_janet),
+        // so this is correct for both comparison and value forms.
+        StmtKind::ArithTest(a) => write!(out, "(not= 0 {})", arith_expr_to_janet(a)).unwrap(),
         _ => write!(out, "true").unwrap(),
     }
 }
 
+/// A command used as an if/while condition: `[[ … ]]` lowers to the test
+/// expression; any other command is true iff it exits 0.
+fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
+    let name = expr_to_literal(&c.name);
+    if name == "[[" {
+        match c.args.first() {
+            Some(arg) => write!(out, "{}", emit_test_expr(arg, ctx)).unwrap(),
+            None => write!(out, "true").unwrap(),
+        }
+        return;
+    }
+    let mut parts = vec![format!("\"{}\"", name)];
+    for arg in &c.args {
+        parts.push(emit_expr_inline(arg, ctx));
+    }
+    write!(out, "(zero? (os/execute [{}] :p))", parts.join(" ")).unwrap();
+}
+
 /// Check if an expression is known to be integer-typed.
-#[allow(dead_code)]
 fn is_int_expr(expr: &Expr, ctx: &EmitCtx) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => ctx.is_int(var),
@@ -1052,7 +1055,10 @@ fn emit_binary_test(left: &Expr, op: &str, right: &Expr, ctx: &EmitCtx) -> Strin
     let (l, r) = if is_numeric_test_op(op) {
         (emit_expr_as_int(left, ctx), emit_expr_as_int(right, ctx))
     } else {
-        (emit_expr_inline(left, ctx), emit_expr_inline(right, ctx))
+        (
+            emit_test_string_operand(left, ctx),
+            emit_test_string_operand(right, ctx),
+        )
     };
     match op {
         "=" | "==" | "-eq" => format!("(= {} {})", l, r),
@@ -1065,6 +1071,19 @@ fn emit_binary_test(left: &Expr, op: &str, right: &Expr, ctx: &EmitCtx) -> Strin
     }
 }
 
+/// A string-comparison operand. An int-typed value emits as a bare janet
+/// number, so stringify it to compare like bash's all-strings model — e.g.
+/// `[[ $i != 0 ]]` with an int `i` must compare "0" to "0", not the janet
+/// integer 0 to the string "0" (which is always unequal → infinite loops).
+fn emit_test_string_operand(expr: &Expr, ctx: &EmitCtx) -> String {
+    let s = emit_expr_inline(expr, ctx);
+    if is_int_expr(expr, ctx) {
+        format!("(string {})", s)
+    } else {
+        s
+    }
+}
+
 fn is_numeric_test_op(op: &str) -> bool {
     matches!(op, "-eq" | "-ne" | "-gt" | "-lt" | "-ge" | "-le")
 }
@@ -1073,24 +1092,31 @@ fn is_numeric_test_op(op: &str) -> bool {
 /// Strips quotes from literals, converts string vars via scan-number.
 fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
     match &expr.kind {
-        ExprKind::Literal(s) => {
-            // Bare number — emit without quotes
-            if s.chars().all(|c| c.is_ascii_digit() || c == '-') {
-                s.clone()
-            } else {
-                format!("(scan-number \"{}\")", s)
-            }
-        }
-        ExprKind::SimpleExpansion(var) => {
-            if var == "#" {
-                "(length _args)".to_string()
-            } else if ctx.is_int(var) {
-                var.clone()
-            } else {
-                format!("(scan-number {})", emit_expr_inline(expr, ctx))
-            }
-        }
+        ExprKind::Literal(s) => int_literal_to_janet(s),
+        ExprKind::SimpleExpansion(var) => int_expansion_to_janet(var, expr, ctx),
+        ExprKind::Arithmetic(a) => arith_expr_to_janet(a),
         _ => format!("(scan-number {})", emit_expr_inline(expr, ctx)),
+    }
+}
+
+/// A bare numeric literal stays unquoted; anything else is parsed at runtime.
+fn int_literal_to_janet(s: &str) -> String {
+    if s.chars().all(|c| c.is_ascii_digit() || c == '-') {
+        s.to_string()
+    } else {
+        format!("(scan-number \"{}\")", s)
+    }
+}
+
+/// Read a `$var`/`$#` as an integer: `$#` is the arg count, an int-typed
+/// binding is already numeric, otherwise parse its string value.
+fn int_expansion_to_janet(var: &str, expr: &Expr, ctx: &EmitCtx) -> String {
+    if var == "#" {
+        "(length _args)".to_string()
+    } else if ctx.is_int(var) {
+        var.to_string()
+    } else {
+        format!("(scan-number {})", emit_expr_inline(expr, ctx))
     }
 }
 
@@ -1425,77 +1451,92 @@ fn arith_dollar_var_to_janet(name: &str) -> String {
     }
 }
 
+/// Emit a janet expression for a binary arithmetic op. bash arithmetic
+/// comparisons and logicals yield 1/0 **integers** (and bash treats 0 as
+/// false), whereas janet comparisons yield booleans and janet treats 0 as
+/// truthy — so wrap comparisons/logicals to produce a 1/0 integer.
+fn arith_binop_to_janet(op: crate::ir::IrArithOp, lhs: String, rhs: String) -> String {
+    use crate::ir::IrArithOp::*;
+    match op {
+        Eq | Ne | Lt | Le | Gt | Ge => {
+            let j = match op {
+                Eq => "=",
+                Ne => "not=",
+                Lt => "<",
+                Le => "<=",
+                Gt => ">",
+                _ => ">=",
+            };
+            format!("(if ({} {} {}) 1 0)", j, lhs, rhs)
+        }
+        And => format!("(if (and (not= 0 {}) (not= 0 {})) 1 0)", lhs, rhs),
+        Or => format!("(if (or (not= 0 {}) (not= 0 {})) 1 0)", lhs, rhs),
+        _ => {
+            let j = match op {
+                Add => "+",
+                Sub => "-",
+                Mul => "*",
+                Div => "/",
+                Mod => "%",
+                Pow => "math/pow",
+                Shl => "blshift",
+                Shr => "brshift",
+                BitAnd => "band",
+                BitOr => "bor",
+                _ => "bxor",
+            };
+            format!("({} {} {})", j, lhs, rhs)
+        }
+    }
+}
+
+/// Emit a compound arithmetic assignment `var op= value` as janet.
+fn arith_compound_assign_to_janet(var: &str, op: crate::ir::IrArithOp, value: String) -> String {
+    use crate::ir::IrArithOp::*;
+    let op_str = match op {
+        Add => "+",
+        Sub => "-",
+        Mul => "*",
+        Div => "/",
+        Mod => "%",
+        _ => "?",
+    };
+    format!("(set {} ({} {} {}))", var, op_str, var, value)
+}
+
+/// Emit a unary arithmetic op as janet.
+fn arith_unaryop_to_janet(op: crate::ir::IrUnaryArithOp, operand: String) -> String {
+    use crate::ir::IrUnaryArithOp::*;
+    let op_str = match op {
+        Neg => "-",
+        Pos => "+",
+        Not => "not",
+        BitNot => "bnot",
+    };
+    format!("({} {})", op_str, operand)
+}
+
 /// Convert a structured ArithExpr to Janet code.
 fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
-    use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
+    use crate::ir::ArithExpr;
     match expr {
         ArithExpr::Literal(n) => n.to_string(),
         ArithExpr::Var(name) => name.clone(),
         ArithExpr::DollarVar(name) => arith_dollar_var_to_janet(name),
         ArithExpr::BinOp { left, op, right } => {
-            let op_str = match op {
-                IrArithOp::Add => "+",
-                IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*",
-                IrArithOp::Div => "/",
-                IrArithOp::Mod => "%",
-                IrArithOp::Pow => "math/pow",
-                IrArithOp::Eq => "=",
-                IrArithOp::Ne => "not=",
-                IrArithOp::Lt => "<",
-                IrArithOp::Le => "<=",
-                IrArithOp::Gt => ">",
-                IrArithOp::Ge => ">=",
-                IrArithOp::And => "and",
-                IrArithOp::Or => "or",
-                IrArithOp::Shl => "blshift",
-                IrArithOp::Shr => "brshift",
-                IrArithOp::BitAnd => "band",
-                IrArithOp::BitOr => "bor",
-                IrArithOp::BitXor => "bxor",
-            };
-            format!(
-                "({} {} {})",
-                op_str,
-                arith_expr_to_janet(left),
-                arith_expr_to_janet(right)
-            )
+            arith_binop_to_janet(*op, arith_expr_to_janet(left), arith_expr_to_janet(right))
         }
         ArithExpr::UnaryOp { op, operand } => {
-            let op_str = match op {
-                IrUnaryArithOp::Neg => "-",
-                IrUnaryArithOp::Pos => "+",
-                IrUnaryArithOp::Not => "not",
-                IrUnaryArithOp::BitNot => "bnot",
-            };
-            format!("({} {})", op_str, arith_expr_to_janet(operand))
+            arith_unaryop_to_janet(*op, arith_expr_to_janet(operand))
         }
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
-            if *inc {
-                format!("(+ {} 1)", var)
-            } else {
-                format!("(- {} 1)", var)
-            }
+            format!("({} {} 1)", if *inc { "+" } else { "-" }, var)
         }
         ArithExpr::Assign { var, value } => {
             format!("(set {} {})", var, arith_expr_to_janet(value))
         }
         ArithExpr::CompoundAssign { var, op, value } => {
-            let op_str = match op {
-                IrArithOp::Add => "+",
-                IrArithOp::Sub => "-",
-                IrArithOp::Mul => "*",
-                IrArithOp::Div => "/",
-                IrArithOp::Mod => "%",
-                _ => "?",
-            };
-            format!(
-                "(set {} ({} {} {}))",
-                var,
-                op_str,
-                var,
-                arith_expr_to_janet(value)
-            )
+            arith_compound_assign_to_janet(var, *op, arith_expr_to_janet(value))
         }
         ArithExpr::Ternary {
             cond,

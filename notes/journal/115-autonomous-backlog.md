@@ -124,3 +124,26 @@ reframed inside a fn + un-ignored. Verified zero regressions: native
 janet −6 fail / +9 pass. Rust codegen/janet suites: no new failures
 (suite is heavily rotted at HEAD — 182 baseline fails — but my diff is
 clean).
+
+## bug-janet-arith-condition — done (janet (( )) conditions/loops/counters)
+
+Root cause: `emit_condition_inline` fell to `_ => "true"` for `ArithTest`,
+so every janet `if/while (( … ))` took the true branch. Fixing that
+exposed a coupled chain (each found by running the loop battery):
+
+1. condition: added `StmtKind::ArithTest` arm → `(not= 0 <arith>)`.
+2. comparisons/logicals must yield bash 1/0 ints, not janet bools (janet
+   treats 0 as truthy). New `arith_binop_to_janet` wraps them. Fixes
+   `echo $(( a < b ))` (was empty) too.
+3. int counters: `(( i++ ))` string-wrapped i, breaking the next compare;
+   `emit_assignment` now keeps int-typed targets numeric.
+4. string tests on int vars: `[[ $i != 0 ]]` emitted `(not= i "0")`
+   (int≠string always true → infinite loop). `emit_test_string_operand`
+   stringifies int operands in string comparisons.
+
+Refactored `arith_expr_to_janet` (extracted binop/unaryop/compound-assign
+helpers), `_stmt_uses_args` (now via direct_exprs/child_bodies), and
+`emit_condition_inline`/`emit_expr_as_int` to stay under the complexity
+gate. Un-guarded 31.17/31.18/av.h3. Spec: janet −8 failing (cf.w1–w7,
+cf.i3), zero regressions native/c/janet. rust codegen 188/68, janet 24/11
+(unchanged).

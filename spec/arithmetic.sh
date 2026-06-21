@@ -108,21 +108,15 @@ run_sash 'if (( 3 <= 7 )); then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.16
 
 # 31.17 <= is false when greater. 31.18 >= mixed. The false case exercises
-# the else/skip branch, which the janet backend mishandles for ALL (( ))
-# comparison conditions (always takes 'then'); see bug-janet-arith-condition.
-# native is the reference.
-if in_modes native,c; then
-    run_sash 'if (( 7 <= 3 )); then echo n; else echo y; fi'
-    [[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.17
-    run_sash 'int x=5
+# the else/skip branch (janet now threads `(( ))` comparison conditions as
+# 1/0 integers — bug-janet-arith-condition fixed).
+run_sash 'if (( 7 <= 3 )); then echo n; else echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.17
+run_sash 'int x=5
 if (( x >= 5 )); then echo a; fi
 if (( x >= 4 )); then echo b; fi
 if (( x >= 6 )); then echo BAD; fi'
-    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 31.18
-else
-    skip_chk 31.17
-    skip_chk 31.18
-fi
+[[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 31.18
 
 set -e
 tally

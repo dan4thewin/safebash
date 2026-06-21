@@ -1,6 +1,6 @@
 ---
 title: "BUG — janet backend: (( )) used as an if/while condition always takes the true branch"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,6 +10,28 @@ gates:
 ---
 
 # BUG — janet `(( ))` condition always true
+
+## Resolution (2026-06-21) — done
+
+Fixed end-to-end so janet `(( ))` conditions, while-loops, and counters
+match native/c. Three coupled fixes in `emit_janet.rs`:
+
+1. **condition** — `emit_condition_inline` gained a `StmtKind::ArithTest`
+   arm: `(not= 0 <arith>)` (was falling to `_ => "true"`).
+2. **1/0 integers** — `arith_binop_to_janet` wraps comparisons
+   (`(if (< a b) 1 0)`) and logicals (`(if (and (not= 0 a) (not= 0 b)) 1 0)`)
+   so arith yields bash-style 1/0 ints (janet comparisons are bools and
+   janet treats 0 as truthy). Fixes `echo $(( a < b ))` too.
+3. **int assignment** — `emit_assignment` keeps an int-typed target numeric
+   (`(set i (+ i 1))`, not string-wrapped) so `(( i++ ))` counters work; and
+   **string `[[ ]]` tests stringify int operands** (`emit_test_string_operand`)
+   so `[[ $i != 0 ]]` with an int `i` compares "0" to "0" (else it loops
+   forever — int 0 ≠ string "0").
+
+Un-guarded arithmetic.sh 31.17/31.18 and argv.sh av.h3. Spec: janet
+−8 failing (cf.w1–w7 while-loops, cf.i3) with zero regressions in any
+mode. `_stmt_uses_args` ArithTest detection restored (refactored to use
+`direct_exprs`/`child_bodies`, well under the complexity gate).
 
 ## Symptom (janet backend only)
 

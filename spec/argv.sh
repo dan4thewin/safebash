@@ -161,19 +161,13 @@ x=$(( $? + 5 ))
 echo $x'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk av.h2
 
-# av.h3 $# drives a (( )) comparison condition inside a function. The janet
-# backend mishandles ALL (( )) conditions (emit_condition_inline emits a
-# constant `true`); native/c are the reference. See bug-janet-arith-condition.
-if in_modes native,c; then
-    run_sash 'fn f {
+# av.h3 $# drives a (( )) comparison condition inside a function.
+run_sash 'fn f {
   if (( $# < 2 )); then echo few; else echo many; fi
 }
 f a
 f a b c'
-    [[ $rc = 0 && $out = $'few\nmany' && -z $err ]]; chk av.h3
-else
-    skip_chk av.h3
-fi
+[[ $rc = 0 && $out = $'few\nmany' && -z $err ]]; chk av.h3
 
 # av.h4 top-level $# inside (( )) is rejected (DD#46, SB5024)
 run_sash 'if (( $# < 2 )); then echo x; fi'
