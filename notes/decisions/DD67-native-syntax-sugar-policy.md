@@ -1,5 +1,5 @@
 title: DD#67 — Native syntax, with unambiguous bash forms kept as 1-to-1 sugar
-status: candidate
+status: accepted
 
 sash prefers clean, regular native syntax, but to avoid turning away
 bash users it does **not** gratuitously break familiar forms. The policy
@@ -58,12 +58,22 @@ semantic.
 - `fn name { }` already replaced bash `name()`; under this policy
   `name()` is a re-add candidate (see Open).
 
-## Open / to confirm
+## Resolved (DG, 2026-06-21)
 
-- **Re-add `name() { }`** (and ksh `function name { }`) as 1-to-1 sugar
-  for `fn name { }`? `fn` is currently the only accepted form.
-- **Backticks** `` `…` `` as sugar for `$(…)` — 1-to-1 modulo nesting;
-  keep or drop?
-- The convert-switch spelling (flag name; e.g. `--emit-source --native`).
-- A **sweep** of currently-rejected bash forms against the 1-to-1 test,
-  so keep/drop is applied consistently rather than ad hoc.
+- **Re-add `name() { }` AND ksh `function name { }`** as 1-to-1 sugar for
+  `fn name { }`. `fn` stays canonical; both bash spellings are accepted
+  input that lowers to the same function IR.
+- **Backticks**: keep **flat** `` `…` `` as 1-to-1 sugar for `$(…)`;
+  **reject nested** backticks with a diagnostic (nesting needs
+  `\``-escaping, which DD#64 removes — so it can't map 1-to-1; direct to
+  `$(…)`).
+- **Convert/canonicalize switch lives in `sash-convert`**, not the
+  compiler. There is no `--emit-source` CLI flag (it was removed when the
+  converter was split out; the compiler rejects it and directs to
+  `sash-convert`). `sash-convert` is the one source-rewriting tool and the
+  natural home for sugar→native canonicalization. Default still = preserve
+  the user's form.
+- **Sweep**: do a one-time systematic pass over every currently-rejected
+  bash form, applying the 1-to-1 test, and produce a **keep/drop table**.
+  DG **ratifies the table before any sugar is implemented** (no ad-hoc
+  keep/drop). See task `dd67-bash-sugar-sweep`.
