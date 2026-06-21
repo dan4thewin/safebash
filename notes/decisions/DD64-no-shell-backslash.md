@@ -1,11 +1,20 @@
 title: DD#64 — No shell-level backslash escaping; quoting + concatenation instead
-status: candidate
+status: accepted
 
 The shell interprets backslash in **exactly two** places — `$'…'`
 (C-escapes) and `\` at end-of-line (line continuation). Everywhere else —
 unquoted, `'…'`, `"…"` — `\` is a verbatim literal byte. Escaping shell
 metacharacters is done by **quoting and string concatenation**, not
 backslashes. From the 2026-06-17/18 discussion.
+
+## Ratified (DG, 2026-06-21)
+
+Accepted as written, **including** the breaking change that inside `"…"`
+`\\` no longer collapses to one backslash and there is no `\"`/`\$` — a
+deliberate divergence from bash, "judged worth the consistency." The core
+(`scan_dq_escape`) is already implemented; the in-`${var:OP}` backslash
+handlers are removed by DD#63 (Path B) and DD#65 (operator drops). No
+open design items.
 
 ## Implementation status (2026-06-19)
 
