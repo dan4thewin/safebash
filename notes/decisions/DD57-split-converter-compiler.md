@@ -1,5 +1,14 @@
-title: DD#57 — Split Converter and Compiler (candidate)
-status: candidate
+title: DD#57 — Split Converter and Compiler
+status: implemented
+
+> **Implemented (status updated 2026-06-21).** The split is done:
+> `sash-convert` is a separate crate on **stock** `tree-sitter-bash` (runs
+> shellcheck, parses findings, emits `# CHECK:` hints); `sash` is the
+> compiler. **Update:** the line below about the compiler "keeping the
+> modified fork (future: purpose-built sash-native parser)" was overtaken
+> — the compiler now uses a **hand-written parser** and dropped tree-sitter
+> entirely (commit 73caecf); the fork is no longer part of the build. Only
+> `sash-convert` uses tree-sitter.
 
 Two programs: `sash-convert` (bash → sash-native source) and `sash` (sash-native → binary).
 Motivated by parser divergence — one tree-sitter fork serving two languages accumulates
