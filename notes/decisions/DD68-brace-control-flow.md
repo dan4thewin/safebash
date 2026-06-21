@@ -1,5 +1,5 @@
 title: DD#68 — Brace-block control flow (`if`/`while`/`until`/`for`); `then/fi/do/done` as sugar
-status: candidate
+status: accepted
 
 `if`, `while`, `until`, and `for` (incl. C-style `for ((;;))`) gain
 **brace `{ }` bodies**, matching `fn name { … }` (already brace-bodied)
@@ -74,12 +74,16 @@ head or body, and `elif`/`else` chaining are all unchanged.
   the family. (`name() { }` is re-added as 1-to-1 sugar — task
   `dd67-bash-sugar-sweep`.)
 
-## Open / to confirm
+## Resolved (DG, 2026-06-21)
 
-- The "expected `{` body" diagnostic (new SB code) for a missing body and
-  for a brace-group-as-condition.
-- Whether the converter/`--emit-source` default round-trips `then/do` or
-  normalizes to braces (DD#67 says default = preserve; confirm for these).
-- `select` / other heads: sash has no `select`; nothing to do.
+- **Converter default preserves `then…fi`/`do…done`** (they are valid
+  sash sugar under DD#67); only `sash-convert`'s **canonicalize mode**
+  normalizes them to `{ }`. Consistent with DD#67 (default = preserve,
+  canonicalize-switch = native-only). Note: there is no `--emit-source`
+  flag — the canonicalize mode lives in `sash-convert` (DD#67).
+- **"expected `{` body" diagnostic** → next-free SB code at implementation
+  (validate/parse-level, alongside the DD#66 codes). Covers a missing body
+  and a brace-group-as-condition.
+- **`select`** and other heads: sash has none; nothing to do.
 
 See task `dd68-brace-control-flow` for the spec-first implementation.
