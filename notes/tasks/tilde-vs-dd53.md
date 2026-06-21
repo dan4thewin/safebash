@@ -5,73 +5,62 @@ priority: P3
 kind: bug
 depends: []
 gates:
-  - `~` and `~/path` either compile cleanly or produce a focused diagnostic
-  - new e2e_tests case for `echo ~` and `echo ~/foo`
-  - DD or DD amendment if behavior is intentional
+  - "compiler: unquoted leading `~` / `~/path` → focused diagnostic mentioning `~` (not the misleading $HOME SB5018), directing to $(getenv HOME)"
+  - "literal `~` stays available (quoted '~'/\"~\", mid-word a~b — already works)"
+  - "sash-convert: rewrite bash `~`/`~/path` → $(getenv HOME) (+ bless) so converted sash compiles"
+  - "new e2e_tests case for `echo ~` (compiler error) and a sash-convert test for the rewrite"
 ---
 
 # Tilde expansion produces SB5018-rejected $HOME
 
-Found 2026-06-07 while excising pre-DD#53 cruft from `handle_cd`
-(journal 109).
+## Decision (DG, 2026-06-21): split compiler vs converter
 
-## Symptom
+Fits the DD#57 converter/compiler division:
 
-```bash
-$ echo "echo ~" > /tmp/t.sh
-$ sash /tmp/t.sh
-/tmp/t.sh:2:6: error [SB5018] $HOME is not available directly — use $(getenv HOME)
-```
+- **Compiler (sash): reject unquoted leading `~`/`~/path`** with a
+  **focused diagnostic** (new SB code) that mentions `~` and directs to
+  `$(getenv HOME)` — not the current misleading SB5018 "$HOME" message.
+  Strict, no magic. A literal `~` remains available via quoting (`'~'`,
+  `"~"`) or mid-word (`a~b`) — all already work; only unquoted *leading*
+  `~` is at issue.
+- **sash-convert: expand `~`/`~/path` → `$(getenv HOME)` and bless it** so
+  a bash script using `~` translates to working sash. The converter does
+  the bash-compat translation (with the explicit bless); the compiler
+  stays strict.
 
-The user wrote `~`, never wrote `$HOME` — the error message is
-misleading.
+## Implementation notes
 
-## Cause
+- Compiler: `parse/expr.rs::parse_word_arm` (~138) currently lowers `~` →
+  `SimpleExpansion("HOME")` and `~/path` → `Concat([HOME, "/path"])`,
+  which the validator then rejects via SB5018 — losing the tilde origin
+  and producing the `$HOME` message. To give a focused message, preserve
+  the tilde origin to a rejection point. Options: (a) a dedicated
+  `ExprKind::Tilde(Option<String>)` marker rejected in `check_rejected`
+  (parser.rs) — principled but touches ~12 files that match `ExprKind`
+  exhaustively (codegen, emit_c, emit_janet, transform, type_check,
+  validate); (b) thread a parse-time diagnostic through `parse_word_arm`;
+  (c) a sentinel the validator special-cases. Pick during implementation.
+- sash-convert: rewrite at the tree-sitter CST level (bash `~` →
+  `$(getenv HOME)`), inserting a bless for the captured value (HOME is a
+  known external; the converter already emits bless/CHECK hints).
 
-`sash/src/parse/expr.rs:138 parse_word_arm` lowers `~` to
-`ExprKind::SimpleExpansion("HOME")` and `~/path` to
-`ExprKind::Concat([SimpleExpansion("HOME"), Literal("/path")])`.
+## Cause (original)
 
-`sash/src/validate.rs:388 ENV_VARS` lists `HOME` as a rejected bare
-env-var per SB5018 (DD#53).
+`parse/expr.rs:138 parse_word_arm` lowers `~` → `SimpleExpansion("HOME")`
+and `~/path` → `Concat([SimpleExpansion("HOME"), Literal("/path")])`.
+`validate.rs:388 ENV_VARS` lists `HOME` as SB5018-rejected (DD#53). So the
+parser produces an expression the validator always rejects, with a
+message about `$HOME` rather than `~`.
 
-The parser produces an expression the validator will always reject,
-with an error message that refers to `$HOME` instead of `~`.
+## DD#53 context
 
-## DD#53 considerations
-
-Per DD#53, `$HOME` is a plain sash variable that is empty unless
-explicitly assigned. So even if SB5018 didn't fire, `echo ~` would
-print an empty line — not the user's actual home directory.
-
-Tilde expansion in bash is a *shell* feature that consults
-`$HOME` at expansion time. Under DD#53, sash has no path to a
-"current user's home directory" without `$(getenv HOME)` + bless.
-
-## Options
-
-1. **Reject `~` at parse time with a focused diagnostic.** New code
-   SB5021 (or similar): "`~` tilde expansion is not available — use
-   `$(getenv HOME)` and bless the result". DD amendment to DD#53 to
-   document the explicit rejection.
-
-2. **Reject `~` only when used unquoted as a path.** Some uses of `~`
-   are intentional (e.g., literal tilde character in regex). The
-   parser would need to distinguish path-position from other
-   positions.
-
-3. **Lower `~` directly to `$(getenv HOME)` plus auto-bless.** This
-   mirrors what bash does at the cost of a hidden tainted-value
-   capture. The auto-bless would have to be conservative
-   (`known_externals` already handles HOME).
-
-Option 1 is the strict DD#53 choice. Option 3 is the
-user-friendly-but-magic choice. DG should decide before implementation.
+Per DD#53, `$HOME` is a plain sash variable, empty unless assigned; the
+only path to the user's home is `$(getenv HOME)` + bless. So `~` has no
+clean compile-time meaning in sash — hence the compiler rejects it and the
+converter rewrites it to the explicit form.
 
 ## Related
 
-- Journal 109 (the handle_cd discovery)
-- DD#53 (env isolation)
-- DD#24 (taint/bless)
-- `sash/src/parse/expr.rs:138`
-- `sash/src/validate.rs:388`
+- Journal 109 (the handle_cd discovery); DD#53 (env isolation); DD#24
+  (taint/bless); DD#57 (converter/compiler split).
+- `sash/src/parse/expr.rs:138`, `sash/src/validate.rs:388`.
