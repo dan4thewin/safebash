@@ -12,6 +12,40 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-20 (cont.) — autonomous backlog sweep
+
+Worked the ready backlog in dependency order (journal 115). Landed:
+
+- **for-loop-arith-condition** (`d76b77a`): for-in bound checks moved off
+  the synthesized `[[ -lt ]]` test onto the `(( ))` arith path
+  (`emit_for_bound`: `ArithBinOp` + `LetExit`); `emit_let_exit`
+  generalized to any `SsaValue`; the `[[ ]]` numeric arm deleted in both
+  backends (`[[ ]]` now carries zero integer machinery); direct `arrlen`
+  → `sash_table_len` arm. Fixed a latent catching-construct bug
+  (`for_arr.exit`/`for_at.exit` added to `is_catching_construct_exit`).
+- **Real bug fixed:** `(( <= ))`/`(( >= ))` were silently wrong (the bash
+  lexer splits `<=` into `<`+`=`; `collect_arith_content` inserted a
+  separator space). Fixed in `arith.rs::needs_separator_space`. Spec
+  arithmetic.sh 31.15–31.18.
+- **subscript-append-broken** (`7ee2854`): `a[i]+=v` now read-modify-write
+  (`Concat([${a[i]}, rhs])`). native; spec types.sh 33.11–33.13.
+- **bug-until-arith-condition** (`6f97636`): `until` desugar appends the
+  `NegateTestResult` sigil instead of patching `SsaInst::Test`, so
+  `until (( ))` / `until <cmd>` are negated (and compound conditions
+  negate once). 3 until codegen_tests re-enabled.
+
+Filed bugs (pre-existing, surfaced here): `bug-dollar-hash-in-arith`
+(`$#` not read in `(( ))`), `bug-c-janet-concat-in-value`,
+`bug-janet-arith-condition` (janet `(( ))` cond always-true). Several
+ignored c/janet cases are guarded `in_modes native`.
+
+All commits: native baseline (cf.c7/c8), c/janet no new failures, rust
+no net change, gates green. **Next ready (large/design):**
+`array-splat-command-arg` (runtime-variadic argv → unblocks DD#69 glob
+work), the c/janet concat/janet-arith backend gaps, and the `$#`/DD#46
+and non-brace-subscript design questions.
+
+
 ### Session 2026-06-20 — DD#62 section A: `[[ ]]` operands → `SsaValue`
 
 The operand→`SsaValue` refactor (the last piece of DD#62). `SsaInst::Test`
