@@ -1,6 +1,6 @@
 ---
 title: "BUG — && / || parse right-associative (false && A || B runs neither)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -10,6 +10,14 @@ gates:
   - "mixed/deep chains correct: A && B || C && D == ((A && B) || C) && D"
   - "no rust/spec regression (every && / || chain re-associates — verify the whole suite)"
 ---
+
+> **Done in `4abe44a` (fix(parser): && / || are left-associative).**
+> Verified 2026-06-21: `false && echo A || echo B` → B; `[[ 1 = 2 ]] && echo
+> A || echo B` → B; `true && echo A || echo B && echo C` → "A C";
+> `false || echo A && echo B` → "A B" — all match bash. The backend
+> exit-status-vs-truthiness follow-up is the separate
+> `bug-andor-backend-chain-status` (janet/c).
+
 
 # BUG — `&&` / `||` parse right-associative
 

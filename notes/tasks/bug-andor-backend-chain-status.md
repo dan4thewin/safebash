@@ -77,3 +77,40 @@ Once fixed, drop the guard so they run under janet+c too. Add a
 - `sash/src/emit_janet.rs:309` (emit_list_and), `:320` (emit_list_or)
 - `sash/src/emit_c.rs` (&&/|| lowering)
 - `bug-andor-right-associative` (the parser fix that surfaced this)
+
+## Investigation (2026-06-21) — concrete map, ready for a focused effort
+
+Confirmed the root cause and mapped the full change surface (janet;
+c mirrors it). The fix is well-defined but spans the whole command-
+emission path, so it wants a dedicated session with full re-verification.
+
+**janet pieces (emit_janet.rs):**
+- `emit_list_and` (~309) / `emit_list_or` (~320): stop wrapping the left in
+  `(do …)` and branching on its value. Instead: `emit_stmt(left)` for
+  effect, then `(when (= 0 __last_exit) <right>)` for `&&` /
+  `(when (not= 0 __last_exit) <right>)` for `||`. With status-setting
+  commands these compose correctly (the chain's resulting `__last_exit` is
+  the last-run command's, matching bash).
+- Every command must leave `__last_exit` set. Today only true/false do
+  (`emit_janet_const_bool`, ~680). Needed:
+  - `emit_janet_echo`, `emit_janet_printf`, `emit_janet_cat` (stdin) → 0.
+  - `emit_janet_test_cmd` (~639): currently emits a bare bool value;
+    change to `(set __last_exit (if <test> 0 1))`.
+  - `emit_janet_general_command` (~678): `(os/execute […] :p)` returns the
+    exit code → `(set __last_exit (os/execute …))`. **Edge case:** the
+    user-function call branch `(f args)` returns a value, not a status —
+    decide its `__last_exit` (native uses the callee's `$?`).
+  - The simple-success builtins can be set centrally in `emit_command`
+    (~601, which has `depth`) after the match, EXCEPT the kinds that set
+    their own (test, general-command, true/false) or are control flow
+    (exit/return/break/continue). Mind the indent (emitters get one
+    `indent(depth)` from the dispatch; a second line needs its own).
+
+**c pieces (emit_c.rs):** the analogous `&&`/`||` lowering + `__exit_status`
+must be set by every command emitter (echo already sets it to 0;
+audit the rest). 62.9 fails in c; 62.8/62.10 pass by luck.
+
+**Tests:** drop the `in_modes native` guard on wordsplit.sh 62.8–62.10;
+add a `printf`/`echo`-in-chain case to pin per-command status. Verify the
+WHOLE spec + rust suites under all 3 modes (broad blast radius: every
+program's command/list emission changes).
