@@ -135,6 +135,7 @@ struct EmitCtx {
     int_vars: std::collections::HashSet<String>,
     int_funcs: std::collections::HashSet<String>,
     functions: std::collections::HashSet<String>,
+    map_vars: std::collections::HashSet<String>,
 }
 
 impl EmitCtx {
@@ -144,6 +145,7 @@ impl EmitCtx {
             int_vars: std::collections::HashSet::new(),
             int_funcs: std::collections::HashSet::new(),
             functions: std::collections::HashSet::new(),
+            map_vars: std::collections::HashSet::new(),
         }
     }
 
@@ -155,6 +157,12 @@ impl EmitCtx {
         self.int_vars.contains(name)
     }
 
+    /// A `map` (assoc array) is keyed by strings; an indexed array is keyed
+    /// by integers. janet `put`/`get` require the matching key type.
+    fn is_map(&self, name: &str) -> bool {
+        self.map_vars.contains(name)
+    }
+
     #[allow(dead_code)]
     fn is_int_func(&self, name: &str) -> bool {
         self.int_funcs.contains(name)
@@ -162,6 +170,11 @@ impl EmitCtx {
 
     fn declare(&mut self, name: &str) {
         self.declared.insert(name.to_string());
+    }
+
+    fn declare_map(&mut self, name: &str) {
+        self.declared.insert(name.to_string());
+        self.map_vars.insert(name.to_string());
     }
 
     fn declare_int(&mut self, name: &str) {
@@ -211,6 +224,12 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
 
 fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: usize) {
     indent(out, depth);
+    // Indexed assignment `a[i]=v` / `a[i]+=v` mutates one element via janet
+    // `put` (arrays take integer indices, maps string keys).
+    if a.index.is_some() {
+        emit_indexed_assignment(out, ctx, a);
+        return;
+    }
     // An int-typed target keeps arithmetic numeric so later `(( ))` reads and
     // comparisons work (string-wrapping would make `(( i += 1 ))` set i to a
     // string and break the next comparison). String targets stay strings.
@@ -225,6 +244,25 @@ fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: u
         ctx.declare(&a.name);
         writeln!(out, "(var {} {})", a.name, val).unwrap();
     }
+}
+
+/// `a[i]=v` / `a[i]+=v` → `(put a <idx> <val>)`. The index is an integer for
+/// an indexed array and a string key for a map; append concatenates onto the
+/// current element via `(string (get a <idx>) <val>)`.
+fn emit_indexed_assignment(out: &mut String, ctx: &EmitCtx, a: &Assignment) {
+    let idx = a.index.as_ref().expect("indexed assignment has an index");
+    let index = if ctx.is_map(&a.name) {
+        emit_expr_inline(idx, ctx)
+    } else {
+        emit_expr_as_int(idx, ctx)
+    };
+    let rhs = emit_expr_inline(&a.value, ctx);
+    let value = if a.op == AssignOp::Append {
+        format!("(string (get {n} {i}) {r})", n = a.name, i = index, r = rhs)
+    } else {
+        rhs
+    };
+    writeln!(out, "(put {} {} {})", a.name, index, value).unwrap();
 }
 
 fn emit_declaration(out: &mut String, ctx: &mut EmitCtx, d: &Declaration, depth: usize) {
@@ -249,20 +287,29 @@ fn emit_declaration_assignment(
     if ctx.is_declared(&a.name) {
         writeln!(out, "(set {} {})", a.name, val).unwrap();
     } else {
-        if d.var_type == VarType::Int {
-            ctx.declare_int(&a.name);
+        declare_decl_var(ctx, d, a);
+        let kw = if d.keyword == DeclKeyword::Readonly {
+            "def"
         } else {
-            ctx.declare(&a.name);
-        }
-        if d.keyword == DeclKeyword::Readonly {
-            writeln!(out, "(def {} {})", a.name, val).unwrap();
-        } else {
-            writeln!(out, "(var {} {})", a.name, val).unwrap();
-        }
+            "var"
+        };
+        writeln!(out, "({} {} {})", kw, a.name, val).unwrap();
     }
     if d.keyword == DeclKeyword::Export {
         indent(out, depth);
         writeln!(out, "(os/setenv \"{}\" {})", a.name, a.name).unwrap();
+    }
+}
+
+/// Record a declared variable's janet type: int (numeric), map (assoc array,
+/// string-keyed), or a plain string/indexed-array binding.
+fn declare_decl_var(ctx: &mut EmitCtx, d: &Declaration, a: &Assignment) {
+    if d.var_type == VarType::Int {
+        ctx.declare_int(&a.name);
+    } else if matches!(a.value.kind, ExprKind::AssocArray(_)) {
+        ctx.declare_map(&a.name);
+    } else {
+        ctx.declare(&a.name);
     }
 }
 

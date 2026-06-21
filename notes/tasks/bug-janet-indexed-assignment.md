@@ -1,6 +1,6 @@
 ---
 title: "BUG — janet backend: indexed assignment a[i]=v / a[i]+=v ignores the index (sets the whole variable)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -11,6 +11,28 @@ gates:
 ---
 
 # BUG — janet indexed assignment ignores the index
+
+## Resolution (2026-06-21)
+
+`emit_assignment` now routes a `Some(index)` assignment to
+`emit_indexed_assignment`, which emits `(put <name> <index> <value>)`.
+The index is typed by collection kind — integer for an indexed array,
+string key for a map — tracked via a new `EmitCtx::map_vars`
+(`declare_map`, populated when a declaration's value is an
+`ExprKind::AssocArray`); janet rejects a string key on an array. Append
+(`+=`) concatenates onto the current element via
+`(string (get <name> <index>) <value>)`.
+
+Verified vs native: `a[1]=NEW`→NEW, `a[0]+=9`→19, `a[$i]+=z`→yz,
+`m[k]+=cd`→abcd, `m[a]=V`→V. Specs types.sh 33.11-33.13 fully un-guarded
+(all modes). Spec: janet 109→108 (33.8 dynamic map-key write recovered;
+33.11-33.13 skipped→passing), zero regressions native/c/janet; janet rust
+suite 24/11 unchanged.
+
+NB: array *dynamic read* `${a[$i]}` is still a separate janet gap
+(bug-janet-array-dynamic-subscript-read); the write side fixed here is
+independent. (A pre-existing duplicate `chk 33.7` id in types.sh makes
+the test_status row for janet:33.7 ambiguous — unrelated spec hygiene.)
 
 ## Symptom (janet backend only)
 

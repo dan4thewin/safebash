@@ -176,3 +176,15 @@ Specs: 12.4 locks `a=hello$b`; 33.11-33.13 native→native,c. Zero new
 failures; c 61→60 (53.6 recovered too). Filed bug-janet-indexed-assignment:
 janet `a[i]=v` drops the index (emits whole-var `(set a v)`) — why the
 append rows stay janet-excluded.
+
+## bug-janet-indexed-assignment — done
+
+janet `a[i]=v`/`a[i]+=v` ignored the index (`emit_assignment` dropped
+`Assignment.index`/`op`, emitting `(set a v)`). Now routes to
+`emit_indexed_assignment` → `(put name index value)`, index typed by
+collection kind (integer for arrays, string for maps — janet rejects a
+string key on an array) via a new `EmitCtx::map_vars` populated from
+`ExprKind::AssocArray` declarations. Append → `(string (get name idx) v)`.
+Un-guarded types.sh 33.11-33.13 (all modes). janet 109→108 (33.8 map
+dynamic-key write recovered too), zero regressions. (Found a pre-existing
+duplicate `chk 33.7` id — noted, not fixed; unrelated spec hygiene.)
