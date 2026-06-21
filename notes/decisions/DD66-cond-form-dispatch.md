@@ -1,5 +1,5 @@
 title: DD#66 — `[[ ]]` gains a dispatch (cond) form; `case`/`esac` removed
-status: candidate
+status: accepted
 
 `[[ ]]` becomes sash's single match construct, in **two forms**: the
 familiar **boolean test** (yields `$?`) and a new **dispatch statement**
@@ -130,14 +130,18 @@ arm intends). Bash `*)` → `|| { … }`.
 - **Builds on** DD#62 (`==` exact) and DD#63 (`=~`/`match` regex,
   unanchored).
 
-## Open / to confirm
+## Resolved (DG, 2026-06-21)
 
-- The dispatch IR/merge-label name (`cond.merge`?) to add to
-  `is_catching_construct_exit`.
-- Numeric dispatch (`[[ $n -eq 1 { } 2 { } || { } ]]`) — deferred; start
-  with `==`/`=~` only.
-- Two new SB codes to assign: the `case`-removed reserved-word
-  diagnostic, and the "dispatch `[[ … ]]` used as a condition" diagnostic
-  (statement-only rule, (b)).
+- **Numeric dispatch dropped entirely.** `==` and `=~` are the **only**
+  dispatch ops — there is no `-eq`/`-lt`/… dispatch form, now or later.
+  Exact numeric dispatch still works through `==` (string-exact: `[[ $n ==
+  1 { … } 2 { … } ]]`); numeric *ranges*/comparisons use an `if`/`elif`
+  chain with `(( ))`. This keeps the construct to two clean modes.
+- **Merge-label name → `dispatch.merge`** in `is_catching_construct_exit`
+  (siblings: `case.merge`, `if.merge`, `while.exit`). Implementation detail.
+- **SB codes assigned at implementation** (next-free; validate-level is at
+  SB5028, so SB5029+). Pre-numbering now would risk colliding with
+  intervening work. The two codes: the `case` reserved-word diagnostic and
+  the "dispatch `[[ … ]]` used as a condition" (statement-only) diagnostic.
 
 See task `dd66-cond-form-dispatch` for the spec-first implementation.
