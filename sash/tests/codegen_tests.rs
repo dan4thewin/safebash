@@ -793,7 +793,6 @@ done
 }
 
 #[test]
-#[ignore = "blocked on bug-until-arith-condition: until (( )) is not negated"]
 fn until_basic() {
     let src = r#"x=0
 until (( x >= 3 )); do
@@ -806,7 +805,6 @@ done
 }
 
 #[test]
-#[ignore = "blocked on bug-until-arith-condition: until (( )) is not negated"]
 fn until_immediate_exit() {
     let src = r#"x=5
 until (( x < 10 )); do
@@ -865,7 +863,6 @@ done
 }
 
 #[test]
-#[ignore = "blocked on bug-until-arith-condition: until (( )) is not negated"]
 fn until_countdown() {
     let src = r#"x=3
 until (( x <= 0 )); do

@@ -70,3 +70,12 @@ value = `Concat([subscript_to_value(a,i), rhs])` (read-modify-write);
 (`a=hello$b` is empty in c too); filed `bug-c-janet-concat-in-value`.
 array-splat-command-arg deferred (substantial: runtime-variadic argv
 across 3 backends) — left ready for a focused effort.
+
+## bug-until-arith-condition — done (native)
+
+Rewrote the until desugar to append the `NegateTestResult` sigil (the
+`!` primitive) to the loop header rather than wrapping each `SsaInst::Test`
+in `SsaTest::Not`. Negates any condition form ([[ ]], (( )), command)
+once — also more correct for compound conditions. 3 until codegen_tests
+un-ignored + pass. (c/janet until (( )) still fails on separate backend
+gaps.) numeric_with_argc stays ignored on bug-dollar-hash-in-arith.

@@ -1,6 +1,6 @@
 ---
 title: "BUG — `until (( cond ))` is not negated (infinite loop); until only negates [[ ]] Test conditions"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -11,6 +11,15 @@ gates:
 ---
 
 # BUG — `until (( ))` / `until <cmd>` not negated
+
+> **DONE (2026-06-20, native).** The until desugar
+> (transform/statements.rs::lower_while_stmt) now appends the
+> `NegateTestResult` sigil (the `!`-prefix primitive) to the loop header
+> instead of wrapping each `SsaInst::Test` in `SsaTest::Not`. Negates ANY
+> condition form ([[ ]], (( )), command) once. The 3 #[ignore]d until
+> codegen_tests are re-enabled and pass. c/janet `until (( ))` still fails
+> on separate backend gaps (NegateTestResult / int-echo / janet (( ))
+> handling) — not the desugar bug.
 
 ## Symptom
 

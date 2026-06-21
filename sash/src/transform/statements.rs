@@ -69,14 +69,19 @@ fn lower_while_stmt(
     let mut desugared = w.clone();
     desugared.until = false;
     let exit = lower_while(&desugared, ssa, state, block);
+    // `until` = `while ! cond`: negate the condition's result in the loop
+    // header, after the condition and before the loop branch. Appending the
+    // NegateTestResult sigil (the same `!`-prefix primitive) works for ANY
+    // condition form — [[ ]], (( )) (a LetExit), or a plain command — and
+    // negates the whole condition once (the old per-Test `SsaTest::Not`
+    // patch missed (( ))/command conditions and mis-negated compound ones).
     if let Terminator::Goto(header_id) = &ssa.block(block).terminator {
         let header_id = *header_id;
-        let insts = &mut ssa.block_mut(header_id).insts;
-        for inst in insts.iter_mut() {
-            if let SsaInst::Test(ref mut test) = inst {
-                *test = SsaTest::Not(Box::new(test.clone()));
-            }
-        }
+        ssa.block_mut(header_id).insts.push(SsaInst::sigil(
+            BuiltinCmd::NegateTestResult,
+            vec![],
+            true,
+        ));
     }
     exit
 }
