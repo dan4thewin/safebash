@@ -1,5 +1,5 @@
 title: DD#63 — Regex as a builtin family (match / sub / gsub) with thin sugar
-status: candidate
+status: accepted
 
 Regex is a family of **builtins** that take ordinary sash string
 arguments; the familiar syntaxes (`[[ =~ ]]`, `s/re/sub/`,
@@ -171,12 +171,23 @@ interpolate; `${pat}` → SB4014; `${v:s/$x/Y/}` no-ops; `v =~ s/$x/Y/` →
 evaluated normally). DD#39's "dynamic patterns compiled at runtime" was
 aspirational; DD#39 is also stale on `{n,m}` (counted repetition works).
 
-## Open / to confirm
+## Resolved (DG, 2026-06-21)
 
-- `case` glob: desugar `=glob` to a `match`/glob builtin too (removes the
-  last `[[ ]]`/`case` pattern operand)? Proposed, not locked.
-- `\` followed by a non-digit in the **replacement**: literal, or error?
-- The `Resub` stride (32 vs 16) before reading `resub[1..]`.
+- **`\` + non-digit in a `sub`/`gsub` replacement → compile error.** Only
+  `\0`–`\9` (backrefs) and `\\` (literal backslash) are valid; every other
+  `\<char>` is rejected (a new SB code). Holds the explicit line (DD#64
+  removed shell backslash; sash rejects ambiguity rather than guessing).
+  This deliberately diverges from sed, which is lenient (drops the
+  backslash for unknown escapes and recognizes a `\t`/`\n`/… table). A
+  literal char is just itself; a literal backslash is `\\`.
+- **`Resub` stride = 16 bytes** (2 pointers per entry: start `s`, end `e`;
+  `regexp9.h`). Read `resub[1..9]` at 16-byte stride. The `sash-rt/src/
+  lib.rs:1307` comment ("4 pointers … 320 bytes") is **wrong** (the
+  320-byte buffer is 2× over-allocated but safe); fix that comment when
+  surfacing capture groups. The `:1363` comment ("16 bytes") is correct.
+- **`case` `=glob` → match/glob builtin** is resolved by **DD#66**, which
+  removes `case`/`esac` entirely (so there is no `case` glob operand left
+  to desugar). Confirmed under DD#66.
 
 See task `regex-interpolation-delimiters` for the spec-first
 implementation; `dd62-test-expr-ssavalue` for the overlapping operand
