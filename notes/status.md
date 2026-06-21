@@ -12,6 +12,33 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-21 — autonomous backlog sweep (cont.)
+
+Five tasks landed (journal 115), all multi-backend verified with zero net
+regression (native cf.c7/c8 only; c/janet diffed per-mode; complexity
+gates green):
+
+- **bug-dollar-hash-in-arith** (`4b48920`): `$#`/`$?`/positionals now read
+  inside `(( ))` (lexer `scan_arith_dollar` scans the special single-char
+  names; DD#46 enforced in arith via `check_positionals`). Fixed a
+  pre-existing janet double-paren arith-value crash (repaired 6 specs).
+- **bug-janet-arith-condition** (`a3fc02e`): janet `(( ))` conditions were
+  constant-`true`. Now `emit_condition_inline` handles `ArithTest`;
+  comparisons/logicals yield bash 1/0 ints; int counters stay numeric;
+  string `[[ ]]` tests stringify int operands. janet −8 (cf.w1–w7, cf.i3).
+- **nonbrace-dynamic-subscript** (`44dc0b3`): `$a[$i]` reads `${a[$i]}`
+  (decision B) via `try_split_subscript_arm` (peek_n lookahead).
+- **bug-c-janet-concat-in-value** (`15654ef`): c `lower_value_as_str`
+  gained a `Concat` arm (`emit_concat_value` via runtime `sash_concat`).
+- **bug-janet-indexed-assignment** (`4db609e`): janet `a[i]=v`/`a[i]+=v`
+  now `(put …)` with collection-typed index (`EmitCtx::map_vars`).
+  types.sh 33.11–33.13 fully un-guarded (all modes).
+
+Filed for review: **array-splat-command-arg** — investigated (feasible
+via `sash_alloc`+table iteration); held for DG on the native runtime-argv
+ABI choice (B1 codegen-side vs B2 runtime-side). Filed bugs:
+`bug-janet-int-overflow`, `bug-janet-array-dynamic-subscript-read`.
+
 ### Session 2026-06-20 (cont.) — autonomous backlog sweep
 
 Worked the ready backlog in dependency order (journal 115). Landed:
