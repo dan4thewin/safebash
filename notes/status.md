@@ -74,7 +74,47 @@ via `sash_alloc`+table iteration); held for DG on the native runtime-argv
 ABI choice (B1 codegen-side vs B2 runtime-side). Filed bugs:
 `bug-janet-int-overflow`, `bug-janet-array-dynamic-subscript-read`.
 
-### Session 2026-06-20 (cont.) — autonomous backlog sweep
+### Session 2026-06-21 (cont.) — DD implementation phase (journal 116)
+
+Implemented the resolved DDs in dependency order; all multi-backend
+verified, native baseline held (cf.c7/cf.c8 only), rust 184=184 (oracle
+order-flakiness only). Commits:
+
+- **cstring-in-double-quotes** (`ba345da`): DD#64 addendum — `$'…'`
+  recognized inside `"…"` (lexer `scan_dq_cstring`). Specs wordsplit
+  64.4–64.8 (all backends).
+- **array-splat-command-arg** (`d24084e`): `@a` expands to one argv entry
+  per element (DD#20/#22), all backends. A1 `SsaValue::ArraySplat` (taint
+  inherits from the array); B1 native `build_argv_values` (unifies exec/
+  pipeline/cmdsub; runtime `sash_alloc` + Cranelift fill-loops); C VLA;
+  janet `;`-splice. Specs wordsplit 22.14–22.19. **Folded in a spec-
+  hygiene fix**: wordsplit had a misplaced mid-file `tally` (its
+  "Additional coverage" ran only in native) → moved to EOF; surfaced two
+  pre-existing c/janet gaps (39.10 `\w`, 22.12 echo|read, filed).
+- **glob-splat Part 1** (`c8b3530`, `90ed26b`): DD#69 globs-are-arrays.
+  1.2 — inline `*` in command-arg position is SB5029 (use `array a=(*)`).
+  1.1 — `for f in *` routes through glob→array→per-element
+  (`try_dispatch_glob`); **fixed a C-backend glob SIGSEGV** (`emit_glob_c`;
+  emit_c had a glob TODO → null table). Specs wordsplit 20.1–20.6
+  (for-in glob native/c; janet doesn't glob).
+
+**Decisions now needed from DG (filed):**
+- `DECISION-glob-splat-disposition-word` — glob-splat **Part 2**
+  (`@{a:-WORD}`/`@{a:?WORD}` disposition + bare-`@a`-to-external reject):
+  WORD-interpolation semantics, `:?` abort format, taint compose. Blocks
+  the rest of glob-splat.
+- Remaining ready tasks are each design-gated per their files:
+  `reject-undeclared` (typed-zero-init set + pre-SSA-vs-SSA placement),
+  `vet-var-modifiers` (basename/dirname builtin-vs-external; couples to
+  regex-builtins for sub/gsub), `dd67-sugar-sweep` (keep/drop table needs
+  DG ratification *before* sugar), `regex-builtins`/`dd66`/`dd68`.
+
+Other tasks filed this session: `bug-cmdsubst-builtin-not-resolved`
+(`$(printf …)` passes a bare name to sash_exec — pre-existing),
+`janet-pipeline-eagain-flaky`, `cjanet-wordsplit-39-10-22-12`,
+`spec-wordsplit-count-desync` (done).
+
+
 
 Worked the ready backlog in dependency order (journal 115). Landed:
 
