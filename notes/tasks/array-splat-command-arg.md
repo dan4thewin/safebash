@@ -102,3 +102,24 @@ builtins paths change). Recommend A1 + B1 + C + D (smallest blast radius,
 reuses sash_alloc + the for-in iteration pattern, no ABI churn). Holding
 for your call on B before implementing, per decision authority — this is
 the runtime-architecture choice, not the (already-decided) semantics.
+
+## Decision (DG, 2026-06-21): A1 + B1 + C + D
+
+- **A1** — new `SsaValue::ArraySplat { array: String }`; command args stay
+  `Vec<SsaValue>` and may contain a splat each backend expands.
+- **B1** (native) — **codegen-side** runtime argv: compute argc at runtime
+  (`1 + #scalars + Σ sash_table_len(splat)`), `sash_alloc((argc+1)*8)`,
+  fill with Cranelift loops (scalars direct; each splat loops
+  `sash_table_value`), null-terminate, pass to `sash_run`. **No runtime-ABI
+  change**; argv moves from the fixed stack slot to a heap alloc. Reuses
+  the `lower_for_array` iteration pattern (transform/pipelines.rs:33-172).
+- **C** (emit_c) — build argv as a dynamically-sized list (count then
+  fill); arrays are `SashTable*`.
+- **D** (emit_janet) — `;`-splice into the command array:
+  `(os/execute [cmd ;(elems-of a) …] :p)`.
+
+Implementation still owns: the empty-array → zero-args case, DD#69's
+empty-disposition forms (`@{a:-W}`/`@{a:?W}`) which build on this, and
+verifying arg boundaries across all three backends. SB/validation for the
+DD#69 external-splat rule is the separate `glob-as-array-splat-disposition`
+task that depends on this one.
