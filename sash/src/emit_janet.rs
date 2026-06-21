@@ -1257,12 +1257,13 @@ fn emit_expr_assoc_array(pairs: &[(String, Expr)], ctx: &EmitCtx) -> String {
 }
 
 fn emit_expr_subscript(name: &str, index: &Expr, ctx: &EmitCtx) -> String {
-    let idx = emit_expr_inline(index, ctx);
-    let idx_str = idx.trim_matches('"');
-    if idx_str.chars().all(|c| c.is_ascii_digit()) {
-        format!("(get {} {})", name, idx_str)
+    // An indexed array needs an integer index; a map needs its string key.
+    // `${a[$i]}` reads $i as a string var, so coerce with emit_expr_as_int
+    // (janet `get` on an array with a string key returns nil → empty).
+    if ctx.is_map(name) {
+        format!("(get {} {})", name, emit_expr_inline(index, ctx))
     } else {
-        format!("(get {} {})", name, idx)
+        format!("(get {} {})", name, emit_expr_as_int(index, ctx))
     }
 }
 

@@ -188,3 +188,15 @@ string key on an array) via a new `EmitCtx::map_vars` populated from
 Un-guarded types.sh 33.11-33.13 (all modes). janet 109→108 (33.8 map
 dynamic-key write recovered too), zero regressions. (Found a pre-existing
 duplicate `chk 33.7` id — noted, not fixed; unrelated spec hygiene.)
+
+## bug-janet-array-dynamic-subscript-read — done
+
+`emit_expr_subscript` left the index untyped, so `${a[$i]}` → `(get a i)`
+with `i` a string var → janet returns nil (empty). Now types the index by
+collection kind (reusing `map_vars`): map → string key, array →
+`emit_expr_as_int` (`(scan-number i)`). Both brace and non-brace array
+reads work in janet now, plus the `[[ ${a[$i]} ]]` test (62.14 un-guarded,
+all modes). Also fixed a spec-hygiene bug: `chk 33.5/33.6/33.7` were each
+duplicated (dynamic read/write AND array per-element-ops) — renumbered the
+per-element rows to 33.16-33.18 so test_status reports the dynamic rows
+accurately. janet 108→107, zero regressions.

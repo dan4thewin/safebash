@@ -234,17 +234,17 @@ run_sash 'array a=(one two three); unset a; echo ${#a[@]}'
 
 # --- DD#33 array per-element ops ---
 
-# 33.5 ${arr[@]/pat/rep} substitution per element
+# 33.16 ${arr[@]/pat/rep} substitution per element
 run_sash 'array a=(foo bar baz); echo ${a[@]/ba/BA}'
-[[ $rc = 0 && $out = "foo BAr BAz" && -z $err ]]; chk 33.5
+[[ $rc = 0 && $out = "foo BAr BAz" && -z $err ]]; chk 33.16
 
-# 33.6 ${arr[@]#prefix} strip prefix per element
+# 33.17 ${arr[@]#prefix} strip prefix per element
 run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
-[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.6
+[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.17
 
-# 33.7 ${arr[@]%%suffix} strip suffix per element
+# 33.18 ${arr[@]%%suffix} strip suffix per element
 run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
-[[ $rc = 0 && $out = "file doc note.md" && -z $err ]]; chk 33.7
+[[ $rc = 0 && $out = "file doc note.md" && -z $err ]]; chk 33.18
 
 # --- DD#62 section A: [[ ]] operands are pre-lowered SsaValues ---
 # Subscript operands carry their map-vs-indexed key-ness from transform
@@ -268,16 +268,11 @@ run_sash 'map m=([a]=1 [b]=2); k=b; if [[ ${m[$k]} != 1 ]]; then echo yes; fi'
 run_sash 'map m=([a]=x); k=a; if [[ ${m[$k]} ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.15
 
-# 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]] — NATIVE
-# and C only. The janet backend lowers [[ ]] from IR TestExpr (not the SSA
-# operand path) and doesn't yet resolve a dynamic indexed read; see the
-# matching types 33.5 janet gap. Native is the reference.
-if in_modes native,c; then
-    run_sash 'array a=(10 20 30); i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
-    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.14
-else
-    skip_chk 62.14
-fi
+# 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]]. janet now
+# coerces the array index to an integer in emit_expr_subscript
+# (bug-janet-array-dynamic-subscript-read), so this works in all backends.
+run_sash 'array a=(10 20 30); i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.14
 
 # --- subscript append a[i]+=v (read-modify-write). All backends: c lowers the
 # Concat value (bug-c-janet-concat-in-value) and janet lowers indexed

@@ -1,6 +1,6 @@
 ---
 title: "BUG — janet backend: dynamic subscript read of an indexed array in value context returns empty"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -10,6 +10,25 @@ gates:
 ---
 
 # BUG — janet dynamic indexed-array subscript read (value context)
+
+## Resolution (2026-06-21)
+
+`emit_expr_subscript` emitted `(get a <idx>)` with the index untouched, so
+a dynamic `${a[$i]}` became `(get a i)` where `i` is a string var — janet
+`get` on an array with a string key returns nil → empty. Now it types the
+index by collection kind (reusing `EmitCtx::map_vars` from
+bug-janet-indexed-assignment): a map keeps its string key
+(`emit_expr_inline`), an indexed array coerces to an integer
+(`emit_expr_as_int` → `(scan-number i)` for a string var). Both brace
+`${a[$i]}` and non-brace `$a[$i]` reads now work in janet (they share the
+Subscript path), and the `[[ ${a[$i]} == … ]]` test case (62.14) too.
+
+Verified vs native; un-guarded types.sh 62.14 (all modes). Also fixed a
+pre-existing spec-hygiene bug: `chk 33.5/33.6/33.7` were each used twice
+(dynamic read/write rows AND the array per-element-ops rows) — the latter
+renumbered to 33.16/33.17/33.18, so test_status now reports the dynamic
+rows accurately (janet:33.5/33.6/33.7 passing). janet 108→107; zero
+regressions. (c brace `${a[$i]}` value read remains a separate c gap.)
 
 ## Symptom (janet backend only)
 
