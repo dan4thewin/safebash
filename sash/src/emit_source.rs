@@ -1,10 +1,16 @@
-/// Source emitter — produces sash-native source from bash input.
+/// Source emitter — renders the text embedded in the `.sash_source` ELF
+/// section (DD#45; retrievable via `--extract`). Applies recorded
+/// `Coercion` patches to the original source bytes (replace
+/// `source[start..end]` with `replacement`), preserving comments,
+/// whitespace, and formatting for unpatched regions.
 ///
-/// Collects coercion patches during CST→IR lowering, then applies them
-/// to the original source to produce sash-native output. Preserves
-/// comments, whitespace, and formatting for uncoerced regions.
-///
-/// DD#45: coerce in lowerer, emit from CST.
+/// NOTE: the patch *recorder* lived in the old CST→IR lowerer, which was
+/// removed with tree-sitter (commit 73caecf). Nothing currently pushes
+/// into `COERCIONS`, so the list is empty and the source is embedded
+/// verbatim. The hand-written parser instead *rejects* non-conforming
+/// bash with diagnostics; structural bash→sash-native rewriting lives in
+/// the separate `sash-convert` crate. This passthrough is the dormant
+/// remainder of that mechanism (kept for the `.sash_source` section).
 use std::cell::RefCell;
 
 /// A single source-level coercion: replace source[start..end] with `replacement`.

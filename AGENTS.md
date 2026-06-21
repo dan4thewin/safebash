@@ -57,10 +57,12 @@ to "I'll just implement option A" violates Decision authority.
 - **suites/** — test suites
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
 - **spec.db** — SQLite database of all spec test results (root of repo)
-- **46 design decisions** in `notes/decisions/` (one file per DD)
+- **57 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#69)
 - **1 adversarial audit** completed (5 models, 3 passes, remediation done)
-- **Tree-sitter fork** at `~/src/tree-sitter-bash-safebash` with custom grammar
-  (int, const, array, map, bless, fn, `${var:s/re/str/}`, suppressed_command)
+- **tree-sitter**: not used by the main compiler (hand-written parser). The
+  `sash-convert` crate uses **stock** `tree-sitter-bash 0.25` on bash input.
+  (The old `~/src/tree-sitter-bash-safebash` fork drove the deleted
+  main-compiler pipeline and is no longer part of the build.)
 
 ### Crate structure
 
@@ -71,24 +73,34 @@ integration tests are `pub`.
 
 ### Pipeline
 
-tree-sitter CST → validate (rules + taint) → lower (CST→IR, coercions)
-→ type check → transform (IR→SSA) → fold → codegen (Cranelift) → link → static ELF
+hand-written parser (logos lexer + recursive descent) → Program (AST,
+defined in `ir.rs`) → validate (rules + taint + positionals + argv-splat)
+→ type check → transform (AST→SSA) → fold → codegen (Cranelift) → link →
+static ELF
 
-DD#58 arithmetic sexpr: source preprocessor replaces `(func args...)`
-inside `$(( ))` with placeholders before tree-sitter, transform
-resolves via global `ARITH_MAP`.
+The compiler has **no tree-sitter dependency and no CST** — the parser
+(`parse/`) yields the AST directly (the codebase calls this AST its
+"IR"). tree-sitter survives only in the separate `sash-convert` crate
+(bash→sash-native conversion). (Removed in commit 73caecf, which deleted
+`lower/`, `rules/`, the standalone taint pass, and the logos-CST glue.)
+
+DD#58 arithmetic sexpr: `(name args...)` inside `$(( ))` is parsed
+natively by the arith parser (`parse/arith.rs` → `ArithExpr::FuncCall`);
+the transform resolves the call. (The old pre-tree-sitter source
+preprocessor and global `ARITH_MAP` are gone.)
 
 ### Key source files (`sash/src/`)
 
-- `lib.rs` — entry point, cli_main, arithmetic preprocessor
-- `lower/` — CST → IR lowering (7 files)
-  - `mod.rs` — lower_program, lower_body
-  - `statements.rs` — statement/declaration/command lowering
-  - `control_flow.rs` — if/while/for/case
-  - `functions.rs` — function definitions, redirects
-  - `expressions.rs` — expression lowering
-  - `arithmetic.rs` — (( )) and C-style for
-  - `helpers.rs` — utilities
+- `lib.rs` — entry point, cli_main
+- `parse/` — hand-written lexer + recursive-descent parser → Program/AST
+  - `mod.rs` — parse module root
+  - `logos_tokens.rs` — logos `Tok` enum (lexer tokens)
+  - `lexer.rs` — Scanner (token stream: peek/peek_n/next)
+  - `parser.rs` — recursive descent → Program; `parse()`, statements/decls
+  - `expr.rs` — words, strings, parameter/command expansion, subscripts
+  - `arith.rs` — `(( ))`/`$(( ))` lexer+parser, DD#58 sexpr FuncCall
+  - `error.rs` — parse_error helpers
+  - `tests.rs` — parser unit tests
 - `ir.rs` — IR definitions
 - `type_check.rs` — type checking pass
 - `transform/` — IR → SSA transformation (9 files)
@@ -100,7 +112,7 @@ resolves via global `ARITH_MAP`.
   - `pipelines.rs` — pipeline decomposition
   - `resolution.rs` — DD#23 command resolution
   - `helpers.rs` — phi insertion, positional scanning
-- `ssa.rs`, `ssa_printer.rs` — SSA representation and printing
+- `ssa.rs` — SSA representation (and printing)
 - `codegen/` — Cranelift code generation (8 files)
   - `entry.rs` — compile_to_object, compile_ssa, lower_inst dispatch
   - `types.rs` — VarSlot, ExternFuncs, InstCtx
@@ -109,13 +121,16 @@ resolves via global `ARITH_MAP`.
   - `tests.rs` — [[ ]] test expressions
   - `values.rs` — lower_value, lower_value_as_int
   - `redirects.rs` — fd save/restore
-- `taint.rs` — CST taint analysis
+- `validate.rs` — IR validation: structural rules + taint (`check_taint`) +
+  positionals + argv-splat (absorbed the old `rules/`, `taint.rs`,
+  `validator.rs`, `rule.rs`)
 - `ssa_taint.rs` — SSA taint verification
-- `validator.rs`, `rule.rs` — validation framework
-- `rules/` — validation rules (16 rules)
+- `regex_validate.rs` — DD#39/#63 regex validation
 - `diagnostic.rs` — error reporting
-- `emit_janet.rs` — Janet backend
-- `emit_source.rs`, `printer.rs` — source emission modes
+- `emit_c.rs` — C oracle backend; `emit_janet.rs` — Janet backend
+- `emit_source.rs` — text for the `.sash_source` ELF section (dormant
+  coercion-patch passthrough; see the module note)
+- `oracle.rs` — oracle (bash-comparison) test harness glue
 
 ### Key docs
 
