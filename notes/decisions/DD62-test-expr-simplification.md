@@ -1,5 +1,5 @@
 title: DD#62 — [[ ]] test simplification: exact-only ==/!=, =~ quoting, drop -v
-status: candidate
+status: accepted
 
 Language decisions for `[[ ]]` test expressions, captured from the
 2026-06-17 discussion. (SUBSET.md is stale and not authoritative; this
@@ -86,3 +86,29 @@ Remaining open here (zero-value model, from decision #3):
   (`echo $foo` compiles). Adjacent to the zero-value model behind
   decision #3 — should an undeclared scalar read be a compile error
   instead of a silent empty? (Footgun in a "safe subset".)
+
+## Resolved (DG, 2026-06-21): definite-assignment, `${x:-}` opt-out
+
+**A bare scalar read (`$x` / `${x}`) is rejected if `x` can be reached
+without having been assigned on *some* path** — i.e. **strict
+definite-assignment**, not merely "declared somewhere." The explicit
+escape is the default form **`${x:-WORD}`** (DD#65), which is always
+allowed and states "maybe-unset is intended" (reads the default/zero value
+when unset). Examples:
+
+- `echo $foo` (assigned nowhere) → **reject** (a never-assigned name has no
+  assigning path). Typos are caught.
+- `if c; then x=1; fi; echo $x` → **reject** (the `c`-false path reaches the
+  read unassigned). Fix: `x=` before the `if`, or read `${x:-}`.
+- `x=1; echo $x` → ok (definitely assigned).
+- `echo ${x:-default}` → always ok (explicit maybe-unset; the only way a
+  scalar zero-value is reached).
+
+Consequence: the scalar **zero-value model survives only behind `${x:-}`**;
+every bare read is definitely-assigned. Feasibility: sash already builds
+SSA with phi at branch joins, so the join/dataflow machinery
+definite-assignment needs already exists. Loops (`while`/`for` bodies may
+run zero times) and use-before-assign fall out of the same all-paths rule.
+A typed declaration's zero-init (`int x` → 0, `array a` → empty) counts as
+an assignment — settle the exact "declaration zero-inits" set in the task.
+See task `reject-undeclared-scalar-read`.
