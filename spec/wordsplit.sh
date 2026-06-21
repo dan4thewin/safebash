@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=49
+plan=63
 echo "1..$plan" >&3
 
 set +e
@@ -217,9 +217,6 @@ else
     skip_chk 62.10
 fi
 
-set -e
-tally
-
 
 # ── Additional coverage (2026-05-24) ──
 
@@ -239,6 +236,40 @@ run_sash 'echo "clean" | read x; echo $x'
 run_sash 'array arr; printf "x\n" | mapfile -t arr; echo ${arr[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.13
 
+# 22.14 @a command-arg splat → one verbatim arg per element (DD#20/#22).
+# /usr/bin/printf runs as a real external in all three backends.
+run_sash 'array a=(one two three); /usr/bin/printf "[%s]\n" @a'
+[[ $rc = 0 && $out = $'[one]\n[two]\n[three]' && -z $err ]]; chk 22.14
+
+# 22.15 no word splitting WITHIN an element: a value with a space is one arg
+run_sash 'array a=("a b" c); /usr/bin/printf "[%s]\n" @a'
+[[ $rc = 0 && $out = $'[a b]\n[c]' && -z $err ]]; chk 22.15
+
+# 22.16 splat interleaves with scalar args, preserving order
+run_sash 'array a=(x y); /usr/bin/printf "%s|" pre @a post'
+[[ $rc = 0 && $out = "pre|x|y|post|" && -z $err ]]; chk 22.16
+
+# 22.17 multiple splats expand in order
+run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @a @b'
+[[ $rc = 0 && $out = "x|y|z|" && -z $err ]]; chk 22.17
+
+# 22.18 empty array → ZERO args (cat reads stdin, not an empty-name file).
+# Pipeline → native/c only: Janet's os/spawn pipe path is racy (pre-existing).
+if in_modes native,c; then
+    run_sash 'array e=(); /usr/bin/printf STDIN | cat @e'
+    [[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
+else
+    skip_chk 22.18
+fi
+
+# 22.19 splat in a pipeline stage (native/c; Janet os/spawn pipe is racy)
+if in_modes native,c; then
+    run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @a | cat'
+    [[ $rc = 0 && $out = $'[p]\n[q]\n[r]' && -z $err ]]; chk 22.19
+else
+    skip_chk 22.19
+fi
+
 # 14.7 && on compound command rejected (SB4023)
 run_sash 'if true; then echo x; fi && echo y'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 14.7
@@ -257,3 +288,6 @@ hello
 EOF'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 5.2
 
+
+set -e
+tally

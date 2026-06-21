@@ -25,6 +25,31 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     }
 }
 
+/// Lower a command-*argument* expression to an `SsaValue`, recognising
+/// the `@a` / `"${a[@]}"` array splat (a `ParameterExpansion` whose
+/// operator is `arrvals`) as [`SsaValue::ArraySplat`] so it expands to
+/// one verbatim argv entry per element at codegen time (DD#20/DD#22).
+/// Outside command-arg position `@a` keeps its joined-string meaning via
+/// [`expr_to_value`].
+pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
+    match command_arg_splat(&expr.kind) {
+        Some(array) => SsaValue::ArraySplat { array },
+        None => expr_to_value(expr, state),
+    }
+}
+
+/// Recognise `@a` and the equivalent single-part `"${a[@]}"` as an array
+/// splat, returning the array name.
+fn command_arg_splat(kind: &ExprKind) -> Option<String> {
+    match kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            Some(pe.name.clone())
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => command_arg_splat(&parts[0].kind),
+        _ => None,
+    }
+}
+
 /// DD#62: pre-lower a `[[ ]]` `TestExpr` into an `SsaTest` whose value
 /// operands are `SsaValue` (so codegen uses the ordinary value path,
 /// with `assoc_arrays`-correct subscript key-typing). `=~`/`=glob` right

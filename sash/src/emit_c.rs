@@ -898,30 +898,110 @@ fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 /// sets __test_result so a Branch terminator reading it sees
 /// success ⇔ exit==0.
 fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
-    // Pre-lower every arg so all temp declarations land in the right
-    // order (before the argv array initializer).
+    let argv = emit_argv(e, name, args, types, "    ");
+    writeln!(
+        e.out,
+        "    __exit_status = sash_run((const char* const*){argv}, sash_envp);"
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+}
+
+/// Build a NUL-terminated `<tN>_argv` for `[name, args…]`, expanding any
+/// `@a` splat to one entry per element (DD#20/DD#22 — NO word splitting,
+/// empty array → zero entries). `ind` is the leading indentation.
+/// Returns the argv variable name. No splat → a fixed C array literal;
+/// with a splat → a runtime-sized C99 VLA (count = 1 + #scalars +
+/// Σ sash_table_len(splat)).
+fn emit_argv(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes, ind: &str) -> String {
+    let t = e.fresh();
+    let argv = format!("{}_argv", t);
+    if args
+        .iter()
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. }))
+    {
+        emit_argv_splat(e, name, args, types, ind, &t, &argv);
+    } else {
+        emit_argv_fixed(e, name, args, types, ind, &argv);
+    }
+    argv
+}
+
+/// Fixed argv: a C array literal `{ "name", a0, a1, …, NULL }`.
+fn emit_argv_fixed(
+    e: &mut Emit,
+    name: &str,
+    args: &[SsaValue],
+    types: &VarTypes,
+    ind: &str,
+    argv: &str,
+) {
     let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
     arg_ptrs.push(format!("\"{}\"", c_escape(name)));
     for arg in args {
         let (ptr, _len) = lower_value_as_str(e, arg, types);
         arg_ptrs.push(ptr);
     }
+    writeln!(
+        e.out,
+        "{ind}const char* {argv}[] = {{ {}, (const char*)0 }};",
+        arg_ptrs.join(", ")
+    )
+    .unwrap();
+}
 
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    const char* {t}_argv[] = {{ {}, (const char*)0 }};",
-        arg_ptrs.join(", "),
-        t = t,
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    __exit_status = sash_run((const char* const*){t}_argv, sash_envp);",
-        t = t,
-    )
-    .unwrap();
-    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+/// Runtime VLA argv: count = 1 + #scalars + Σ sash_table_len(splat); each
+/// splat contributes one entry per element.
+fn emit_argv_splat(
+    e: &mut Emit,
+    name: &str,
+    args: &[SsaValue],
+    types: &VarTypes,
+    ind: &str,
+    t: &str,
+    argv: &str,
+) {
+    // Cache each splat's table expression and length up front.
+    let scalar_count = args
+        .iter()
+        .filter(|a| !matches!(a, SsaValue::ArraySplat { .. }))
+        .count();
+    let mut splat_lens: Vec<(String, String)> = Vec::new();
+    for arg in args {
+        if let SsaValue::ArraySplat { array } = arg {
+            let tbl = lookup_table_var(array, types);
+            let len = format!("{}_len{}", t, splat_lens.len());
+            writeln!(e.out, "{ind}i64 {len} = sash_table_len((SashTable*){tbl});").unwrap();
+            splat_lens.push((tbl, len));
+        }
+    }
+    let total = std::iter::once(format!("{}", 1 + scalar_count))
+        .chain(splat_lens.iter().map(|(_, l)| l.clone()))
+        .collect::<Vec<_>>()
+        .join(" + ");
+    writeln!(e.out, "{ind}i64 {t}_n = {total};").unwrap();
+    writeln!(e.out, "{ind}const char* {argv}[{t}_n + 1];").unwrap();
+    writeln!(e.out, "{ind}i64 {t}_w = 0;").unwrap();
+    writeln!(e.out, "{ind}{argv}[{t}_w++] = \"{}\";", c_escape(name)).unwrap();
+
+    let mut si = 0;
+    for arg in args {
+        if let SsaValue::ArraySplat { .. } = arg {
+            let (tbl, len) = &splat_lens[si];
+            si += 1;
+            let iv = format!("{}_i{}", t, si);
+            writeln!(
+                e.out,
+                "{ind}for (i64 {iv} = 0; {iv} < {len}; {iv}++) {{ i64 {t}_el; \
+                 {argv}[{t}_w++] = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); }}"
+            )
+            .unwrap();
+        } else {
+            let (ptr, _len) = lower_value_as_str(e, arg, types);
+            writeln!(e.out, "{ind}{argv}[{t}_w++] = {ptr};").unwrap();
+        }
+    }
+    writeln!(e.out, "{ind}{argv}[{t}_w] = (const char*)0;").unwrap();
 }
 
 /// Echo: mirrors `lower_echo` from codegen/commands.rs:21.
@@ -1790,24 +1870,10 @@ fn emit_pipeline_stage(
 /// fork+execs internally). Mirrors lower_exec_stage
 /// (codegen/inst_handlers.rs:279).
 fn emit_pipeline_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
-    let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
-    arg_ptrs.push(format!("\"{}\"", c_escape(name)));
-    for arg in args {
-        let (ptr, _) = lower_value_as_str(e, arg, types);
-        arg_ptrs.push(ptr);
-    }
-    let a = e.fresh();
+    let argv = emit_argv(e, name, args, types, "        ");
     writeln!(
         e.out,
-        "        const char* {a}_argv[] = {{ {}, (const char*)0 }};",
-        arg_ptrs.join(", "),
-        a = a
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        sash_exec((const char* const*){a}_argv, sash_envp);",
-        a = a
+        "        sash_exec((const char* const*){argv}, sash_envp);"
     )
     .unwrap();
 }

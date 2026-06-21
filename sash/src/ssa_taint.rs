@@ -303,7 +303,8 @@ fn value_is_tainted(
         // so we consult the latest classified version of that name.
         SsaValue::Subscript { array, .. }
         | SsaValue::TableValue { array, .. }
-        | SsaValue::TableKey { array, .. } => taint_of_name(taint, array),
+        | SsaValue::TableKey { array, .. }
+        | SsaValue::ArraySplat { array } => taint_of_name(taint, array),
 
         // Always-tainted: program argv is external input by construction.
         SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => Taint::Tainted,

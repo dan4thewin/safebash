@@ -539,6 +539,14 @@ pub enum SsaValue {
         array: String,
         index: VarRef,
     },
+    /// DD#20/DD#22: `@a` (= `${a[@]}`) in command-argument position.
+    /// Expands to one verbatim argv entry per array element at codegen
+    /// time — NO word splitting within an element, empty array → zero
+    /// args. Only valid in command-arg position (the backends' argv
+    /// builders intercept it); elsewhere `@a` keeps its joined meaning.
+    ArraySplat {
+        array: String,
+    },
 }
 
 /// A `[[ ]]` test with operands **pre-lowered to `SsaValue`** (DD#62).

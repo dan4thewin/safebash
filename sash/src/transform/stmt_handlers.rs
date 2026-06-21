@@ -1,6 +1,8 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::expressions::{expr_to_string, expr_to_value, subscript_to_value, test_to_ssa};
+use super::expressions::{
+    arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
+};
 use super::functions::{collect_local_vars, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
@@ -458,12 +460,12 @@ fn build_producer_stages(
     for cmd in cmds {
         if let StmtKind::Command(c) = &cmd.kind {
             let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
             stages.push((resolve_pipeline_command(&name), args, vec![]));
         } else if let StmtKind::Redirected(r) = &cmd.kind {
             if let StmtKind::Command(c) = &r.body.kind {
                 let name = expr_to_string(&c.name);
-                let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+                let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
                 stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
             }
         }
@@ -620,7 +622,7 @@ fn handle_regular_pipeline(
         };
         if let StmtKind::Command(c) = inner {
             let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
             stages.push((resolve_pipeline_command(&name), args, redirects));
         } else {
             // Compound stage: lower into its own SSA blocks, record entry for codegen

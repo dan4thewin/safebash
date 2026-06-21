@@ -1,6 +1,6 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{expr_to_string, expr_to_value, test_to_ssa};
+use super::expressions::{arg_to_value, expr_to_string, expr_to_value, test_to_ssa};
 use super::helpers::insert_phis_two_branch;
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
@@ -463,7 +463,7 @@ fn build_pipeline_stages_from_cmdsubst(
         };
         if let StmtKind::Command(c) = &cmd_stmt.kind {
             let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
             let redirs = match &stmt.kind {
                 StmtKind::Redirected(r) => r.redirects.clone(),
                 _ => vec![],

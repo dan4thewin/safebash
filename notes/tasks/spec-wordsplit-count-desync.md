@@ -1,6 +1,6 @@
 ---
 title: "spec hygiene: wordsplit.sh native emits plan+1 (count desync vs c/janet)"
-status: ready
+status: done
 priority: P6
 kind: bug
 depends: []
@@ -36,3 +36,13 @@ pre-existing).
 
 2026-06-21 adding wordsplit 64.4-64.8 (DD#64 addendum). The new tests are
 unguarded (run in all modes), so they preserve — not cause — the desync.
+
+## Resolved (2026-06-21)
+
+Root cause was a **misplaced `tally`** at line ~221, not a missing
+`skip_chk`: a block of "Additional coverage" tests was appended *after*
+the `tally`, so they ran only in native (which passes the early tally
+and continues) — c/janet exited at the early tally on their earlier
+failures. Moved `set -e; tally` to the end of the file so all tests run
+and are counted in every mode; plan set to 63. Two pre-existing c/janet
+gaps surfaced (39.10, 22.12) → filed `cjanet-wordsplit-39-10-22-12`.

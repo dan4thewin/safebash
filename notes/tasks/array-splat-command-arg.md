@@ -1,6 +1,6 @@
 ---
 title: "@a array splat in command-arg position expands to N verbatim args, not one joined string"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []

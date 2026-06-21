@@ -111,52 +111,21 @@ pub(super) fn lower_exec(
     test_result_var: Variable,
     exit_status_var: Variable,
 ) {
-    let argc = 1 + args.len();
-    let argv_size = ((argc + 1) * 8) as u32;
-    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        argv_size,
-        3,
-    ));
-
-    let cmd_val = SsaValue::Literal(name.to_string());
-    let (cmd_ptr, _) = lower_value(
-        &cmd_val,
+    let argv_addr = build_exec_argv(
+        name,
+        args,
         builder,
         module,
         vars,
         literals,
-        &std::collections::HashMap::new(),
         externs,
-        Some(exit_status_var),
+        exit_status_var,
     );
-    builder.ins().stack_store(cmd_ptr, argv_slot, 0);
-
-    for (i, arg) in args.iter().enumerate() {
-        let offset = ((i + 1) * 8) as i32;
-        let (ptr, _) = lower_value(
-            arg,
-            builder,
-            module,
-            vars,
-            literals,
-            &std::collections::HashMap::new(),
-            externs,
-            Some(exit_status_var),
-        );
-        builder.ins().stack_store(ptr, argv_slot, offset);
-    }
-
-    let null = builder.ins().iconst(I64, 0);
-    builder
-        .ins()
-        .stack_store(null, argv_slot, (argc * 8) as i32);
 
     let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
     let envp_addr = builder.ins().global_value(I64, envp_gv);
     let envp = builder.ins().load(I64, MemFlags::new(), envp_addr, 0);
 
-    let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
     let run_ref = module.declare_func_in_func(externs.run, builder.func);
     let call = builder.ins().call(run_ref, &[argv_addr, envp]);
     let exit_status = builder.inst_results(call)[0];
@@ -166,4 +135,278 @@ pub(super) fn lower_exec(
     let result = builder.ins().uextend(I64, ok);
     builder.def_var(test_result_var, result);
     builder.def_var(exit_status_var, exit_status);
+}
+
+/// Build a NUL-terminated argv `[name, args…, NULL]` and return its base
+/// address (a `*const *const u8` as an `I64` Value), ready to hand to
+/// `sash_run` / `sash_exec`.
+///
+/// Fast path — no [`SsaValue::ArraySplat`] among `args`: a fixed-size
+/// stack slot sized at compile time (the historical behaviour, byte for
+/// byte).
+///
+/// Splat path (DD#20/DD#22, B1) — at least one `@a`: argc is a *runtime*
+/// value `1 + #scalars + Σ sash_table_len(splat)`. We `sash_alloc`
+/// `(argc+1)*8` bytes and fill them with Cranelift loops (scalars stored
+/// directly; each splat loops `sash_table_value`), then NUL-terminate.
+/// An empty array contributes zero entries.
+pub(super) fn build_exec_argv(
+    name: &str,
+    args: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Variable,
+) -> cranelift_codegen::ir::Value {
+    let mut values = Vec::with_capacity(args.len() + 1);
+    values.push(SsaValue::Literal(name.to_string()));
+    values.extend(args.iter().cloned());
+    build_argv_values(
+        &values,
+        builder,
+        module,
+        vars,
+        literals,
+        &std::collections::HashMap::new(),
+        externs,
+        Some(exit_status_var),
+    )
+}
+
+/// Build argv from a complete value list (`values[0]` is the command).
+/// Used by [`build_exec_argv`] and by command substitution. Picks the
+/// fixed (stack) or runtime (heap + splat loops) path automatically.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn build_argv_values(
+    values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    if values
+        .iter()
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. }))
+    {
+        build_argv_runtime(
+            values,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )
+    } else {
+        build_argv_fixed(
+            values,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )
+    }
+}
+
+/// Compile-time-sized argv on a stack slot. No splats present.
+#[allow(clippy::too_many_arguments)]
+fn build_argv_fixed(
+    values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let argc = values.len();
+    let argv_size = ((argc + 1) * 8) as u32;
+    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
+        StackSlotKind::ExplicitSlot,
+        argv_size,
+        3,
+    ));
+
+    for (i, v) in values.iter().enumerate() {
+        let offset = (i * 8) as i32;
+        let (ptr, _) = lower_value(
+            v,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        );
+        builder.ins().stack_store(ptr, argv_slot, offset);
+    }
+
+    let null = builder.ins().iconst(I64, 0);
+    builder
+        .ins()
+        .stack_store(null, argv_slot, (argc * 8) as i32);
+    builder.ins().stack_addr(I64, argv_slot, 0)
+}
+
+/// Runtime-sized argv on the heap. At least one `@a` splat present.
+#[allow(clippy::too_many_arguments)]
+fn build_argv_runtime(
+    values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    // 1) argc = #scalars + Σ sash_table_len(splat). (cmd is a scalar.)
+    let scalar_count = values
+        .iter()
+        .filter(|a| !matches!(a, SsaValue::ArraySplat { .. }))
+        .count();
+    let mut argc = builder.ins().iconst(I64, scalar_count as i64);
+    for v in values {
+        if let SsaValue::ArraySplat { array } = v {
+            let tbl = array_table_ptr(array, vars, builder);
+            let len = emit_table_len_call(tbl, builder, module, externs);
+            argc = builder.ins().iadd(argc, len);
+        }
+    }
+
+    // 2) heap argv of (argc+1)*8 bytes.
+    let argc_plus1 = builder.ins().iadd_imm(argc, 1);
+    let bytes = builder.ins().imul_imm(argc_plus1, 8);
+    let alloc_ref = module.declare_func_in_func(externs.alloc, builder.func);
+    let call = builder.ins().call(alloc_ref, &[bytes]);
+    let base = builder.inst_results(call)[0];
+
+    // 3) running write index, starting at 0.
+    let widx = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(widx, zero);
+
+    // 4) fill: scalars directly, splats per element.
+    for v in values {
+        match v {
+            SsaValue::ArraySplat { array } => {
+                let tbl = array_table_ptr(array, vars, builder);
+                emit_splat_fill(builder, module, externs, base, widx, tbl);
+            }
+            scalar => {
+                let (ptr, _) = lower_value(
+                    scalar,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    func_constants,
+                    externs,
+                    exit_status_var,
+                );
+                store_argv_entry(builder, base, widx, ptr);
+            }
+        }
+    }
+
+    // 5) NUL-terminate at argv[argc] (widx now equals argc).
+    let cur = builder.use_var(widx);
+    let off = builder.ins().imul_imm(cur, 8);
+    let addr = builder.ins().iadd(base, off);
+    let null = builder.ins().iconst(I64, 0);
+    builder.ins().store(MemFlags::new(), null, addr, 0);
+    base
+}
+
+/// Load an array variable's table pointer by name.
+fn array_table_ptr(
+    array: &str,
+    vars: &HashMap<String, VarSlot>,
+    builder: &mut FunctionBuilder,
+) -> cranelift_codegen::ir::Value {
+    let sv = super::types::find_array_slot(vars, array, "array");
+    builder.use_var(sv.str_ptr())
+}
+
+/// `sash_table_len(tbl)` → i64.
+fn emit_table_len_call(
+    tbl: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+    let call = builder.ins().call(len_ref, &[tbl]);
+    builder.inst_results(call)[0]
+}
+
+/// Store `ptr` at `argv[widx]` (base + widx*8) and increment `widx`.
+fn store_argv_entry(
+    builder: &mut FunctionBuilder,
+    base: cranelift_codegen::ir::Value,
+    widx: Variable,
+    ptr: cranelift_codegen::ir::Value,
+) {
+    let cur = builder.use_var(widx);
+    let off = builder.ins().imul_imm(cur, 8);
+    let addr = builder.ins().iadd(base, off);
+    builder.ins().store(MemFlags::new(), ptr, addr, 0);
+    let next = builder.ins().iadd_imm(cur, 1);
+    builder.def_var(widx, next);
+}
+
+/// Append every element of `tbl` to argv: for i in 0..len { argv[widx++]
+/// = sash_table_value(tbl, i) }. Element pointers are NUL-terminated
+/// (string invariant ptr[len]==0), so they go straight into argv.
+fn emit_splat_fill(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    base: cranelift_codegen::ir::Value,
+    widx: Variable,
+    tbl: cranelift_codegen::ir::Value,
+) {
+    let len = emit_table_len_call(tbl, builder, module, externs);
+    let i = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(i, zero);
+
+    let hdr = builder.create_block();
+    let body = builder.create_block();
+    let done = builder.create_block();
+    builder.ins().jump(hdr, &[]);
+
+    builder.switch_to_block(hdr);
+    let iv = builder.use_var(i);
+    let end = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, iv, len);
+    builder.ins().brif(end, done, &[], body, &[]);
+
+    builder.switch_to_block(body);
+    builder.seal_block(body);
+    let iv2 = builder.use_var(i);
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+    let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
+    let call = builder.ins().call(tv_ref, &[tbl, iv2, out_addr]);
+    let elem_ptr = builder.inst_results(call)[0];
+    store_argv_entry(builder, base, widx, elem_ptr);
+    let next = builder.ins().iadd_imm(iv2, 1);
+    builder.def_var(i, next);
+    builder.ins().jump(hdr, &[]);
+    builder.seal_block(hdr);
+
+    builder.switch_to_block(done);
+    builder.seal_block(done);
 }

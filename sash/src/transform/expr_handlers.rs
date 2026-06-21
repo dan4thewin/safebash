@@ -1,6 +1,6 @@
 //! Handlers for expression evaluation in the transform.
 
-use super::expressions::{expr_to_string, expr_to_value};
+use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -86,7 +86,7 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
     let mut argv = Vec::with_capacity(c.args.len() + 1);
     argv.push(expr_to_value(&c.name, state));
     for arg in &c.args {
-        argv.push(expr_to_value(arg, state));
+        argv.push(arg_to_value(arg, state));
     }
     argv
 }

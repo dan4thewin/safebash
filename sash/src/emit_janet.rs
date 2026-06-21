@@ -599,10 +599,7 @@ fn emit_pipeline_stage(
         return;
     };
     let cmd_name = expr_to_literal(&c.name);
-    let mut parts = vec![format!("\"{}\"", cmd_name)];
-    for arg in &c.args {
-        parts.push(emit_expr_inline(arg, ctx));
-    }
+    let parts = janet_command_parts(&cmd_name, c, ctx);
     indent(out, depth);
     if i == 0 {
         writeln!(
@@ -731,11 +728,33 @@ fn emit_janet_general_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, 
         }
         writeln!(out, "({}{})", cmd_name, args_str).unwrap();
     } else {
-        let mut cmd_parts = vec![format!("\"{}\"", cmd_name)];
-        for arg in &c.args {
-            cmd_parts.push(emit_expr_inline(arg, ctx));
+        let parts = janet_command_parts(cmd_name, c, ctx);
+        writeln!(out, "(os/execute [{}] :p)", parts.join(" ")).unwrap();
+    }
+}
+
+/// Build the Janet command tuple parts `["cmd" arg…]`, expanding any
+/// `@a` splat to a `;` splice (DD#20/DD#22 — one element per value).
+fn janet_command_parts(cmd_name: &str, c: &Command, ctx: &mut EmitCtx) -> Vec<String> {
+    let mut parts = vec![format!("\"{}\"", cmd_name)];
+    for arg in &c.args {
+        match janet_arg_splat(&arg.kind) {
+            Some(array) => parts.push(format!(";{}", array)),
+            None => parts.push(emit_expr_inline(arg, ctx)),
         }
-        writeln!(out, "(os/execute [{}] :p)", cmd_parts.join(" ")).unwrap();
+    }
+    parts
+}
+
+/// Recognise `@a` / single-part `"${a[@]}"` (ParameterExpansion
+/// `arrvals`) as an array splat, returning the array name.
+fn janet_arg_splat(kind: &ExprKind) -> Option<String> {
+    match kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            Some(pe.name.clone())
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => janet_arg_splat(&parts[0].kind),
+        _ => None,
     }
 }
 

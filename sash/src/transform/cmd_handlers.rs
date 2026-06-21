@@ -1,6 +1,6 @@
 //! Command-specific handlers extracted from handle_command.
 
-use super::expressions::{expr_to_string, expr_to_value};
+use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
 use super::functions::{collect_local_vars, collect_max_positional};
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
@@ -172,7 +172,7 @@ pub(super) fn handle_trap(
         }
     }
     // Unsupported trap form — emit as regular command
-    let args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     let resolved = resolve_pipeline_command(name);
     ssa.block_mut(block)
         .insts
@@ -682,7 +682,7 @@ fn emit_external_command(
 /// Lower an argument expression and emit SB4018 if it captures an
 /// `-> int` function with `$( )` (DD#55).
 fn eval_arg_and_check_int_capture(a: &Expr, state: &mut VersionState) -> SsaValue {
-    let v = expr_to_value(a, state);
+    let v = arg_to_value(a, state);
     if let SsaValue::FuncCall(fname) = &v {
         if state.function_int_typed.contains(fname.as_str()) {
             state.diagnostics.push(format!(

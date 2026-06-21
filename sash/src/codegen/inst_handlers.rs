@@ -283,48 +283,21 @@ fn lower_exec_stage(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
     pe: &PipelineExterns,
-    null: cranelift_codegen::ir::Value,
+    _null: cranelift_codegen::ir::Value,
 ) {
-    let argc = 1 + args.len();
-    let argv_size = ((argc + 1) * 8) as u32;
-    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        argv_size,
-        3,
-    ));
-    let cmd_val = SsaValue::Literal(name.to_string());
-    let (cmd_ptr, _) = lower_value(
-        &cmd_val,
+    let argv_addr = super::commands::build_exec_argv(
+        name,
+        args,
         builder,
         module,
         ctx.vars,
         ctx.literals,
-        &std::collections::HashMap::new(),
         ctx.externs,
-        Some(ctx.exit_status_var),
+        ctx.exit_status_var,
     );
-    builder.ins().stack_store(cmd_ptr, argv_slot, 0);
-    for (j, arg) in args.iter().enumerate() {
-        let offset = ((j + 1) * 8) as i32;
-        let (ptr, _) = lower_value(
-            arg,
-            builder,
-            module,
-            ctx.vars,
-            ctx.literals,
-            &std::collections::HashMap::new(),
-            ctx.externs,
-            Some(ctx.exit_status_var),
-        );
-        builder.ins().stack_store(ptr, argv_slot, offset);
-    }
-    builder
-        .ins()
-        .stack_store(null, argv_slot, (argc * 8) as i32);
     let envp_gv = module.declare_data_in_func(ctx.externs.envp, builder.func);
     let envp_addr = builder.ins().global_value(I64, envp_gv);
     let envp = builder.ins().load(I64, MemFlags::new(), envp_addr, 0);
-    let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
     builder.ins().call(pe.exec, &[argv_addr, envp]);
     // exec doesn't return on success; if it does, exit 127
     let code = builder.ins().iconst(I64, 127);

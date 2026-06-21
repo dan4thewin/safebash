@@ -1051,32 +1051,18 @@ fn emit_cmdsub_exec(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // 1. Build argv on stack (null-terminated pointer array)
-    let argc = argv_values.len();
-    let argv_size = ((argc + 1) * 8) as u32;
-    let argv_slot = builder.create_sized_stack_slot(StackSlotData::new(
-        StackSlotKind::ExplicitSlot,
-        argv_size,
-        3,
-    ));
-    for (i, arg_val) in argv_values.iter().enumerate() {
-        let (ptr, _) = lower_value(
-            arg_val,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        );
-        builder.ins().stack_store(ptr, argv_slot, (i * 8) as i32);
-    }
-    let null = builder.ins().iconst(I64, 0);
-    builder
-        .ins()
-        .stack_store(null, argv_slot, (argc * 8) as i32);
-    let argv_addr = builder.ins().stack_addr(I64, argv_slot, 0);
+    // 1. Build argv (null-terminated pointer array); `@a` splats expand
+    //    to one entry per element (DD#20/DD#22). argv_values[0] is the cmd.
+    let argv_addr = super::commands::build_argv_values(
+        argv_values,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
 
     // envp
     let envp_gv = module.declare_data_in_func(externs.envp, builder.func);
