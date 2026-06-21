@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=44
+plan=49
 echo "1..$plan" >&3
 
 set +e
@@ -150,6 +150,26 @@ run_sash 'x=hi; echo "v\$x"'
 # 64.3 DD#64: a literal " comes from single-quote concatenation
 run_sash 'echo a'\''"'\''b'
 [[ $rc = 0 && $out = 'a"b' && -z $err ]]; chk 64.3
+
+# 64.4 DD#64 addendum: $'...' expands inside "..." (control byte in place)
+run_sash $'echo "a$\'\\t\'b"'
+[[ $rc = 0 && $out = $'a\tb' && -z $err ]]; chk 64.4
+
+# 64.5 DD#64 addendum: C-string mixes with interpolation in "..."
+run_sash $'x=V\necho "p$\'\\t\'$x"'
+[[ $rc = 0 && $out = $'p\tV' && -z $err ]]; chk 64.5
+
+# 64.6 DD#64 addendum: a literal " inside "..." via $'\x22' (universal hatch)
+run_sash $'echo "a$\'\\x22\'b"'
+[[ $rc = 0 && $out = 'a"b' && -z $err ]]; chk 64.6
+
+# 64.7 DD#64 addendum: $'...' close is escape-aware (\' does not terminate)
+run_sash $'echo "a$\'x\\\'y\'b"'
+[[ $rc = 0 && $out = "ax'yb" && -z $err ]]; chk 64.7
+
+# 64.8 DD#64 addendum: a lone ' (not preceded by $) stays literal in "..."
+run_sash 'echo "it'\''s"'
+[[ $rc = 0 && $out = "it's" && -z $err ]]; chk 64.8
 
 # 62.1 DD#62: == is exact equality (regression)
 run_sash 'if [[ abc == abc ]]; then echo y; fi'

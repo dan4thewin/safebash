@@ -1,6 +1,6 @@
 ---
 title: "Recognize $'...' inside \"...\" (DD#64 addendum: C-string as in-string escape hatch)"
-status: ready
+status: done
 priority: P3
 kind: feature
 depends: [DD64-no-shell-backslash]

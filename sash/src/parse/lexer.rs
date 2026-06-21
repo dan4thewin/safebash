@@ -762,15 +762,8 @@ impl Scanner {
                 let content = self.consume_dq_brace_expansion();
                 parts.push(StringPart::Expansion(content));
             }
-            b'(' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
-                    let content = self.consume_dq_arith_sub();
-                    parts.push(StringPart::ArithSub(content));
-                } else {
-                    let content = self.consume_dq_cmd_sub();
-                    parts.push(StringPart::CommandSub(content));
-                }
-            }
+            b'(' => self.scan_dq_paren(parts),
+            b'\'' => self.scan_dq_cstring(literal),
             c if c.is_ascii_alphabetic() || c == b'_' => {
                 let name = self.consume_dq_var_name();
                 parts.push(StringPart::Variable(name));
@@ -785,6 +778,30 @@ impl Scanner {
                 // literal; don't consume the next byte.
                 literal.push('$');
             }
+        }
+    }
+
+    /// `$(…)` or `$((…))` — `(` is at `self.pos`. Pushes the appropriate
+    /// part and advances past the closing paren(s).
+    fn scan_dq_paren(&mut self, parts: &mut Vec<StringPart>) {
+        if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
+            let content = self.consume_dq_arith_sub();
+            parts.push(StringPart::ArithSub(content));
+        } else {
+            let content = self.consume_dq_cmd_sub();
+            parts.push(StringPart::CommandSub(content));
+        }
+    }
+
+    /// DD#64 addendum: `$'…'` inside `"…"` is an escape-aware,
+    /// compile-time-constant C-string. The opening `'` is at `self.pos`.
+    /// Its resolved bytes become literal text in the concat (they merge
+    /// with adjacent literal runs). `$'` claims its sequence, like `${`/`$(`.
+    fn scan_dq_cstring(&mut self, literal: &mut String) {
+        let dollar = self.pos - 1;
+        self.pos += 1; // skip opening '
+        if let Tok::AnsiCQuoted(s) = self.scan_ansi_c_quoted(dollar).token {
+            literal.push_str(&s);
         }
     }
 
