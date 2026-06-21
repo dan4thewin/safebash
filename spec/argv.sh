@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=30
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -144,6 +144,40 @@ run_sash 'for x in $(argv) $(argv 1); do echo "$x"; done'
 # av.m3 named array + argv in one for-in header is rejected
 run_sash 'array a=(x y); for x in @a $(argv); do echo "$x"; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk av.m3
+
+# ── DD#46 positionals inside (( )) / $(( )) ──────────────────────
+# $#/$1.. are function-local but legal inside arithmetic there; the
+# arith lexer must scan the special single-char name and the validator
+# must still reject them at top level (bug-dollar-hash-in-arith).
+
+# av.h1 $# is readable inside $(( )) within a function
+run_sash 'fn f { x=$(( $# + 10 )); echo $x; }
+f a b'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk av.h1
+
+# av.h2 $? (clean everywhere) is readable inside $(( )) at top level
+run_sash 'true
+x=$(( $? + 5 ))
+echo $x'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk av.h2
+
+# av.h3 $# drives a (( )) comparison condition inside a function. The janet
+# backend mishandles ALL (( )) conditions (emit_condition_inline emits a
+# constant `true`); native/c are the reference. See bug-janet-arith-condition.
+if in_modes native,c; then
+    run_sash 'fn f {
+  if (( $# < 2 )); then echo few; else echo many; fi
+}
+f a
+f a b c'
+    [[ $rc = 0 && $out = $'few\nmany' && -z $err ]]; chk av.h3
+else
+    skip_chk av.h3
+fi
+
+# av.h4 top-level $# inside (( )) is rejected (DD#46, SB5024)
+run_sash 'if (( $# < 2 )); then echo x; fi'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk av.h4
 
 set -e
 tally

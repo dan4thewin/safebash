@@ -79,3 +79,48 @@ in `SsaTest::Not`. Negates any condition form ([[ ]], (( )), command)
 once — also more correct for compound conditions. 3 until codegen_tests
 un-ignored + pass. (c/janet until (( )) still fails on separate backend
 gaps.) numeric_with_argc stays ignored on bug-dollar-hash-in-arith.
+
+## New sweep (2026-06-21) — decisions resolved, continue SOP
+
+DG: don't defer on predicted effort/risk; find legitimate blockers.
+Two decisions resolved: $#-in-arith = read via normal var path (DD#46);
+$a[$i] = support as subscript (diverge from bash). Implementing both,
+then continuing the backlog (array-splat-command-arg, …).
+
+## bug-dollar-hash-in-arith — done (native + c + janet leaf)
+
+Option A (DG): specials read through the normal var path; DD#46 governs.
+
+- `scan_arith_dollar` now scans `# ? $ ! @ *` (not just alnum), so `$#`
+  etc. become a real `DollarVar` inside `(( ))`. Native/c then read them
+  correctly (`$#` in a fn → argc; `$?`/`$$`/`$!` clean everywhere).
+- `validate.rs::check_positionals` descends into `ExprKind::Arithmetic`
+  and bare `StmtKind::ArithTest`, so top-level `$#`/`$@`/`$1..` in
+  `(( ))` → SB5024 (DD#46), while `$?` stays clean. Without this the
+  validator never looked inside arith.
+- janet: arith `DollarVar` lowering (`$#`→`(length _args)`,
+  `$?`→`__last_exit`, `$N`→`(scan-number …)`) + `_arith_uses_args` so a
+  function using `$#` in arith emits `[& _args]`.
+
+**Bug found + fixed inline:** janet arith-VALUE emission double-wrapped
+parens — `(string ((+ …)))` — so janet evaluated `(+ …)` then tried to
+*call* the result (`5 called with 0 arguments`). Crashed *every*
+`x=$(( … ))`. Fixed both sites (value path + `emit_arith_test`).
+Repaired 6 pre-existing janet specs (30.2/30.4/31.x/33.6/55.3).
+
+**Two pre-existing janet gaps surfaced (filed, guarded):**
+- `bug-janet-arith-condition` root cause pinned: `emit_condition_inline`
+  falls to `_ => "true"` for `ArithTest` → `if (( … ))` always true.
+  Proper fix needs comparisons/logicals to yield bash 1/0 ints (janet
+  bools + truthy-0 break the naive forms). av.h3 guarded native,c.
+- `bug-janet-int-overflow`: the double-paren crash was making overflow
+  specs 25.1–25.3 *false-pass* in janet (crash → nonzero exit). With the
+  crash gone, janet's float/bignum arithmetic doesn't trap i64 overflow.
+  Guarded native,c; filed.
+
+Specs: argv.sh av.h1–av.h4 (plan 30→34). codegen `numeric_with_argc`
+reframed inside a fn + un-ignored. Verified zero regressions: native
+2-fail (cf.c7/c8) unchanged +4 pass; c 61-fail unchanged +4 pass;
+janet −6 fail / +9 pass. Rust codegen/janet suites: no new failures
+(suite is heavily rotted at HEAD — 182 baseline fails — but my diff is
+clean).

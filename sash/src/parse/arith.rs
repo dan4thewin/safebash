@@ -469,26 +469,40 @@ fn parse_arith_base_digits(digits: &str, base: u32) -> i64 {
 /// Scan a `$`-prefixed variable: `$name` or `${name}`. Returns the
 /// token and the byte index just past it.
 fn scan_arith_dollar(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
-    let mut j = i + 1; // skip '$'
+    let j = i + 1; // skip '$'
     if j < bytes.len() && bytes[j] == b'{' {
-        j += 1; // skip '{'
-        let name_start = j;
-        while j < bytes.len() && bytes[j] != b'}' {
-            j += 1;
-        }
-        let name = input[name_start..j].to_string();
-        if j < bytes.len() {
-            j += 1; // skip '}'
-        }
-        (ATok::DollarVar(name), j)
-    } else {
-        let name_start = j;
-        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
-            j += 1;
-        }
-        let name = input[name_start..j].to_string();
-        (ATok::DollarVar(name), j)
+        return scan_arith_braced_var(input, bytes, j + 1);
     }
+    // Special single-char vars: $#, $?, $$, $!, $@, $* (none are
+    // ascii-alphanumeric, so the identifier scan would miss them and leave
+    // the sigil char stray). Positionals $1..$9 are digits, handled by the
+    // alphanumeric scan in scan_arith_named_var.
+    if j < bytes.len() && matches!(bytes[j], b'#' | b'?' | b'$' | b'!' | b'@' | b'*') {
+        return (ATok::DollarVar((bytes[j] as char).to_string()), j + 1);
+    }
+    scan_arith_named_var(input, bytes, j)
+}
+
+/// Scan a braced `${name}` body starting just past the `{`.
+fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
+    let mut j = start;
+    while j < bytes.len() && bytes[j] != b'}' {
+        j += 1;
+    }
+    let name = input[start..j].to_string();
+    if j < bytes.len() {
+        j += 1; // skip '}'
+    }
+    (ATok::DollarVar(name), j)
+}
+
+/// Scan a bare `$name` (alphanumeric/`_`, including positional digits).
+fn scan_arith_named_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
+    let mut j = start;
+    while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+        j += 1;
+    }
+    (ATok::DollarVar(input[start..j].to_string()), j)
 }
 
 /// Scan a bare identifier: starts alpha/`_`, continues alphanumeric/`_`.

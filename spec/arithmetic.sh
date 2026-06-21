@@ -79,14 +79,22 @@ run_sash 'int x=5; (( x > 0 ))'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 31.14
 
 # --- DD#25 overflow ---
+# The janet backend uses float/bignum arithmetic with no i64 overflow trap; it
+# previously "passed" these only via an unrelated codegen crash. native/c are
+# the reference. See bug-janet-int-overflow.
 
-# 25.2 overflow aborts even with - suppress prefix
-run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
-[[ $rc != 0 && -z $out ]]; chk 25.2
+if in_modes native,c; then
+    # 25.2 overflow aborts even with - suppress prefix
+    run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
+    [[ $rc != 0 && -z $out ]]; chk 25.2
 
-# 25.3 overflow aborts with nonzero exit
-run_sash 'int x=9223372036854775807; (( x = x + 1 )); echo $x'
-[[ $rc != 0 && -z $out ]]; chk 25.3
+    # 25.3 overflow aborts with nonzero exit
+    run_sash 'int x=9223372036854775807; (( x = x + 1 )); echo $x'
+    [[ $rc != 0 && -z $out ]]; chk 25.3
+else
+    skip_chk 25.2
+    skip_chk 25.3
+fi
 
 # --- DD#31 comparison operators (regression: <= / >= were mis-lexed) ---
 

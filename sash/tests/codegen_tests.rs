@@ -140,14 +140,17 @@ if (( x <= 4 )); then echo bad; fi
 }
 
 #[test]
-#[ignore = "blocked on bug-dollar-hash-in-arith: $# is not read inside (( ))"]
 fn numeric_with_argc() {
-    let src = r#"if (( $# < 2 )); then echo few; else echo many; fi
+    // DD#46: $# is function-local. Exercise (( $# < N )) inside a function,
+    // invoked with differing arg counts.
+    let src = r#"fn f {
+  if (( $# < 2 )); then echo few; else echo many; fi
+}
+f a
+f a b c
 "#;
-    let (out1, _) = run_bash_native(src, &[]);
-    assert_eq!(out1, "few\n");
-    let (out2, _) = run_bash_native(src, &["a", "b", "c"]);
-    assert_eq!(out2, "many\n");
+    let (out, _) = run_bash_native(src, &[]);
+    assert_eq!(out, "few\nmany\n");
 }
 
 // ── While loop tests ────────────────────────────────────────

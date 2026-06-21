@@ -1241,12 +1241,23 @@ fn check_positionals_stmt(stmt: &Statement, in_function: bool, diags: &mut Vec<D
         return;
     }
     if !in_function {
-        stmt.direct_exprs(&mut |expr| check_positionals_expr(expr, diags));
+        check_positionals_direct(stmt, diags);
     }
     for body in stmt.child_bodies() {
         for s in body {
             check_positionals_stmt(s, in_function, diags);
         }
+    }
+}
+
+/// Flag positionals owned directly by `stmt` (top-level context). A bare
+/// `(( ))` test/condition is `StmtKind::ArithTest`, which holds an
+/// `ArithExpr` directly (not wrapped in an `Expr`), so `direct_exprs`
+/// cannot surface it — descend explicitly.
+fn check_positionals_direct(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    stmt.direct_exprs(&mut |expr| check_positionals_expr(expr, diags));
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        check_positionals_arith(a, stmt.span, diags);
     }
 }
 
@@ -1267,8 +1278,43 @@ fn check_positionals_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         ExprKind::AssocArray(pairs) => check_positionals_seq(pairs.iter().map(|(_, v)| v), diags),
         ExprKind::Subscript { index, .. } => check_positionals_expr(index, diags),
         ExprKind::Test(t) => check_positionals_test(t, diags),
+        ExprKind::Arithmetic(a) => check_positionals_arith(a, expr.span, diags),
         ExprKind::CommandSubstitution(stmts) => check_positionals_stmt_seq(stmts, diags),
         _ => {}
+    }
+}
+
+/// DD#46: positionals reached via `$#`/`$1`/`$@` inside `(( ))` / `$(( ))`
+/// are still function-local. Walk the arith tree and flag positional
+/// `DollarVar`s (bare `Var`/lvalue names are not positionals).
+fn check_positionals_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    use crate::ir::ArithExpr::*;
+    match a {
+        DollarVar(name) => flag_positional(name, span, diags),
+        BinOp { left, right, .. } => {
+            check_positionals_arith(left, span, diags);
+            check_positionals_arith(right, span, diags);
+        }
+        UnaryOp { operand, .. } => check_positionals_arith(operand, span, diags),
+        Assign { value, .. } | CompoundAssign { value, .. } => {
+            check_positionals_arith(value, span, diags)
+        }
+        Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            check_positionals_arith(cond, span, diags);
+            check_positionals_arith(true_val, span, diags);
+            check_positionals_arith(false_val, span, diags);
+        }
+        Comma(exprs) | FuncCall { args: exprs, .. } => {
+            for e in exprs {
+                check_positionals_arith(e, span, diags);
+            }
+        }
+        Paren(inner) => check_positionals_arith(inner, span, diags),
+        Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => {}
     }
 }
 

@@ -11,6 +11,13 @@ gates:
 
 # non-brace dynamic subscript read `$a[$i]`
 
+> **Decision (DG, 2026-06-21): option B — support it as a subscript.**
+> `$a[$i]` reads `${a[$i]}` (so `array a=(x y z); i=2; echo $a[$i]` → `z`),
+> deliberately diverging from bash (where `$a[$i]` is `${a[0]}` + literal
+> `[$i]`). Parser gathers the lexer-split tokens (`$a` `[` `$i` `]`) into a
+> subscript read in `try_subscript_arm`, analogous to the write side's
+> `parse_split_subscript_index`. Lock with the spec tests below.
+
 Found 2026-06-17 during the dynamic-subscript implementation. The brace
 form `${a[$i]}` / `${m[$k]}` now expands the index correctly (types.sh
 33.5/33.6). The **non-brace** form `$a[$i]` does not:

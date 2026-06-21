@@ -94,8 +94,39 @@ fn _expr_uses_args(expr: &Expr) -> bool {
             pe.name == "#" || pe.name == "@" || pe.name.parse::<u32>().is_ok()
         }
         ExprKind::Test(test) => _test_uses_args(test),
+        ExprKind::Arithmetic(a) => _arith_uses_args(a),
         _ => false,
     }
+}
+
+/// Whether an arithmetic expression reads a positional that requires the
+/// `_args` preamble (`$#`, `$@`, `$*`, `$N`). `$?` reads `__last_exit`
+/// instead, so it does not force the preamble.
+fn _arith_uses_args(a: &crate::ir::ArithExpr) -> bool {
+    use crate::ir::ArithExpr::*;
+    match a {
+        DollarVar(name) => is_positional_arg_name(name),
+        BinOp { left, right, .. } => _arith_uses_args(left) || _arith_uses_args(right),
+        UnaryOp { operand, .. } => _arith_uses_args(operand),
+        Assign { value, .. } | CompoundAssign { value, .. } => _arith_uses_args(value),
+        Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => _arith_uses_args(cond) || _arith_uses_args(true_val) || _arith_uses_args(false_val),
+        Comma(exprs) | FuncCall { args: exprs, .. } => exprs.iter().any(_arith_uses_args),
+        Paren(inner) => _arith_uses_args(inner),
+        Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => false,
+    }
+}
+
+/// Whether `$name` names a positional that needs the `_args` preamble
+/// (`$#`, `$@`, `$*`, `$N`). `$?` uses `__last_exit`, not `_args`.
+fn is_positional_arg_name(name: &str) -> bool {
+    name == "#"
+        || name == "@"
+        || name == "*"
+        || (name != "0" && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn _test_uses_args(test: &TestExpr) -> bool {
@@ -375,7 +406,7 @@ fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth
 
 fn emit_arith_test(out: &mut String, expr: &ArithExpr, depth: usize) {
     indent(out, depth);
-    writeln!(out, "(not= 0 ({}))", arith_expr_to_janet(expr)).unwrap();
+    writeln!(out, "(not= 0 {})", arith_expr_to_janet(expr)).unwrap();
 }
 
 fn emit_if(out: &mut String, ctx: &mut EmitCtx, i: &If, depth: usize) {
@@ -1072,7 +1103,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
         ExprKind::DoubleQuoted(parts) => emit_expr_double_quoted(parts, ctx),
         ExprKind::ParameterExpansion(pe) => emit_param_expansion_inline(pe, ctx),
         ExprKind::CommandSubstitution(stmts) => emit_expr_command_substitution(stmts, ctx),
-        ExprKind::Arithmetic(a) => format!("(string ({}))", arith_expr_to_janet(a)),
+        ExprKind::Arithmetic(a) => format!("(string {})", arith_expr_to_janet(a)),
         ExprKind::Concat(parts) => emit_expr_concat(parts, ctx),
         ExprKind::Array(elems) => emit_expr_array(elems, ctx),
         ExprKind::AssocArray(pairs) => emit_expr_assoc_array(pairs, ctx),
@@ -1378,13 +1409,29 @@ fn expr_to_literal(expr: &Expr) -> String {
     }
 }
 
+/// Lower an arithmetic `$name` to a numeric Janet expression. `$#` and
+/// `$N` read the function-local `_args`; `$?` reads `__last_exit`; a plain
+/// name is an in-scope integer Janet binding.
+fn arith_dollar_var_to_janet(name: &str) -> String {
+    if name == "#" {
+        "(length _args)".to_string()
+    } else if name == "?" {
+        "__last_exit".to_string()
+    } else if name != "0" && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
+        let idx = name.parse::<u32>().unwrap_or(1).saturating_sub(1);
+        format!("(scan-number (or (get _args {}) \"0\"))", idx)
+    } else {
+        name.to_string()
+    }
+}
+
 /// Convert a structured ArithExpr to Janet code.
 fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
     use crate::ir::{ArithExpr, IrArithOp, IrUnaryArithOp};
     match expr {
         ArithExpr::Literal(n) => n.to_string(),
         ArithExpr::Var(name) => name.clone(),
-        ArithExpr::DollarVar(name) => name.clone(),
+        ArithExpr::DollarVar(name) => arith_dollar_var_to_janet(name),
         ArithExpr::BinOp { left, op, right } => {
             let op_str = match op {
                 IrArithOp::Add => "+",
