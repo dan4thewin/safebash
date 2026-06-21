@@ -189,6 +189,37 @@ aspirational; DD#39 is also stale on `{n,m}` (counted repetition works).
   removes `case`/`esac` entirely (so there is no `case` glob operand left
   to desugar). Confirmed under DD#66.
 
+## Default/replacement context unification (DG, 2026-06-21)
+
+The `sub`/`gsub` **replacement** and the `${var:-default}` **default** are
+the **same interpolating word context**, differing in exactly one way: the
+replacement runs an extra **`\0`–`\9` backref template pass** over the
+evaluated string; the default has no second pass. In that shared context:
+
+- `$var`/`${var}` interpolate; `'…'` literal; `"…"` interpolating;
+  **`$'…'` C-string works** (DD#64 addendum — control bytes/escapes in
+  place, no concatenation); pieces concatenate. The sigils don't collide:
+  `$` = interpolation (word layer), `\` = backref (template layer, replacement
+  only).
+- **`$(cmd)` is allowed** (not rejected): a user-function capture is clean,
+  an external capture is tainted and needs bless — taint handles it, same
+  as a `${var:-…}` default (DD#65). Arithmetic `$((…))` allowed.
+
+**Desugar correction.** The `s/RE/SUB/` sugar must desugar its fields to
+this **word context**, NOT to literal-double-quoted args. The earlier
+"fields desugar to double-quoted `\"RE\"`/`\"SUB\"`" wording would make
+`$'…'` (and the intended interpolation) behave differently in the sugar
+than in the `$(sub …)` function form; desugaring to a word context makes
+**sugar ≡ function form**. (Path B still governs `/`-delimiting of the
+`${var:s/…}` payload at the lexer.)
+
+**Lexer note.** The `${…}` brace scanner and the `:s/` Path-B `/`-scanner
+must skip a nested `$'…'` by **C-string (escape-aware) rules** so an
+escaped delimiter inside (`$'\}'`, `$'\/'`, `$'\''`) does not terminate the
+field. (Today the brace scanner skips `$'…'` with literal single-quote
+rules — `skip_balanced_squote`, lexer.rs:658 — a latent bug to fix when
+this lands.)
+
 See task `regex-interpolation-delimiters` for the spec-first
 implementation; `dd62-test-expr-ssavalue` for the overlapping operand
 work (the `=~`-as-`match`-command desugaring is the seam between them).

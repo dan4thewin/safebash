@@ -1,5 +1,5 @@
 title: DD#65 — Prune the ${var:OP} modifier family
-status: candidate
+status: accepted
 
 The `${var:OP}` family had accumulated bash creep. Vetted 2026-06-18
 (task `vet-var-modifiers`). Kept only what earns its place; the rest is
@@ -53,7 +53,7 @@ takes integer operands. Implement when these are touched.)
   flag): `match $(tolower $x) $(tolower $pat)`. `/usr/bin/tr` remains for
   arbitrary character translation.
 
-## Resolved
+## Resolved — basename/dirname (2026-06-18)
 
 - **No `basename`/`dirname` builtins.** Use `${var:s/…/…/}` / `sub`, or the
   external `basename`/`dirname` (DG: fork cost is fine). **Caveat:** DD#23
@@ -64,9 +64,29 @@ takes integer operands. Implement when these are touched.)
   needs DD#23 completed; filed as a dependency, not a blocker (DG uses
   `:s/`).
 
-## Open
+## Resolved (DG, 2026-06-21)
 
-- Confirm `${#var}` (length) and `@X` transforms (already SB4015) status.
+- **`${#var}` length: KEPT.** Orthogonal to the pruned `:OP` family, O(1),
+  essential. **`@X` transforms** (`${var@U}`/`@Q`/…): **stay rejected**
+  (SB4015), unchanged.
+- **`${var:-default}` allows `$(cmd)`.** The earlier "command substitution
+  is rejected in the default" was an over-restriction. Only an **external**
+  capture is tainted (`$(getenv|argv|arg …)` or `$(/abs …)` —
+  `cmdsub_is_taint_source`, validate.rs:1925); a **user-function** capture
+  `$(my_fn)` is **clean** and useful. So `$(cmd)` is allowed; taint does
+  its normal job (clean user-fn works; external needs bless, as
+  everywhere). Arithmetic `$((…))` was already allowed.
+- **`:?` is rejected for SCALAR `${var:?…}` only.** The `:?` *empty-
+  disposition* is reintroduced for the **array-splat** form `@{a:?WORD}`
+  (DD#69) — a different construct. DD#65 drops only the scalar `${var:?}`.
+- **The default is an interpolating word context.** `${var:-default}`
+  behaves like any command argument / assignment RHS: `$var`/`${var}`
+  interpolate, `'…'` literal, `"…"` interpolating, **`$'…'` C-string
+  works** (DD#64 addendum), `$(…)` per above — all concatenating. It is
+  *not* a literal-double-quoted wrapper. (Still unimplemented today; this
+  is the target when operand interpolation lands.) This is the **same**
+  context as the `sub`/`gsub` replacement (DD#63), which differs only by
+  its extra `\0`–`\9` backref pass.
 
 ## See also
 - DD#63 — regex/string builtin family (`match`/`sub`/`gsub`, +`toupper`/`tolower`).

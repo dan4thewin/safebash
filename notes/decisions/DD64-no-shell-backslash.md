@@ -64,6 +64,47 @@ Two backslash *interpreters* remain, both downstream and contextual:
 `$'…'` (shell C-escapes) and the regex engine (`\.`, `\\`). The shell
 proper interprets none.
 
+## Addendum (DG, 2026-06-21): `$'…'` expands inside `"…"`
+
+A `$'…'` C-string is recognized **inside double quotes** as a
+compile-time-constant expansion, alongside `$var`/`${var}`/`$(…)`/`$((…))`.
+So inside `"…"` **every** `$`-prefixed form expands — `$'…'` is no longer
+the odd one out. `"a$'\n'b"` → `a`⏎`b` (bash leaves it literal; this is a
+deliberate, capability-adding divergence).
+
+**Why.** DD#64 made `\` verbatim in `"…"`, so there was no in-place way to
+put a control byte (newline/tab) into an interpolated string — only
+concatenation (`"a"$'\n'"b"`) or a variable. This restores it via the one
+sanctioned escape syntax, reinforcing (not weakening) DD#64: *escapes live
+only in `$'…'`, now usable everywhere including inside `"…"`.*
+
+**Universal escape hatch.** Because `$'…'` is escape-aware and can encode
+every structural char (`$'\x22'`→`"`, `$'\x24'`→`$`, `$'\''`→`'`,
+`$'\\'`→`\`, any byte via `\xNN`), a C-string nested in `"…"` gives
+**complete literal-byte control inside an interpolated string with no
+concatenation** — even a literal `"` (`"a$'\x22'b"` → `a"b`), since the
+C-string region is opaque to the double-quote scanner. So `"…"` + `$'…'`
+together express any byte string *with* interpolation.
+
+**`$'` claims its sequence.** Inside `"…"`, the adjacency `$'` always
+opens a C-string (exactly as `${`/`$(` claim theirs). A literal `$'` in a
+double-quoted string is therefore encoded via the C-string itself
+(`"$'$\''"` → `$'`). A lone `'` (not preceded by `$`) stays a literal
+apostrophe (`"it's"` → `it's`). Literal `$'` text is rare; the hatch is
+self-contained.
+
+**Implementation.** `scan_double_quoted`, on `$'`, hands off to the
+existing **escape-aware** `scan_ansi_c_quoted` (verified: `$'a\'b'` →
+`a'b`), which finds the close `'` past any `\'`; the bytes become a literal
+part of the double-quoted concat. A C-string is a compile-time constant →
+always **clean** (no taint).
+
+**Resolves the default/replacement context (DD#63/DD#65).** Because a
+`$'…'` is recognized wherever a `$`-form is, it works uniformly in `"…"`,
+in `${var:-default}`, and in the `sub`/`gsub` replacement. There is no
+"word context (C-string lives) vs double-quoted (C-string inert)"
+split — they are the same interpolating context (see DD#65/DD#63).
+
 ## Escaping by quoting + concatenation
 
 Adjacent single-quoted literals and interpolations concatenate (verified:

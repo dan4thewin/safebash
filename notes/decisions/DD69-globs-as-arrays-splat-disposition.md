@@ -1,8 +1,9 @@
 title: DD#69 — Globs are array sugar; external-command array splats require an empty-disposition
-status: candidate
+status: accepted
 
-Decided with DG 2026-06-20. Reframes the glob lines of DD#20 and adds a
-compile-time rule for array splats passed to external commands.
+Decided with DG 2026-06-20; ratified 2026-06-21. Reframes the glob lines
+of DD#20 and adds a compile-time rule for array splats passed to external
+commands.
 
 ## 1. A glob is sugar for an array
 
