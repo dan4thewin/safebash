@@ -104,8 +104,12 @@ Non-empty arrays splat per-element (per `array-splat-command-arg`).
   compile error (SB5029, `check_inline_glob` in validate.rs), directing
   to the array form. Quoted `"*"` stays literal; `array a=(*)` still
   globs. Specs wordsplit 20.1-20.4 (all three backends). No regression.
-- **Part 1.1 TODO** — `for f in *` still treats `*` as a literal (route
-  it through the glob→array→per-element path; decision-free per DD#69).
+- **Part 1.1 DONE** — `for f in *` now routes through the glob→array→
+  per-element path (`try_dispatch_glob`, control_flow.rs; native+c). 0
+  matches → body skipped. Janet lowers from IR and does not glob (gate
+  is native+c). Required fixing the **C backend glob segfault** (emit_c
+  had a `TODO param expansion op: glob` → null table → SIGSEGV); added
+  `emit_glob_c` (sash_glob call). Specs wordsplit 20.5/20.6.
 - **Part 2 TODO** — `@{a:-WORD}`/`@{a:?WORD}` disposition + bare-`@a`-to-
   external reject. Blocked on the WORD-interpolation decision
   (DECISION-glob-splat-disposition-word).

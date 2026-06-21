@@ -340,6 +340,9 @@ pub(super) fn lower_for(
     if let Some(b) = try_dispatch_cmdsubst(f, ssa, state, block) {
         return b;
     }
+    if let Some(b) = try_dispatch_glob(f, ssa, state, block) {
+        return b;
+    }
     lower_for_static(f, ssa, state, block)
 }
 
@@ -401,6 +404,39 @@ fn try_dispatch_array(
     }
     let (name, use_keys) = detect_array_iter(&f.words[0].kind)?;
     Some(lower_for_array(f, &name, use_keys, ssa, state, block))
+}
+
+/// DD#20/DD#69: `for f in *` is sugar for `array tmp=(*); for f in @tmp`.
+/// Materialise the glob into a temp array (the existing `glob`
+/// param-expansion → libc glob → table) and iterate it per-element. 0
+/// matches → empty table → body never runs (lower_for_array bound).
+fn try_dispatch_glob(
+    f: &For,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if f.words.len() != 1 {
+        return None;
+    }
+    let ExprKind::Literal(s) = &f.words[0].kind else {
+        return None;
+    };
+    if !s.contains('*') {
+        return None;
+    }
+    let glob_val = SsaValue::ParamExpansion {
+        var: VarRef::new(".", 0),
+        operator: "glob".to_string(),
+        operand: s.clone(),
+    };
+    let target = state.define("__forglob");
+    let tmp_name = target.name.clone();
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target,
+        value: glob_val,
+    });
+    Some(lower_for_array(f, &tmp_name, false, ssa, state, block))
 }
 
 fn detect_array_iter(kind: &ExprKind) -> Option<(String, bool)> {

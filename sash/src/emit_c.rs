@@ -225,6 +225,16 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_table_len(SashTable* t);").unwrap();
     writeln!(
         out,
+        "extern SashTable* sash_glob(const char* d, i64 dl, const char* p, i64 pl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern SashTable* sash_glob_regex(const char* d, i64 dl, const char* p, i64 pl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern const char* sash_table_value(SashTable* t, i64 idx, i64* out_len);"
     )
     .unwrap();
@@ -1263,6 +1273,7 @@ fn emit_param_expansion(
         "arrlen" => emit_arrlen(e, &s_ptr),
         "arrvals" | "arrjoin" => emit_arr_values_joined(e, &s_ptr, operand),
         "arrkeys" => emit_arr_keys_joined(e, &s_ptr, operand),
+        "glob" | "glob_regex" => emit_glob_c(e, operator, operand),
         "%" | "%%" => emit_strip_suffix_c(e, operator, &s_ptr, &s_len, operand),
         "#" | "##" => emit_strip_prefix_c(e, operator, &s_ptr, &s_len, operand),
         ":-" | "-" => emit_default_value_c(e, &s_ptr, &s_len, operand),
@@ -1274,6 +1285,28 @@ fn emit_param_expansion(
             ("\"\"".to_string(), "0".to_string())
         }
     }
+}
+
+/// `array a=(*)` glob — mirrors emit_glob_expansion (codegen/value_handlers.rs:119).
+/// Calls sash_glob(".", pattern) which returns a SashTable*; the table
+/// pointer becomes the array var's _ptr (len 0), like the indexed-array path.
+fn emit_glob_c(e: &mut Emit, operator: &str, operand: &str) -> CStr {
+    let func = if operator == "glob_regex" {
+        "sash_glob_regex"
+    } else {
+        "sash_glob"
+    };
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    const char* {t}_p = (const char*){func}(\".\", 1, \"{pat}\", {len});",
+        t = t,
+        func = func,
+        pat = c_escape(operand),
+        len = operand.len()
+    )
+    .unwrap();
+    (format!("{}_p", t), "0".to_string())
 }
 
 /// Mirrors `load_var_or_empty` (codegen/value_handlers.rs:70). Look

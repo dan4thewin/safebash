@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=67
+plan=69
 echo "1..$plan" >&3
 
 set +e
@@ -286,6 +286,23 @@ run_sash 'echo "*"'
 # 20.4 array-literal glob `array a=(*)` still globs (unchanged)
 run_sash 'array a=(*); echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 20.4
+
+# 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69). native/c
+#      only — Janet lowers from IR and does not expand globs.
+if in_modes native,c; then
+    run_sash 'for f in *.nomatchZZZ; do echo ran; done; echo done'
+    [[ $rc = 0 && $out = "done" && -z $err ]]; chk 20.5
+else
+    skip_chk 20.5
+fi
+
+# 20.6 for-in glob: iterates per matched entry, no word splitting (native/c)
+if in_modes native,c; then
+    run_sash '/usr/bin/touch only.www; for f in *.www; do echo "[$f]"; done'
+    [[ $rc = 0 && $out = "[only.www]" && -z $err ]]; chk 20.6
+else
+    skip_chk 20.6
+fi
 
 # 14.7 && on compound command rejected (SB4023)
 run_sash 'if true; then echo x; fi && echo y'

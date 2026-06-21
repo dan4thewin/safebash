@@ -97,3 +97,26 @@ Part 1.1 (for-in glob → per-element) is decision-free (DD#69) and still
 TODO. Part 2 (`@{a:-WORD}`/`@{a:?WORD}` disposition + bare-@a-external
 reject) is blocked on the WORD-interpolation design decision — filed
 DECISION-glob-splat-disposition-word for DG.
+
+## glob-splat Part 1.1 (for-in glob) + C-glob segfault fix
+
+`for f in *` now routes through the glob→array→per-element path:
+`try_dispatch_glob` (control_flow.rs) materialises the glob into a temp
+array (the existing `glob` param-expansion → libc `sash_glob` → table)
+and reuses `lower_for_array`. 0 matches → empty table → body skipped.
+Works native+c; Janet lowers from IR and doesn't glob (gate is native+c).
+
+Discovered+fixed a real bug en route: the **C backend segfaulted on any
+glob** (`array a=(*)` included) — emit_c had `/* TODO param expansion
+op: glob */` producing a null table. Added `emit_glob_c` emitting a
+`sash_glob(".", pat)` call (mirrors codegen emit_glob_expansion); C now
+globs correctly and matches native.
+
+Specs wordsplit 20.5 (0-match → body skipped) and 20.6 (per-element,
+single deterministic match) — native/c, Janet skipped. Native baseline
+held (2-fail); rust 184=184 (oracle_pipeline flakiness only — passes in
+isolation).
+
+glob-splat remaining: Part 2 (`@{a:-WORD}`/`@{a:?WORD}` disposition +
+bare-@a-external reject), blocked on the WORD-interpolation decision
+(DECISION-glob-splat-disposition-word, for DG).
