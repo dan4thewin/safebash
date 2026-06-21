@@ -84,3 +84,16 @@ pre-existing bug: `$(printf …)` passes a bare command to sash_exec
 (builtin not abs-path-resolved in cmdsubst) → filed
 bug-cmdsubst-builtin-not-resolved (cmdsubst splat verified working with
 an explicit abs path).
+
+## glob-as-array-splat-disposition — Part 1.2 (inline-* reject)
+
+DD#69/DD#20 "globs are array sugar": an unquoted `*` in command-arg
+position is now SB5029 (check_inline_glob, validate.rs), directing to
+`array a=(*); … @a`. Quoted `"*"` is literal; `array a=(*)` still globs.
+Specs wordsplit 20.1-20.4 (all backends, no regression; native baseline
+2-fail held).
+
+Part 1.1 (for-in glob → per-element) is decision-free (DD#69) and still
+TODO. Part 2 (`@{a:-WORD}`/`@{a:?WORD}` disposition + bare-@a-external
+reject) is blocked on the WORD-interpolation design decision — filed
+DECISION-glob-splat-disposition-word for DG.

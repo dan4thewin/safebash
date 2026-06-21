@@ -230,6 +230,38 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_export_or_declare(name, c, span, diags);
     check_dynexec(name, span, diags);
     check_test_constructs(name, c, span, diags);
+    check_inline_glob(c, diags);
+}
+
+/// DD#69 (globs are array sugar): an unquoted `*` glob in command-argument
+/// position is a compile error. A glob must go through an array literal
+/// (`array a=(*)`) and splat (`@a`) — there is no inline glob expansion.
+/// Quoted `"*"` is a literal asterisk and is unaffected.
+fn check_inline_glob(c: &Command, diags: &mut Vec<Diagnostic>) {
+    for arg in &c.args {
+        if arg_has_unquoted_star(&arg.kind) {
+            diags.push(Diagnostic::error_span(
+                arg.span,
+                "SB5029",
+                "inline `*` glob is not allowed in command arguments — a glob is \
+                 array sugar: use `array a=(*); … @a`. Quote it (\"*\") for a literal \
+                 asterisk."
+                    .to_string(),
+            ));
+        }
+    }
+}
+
+/// True if the word is an unquoted literal (or concatenation with a
+/// literal part) containing `*` — i.e. an inline glob attempt.
+fn arg_has_unquoted_star(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::Literal(s) => s.contains('*'),
+        ExprKind::Concat(parts) => parts
+            .iter()
+            .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s.contains('*'))),
+        _ => false,
+    }
 }
 
 fn heredoc_diag(span: Span) -> Diagnostic {

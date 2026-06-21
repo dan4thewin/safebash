@@ -97,3 +97,15 @@ Non-empty arrays splat per-element (per `array-splat-command-arg`).
   disposition), DD#20 (reframe), DD#39 (star-only, unchanged),
   DD#22 (no word splitting), DD#67 (1-to-1 bash sugar), DD#23
   (compile-time command resolution).
+
+## Progress (2026-06-21)
+
+- **Part 1.2 DONE** — inline `*` glob in command-arg position is now a
+  compile error (SB5029, `check_inline_glob` in validate.rs), directing
+  to the array form. Quoted `"*"` stays literal; `array a=(*)` still
+  globs. Specs wordsplit 20.1-20.4 (all three backends). No regression.
+- **Part 1.1 TODO** — `for f in *` still treats `*` as a literal (route
+  it through the glob→array→per-element path; decision-free per DD#69).
+- **Part 2 TODO** — `@{a:-WORD}`/`@{a:?WORD}` disposition + bare-`@a`-to-
+  external reject. Blocked on the WORD-interpolation decision
+  (DECISION-glob-splat-disposition-word).

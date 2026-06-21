@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=63
+plan=67
 echo "1..$plan" >&3
 
 set +e
@@ -269,6 +269,23 @@ if in_modes native,c; then
 else
     skip_chk 22.19
 fi
+
+# 20.1 inline `*` glob in command-arg position is a compile error (DD#20/#69:
+#      globs are array sugar; no inline glob expansion)
+run_sash 'echo *'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 20.1
+
+# 20.2 inline `*.sh` glob in command args is rejected too
+run_sash 'ls *.sh'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 20.2
+
+# 20.3 quoted "*" is a literal asterisk, not a glob
+run_sash 'echo "*"'
+[[ $rc = 0 && $out = "*" && -z $err ]]; chk 20.3
+
+# 20.4 array-literal glob `array a=(*)` still globs (unchanged)
+run_sash 'array a=(*); echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 20.4
 
 # 14.7 && on compound command rejected (SB4023)
 run_sash 'if true; then echo x; fi && echo y'
