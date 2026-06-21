@@ -159,3 +159,20 @@ the brace form. Specs types.sh 33.14/33.15 (native passes; c/janet share
 the pre-existing dynamic-read gap with 33.5/33.6). Static/brace forms and
 the spaced `$a [foo]` case unchanged. codegen 188/68, e2e unrelated —
 no regression.
+
+## bug-c-janet-concat-in-value — done (c) + array-splat filed for DG
+
+array-splat-command-arg: investigated fully (sash_alloc + sash_table_len/
+value + the for-in Cranelift iteration are all there — feasible). Recorded
+the approach in the task; held for DG on the native runtime-argv ABI
+choice (B1 codegen-side dynamic alloc vs B2 runtime-side builder) — the
+architecturally significant decision. Semantics are already decided.
+
+bug-c-janet-concat-in-value: the real gap was c-only — `lower_value_as_str`
+had no `Concat` arm (returned empty). Added `emit_concat_value` (left-fold
+via runtime `sash_concat`, mirroring native lower_concat_value) + the
+`sash_concat` C extern. janet concat-in-value already worked (stale claim).
+Specs: 12.4 locks `a=hello$b`; 33.11-33.13 native→native,c. Zero new
+failures; c 61→60 (53.6 recovered too). Filed bug-janet-indexed-assignment:
+janet `a[i]=v` drops the index (emits whole-var `(set a v)`) — why the
+append rows stay janet-excluded.

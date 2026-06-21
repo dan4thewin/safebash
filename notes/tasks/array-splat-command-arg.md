@@ -63,3 +63,42 @@ expands per-element). Land this standalone.
 
 - Discussed 2026-06-20 alongside the glob-as-array reframe.
 - for-in splat precedent: transform/control_flow.rs `detect_array_iter`.
+
+## Implementation approach — investigated 2026-06-21 (needs DG sign-off on B)
+
+Feasibility confirmed: `sash_alloc(n)` exists (sash-rt/src/lib.rs:575),
+arrays are integer-keyed `SashTable`s with `sash_table_len`
+(lib.rs:1136) and `sash_table_value` (lib.rs:1196), and `lower_for_array`
+(transform/pipelines.rs:33-172) already does Cranelift array iteration
+(arrlen bound + `TableValue{array,index}` per element) — the exact
+pattern an argv fill-loop would reuse. No fundamental blocker.
+
+**A. SSA/IR representation** (recommend A1):
+- A1: new `SsaValue::ArraySplat { array: String }`. Command args stay
+  `Vec<SsaValue>` but may contain a splat; each backend's argv build
+  expands it. Fits the existing array variants (IndexedArray/TableValue).
+- A2: restructure the command SsaInst into a fixed/splat "arg plan".
+
+**B. Native runtime-sized argv — the architecturally significant choice:**
+- B1 (codegen-side): compute argc at runtime (`1 + #scalars +
+  Σ sash_table_len(splat)`), `sash_alloc((argc+1)*8)`, fill with Cranelift
+  loops (scalars direct, splats loop `sash_table_value`). No ABI change;
+  more Cranelift in `lower_exec` (codegen/commands.rs:103-169). Note: the
+  current argv is a fixed stack slot — B1 moves it to a heap alloc.
+- B2 (runtime-side): new exec ABI — codegen passes an arg descriptor
+  (scalars + array table ptrs + splat flags) and sash-rt builds argv
+  (e.g. `sash_arglist_new/push/push_array` + `sash_run_list`). Less
+  Cranelift, but a new runtime ABI surface that the pipeline/fork-exec
+  paths must also adopt.
+
+**C. C backend** (emit_c.rs:601-693): build argv as a dynamically-sized
+list (count then fill, or a small emitted helper); arrays are `SashTable*`.
+
+**D. Janet backend** (emit_janet.rs:678-693): use janet's `;` splice in
+the `[...]` command array: `(os/execute [cmd ;(elems-of a) …] :p)`.
+
+DG: B1 vs B2 sets the runtime ABI direction (and whether pipelines/
+builtins paths change). Recommend A1 + B1 + C + D (smallest blast radius,
+reuses sash_alloc + the for-in iteration pattern, no ABI churn). Holding
+for your call on B before implementing, per decision authority — this is
+the runtime-architecture choice, not the (already-decided) semantics.

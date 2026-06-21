@@ -1,6 +1,6 @@
 ---
 title: "BUG — c/janet backends don't lower a Concat value in non-echo position (assignments, subscript-assign)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -11,6 +11,27 @@ gates:
 ---
 
 # BUG — c/janet Concat-in-value not lowered
+
+## Resolution (2026-06-21)
+
+- **c**: added a `SsaValue::Concat` arm to `lower_value_as_str`
+  (`emit_concat_value`) that left-folds the parts through the runtime
+  `sash_concat`, mirroring native `lower_concat_value`. Declared the
+  `sash_concat` extern in the C preamble. `a=hello$b`, multi-part
+  `a=x${b}y${b}z`, and the subscript-append read-modify-write Concat all
+  now work in c (verified vs native).
+- **janet**: concat-in-value already worked (`a=hello$b` → helloworld;
+  `v=${a[1]}HELLO` → yHELLO). The task's janet claim was stale.
+
+Specs: types.sh 12.4 locks `b=world; a=hello$b` (native/c/janet); the
+subscript-append rows 33.11-33.13 went `in_modes native` → `native,c`.
+Bonus: c:53.6 also recovered. Zero new failures (native 2, janet 109
+unchanged; c 61→60).
+
+**Remaining (separate bug, filed):** the janet subscript-append rows stay
+janet-excluded because janet's *indexed assignment* `a[i]=v` ignores the
+index entirely (`emit_assignment` drops `Assignment.index`/`op`) — that's
+`bug-janet-indexed-assignment`, not a Concat gap.
 
 ## Symptom
 

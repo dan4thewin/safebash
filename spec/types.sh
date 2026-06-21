@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=57
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -44,6 +44,12 @@ run_sash 'x="hello"; /usr/bin/printf "%s\n" "$x"'
 # 12.3 O(1) length — proves ${#x} works without scanning
 run_sash 'x="hello world test"; echo ${#x}'
 [[ $rc = 0 && $out = "16" && -z $err ]]; chk 12.3
+
+# 12.4 string interpolation in assignment (Concat in value position): the c
+# backend lowers it via sash_concat (bug-c-janet-concat-in-value); native and
+# janet already did.
+run_sash 'b=world; a=hello$b; echo $a'
+[[ $rc = 0 && $out = "helloworld" && -z $err ]]; chk 12.4
 
 # 16.1 int stores machine-width
 run_sash 'int x=9223372036854775807; echo $x'
@@ -273,11 +279,12 @@ else
     skip_chk 62.14
 fi
 
-# --- subscript append a[i]+=v (read-modify-write) — NATIVE reference.
-# The c/janet backends don't lower a Concat value in non-echo position
-# (e.g. `a=hello$b` is also empty in c), so the read-modify-write Concat
-# this produces isn't handled there yet; see bug-c-janet-concat-in-value.
-if in_modes native; then
+# --- subscript append a[i]+=v (read-modify-write). native + c reference.
+# c now lowers a Concat value in non-echo position (bug-c-janet-concat-in-value
+# fixed). janet still mis-lowers an indexed assignment `a[i]=v` (emits a whole-
+# var `(set a …)` ignoring the index — see bug-janet-indexed-assignment), so it
+# stays excluded here.
+if in_modes native,c; then
     # 33.11 indexed literal-index append concatenates onto the current element
     run_sash 'array a=(1 2 3); a[0]+=9; echo ${a[0]}'
     [[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.11

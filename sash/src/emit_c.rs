@@ -100,6 +100,11 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern char* sash_itoa(i64 val, i64* out_len);").unwrap();
     writeln!(
         out,
+        "extern char* sash_concat(const char* a, i64 al, const char* b, i64 bl, i64* out_len);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern i64 sash_strcmp(const char* p1, i64 l1, const char* p2, i64 l2);"
     )
     .unwrap();
@@ -544,6 +549,31 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
 /// If the value requires a runtime call (e.g. `sash_itoa` for an
 /// int variable), this function *emits a temp declaration into `e.out`*
 /// and returns expressions referencing the temp.
+/// Concatenate `parts` in value position: left-fold via `sash_concat`,
+/// mirroring native `lower_concat_value`. Each fold step emits a fresh
+/// temp `(ptr, len)`; the final temp is returned.
+fn emit_concat_value(e: &mut Emit, parts: &[SsaValue], types: &VarTypes) -> CStr {
+    assert!(!parts.is_empty(), "empty Concat");
+    let (mut acc_ptr, mut acc_len) = lower_value_as_str(e, &parts[0], types);
+    for part in &parts[1..] {
+        let (p_ptr, p_len) = lower_value_as_str(e, part, types);
+        let t = e.fresh();
+        writeln!(
+            e.out,
+            "    i64 {t}_l; const char* {t}_p = (const char*)sash_concat({a_ptr}, {a_len}, {b_ptr}, {b_len}, &{t}_l);",
+            t = t,
+            a_ptr = acc_ptr,
+            a_len = acc_len,
+            b_ptr = p_ptr,
+            b_len = p_len
+        )
+        .unwrap();
+        acc_ptr = format!("{}_p", t);
+        acc_len = format!("{}_l", t);
+    }
+    (acc_ptr, acc_len)
+}
+
 fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr {
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
@@ -584,6 +614,10 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // Phase 5: table iteration helpers (for x in "${arr[@]}").
         SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
         SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
+        // Concat in value position (assignment RHS, subscript-assign value):
+        // left-fold the parts through sash_concat, mirroring native
+        // lower_concat_value (codegen/values.rs:314).
+        SsaValue::Concat(parts) => emit_concat_value(e, parts, types),
         _ => {
             writeln!(
                 e.out,
