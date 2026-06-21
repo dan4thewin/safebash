@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=52
+plan=55
 echo "1..$plan" >&3
 
 set +e
@@ -260,6 +260,28 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.14
 else
     skip_chk 62.14
+fi
+
+# --- subscript append a[i]+=v (read-modify-write) — NATIVE reference.
+# The c/janet backends don't lower a Concat value in non-echo position
+# (e.g. `a=hello$b` is also empty in c), so the read-modify-write Concat
+# this produces isn't handled there yet; see bug-c-janet-concat-in-value.
+if in_modes native; then
+    # 33.11 indexed literal-index append concatenates onto the current element
+    run_sash 'array a=(1 2 3); a[0]+=9; echo ${a[0]}'
+    [[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.11
+
+    # 33.12 indexed dynamic-index append
+    run_sash 'array a=(x y); i=1; a[$i]+=z; echo ${a[1]}'
+    [[ $rc = 0 && $out = "yz" && -z $err ]]; chk 33.12
+
+    # 33.13 map subscript append
+    run_sash 'map m=([k]=ab); m[k]+=cd; echo ${m[k]}'
+    [[ $rc = 0 && $out = "abcd" && -z $err ]]; chk 33.13
+else
+    skip_chk 33.11
+    skip_chk 33.12
+    skip_chk 33.13
 fi
 
 set -e

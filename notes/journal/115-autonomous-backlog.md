@@ -53,3 +53,20 @@ Test fallout + a real bug found:
   `(( ))` (bug-dollar-hash-in-arith); `until (( ))` not negated — the
   until desugar only wraps `SsaInst::Test`, not the `LetExit` arith
   condition (bug-until-arith-condition).
+
+## array-splat-command-arg — START
+
+`@a` in command-arg position collapses to one joined string instead of N
+verbatim args. Investigating how command args lower (Vec<SsaValue>) and
+how the exec/argv path is built across native/janet/c, to splice a
+runtime-sized array's elements into argv.
+
+## subscript-append-broken — done (native)
+
+`handle_subscript_assign` ignored `AssignOp::Append`. Fixed: for append,
+value = `Concat([subscript_to_value(a,i), rhs])` (read-modify-write);
+`subscript_to_value` made `pub(super)`. Transform-only. Spec types.sh
+33.11–33.13. Guarded native — c/janet lack Concat-in-value lowering
+(`a=hello$b` is empty in c too); filed `bug-c-janet-concat-in-value`.
+array-splat-command-arg deferred (substantial: runtime-variadic argv
+across 3 backends) — left ready for a focused effort.

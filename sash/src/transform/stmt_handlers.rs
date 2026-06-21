@@ -1,6 +1,6 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::expressions::{expr_to_string, expr_to_value, test_to_ssa};
+use super::expressions::{expr_to_string, expr_to_value, subscript_to_value, test_to_ssa};
 use super::functions::{collect_local_vars, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
@@ -675,9 +675,17 @@ fn handle_subscript_assign(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> BlockId {
-    let val = expr_to_value(&a.value, state);
-    let idx_val = expr_to_value(idx, state);
+    let rhs = expr_to_value(&a.value, state);
     let is_int = !state.assoc_arrays.contains(&a.name);
+    // `a[i] += v` is read-modify-write: a[i] = ${a[i]} ++ v. (Plain
+    // `a[i] = v` discards the current element, which is correct.)
+    let val = if a.op == crate::ir::AssignOp::Append {
+        let current = subscript_to_value(&a.name, idx, state);
+        SsaValue::Concat(vec![current, rhs])
+    } else {
+        rhs
+    };
+    let idx_val = expr_to_value(idx, state);
     ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
         array: a.name.clone(),
         index: idx_val,

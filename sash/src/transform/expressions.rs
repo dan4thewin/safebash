@@ -94,7 +94,7 @@ fn assoc_array_to_value(pairs: &[(String, Expr)], state: &VersionState) -> SsaVa
     SsaValue::AssocArray(vals)
 }
 
-fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
+pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
     let is_integer = !state.assoc_arrays.contains(name);
     SsaValue::Subscript {
         array: name.to_string(),

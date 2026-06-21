@@ -1,6 +1,6 @@
 ---
 title: BUG — subscript append `a[i]+=v` discards the existing element value
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,6 +10,13 @@ gates:
 ---
 
 # subscript `+=` append discards the current value
+
+> **DONE (2026-06-20).** Native: `handle_subscript_assign`
+> (transform/stmt_handlers.rs) now honours `AssignOp::Append` by setting
+> the value to `Concat([${a[i]}, rhs])` (read-modify-write);
+> `subscript_to_value` made `pub(super)`. Spec types.sh 33.11–33.13
+> (guarded `in_modes native` — c/janet don't lower a Concat value in
+> non-echo position, filed bug-c-janet-concat-in-value). Zero regression.
 
 Found 2026-06-17 while implementing dynamic subscript (the map-iteration
 work). **Pre-existing** — not introduced by that change; literal and
