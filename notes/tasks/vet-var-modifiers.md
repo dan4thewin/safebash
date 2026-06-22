@@ -109,3 +109,22 @@ in `regex-interpolation-delimiters` section G (don't duplicate it here).
   DD#64 fully clean for the family.
 - Prefix/suffix/case ops: decide whether they earn their keep vs. a small
   builtin set or the regex family.
+
+## Resolved (DG, 2026-06-21)
+
+- **`basename`/`dirname` are SUGAR**, not builtins: `basename $p` ≡
+  `$(sub $p '.*/')`, `dirname $p` ≡ `$(sub $p '/[^/]*$')` (or equivalent).
+  Avoids builtin creep — they reduce to the existing `sub` primitive.
+- **`toupper`/`tolower` ARE builtins** — the one exception: case conversion
+  is not expressible as a regex `sub` replacement (DD#63 forbids `\U`/`\L`),
+  so they're irreducible primitives.
+- **Sequencing:** drop the modifiers AND build the replacements in the
+  **same commit**, with **no transitional diagnostics** (no "use X
+  instead" phase). Kept: `:-`, `:off:len`, `:s/`; the `:-` is now a *full
+  word* (Decision 1) so its word-interpolation is built here too (shared
+  with `@{a:-WORD}`). Dropped: `:=`/`:+`/`:?`, `#`/`##`/`%`/`%%` (→
+  basename/dirname sugar), `/`-family (→ `sub`/`gsub`), `^`/`,` (first-char
+  case, no replacement), `^^`/`,,` (→ toupper/tolower builtins).
+- **DEPENDS ON `regex-builtins`** — `sub`/`gsub` must exist for the
+  basename/dirname sugar and the `/`-family replacement. regex-builtins
+  lands first or in the same commit.

@@ -1,6 +1,6 @@
 ---
 title: "DECISION NEEDED: @{a:-WORD} / @{a:?WORD} splat-disposition syntax + WORD semantics (glob-splat Part 2)"
-status: needs-decision
+status: ready
 priority: P2
 kind: decision
 depends: [array-splat-command-arg]
@@ -61,3 +61,18 @@ modifiers` settles for the scalar `${x:-WORD}` so the two stay 1-to-1.
 Part 1 of glob-splat (globs-are-arrays: for-in glob per-element +
 inline-`*` reject) is decision-free (DD#69) and is being implemented
 independently of this decision.
+
+## Resolved (DG, 2026-06-21)
+
+- **WORD = full word** — interpolation + concat + quoting, identical to the
+  scalar `${x:-WORD}` default (option c). COUPLES to `vet-var-modifiers`:
+  the scalar `:-` word-interpolation is currently unimplemented, so the
+  shared word-interpolation machinery is built once and used by both.
+- **`@{a:?WORD}` abort** — exit 1; stderr is **`<program name>: WORD`**
+  (the running program's own name, i.e. argv[0]/basename — NOT `sash:`).
+- **Parser** — only `:-` and `:?` after `@{a` (no `:=`/`:+`).
+- **Taint compose** — orthogonal: the disposition is cardinality-only, the
+  bless is value/taint-only; they compose without collision.
+
+Status now: ready to implement (jointly with the scalar `${x:-WORD}`
+interpolation in vet-var-modifiers).

@@ -37,3 +37,17 @@ Resolving the cmdsub head (DD#23) made bare-external `$(cat …)` /
    exec: … (Phase 4) */` and captures empty. Implement the fork/pipe/exec
    capture (mirror codegen `emit_cmdsub_exec`) so the C oracle matches
    native for `$(external …)`.
+
+## Resolved (DG, 2026-06-21) — reframed into three threads
+
+DG corrected the framing: there are no "bare externals" (DD#23 maps every
+external to an absolute path), and the taint criterion is operational —
+**any output that passed through `execve(2)`/`execveat(2)` is tainted**;
+`getenv`/`argv`/`arg` are tainted external *input*; everything the
+compiler computes in-process (internal builtins, inlined user functions)
+is clean. The "unblessed-external ICE" is just a symptom of DD#23 being
+partial (resolution runs in transform, after the front-end taint pass).
+
+Split into three threads (filed): `advance-dd23-resolution`,
+`tighten-cmdsub-taint-execve`, `implement-getpid-builtins`. The C cmdsub
+exec (Phase-4 TODO) remains pure implementation and stays in *this* task.

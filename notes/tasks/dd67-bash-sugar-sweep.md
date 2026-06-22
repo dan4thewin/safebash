@@ -68,3 +68,24 @@ ratified decisions + small re-add tasks, not one big change.
   they change meaning, not spelling, so there is no sugar to keep.
 - Keep each re-add a thin parser alias onto an existing IR node — no new
   semantics.
+
+## Keep/drop table — RATIFIED (DG, 2026-06-21)
+
+**A. Re-add as 1-to-1 sugar:**
+- `name() { }` → `fn name { }` — **KEEP** (re-add; currently SB4014).
+- `function name { }` → `fn name { }` — **KEEP** (already accepted today).
+- flat `` `cmd` `` → `$(cmd)` — **KEEP** (re-add).
+
+**B. Single-bracket `[ … ]`:** removed as a test construct. `[` becomes an
+**ordinary literal character** (like backslash under DD#64) — it no longer
+*starts a test*. `[[ … ]]` is the only test form. The distinct constructs
+`[[ … ]]` and `arr[i]` subscript keep their meanings.
+
+**C. Stay dropped (fail the 1-to-1 test):** nested backticks (need
+`\``-escaping, DD#64 removes); `?`/`[…]`/`**` globs (DD#39, only `*`);
+heredocs `<<`/`<<-` (use `<<<`/vars); `export`/`declare -x` (use
+int/const/array/map); `coproc`; `[ -v ]` (use `-n`); `IFS=` (no word
+splitting); prefix `++x` (use `x++` / `(( x += 1 ))`).
+
+**D. Owned by other DDs:** `case…esac` → DD#66; brace-form control flow +
+`then…fi`/`do…done` canonicalization → DD#68; `${var}` modifiers → DD#65.

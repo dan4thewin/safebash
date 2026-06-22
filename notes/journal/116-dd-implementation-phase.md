@@ -137,3 +137,26 @@ Filed `cmdsub-followups-taint-intrinsics-c` for three surfaced pre-
 existing gaps: unblessed-external ICE→should-be-SB5020 (CST taint under-
 classifies bare externals); getpid-class intrinsics not intercepted in
 cmdsub; C cmdsub exec Phase-4 TODO.
+
+## Decision review with DG (2026-06-21) — all 5 resolved
+
+1. **glob-splat Part 2** (`@{a:-WORD}`/`@{a:?WORD}`): WORD = **full word**
+   (like scalar `${x:-WORD}` — couples to vet-var-modifiers). Abort: exit 1,
+   stderr `<program name>: WORD` (no `sash:`). Only `:-`/`:?`. Taint
+   orthogonal.
+2. **reject-undeclared** (DD#62): **scalars only**; typed scalar decl
+   (`int x`→0) counts as assigned; **containers out of scope** (emptiness is
+   the splat disposition's job, not definite-assignment); IR-pass primary
+   (spans) + SSA backstop (ICE on miss), mirroring taint; loop targets in a
+   possibly-empty loop aren't assigned.
+3. **vet-var-modifiers** (DD#65): **basename/dirname = sub-sugar** (not
+   builtins); **toupper/tolower = builtins** (irreducible); drop+build in
+   one commit, no diagnostics; **depends on regex-builtins** (sub/gsub).
+4. **dd67 keep/drop table** ratified: re-add `name(){}`+flat backticks;
+   **single-bracket `[` becomes a normal literal char** (no `[ … ]` test;
+   `[[ … ]]` only); the semantic rejections stay dropped.
+5. **cmdsub/taint** → reframed as: **advance DD#23** (hoist resolution ahead
+   of front-end, unresolved=fatal, --sysroot incl. squashfs) + **tighten
+   taint** (execve/execveat ⇒ tainted; delete the "clean iff args clean"
+   path; printf/pwd tainted, echo/getcwd/getpid clean) + **implement
+   getpid-class builtins** (`$$` = getpid sugar). Three threads filed.

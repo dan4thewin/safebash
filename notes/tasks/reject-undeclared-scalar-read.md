@@ -71,3 +71,24 @@ bare reads costs no expressiveness — it forces intent.
 DD#62 decision #3 open item, resolved 2026-06-21 in the DD walkthrough.
 Current behavior: undeclared/typo'd scalar reads compile and yield empty
 silently (verified).
+
+## Resolved (DG, 2026-06-21) — narrowed design
+
+- **Scalars only.** Definite-assignment rejects a bare scalar read `$x`/
+  `${x}` that is not definitely assigned on every path. `${x:-WORD}` is
+  the opt-out.
+- **Two passes (mirrors taint):** an **IR-pass** is primary — it carries
+  source spans, so the diagnostic points at the read and suggests
+  `${x:-}`; the **SSA** check is a soundness backstop that **ICEs** if it
+  catches a maybe-unset read the IR-pass missed (version-0 / phi-source
+  propagation already present in SSA). Exclude compiler-managed specials
+  (`$1`/`$@`/`$?`/`$$`/`$LINENO`…) and the `${x:-}`/`${x:?}` forms.
+- **Typed scalar decl = assigned.** `int x` (no initializer) zero-inits to
+  `0`, so `$x` after it is fine (matches today).
+- **Containers are OUT of scope.** `array a`/`map m` are always assigned
+  (a valid *empty* container); definite-assignment never applies. An empty
+  container's only consequence is cardinality at an **external `@a`
+  splat**, handled by the disposition (`@{a:-}`/`@{a:?}`) — NOT here.
+- **Loop targets:** a possibly-empty `for`/`while` does not assign its
+  body's scalar targets (reading them after the loop is rejected unless
+  pre-assigned); the loop variable is assigned inside the body.

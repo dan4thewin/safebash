@@ -76,3 +76,17 @@ search.
 
 - DD#53 — Env var isolation (PATH not readable unless via getenv+bless)
 - DD#45 — Export rejected (can't modify inherited PATH)
+
+## Clarification (DG, 2026-06-21)
+
+- **No bare externals reach the back-end.** Every external is mapped to an
+  absolute path; this resolution must run **ahead of the front-end checks**
+  (validate/taint/type-check), not in the transform as it does today. See
+  `advance-dd23-resolution`.
+- **Taint source = `execve(2)`/`execveat(2)`.** Any captured output that
+  passed through an exec is tainted (e.g. `printf`, `pwd` — real programs).
+  In-process internal builtins (echo, getcwd, getpid, …) and inlined user
+  functions are clean; `getenv`/`argv`/`arg` are tainted external input.
+  See `tighten-cmdsub-taint-execve`.
+- **--sysroot incl. squashfs** is part of resolution (build host default,
+  or a target dir / squashfs image root).
