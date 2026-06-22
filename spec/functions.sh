@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=17
+plan=20
 echo "1..$plan" >&3
 
 set +e
@@ -105,6 +105,21 @@ f one'
 run_sash 'fn f { shift; echo $1; }
 f a b'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 48.2
+
+# 67.1 bash `name() { }` function sugar ≡ fn name { } (DD#67)
+run_sash 'greet() { echo hi; }
+greet'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 67.1
+
+# 67.2 `name()` sugar passes positionals like fn
+run_sash 'pick() { echo $2; }
+pick a b c'
+[[ $rc = 0 && $out = "b" && -z $err ]]; chk 67.2
+
+# 67.3 `function name { }` keyword form also accepted
+run_sash 'function g { echo G; }
+g'
+[[ $rc = 0 && $out = "G" && -z $err ]]; chk 67.3
 
 set -e
 tally

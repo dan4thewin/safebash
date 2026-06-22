@@ -146,6 +146,7 @@ fn dispatch_statement(
         Tok::Word(ref w) if w == "-" => parse_suppressed(scanner),
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::Bless => parse_bless(scanner),
+        Tok::Word(_) if is_paren_function(scanner) => parse_paren_function(scanner),
         _ => parse_simple_or_assignment(scanner),
     }
 }
@@ -488,6 +489,45 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
     let name = expect_word(scanner, span, "expected function name")?;
 
     parse_optional_empty_parens(scanner, span)?;
+    Ok(Some(finish_function_def(scanner, name, span, is_local)?))
+}
+
+/// DD#67: bash `name() { ... }` function-definition sugar (no `fn`/
+/// `function` keyword). Produces the same `Function` IR as `fn name { }`.
+/// The leading `name ( )` shape is recognised by [`is_paren_function`].
+fn parse_paren_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+    let sp = scanner.peek().span;
+    let span = span_from(scanner, sp.start);
+    let name = expect_word(scanner, span, "expected function name")?;
+    expect(
+        scanner,
+        &Tok::LParen,
+        span,
+        "expected '(' in function definition",
+    )?;
+    expect(
+        scanner,
+        &Tok::RParen,
+        span,
+        "expected ')' in function definition",
+    )?;
+    Ok(Some(finish_function_def(scanner, name, span, false)?))
+}
+
+/// True if the upcoming tokens are `WORD ( )` — the bash `name()`
+/// function-definition prefix. `peek()` is the name word.
+fn is_paren_function(scanner: &mut Scanner) -> bool {
+    matches!(scanner.peek_n(1).token, Tok::LParen) && matches!(scanner.peek_n(2).token, Tok::RParen)
+}
+
+/// Shared tail of a function definition: optional `-> type`, then the
+/// `{ body }`. `name` and the leading parens (if any) are already consumed.
+fn finish_function_def(
+    scanner: &mut Scanner,
+    name: String,
+    span: Span,
+    is_local: bool,
+) -> Result<Statement, Diagnostic> {
     let return_type = parse_optional_return_type(scanner);
 
     skip_terminators(scanner);
@@ -506,7 +546,7 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
         name
     };
 
-    Ok(Some(Statement {
+    Ok(Statement {
         kind: StmtKind::Function(Function {
             name: func_name,
             return_type,
@@ -514,7 +554,7 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
             is_local,
         }),
         span,
-    }))
+    })
 }
 
 /// Consume an optional `()` after the function name. Bash style:
