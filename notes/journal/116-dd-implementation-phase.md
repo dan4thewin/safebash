@@ -120,3 +120,20 @@ isolation).
 glob-splat remaining: Part 2 (`@{a:-WORD}`/`@{a:?WORD}` disposition +
 bare-@a-external reject), blocked on the WORD-interpolation decision
 (DECISION-glob-splat-disposition-word, for DG).
+
+## bug-cmdsubst-builtin-not-resolved — FIXED
+
+`build_argv` (expr_handlers.rs) now resolves the command-substitution
+head via `resolve_pipeline_command` (DD#23), exactly like direct commands
+and pipeline stages. Bare external heads (`cat`, `printf`, `grep`, …) →
+absolute paths; `getenv`/`argv`/`arg`/`echo`/user-fns/abs-paths unchanged.
+Taint stays correct (SSA `cmd_subst_taint`: external→tainted, printf
+pass-through→clean, user-fn→clean — verified). Rust `cmdsub_with_args`,
+`cmdsub_empty_output` now pass (184→180); spec commands 14.2b (native;
+c cmdsub is a Phase-4 TODO, janet os/spawn capture is racy). Native
+baseline held (2-fail).
+
+Filed `cmdsub-followups-taint-intrinsics-c` for three surfaced pre-
+existing gaps: unblessed-external ICE→should-be-SB5020 (CST taint under-
+classifies bare externals); getpid-class intrinsics not intercepted in
+cmdsub; C cmdsub exec Phase-4 TODO.

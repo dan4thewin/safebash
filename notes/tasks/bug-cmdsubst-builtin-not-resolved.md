@@ -1,6 +1,6 @@
 ---
 title: "bug: $(printf …) and other abs-path builtins not resolved inside command substitution → bare command passed to sash_exec"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -49,3 +49,21 @@ builtins (printf, …).
   splat path (`$(/usr/bin/printf '%s-' @a)` with an explicit abs path)
   works correctly once the head resolves — verified output `one-two-three-`.
 - External commands (true externals with a `/`) are unaffected.
+
+## Resolved (2026-06-21)
+
+`build_argv` (expr_handlers.rs) now resolves the cmdsub head via
+`resolve_pipeline_command` (DD#23), like direct commands / pipeline
+stages. Bare external heads (`cat`, `printf`, `grep`, …) resolve to
+absolute paths; `getenv`/`argv`/`arg`/`echo`/user-functions/abs-paths are
+unchanged. Taint is correctly enforced by the SSA-level `cmd_subst_taint`
+(external → tainted, pure builtins like printf → clean, user-fn → clean).
+Rust `cmdsub_with_args`/`cmdsub_empty_output` now pass; spec commands 14.2b
+(native). Native baseline held.
+
+Surfaced (filed): (1) an **unblessed** bare-external cmdsub trips the SSA
+ICE backstop ("CST taint pass missed this") instead of a clean SB5020 —
+pre-existing; the CST taint pass under-classifies bare externals. (2)
+`getpid`/`getppid`/`getcwd`/`epochseconds`/`random`/`argc`/… intrinsics
+aren't intercepted in cmdsub (only getenv/argv/arg are) → "bare command".
+(3) The **C** backend's cmdsub exec is an unimplemented Phase-4 TODO.

@@ -84,7 +84,18 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
 /// `CmdSubst` expects).
 fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
     let mut argv = Vec::with_capacity(c.args.len() + 1);
-    argv.push(expr_to_value(&c.name, state));
+    // DD#23: resolve the command head to its absolute path, like direct
+    // commands and pipeline stages. Otherwise a bare external name (cat,
+    // printf, …) reaches sash_exec unresolved ("bare command passed to
+    // sash_exec"). echo/true/false/: stay bare — the cmdsub codegen
+    // inlines them.
+    let head = match &c.name.kind {
+        ExprKind::Literal(name) => {
+            SsaValue::Literal(super::resolution::resolve_pipeline_command(name))
+        }
+        _ => expr_to_value(&c.name, state),
+    };
+    argv.push(head);
     for arg in &c.args {
         argv.push(arg_to_value(arg, state));
     }

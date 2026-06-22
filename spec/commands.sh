@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=16
+plan=17
 echo "1..$plan" >&3
 
 set +e
@@ -15,6 +15,17 @@ run_sash 'echo hello | /usr/bin/cat'
 # 14.2 command substitution
 run_sash 'x=$(echo hello); echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 14.2
+
+# 14.2b command substitution resolves an EXTERNAL command head (DD#23) —
+#        bare `printf`/`cat` used to reach sash_exec unresolved. native
+#        only: the C cmdsub exec is a Phase-4 TODO and the Janet os/spawn
+#        capture pipe is racy (janet-pipeline-eagain-flaky).
+if in_modes native; then
+    run_sash 'x=$(printf hi); echo "$x"'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2b
+else
+    skip_chk 14.2b
+fi
 
 # 14.3 background command
 run_sash 'echo bg &
