@@ -18,6 +18,54 @@ use crate::ir::*;
 
 // ── Top-level expression parsing ───────────────────────────────────
 
+/// Single/double/ansi-c quoted arms of `parse_expr`, factored out to keep
+/// the main word loop under the complexity gate.
+fn parse_quoted_arm(scanner: &mut Scanner, tok: &Tok, span: Span, parts: &mut Vec<Expr>) {
+    scanner.next();
+    let kind = match tok {
+        Tok::SingleQuoted(s) => ExprKind::SingleQuoted(s.clone()),
+        Tok::DoubleQuoted(parts_tok) => {
+            ExprKind::DoubleQuoted(string_parts_to_exprs(parts_tok, span, scanner))
+        }
+        Tok::AnsiCQuoted(s) => ExprKind::Literal(s.clone()),
+        _ => unreachable!("parse_quoted_arm called with non-quoted token"),
+    };
+    parts.push(Expr { kind, span });
+}
+
+/// `$`-expansion and flat-backtick arms of `parse_expr`, factored out to
+/// keep the main word loop under the complexity gate. `tok` is one of
+/// `Dollar`/`DollarBrace`/`DollarParen`/`Backtick`/`DollarDblParen`.
+fn parse_expansion_arm(
+    scanner: &mut Scanner,
+    tok: &Tok,
+    span: Span,
+    start: usize,
+    parts: &mut Vec<Expr>,
+) -> Result<(), Diagnostic> {
+    match tok {
+        Tok::Dollar(name) => parse_dollar_arm(scanner, name.clone(), span, start, parts),
+        Tok::DollarBrace(content) => {
+            scanner.next();
+            parts.push(parse_parameter_expansion(content, span));
+        }
+        Tok::DollarParen => {
+            scanner.next();
+            parts.push(parse_command_substitution(scanner, span)?);
+        }
+        Tok::Backtick(content) => {
+            scanner.next();
+            parts.push(command_sub_to_expr(content, span));
+        }
+        Tok::DollarDblParen => {
+            scanner.next();
+            parts.push(super::arith::parse_arith_expansion(scanner, span)?);
+        }
+        _ => unreachable!("parse_expansion_arm called with non-expansion token"),
+    }
+    Ok(())
+}
+
 /// Parse a single word/expression that produces a value.
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
 /// concatenation of adjacent tokens, and array literals.
@@ -38,48 +86,15 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
                 let w = w.clone();
                 parts.push(parse_word_arm(scanner, w, span));
             }
-            Tok::SingleQuoted(ref s) => {
-                let s = s.clone();
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::SingleQuoted(s),
-                    span,
-                });
+            Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
+                parse_quoted_arm(scanner, &tok, span, &mut parts);
             }
-            Tok::DoubleQuoted(ref parts_tok) => {
-                let parts_tok = parts_tok.clone();
-                scanner.next();
-                let dq_parts = string_parts_to_exprs(&parts_tok, span, scanner);
-                parts.push(Expr {
-                    kind: ExprKind::DoubleQuoted(dq_parts),
-                    span,
-                });
-            }
-            Tok::AnsiCQuoted(ref s) => {
-                let s = s.clone();
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::Literal(s),
-                    span,
-                });
-            }
-            Tok::Dollar(ref name) => {
-                let name = name.clone();
-                parse_dollar_arm(scanner, name, span, start, &mut parts);
-            }
-            Tok::DollarBrace(ref content) => {
-                let content = content.clone();
-                scanner.next();
-                parts.push(parse_parameter_expansion(&content, span));
-            }
-            Tok::DollarParen => {
-                scanner.next();
-                parts.push(parse_command_substitution(scanner, span)?);
-            }
-            Tok::DollarDblParen => {
-                scanner.next();
-                let arith = super::arith::parse_arith_expansion(scanner, span)?;
-                parts.push(arith);
+            Tok::Dollar(_)
+            | Tok::DollarBrace(_)
+            | Tok::DollarParen
+            | Tok::Backtick(_)
+            | Tok::DollarDblParen => {
+                parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
             }
             Tok::Eq => {
                 scanner.next();

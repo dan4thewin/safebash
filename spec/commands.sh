@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=17
+plan=19
 echo "1..$plan" >&3
 
 set +e
@@ -26,6 +26,14 @@ if in_modes native; then
 else
     skip_chk 14.2b
 fi
+
+# 67.4 flat backtick `cmd` is sugar for $(cmd) (DD#67)
+run_sash 'x=`echo hi`; echo $x'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 67.4
+
+# 67.5 nested backticks (\`-escaping) are rejected — use $()
+run_sash 'x=`echo \`date\``; echo $x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 67.5
 
 # 14.3 background command
 run_sash 'echo bg &

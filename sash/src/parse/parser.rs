@@ -1956,7 +1956,7 @@ fn check_rejected_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
             diags.push(parse_error(
                 expr.span,
                 "SB5020",
-                "backtick command substitution is not allowed — use $(...) instead".to_string(),
+                "nested backticks are not allowed — use $(...) for nesting".to_string(),
             ));
         }
         ExprKind::ParameterExpansion(pe) => check_rejected_param_expansion(pe, expr.span, diags),

@@ -115,6 +115,7 @@ pub enum Tok {
     Dollar(String),      // $var, $1, $@, $#, $?, $$, $!
     DollarBrace(String), // ${...} raw content for sub-parsing
     DollarParen,         // $( — start of command substitution
+    Backtick(String),    // DD#67: flat `cmd` → $(cmd); raw inner content
 
     // Comments
     Comment(String),
@@ -506,26 +507,56 @@ impl Scanner {
         }
     }
 
-    /// Backticks are rejected (SB5020). Consume until matching backtick
-    /// or end-of-line so error reporting can show the offending span.
+    /// DD#67: flat `` `cmd` `` is sugar for `$(cmd)` → `Tok::Backtick`
+    /// carrying the raw inner content. A `\`` inside (the bash nesting
+    /// escape, which DD#64 removes) can't map 1-to-1, so it falls back to
+    /// the `` `backtick` `` sentinel the parser rejects with a diagnostic.
     fn scan_backtick(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // opening `
-        while self.pos < self.source.len()
-            && self.source[self.pos] != b'`'
-            && self.source[self.pos] != b'\n'
-        {
-            self.pos += 1;
+        let (content, nested) = self.scan_backtick_body();
+        let terminated = self.pos < self.source.len() && self.source[self.pos] == b'`';
+        if terminated {
+            self.pos += 1; // closing `
         }
-        if self.pos < self.source.len() && self.source[self.pos] == b'`' {
-            self.pos += 1;
-        }
+        let token = if nested || !terminated {
+            Tok::Word("`backtick`".to_string())
+        } else {
+            Tok::Backtick(content)
+        };
         SpannedToken {
-            token: Tok::Word("`backtick`".to_string()),
+            token,
             span: LexSpan {
                 start,
                 end: self.pos,
             },
         }
+    }
+
+    /// Scan a backtick body up to the closing `` ` `` / newline / EOF.
+    /// Returns the raw content and whether a `\`` nesting attempt was seen.
+    fn scan_backtick_body(&mut self) -> (String, bool) {
+        let content_start = self.pos;
+        let mut nested = false;
+        while self.pos < self.source.len()
+            && self.source[self.pos] != b'`'
+            && self.source[self.pos] != b'\n'
+        {
+            if self.is_escaped_backtick() {
+                nested = true;
+                self.pos += 2;
+            } else {
+                self.pos += 1;
+            }
+        }
+        let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).into_owned();
+        (content, nested)
+    }
+
+    /// `\`` at the cursor — the bash nesting escape DD#64 removes.
+    fn is_escaped_backtick(&self) -> bool {
+        self.source[self.pos] == b'\\'
+            && self.pos + 1 < self.source.len()
+            && self.source[self.pos + 1] == b'`'
     }
 
     fn starts_with(&self, prefix: &[u8]) -> bool {

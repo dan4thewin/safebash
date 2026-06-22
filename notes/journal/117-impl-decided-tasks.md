@@ -45,3 +45,13 @@ Added `parse_paren_function` + `is_paren_function` (WORD `(` `)` lookahead)
 `parse_function`. `name() { }` and `name() -> int { }` produce the same
 `Function` IR as `fn name { }`. Specs functions 67.1-67.3 (all backends).
 Big win: rust suite 180→152 — `name() {}` was unblocking ~34 tests.
+
+### §2 flat backticks — DONE
+
+New `Tok::Backtick(content)`: `scan_backtick` produces it for flat
+`` `cmd` `` (→ `command_sub_to_expr` → CommandSubstitution, same as
+`$(cmd)`). A `\`` nesting attempt (or unterminated) falls back to the
+`` `backtick` `` sentinel the parser rejects ("nested backticks are not
+allowed — use $(...)"). Split into scan_backtick/scan_backtick_body/
+is_escaped_backtick for the complexity gate. Specs commands 67.4 (flat),
+67.5 (nested rejected).
