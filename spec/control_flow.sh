@@ -67,13 +67,15 @@ run_sash 'x=b; case $x in a|b|c) echo abc ;; *) echo other ;; esac'
 run_sash 'x=hello; case $x in h*) echo h-prefix ;; *) echo other ;; esac'
 [[ $rc = 0 && $out = "h-prefix" && -z $err ]]; chk cf.c6
 
-# cf.c7 case with ? glob
-run_sash 'x=ab; case $x in ?b) echo two-char-b ;; *) echo other ;; esac'
-[[ $rc = 0 && $out = "two-char-b" && -z $err ]]; chk cf.c7
+# cf.c7 `?` is a literal in case patterns, NOT a single-char wildcard
+#       (DD#39 star-only glob): `?b` does not match `ab`, so the `*` arm wins.
+run_sash 'x=ab; case $x in ?b) echo wildcard ;; *) echo star-only ;; esac'
+[[ $rc = 0 && $out = "star-only" && -z $err ]]; chk cf.c7
 
-# cf.c8 case with [class] glob
-run_sash 'x=5; case $x in [0-9]) echo digit ;; *) echo other ;; esac'
-[[ $rc = 0 && $out = "digit" && -z $err ]]; chk cf.c8
+# cf.c8 `[class]` is literal, NOT a character class (DD#39 star-only glob):
+#       `[0-9]` does not match `5`, so the `*` arm wins.
+run_sash 'x=5; case $x in [0-9]) echo charclass ;; *) echo star-only ;; esac'
+[[ $rc = 0 && $out = "star-only" && -z $err ]]; chk cf.c8
 
 # cf.c9 case with no matching arm and no default
 run_sash 'x=z; case $x in a) echo a ;; b) echo b ;; esac; echo done'

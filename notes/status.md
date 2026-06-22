@@ -12,6 +12,28 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-21 (cont.) — dd67 sugar, DD#23 resolution, native green
+
+- **Native spec suite is GREEN (0 failing).** cf.c7/cf.c8 rewritten to the
+  **star-only** glob contract (DG, DD#39): `?` and `[class]` are literal
+  characters in `case` patterns, not metacharacters — only `*` globs.
+- **DD#23 resolution hoisted ahead of the front-end** (`599fa74`): new
+  `sash/src/resolve.rs` rewrites external command heads (incl. cmdsub heads)
+  to absolute paths before taint/type checks, so the CST taint pass sees the
+  real exec form. Unresolved = fatal (SB5011, now incl. cmdsub heads).
+  `--sysroot` dir + `.squashfs` honored. Structural rejections (heredoc,
+  export/declare) now run before resolution.
+- **dd67 sugar sweep**: `name() { }` (`e9849ad`), flat backticks (`def5c40`),
+  single-bracket `[` is an ordinary literal (`c3875d1`).
+- **Rust suites (sash/tests/) have significant bit-rot** (DG) — they are NO
+  LONGER a regression gate. **spec.db is the source of truth.** Filed
+  `audit-rust-test-suites`. Their nondeterminism: codegen tests call
+  `compile_to_object` in-process, sharing global compiler state.
+- **Heredoc removal is INCOMPLETE**: lexer rejects `<<` (→ `__HEREDOC__` →
+  SB5002), but `RedirectOp::HereDoc` + its codegen/emit_c/emit_janet/validate
+  handling remain as dead code. Filed `finish-heredoc-removal`.
+
+
 ### Session 2026-06-21 (cont.) — DD decision review
 
 Walked every candidate DD with DG; **all now resolved** (DD#57 implemented;
