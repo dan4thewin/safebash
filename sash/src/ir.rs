@@ -112,6 +112,51 @@ impl Statement {
         }
     }
 
+    /// Mutable mirror of [`Self::child_bodies`]: the child statement bodies
+    /// of this statement, for passes that rewrite nested statements in place.
+    pub fn child_bodies_mut(&mut self) -> Vec<&mut [Statement]> {
+        match &mut self.kind {
+            StmtKind::If(i) => Self::if_child_bodies_mut(i),
+            StmtKind::While(w) => vec![&mut w.condition, &mut w.body],
+            StmtKind::For(f) => vec![&mut f.body],
+            StmtKind::Case(c) => c
+                .items
+                .iter_mut()
+                .map(|item| item.body.as_mut_slice())
+                .collect(),
+            StmtKind::Function(f) => vec![&mut f.body],
+            StmtKind::Pipeline(p) => vec![&mut p.commands],
+            StmtKind::Redirected(r) => vec![std::slice::from_mut(r.body.as_mut())],
+            StmtKind::List(l) => vec![
+                std::slice::from_mut(l.left.as_mut()),
+                std::slice::from_mut(l.right.as_mut()),
+            ],
+            StmtKind::Group(g) => vec![&mut g.body],
+            StmtKind::Subshell(s) => vec![&mut s.body],
+            StmtKind::Suppressed(inner) => vec![std::slice::from_mut(inner.as_mut())],
+            StmtKind::Assignment(_)
+            | StmtKind::Declaration(_)
+            | StmtKind::Command(_)
+            | StmtKind::Comment(_)
+            | StmtKind::ArithTest(_) => vec![],
+        }
+    }
+
+    /// The child statement bodies of an `if` (condition, then, each elif's
+    /// condition + body, and else), mutable. Factored out of
+    /// [`Self::child_bodies_mut`] to keep that dispatcher simple.
+    fn if_child_bodies_mut(i: &mut If) -> Vec<&mut [Statement]> {
+        let mut bodies: Vec<&mut [Statement]> = vec![&mut i.condition, &mut i.then_body];
+        for elif in &mut i.elif_clauses {
+            bodies.push(&mut elif.condition);
+            bodies.push(&mut elif.body);
+        }
+        if let Some(ref mut eb) = i.else_body {
+            bodies.push(eb);
+        }
+        bodies
+    }
+
     /// Visit all expressions directly owned by this statement (non-recursive).
     ///
     /// Does NOT descend into child statements — use `child_bodies()` for that.

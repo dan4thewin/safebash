@@ -10,6 +10,7 @@ pub mod codegen;
 pub(crate) mod diagnostic;
 pub(crate) mod emit_source;
 pub(crate) mod regex_validate;
+pub(crate) mod resolve;
 pub(crate) mod ssa;
 pub(crate) mod ssa_taint;
 pub(crate) mod transform;
@@ -92,10 +93,26 @@ pub fn cli_main(args: Vec<String>) {
             std::process::exit(1);
         }
     };
+    let mut program = program;
 
     print_diags(input, &parse_diags);
 
-    run_front_end_checks(input, &program);
+    // Structural validation (heredoc/export/declare/… rejections) runs
+    // FIRST, before resolution: an unsupported construct must surface its
+    // own diagnostic, not a spurious SB4032 on the tokens it leaves behind
+    // (e.g. a rejected heredoc leaks its body lines as bare commands).
+    run_structural_checks(input, &program);
+
+    // DD#23: resolve external command heads to absolute paths BEFORE the
+    // taint/type checks, so they see the real exec form (`/usr/bin/cat`,
+    // not bare `cat`). An unresolved external is fatal here, not at runtime.
+    let resolve_diags = resolve::resolve_commands(&mut program);
+    if !resolve_diags.is_empty() {
+        print_diags(input, &resolve_diags);
+        std::process::exit(1);
+    }
+
+    run_semantic_checks(input, &program);
 
     if maybe_emit_alt_output(&parsed.flags, &program) {
         return;
@@ -133,12 +150,24 @@ fn apply_and_check_flags(flags: &[&str]) {
 /// Run the front-end diagnostic gates that apply to every backend:
 /// structural validation, taint analysis, and type checking (incl. the
 /// DD#61 bless-form rules). Exits the process on the first failing gate.
-fn run_front_end_checks(input: &str, program: &crate::ir::Program) {
+/// Structural validation rules (DD-level rejections of unsupported bash
+/// constructs: heredocs, export/declare, flat map literals, …). Runs
+/// before command resolution so a rejected construct surfaces its own
+/// diagnostic rather than a spurious SB4032 on the tokens it leaves behind.
+fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     let vdiags = validate::validate(program);
+    if !vdiags.is_empty() {
+        print_diags(input, &vdiags);
+        std::process::exit(1);
+    }
+}
+
+/// Taint, positional, argv-splat, and type checks. Run after resolution so
+/// the taint pass classifies on the resolved exec form.
+fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
     let mut tdiags = validate::check_taint(program);
     tdiags.extend(validate::check_positionals(program));
     tdiags.extend(validate::check_argv_splat(program));
-    tdiags.extend(vdiags);
     if !tdiags.is_empty() {
         print_diags(input, &tdiags);
         std::process::exit(1);

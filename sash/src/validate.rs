@@ -1195,14 +1195,10 @@ fn resolve_on_path(name: &str) -> bool {
     if name.contains('/') || name.contains('$') {
         return false;
     }
-    let path = std::env::var("PATH").unwrap_or_default();
-    for dir in path.split(':') {
-        let full = format!("{}/{}", dir, name);
-        if std::path::Path::new(&full).exists() {
-            return true;
-        }
-    }
-    false
+    // Shared, sysroot-aware resolution (DD#23): honors --sysroot=<dir> and
+    // --sysroot=<image.squashfs> so a cross-compile target's commands aren't
+    // rejected just because they're absent from the build host's PATH.
+    crate::resolve::resolve_command_path(name).is_some()
 }
 
 // ── Taint tracking (SB5020) ───────────────────────────────────────

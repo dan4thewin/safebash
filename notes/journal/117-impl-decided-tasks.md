@@ -82,3 +82,59 @@ existing spec regressed; native baseline held at 2 (cf.c7/cf.c8).
 Keep/drop table keep-items (name(), backticks, single-bracket literal)
 are all DONE. Remaining for the dd67 task: the **sash-convert
 canonicalize switch** (task §3) — rewrite all sugar → native-only form.
+
+## advance-dd23-resolution — DONE
+
+Hoisted command resolution ahead of the front-end so the taint pass
+classifies on the real exec form (gate 1 — the core fix: the CST taint
+pass keys on `name.starts_with('/')`, so a bare `cat` was under-tainted;
+`/usr/bin/cat` is correctly tainted).
+
+New `sash/src/resolve.rs` (`resolve_commands(&mut Program)`): a mutating
+front-end pass that walks every command head (statements, pipelines,
+control-flow bodies, redirect targets, AND command-substitution heads via
+the Expr walk) and rewrites each true-external literal head to its resolved
+absolute path. Skip-set = path-heads, `BuiltinCmd::from_name != Other`,
+the intrinsic list (getenv/argv/arg/argc/status/len/keys/join/epochseconds/
+random/getpid/getppid/getcpid/getcwd/signum/dtoi/itod, kept in sync with
+`ssa_taint::cmd_subst_taint`), user functions, and the `var =~ s/…/…/`
+regex-mutation shape (mirrors `validate::is_regex_mutation`).
+
+Wired into `cli_main` (lib.rs) between parse and the checks. Discovered the
+front-end already had two relevant pieces, so this *consolidated* rather
+than duplicated:
+- **`validate::check_commands` (SB5011)** already rejected unresolved
+  *statement* commands (but not cmdsub heads, and not sysroot-aware). Kept
+  it; reused **SB5011** (not a new code) for the resolve pass's unresolved
+  case, which additionally covers cmdsub heads.
+- **`resolve_command_path`** (was `pub(super)` in transform) moved to
+  `resolve.rs` (`pub(crate)`); `transform::resolve_pipeline_command` and
+  `validate::resolve_on_path` now both call it — one sysroot-aware
+  implementation. `validate::resolve_on_path` was NOT sysroot-aware before;
+  now is.
+- **squashfs** (gate 3) was already implemented: `lib.rs::sysroot_file_exists`
+  reads `unsquashfs -l`. `--sysroot=<dir>` and `--sysroot=<image.squashfs>`
+  both work; verified a command present only in a `--sysroot` dir resolves.
+
+**Ordering fix (regression caught + fixed).** Initially resolution ran
+before *all* front-end checks and fataled on the body lines a rejected
+heredoc leaks as bare commands (`cat <<EOF\nhello…\nEOF` → `__HEREDOC__`
+sentinel + leaked `hello`/`EOF` commands), pre-empting the heredoc
+rejection (SB5002) with a spurious command-not-found. Split
+`run_front_end_checks` into **`run_structural_checks`** (validate's
+DD-level rejections: heredoc SB5002, export/declare SB5001, …) which now
+runs BEFORE resolution, and **`run_semantic_checks`** (taint + positionals
++ argv-splat + type) AFTER. So an unsupported construct surfaces its own
+diagnostic, and gate 1 (resolution before taint) still holds. Fixed
+`neg_heredoc_cmdsub` + `brush_rejected_heredoc_cmdsub`.
+
+Gates: (1) taint sees abs paths ✓ (2) unresolved = fatal compile error
+SB5011, now incl. cmdsub heads ✓ (3) `--sysroot` dir + squashfs ✓ (4) the
+runtime "bare command passed to sash_exec" is unreachable for resolved
+paths ✓. Native spec baseline held at 2 (cf.c7/cf.c8); c/janet now also get
+resolved abs paths (more DD#23-correct).
+
+NB: per DG, the Rust suites (sash/tests/) have significant bit-rot and are
+no longer a gate — spec.db is the source of truth. Filed
+`audit-rust-test-suites`. The codegen tests call `compile_to_object`
+in-process and bypass this pass entirely.
