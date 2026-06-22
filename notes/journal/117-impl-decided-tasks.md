@@ -55,3 +55,30 @@ New `Tok::Backtick(content)`: `scan_backtick` produces it for flat
 allowed — use $(...)"). Split into scan_backtick/scan_backtick_body/
 is_escaped_backtick for the complexity gate. Specs commands 67.4 (flat),
 67.5 (nested rejected).
+
+### §3 single-bracket `[` literal — VERIFIED (no code change)
+
+Ratified keep/drop item B: single-bracket `[` is an ordinary literal
+character (like backslash under DD#64), no longer a test construct;
+`[[ … ]]` is the only test form and `arr[i]` subscript is unaffected.
+
+The hand-parser already implements this — the tree-sitter-era single-
+bracket test parsing did not survive the parser migration. Verified:
+`echo [` → `[`, `x=[; echo $x` → `[`, `[[ a = a ]]` still tests,
+`arr[i]` subscript still works. `[ a = a ]` compiles as the external
+command `[`, resolved to `/usr/bin/[` (DD#23); no validator rejection.
+
+Detour: `[ a = b ]` (exit 1) aborts the program before a following
+statement. Confirmed this is **correct by DD#55** (status: implemented):
+no runtime `set -e`, but the compiler inserts an implicit exit check on
+every fail-able op — bare `cmd` aborts on nonzero; `- cmd` / `cmd ||` /
+`if cmd` handle it. Not a bug. (Bare `false`/`true`/`:` run inline as
+builtins and likewise abort on nonzero.)
+
+Codified with specs commands 67.6a (`echo [ ]` → `[ ]`) and 67.6b
+(`[ a = a ]; echo ok` → `ok`), both green in native + c + janet. No
+existing spec regressed; native baseline held at 2 (cf.c7/cf.c8).
+
+Keep/drop table keep-items (name(), backticks, single-bracket literal)
+are all DONE. Remaining for the dd67 task: the **sash-convert
+canonicalize switch** (task §3) — rewrite all sugar → native-only form.

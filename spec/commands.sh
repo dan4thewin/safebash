@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=19
+plan=21
 echo "1..$plan" >&3
 
 set +e
@@ -34,6 +34,18 @@ run_sash 'x=`echo hi`; echo $x'
 # 67.5 nested backticks (\`-escaping) are rejected — use $()
 run_sash 'x=`echo \`date\``; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 67.5
+
+# 67.6 single-bracket `[` is an ordinary literal (DD#67), no longer a
+#      test construct. `[[ … ]]` is the only test form; `arr[i]` subscript
+#      is unaffected. 67.6a: `[`/`]` are plain words in argument position.
+run_sash 'echo [ ]'
+[[ $rc = 0 && $out = "[ ]" && -z $err ]]; chk 67.6a
+
+# 67.6b `[ … ]` resolves and runs as the external `[` command (exit 0
+#       here, so the DD#55 implicit check passes and execution continues).
+run_sash '[ a = a ]
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 67.6b
 
 # 14.3 background command
 run_sash 'echo bg &
