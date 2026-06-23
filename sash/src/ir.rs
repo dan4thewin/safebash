@@ -266,7 +266,6 @@ fn walk_test_exprs(t: &TestExpr, f: &mut impl FnMut(&Expr)) {
             walk_test_exprs(l, f);
             walk_test_exprs(r, f);
         }
-        TestExpr::Paren(inner) => walk_test_exprs(inner, f),
     }
 }
 
@@ -618,8 +617,6 @@ pub enum TestExpr {
     And(Box<TestExpr>, Box<TestExpr>),
     /// expr || expr
     Or(Box<TestExpr>, Box<TestExpr>),
-    /// ( expr ) — grouping
-    Paren(Box<TestExpr>),
 }
 
 // ── Arithmetic expressions ─────────────────────────────────────────────

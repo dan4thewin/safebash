@@ -832,7 +832,7 @@ pub(super) fn scan_test_for_vars(test: &SsaTest, refs: &mut std::collections::Ha
         SsaTest::Unary { operand, .. } => {
             scan_value_for_vars(operand, refs);
         }
-        SsaTest::Not(inner) | SsaTest::Paren(inner) => {
+        SsaTest::Not(inner) => {
             scan_test_for_vars(inner, refs);
         }
         SsaTest::And(a, b) | SsaTest::Or(a, b) => {

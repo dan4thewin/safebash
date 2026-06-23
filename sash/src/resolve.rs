@@ -245,7 +245,7 @@ fn resolve_test_expr(t: &mut TestExpr, funcs: &HashSet<String>, diags: &mut Vec<
             resolve_expr(left, funcs, diags);
             resolve_expr(right, funcs, diags);
         }
-        TestExpr::Not(inner) | TestExpr::Paren(inner) => resolve_test_expr(inner, funcs, diags),
+        TestExpr::Not(inner) => resolve_test_expr(inner, funcs, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             resolve_test_expr(l, funcs, diags);
             resolve_test_expr(r, funcs, diags);

@@ -159,6 +159,5 @@ pub(super) fn scan_test_positionals(test: &TestExpr, max: &mut usize) {
             scan_test_positionals(a, max);
             scan_test_positionals(b, max);
         }
-        TestExpr::Paren(inner) => scan_test_positionals(inner, max),
     }
 }

@@ -531,7 +531,6 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             test_references_var(l, var) || test_references_var(r, var)
         }
-        TestExpr::Paren(inner) => test_references_var(inner, var),
     }
 }
 
@@ -584,7 +583,6 @@ fn check_unsupported_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
             check_unsupported_test_ops(l, diags);
             check_unsupported_test_ops(r, diags);
         }
-        TestExpr::Paren(inner) => check_unsupported_test_ops(inner, diags),
     }
 }
 
@@ -1376,7 +1374,7 @@ fn check_positionals_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
             check_positionals_expr(left, diags);
             check_positionals_expr(right, diags);
         }
-        TestExpr::Not(inner) | TestExpr::Paren(inner) => check_positionals_test(inner, diags),
+        TestExpr::Not(inner) => check_positionals_test(inner, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             check_positionals_test(l, diags);
             check_positionals_test(r, diags);
@@ -1559,7 +1557,7 @@ fn check_argv_splat_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
             check_argv_splat_expr(left, diags);
             check_argv_splat_expr(right, diags);
         }
-        TestExpr::Not(inner) | TestExpr::Paren(inner) => check_argv_splat_test(inner, diags),
+        TestExpr::Not(inner) => check_argv_splat_test(inner, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
             check_argv_splat_test(l, diags);
             check_argv_splat_test(r, diags);

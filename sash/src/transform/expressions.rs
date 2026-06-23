@@ -81,7 +81,6 @@ pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
             Box::new(test_to_ssa(a, state)),
             Box::new(test_to_ssa(b, state)),
         ),
-        TestExpr::Paren(inner) => SsaTest::Paren(Box::new(test_to_ssa(inner, state))),
     }
 }
 fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {

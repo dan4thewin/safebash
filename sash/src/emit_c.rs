@@ -1111,7 +1111,6 @@ fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
             let vb = lower_test_expr(e, b, types);
             format!("(({}) | ({}))", va, vb)
         }
-        SsaTest::Paren(inner) => lower_test_expr(e, inner, types),
     }
 }
 

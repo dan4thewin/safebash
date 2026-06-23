@@ -565,7 +565,6 @@ pub enum SsaTest {
     Not(Box<SsaTest>),
     And(Box<SsaTest>, Box<SsaTest>),
     Or(Box<SsaTest>, Box<SsaTest>),
-    Paren(Box<SsaTest>),
 }
 
 /// The right operand of a `[[ ]]` binary test: a value (`==`/`!=`/`<`/`>`)

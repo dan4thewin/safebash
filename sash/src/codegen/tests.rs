@@ -191,16 +191,6 @@ pub(super) fn lower_test_expr(
             );
             builder.ins().bor(va, vb)
         }
-        SsaTest::Paren(inner) => lower_test_expr(
-            inner,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        ),
     }
 }
 

@@ -917,7 +917,7 @@ impl<'a> Interner<'a> {
             SsaTest::Unary { operand, .. } => {
                 self.intern_value(operand);
             }
-            SsaTest::Not(inner) | SsaTest::Paren(inner) => {
+            SsaTest::Not(inner) => {
                 self.intern_test_expr(inner);
             }
             SsaTest::And(a, b) | SsaTest::Or(a, b) => {

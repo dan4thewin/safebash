@@ -124,7 +124,7 @@ fn _test_uses_args(test: &TestExpr) -> bool {
     match test {
         TestExpr::Binary { left, right, .. } => _expr_uses_args(left) || _expr_uses_args(right),
         TestExpr::Unary { operand, .. } => _expr_uses_args(operand),
-        TestExpr::Not(inner) | TestExpr::Paren(inner) => _test_uses_args(inner),
+        TestExpr::Not(inner) => _test_uses_args(inner),
         TestExpr::And(a, b) | TestExpr::Or(a, b) => _test_uses_args(a) || _test_uses_args(b),
     }
 }
@@ -1091,7 +1091,6 @@ fn emit_test_expr(expr: &Expr, ctx: &EmitCtx) -> String {
             emit_inner_test(l, expr.span, ctx),
             emit_inner_test(r, expr.span, ctx)
         ),
-        TestExpr::Paren(inner) => emit_inner_test(inner, expr.span, ctx),
     }
 }
 
