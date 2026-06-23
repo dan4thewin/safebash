@@ -174,9 +174,9 @@ fn classify_inst_def(
 /// Heredoc/herestring data is literal in the program source; clean-pipe
 /// is data flowing from another sash function. Anything else is tainted.
 fn read_line_taint(redirects: &[crate::ir::Redirect], clean_pipe: bool) -> Taint {
-    let from_literal = redirects.iter().any(|r| {
-        r.op == crate::ir::RedirectOp::HereString || r.op == crate::ir::RedirectOp::HereDoc
-    });
+    let from_literal = redirects
+        .iter()
+        .any(|r| r.op == crate::ir::RedirectOp::HereString);
     if from_literal || clean_pipe {
         Taint::Clean
     } else {

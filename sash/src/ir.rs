@@ -518,7 +518,6 @@ pub enum RedirectOp {
     DupOutput,  // >&
     DupInput,   // <&
     ReadWrite,  // <>
-    HereDoc,    // <<
     HereString, // <<<
 }
 

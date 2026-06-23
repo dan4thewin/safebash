@@ -1821,12 +1821,9 @@ fn taint_redirected(
     if let StmtKind::Command(c) = &r.body.kind {
         let name = expr_literal_str(&c.name);
         if (name == "read" || name == "mapfile")
-            && r.redirects.iter().any(|rd| {
-                matches!(
-                    rd.op,
-                    crate::ir::RedirectOp::HereString | crate::ir::RedirectOp::HereDoc
-                )
-            })
+            && r.redirects
+                .iter()
+                .any(|rd| matches!(rd.op, crate::ir::RedirectOp::HereString))
         {
             return;
         }

@@ -1,6 +1,6 @@
 ---
 title: "finish removing heredoc support — RedirectOp::HereDoc is dead code"
-status: ready
+status: done
 priority: P3
 kind: chore
 depends: []

@@ -1607,14 +1607,14 @@ fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereDoc | RedirectOp::HereString => 0,
+        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereString => 0,
         _ => 1,
     }
 }
 
 /// open(2) flags by RedirectOp. Mirrors open_flags_for_op
 /// (codegen/redirects.rs:114). Returns None for ops that don't
-/// follow the open-and-dup2 pattern (DupOutput, HereDoc, etc.).
+/// follow the open-and-dup2 pattern (DupOutput, etc.).
 fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
     use crate::ir::RedirectOp;
     match op {
@@ -1635,9 +1635,7 @@ fn emit_one_redirect(e: &mut Emit, r: &crate::ir::Redirect, fd: i64, types: &Var
     }
     match r.op {
         RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
-        RedirectOp::HereString | RedirectOp::HereDoc => {
-            emit_heredoc_redirect(e, fd, &r.target, types)
-        }
+        RedirectOp::HereString => emit_heredoc_redirect(e, fd, &r.target, types),
         _ => {
             writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
         }

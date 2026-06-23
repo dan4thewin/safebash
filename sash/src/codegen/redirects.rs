@@ -40,7 +40,7 @@ fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereDoc | RedirectOp::HereString => 0,
+        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereString => 0,
         _ => 1,
     }
 }
@@ -64,7 +64,7 @@ fn emit_save_fd(
 
 /// Dispatch on the RedirectOp shape. `Write`/`Append`/`Read` share the
 /// open-and-dup2 pattern (open_flags_for_op covers the three flag
-/// values); `DupOutput` and `HereDoc`/`HereString` get their own
+/// values); `DupOutput` and `HereString` get their own
 /// emitters. Unknown ops are no-ops (the save still happened).
 fn emit_one_redirect(
     redir: &crate::ir::Redirect,
@@ -93,7 +93,7 @@ fn emit_one_redirect(
         RedirectOp::DupOutput => {
             emit_dup_output(fd_val, &redir.target, builder, module, externs);
         }
-        RedirectOp::HereDoc | RedirectOp::HereString => {
+        RedirectOp::HereString => {
             emit_heredoc_redirect(
                 fd_val,
                 &redir.target,

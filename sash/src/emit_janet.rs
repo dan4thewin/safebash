@@ -867,13 +867,13 @@ fn emit_redirected(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: u
 fn has_heredoc_redirect(redirects: &[Redirect]) -> bool {
     redirects
         .iter()
-        .any(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
+        .any(|rd| matches!(rd.op, RedirectOp::HereString))
 }
 
 fn collect_heredoc_body_text(redirects: &[Redirect]) -> String {
     redirects
         .iter()
-        .filter(|rd| matches!(rd.op, RedirectOp::HereDoc | RedirectOp::HereString))
+        .filter(|rd| matches!(rd.op, RedirectOp::HereString))
         .map(|rd| expr_to_literal(&rd.target))
         .collect::<Vec<_>>()
         .join("")
