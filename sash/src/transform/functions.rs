@@ -198,9 +198,6 @@ fn collect_returns_inner(stmts: &[Statement], returns: &mut Vec<Option<String>>)
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Command(c) => maybe_collect_return(c, returns),
-            // `return` inside a subshell only exits the subshell, not
-            // the enclosing function.
-            StmtKind::Subshell(_) => {}
             // Nested function definitions have their own returns.
             StmtKind::Function(_) => {}
             // Default: descend into every nested statement body via

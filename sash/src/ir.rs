@@ -102,7 +102,6 @@ impl Statement {
                 std::slice::from_ref(l.right.as_ref()),
             ],
             StmtKind::Group(g) => vec![&g.body],
-            StmtKind::Subshell(s) => vec![&s.body],
             StmtKind::Suppressed(inner) => vec![std::slice::from_ref(inner.as_ref())],
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
@@ -132,7 +131,6 @@ impl Statement {
                 std::slice::from_mut(l.right.as_mut()),
             ],
             StmtKind::Group(g) => vec![&mut g.body],
-            StmtKind::Subshell(s) => vec![&mut s.body],
             StmtKind::Suppressed(inner) => vec![std::slice::from_mut(inner.as_mut())],
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
@@ -318,9 +316,6 @@ pub enum StmtKind {
 
     /// cmd1 && cmd2, cmd1 || cmd2
     List(List),
-
-    /// ( statements )
-    Subshell(Subshell),
 
     /// { statements; }
     Group(Group),
@@ -533,11 +528,6 @@ pub enum ListOp {
     And,        // &&
     Or,         // ||
     Background, // &
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct Subshell {
-    pub body: Vec<Statement>,
 }
 
 #[derive(Debug, Clone, PartialEq)]

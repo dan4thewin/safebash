@@ -412,7 +412,6 @@ fn expand_dollar_at_in_stmt(stmt: &mut Statement, argc: usize) {
             expand_dollar_at_in_stmt(&mut l.right, argc);
         }
         StmtKind::Group(g) => expand_dollar_at_in_body(&mut g.body, argc),
-        StmtKind::Subshell(s) => expand_dollar_at_in_body(&mut s.body, argc),
         StmtKind::Suppressed(inner) => expand_dollar_at_in_stmt(inner, argc),
         // Nested function definitions keep their own $@; everything else
         // has no $@-splat position.

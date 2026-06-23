@@ -196,7 +196,6 @@ impl SsaInst {
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
             BuiltinCmd::SubshellStart => self.emit_subshell_start(builder, module, ctx),
-            BuiltinCmd::SubshellWait => self.emit_subshell_wait(builder, module, ctx),
             BuiltinCmd::RedirectPush => self.emit_redirect_push(redirects, builder, module, ctx),
             BuiltinCmd::RedirectPop => self.emit_redirect_pop(builder, module, ctx),
             BuiltinCmd::StoreBgPid => return self.emit_store_bg_pid(args, builder, module, ctx),
@@ -257,20 +256,6 @@ impl SsaInst {
         let call = builder.ins().call(fork_ref, &[]);
         let pid = builder.inst_results(call)[0];
         builder.def_var(ctx.test_result_var, pid);
-    }
-
-    fn emit_subshell_wait(
-        &self,
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) {
-        // Parent: wait for the child whose pid is in test_result_var
-        let pid = builder.use_var(ctx.test_result_var);
-        let wait_ref = module.declare_func_in_func(ctx.externs.wait, builder.func);
-        let call = builder.ins().call(wait_ref, &[pid]);
-        let status = builder.inst_results(call)[0];
-        builder.def_var(ctx.exit_status_var, status);
     }
 
     fn emit_redirect_push(

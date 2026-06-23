@@ -110,7 +110,6 @@ fn forwards_condition(stmt: &Statement) -> bool {
     matches!(
         &stmt.kind,
         StmtKind::Pipeline(_)
-            | StmtKind::Subshell(_)
             | StmtKind::Suppressed(_)
             | StmtKind::Redirected(_)
             | StmtKind::List(_)

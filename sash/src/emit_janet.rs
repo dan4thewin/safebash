@@ -214,7 +214,6 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         StmtKind::Function(f) => emit_function_def(out, ctx, f, depth),
         StmtKind::Redirected(r) => emit_redirected(out, ctx, r, depth),
         StmtKind::List(l) => emit_list(out, ctx, l, depth),
-        StmtKind::Subshell(s) => emit_subshell(out, ctx, s, depth),
         StmtKind::Group(g) => emit_group(out, ctx, g, depth),
         StmtKind::Comment(text) => emit_comment(out, text, depth),
         StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
@@ -410,16 +409,6 @@ fn emit_list_background(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: us
     emit_stmt(out, ctx, &l.left, depth + 1);
     indent(out, depth);
     writeln!(out, "))").unwrap();
-}
-
-fn emit_subshell(out: &mut String, ctx: &mut EmitCtx, s: &Subshell, depth: usize) {
-    indent(out, depth);
-    writeln!(out, "(do").unwrap();
-    for st in &s.body {
-        emit_stmt(out, ctx, st, depth + 1);
-    }
-    indent(out, depth);
-    writeln!(out, ")").unwrap();
 }
 
 fn emit_group(out: &mut String, ctx: &mut EmitCtx, g: &Group, depth: usize) {

@@ -349,7 +349,6 @@ fn builtin_command_set() -> std::collections::HashSet<&'static str> {
         "__redirect_push",
         "__redirect_pop",
         "__store_bg_pid",
-        "__subshell_wait",
         "__table_delete",
         "printf",
         "signal",

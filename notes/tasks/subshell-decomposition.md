@@ -1,8 +1,17 @@
 title: Subshell decomposition — lowerer should coerce to sash primitives
-status: done
+status: obsolete
 depends: dd38-subshell-coercion-docs
 severity: correctness
 gates: [38.4, 38.5]
+
+> **OBSOLETE (2026-06-22).** This describes the pre-DD#38 design where the
+> compiler lowered `StmtKind::Subshell` via fork/wait. DD#38 (implemented)
+> makes sash-native `( … )` a **compile error** (SB4014) and moves bash
+> subshell coercion to **sash-convert**, not the lowerer. The compiler no
+> longer constructs a subshell: `StmtKind::Subshell`, the `Subshell` struct,
+> `lower_subshell_stmt`, and `BuiltinCmd::SubshellWait` were removed as dead
+> code (dead-enum-variants sweep). The remaining coercion work, if any,
+> belongs to sash-convert. Kept for history.
 
 Currently the lowerer emits `StmtKind::Subshell` and transform/codegen
 implement it as fork/wait. DD#38 says bash-mode subshells should be

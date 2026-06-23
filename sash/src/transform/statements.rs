@@ -46,7 +46,6 @@ pub(super) fn lower_one(
         StmtKind::List(l) => lower_list_stmt(l, stmt, ssa, state, block),
         StmtKind::Function(f) => lower_function_stmt(f, stmt, ssa, state, block),
         StmtKind::Redirected(r) => lower_redirected_stmt(r, ssa, state, block),
-        StmtKind::Subshell(s) => lower_subshell_stmt(s, ssa, state, block),
         StmtKind::Group(g) => lower_stmts(&g.body, ssa, state, block),
         StmtKind::Case(c) => lower_case(c, ssa, state, block),
         StmtKind::Comment(_) => block,
@@ -226,7 +225,6 @@ fn is_compound_stmt(kind: &StmtKind) -> bool {
             | StmtKind::For(_)
             | StmtKind::Case(_)
             | StmtKind::Group(_)
-            | StmtKind::Subshell(_)
             | StmtKind::Function { .. }
     )
 }
@@ -571,44 +569,4 @@ fn lower_list_stmt(
             parent_block
         }
     }
-}
-
-fn lower_subshell_stmt(
-    s: &Subshell,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    // Subshell: fork child, run body in child, wait in parent.
-    // Child gets its own memory space — modifications don't propagate.
-    let child_block = ssa.new_block("subshell");
-    let after_block = ssa.new_block("subshell_done");
-
-    // Emit fork — codegen stores pid in test_result_var
-    ssa.block_mut(block)
-        .insts
-        .push(SsaInst::sigil(BuiltinCmd::SubshellStart, vec![], true));
-    // Branch: parent (pid>0) → after, child (pid==0) → body
-    ssa.block_mut(block).terminator = Terminator::Branch {
-        condition: "__fork_pid".to_string(),
-        true_block: after_block,
-        false_block: child_block,
-    };
-
-    // Parent: wait for child at start of after_block
-    ssa.block_mut(after_block)
-        .insts
-        .push(SsaInst::sigil(BuiltinCmd::SubshellWait, vec![], true));
-
-    // Snapshot SSA state — child modifications don't affect parent
-    let snap = state.snapshot();
-
-    // Child: run body then _exit(0)
-    let body_exit = lower_stmts(&s.body, ssa, state, child_block);
-    ssa.block_mut(body_exit).terminator = Terminator::Return;
-
-    // Restore parent's SSA versions
-    state.restore(&snap);
-
-    after_block
 }

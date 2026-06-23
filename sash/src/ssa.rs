@@ -75,10 +75,9 @@ pub enum BuiltinCmd {
     /// Run a `let` expression for side-effects, propagate non-zero
     /// exit per DD#55.
     LetExit,
-    /// Fork point for `( ... )` subshell.
+    /// Fork point — used by background `cmd &` (DD#38: `&` is the fork
+    /// mechanism). (Subshells `( … )` are rejected; this is not subshell-only.)
     SubshellStart,
-    /// Reap the forked subshell child.
-    SubshellWait,
     /// Push current fd state before a redirect.
     RedirectPush,
     /// Pop fd state after the redirected scope.
@@ -146,7 +145,6 @@ impl BuiltinCmd {
             "__negate_test_result" => Self::NegateTestResult,
             "__let_exit" => Self::LetExit,
             "__subshell" => Self::SubshellStart,
-            "__subshell_wait" => Self::SubshellWait,
             "__redirect_push" => Self::RedirectPush,
             "__redirect_pop" => Self::RedirectPop,
             "__store_bg_pid" => Self::StoreBgPid,
@@ -190,7 +188,6 @@ impl BuiltinCmd {
             Self::NegateTestResult => "__negate_test_result",
             Self::LetExit => "__let_exit",
             Self::SubshellStart => "__subshell",
-            Self::SubshellWait => "__subshell_wait",
             Self::RedirectPush => "__redirect_push",
             Self::RedirectPop => "__redirect_pop",
             Self::StoreBgPid => "__store_bg_pid",
