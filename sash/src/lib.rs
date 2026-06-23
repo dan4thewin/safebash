@@ -8,7 +8,6 @@ pub mod parse;
 // Internal modules — not used outside the crate
 pub mod codegen;
 pub(crate) mod diagnostic;
-pub(crate) mod emit_source;
 pub(crate) mod regex_validate;
 pub(crate) mod resolve;
 pub(crate) mod ssa;

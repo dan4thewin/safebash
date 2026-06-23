@@ -483,17 +483,20 @@ fn emit_branch_outcome_trace(
     ctx.builder.seal_block(no_trace_block);
 }
 
-/// DD#45: embed sash-native source as a `.sash_source` ELF section.
+/// DD#45: embed the source as a `.sash_source` ELF section (retrievable via
+/// `--extract`). The source is embedded verbatim: the coercion/rewrite
+/// recorder lived in the old CST→IR lowerer and was removed with tree-sitter
+/// (commit 73caecf); structural bash→sash-native rewriting now lives in the
+/// separate `sash-convert` crate.
 fn embed_sash_source(product: &mut cranelift_object::ObjectProduct, bash_source: Option<&str>) {
     let Some(src) = bash_source else {
         return;
     };
-    let sash_source = crate::emit_source::emit_source(src.as_bytes(), false);
     let section_id =
         product
             .object
             .add_section(vec![], b".sash_source".to_vec(), object::SectionKind::Note);
     product
         .object
-        .append_section_data(section_id, sash_source.as_bytes(), 1);
+        .append_section_data(section_id, src.as_bytes(), 1);
 }
