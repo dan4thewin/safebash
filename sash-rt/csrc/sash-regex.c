@@ -9,8 +9,13 @@
  *
  * The replace loop mirrors sash-rt's `sash_regex_replace` exactly.
  *
- * Usage: sash-regex sub|gsub SUBJECT PATTERN REPLACEMENT
- *   Prints the result (no trailing newline) to stdout.
+ * Usage:
+ *   sash-regex sub|gsub SUBJECT PATTERN REPLACEMENT
+ *     Prints the replaced result (no trailing newline) to stdout.
+ *   sash-regex match SUBJECT PATTERN
+ *     Prints the whole match (resub[0]) to stdout; exit 0 if matched,
+ *     1 if not. Serves both `$(match S P)` (stdout) and the boolean
+ *     `match S P` command (exit status).
  *
  * Build: cc -o sash-regex sash-regex.c regcomp.c regexec.c regaux.c -I.
  */
@@ -27,7 +32,45 @@ void *sash_malloc(unsigned long n) { return malloc(n); }
 void *sash_realloc(void *p, unsigned long n) { return realloc(p, n); }
 void sash_free(void *p) { free(p); }
 
+/*
+ * `match SUBJECT PATTERN` — print the whole match (resub[0]) and return
+ * the boolean exit status. Mirrors sash-rt's `sash_regex_match_str`:
+ * invalid regex is exit 2, no match is exit 1 with no output.
+ */
+static int do_match(const char *subj, const char *pat) {
+    void *prog = regcomp9(pat);
+    if (!prog) {
+        return 2;
+    }
+    size_t subj_len = strlen(subj);
+    char *buf = malloc(subj_len + 1);
+    memcpy(buf, subj, subj_len);
+    buf[subj_len] = 0;
+
+    /* Resub: 10 entries x (sp, ep) = 16 bytes/entry on 64-bit. */
+    char resub[320];
+    memset(resub, 0, sizeof resub);
+    int matched = regexec9(prog, buf, resub, 10);
+    if (matched <= 0) {
+        free(buf);
+        return 1;
+    }
+    char **ptrs = (char **)resub; /* resub[0] = whole match (sp, ep) */
+    size_t ms_off = (size_t)(ptrs[0] - buf);
+    size_t me_off = (size_t)(ptrs[1] - buf);
+    fwrite(subj + ms_off, 1, me_off - ms_off, stdout);
+    free(buf);
+    return 0;
+}
+
 int main(int argc, char **argv) {
+    if (argc >= 2 && strcmp(argv[1], "match") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "usage: sash-regex match SUBJECT PATTERN\n");
+            return 2;
+        }
+        return do_match(argv[2], argv[3]);
+    }
     if (argc != 5) {
         fprintf(stderr, "usage: sash-regex sub|gsub SUBJECT PATTERN REPLACEMENT\n");
         return 2;

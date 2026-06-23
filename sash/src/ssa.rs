@@ -134,6 +134,9 @@ pub enum BuiltinCmd {
     Sub,
     /// `$(gsub SUBJECT PATTERN REPL)` — DD#63 regex replace, all matches.
     Gsub,
+    /// `match SUBJECT PATTERN` — DD#63 regex match. As a command: boolean
+    /// exit status. As `$(match …)`: prints the whole match (`resub[0]`).
+    Match,
 
     /// Anything else: external command, user function call, dynamic
     /// expansion. The raw name in `SsaInst::Command::name` is the
@@ -182,6 +185,7 @@ impl BuiltinCmd {
             "join" => Self::Join,
             "sub" => Self::Sub,
             "gsub" => Self::Gsub,
+            "match" => Self::Match,
             _ => Self::Other,
         }
     }
@@ -512,6 +516,13 @@ pub enum SsaValue {
         replacement: Box<SsaValue>,
         global: bool,
     },
+    /// DD#63: `$(match S P)` — whole-match (`resub[0]`) capture with
+    /// ordinary value operands. Value position only; the boolean
+    /// `match S P` command form is an `SsaInst::Command`.
+    RegexMatch {
+        subject: Box<SsaValue>,
+        pattern: Box<SsaValue>,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -576,6 +587,7 @@ impl SsaValue {
                 replacement,
                 ..
             } => vec![subject, pattern, replacement],
+            SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

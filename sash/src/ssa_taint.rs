@@ -334,6 +334,9 @@ fn value_is_tainted(
             taint,
             user_functions,
         ),
+        SsaValue::RegexMatch { subject, pattern } => {
+            any_tainted([subject.as_ref(), pattern.as_ref()], taint, user_functions)
+        }
         SsaValue::Ternary {
             cond,
             true_val,

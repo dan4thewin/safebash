@@ -321,6 +321,22 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_regex_match", Linkage::Import, &regex_match_sig)
         .expect("declare sash_regex_match");
 
+    // sash_regex_match_str(str_ptr, str_len, pat_ptr, pat_len) -> (ptr, len)
+    // DD#63: whole-match capture for `$(match S P)`.
+    let mut regex_match_str_sig = module.make_signature();
+    for _ in 0..4 {
+        regex_match_str_sig.params.push(AbiParam::new(I64));
+    }
+    regex_match_str_sig.returns.push(AbiParam::new(I64)); // ptr
+    regex_match_str_sig.returns.push(AbiParam::new(I64)); // len
+    let regex_match_str_func = module
+        .declare_function(
+            "sash_regex_match_str",
+            Linkage::Import,
+            &regex_match_str_sig,
+        )
+        .expect("declare sash_regex_match_str");
+
     // sash_fnmatch(pat_ptr, pat_len, str_ptr, str_len) -> i64
     let mut fnmatch_sig = module.make_signature();
     for _ in 0..4 {
@@ -689,6 +705,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         regex_match: regex_match_func,
         fnmatch: fnmatch_func,
         regex_replace: regex_replace_func,
+        regex_match_str: regex_match_str_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
         table_set: table_set_func,

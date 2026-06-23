@@ -1251,6 +1251,18 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
             rep = rep,
         );
     }
+    // `$(match S P)` → whole match (resub[0]) on stdout. Matching cases
+    // exit 0; the boolean `match S P` command form (exit status) is
+    // emitted separately as a statement.
+    if name == "match" && c.args.len() == 2 {
+        let subj = emit_expr_inline(&c.args[0], ctx);
+        let pat = emit_expr_inline(&c.args[1], ctx);
+        return format!(
+            "(string/trim (with [f (os/spawn [\"sash-regex\" \"match\" {subj} {pat}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))",
+            subj = subj,
+            pat = pat,
+        );
+    }
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
         parts.push(emit_expr_inline(arg, ctx));

@@ -1304,7 +1304,8 @@ pub unsafe extern "C" fn sash_regex_match(
         // Invalid regex is a runtime error — exit with failure
         sash_exit(2);
     }
-    // Resub is 4 pointers per entry, 10 entries = 320 bytes on 64-bit
+    // Resub is 2 pointers (sp, ep) per entry = 16 bytes; 10 entries = 160
+    // bytes. Over-allocated to 320 (matches sash_regex_replace).
     let mut resub = [0u8; 320];
     let result = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
     if result > 0 {
@@ -1312,6 +1313,46 @@ pub unsafe extern "C" fn sash_regex_match(
     } else {
         0
     }
+}
+
+/// DD#63: whole-match extraction for `$(match S P)`.
+/// Returns (ptr, len) of `resub[0]` (the whole match) as a slice of the
+/// original subject. No match → `(str_ptr, 0)` (empty string). Invalid
+/// regex is a runtime error (`sash_exit(2)`), mirroring `sash_regex_match`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_regex_match_str(
+    str_ptr: *const u8,
+    str_len: i64,
+    pat_ptr: *const u8,
+    pat_len: i64,
+) -> (*const u8, i64) {
+    // Need null-terminated copies for the Plan 9 regex API.
+    let pat_buf = sash_alloc((pat_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len as usize);
+    *pat_buf.add(pat_len as usize) = 0;
+
+    let str_buf = sash_alloc((str_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(str_ptr, str_buf, str_len as usize);
+    *str_buf.add(str_len as usize) = 0;
+
+    let prog = regcomp9(pat_buf);
+    if prog.is_null() {
+        sash_exit(2);
+    }
+    // Resub stride is 16 bytes (sp, ep); 10 entries, over-allocated to 320.
+    let mut resub = [0u8; 320];
+    let matched = regexec9(prog, str_buf, resub.as_mut_ptr(), 10);
+    if matched <= 0 {
+        return (str_ptr, 0);
+    }
+    // resub[0] = whole match. Offsets are relative to str_buf; return the
+    // matching slice of the caller's original subject.
+    let ptrs = resub.as_ptr() as *const *const u8;
+    let match_start = *ptrs; // sp
+    let match_end = *ptrs.add(1); // ep
+    let start_off = match_start as usize - str_buf as usize;
+    let end_off = match_end as usize - str_buf as usize;
+    (str_ptr.add(start_off), (end_off - start_off) as i64)
 }
 
 /// Regex substitution: s/pattern/replacement/flags

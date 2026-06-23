@@ -76,6 +76,7 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
         BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
         BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
+        BuiltinCmd::Match => regex_match_intrinsic(c, state),
         BuiltinCmd::Echo => Some(echo_concat(c, state)),
         _ => None,
     }
@@ -94,6 +95,19 @@ fn regex_replace_intrinsic(c: &Command, state: &VersionState, global: bool) -> O
         pattern: Box::new(expr_to_value(&c.args[1], state)),
         replacement: Box::new(expr_to_value(&c.args[2], state)),
         global,
+    })
+}
+
+/// DD#63: `$(match S P)` → `SsaValue::RegexMatch` (whole-match capture).
+/// The two operands are ordinary lowered values. Returns `None` (falls
+/// through to the generic cmdsub path) if the arity is wrong.
+fn regex_match_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+    if c.args.len() != 2 {
+        return None;
+    }
+    Some(SsaValue::RegexMatch {
+        subject: Box::new(expr_to_value(&c.args[0], state)),
+        pattern: Box::new(expr_to_value(&c.args[1], state)),
     })
 }
 

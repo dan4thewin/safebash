@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=4
+plan=8
 echo "1..$plan" >&3
 
 set +e
@@ -28,6 +28,27 @@ run_sash 'echo $(sub "a/b/c" "/" "_")'
 # 63.f1 empty replacement deletes the match
 run_sash 'echo $(sub abc "b" "")'
 [[ $rc = 0 && $out = "ac" && -z $err ]]; chk 63.f1
+
+# ── B. match — value form $(match S P) = whole match (resub[0]) ───────
+
+# 63.1a $(match S P) prints the whole match
+run_sash 'echo $(match "hello world" "world")'
+[[ $rc = 0 && $out = "world" && -z $err ]]; chk 63.1a
+
+# 63.1b a character class match returns exactly the matched span
+run_sash 'echo $(match "abc123def" "[0-9][0-9][0-9]")'
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk 63.1b
+
+# 63.b1 subject and pattern are ordinary args — interpolation is normal
+run_sash 's=hello
+p=ell
+echo $(match "$s" "$p")'
+[[ $rc = 0 && $out = "ell" && -z $err ]]; chk 63.b1
+
+# 63.f2 no match → empty whole match, no error (assignment doesn't abort)
+run_sash 'x=$(match abc z)
+echo "[$x]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 63.f2
 
 set -e
 tally

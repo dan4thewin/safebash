@@ -108,6 +108,17 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
+        SsaValue::RegexMatch { subject, pattern } => lower_regex_match_value(
+            subject,
+            pattern,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(
                 &SsaValue::Var(var.clone()),
@@ -317,6 +328,45 @@ fn lower_regex_replace_value(
         replace_ref,
         &[s_ptr, s_len, p_ptr, p_len, r_ptr, r_len, global_val],
     );
+    (builder.inst_results(call)[0], builder.inst_results(call)[1])
+}
+
+/// DD#63: lower `$(match S P)` (whole-match capture) to a call to
+/// `sash_regex_match_str(s, slen, p, plen) -> (ptr, len)`.
+#[allow(clippy::too_many_arguments)]
+fn lower_regex_match_value(
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (s_ptr, s_len) = lower_value(
+        subject,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let (p_ptr, p_len) = lower_value(
+        pattern,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let match_ref = module.declare_func_in_func(externs.regex_match_str, builder.func);
+    let call = builder.ins().call(match_ref, &[s_ptr, s_len, p_ptr, p_len]);
     (builder.inst_results(call)[0], builder.inst_results(call)[1])
 }
 
@@ -891,6 +941,10 @@ fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<
             scan_value_for_vars(subject, refs);
             scan_value_for_vars(pattern, refs);
             scan_value_for_vars(replacement, refs);
+        }
+        SsaValue::RegexMatch { subject, pattern } => {
+            scan_value_for_vars(subject, refs);
+            scan_value_for_vars(pattern, refs);
         }
         _ => {}
     }

@@ -143,6 +143,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern sash_pair sash_regex_match_str(const char* sp, i64 sl, const char* pp, i64 pl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern i64 sash_toupper_first(const char* sp, i64 sl, char* out);"
     )
     .unwrap();
@@ -613,6 +618,8 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             replacement,
             global,
         } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
+        // DD#63: $(match S P) → whole match via sash_regex_match_str.
+        SsaValue::RegexMatch { subject, pattern } => emit_regex_match_c(e, subject, pattern, types),
         // Phase 5 table/array/argv reads, plus the unhandled fallback.
         other => lower_value_as_str_aggregate(e, other, types),
     }
@@ -1468,6 +1475,30 @@ fn emit_regex_replace_c(
         rp = r_ptr,
         rl = r_len,
         g = global as i64,
+    )
+    .unwrap();
+    (format!("{}.ptr", t), format!("{}.len", t))
+}
+
+/// DD#63: `$(match S P)` in value position → `sash_regex_match_str`,
+/// returning the whole match (`resub[0]`) via the `sash_pair` ABI.
+fn emit_regex_match_c(
+    e: &mut Emit,
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    types: &VarTypes,
+) -> CStr {
+    let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+    let (p_ptr, p_len) = lower_value_as_str(e, pattern, types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    sash_pair {t} = sash_regex_match_str({sp}, {sl}, {pp}, {pl});",
+        t = t,
+        sp = s_ptr,
+        sl = s_len,
+        pp = p_ptr,
+        pl = p_len,
     )
     .unwrap();
     (format!("{}.ptr", t), format!("{}.len", t))

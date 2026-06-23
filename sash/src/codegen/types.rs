@@ -78,6 +78,7 @@ pub(super) struct ExternFuncs {
     pub(super) strcmp: cranelift_module::FuncId,
     pub(super) regex_match: cranelift_module::FuncId,
     pub(super) regex_replace: cranelift_module::FuncId,
+    pub(super) regex_match_str: cranelift_module::FuncId,
     pub(super) table_new: cranelift_module::FuncId,
     pub(super) table_set: cranelift_module::FuncId,
     pub(super) table_get: cranelift_module::FuncId,
