@@ -138,6 +138,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern sash_pair sash_regex_replace(const char* sp, i64 sl, const char* pp, i64 pl, const char* rp, i64 rl, i64 global);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern i64 sash_toupper_first(const char* sp, i64 sl, char* out);"
     )
     .unwrap();
@@ -595,16 +600,36 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // (codegen/value_handlers.rs:691). Tries native intrinsics
         // first; external exec is deferred to Phase 4.
         SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
+        // Concat in value position (assignment RHS, subscript-assign value):
+        // left-fold the parts through sash_concat, mirroring native
+        // lower_concat_value (codegen/values.rs:314).
+        SsaValue::Concat(parts) => emit_concat_value(e, parts, types),
+        // DD#63: $(sub/gsub S P R) → real Plan 9 engine via the sash
+        // runtime (the same sash_regex_replace native uses), called with
+        // the sash_pair ABI like sash_substring.
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            global,
+        } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
+        // Phase 5 table/array/argv reads, plus the unhandled fallback.
+        other => lower_value_as_str_aggregate(e, other, types),
+    }
+}
+
+/// Phase 5 aggregate/positional reads (array & map literals, subscript
+/// reads, table-iteration helpers, argv-slice reads) plus the
+/// not-yet-supported fallback. Split out of `lower_value_as_str` to keep
+/// that dispatcher under the complexity gate.
+fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr {
+    match value {
         // Phase 5: array / map literals → sash_table_new + per-elem set.
-        // The table pointer goes in the _ptr slot of the assigned var;
-        // _len is 0 (mirrors codegen's lower_indexed_array_value +
-        // lower_assoc_array_value).
         SsaValue::IndexedArray(elems) => emit_indexed_array(e, elems, types),
         SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
         SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => emit_c_argv_value(e, value),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
-        // Mirrors lower_subscript_value (codegen/values.rs:654).
         SsaValue::Subscript {
             array,
             index,
@@ -613,10 +638,6 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // Phase 5: table iteration helpers (for x in "${arr[@]}").
         SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
         SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
-        // Concat in value position (assignment RHS, subscript-assign value):
-        // left-fold the parts through sash_concat, mirroring native
-        // lower_concat_value (codegen/values.rs:314).
-        SsaValue::Concat(parts) => emit_concat_value(e, parts, types),
         _ => {
             writeln!(
                 e.out,
@@ -1419,6 +1440,37 @@ fn emit_alternate_value_c(e: &mut Emit, s_len: &str, alt: &str) -> CStr {
     )
     .unwrap();
     (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// DD#63: `$(sub S P R)` / `$(gsub S P R)` in the C backend. Recursively
+/// lowers the three value operands and calls the real `sash_regex_replace`
+/// (Plan 9 engine, the same one native uses) via the `sash_pair` ABI.
+fn emit_regex_replace_c(
+    e: &mut Emit,
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    replacement: &SsaValue,
+    global: bool,
+    types: &VarTypes,
+) -> CStr {
+    let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+    let (p_ptr, p_len) = lower_value_as_str(e, pattern, types);
+    let (r_ptr, r_len) = lower_value_as_str(e, replacement, types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    sash_pair {t} = sash_regex_replace({sp}, {sl}, {pp}, {pl}, {rp}, {rl}, {g});",
+        t = t,
+        sp = s_ptr,
+        sl = s_len,
+        pp = p_ptr,
+        pl = p_len,
+        rp = r_ptr,
+        rl = r_len,
+        g = global as i64,
+    )
+    .unwrap();
+    (format!("{}.ptr", t), format!("{}.len", t))
 }
 
 /// ${var:offset} / ${var:offset:length}. Mirrors emit_substring

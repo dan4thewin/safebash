@@ -3,9 +3,13 @@ SASH=sash
 CONVERT=sash-convert
 CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
-build:V: $RT/target/release/libsash_rt.a
+build:V: $RT/target/release/libsash_rt.a target/release/sash-regex
 	(cd $SASH && cargo build --release)
 	(cd $CONVERT && cargo build --release)
+
+target/release/sash-regex: sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c
+	mkdir -p target/release
+	cc -O2 -o target/release/sash-regex sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c -I sash-rt/csrc
 
 $RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)

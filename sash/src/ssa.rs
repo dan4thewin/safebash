@@ -130,6 +130,10 @@ pub enum BuiltinCmd {
     Keys,
     /// `$(join [sep] @arr)` — join elements.
     Join,
+    /// `$(sub SUBJECT PATTERN REPL)` — DD#63 regex replace, first match.
+    Sub,
+    /// `$(gsub SUBJECT PATTERN REPL)` — DD#63 regex replace, all matches.
+    Gsub,
 
     /// Anything else: external command, user function call, dynamic
     /// expansion. The raw name in `SsaInst::Command::name` is the
@@ -176,6 +180,8 @@ impl BuiltinCmd {
             "len" => Self::Len,
             "keys" => Self::Keys,
             "join" => Self::Join,
+            "sub" => Self::Sub,
+            "gsub" => Self::Gsub,
             _ => Self::Other,
         }
     }
@@ -495,6 +501,17 @@ pub enum SsaValue {
         operator: String,
         operand: String,
     },
+    /// DD#63: `$(sub S P R)` / `$(gsub S P R)` — regex replace with
+    /// ordinary value operands (interpolation is normal arg eval).
+    /// `global` selects gsub (all matches) over sub (first match).
+    /// Distinct from the literal-only `regex_replace` ParamExpansion
+    /// operator used by the `${var:s/…}` / `var =~ s/…` sugar today.
+    RegexReplace {
+        subject: Box<SsaValue>,
+        pattern: Box<SsaValue>,
+        replacement: Box<SsaValue>,
+        global: bool,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -541,8 +558,35 @@ pub enum SsaValue {
     },
 }
 
-/// A `[[ ]]` test with operands **pre-lowered to `SsaValue`** (DD#62).
-/// Value operands take the ordinary SSA value path at codegen
+impl SsaValue {
+    /// The nested `SsaValue` operands directly owned by this value, for
+    /// passes that recurse uniformly into sub-values (literal interning,
+    /// positional scanning). Leaf values (`Literal`, `Var`, …) and the
+    /// string-keyed parts of `AssocArray` are returned empty / handled by
+    /// the caller. Mirrors the `Statement::child_bodies` pattern.
+    pub(crate) fn child_values(&self) -> Vec<&SsaValue> {
+        match self {
+            SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => parts.iter().collect(),
+            SsaValue::CmdSubst { argv, .. } => argv.iter().collect(),
+            SsaValue::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
+            SsaValue::Subscript { index, .. } => vec![index],
+            SsaValue::RegexReplace {
+                subject,
+                pattern,
+                replacement,
+                ..
+            } => vec![subject, pattern, replacement],
+            SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
+            SsaValue::Ternary {
+                cond,
+                true_val,
+                false_val,
+            } => vec![cond, true_val, false_val],
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// (`lower_value`), so subscripts use `assoc_arrays` key-typing. Only
 /// `=~` / `=glob` keep a raw pattern string.
 #[derive(Debug, Clone, PartialEq)]

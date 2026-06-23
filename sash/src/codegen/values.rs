@@ -90,6 +90,24 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            global,
+        } => lower_regex_replace_value(
+            subject,
+            pattern,
+            replacement,
+            *global,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(
                 &SsaValue::Var(var.clone()),
@@ -243,6 +261,63 @@ pub(super) fn lower_literal_value(
     let ptr = builder.ins().global_value(I64, gv);
     let len = builder.ins().iconst(I64, s.len() as i64);
     (ptr, len)
+}
+
+/// DD#63: lower `$(sub S P R)` / `$(gsub S P R)`. Each operand is an
+/// ordinary value (recursively lowered to a (ptr,len) pair), so quoting
+/// and interpolation are normal argument evaluation. Calls
+/// `sash_regex_replace(s, slen, p, plen, r, rlen, global) -> (ptr,len)`.
+#[allow(clippy::too_many_arguments)]
+fn lower_regex_replace_value(
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    replacement: &SsaValue,
+    global: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (s_ptr, s_len) = lower_value(
+        subject,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let (p_ptr, p_len) = lower_value(
+        pattern,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let (r_ptr, r_len) = lower_value(
+        replacement,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let global_val = builder.ins().iconst(I64, global as i64);
+    let replace_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
+    let call = builder.ins().call(
+        replace_ref,
+        &[s_ptr, s_len, p_ptr, p_len, r_ptr, r_len, global_val],
+    );
+    (builder.inst_results(call)[0], builder.inst_results(call)[1])
 }
 
 fn lower_var_value(
@@ -773,21 +848,31 @@ fn maybe_insert_positional(name: &str, refs: &mut std::collections::HashSet<Stri
 pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
     match val {
         SsaValue::Var(vref) if vref.version == 0 => maybe_insert_positional(&vref.name, refs),
-        SsaValue::Concat(parts) => {
+        SsaValue::ParamExpansion { var, .. } if var.version == 0 => {
+            maybe_insert_positional(&var.name, refs)
+        }
+        SsaValue::ArithExpr { var, .. } if var.version == 0 => {
+            maybe_insert_positional(&var.name, refs)
+        }
+        other => scan_composite_children(other, refs),
+    }
+}
+
+/// Recurse into the child values of composite SsaValues. Split out of
+/// `scan_value_for_vars` to keep that dispatcher under the complexity gate;
+/// behavior is identical (ArithBinOp/Ternary intentionally not recursed, as
+/// before).
+fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
+    match val {
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
             for p in parts {
                 scan_value_for_vars(p, refs);
             }
-        }
-        SsaValue::ParamExpansion { var, .. } if var.version == 0 => {
-            maybe_insert_positional(&var.name, refs)
         }
         SsaValue::CmdSubst { argv, .. } => {
             for a in argv {
                 scan_value_for_vars(a, refs);
             }
-        }
-        SsaValue::ArithExpr { var, .. } if var.version == 0 => {
-            maybe_insert_positional(&var.name, refs)
         }
         SsaValue::AssocArray(pairs) => {
             for (_, v) in pairs {
@@ -797,14 +882,16 @@ pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::H
         SsaValue::Subscript { index, .. } => {
             scan_value_for_vars(index, refs);
         }
-        SsaValue::IndexedArray(elems) => {
-            for v in elems {
-                scan_value_for_vars(v, refs);
-            }
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            ..
+        } => {
+            scan_value_for_vars(subject, refs);
+            scan_value_for_vars(pattern, refs);
+            scan_value_for_vars(replacement, refs);
         }
-        SsaValue::ArgvIndex(_) => {}
-        SsaValue::TableValue { .. } => {}
-        SsaValue::TableKey { .. } => {}
         _ => {}
     }
 }

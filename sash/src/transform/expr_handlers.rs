@@ -74,9 +74,27 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         BuiltinCmd::Len => try_len_intrinsic(c, state),
         BuiltinCmd::Keys => try_keys_intrinsic(c, state),
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
+        BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
+        BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
         BuiltinCmd::Echo => Some(echo_concat(c, state)),
         _ => None,
     }
+}
+
+/// DD#63: `$(sub S P R)` / `$(gsub S P R)` → `SsaValue::RegexReplace`.
+/// The three operands are ordinary lowered values, so quoting and
+/// interpolation are just normal argument evaluation. Returns `None`
+/// (falls through to the generic cmdsub path) if the arity is wrong.
+fn regex_replace_intrinsic(c: &Command, state: &VersionState, global: bool) -> Option<SsaValue> {
+    if c.args.len() != 3 {
+        return None;
+    }
+    Some(SsaValue::RegexReplace {
+        subject: Box::new(expr_to_value(&c.args[0], state)),
+        pattern: Box::new(expr_to_value(&c.args[1], state)),
+        replacement: Box::new(expr_to_value(&c.args[2], state)),
+        global,
+    })
 }
 
 /// Build the runtime argv: head followed by every argument lowered

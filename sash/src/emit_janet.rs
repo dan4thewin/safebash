@@ -1235,6 +1235,22 @@ fn emit_expr_command_substitution(stmts: &[Statement], ctx: &EmitCtx) -> String 
 
 fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     let name = expr_to_literal(&c.name);
+    // DD#63: regex builtins shell out to the `sash-regex` helper, which
+    // uses the same vendored Plan 9 regexp9 engine as native/C — so the
+    // Janet oracle is byte-identical rather than faking regex with Janet's
+    // literal string/replace. `sub`/`gsub` take SUBJECT PATTERN REPLACEMENT.
+    if (name == "sub" || name == "gsub") && c.args.len() == 3 {
+        let subj = emit_expr_inline(&c.args[0], ctx);
+        let pat = emit_expr_inline(&c.args[1], ctx);
+        let rep = emit_expr_inline(&c.args[2], ctx);
+        return format!(
+            "(string/trim (with [f (os/spawn [\"sash-regex\" \"{op}\" {subj} {pat} {rep}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))",
+            op = name,
+            subj = subj,
+            pat = pat,
+            rep = rep,
+        );
+    }
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
         parts.push(emit_expr_inline(arg, ctx));

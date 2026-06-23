@@ -323,6 +323,17 @@ fn value_is_tainted(
         SsaValue::ArithBinOp { left, right, .. } => {
             any_tainted([left.as_ref(), right.as_ref()], taint, user_functions)
         }
+        // DD#63: a regex replace inherits the taint of its operands.
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            ..
+        } => any_tainted(
+            [subject.as_ref(), pattern.as_ref(), replacement.as_ref()],
+            taint,
+            user_functions,
+        ),
         SsaValue::Ternary {
             cond,
             true_val,

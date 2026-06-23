@@ -814,50 +814,25 @@ impl<'a> Interner<'a> {
     }
 
     fn intern_value(&mut self, v: &SsaValue) {
+        // Leaf interning: literal strings, the param-expansion operand, and
+        // associative-array keys are interned here; every nested SsaValue
+        // is recursed into uniformly via `child_values`.
         match v {
             SsaValue::Literal(s) | SsaValue::Expr(s) => {
                 self.intern(s);
             }
-            SsaValue::Concat(parts) => {
-                for p in parts {
-                    self.intern_value(p);
-                }
-            }
             SsaValue::ParamExpansion {
                 operator, operand, ..
-            } => {
-                self.intern_param_expansion(operator, operand);
-            }
-            SsaValue::CmdSubst { argv, .. } => {
-                for a in argv {
-                    self.intern_value(a);
-                }
-            }
+            } => self.intern_param_expansion(operator, operand),
             SsaValue::AssocArray(pairs) => {
-                for (k, v) in pairs {
+                for (k, _) in pairs {
                     self.intern(k);
-                    self.intern_value(v);
                 }
-            }
-            SsaValue::IndexedArray(elems) => {
-                for v in elems {
-                    self.intern_value(v);
-                }
-            }
-            SsaValue::Subscript { index, .. } => {
-                self.intern_value(index);
-            }
-            SsaValue::ArgvIndex(_) => {}
-            SsaValue::Ternary {
-                cond,
-                true_val,
-                false_val,
-            } => {
-                self.intern_value(cond);
-                self.intern_value(true_val);
-                self.intern_value(false_val);
             }
             _ => {}
+        }
+        for child in v.child_values() {
+            self.intern_value(child);
         }
     }
 
