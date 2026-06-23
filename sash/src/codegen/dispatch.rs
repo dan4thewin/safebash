@@ -50,7 +50,6 @@ impl SsaInst {
                 return self
                     .emit_command_kind(name, kind, args, redirects, checked, builder, module, ctx);
             }
-            SsaInst::Phi(_) => {}
             SsaInst::SubscriptAssign {
                 array,
                 index,

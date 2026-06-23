@@ -324,17 +324,6 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
                 }
             }
         }
-        SsaInst::Phi(node) => {
-            types.insert(
-                (node.target.name.clone(), node.target.version),
-                node.target.var_type,
-            );
-            for (_, src) in &node.sources {
-                types
-                    .entry((src.name.clone(), src.version))
-                    .or_insert(src.var_type);
-            }
-        }
         _ => {}
     }
 }

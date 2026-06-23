@@ -227,8 +227,6 @@ pub enum SsaInst {
     /// can emit inline comparisons instead of shelling out.
     Test(SsaTest),
 
-    /// phi node
-    Phi(PhiNode),
     /// read -r line: reads one line from fd, assigns to target, sets __read_eof
     ReadLine {
         target: VarRef,

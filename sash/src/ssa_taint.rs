@@ -161,7 +161,6 @@ fn classify_inst_def(
         // Instructions that don't define a VarRef
         SsaInst::Command { .. }
         | SsaInst::Test(_)
-        | SsaInst::Phi(_) // handled above
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
         | SsaInst::Mapfile { .. }
