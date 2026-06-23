@@ -768,7 +768,6 @@ fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
         Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
         And => format!("({} && {})", lhs, rhs),
         Or => format!("({} || {})", lhs, rhs),
-        Not => format!("(!{})", lhs), // unary; rhs ignored
         Shl => format!("({} << {})", lhs, rhs),
         Shr => format!("({} >> {})", lhs, rhs),
         BitAnd => format!("({} & {})", lhs, rhs),

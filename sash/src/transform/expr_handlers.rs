@@ -405,7 +405,6 @@ fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> i64 {
         ArithOp::Ge => (l >= r) as i64,
         ArithOp::And => ((l != 0) && (r != 0)) as i64,
         ArithOp::Or => ((l != 0) || (r != 0)) as i64,
-        ArithOp::Not => (l == 0) as i64,
         ArithOp::Shl => l << r,
         ArithOp::Shr => l >> r,
         ArithOp::BitAnd => l & r,

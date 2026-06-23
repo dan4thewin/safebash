@@ -31,7 +31,6 @@ pub(super) fn emit_arith_op(
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs, exit_status_var)
         }
         ArithOp::And | ArithOp::Or => emit_logical_and_or(op, lhs, rhs, builder),
-        ArithOp::Not => panic!("ICE: unary ! in binary arithmetic context"),
         ArithOp::Shl => builder.ins().ishl(lhs, rhs),
         ArithOp::Shr => builder.ins().sshr(lhs, rhs),
         ArithOp::BitAnd => builder.ins().band(lhs, rhs),
