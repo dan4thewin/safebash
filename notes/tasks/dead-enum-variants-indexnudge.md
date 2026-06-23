@@ -1,6 +1,6 @@
 ---
 title: "indexnudge enum_variant_refs shipped — dead-variant audit (HereDoc + 4 more)"
-status: ready
+status: done
 priority: P3
 kind: chore
 depends: []
@@ -112,3 +112,27 @@ one-shot.
 this repo's index — the feature was built to answer exactly the HereDoc
 question this repo raised, and surfaced four more dead variants in the
 process.
+
+## Completed (2026-06-22) — all 5 removed, one commit each, native spec green
+
+| variant | commit | scrutiny note |
+|---|---|---|
+| `SsaInst::Phi` | 3335996 | phis live in `block.phis`; inst-arm was a no-op |
+| `TestExpr::Paren` | 714b8e7 | parens flattened at parse; cascaded to dead `SsaTest::Paren` |
+| `ArithOp::Not` | 129298c | unary `!` uses `IrUnaryArithOp::Not`; removed the ICE panic arm |
+| `RedirectOp::HereDoc` | d4b576c | heredocs dropped (SB5002); closed finish-heredoc-removal |
+| `StmtKind::Subshell` | 44274b2 | DD#38 rejects subshells; cascaded to `Subshell` struct, `lower_subshell_stmt`, `BuiltinCmd::SubshellWait`, `emit_subshell*` |
+
+**Corrections to the original task's claims** (per DG's "scrutinize"):
+- It implied each was a tiny removal; **Paren and Subshell cascaded** to a
+  second dead variant each (`SsaTest::Paren`, `BuiltinCmd::SubshellWait`)
+  that the view didn't flag because of **transitive deadness** (their lone
+  construct site is fed only by the variant being removed).
+- `BuiltinCmd::SubshellStart` is **NOT dead** — it's the live fork primitive
+  for background `cmd &` (DD#38). Kept; doc-comment corrected.
+- The "dead vs deferred" question is resolved: all five are genuinely dead
+  (verified against DD#38, the `block.phis` mechanism, paren flattening,
+  and the `IrUnaryArithOp::Not` path), not deferred-feature scaffolding.
+
+`enum_variant_refs` now reports zero dead variants. It's a standing audit —
+re-run after IR changes.
