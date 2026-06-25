@@ -12,6 +12,26 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-25 (cont.) — DD#70 (A)/(B) write-up + match boolean
+
+- **DD#70 written** (`notes/decisions/DD70-error-taxonomy-A-B.md`):
+  (A) runtime abort-if-unchecked vs (B) compile-time must-consume,
+  refining DD#55. DG resolved: booleans must be consumed (compiler-
+  enforced); ignored-result codes adjacent (SB4018 discarded boolean,
+  SB4019 `-` on a (B) construct, next to SB4016/SB4017); verbatim argv[0].
+  Contract-spec task `dd70-error-model-contract-spec.md`.
+- **`match` boolean command (DD#63 1b-bool)** shipped on all three
+  backends (commit bbe5816): `match S P` → exit 0/1, sets the if/&&/||
+  boolean. native (sash_regex_match), C (sash_regex_match), janet
+  (sash-regex `matchq` — quiet, no stdout leak). Bare `match` → SB4018,
+  `- match` → SB4019 (native; via a `suppressed` counter +
+  check_match_must_consume mirroring SB4016). Fixed a janet `:` (Noop)
+  gap. regex.sh 63.1c-2f.
+- **Finding:** transform diagnostics (the whole SB40xx must-consume
+  family incl. the existing SB4016) are native-only — `--emit-c`/`--janet`
+  don't surface them. Must-consume compile-error specs are `in_modes
+  native` until that's fixed.
+
 ### Session 2026-06-25 — DD#55 W3: syscall aborts + stderr diagnostics
 
 - **cd / echo / redirect-open now participate in the DD#55 (A)-channel**

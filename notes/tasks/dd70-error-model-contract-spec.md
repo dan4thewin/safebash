@@ -48,14 +48,16 @@ Legend: [✓]=passing today  [~]=abort works, diagnostic pending  [ ]=new.
 
 ### (B) must-consume  (booleans must be consumed — compiler-enforced, DG)
 
-- [ ] B.match.bare `match abc abc` (bare statement)  → COMPILE error SB4018 (boolean discarded)
-- [ ] B.test.bare  `[[ a = a ]]` (bare statement)    → COMPILE error SB4018 (boolean discarded)
-- [ ] B.match.if   `if match abc abc; then y; else n`→ rc=0, out=y (consumed)
-- [ ] B.match.or   `match abc zzz || echo miss`      → rc=0, out=miss (consumed)
-- [ ] B.match.and  `match abc abc && echo hit`       → rc=0, out=hit (consumed)
-- [ ] B.match.disc `match abc abc || :`              → rc=0, no output (explicit discard)
-- [ ] B.test.disc  `[[ a = a ]] || :`                → rc=0, no output (explicit discard)
-- [ ] B.match.dash `- match abc abc`                 → COMPILE error SB4019 (`-` on a (B) construct)
+Legend below: [✓N]=native only (transform diagnostics not yet on c/janet).
+
+- [✓N] B.match.bare `match abc abc` (bare statement)  → SB4018 (regex.sh 63.2e)
+- [ ]  B.test.bare  `[[ a = a ]]` (bare statement)    → SB4018 (NOT YET — bare [[ ]])
+- [✓] B.match.if   `if match abc abc; then y; else n`→ rc=0, out=y (regex.sh 63.1c/1d)
+- [✓] B.match.or   `match abc zzz || echo miss`      → rc=0, out=miss (regex.sh 63.2b)
+- [✓] B.match.and  `match abc abc && echo hit`       → rc=0, out=hit (regex.sh 63.2a)
+- [✓] B.match.disc `match abc zzz || :`              → rc=0, no output (regex.sh 63.2d)
+- [ ]  B.test.disc  `[[ a = a ]] || :`                → rc=0, no output (with B.test.bare)
+- [✓N] B.match.dash `- match abc abc`                 → SB4019 (regex.sh 63.2f)
 - [✓] B.fn.bare    bare call of `-> int` fn          → SB4016 (55.13)
 - [✓] B.fn.zero    return-0-only `-> int` fn         → SB4017 (55.14)
 - [ ] B.fn.disc    `f || :` for `-> int f`           → rc=0 (explicit discard consumes the return)
@@ -75,6 +77,16 @@ Legend: [✓]=passing today  [~]=abort works, diagnostic pending  [ ]=new.
 
 ## Notes
 
+- **Finding (2026-06-25): transform diagnostics are native-only.** The
+  whole SB40xx must-consume family (the existing SB4016/SB4017 and the new
+  SB4018/SB4019) is surfaced only on the native path — `sash --emit-c` and
+  `sash --janet` exit 0 on a bare `match` / bare `-> int` call. So all
+  must-consume *compile-error* specs are `in_modes native` for now;
+  surfacing transform diagnostics on the C/janet CLIs is a precondition to
+  un-guarding them (relates to `c-janet-dd55-abort-channel`).
+- `match`'s boolean *behavior* (if/&&/||/`|| :`) IS implemented on all
+  three backends (commit bbe5816) — native (sash_regex_match), C
+  (sash_regex_match), janet (sash-regex `matchq`, exit-only/no stdout).
 - Spec harness already captures runtime stderr in `$rerr` (native) for the
   diagnostic assertions; `err` stays compile-only.
 - The (A) diagnostic message work is `abort-diagnostics-remaining`; the
