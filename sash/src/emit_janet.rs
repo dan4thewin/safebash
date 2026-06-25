@@ -639,11 +639,14 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
         BuiltinCmd::True => emit_janet_const_bool(out, true),
         BuiltinCmd::False => emit_janet_const_bool(out, false),
+        // `:` no-op — succeeds silently (the canonical `|| :` discard).
+        BuiltinCmd::Noop => emit_janet_const_bool(out, true),
         BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
         BuiltinCmd::Shift => {
             writeln!(out, "(set _args (array/slice _args 1))").unwrap();
         }
         BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
+        BuiltinCmd::Match => emit_janet_match(out, ctx, c),
         BuiltinCmd::Break | BuiltinCmd::Continue => {
             // Janet's (each) doesn't support continue; use (break) as approximation
             writeln!(out, "(break)").unwrap();
@@ -674,6 +677,25 @@ fn emit_janet_test_cmd(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
         write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
         writeln!(out).unwrap();
     }
+}
+
+/// DD#63: `match S P` boolean command (statement position — e.g. the LHS
+/// of `&&`/`||`). Shells out to the quiet `sash-regex matchq` (exit 0
+/// matched / 1 not, no stdout), sets `__last_exit`, and yields the
+/// boolean so `(when (do …))` consumes it.
+fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if c.args.len() != 2 {
+        writeln!(out, "false").unwrap();
+        return;
+    }
+    let s = emit_expr_inline(&c.args[0], ctx);
+    let p = emit_expr_inline(&c.args[1], ctx);
+    writeln!(
+        out,
+        "(let [_m (zero? (os/execute [\"sash-regex\" \"matchq\" {} {}] :p))] (set __last_exit (if _m 0 1)) _m)",
+        s, p
+    )
+    .unwrap();
 }
 
 /// `return [code]` — Janet's `(return …)` form. Omits the operand
@@ -1043,6 +1065,20 @@ fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
             Some(arg) => write!(out, "{}", emit_test_expr(arg, ctx)).unwrap(),
             None => write!(out, "true").unwrap(),
         }
+        return;
+    }
+    // DD#63: `match S P` boolean command → the `sash-regex` helper. Use
+    // the quiet `matchq` op (exit status only) so the matched text does
+    // NOT leak to stdout; `(zero? …)` is the condition truth.
+    if name == "match" && c.args.len() == 2 {
+        let s = emit_expr_inline(&c.args[0], ctx);
+        let p = emit_expr_inline(&c.args[1], ctx);
+        write!(
+            out,
+            "(zero? (os/execute [\"sash-regex\" \"matchq\" {} {}] :p))",
+            s, p
+        )
+        .unwrap();
         return;
     }
     let mut parts = vec![format!("\"{}\"", name)];

@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=8
+plan=16
 echo "1..$plan" >&3
 
 set +e
@@ -49,6 +49,53 @@ echo $(match "$s" "$p")'
 run_sash 'x=$(match abc z)
 echo "[$x]"'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk 63.f2
+
+# ── C. match — boolean command form (DD#63 primitive; DD#70 (B)) ──────
+# `match S P` is a boolean COMMAND: exit 0 if it matched, nonzero if not.
+# It is a (B) must-consume result (DD#70) — it MUST be consumed by a
+# condition (if/while/&&/||); a bare `match` or `- match` is a compile
+# error.
+
+# 63.1c match in an if-condition: matched → then branch
+run_sash 'if match "hello world" "world"; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 63.1c
+
+# 63.1d match in an if-condition: no match → else branch
+run_sash 'if match "hello" "zzz"; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 63.1d
+
+# 63.2a match && action — runs the action only on a match
+run_sash 'match "abc123" "[0-9]" && echo hit'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk 63.2a
+
+# 63.2b match || action — runs the action only on no match
+run_sash 'match "abc" "zzz" || echo miss'
+[[ $rc = 0 && $out = "miss" && -z $err ]]; chk 63.2b
+
+# 63.2c interpolated subject/pattern in a boolean match
+run_sash 's="user@host"
+if match "$s" "@"; then echo at; else echo none; fi'
+[[ $rc = 0 && $out = "at" && -z $err ]]; chk 63.2c
+
+# 63.2d `match S P || :` explicitly discards the boolean (no match here)
+run_sash 'match abc zzz || :
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 63.2d
+
+# 63.2e bare `match S P` is a must-consume compile error (DD#70 SB4018)
+# 63.2f `- match S P` — `-` on a (B) construct is a compile error (SB4019)
+# Native-only: transform diagnostics (the SB40xx must-consume family,
+# incl. the existing SB4016) are not yet surfaced on the --emit-c /
+# --janet paths. See c-janet-dd55-abort-channel / diagnostic parity.
+if in_modes native; then
+    run_sash 'match abc abc'
+    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
+
+    run_sash '- match abc abc'
+    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk 63.2f
+else
+    skip_chk 63.2e; skip_chk 63.2f
+fi
 
 set -e
 tally

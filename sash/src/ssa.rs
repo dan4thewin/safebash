@@ -811,6 +811,10 @@ pub struct VersionState {
     pub function_int_typed: std::collections::HashSet<String>,
     /// Depth counter for condition position (if/while condition, LHS of &&/||).
     pub in_condition: u32,
+    /// Depth counter for `-` suppression (DD#55). Set while lowering the
+    /// inner statement of `StmtKind::Suppressed`. Distinguishes a bare
+    /// must-consume violation (SB4018) from a `-`-suppressed one (SB4019).
+    pub suppressed: u32,
     /// EXIT trap body statements (if set via `trap 'body' EXIT`).
     pub exit_trap: Option<Vec<crate::ir::Statement>>,
     /// Signals registered with EXIT disposition (compiler inserts check points).
@@ -829,6 +833,7 @@ impl VersionState {
             function_non_void: std::collections::HashSet::new(),
             function_int_typed: std::collections::HashSet::new(),
             in_condition: 0,
+            suppressed: 0,
             function_redirects: HashMap::new(),
             type_map,
             assoc_arrays: std::collections::HashSet::new(),

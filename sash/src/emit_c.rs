@@ -148,6 +148,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern i64 sash_regex_match(const char* sp, i64 sl, const char* pp, i64 pl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern i64 sash_toupper_first(const char* sp, i64 sl, char* out);"
     )
     .unwrap();
@@ -891,6 +896,9 @@ fn emit_command(
         // first arg as int; if zero → status=1, test_result=0; else
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
+        // DD#63: `match S P` boolean command → sash_regex_match (1 matched
+        // / 0 not); set test_result + $? (matched ? 0 : 1).
+        BuiltinCmd::Match => emit_match_c(e, args, types),
         _ => {
             writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
         }
@@ -1502,6 +1510,32 @@ fn emit_regex_match_c(
     )
     .unwrap();
     (format!("{}.ptr", t), format!("{}.len", t))
+}
+
+/// DD#63: `match S P` boolean command (C backend). Calls the real
+/// `sash_regex_match` (1 matched / 0 not) and sets `__test_result` (the
+/// branch boolean) and `__exit_status` (matched ? 0 : 1).
+fn emit_match_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+    let empty = || ("\"\"".to_string(), "0".to_string());
+    let (s_ptr, s_len) = args
+        .first()
+        .map_or_else(empty, |s| lower_value_as_str(e, s, types));
+    let (p_ptr, p_len) = args
+        .get(1)
+        .map_or_else(empty, |p| lower_value_as_str(e, p, types));
+    let m = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {m} = sash_regex_match({sp}, {sl}, {pp}, {pl});",
+        m = m,
+        sp = s_ptr,
+        sl = s_len,
+        pp = p_ptr,
+        pl = p_len,
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = {m};", m = m).unwrap();
+    writeln!(e.out, "    __exit_status = 1 - {m};", m = m).unwrap();
 }
 
 /// ${var:offset} / ${var:offset:length}. Mirrors emit_substring

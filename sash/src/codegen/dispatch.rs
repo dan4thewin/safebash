@@ -207,6 +207,7 @@ impl SsaInst {
             BuiltinCmd::Noop | BuiltinCmd::True | BuiltinCmd::False => {
                 self.emit_noop_true_false(kind, builder, ctx)
             }
+            BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
             BuiltinCmd::Cd => {
@@ -341,6 +342,57 @@ impl SsaInst {
         builder.def_var(ctx.test_result_var, v);
         // $? = 0 for true/:, 1 for false
         let es = builder.ins().iconst(I64, if is_false { 1 } else { 0 });
+        builder.def_var(ctx.exit_status_var, es);
+    }
+
+    /// DD#63: `match SUBJECT PATTERN` boolean command. Calls the real
+    /// `sash_regex_match` (1 = matched, 0 = not) and sets `test_result`
+    /// (the boolean for if/while/&&/||) and `$?` (0 matched / 1 not). A
+    /// (B) must-consume result (DD#70) — the front-end rejects a bare or
+    /// `-`-suppressed `match`, so this only runs in a consuming position.
+    fn emit_match(
+        &self,
+        args: &[SsaValue],
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) {
+        // Arity is validated up front; defensively treat a malformed call
+        // as a non-match rather than indexing out of bounds.
+        let (Some(subject), Some(pattern)) = (args.first(), args.get(1)) else {
+            let zero = builder.ins().iconst(I64, 0);
+            builder.def_var(ctx.test_result_var, zero);
+            let one = builder.ins().iconst(I64, 1);
+            builder.def_var(ctx.exit_status_var, one);
+            return;
+        };
+        let (s_ptr, s_len) = lower_value(
+            subject,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.func_constants,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        let (p_ptr, p_len) = lower_value(
+            pattern,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.func_constants,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        let regex_ref = module.declare_func_in_func(ctx.externs.regex_match, builder.func);
+        let call = builder.ins().call(regex_ref, &[s_ptr, s_len, p_ptr, p_len]);
+        let matched = builder.inst_results(call)[0]; // 1 = matched, 0 = not
+        builder.def_var(ctx.test_result_var, matched);
+        // $? = matched ? 0 : 1  (command exit status; 1 - matched, matched is 0/1)
+        let one = builder.ins().iconst(I64, 1);
+        let es = builder.ins().isub(one, matched);
         builder.def_var(ctx.exit_status_var, es);
     }
 

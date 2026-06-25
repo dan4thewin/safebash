@@ -34,10 +34,13 @@ void sash_free(void *p) { free(p); }
 
 /*
  * `match SUBJECT PATTERN` — print the whole match (resub[0]) and return
- * the boolean exit status. Mirrors sash-rt's `sash_regex_match_str`:
- * invalid regex is exit 2, no match is exit 1 with no output.
+ * the boolean exit status. `matchq` is the same but quiet (no output) —
+ * the boolean-command form (DD#63), where only the exit status matters
+ * and the matched text must NOT leak to stdout. Mirrors sash-rt's
+ * `sash_regex_match_str` / `sash_regex_match`: invalid regex is exit 2,
+ * no match is exit 1.
  */
-static int do_match(const char *subj, const char *pat) {
+static int do_match(const char *subj, const char *pat, int print) {
     void *prog = regcomp9(pat);
     if (!prog) {
         return 2;
@@ -55,21 +58,23 @@ static int do_match(const char *subj, const char *pat) {
         free(buf);
         return 1;
     }
-    char **ptrs = (char **)resub; /* resub[0] = whole match (sp, ep) */
-    size_t ms_off = (size_t)(ptrs[0] - buf);
-    size_t me_off = (size_t)(ptrs[1] - buf);
-    fwrite(subj + ms_off, 1, me_off - ms_off, stdout);
+    if (print) {
+        char **ptrs = (char **)resub; /* resub[0] = whole match (sp, ep) */
+        size_t ms_off = (size_t)(ptrs[0] - buf);
+        size_t me_off = (size_t)(ptrs[1] - buf);
+        fwrite(subj + ms_off, 1, me_off - ms_off, stdout);
+    }
     free(buf);
     return 0;
 }
 
 int main(int argc, char **argv) {
-    if (argc >= 2 && strcmp(argv[1], "match") == 0) {
+    if (argc >= 2 && (strcmp(argv[1], "match") == 0 || strcmp(argv[1], "matchq") == 0)) {
         if (argc != 4) {
-            fprintf(stderr, "usage: sash-regex match SUBJECT PATTERN\n");
+            fprintf(stderr, "usage: sash-regex match|matchq SUBJECT PATTERN\n");
             return 2;
         }
-        return do_match(argv[2], argv[3]);
+        return do_match(argv[2], argv[3], strcmp(argv[1], "match") == 0);
     }
     if (argc != 5) {
         fprintf(stderr, "usage: sash-regex sub|gsub SUBJECT PATTERN REPLACEMENT\n");

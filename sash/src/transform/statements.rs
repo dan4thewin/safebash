@@ -332,7 +332,9 @@ fn lower_suppressed_stmt(
     block: BlockId,
 ) -> BlockId {
     let pre_len = ssa.block(block).insts.len();
+    state.suppressed += 1;
     let result_block = lower_one(inner, ssa, state, block);
+    state.suppressed -= 1;
     uncheck_block_from(ssa, block, pre_len);
     if result_block != block {
         for b in (block + 1)..=result_block {

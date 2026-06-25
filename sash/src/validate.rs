@@ -1088,6 +1088,8 @@ const BUILTINS: &[&str] = &[
     // Conversion
     "dtoi",
     "itod",
+    // Regex (DD#63): match is a boolean command (sub/gsub are value-only)
+    "match",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {

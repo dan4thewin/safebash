@@ -27,6 +27,10 @@ pub(super) fn handle_command(
     let name = expr_to_string(&c.name);
     let kind = BuiltinCmd::from_name(&name);
 
+    // DD#70 (B): `match` is a boolean that must be consumed — a bare or
+    // `-`-suppressed `match` is a compile error.
+    check_match_must_consume(kind, stmt, state);
+
     if let Some(b) = try_builtin(kind, &name, c, stmt, ssa, state, &mut block) {
         return b;
     }
@@ -157,6 +161,29 @@ fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionSta
             stmt.span.line, stmt.span.col, name, name
         ));
     }
+}
+
+/// DD#70 (B): `match` is a boolean that **must be consumed**. In a
+/// consuming position (if/while/&&/||) it is fine. Otherwise it is a
+/// compile error in the "ignored result" family (adjacent to SB4016):
+/// SB4018 for a bare `match`, SB4019 when `-` is applied to it (a
+/// must-consume result has no runtime verdict to suppress).
+fn check_match_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
+    if kind != BuiltinCmd::Match || state.in_condition > 0 {
+        return;
+    }
+    let diag = if state.suppressed > 0 {
+        format!(
+            "{}:{}: error [SB4019] `-` cannot suppress `match` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
+            stmt.span.line, stmt.span.col
+        )
+    } else {
+        format!(
+            "{}:{}: error [SB4018] `match` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
+            stmt.span.line, stmt.span.col
+        )
+    };
+    state.diagnostics.push(diag);
 }
 
 fn handle_bless_stmt(
