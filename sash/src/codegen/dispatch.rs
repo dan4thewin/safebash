@@ -186,7 +186,9 @@ impl SsaInst {
         ctx: &mut InstCtx,
     ) -> bool {
         match kind {
-            BuiltinCmd::Echo => return self.emit_echo(args, redirects, builder, module, ctx),
+            BuiltinCmd::Echo => {
+                return self.emit_echo(args, redirects, *checked, builder, module, ctx)
+            }
             BuiltinCmd::Test => {
                 // Legacy path — should not be reached now that transform
                 // emits SsaInst::Test directly. Treat as always-true.
@@ -207,7 +209,9 @@ impl SsaInst {
             }
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
-            BuiltinCmd::Cd => return super::inst_handlers::handle_cd(args, builder, module, ctx),
+            BuiltinCmd::Cd => {
+                return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
+            }
             BuiltinCmd::Pwd => return self.emit_pwd(args, builder, module, ctx),
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
             BuiltinCmd::Shift => {
@@ -988,17 +992,19 @@ impl SsaInst {
         &self,
         args: &[SsaValue],
         redirects: &[crate::ir::Redirect],
+        checked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
+        let end_cl_block = ctx.end_cl_block;
         let space_id = ctx.space_id;
         let nl_id = ctx.nl_id;
+        let vars = &mut *ctx.vars;
+        let literals = ctx.literals;
         let restore = emit_redirects(
             redirects,
             builder,
@@ -1008,7 +1014,7 @@ impl SsaInst {
             vars,
             Some(exit_status_var),
         );
-        lower_echo(
+        let failed = lower_echo(
             args,
             builder,
             module,
@@ -1020,11 +1026,22 @@ impl SsaInst {
             Some(exit_status_var),
         );
         emit_restore(restore, builder, module, externs);
-        // echo always succeeds — set test_result for && / || chains
-        let one = builder.ins().iconst(I64, 1);
-        builder.def_var(test_result_var, one);
+        // DD#55 (A): echo's verdict is its write status (0 OK / 1 failed).
+        // Make it visible to catching positions (&&/||/if) and abort on a
+        // failed write unless caught or suppressed.
+        builder.def_var(exit_status_var, failed);
         let zero = builder.ins().iconst(I64, 0);
-        builder.def_var(exit_status_var, zero);
+        let ok = builder.ins().icmp(IntCC::Equal, failed, zero);
+        let tr = builder.ins().uextend(I64, ok);
+        builder.def_var(test_result_var, tr);
+        super::inst_handlers::emit_status_abort_check(
+            builder,
+            module,
+            externs,
+            exit_status_var,
+            end_cl_block,
+            checked,
+        );
         false
     }
 

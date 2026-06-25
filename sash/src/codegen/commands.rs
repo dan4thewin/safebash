@@ -18,6 +18,88 @@ use super::types::{ExternFuncs, VarSlot};
 use super::values::lower_value;
 use crate::ssa::*;
 
+/// Emit a single `sash_write(fd, ptr, len)` and fold a write failure
+/// (`result < 0`, e.g. ENOSPC/EPIPE) into the running `failed` flag.
+/// Returns the updated `failed` (0 = all writes OK so far, 1 = some
+/// write failed). DD#55 (A): echo's write verdict must be observable.
+fn echo_write_tracked(
+    builder: &mut FunctionBuilder,
+    write_ref: cranelift_codegen::ir::FuncRef,
+    fd: cranelift_codegen::ir::Value,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+    failed: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let call = builder.ins().call(write_ref, &[fd, ptr, len]);
+    let result = builder.inst_results(call)[0];
+    let zero = builder.ins().iconst(I64, 0);
+    let this_failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
+    let this_failed = builder.ins().uextend(I64, this_failed);
+    builder.ins().bor(failed, this_failed)
+}
+
+/// Lower `echo`. Returns the write-failure status (0 = OK, 1 = some
+/// `write(2)` failed) so the caller can set `$?`/test_result and apply
+/// the DD#55 (A) abort.
+/// Parse the optional leading `-n` flag. Returns (args_to_print,
+/// suppress_newline).
+fn echo_parse_flags(args: &[SsaValue]) -> (&[SsaValue], bool) {
+    if let Some(SsaValue::Literal(flag)) = args.first() {
+        if flag == "-n" {
+            return (&args[1..], true);
+        }
+    }
+    (args, false)
+}
+
+/// Write one echo argument: a leading space when not first, then the
+/// value (Concat parts written sequentially without spaces; a scalar is
+/// a one-element slice). Folds each write's failure into `failed`.
+#[allow(clippy::too_many_arguments)]
+fn echo_write_one_arg(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    write_ref: cranelift_codegen::ir::FuncRef,
+    fd: cranelift_codegen::ir::Value,
+    arg: &SsaValue,
+    is_first: bool,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    space_id: cranelift_module::DataId,
+    exit_status_var: Option<Variable>,
+    mut failed: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let empty_fc = std::collections::HashMap::new();
+    if !is_first {
+        let sp_gv = module.declare_data_in_func(space_id, builder.func);
+        let sp_ptr = builder.ins().global_value(I64, sp_gv);
+        let sp_len = builder.ins().iconst(I64, 1);
+        failed = echo_write_tracked(builder, write_ref, fd, sp_ptr, sp_len, failed);
+    }
+    let parts: &[SsaValue] = match arg {
+        SsaValue::Concat(parts) => parts,
+        other => std::slice::from_ref(other),
+    };
+    for part in parts {
+        let (ptr, len) = lower_value(
+            part,
+            builder,
+            module,
+            vars,
+            literals,
+            &empty_fc,
+            externs,
+            exit_status_var,
+        );
+        failed = echo_write_tracked(builder, write_ref, fd, ptr, len, failed);
+    }
+    failed
+}
+
+/// Lower `echo`. Returns the write-failure status (0 = OK, 1 = some
+/// `write(2)` failed) so the caller can set `$?`/test_result and apply
+/// the DD#55 (A) abort.
 pub(super) fn lower_echo(
     args: &[SsaValue],
     builder: &mut FunctionBuilder,
@@ -27,66 +109,37 @@ pub(super) fn lower_echo(
     externs: &ExternFuncs,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
-    #[allow(unused_variables)] exit_status_var: Option<Variable>,
-) {
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
     let fd = builder.ins().iconst(I64, 1);
     let write_ref = module.declare_func_in_func(externs.write, builder.func);
-    let empty_fc = std::collections::HashMap::new();
-
-    // Check for -n flag (suppress trailing newline)
-    let (print_args, suppress_newline) = if let Some(SsaValue::Literal(flag)) = args.first() {
-        if flag == "-n" {
-            (&args[1..], true)
-        } else {
-            (args, false)
-        }
-    } else {
-        (args, false)
-    };
+    let mut failed = builder.ins().iconst(I64, 0);
+    let (print_args, suppress_newline) = echo_parse_flags(args);
 
     for (i, arg) in print_args.iter().enumerate() {
-        if i > 0 {
-            let sp_gv = module.declare_data_in_func(space_id, builder.func);
-            let sp_ptr = builder.ins().global_value(I64, sp_gv);
-            let sp_len = builder.ins().iconst(I64, 1);
-            builder.ins().call(write_ref, &[fd, sp_ptr, sp_len]);
-        }
-        // For Concat values, write each part sequentially (no spaces)
-        if let SsaValue::Concat(parts) = arg {
-            for part in parts {
-                let (ptr, len) = lower_value(
-                    part,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    &empty_fc,
-                    externs,
-                    exit_status_var,
-                );
-                builder.ins().call(write_ref, &[fd, ptr, len]);
-            }
-        } else {
-            let (ptr, len) = lower_value(
-                arg,
-                builder,
-                module,
-                vars,
-                literals,
-                &empty_fc,
-                externs,
-                exit_status_var,
-            );
-            builder.ins().call(write_ref, &[fd, ptr, len]);
-        }
+        failed = echo_write_one_arg(
+            builder,
+            module,
+            write_ref,
+            fd,
+            arg,
+            i == 0,
+            vars,
+            literals,
+            externs,
+            space_id,
+            exit_status_var,
+            failed,
+        );
     }
 
     if !suppress_newline {
         let nl_gv = module.declare_data_in_func(nl_id, builder.func);
         let nl_ptr = builder.ins().global_value(I64, nl_gv);
         let nl_len = builder.ins().iconst(I64, 1);
-        builder.ins().call(write_ref, &[fd, nl_ptr, nl_len]);
+        failed = echo_write_tracked(builder, write_ref, fd, nl_ptr, nl_len, failed);
     }
+    failed
 }
 
 /// Emit fork/exec for an external command.

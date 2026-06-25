@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects, emit_restore, ir_expr_to_ssa_value};
-use super::types::{emit_int_to_str, find_array_slot, InstCtx};
+use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx};
 use super::values::{atoi_call, emit_strlen, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
@@ -252,7 +252,10 @@ fn lower_pipeline_builtin(
         return false;
     }
     if name == "echo" {
-        lower_echo(
+        // Pipeline-stage echo runs in a forked child; its write status
+        // feeds the child exit, handled by the pipeline path — ignore the
+        // returned write-failure flag here.
+        let _ = lower_echo(
             args,
             builder,
             module,
@@ -576,35 +579,16 @@ pub(super) fn handle_general_command(
     );
     emit_restore(restore, builder, module, externs);
 
-    // DD#55: implicit exit check — abort if nonzero
-    if *checked {
-        let status = builder.use_var(exit_status_var);
-        let zero = builder.ins().iconst(I64, 0);
-        let failed = builder.ins().icmp(IntCC::NotEqual, status, zero);
-
-        let abort_block = builder.create_block();
-        let cont_block = builder.create_block();
-        builder
-            .ins()
-            .brif(failed, abort_block, &[], cont_block, &[]);
-
-        builder.switch_to_block(abort_block);
-        builder.seal_block(abort_block);
-        if let Some(end_cl) = end_cl_block {
-            // DD#56: jump to END block instead of exiting directly
-            builder.def_var(exit_status_var, status);
-            builder.ins().jump(end_cl, &[]);
-        } else {
-            let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-            builder.ins().call(exit_ref, &[status]);
-            builder
-                .ins()
-                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
-        }
-
-        builder.switch_to_block(cont_block);
-        builder.seal_block(cont_block);
-    }
+    // DD#55 (A): implicit exit check — abort if the command's status is
+    // nonzero, unless it was caught (if/||) or suppressed (-).
+    emit_status_abort_check(
+        builder,
+        module,
+        externs,
+        exit_status_var,
+        end_cl_block,
+        *checked,
+    );
 
     // DD#56: signal EXIT check point after external command
     if !program.exiting_signals.is_empty() {
@@ -635,12 +619,58 @@ pub(super) fn handle_general_command(
     false
 }
 
+/// DD#55 (A)-channel: emit the implicit exit check. When `abort` is true
+/// (the command was neither caught by `if`/`||` nor suppressed by `-`),
+/// branch on `exit_status_var != 0` to either the EXIT/END block (DD#56,
+/// runs traps) or a direct `sash_exit(status)`. Shared by external
+/// commands and internal syscall-wrapping builtins (cd, …) so they abort
+/// uniformly on failure.
+pub(super) fn emit_status_abort_check(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    exit_status_var: cranelift_frontend::Variable,
+    end_cl_block: Option<cranelift_codegen::ir::Block>,
+    abort: bool,
+) {
+    if !abort {
+        return;
+    }
+    let status = builder.use_var(exit_status_var);
+    let zero = builder.ins().iconst(I64, 0);
+    let failed = builder.ins().icmp(IntCC::NotEqual, status, zero);
+
+    let abort_block = builder.create_block();
+    let cont_block = builder.create_block();
+    builder
+        .ins()
+        .brif(failed, abort_block, &[], cont_block, &[]);
+
+    builder.switch_to_block(abort_block);
+    builder.seal_block(abort_block);
+    if let Some(end_cl) = end_cl_block {
+        // DD#56: jump to END block instead of exiting directly
+        builder.def_var(exit_status_var, status);
+        builder.ins().jump(end_cl, &[]);
+    } else {
+        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+        builder.ins().call(exit_ref, &[status]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+    }
+
+    builder.switch_to_block(cont_block);
+    builder.seal_block(cont_block);
+}
+
 /// Handle `cd` builtin. Per DD#53, $PWD/$OLDPWD/$HOME are plain sash
 /// variables (not magic); cd only calls chdir(2) and sets $?. With no
 /// argument or with `-`, behavior is unspecified — fall back to a
 /// no-op-success.
 pub(super) fn handle_cd(
     args: &[SsaValue],
+    checked: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -649,6 +679,8 @@ pub(super) fn handle_cd(
         // `cd` with no arg — no $HOME magic under DD#53; succeed silently.
         let zero = builder.ins().iconst(I64, 0);
         builder.def_var(ctx.exit_status_var, zero);
+        let one = builder.ins().iconst(I64, 1);
+        builder.def_var(ctx.test_result_var, one);
         return false;
     };
     let (ptr, len) = lower_value(
@@ -664,11 +696,29 @@ pub(super) fn handle_cd(
     let chdir_ref = module.declare_func_in_func(ctx.externs.chdir, builder.func);
     let call = builder.ins().call(chdir_ref, &[ptr, len]);
     let result = builder.inst_results(call)[0];
-    // chdir returns 0 on success, -1 on failure → $? = 0 or 1
+    // chdir returns 0 on success, -1 on failure → $? = 0 or 1.
     let zero = builder.ins().iconst(I64, 0);
     let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
     let es = builder.ins().uextend(I64, failed);
     builder.def_var(ctx.exit_status_var, es);
+    // DD#55/DD#62: cd's verdict must be visible to catching positions
+    // (if/while/&&/||) — set test_result = success, not the old "always
+    // false" left-over that made `if cd /valid` take the else branch.
+    let success = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, result, zero);
+    let tr = builder.ins().uextend(I64, success);
+    builder.def_var(ctx.test_result_var, tr);
+    // DD#55 (A): a failed chdir is a failed syscall — bare cd aborts;
+    // caught (if/||) or suppressed (-) cd does not.
+    emit_status_abort_check(
+        builder,
+        module,
+        ctx.externs,
+        ctx.exit_status_var,
+        ctx.end_cl_block,
+        checked,
+    );
     false
 }
 

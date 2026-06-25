@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=32
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -152,6 +152,57 @@ run_sash '/bin/false || echo $?'
 # 55.19 $! is sugar for $(getcpid)
 run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.19
+
+# ── DD#55 syscall-abort: internal builtins must thread real status ──
+# Internal syscall wrappers (cd→chdir, redirect→open, echo→write) must
+# (a) set their real exit status, visible to catching positions, and
+# (b) abort on failure unless caught (if/||) or suppressed (-). A failed
+# redirect open must NOT silently misroute output to the original fd.
+# NATIVE-ONLY for now: the C and janet oracles don't yet implement the
+# DD#55 (A)-channel abort at all (bare `/bin/false` doesn't abort there);
+# bringing them to parity is a separate task. See notes/tasks/.
+if in_modes native; then
+    # 55.20 bare cd to a bad dir aborts (failed chdir is a failed syscall)
+    run_sash 'echo a
+cd /nonexistent_xyz_55
+echo b'
+    [[ $rc != 0 && $out = "a" && -z $err ]]; chk 55.20
+
+    # 55.21 cd SUCCESS is visible to a condition (regression: was always "no")
+    run_sash 'if cd /tmp; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 55.21
+
+    # 55.22 cd failure in a condition is caught — no abort
+    run_sash 'if cd /nonexistent_xyz_55; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk 55.22
+
+    # 55.23 - cd /bad suppresses the abort
+    run_sash '- cd /nonexistent_xyz_55
+echo after'
+    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 55.23
+
+    # 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC)
+    run_sash 'echo hi > /dev/full
+echo after'
+    [[ $rc != 0 && -z $out && -z $err ]]; chk 55.27
+
+    # 55.28 echo write failure is catchable with ||
+    run_sash 'echo hi > /dev/full || echo caught'
+    [[ $rc = 0 && $out = "caught" && -z $err ]]; chk 55.28
+
+    # 55.29 - echo write failure suppressed
+    run_sash '- echo hi > /dev/full
+echo after'
+    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 55.29
+else
+    skip_chk 55.20; skip_chk 55.21; skip_chk 55.22; skip_chk 55.23
+    skip_chk 55.27; skip_chk 55.28; skip_chk 55.29
+fi
+
+# 55.24-26 redirect open(2) setup-failure (abort / catch / M1-no-suppress)
+# are pending the W3 redirect increment (redirect-path short-circuit +
+# the `suppressed` IR bit). Skipped on all modes until implemented.
+skip_chk 55.24; skip_chk 55.25; skip_chk 55.26
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 
