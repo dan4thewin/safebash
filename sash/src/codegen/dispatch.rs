@@ -997,50 +997,17 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        let test_result_var = ctx.test_result_var;
-        let end_cl_block = ctx.end_cl_block;
-        let space_id = ctx.space_id;
-        let nl_id = ctx.nl_id;
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let restore = emit_redirects(
+        let in_condition = ctx.in_condition;
+        // DD#55: a redirect open(2) failure skips the echo body (no
+        // misroute) and aborts unless caught; on success the echo runs and
+        // its own write verdict applies.
+        super::inst_handlers::emit_redirect_guarded_body(
             redirects,
+            in_condition,
             builder,
             module,
-            externs,
-            literals,
-            vars,
-            Some(exit_status_var),
-        );
-        let failed = lower_echo(
-            args,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            space_id,
-            nl_id,
-            Some(exit_status_var),
-        );
-        emit_restore(restore, builder, module, externs);
-        // DD#55 (A): echo's verdict is its write status (0 OK / 1 failed).
-        // Make it visible to catching positions (&&/||/if) and abort on a
-        // failed write unless caught or suppressed.
-        builder.def_var(exit_status_var, failed);
-        let zero = builder.ins().iconst(I64, 0);
-        let ok = builder.ins().icmp(IntCC::Equal, failed, zero);
-        let tr = builder.ins().uextend(I64, ok);
-        builder.def_var(test_result_var, tr);
-        super::inst_handlers::emit_status_abort_check(
-            builder,
-            module,
-            externs,
-            exit_status_var,
-            end_cl_block,
-            checked,
+            ctx,
+            |b, m, c| emit_echo_body(args, checked, b, m, c),
         );
         false
     }
@@ -1439,4 +1406,51 @@ fn emit_table_lookup(
     let ptr = builder.inst_results(call)[0];
     let len = builder.ins().stack_load(I64, out_slot, 0);
     (ptr, len)
+}
+
+/// DD#55: the echo command body (write + verdict + diagnostic) run inside
+/// the redirect-open guard's success path. Lowers the args, sets `$?`/
+/// test_result from the write status, and applies the (A)-channel abort
+/// with the `<argv0>: echo: write error: <reason>` diagnostic.
+fn emit_echo_body(
+    args: &[SsaValue],
+    checked: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let failed = lower_echo(
+        args,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        ctx.space_id,
+        ctx.nl_id,
+        Some(ctx.exit_status_var),
+    );
+    builder.def_var(ctx.exit_status_var, failed);
+    let zero = builder.ins().iconst(I64, 0);
+    let ok = builder.ins().icmp(IntCC::Equal, failed, zero);
+    let tr = builder.ins().uextend(I64, ok);
+    builder.def_var(ctx.test_result_var, tr);
+    let (s1p, s1l) =
+        super::inst_handlers::diag_static_seg("echo: write error", ctx.literals, module, builder);
+    let (s2p, s2l) = super::inst_handlers::diag_empty_seg(builder);
+    let msg = super::inst_handlers::AbortMsg {
+        seg1_ptr: s1p,
+        seg1_len: s1l,
+        seg2_ptr: s2p,
+        seg2_len: s2l,
+    };
+    super::inst_handlers::emit_status_abort_check(
+        builder,
+        module,
+        ctx.externs,
+        ctx.exit_status_var,
+        ctx.end_cl_block,
+        checked,
+        Some(msg),
+    );
 }

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=42
+plan=43
 echo "1..$plan" >&3
 
 set +e
@@ -156,53 +156,91 @@ run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 # ── DD#55 syscall-abort: internal builtins must thread real status ──
 # Internal syscall wrappers (cd→chdir, redirect→open, echo→write) must
 # (a) set their real exit status, visible to catching positions, and
-# (b) abort on failure unless caught (if/||) or suppressed (-). A failed
-# redirect open must NOT silently misroute output to the original fd.
+# (b) abort on failure unless caught (if/||) — or, for a command's own
+# verdict (cd / echo's write), suppressed by `-`. A redirect open(2) is
+# the implicit `exec N>file` that runs FIRST, so `-` (which binds to the
+# command) does NOT suppress it; and a failed open must never silently
+# misroute output to the original fd.
 # NATIVE-ONLY for now: the C and janet oracles don't yet implement the
 # DD#55 (A)-channel abort at all (bare `/bin/false` doesn't abort there);
 # bringing them to parity is a separate task. See notes/tasks/.
 if in_modes native; then
+    # Abort cases emit a descriptive diagnostic to stderr (captured as
+    # $rerr), prefixed with the program name (argv[0], here ./test_bin):
+    #   <argv0>: cd: <path>: <reason>
+    #   <argv0>: <path>: <reason>              (redirect open)
+    #   <argv0>: echo: write error: <reason>   (echo write)
+    # where <reason> is the OS strerror text. Caught (if/||) and `-`
+    # suppressed failures do NOT abort, so they emit NO diagnostic.
+
     # 55.20 bare cd to a bad dir aborts (failed chdir is a failed syscall)
     run_sash 'echo a
 cd /nonexistent_xyz_55
 echo b'
-    [[ $rc != 0 && $out = "a" && -z $err ]]; chk 55.20
+    [[ $rc != 0 && $out = "a" && -z $err \
+       && $rerr == *"test_bin: cd: /nonexistent_xyz_55: No such file or directory"* ]]; chk 55.20
 
     # 55.21 cd SUCCESS is visible to a condition (regression: was always "no")
     run_sash 'if cd /tmp; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 55.21
+    [[ $rc = 0 && $out = "yes" && -z $err && -z $rerr ]]; chk 55.21
 
-    # 55.22 cd failure in a condition is caught — no abort
+    # 55.22 cd failure in a condition is caught — no abort, no diagnostic
     run_sash 'if cd /nonexistent_xyz_55; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "no" && -z $err ]]; chk 55.22
+    [[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.22
 
-    # 55.23 - cd /bad suppresses the abort
+    # 55.23 - cd /bad suppresses the abort (and the diagnostic)
     run_sash '- cd /nonexistent_xyz_55
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 55.23
+    [[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.23
 
-    # 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC)
+    # 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC) + diagnostic
     run_sash 'echo hi > /dev/full
 echo after'
-    [[ $rc != 0 && -z $out && -z $err ]]; chk 55.27
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"test_bin: echo: write error: No space left on device"* ]]; chk 55.27
 
-    # 55.28 echo write failure is catchable with ||
+    # 55.28 echo write failure is catchable with || — no abort, no diagnostic
     run_sash 'echo hi > /dev/full || echo caught'
-    [[ $rc = 0 && $out = "caught" && -z $err ]]; chk 55.28
+    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.28
 
-    # 55.29 - echo write failure suppressed
+    # 55.29 - echo write failure suppressed — no diagnostic
     run_sash '- echo hi > /dev/full
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 55.29
+    [[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.29
+
+    # ── DD#55 redirect-open(2): the open is a checked syscall that runs
+    # FIRST (the implicit `exec N>file`). On failure the command body is
+    # skipped (no misroute), and the abort is governed by CONTEXT — bare
+    # and `-` both abort (the `-` binds to the command's write verdict,
+    # not the prior open); an enclosing condition (if/||) catches it via
+    # the failed final-command result.
+
+    # 55.24 bare redirect open failure aborts — no misroute + diagnostic
+    run_sash 'echo hi > /nonexistent_dir_55/f
+echo after'
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.24
+
+    # 55.25 open failure in an if-condition is caught: the failed final
+    # command makes the condition false → else branch (no misroute, no diag)
+    run_sash 'if echo hi > /nonexistent_dir_55/f; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.25
+
+    # 55.26 `- echo > /bad` still ABORTS: `-` suppresses echo's write
+    # verdict, not the prior `exec N>file` open, which runs first (+ diagnostic)
+    run_sash '- echo hi > /nonexistent_dir_55/f
+echo after'
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.26
+
+    # 55.30 open failure is catchable with || too (symmetry with if), no diag
+    run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
+    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.30
 else
     skip_chk 55.20; skip_chk 55.21; skip_chk 55.22; skip_chk 55.23
     skip_chk 55.27; skip_chk 55.28; skip_chk 55.29
+    skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.30
 fi
-
-# 55.24-26 redirect open(2) setup-failure (abort / catch / M1-no-suppress)
-# are pending the W3 redirect increment (redirect-path short-circuit +
-# the `suppressed` IR bit). Skipped on all modes until implemented.
-skip_chk 55.24; skip_chk 55.25; skip_chk 55.26
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 

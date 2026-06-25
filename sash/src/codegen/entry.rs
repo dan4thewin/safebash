@@ -340,10 +340,22 @@ fn emit_block_insts(
     redirect_stack: &mut Vec<Vec<SavedFd>>,
 ) -> bool {
     let mut block_terminated = false;
-    for inst in &ssa_block.insts {
+    // DD#55: the command in condition position is the last Command/Pipeline
+    // of a Branch-terminated block (mirrors transform's
+    // mark_unchecked_in_conditions). Its redirect open(2) failure is caught
+    // by if/||, not aborted — distinct from `-` suppression.
+    let is_branch = matches!(ssa_block.terminator, crate::ssa::Terminator::Branch { .. });
+    let last_cmd_idx = ssa_block.insts.iter().rposition(|i| {
+        matches!(
+            i,
+            crate::ssa::SsaInst::Command { .. } | crate::ssa::SsaInst::Pipeline { .. }
+        )
+    });
+    for (idx, inst) in ssa_block.insts.iter().enumerate() {
         if block_terminated {
             break;
         }
+        let in_condition = is_branch && Some(idx) == last_cmd_idx;
         block_terminated = inst.emit(
             ctx.builder,
             ctx.module,
@@ -365,6 +377,7 @@ fn emit_block_insts(
                 ssa_id,
                 saved_end_status_var: ctx.saved_end_status_var,
                 cl_blocks: ctx.cl_blocks,
+                in_condition,
             },
         );
     }

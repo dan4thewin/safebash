@@ -34,6 +34,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_exit", Linkage::Import, &exit_sig)
         .expect("declare sash_exit");
 
+    // sash_emsg(seg1_ptr, seg1_len, seg2_ptr, seg2_len) -> () — DD#55
+    // abort diagnostic to stderr (no return value).
+    let mut emsg_sig = Signature::new(CallConv::SystemV);
+    for _ in 0..4 {
+        emsg_sig.params.push(AbiParam::new(I64));
+    }
+    let emsg_func = module
+        .declare_function("sash_emsg", Linkage::Import, &emsg_sig)
+        .expect("declare sash_emsg");
+
     let mut run_sig = Signature::new(CallConv::SystemV);
     run_sig.params.push(AbiParam::new(I64));
     run_sig.params.push(AbiParam::new(I64));
@@ -679,6 +689,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     ExternFuncs {
         write: write_func,
         exit: exit_func,
+        emsg: emsg_func,
         run: run_func,
         getenv: getenv_func,
         capture: capture_func,
@@ -773,6 +784,11 @@ pub(super) fn intern_literals(
     let space_id = interner.intern(" ");
     let nl_id = interner.intern("\n");
     let _empty_id = interner.intern(""); // for argv bounds check
+                                         // DD#55 abort diagnostics: pre-intern the static message segments so
+                                         // the (immutable) literals map can resolve them at instruction-emit
+                                         // time (cd / echo write-error contexts; the path segment is dynamic).
+    let _ = interner.intern("cd");
+    let _ = interner.intern("echo: write error");
 
     for block in program.blocks.values() {
         for inst in &block.insts {

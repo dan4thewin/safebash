@@ -114,8 +114,105 @@ pub extern "C" fn sash_write(fd: i64, buf: *const u8, len: i64) -> i64 {
     let fd = unsafe { BorrowedFd::borrow_raw(fd as i32) };
     match rustix::io::write(fd, slice) {
         Ok(n) => n as i64,
-        Err(_) => -1,
+        Err(e) => {
+            set_last_errno(e);
+            -1
+        }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════
+// DD#55 abort diagnostics
+// ═══════════════════════════════════════════════════════════════
+
+/// errno of the most recent failed syscall wrapper (chdir/open/write).
+/// Set on the failure path; read by `sash_emsg` to render the reason.
+static mut SASH_LAST_ERRNO: i64 = 0;
+
+#[inline]
+fn set_last_errno(e: rustix::io::Errno) {
+    unsafe {
+        SASH_LAST_ERRNO = e.raw_os_error() as i64;
+    }
+}
+
+/// Standard message for the common file/IO errnos. Unknown values fall
+/// back to a numeric form in `sash_emsg`.
+fn errno_str(errno: i64) -> Option<&'static [u8]> {
+    Some(match errno {
+        1 => b"Operation not permitted" as &[u8],
+        2 => b"No such file or directory",
+        5 => b"Input/output error",
+        6 => b"No such device or address",
+        9 => b"Bad file descriptor",
+        13 => b"Permission denied",
+        17 => b"File exists",
+        19 => b"No such device",
+        20 => b"Not a directory",
+        21 => b"Is a directory",
+        22 => b"Invalid argument",
+        23 => b"Too many open files in system",
+        24 => b"Too many open files",
+        27 => b"File too large",
+        28 => b"No space left on device",
+        30 => b"Read-only file system",
+        32 => b"Broken pipe",
+        36 => b"File name too long",
+        40 => b"Too many levels of symbolic links",
+        122 => b"Disk quota exceeded",
+        _ => return None,
+    })
+}
+
+/// Write a DD#55 abort diagnostic to stderr (no exit):
+///   `<argv0>: <seg1>[: <seg2>]: <reason>\n`
+/// where `<reason>` = strerror(SASH_LAST_ERRNO). `seg2` is skipped when
+/// `seg2_len == 0`. Called at the codegen abort site (so caught/`-`
+/// suppressed failures stay silent). `argv0` is the program name.
+#[no_mangle]
+pub extern "C" fn sash_emsg(
+    seg1_ptr: *const u8,
+    seg1_len: i64,
+    seg2_ptr: *const u8,
+    seg2_len: i64,
+) {
+    let sep: &[u8] = b": ";
+    // <argv0>
+    let argv = unsafe { sash_argv };
+    if !argv.is_null() {
+        let a0 = unsafe { *argv };
+        if !a0.is_null() {
+            let l = unsafe { strlen(a0) };
+            sash_write(2, a0, l as i64);
+        }
+    }
+    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    // <seg1>
+    if !seg1_ptr.is_null() && seg1_len > 0 {
+        sash_write(2, seg1_ptr, seg1_len);
+    }
+    // [: <seg2>]
+    if !seg2_ptr.is_null() && seg2_len > 0 {
+        sash_write(2, sep.as_ptr(), sep.len() as i64);
+        sash_write(2, seg2_ptr, seg2_len);
+    }
+    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    // <reason>
+    let errno = unsafe { SASH_LAST_ERRNO };
+    match errno_str(errno) {
+        Some(s) => {
+            sash_write(2, s.as_ptr(), s.len() as i64);
+        }
+        None => {
+            let prefix: &[u8] = b"error ";
+            sash_write(2, prefix.as_ptr(), prefix.len() as i64);
+            let mut buf = [0u8; 24];
+            let n = write_i64(&mut buf, errno);
+            sash_write(2, buf.as_ptr(), n as i64);
+        }
+    }
+    let nl: &[u8] = b"\n";
+    sash_write(2, nl.as_ptr(), nl.len() as i64);
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -216,7 +313,10 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
         let mode = rustix::fs::Mode::from_raw_mode(0o666);
         let opened = match rustix::fs::open(path_cstr, oflags, mode) {
             Ok(f) => f,
-            Err(_) => return -1,
+            Err(e) => {
+                set_last_errno(e);
+                return -1;
+            }
         };
         let src = rustix::fd::IntoRawFd::into_raw_fd(opened) as i64;
         core::arch::asm!(
@@ -1904,7 +2004,10 @@ pub extern "C" fn sash_chdir(path_ptr: *const u8, path_len: i64) -> i64 {
     let path_cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
     match rustix::process::chdir(path_cstr) {
         Ok(()) => 0,
-        Err(_) => -1,
+        Err(e) => {
+            set_last_errno(e);
+            -1
+        }
     }
 }
 

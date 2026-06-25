@@ -50,6 +50,7 @@ impl VarSlot {
 pub(super) struct ExternFuncs {
     pub(super) write: cranelift_module::FuncId,
     pub(super) exit: cranelift_module::FuncId,
+    pub(super) emsg: cranelift_module::FuncId,
     pub(super) run: cranelift_module::FuncId,
     pub(super) getenv: cranelift_module::FuncId,
     #[allow(dead_code)]
@@ -149,6 +150,12 @@ pub(super) struct InstCtx<'a> {
     pub(super) ssa_id: usize,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) cl_blocks: &'a std::collections::HashMap<usize, cranelift_codegen::ir::Block>,
+    /// DD#55: true when this command is the condition of a catching
+    /// construct (last Command/Pipeline of a `Branch`-terminated block).
+    /// Distinct from `checked` (which `-` suppression also clears); used
+    /// so a redirect open(2) setup-failure is caught by `if`/`||` but
+    /// still aborts under bare/`-`.
+    pub(super) in_condition: bool,
 }
 
 /// Per-function compilation state, built during variable allocation.

@@ -11,7 +11,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
-use super::redirects::{emit_redirects, emit_restore, ir_expr_to_ssa_value};
+use super::redirects::{emit_redirects_guarded, emit_restore, ir_expr_to_ssa_value};
 use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx};
 use super::values::{atoi_call, emit_strlen, lower_value, lower_value_as_int};
 use crate::ssa::*;
@@ -548,83 +548,200 @@ pub(super) fn handle_general_command(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    let vars = &mut *ctx.vars;
-    let literals = ctx.literals;
-    let externs = ctx.externs;
-    let test_result_var = ctx.test_result_var;
-    let exit_status_var = ctx.exit_status_var;
-    let end_cl_block = ctx.end_cl_block;
-    let program = ctx.program;
-    let ssa_id = ctx.ssa_id;
+    let in_condition = ctx.in_condition;
+    let checked = *checked;
+    // DD#55: a redirect open(2) failure skips the exec (no misroute) and
+    // aborts unless caught; on success the command runs and its own exit
+    // status applies.
+    emit_redirect_guarded_body(redirects, in_condition, builder, module, ctx, |b, m, c| {
+        lower_exec(
+            name,
+            args,
+            b,
+            m,
+            c.vars,
+            c.literals,
+            c.externs,
+            c.test_result_var,
+            c.exit_status_var,
+        );
+        // DD#55 (A): implicit exit check — abort if the command's status is
+        // nonzero, unless it was caught (if/||) or suppressed (-). External
+        // command diagnostics are a separate pass; no message here yet.
+        emit_status_abort_check(
+            b,
+            m,
+            c.externs,
+            c.exit_status_var,
+            c.end_cl_block,
+            checked,
+            None,
+        );
+        emit_signal_exit_check(b, m, c);
+    });
+    false
+}
 
-    let restore = emit_redirects(
+/// DD#56: signal EXIT check point after an external command. If a trap'd
+/// signal fired, jump to the END block with status 128+signum. Flattened
+/// with early returns to keep callers under the complexity gate.
+fn emit_signal_exit_check(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    if ctx.program.exiting_signals.is_empty() {
+        return;
+    }
+    let Some(end_cl) = ctx.end_cl_block else {
+        return;
+    };
+    if ctx.program.end_block.is_some_and(|eb| ctx.ssa_id >= eb) {
+        return;
+    }
+    let signum_gv = module.declare_data_in_func(ctx.externs.signum, builder.func);
+    let signum_base = builder.ins().global_value(I64, signum_gv);
+    let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+    let zero_sig = builder.ins().iconst(I64, 0);
+    let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
+    let sig_end_block = builder.create_block();
+    let sig_cont_block = builder.create_block();
+    builder
+        .ins()
+        .brif(sig_fired, sig_end_block, &[], sig_cont_block, &[]);
+    builder.switch_to_block(sig_end_block);
+    builder.seal_block(sig_end_block);
+    // Set exit status to 128+signum (standard convention)
+    let c128 = builder.ins().iconst(I64, 128);
+    let exit_code = builder.ins().iadd(signum_val, c128);
+    builder.def_var(ctx.exit_status_var, exit_code);
+    builder.ins().jump(end_cl, &[]);
+    builder.switch_to_block(sig_cont_block);
+    builder.seal_block(sig_cont_block);
+}
+
+/// DD#55 abort diagnostic segments (already-lowered `(ptr,len)` Values),
+/// rendered by `sash_emsg` as `<argv0>: <seg1>[: <seg2>]: <reason>`.
+pub(super) struct AbortMsg {
+    pub(super) seg1_ptr: cranelift_codegen::ir::Value,
+    pub(super) seg1_len: cranelift_codegen::ir::Value,
+    pub(super) seg2_ptr: cranelift_codegen::ir::Value,
+    pub(super) seg2_len: cranelift_codegen::ir::Value,
+}
+
+/// Materialize a pre-interned static diagnostic segment ("cd",
+/// "echo: write error") as `(ptr, len)` Values. The string must have been
+/// interned at setup (see the build-literals pre-intern list).
+pub(super) fn diag_static_seg(
+    s: &str,
+    literals: &std::collections::HashMap<String, cranelift_module::DataId>,
+    module: &mut ObjectModule,
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let id = literals
+        .get(s)
+        .copied()
+        .expect("diagnostic segment must be interned at setup");
+    let gv = module.declare_data_in_func(id, builder.func);
+    let ptr = builder.ins().global_value(I64, gv);
+    let len = builder.ins().iconst(I64, s.len() as i64);
+    (ptr, len)
+}
+
+/// An empty diagnostic segment (null ptr / 0 len → skipped by sash_emsg).
+pub(super) fn diag_empty_seg(
+    builder: &mut FunctionBuilder,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let z = builder.ins().iconst(I64, 0);
+    (z, z)
+}
+
+/// DD#55 redirect open(2) guard. Applies `redirects`; if a file `open(2)`
+/// setup-failure is surfaced, skips `body` (no misroute), sets a failure
+/// status, and aborts — emitting `<argv0>: <path>: <reason>` — unless
+/// `in_condition` (if/||), where the failed status flows to the condition
+/// instead. On success runs `body` then restores the saved fds. The
+/// `body` emits the actual command (echo write / exec) and its own status
+/// and abort handling.
+pub(super) fn emit_redirect_guarded_body(
+    redirects: &[crate::ir::Redirect],
+    in_condition: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+    body: impl FnOnce(&mut FunctionBuilder, &mut ObjectModule, &mut InstCtx),
+) {
+    let (saved, failure) = emit_redirects_guarded(
         redirects,
         builder,
         module,
-        externs,
-        literals,
-        vars,
-        Some(exit_status_var),
+        ctx.externs,
+        ctx.literals,
+        ctx.vars,
     );
-    lower_exec(
-        name,
-        args,
-        builder,
-        module,
-        vars,
-        literals,
-        externs,
-        test_result_var,
-        exit_status_var,
-    );
-    emit_restore(restore, builder, module, externs);
+    let Some(rf) = failure else {
+        body(builder, module, ctx);
+        emit_restore(saved, builder, module, ctx.externs);
+        return;
+    };
 
-    // DD#55 (A): implicit exit check — abort if the command's status is
-    // nonzero, unless it was caught (if/||) or suppressed (-).
-    emit_status_abort_check(
-        builder,
-        module,
-        externs,
-        exit_status_var,
-        end_cl_block,
-        *checked,
-    );
+    let fail_block = builder.create_block();
+    let ok_block = builder.create_block();
+    let merge_block = builder.create_block();
+    builder
+        .ins()
+        .brif(rf.failed, fail_block, &[], ok_block, &[]);
 
-    // DD#56: signal EXIT check point after external command
-    if !program.exiting_signals.is_empty() {
-        if let Some(end_cl) = end_cl_block {
-            if program.end_block.is_none_or(|eb| ssa_id < eb) {
-                let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
-                let signum_base = builder.ins().global_value(I64, signum_gv);
-                let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-                let zero_sig = builder.ins().iconst(I64, 0);
-                let sig_fired = builder.ins().icmp(IntCC::NotEqual, signum_val, zero_sig);
-                let sig_end_block = builder.create_block();
-                let sig_cont_block = builder.create_block();
-                builder
-                    .ins()
-                    .brif(sig_fired, sig_end_block, &[], sig_cont_block, &[]);
-                builder.switch_to_block(sig_end_block);
-                builder.seal_block(sig_end_block);
-                // Set exit status to 128+signum (standard convention)
-                let c128 = builder.ins().iconst(I64, 128);
-                let exit_code = builder.ins().iadd(signum_val, c128);
-                builder.def_var(exit_status_var, exit_code);
-                builder.ins().jump(end_cl, &[]);
-                builder.switch_to_block(sig_cont_block);
-                builder.seal_block(sig_cont_block);
-            }
+    // Fail path: the command could not set up its redirect (no misroute —
+    // the body never runs). Status is failure.
+    builder.switch_to_block(fail_block);
+    builder.seal_block(fail_block);
+    let one = builder.ins().iconst(I64, 1);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(ctx.exit_status_var, one);
+    builder.def_var(ctx.test_result_var, zero);
+    emit_restore(saved.clone(), builder, module, ctx.externs);
+    if in_condition {
+        // Caught by if/|| — the failure decides the branch; do not abort.
+        builder.ins().jump(merge_block, &[]);
+    } else {
+        // DD#55: `<argv0>: <path>: <reason>` then abort.
+        let emsg_ref = module.declare_func_in_func(ctx.externs.emsg, builder.func);
+        let z = builder.ins().iconst(I64, 0);
+        builder
+            .ins()
+            .call(emsg_ref, &[rf.path_ptr, rf.path_len, z, z]);
+        if let Some(end_cl) = ctx.end_cl_block {
+            builder.def_var(ctx.exit_status_var, one);
+            builder.ins().jump(end_cl, &[]);
+        } else {
+            let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
+            builder.ins().call(exit_ref, &[one]);
+            builder
+                .ins()
+                .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
         }
     }
-    false
+
+    // Ok path: open succeeded — run the command body normally.
+    builder.switch_to_block(ok_block);
+    builder.seal_block(ok_block);
+    body(builder, module, ctx);
+    emit_restore(saved, builder, module, ctx.externs);
+    builder.ins().jump(merge_block, &[]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
 }
 
 /// DD#55 (A)-channel: emit the implicit exit check. When `abort` is true
 /// (the command was neither caught by `if`/`||` nor suppressed by `-`),
 /// branch on `exit_status_var != 0` to either the EXIT/END block (DD#56,
-/// runs traps) or a direct `sash_exit(status)`. Shared by external
-/// commands and internal syscall-wrapping builtins (cd, …) so they abort
-/// uniformly on failure.
+/// runs traps) or a direct `sash_exit(status)`. When `msg` is provided,
+/// a `sash_emsg` diagnostic is written to stderr first (so caught/`-`
+/// suppressed failures, which never reach the abort block, stay silent).
+/// Shared by external commands and internal syscall-wrapping builtins
+/// (cd, echo, …) so they abort uniformly on failure.
 pub(super) fn emit_status_abort_check(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -632,6 +749,7 @@ pub(super) fn emit_status_abort_check(
     exit_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
     abort: bool,
+    msg: Option<AbortMsg>,
 ) {
     if !abort {
         return;
@@ -648,6 +766,13 @@ pub(super) fn emit_status_abort_check(
 
     builder.switch_to_block(abort_block);
     builder.seal_block(abort_block);
+    // DD#55: descriptive diagnostic to stderr, only on the actual abort.
+    if let Some(m) = msg {
+        let emsg_ref = module.declare_func_in_func(externs.emsg, builder.func);
+        builder
+            .ins()
+            .call(emsg_ref, &[m.seg1_ptr, m.seg1_len, m.seg2_ptr, m.seg2_len]);
+    }
     if let Some(end_cl) = end_cl_block {
         // DD#56: jump to END block instead of exiting directly
         builder.def_var(exit_status_var, status);
@@ -710,7 +835,15 @@ pub(super) fn handle_cd(
     let tr = builder.ins().uextend(I64, success);
     builder.def_var(ctx.test_result_var, tr);
     // DD#55 (A): a failed chdir is a failed syscall — bare cd aborts;
-    // caught (if/||) or suppressed (-) cd does not.
+    // caught (if/||) or suppressed (-) cd does not. Diagnostic on abort:
+    // `<argv0>: cd: <path>: <reason>`.
+    let (s1p, s1l) = diag_static_seg("cd", ctx.literals, module, builder);
+    let msg = AbortMsg {
+        seg1_ptr: s1p,
+        seg1_len: s1l,
+        seg2_ptr: ptr,
+        seg2_len: len,
+    };
     emit_status_abort_check(
         builder,
         module,
@@ -718,6 +851,7 @@ pub(super) fn handle_cd(
         ctx.exit_status_var,
         ctx.end_cl_block,
         checked,
+        Some(msg),
     );
     false
 }

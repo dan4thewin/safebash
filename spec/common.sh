@@ -73,7 +73,7 @@ tally() {
 #   janet  — sash --janet writes Janet to stdout; pipe to janet
 #   c      — sash --emit-c writes C to stdout; gcc -static + libsash_rt.a
 run_sash() {
-    rc=-1 out="" err=""
+    rc=-1 out="" err="" rerr=""
     local src=$1; shift
     case $SASH_MODE in
         native) _run_sash_native "$src" "$@" ;;
@@ -88,9 +88,12 @@ _run_sash_native() {
     sash -c "$src" -o ./test_bin 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
-        out=$(./test_bin "$@" 2>/dev/null)
+        # Capture runtime stderr separately (rerr) so abort diagnostics
+        # (DD#55) can be asserted; err stays for compile diagnostics.
+        out=$(./test_bin "$@" 2>rt.err)
         rc=$?
-        rm -f ./test_bin
+        rerr=$(cat rt.err 2>/dev/null)
+        rm -f ./test_bin rt.err
         err=""
     else
         out=""
