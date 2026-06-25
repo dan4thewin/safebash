@@ -12,6 +12,34 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-25 — DD#55 W3: syscall aborts + stderr diagnostics
+
+- **cd / echo / redirect-open now participate in the DD#55 (A)-channel**
+  (native; commits `8a40ddc`, `f9d833b`). Three bugs fixed: `cd` never
+  set test_result/aborted (`if cd /tmp` took else; failed cd continued);
+  `echo` ignored `write(2)` failures ("echo always succeeds"); a failed
+  redirect `open(2)` **silently misrouted** output to fd 1.
+- **Redirect model (DG):** `> file` is the implicit `exec N>file` that
+  runs FIRST; a failed open makes the command fail without writing (no
+  misroute), aborting unless in a condition (if/||). `-` binds to the
+  command, not the open, so `- echo > /bad` aborts. `in_condition` derived
+  at the emit site from the Branch terminator — **no new IR bit**. Fixed
+  for echo and external commands.
+- **Descriptive diagnostics (DG: all abort cases):** every abort prints
+  `<argv0>: <context>: <reason>` to stderr, prefixed with the program name
+  (argv[0]). `<reason>` = OS strerror via a hand-rolled no_std errno table
+  (`sash_emsg`, `sash_last_errno`, `errno_str`). Fires only on the actual
+  abort; caught/`-`-suppressed stay silent. This pass = cd/redirect/echo
+  (errno cases).
+- **Error model ratified:** (A) runtime abort-if-unchecked for real
+  failures (`-` suppresses the verdict); (B) compile-time must-consume for
+  pure logical results (`match`/`[[ ]]`/`-> int`; SB4016 already enforces).
+- **Harness:** native runner now captures runtime stderr into `rerr`.
+  Spec `errors.sh` 55.20-30 (native only). Native 0 failing; c=58/janet=106.
+- **Deferred (filed):** `abort-diagnostics-remaining.md` (external/pipeline/
+  cmdsub/bg/overflow messages), `c-janet-dd55-abort-channel.md` (C/janet
+  lack the whole (A)-channel — un-guard 55.20-30 cross-mode after).
+
 ### Session 2026-06-21 (cont.) — dd67 sugar, DD#23 resolution, native green
 
 - **Native spec suite is GREEN (0 failing).** cf.c7/cf.c8 rewritten to the
