@@ -42,16 +42,35 @@ runtime can "fail" at. Members:
 
 - **`match SUBJECT PATTERN`** as a boolean command (DD#63).
 - **`[[ … ]]` tests** / comparisons (DD#62).
-- **`-> int` function return values** (DD#55: a bare call of a non-void
-  function is SB4016; a return-0-only `-> int` function is SB4017).
+- **`-> int` function return values** (DD#55).
 
-A (B) result that is produced and then **discarded is a compile error**.
-There is **no synthetic `$?`** for a (B) result, so there is nothing to
-"abort" at run time — a *false* boolean is not a *failure*.
+**A boolean (or any (B) result) must be consumed — enforced by the
+compiler (DG, 2026-06-25).** Producing a (B) result and then **discarding
+it is a compile error**, uniformly: a bare `match S P`, a bare `[[ … ]]`,
+and a bare `-> int` call are all errors. There is **no synthetic `$?`**
+for a (B) result, so there is nothing to "abort" at run time — a *false*
+boolean is not a *failure*; the language simply makes you say what the
+result means.
+
+This resolves the bare-`[[ … ]]` question: a bare test is **not** an
+allowed assertion that aborts on false (that would be the (A) reading) —
+it is a must-consume compile error. Consume it (`if [[ … ]]`,
+`[[ … ]] || …`) or, if you truly don't care, `[[ … ]] || :`.
+
+Enforcement codes — **kept adjacent to the existing ignored-return family**
+(SB4016 = bare non-void `-> int` call, SB4017 = return-0-only `-> int`):
+- **SB4018** — a (B) boolean result is produced and discarded (bare
+  `match` / bare `[[ … ]]`).
+- **SB4019** — `-` applied to a (B) construct (a must-consume result has
+  no runtime verdict to suppress).
+
+(SB4018/SB4019 are the proposed adjacent numbers; the constraint is that
+the "ignored result/value" diagnostics stay together in the SB401x band.
+The `$?`-staleness diagnostic SB5012 — reading a stale *status* — is a
+separate concern and stays in the 50xx validator band.)
 
 Levers:
-- **No `-` suppression.** `-` is meaningless on a (B) construct (there is
-  no runtime verdict to throw away).
+- **No `-` suppression** (→ SB4019). `-` is meaningless on a (B) construct.
 - To genuinely ignore a (B) result, **consume it explicitly**: `cmd || :`
   (`:` is the no-op), or handle it with `if` / `||`.
 
@@ -86,8 +105,9 @@ open's `-1` being discarded, leaving fd 1 = stdout). Consequences:
 ## Diagnostic contract
 
 Every (A) abort writes one line to **stderr**, prefixed with the
-program's own name (`argv[0]` — *not* a fixed `sash:`), then exits with
-the failure status:
+program's own name — the **verbatim `argv[0]`** as invoked (DG: not a
+basename, *not* a fixed `sash:` — e.g. `./prog` prints `./prog: …`), then
+exits with the failure status:
 
 ```
 <argv0>: <context>: <reason>
@@ -119,8 +139,11 @@ silent.
 - **DD#56** — on abort with a trap set, the runtime routes through the
   END block (traps run) rather than exiting directly; the diagnostic is
   written before that jump.
-- **SB4016 / SB4017** — the existing (B) enforcement for `-> int`
-  functions. `match`'s (B) boolean form (DD#63) extends (B) to a builtin.
+- **SB4016 / SB4017 / SB4018 / SB4019** — the "ignored result/value"
+  family (DG: keep these adjacent). SB4016 = bare non-void `-> int` call,
+  SB4017 = return-0-only `-> int`; SB4018 = discarded (B) boolean (bare
+  `match` / bare `[[ … ]]`), SB4019 = `-` on a (B) construct. Distinct
+  from SB5012 (`$?`-staleness — reading a stale *status*, 50xx band).
 
 ## Implementation status (2026-06-25)
 

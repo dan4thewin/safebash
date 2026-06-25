@@ -22,8 +22,9 @@ tested; this task fills the gaps and consolidates the contract.
   not. See `abort-diagnostics-remaining.md`.
 - **(B) done**: `-> int` functions (SB4016 bare call, SB4017 return-0-only;
   spec 55.13/55.14).
-- **(B) pending**: `match` as a boolean command (DD#63 increment); the
-  `-`-on-(B) compile error; the bare-`[[ ]]` disposition (open question).
+- **(B) pending**: `match` as a boolean command (DD#63 increment); bare
+  boolean / bare `[[ … ]]` discarded → SB4018; `-` on a (B) construct →
+  SB4019.
 
 ## Candidate spec tests (spec/errors.sh, native unless noted)
 
@@ -45,28 +46,32 @@ Legend: [✓]=passing today  [~]=abort works, diagnostic pending  [ ]=new.
 - [~] A.ovf.diag   `int x=MAX;(( x+=1 ));echo $x`     → rc!=0 + `*: arithmetic overflow`  (25.x abort ✓)
 - [ ] A.regcomp    dynamic bad pattern (e.g. `match $s "$(getenv RE)"` w/ bad RE) → rc!=0 + `*: regexp error: …`
 
-### (B) must-consume
+### (B) must-consume  (booleans must be consumed — compiler-enforced, DG)
 
-- [ ] B.match.bare `match abc abc` (bare statement)  → COMPILE error (result discarded; new SBxxxx)
+- [ ] B.match.bare `match abc abc` (bare statement)  → COMPILE error SB4018 (boolean discarded)
+- [ ] B.test.bare  `[[ a = a ]]` (bare statement)    → COMPILE error SB4018 (boolean discarded)
 - [ ] B.match.if   `if match abc abc; then y; else n`→ rc=0, out=y (consumed)
 - [ ] B.match.or   `match abc zzz || echo miss`      → rc=0, out=miss (consumed)
 - [ ] B.match.and  `match abc abc && echo hit`       → rc=0, out=hit (consumed)
 - [ ] B.match.disc `match abc abc || :`              → rc=0, no output (explicit discard)
-- [ ] B.match.dash `- match abc abc`                 → COMPILE error (`-` meaningless on a (B) result)
+- [ ] B.test.disc  `[[ a = a ]] || :`                → rc=0, no output (explicit discard)
+- [ ] B.match.dash `- match abc abc`                 → COMPILE error SB4019 (`-` on a (B) construct)
 - [✓] B.fn.bare    bare call of `-> int` fn          → SB4016 (55.13)
 - [✓] B.fn.zero    return-0-only `-> int` fn         → SB4017 (55.14)
 - [ ] B.fn.disc    `f || :` for `-> int f`           → rc=0 (explicit discard consumes the return)
 
-## Open design questions (need DG)
+## Resolved (DG, 2026-06-25)
 
-1. **Bare `[[ … ]]` disposition.** A bare `[[ x = y ]]` produces a (B)
-   boolean that is discarded. Is that a compile error (must-consume), or
-   is a bare test an allowed assertion (DD#55 implicit exit check — a
-   false test aborts)? These conflict; DG decides which.
-2. **SB code + wording** for "(B) result discarded" on `match` (bare) and
-   for "`-` on a (B) construct". Reuse SB4016's family or a new code?
-3. **`<argv0>` form** — verbatim argv[0] (`./test_bin`) vs basename
-   (`test_bin`). W3 ships verbatim; confirm.
+1. **Bare `[[ … ]]` / any boolean → must-consume compile error** (SB4018).
+   A boolean must be consumed; enforced by the compiler. A bare test is
+   NOT an allowed false→abort assertion. Consume with `if`/`||`, or
+   discard explicitly with `[[ … ]] || :`.
+2. **Error codes adjacent to the ignored-return family.** SB4018 =
+   discarded (B) boolean (bare `match` / bare `[[ … ]]`); SB4019 = `-` on
+   a (B) construct. Kept in the SB401x band next to SB4016/SB4017. (SB5012
+   `$?`-staleness is a separate, status-read concern in the 50xx band.)
+3. **`<argv0>` = verbatim argv[0]** (`./test_bin`), not basename. W3 ships
+   this; confirmed.
 
 ## Notes
 
