@@ -11,15 +11,19 @@ gates:
   - "[DONE] new spec cases: runtime fn-arg overflow for +, -, * each trap; itoa(MIN) echoes (25.4-25.8)"
   - "[DONE] DD#25 frontmatter/implementation note corrected"
   - "[DONE] native spec 0-failing; c/janet baseline held"
-  - "[OPEN] Pow (saturates), Shl (>=64), unary Neg (i64::MIN), Div (MIN/-1) — overflow-capable, not yet trap-with-message"
+  - "[DONE 2026-06-26b] Pow (was saturate→now traps); Div i64::MIN/-1 (was SIGFPE→now clean trap), native+c. Neg already traps (0-x→ssub_overflow); Mod MIN/-1 = 0 (srem, correct)."
+  - "[OPEN] Shl (left-shift) overflow — blocked on `bug-arith-left-shift-heredoc` (`<<` mis-lexed as heredoc, can't reach the op)"
   - "[OPEN/DECISION] const-fold overflow: runtime trap (chosen) vs compile-time error — DG to ratify"
+  - "[SPLIT OFF] out-of-range integer *literal* → 0 — see `bug-arith-literal-out-of-range`"
 ---
 
 # BUG — runtime integer overflow silently wraps (DD#25 violation)
 
-**Status 2026-06-26: +, -, * FIXED on native + C** (commit pending). itoa
-i64::MIN FIXED. See `notes/journal/120`. Remaining: the other overflow-
-capable ops (Pow/Shl/Neg/Div) and the const-fold-policy ratification.
+**Status 2026-06-26: +, -, *, Pow, Div, Neg FIXED on native + C.** Mod
+MIN/-1 is correctly 0 (no trap needed). itoa i64::MIN fixed. Remaining:
+Shl (blocked on the `<<` heredoc bug) and the const-fold-policy
+ratification. See journals 120 & 122.
+
 
 
 

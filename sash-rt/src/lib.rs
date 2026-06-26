@@ -2006,7 +2006,8 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
 }
 
 /// Integer power: base ** exp with checked_mul for overflow detection.
-/// Returns base^exp. On overflow, returns i64::MAX (saturating).
+/// On overflow, traps (DD#25) — `sash_arith_overflow`. Negative exponent
+/// → 0 in integer math.
 #[unsafe(no_mangle)]
 pub extern "C" fn sash_pow(base: i64, exp: i64) -> i64 {
     if exp < 0 {
@@ -2019,7 +2020,7 @@ pub extern "C" fn sash_pow(base: i64, exp: i64) -> i64 {
     for _ in 0..exp {
         match result.checked_mul(base) {
             Some(v) => result = v,
-            None => return i64::MAX, // overflow → saturate
+            None => sash_arith_overflow(), // DD#25: overflow traps, not saturates
         }
     }
     result

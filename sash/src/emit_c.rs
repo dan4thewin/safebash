@@ -863,6 +863,7 @@ fn emit_checked_arith_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> Stri
 /// dispatch must happen-before the consumer reads the result.
 fn emit_div_or_mod_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
     let t = e.fresh();
+    let is_div = matches!(op, ArithOp::Div);
     writeln!(e.out, "    i64 {t}_l = ({});", lhs, t = t).unwrap();
     writeln!(e.out, "    i64 {t}_r = ({});", rhs, t = t).unwrap();
     writeln!(e.out, "    i64 {t}_v;", t = t).unwrap();
@@ -874,8 +875,23 @@ fn emit_div_or_mod_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String 
     .unwrap();
     writeln!(e.out, "        __exit_status = 1;").unwrap();
     writeln!(e.out, "        {}_v = 0;", t).unwrap();
+    // DD#25: INT64_MIN / -1 overflows; in C both `/` and `%` lower to idiv,
+    // which #DEs (SIGFPE) for that case. Div traps (sash_arith_overflow);
+    // Mod's true result is 0 (matching native srem).
+    // bug-runtime-arith-overflow-wraps.
+    writeln!(
+        e.out,
+        "    }} else if ({t}_l == (-9223372036854775807L - 1) && {t}_r == -1) {{",
+        t = t
+    )
+    .unwrap();
+    if is_div {
+        writeln!(e.out, "        sash_arith_overflow();").unwrap();
+    } else {
+        writeln!(e.out, "        {}_v = 0;", t).unwrap();
+    }
     writeln!(e.out, "    }} else {{").unwrap();
-    let c_op = if matches!(op, ArithOp::Div) { "/" } else { "%" };
+    let c_op = if is_div { "/" } else { "%" };
     writeln!(e.out, "        {t}_v = {t}_l {} {t}_r;", c_op, t = t).unwrap();
     writeln!(e.out, "    }}").unwrap();
     format!("{}_v", t)

@@ -12,6 +12,17 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-26 (unattended, round 2) — DD#25 overflow sweep: Pow + Div
+
+Continued the DD#25 overflow work. Probed the remaining overflow-capable
+ops: **Pow** saturated silently (→ now traps), **Div** `MIN/-1` SIGFPE
+core-dumped (→ now clean trap); **Neg** already traps (`0-x`→ssub_overflow)
+and **Mod** `MIN%-1`=0 (srem, correct) — no fix needed. Fixes: `sash_pow`
+calls `sash_arith_overflow`; native+C div guard `MIN/-1`. spec 25.9–25.12;
+native 0-failing (531); c=58/janet=106 unchanged. Shl still blocked on the
+`<<` heredoc bug. Filed `bug-arith-literal-out-of-range` (out-of-range
+literal → 0). Journal 122.
+
 ### Session 2026-06-26 (unattended) — P0 bug: compound-assigns other than += were no-ops
 
 Found while verifying the overflow fix. `(( x OP= N ))` for OP ∈

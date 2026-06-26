@@ -130,6 +130,30 @@ fn emit_div_or_mod_with_zero_check(
     builder.switch_to_block(safe_block);
     builder.seal_block(safe_block);
     let result = if matches!(op, ArithOp::Div) {
+        // DD#25: i64::MIN / -1 overflows (and SIGFPEs on x86). Trap it
+        // cleanly via sash_arith_overflow before the sdiv.
+        // bug-runtime-arith-overflow-wraps.
+        let min = builder.ins().iconst(I64, i64::MIN);
+        let neg_one = builder.ins().iconst(I64, -1);
+        let lhs_is_min = builder.ins().icmp(IntCC::Equal, lhs, min);
+        let rhs_is_neg_one = builder.ins().icmp(IntCC::Equal, rhs, neg_one);
+        let is_overflow = builder.ins().band(lhs_is_min, rhs_is_neg_one);
+        let ovf_block = builder.create_block();
+        let div_ok_block = builder.create_block();
+        builder
+            .ins()
+            .brif(is_overflow, ovf_block, &[], div_ok_block, &[]);
+
+        builder.switch_to_block(ovf_block);
+        builder.seal_block(ovf_block);
+        let ovf_ref = module.declare_func_in_func(externs.arith_overflow, builder.func);
+        builder.ins().call(ovf_ref, &[]);
+        builder
+            .ins()
+            .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+        builder.switch_to_block(div_ok_block);
+        builder.seal_block(div_ok_block);
         builder.ins().sdiv(lhs, rhs)
     } else {
         builder.ins().srem(lhs, rhs)

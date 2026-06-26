@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=36
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -140,9 +140,28 @@ sub -9000000000000000000 1000000000000000000'
     # 25.7 i64::MIN echoes correctly — itoa must not panic on negation
     run_sash 'int x=-9223372036854775808; echo $x'
     [[ $rc = 0 && $out = "-9223372036854775808" ]]; chk 25.7
+
+    # 25.9 Pow overflow traps (was: saturated to i64::MAX silently)
+    run_sash 'fn p { int a=$(($1)); int b=$(($2)); (( c = a ** b )); echo $c; }
+p 2 70'
+    [[ $rc != 0 && -z $out ]]; chk 25.9
+
+    # 25.10 Div i64::MIN / -1 traps cleanly (was: SIGFPE core dump, rc 136).
+    # Assert the clean trap exit (sash_arith_overflow exits 2), not a crash.
+    run_sash 'int x=-9223372036854775808; int y=-1; (( c = x / y )); echo $c'
+    [[ $rc = 2 && -z $out ]]; chk 25.10
+
+    # 25.11 unary Neg of i64::MIN traps (regression: -x → 0 - x → ssub_overflow)
+    run_sash 'int x=-9223372036854775808; (( c = -x )); echo $c'
+    [[ $rc != 0 && -z $out ]]; chk 25.11
+
+    # 25.12 Mod i64::MIN % -1 is 0 (NOT an overflow — srem doesn't trap)
+    run_sash 'int x=-9223372036854775808; int y=-1; (( c = x % y )); echo $c'
+    [[ $rc = 0 && $out = "0" ]]; chk 25.12
 else
     skip_chk 25.2; skip_chk 25.3; skip_chk 25.4
     skip_chk 25.5; skip_chk 25.6; skip_chk 25.7
+    skip_chk 25.9; skip_chk 25.10; skip_chk 25.11; skip_chk 25.12
 fi
 
 # 25.8 native-only: overflow prints `<argv0>: arithmetic overflow` to stderr
