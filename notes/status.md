@@ -12,6 +12,19 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-26 (unattended) — P0 bug: compound-assigns other than += were no-ops
+
+Found while verifying the overflow fix. `(( x OP= N ))` for OP ∈
+{−,*,/,%,&,|,^} was a **no-op** (only `+=` worked) — pre-existing,
+spec-uncovered. Root cause: the shell lexer splits `-=`/etc. into `- =`
+(no arith context; `+=` is a single `PlusAssign` token), and
+`needs_separator_space` inserted a space that the arith byte-lexer then
+mis-read as `x - 0` (a comparison, no write-back). The `<=`/`>=`
+special-case existed but didn't cover the compound-assign operator chars.
+Fix: extend it to `- * / % & | ^` (parse/arith.rs). spec 31.1d–31.1i;
+native 0-failing; zero regressions. `<<=`/`<<` left-shift still broken
+(heredoc-vs-shift, `bug-arith-left-shift-heredoc`). Journal 121.
+
 ### Session 2026-06-26 (unattended) — P0 bug: runtime overflow silently wrapped
 
 Started `abort-diagnostics-remaining`; its DD#25 overflow gate exposed a

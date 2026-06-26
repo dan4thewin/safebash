@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=30
+plan=36
 echo "1..$plan" >&3
 
 set +e
@@ -14,6 +14,30 @@ run_sash 'int x=0; (( x = 5 )); echo $x'
 
 run_sash 'int x=5; (( x += 3 )); echo $x'
 [[ $rc = 0 && $out = "8" && -z $err ]]; chk 31.1b
+
+# 31.1d-h compound-assign ops other than += (regression:
+# bug-compound-assign-non-plus — the shell lexer split `-=`/`*=`/`/=`/`%=`
+# into `- =` etc., so they parsed as a comparison `(op x 0)` and never
+# wrote back; only += worked). All operands must apply and write back.
+run_sash 'int x=12; (( x -= 3 )); echo $x'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 31.1d
+
+run_sash 'int x=12; (( x *= 3 )); echo $x'
+[[ $rc = 0 && $out = "36" && -z $err ]]; chk 31.1e
+
+run_sash 'int x=12; (( x /= 4 )); echo $x'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 31.1f
+
+run_sash 'int x=13; (( x %= 5 )); echo $x'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 31.1g
+
+# bitwise compound-assigns + chaining
+run_sash 'int x=12; (( x &= 10 )); (( x |= 1 )); (( x ^= 2 )); echo $x'
+[[ $rc = 0 && $out = "11" && -z $err ]]; chk 31.1h
+
+# 31.1i chained mixed compound-assigns (was: only the first += survived)
+run_sash 'int x=10; (( x += 5 )); (( x -= 3 )); (( x *= 2 )); echo $x'
+[[ $rc = 0 && $out = "24" && -z $err ]]; chk 31.1i
 
 run_sash 'int x=5; (( x++ )); echo $x'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.1c
