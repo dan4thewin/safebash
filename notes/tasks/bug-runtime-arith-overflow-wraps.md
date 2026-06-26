@@ -12,7 +12,7 @@ gates:
   - "[DONE] DD#25 frontmatter/implementation note corrected"
   - "[DONE] native spec 0-failing; c/janet baseline held"
   - "[DONE 2026-06-26b] Pow (was saturate→now traps); Div i64::MIN/-1 (was SIGFPE→now clean trap), native+c. Neg already traps (0-x→ssub_overflow); Mod MIN/-1 = 0 (srem, correct)."
-  - "[OPEN] Shl (left-shift) overflow — blocked on `bug-arith-left-shift-heredoc` (`<<` mis-lexed as heredoc, can't reach the op)"
+  - "[OPEN/DECISION] Shl left-shift: the `<<` lexing bug is FIXED (bug-arith-left-shift-heredoc, 2026-06-26), so `1 << 63` now evaluates. Whether left-shift *overflow* (into/past the sign bit, or shift ≥ 64) should TRAP is a DG decision — shift overflow semantics are murkier than +,-,*. Not acted on."
   - "[OPEN/DECISION] const-fold overflow: runtime trap (chosen) vs compile-time error — DG to ratify"
   - "[SPLIT OFF] out-of-range integer *literal* → 0 — see `bug-arith-literal-out-of-range`"
 ---

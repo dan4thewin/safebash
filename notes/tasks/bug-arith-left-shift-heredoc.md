@@ -1,19 +1,30 @@
 ---
 title: "BUG — left-shift `<<` in `(( ))` is mis-lexed (heredoc), gives wrong result; `<<=` no-op"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "`int x=3; (( y = x << 2 )); echo $y` → 12 (currently 3)"
-  - "`int x=12; (( x <<= 2 )); echo $x` → 48 (currently no-op, 12)"
-  - "native + c + janet"
+  - "[DONE] `int x=3; (( y = x << 2 )); echo $y` → 12"
+  - "[DONE] `int x=3; (( x <<= 2 )); echo $x` → 12"
+  - "[DONE] native + c + janet (spec 31.1j-m)"
 ---
 
-# BUG — `<<` / `<<=` in arithmetic mis-lexed via heredoc
+# BUG — `<<` / `<<=` in arithmetic mis-lexed via heredoc  [FIXED 2026-06-26]
 
-Found 2026-06-26 alongside `bug-compound-assign-non-plus`. Pre-existing
-(reproduces with that fix stashed).
+**Fixed** (journal 123). Root cause confirmed: `scan_lt` (lexer.rs)
+tokenized `<<` as a heredoc sentinel (`__HEREDOC__`) regardless of
+context, so the arith content collector saw `x __HEREDOC__ 2`. The arith
+re-lexer already supported `<<`/`<<=` → Shl; the fix was purely to stop
+the shell scanner from mangling `<<` inside arith.
+
+Fix: added `Scanner.arith_depth` (set by `collect_arith_content` around
+its pull loop); `scan_lt` emits a verbatim `Word("<<")` when
+`arith_depth > 0` instead of the heredoc sentinel. `tok_to_text(Word)`
+round-trips it, and `needs_separator_space`'s `<op>=` rule recombines
+`<<=`. Heredoc rejection outside arith, `>>`, `<=`/`>=`, and redirects are
+all unaffected (verified; zero spec regressions).
+
 
 ## Repro
 

@@ -168,6 +168,10 @@ pub struct Scanner {
     peeked: Vec<SpannedToken>,
     /// Position after last consumed token (for adjacency checking)
     last_end: usize,
+    /// Nonzero while scanning the body of `(( ))` / `$(( ))`. In this mode
+    /// `<<` is the left-shift operator, not a heredoc
+    /// (bug-arith-left-shift-heredoc).
+    arith_depth: usize,
 }
 
 impl Scanner {
@@ -177,7 +181,19 @@ impl Scanner {
             pos: 0,
             peeked: Vec::new(),
             last_end: 0,
+            arith_depth: 0,
         }
+    }
+
+    /// Enter arithmetic-scanning mode (`(( … ))` body). Must be paired with
+    /// [`exit_arith`]. While active, `<<` lexes as left-shift, not heredoc.
+    pub fn enter_arith(&mut self) {
+        self.arith_depth += 1;
+    }
+
+    /// Leave arithmetic-scanning mode (see [`enter_arith`]).
+    pub fn exit_arith(&mut self) {
+        self.arith_depth = self.arith_depth.saturating_sub(1);
     }
 
     /// Compute (line, col) from byte offset. Both 1-based.
@@ -358,19 +374,15 @@ impl Scanner {
         let token = if self.starts_with(b"<<<") {
             self.pos += 3;
             Tok::HereString
-        } else if self.starts_with(b"<<") {
-            // Heredocs are not supported in sash. Skip to end of
-            // delimiter word so we emit one sentinel for the validator.
+        } else if self.arith_depth > 0 && self.starts_with(b"<<") {
+            // Inside `(( ))` / `$(( ))`, `<<` is the left-shift operator,
+            // not a heredoc (the scanner has no arith context otherwise).
+            // Emit it as a verbatim word so the arith re-lexer recombines
+            // it into `<<` / `<<=` (Shl). bug-arith-left-shift-heredoc.
             self.pos += 2;
-            if self.pos < self.source.len() && self.source[self.pos] == b'-' {
-                self.pos += 1;
-            }
-            while self.pos < self.source.len()
-                && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t')
-            {
-                self.pos += 1;
-            }
-            Tok::Word("__HEREDOC__".to_string())
+            Tok::Word("<<".to_string())
+        } else if self.starts_with(b"<<") {
+            self.scan_heredoc_sentinel()
         } else if self.starts_with(b"<&") {
             self.pos += 2;
             Tok::LtAmp
@@ -388,6 +400,21 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// `<<` / `<<-` heredoc (outside arith context). Heredocs are not
+    /// supported in sash — skip to the end of the delimiter word and emit a
+    /// single `__HEREDOC__` sentinel for the validator to reject.
+    fn scan_heredoc_sentinel(&mut self) -> Tok {
+        self.pos += 2;
+        if self.pos < self.source.len() && self.source[self.pos] == b'-' {
+            self.pos += 1;
+        }
+        while self.pos < self.source.len() && !matches!(self.source[self.pos], b'\n' | b' ' | b'\t')
+        {
+            self.pos += 1;
+        }
+        Tok::Word("__HEREDOC__".to_string())
     }
 
     /// Scan `-` standalone (Dash) vs `-flag` (word).

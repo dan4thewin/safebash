@@ -948,12 +948,17 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
     let mut content = String::new();
     let mut depth = 1i32;
 
+    // Scan the body in arithmetic mode so `<<` lexes as left-shift, not a
+    // heredoc (bug-arith-left-shift-heredoc). Set before the first peek so
+    // the leading content token is tokenized in arith mode.
+    scanner.enter_arith();
     while !scanner.at_eof() {
         let tok = scanner.peek().clone();
         if step_arith_collect(scanner, &tok.token, &mut content, &mut depth) {
             break;
         }
     }
+    scanner.exit_arith();
 
     Ok(content)
 }

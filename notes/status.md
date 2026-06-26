@@ -12,6 +12,17 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-26 (unattended, round 3) — fix: `<<`/`<<=` mis-lexed as heredoc
+
+Closed `bug-arith-left-shift-heredoc` (last arith *lexing* gap). `scan_lt`
+tokenized `<<` as a heredoc sentinel regardless of context, so
+`(( x << 2 ))` / `$(( … ))` / `<<=` dropped the operator (`>>` was fine).
+Fix: `Scanner.arith_depth` (set by `collect_arith_content`); `scan_lt`
+emits `Word("<<")` in arith mode → arith re-lexer recombines to Shl, and
+the `<op>=` separator rule handles `<<=`. spec 31.1j-m; native 0-failing
+(535); zero regressions; heredoc rejection / `>>` / `<=` intact. Whether
+left-shift *overflow* should trap is left as a DG decision. Journal 123.
+
 ### Session 2026-06-26 (unattended, round 2) — DD#25 overflow sweep: Pow + Div
 
 Continued the DD#25 overflow work. Probed the remaining overflow-capable

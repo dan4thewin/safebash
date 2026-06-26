@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=40
+plan=44
 echo "1..$plan" >&3
 
 set +e
@@ -41,6 +41,22 @@ run_sash 'int x=10; (( x += 5 )); (( x -= 3 )); (( x *= 2 )); echo $x'
 
 run_sash 'int x=5; (( x++ )); echo $x'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.1c
+
+# 31.1j-l left-shift `<<` / `<<=` (regression: the shell lexer scanned
+# `<<` as a heredoc sentinel, so `x << n` lost the operator and gave the
+# wrong result; `>>` was unaffected). bug-arith-left-shift-heredoc.
+run_sash 'int x=3; (( y = x << 2 )); echo $y'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 31.1j
+
+run_sash 'int x=3; echo $(( x << 4 ))'
+[[ $rc = 0 && $out = "48" && -z $err ]]; chk 31.1k
+
+run_sash 'int x=3; (( x <<= 2 )); echo $x'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 31.1l
+
+# 31.1m `>>` right-shift unaffected (regression guard)
+run_sash 'int x=48; (( x >>= 2 )); echo $x'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 31.1m
 
 # 31.2 statement (( )) rejects comparisons
 run_sash 'int x=5; (( x > 0 ))'
