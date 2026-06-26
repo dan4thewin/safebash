@@ -12,6 +12,29 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-26 (unattended) — P0 bug: runtime overflow silently wrapped
+
+Started `abort-diagnostics-remaining`; its DD#25 overflow gate exposed a
+**stop-everything P0**: runtime integer overflow (+, -, *) **silently
+wrapped** (cranelift plain `iadd`/`imul`; C plain ops; const-fold
+`wrapping_*`), violating DD#25 ("traps at runtime"). Spec 25.2/25.3 only
+"passed" by accident — overflow → exactly i64::MIN → `itoa` panicked on
+`checked_neg`.
+
+Fixed (spec-first, native + C; janet bignum out of scope):
+- `sash_arith_overflow()` → `<argv0>: arithmetic overflow`, exit 2.
+- native `emit_checked_arith` (sadd/ssub/smul_overflow); C
+  `__builtin_*_overflow`; const-fold `fold_arith_op` → `Option` (defers
+  overflow to the runtime trap, decision-free).
+- `itoa_inner`/`write_i64`/`itoa_buf` use `unsigned_abs()` — i64::MIN
+  echoes correctly.
+- spec/arithmetic.sh 25.4-25.8. native **0 failing**; c=58/janet=106
+  unchanged (zero regressions). DD#25 note corrected; journal 120.
+
+Follow-up (filed in `bug-runtime-arith-overflow-wraps`): Pow saturates,
+Shl/Neg/Div overflow-capable; const-fold trap-vs-compile-error is a DG
+sub-decision. The other 5 `abort-diagnostics-remaining` gates remain open.
+
 ### Session 2026-06-25 (cont.) — DD#63 captures (out-array + backrefs)
 
 Both capture surfaces, all three backends, after DG resolved D1–D6.

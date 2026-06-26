@@ -295,7 +295,7 @@ fn try_fold_binop(l: &SsaValue, r: &SsaValue, op: ArithOp) -> Option<SsaValue> {
     };
     let lv = ls.parse::<i64>().ok()?;
     let rv = rs.parse::<i64>().ok()?;
-    Some(SsaValue::Expr(fold_arith_op(lv, rv, op).to_string()))
+    Some(SsaValue::Expr(fold_arith_op(lv, rv, op)?.to_string()))
 }
 
 fn unaryop_to_ssa(
@@ -410,38 +410,45 @@ fn ir_op_to_ssa(op: IrArithOp) -> ArithOp {
     }
 }
 
-fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> i64 {
+/// Constant-fold `int op int`. Returns `None` when the result is not a
+/// safe compile-time constant — a +,-,* overflow, or an out-of-range
+/// shift/pow — so the caller falls back to a runtime `ArithBinOp`, where
+/// the DD#25 overflow trap (for +,-,*) applies. This keeps a
+/// compile-time-known overflow from silently wrapping
+/// (bug-runtime-arith-overflow-wraps) without introducing a new
+/// compile-time error.
+fn fold_arith_op(l: i64, r: i64, op: ArithOp) -> Option<i64> {
     match op {
-        ArithOp::Add => l.wrapping_add(r),
-        ArithOp::Sub => l.wrapping_sub(r),
-        ArithOp::Mul => l.wrapping_mul(r),
+        ArithOp::Add => l.checked_add(r),
+        ArithOp::Sub => l.checked_sub(r),
+        ArithOp::Mul => l.checked_mul(r),
         ArithOp::Div => {
-            if r != 0 {
-                l / r
+            if r == 0 {
+                Some(0)
             } else {
-                0
+                l.checked_div(r)
             }
         }
         ArithOp::Mod => {
-            if r != 0 {
-                l % r
+            if r == 0 {
+                Some(0)
             } else {
-                0
+                l.checked_rem(r)
             }
         }
-        ArithOp::Eq => (l == r) as i64,
-        ArithOp::Ne => (l != r) as i64,
-        ArithOp::Lt => (l < r) as i64,
-        ArithOp::Le => (l <= r) as i64,
-        ArithOp::Gt => (l > r) as i64,
-        ArithOp::Ge => (l >= r) as i64,
-        ArithOp::And => ((l != 0) && (r != 0)) as i64,
-        ArithOp::Or => ((l != 0) || (r != 0)) as i64,
-        ArithOp::Shl => l << r,
-        ArithOp::Shr => l >> r,
-        ArithOp::BitAnd => l & r,
-        ArithOp::BitOr => l | r,
-        ArithOp::BitXor => l ^ r,
-        ArithOp::Pow => l.pow(r as u32),
+        ArithOp::Eq => Some((l == r) as i64),
+        ArithOp::Ne => Some((l != r) as i64),
+        ArithOp::Lt => Some((l < r) as i64),
+        ArithOp::Le => Some((l <= r) as i64),
+        ArithOp::Gt => Some((l > r) as i64),
+        ArithOp::Ge => Some((l >= r) as i64),
+        ArithOp::And => Some(((l != 0) && (r != 0)) as i64),
+        ArithOp::Or => Some(((l != 0) || (r != 0)) as i64),
+        ArithOp::Shl => (0..64).contains(&r).then(|| l << r),
+        ArithOp::Shr => (0..64).contains(&r).then(|| l >> r),
+        ArithOp::BitAnd => Some(l & r),
+        ArithOp::BitOr => Some(l | r),
+        ArithOp::BitXor => Some(l ^ r),
+        ArithOp::Pow => u32::try_from(r).ok().and_then(|e| l.checked_pow(e)),
     }
 }

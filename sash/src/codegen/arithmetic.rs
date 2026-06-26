@@ -24,9 +24,9 @@ pub(super) fn emit_arith_op(
         return emit_icmp_bool(cc, lhs, rhs, builder);
     }
     match op {
-        ArithOp::Add => builder.ins().iadd(lhs, rhs),
-        ArithOp::Sub => builder.ins().isub(lhs, rhs),
-        ArithOp::Mul => builder.ins().imul(lhs, rhs),
+        ArithOp::Add | ArithOp::Sub | ArithOp::Mul => {
+            emit_checked_arith(op, lhs, rhs, builder, module, externs)
+        }
         ArithOp::Div | ArithOp::Mod => {
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs, exit_status_var)
         }
@@ -58,6 +58,46 @@ fn comparison_intcc(op: ArithOp) -> Option<cranelift_codegen::ir::condcodes::Int
         ArithOp::Ge => IntCC::SignedGreaterThanOrEqual,
         _ => return None,
     })
+}
+
+/// DD#25: `+`, `-`, `*` with a runtime overflow trap (not silent
+/// wraparound). Uses Cranelift's signed-overflow instructions, which
+/// return `(result, overflow_flag)`; when the flag is set, branch to an
+/// abort block that calls `sash_arith_overflow` (writes the diagnostic and
+/// exits). bug-runtime-arith-overflow-wraps.
+fn emit_checked_arith(
+    op: ArithOp,
+    lhs: cranelift_codegen::ir::Value,
+    rhs: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+) -> cranelift_codegen::ir::Value {
+    let (result, overflow) = match op {
+        ArithOp::Add => builder.ins().sadd_overflow(lhs, rhs),
+        ArithOp::Sub => builder.ins().ssub_overflow(lhs, rhs),
+        ArithOp::Mul => builder.ins().smul_overflow(lhs, rhs),
+        _ => unreachable!("emit_checked_arith only handles Add/Sub/Mul"),
+    };
+    // `overflow` is a 1-bit flag (i8); `brif` treats any non-zero value as
+    // true, so it can gate the abort branch directly.
+    let abort_block = builder.create_block();
+    let cont_block = builder.create_block();
+    builder
+        .ins()
+        .brif(overflow, abort_block, &[], cont_block, &[]);
+
+    builder.switch_to_block(abort_block);
+    builder.seal_block(abort_block);
+    let ovf_ref = module.declare_func_in_func(externs.arith_overflow, builder.func);
+    builder.ins().call(ovf_ref, &[]);
+    builder
+        .ins()
+        .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
+
+    builder.switch_to_block(cont_block);
+    builder.seal_block(cont_block);
+    result
 }
 
 /// `lhs / rhs` or `lhs % rhs` with bash's division-by-zero semantics:

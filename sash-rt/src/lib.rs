@@ -224,6 +224,27 @@ pub extern "C" fn sash_exit(status: i64) -> ! {
     rustix::runtime::exit_group(status as i32)
 }
 
+/// DD#25: integer overflow trap. Writes `<argv0>: arithmetic overflow\n`
+/// to stderr and exits non-zero. Called from the codegen overflow-check
+/// abort blocks (native + C backends) when a runtime +, -, or * over- or
+/// underflows. bug-runtime-arith-overflow-wraps.
+#[no_mangle]
+pub extern "C" fn sash_arith_overflow() -> ! {
+    let sep: &[u8] = b": ";
+    let argv = unsafe { sash_argv };
+    if !argv.is_null() {
+        let a0 = unsafe { *argv };
+        if !a0.is_null() {
+            let l = unsafe { strlen(a0) };
+            sash_write(2, a0, l as i64);
+            sash_write(2, sep.as_ptr(), sep.len() as i64);
+        }
+    }
+    let msg: &[u8] = b"arithmetic overflow\n";
+    sash_write(2, msg.as_ptr(), msg.len() as i64);
+    sash_exit(2)
+}
+
 // ═══════════════════════════════════════════════════════════════
 // Composable process primitives (Design Decision #14)
 // ═══════════════════════════════════════════════════════════════
@@ -524,20 +545,20 @@ fn sash_panic_argv(idx: i64, argc: i64) -> ! {
 }
 
 /// Write an i64 into a byte buffer, return number of bytes written.
-fn write_i64(buf: &mut [u8], mut val: i64) -> usize {
+fn write_i64(buf: &mut [u8], val: i64) -> usize {
     if val == 0 {
         buf[0] = b'0';
         return 1;
     }
     let negative = val < 0;
-    if negative {
-        val = val.wrapping_neg();
-    }
+    // Magnitude as u64 so i64::MIN formats correctly (its i64 negation
+    // overflows). bug-runtime-arith-overflow-wraps.
+    let mut mag: u64 = val.unsigned_abs();
     let mut tmp = [0u8; 20];
     let mut i = 0;
-    while val > 0 {
-        tmp[i] = b'0' + (val % 10) as u8;
-        val /= 10;
+    while mag > 0 {
+        tmp[i] = b'0' + (mag % 10) as u8;
+        mag /= 10;
         i += 1;
     }
     let mut pos = 0;
@@ -2873,19 +2894,18 @@ pub extern "C" fn sash_glob_regex(
 }
 #[allow(dead_code)]
 
-fn itoa_buf(mut n: i64, buf: &mut [u8; 20]) -> usize {
+fn itoa_buf(n: i64, buf: &mut [u8; 20]) -> usize {
     if n == 0 {
         buf[0] = b'0';
         return 1;
     }
     let neg = n < 0;
-    if neg {
-        n = -n;
-    }
+    // Magnitude as u64 so i64::MIN is handled (its i64 negation overflows).
+    let mut mag: u64 = n.unsigned_abs();
     let mut pos = 19;
-    while n > 0 {
-        buf[pos] = b'0' + (n % 10) as u8;
-        n /= 10;
+    while mag > 0 {
+        buf[pos] = b'0' + (mag % 10) as u8;
+        mag /= 10;
         if pos == 0 {
             break;
         }

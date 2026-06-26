@@ -96,6 +96,11 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_exit(i64 status) __attribute__((noreturn));"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern void sash_arith_overflow(void) __attribute__((noreturn));"
+    )
+    .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern char* sash_itoa(i64 val, i64* out_len);").unwrap();
     writeln!(
@@ -806,9 +811,7 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
 fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
     use ArithOp::*;
     match op {
-        Add => format!("({} + {})", lhs, rhs),
-        Sub => format!("({} - {})", lhs, rhs),
-        Mul => format!("({} * {})", lhs, rhs),
+        Add | Sub | Mul => emit_checked_arith_c(e, op, lhs, rhs),
         Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
         And => format!("({} && {})", lhs, rhs),
         Or => format!("({} || {})", lhs, rhs),
@@ -825,6 +828,32 @@ fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
         Ge => format!("(({} >= {}) ? 1 : 0)", lhs, rhs),
         Pow => format!("sash_pow({}, {})", lhs, rhs),
     }
+}
+
+/// DD#25: `+`, `-`, `*` with a runtime overflow trap (not silent
+/// wraparound), mirroring native `emit_checked_arith`. Uses the C
+/// `__builtin_{add,sub,mul}_overflow` intrinsics; on overflow, calls
+/// `sash_arith_overflow` (writes the diagnostic and exits).
+/// bug-runtime-arith-overflow-wraps.
+fn emit_checked_arith_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
+    let builtin = match op {
+        ArithOp::Add => "__builtin_add_overflow",
+        ArithOp::Sub => "__builtin_sub_overflow",
+        ArithOp::Mul => "__builtin_mul_overflow",
+        _ => unreachable!("emit_checked_arith_c only handles Add/Sub/Mul"),
+    };
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_l = ({});", lhs, t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_r = ({});", rhs, t = t).unwrap();
+    writeln!(e.out, "    i64 {t}_v;", t = t).unwrap();
+    writeln!(
+        e.out,
+        "    if ({b}({t}_l, {t}_r, &{t}_v)) {{ sash_arith_overflow(); }}",
+        b = builtin,
+        t = t
+    )
+    .unwrap();
+    format!("{}_v", t)
 }
 
 /// Emit a Div or Mod operation with bash's div-by-zero semantics:

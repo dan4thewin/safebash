@@ -42,11 +42,10 @@ pub fn atoi_inner(bytes: &[u8]) -> i64 {
 
 /// Format i64 as decimal into a provided buffer. Returns the slice used.
 pub fn itoa_inner(val: i64, buf: &mut [u8; 21]) -> &[u8] {
-    let mut n = val;
-    let negative = n < 0;
-    if negative {
-        n = n.checked_neg().expect("sash: integer overflow in itoa");
-    }
+    // Magnitude as u64 so i64::MIN (whose negation overflows i64) formats
+    // correctly instead of panicking (bug-runtime-arith-overflow-wraps).
+    let negative = val < 0;
+    let mut n: u64 = val.unsigned_abs();
     let mut i = buf.len();
     if n == 0 {
         i -= 1;

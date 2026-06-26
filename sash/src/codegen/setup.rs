@@ -44,6 +44,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_emsg", Linkage::Import, &emsg_sig)
         .expect("declare sash_emsg");
 
+    // sash_arith_overflow() -> ! — DD#25 overflow trap (no params/returns).
+    let arith_overflow_sig = Signature::new(CallConv::SystemV);
+    let arith_overflow_func = module
+        .declare_function("sash_arith_overflow", Linkage::Import, &arith_overflow_sig)
+        .expect("declare sash_arith_overflow");
+
     let mut run_sig = Signature::new(CallConv::SystemV);
     run_sig.params.push(AbiParam::new(I64));
     run_sig.params.push(AbiParam::new(I64));
@@ -705,6 +711,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         write: write_func,
         exit: exit_func,
         emsg: emsg_func,
+        arith_overflow: arith_overflow_func,
         run: run_func,
         getenv: getenv_func,
         capture: capture_func,

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=25
+plan=30
 echo "1..$plan" >&3
 
 set +e
@@ -82,6 +82,12 @@ run_sash 'int x=5; (( x > 0 ))'
 # The janet backend uses float/bignum arithmetic with no i64 overflow trap; it
 # previously "passed" these only via an unrelated codegen crash. native/c are
 # the reference. See bug-janet-int-overflow.
+#
+# bug-runtime-arith-overflow-wraps: runtime (non-const) overflow must TRAP,
+# not silently wrap. 25.2/25.3 are the const path; 25.4-25.6 are the genuine
+# runtime path (fn-arg operands, not const-foldable) for *, +, -. 25.7 guards
+# the itoa(i64::MIN) fix (echo of MIN must not panic). 25.8 asserts the
+# descriptive diagnostic (native).
 
 if in_modes native,c; then
     # 25.2 overflow aborts even with - suppress prefix
@@ -91,9 +97,37 @@ if in_modes native,c; then
     # 25.3 overflow aborts with nonzero exit
     run_sash 'int x=9223372036854775807; (( x = x + 1 )); echo $x'
     [[ $rc != 0 && -z $out ]]; chk 25.3
+
+    # 25.4 runtime MUL overflow (fn-arg operands) traps — the real DD#25 case
+    run_sash 'fn mul { int a=$(($1)); int b=$(($2)); (( c = a * b )); echo $c; }
+mul 3037000500 3037000500'
+    [[ $rc != 0 && -z $out ]]; chk 25.4
+
+    # 25.5 runtime ADD overflow traps
+    run_sash 'fn add { int a=$(($1)); int b=$(($2)); (( c = a + b )); echo $c; }
+add 9000000000000000000 1000000000000000000'
+    [[ $rc != 0 && -z $out ]]; chk 25.5
+
+    # 25.6 runtime SUB overflow (underflow) traps
+    run_sash 'fn sub { int a=$(($1)); int b=$(($2)); (( c = a - b )); echo $c; }
+sub -9000000000000000000 1000000000000000000'
+    [[ $rc != 0 && -z $out ]]; chk 25.6
+
+    # 25.7 i64::MIN echoes correctly — itoa must not panic on negation
+    run_sash 'int x=-9223372036854775808; echo $x'
+    [[ $rc = 0 && $out = "-9223372036854775808" ]]; chk 25.7
 else
-    skip_chk 25.2
-    skip_chk 25.3
+    skip_chk 25.2; skip_chk 25.3; skip_chk 25.4
+    skip_chk 25.5; skip_chk 25.6; skip_chk 25.7
+fi
+
+# 25.8 native-only: overflow prints `<argv0>: arithmetic overflow` to stderr
+if in_modes native; then
+    run_sash 'fn mul { int a=$(($1)); int b=$(($2)); (( c = a * b )); echo $c; }
+mul 3037000500 3037000500'
+    [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk 25.8
+else
+    skip_chk 25.8
 fi
 
 # --- DD#31 comparison operators (regression: <= / >= were mis-lexed) ---
