@@ -24,8 +24,14 @@ aborts**: cd (chdir), redirect open(2), echo write(2). DG ratified the
 scheme `<argv0>: <context>: <reason>` with the program name (argv[0]) as
 prefix, and chose "W3 first, the other abort classes in their own pass."
 
+**Update 2026-06-26:** the **overflow gate is DONE** — but via
+`bug-runtime-arith-overflow-wraps` (it was a P0 silent-wrap bug, not just
+a missing message). `sash_arith_overflow` prints `<argv0>: arithmetic
+overflow`. The 5 status/errno gates below (external / cmdsub / pipeline /
+bg-exec / regerror9) remain open.
+
 This task is that pass: the **status-based** aborts (no errno) and the
-overflow/regcomp cases.
+regcomp case.
 
 ## Notes
 
