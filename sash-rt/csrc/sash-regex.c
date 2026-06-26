@@ -68,6 +68,118 @@ static int do_match(const char *subj, const char *pat, int print) {
     return 0;
 }
 
+/*
+ * DD#63 replacement backrefs: mirrors sash-rt's `expand_replacement`.
+ * `\0` = whole match, `\1`..`\9` = capture groups, `\\` = literal
+ * backslash. `\` + a non-digit is rejected at compile time (SB4033) so it
+ * should not reach here; defensively the two bytes are kept verbatim. A
+ * backref to a non-participating group (null span) expands to nothing.
+ * `ptrs` is the resub cast to (char**); groups point into the current
+ * match buffer. `expanded_len` computes the output size (two-pass so the
+ * caller can size the buffer), `expand_rep` writes the bytes.
+ */
+static size_t expanded_len(const char *rep, size_t rep_len, char **ptrs) {
+    size_t n = 0;
+    for (size_t i = 0; i < rep_len;) {
+        if (rep[i] == '\\' && i + 1 < rep_len) {
+            char c = rep[i + 1];
+            if (c >= '0' && c <= '9') {
+                int d = c - '0';
+                char *sp = ptrs[2 * d], *ep = ptrs[2 * d + 1];
+                if (sp) {
+                    n += (size_t)(ep - sp);
+                }
+                i += 2;
+            } else if (c == '\\') {
+                n += 1;
+                i += 2;
+            } else {
+                n += 2;
+                i += 2;
+            }
+        } else {
+            n++;
+            i++;
+        }
+    }
+    return n;
+}
+
+static size_t expand_rep(char *out, const char *rep, size_t rep_len, char **ptrs) {
+    size_t w = 0;
+    for (size_t i = 0; i < rep_len;) {
+        if (rep[i] == '\\' && i + 1 < rep_len) {
+            char c = rep[i + 1];
+            if (c >= '0' && c <= '9') {
+                int d = c - '0';
+                char *sp = ptrs[2 * d], *ep = ptrs[2 * d + 1];
+                if (sp) {
+                    size_t glen = (size_t)(ep - sp);
+                    memcpy(out + w, sp, glen);
+                    w += glen;
+                }
+                i += 2;
+            } else if (c == '\\') {
+                out[w++] = '\\';
+                i += 2;
+            } else {
+                out[w++] = rep[i];
+                out[w++] = rep[i + 1];
+                i += 2;
+            }
+        } else {
+            out[w++] = rep[i++];
+        }
+    }
+    return w;
+}
+
+/*
+ * `captures SUBJECT PATTERN` — DD#63 out-array form for the Janet backend.
+ * Prints the capture array `[whole, g1..gN]` (bash-parity: N = the
+ * pattern's group count from Reprog.nsub) to stdout, NUL-separated (a
+ * non-participating group is an empty field). Exit 0 if matched, 1 if not,
+ * 2 on invalid regex. The Janet side string/splits the NUL-separated
+ * output into the destination array.
+ */
+static int do_captures(const char *subj, const char *pat) {
+    void *prog = regcomp9(pat);
+    if (!prog) {
+        return 2;
+    }
+    /* Reprog.nsub (group count) sits just past the leading startinst ptr. */
+    int nsub = *(int *)((char *)prog + sizeof(void *));
+    int ngroups = nsub > 127 ? 127 : nsub;
+    int ms = ngroups + 1;
+
+    size_t subj_len = strlen(subj);
+    char *buf = malloc(subj_len + 1);
+    memcpy(buf, subj, subj_len);
+    buf[subj_len] = 0;
+
+    char *resub = calloc((size_t)ms, 16); /* 16 bytes/entry (sp, ep) */
+    int matched = regexec9(prog, buf, resub, ms);
+    if (matched <= 0) {
+        free(buf);
+        free(resub);
+        return 1;
+    }
+    char **ptrs = (char **)resub;
+    for (int i = 0; i <= ngroups; i++) {
+        if (i > 0) {
+            fputc('\0', stdout); /* separator between captures */
+        }
+        char *sp = ptrs[2 * i], *ep = ptrs[2 * i + 1];
+        if (sp) {
+            fwrite(sp, 1, (size_t)(ep - sp), stdout);
+        }
+        /* null sp → non-participating group → empty field */
+    }
+    free(buf);
+    free(resub);
+    return 0;
+}
+
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "match") == 0 || strcmp(argv[1], "matchq") == 0)) {
         if (argc != 4) {
@@ -75,6 +187,13 @@ int main(int argc, char **argv) {
             return 2;
         }
         return do_match(argv[2], argv[3], strcmp(argv[1], "match") == 0);
+    }
+    if (argc >= 2 && strcmp(argv[1], "captures") == 0) {
+        if (argc != 4) {
+            fprintf(stderr, "usage: sash-regex captures SUBJECT PATTERN\n");
+            return 2;
+        }
+        return do_captures(argv[2], argv[3]);
     }
     if (argc != 5) {
         fprintf(stderr, "usage: sash-regex sub|gsub SUBJECT PATTERN REPLACEMENT\n");
@@ -122,15 +241,15 @@ int main(int argc, char **argv) {
         size_t ms_off = (size_t)(ptrs[0] - buf);
         size_t me_off = (size_t)(ptrs[1] - buf);
 
-        size_t need = rlen + ms_off + rep_len;
+        size_t exp_len = expanded_len(rep, rep_len, ptrs);
+        size_t need = rlen + ms_off + exp_len;
         if (need > cap) {
             cap = need * 2;
             out = realloc(out, cap);
         }
         memcpy(out + rlen, subj + offset, ms_off); /* pre-match text */
         rlen += ms_off;
-        memcpy(out + rlen, rep, rep_len); /* replacement */
-        rlen += rep_len;
+        rlen += expand_rep(out + rlen, rep, rep_len, ptrs); /* expanded replacement */
         free(buf);
 
         offset += me_off;

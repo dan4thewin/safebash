@@ -31,6 +31,12 @@ pub(super) fn handle_command(
     // `-`-suppressed `match` is a compile error.
     check_match_must_consume(kind, stmt, state);
 
+    // DD#63: the 3-arg out-array form `match S P ARR` (the 2-arg boolean
+    // and `$(match …)` value forms fall through).
+    if let Some(b) = try_handle_match_into(kind, c, ssa, state, block) {
+        return b;
+    }
+
     if let Some(b) = try_builtin(kind, &name, c, stmt, ssa, state, &mut block) {
         return b;
     }
@@ -79,6 +85,34 @@ fn try_builtin(
         )),
         _ => None,
     }
+}
+
+/// DD#63: `match S P ARR` out-array form (exactly 3 args). Builds a
+/// `MatchInto` inst that fills the named array with `[whole, g1..gN]` and
+/// sets the boolean result. Returns `Some` only for the 3-arg form; the
+/// 2-arg boolean `match` and the `$(match …)` value form fall through
+/// (`None`) to the existing paths. Must-consume (SB4018/SB4019) is checked
+/// by the caller via `check_match_must_consume`, keyed on the kind, so it
+/// applies to this form too.
+fn try_handle_match_into(
+    kind: BuiltinCmd,
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if kind != BuiltinCmd::Match || c.args.len() != 3 {
+        return None;
+    }
+    let subject = expr_to_value(&c.args[0], state);
+    let pattern = expr_to_value(&c.args[1], state);
+    let array = expr_to_string(&c.args[2]);
+    ssa.block_mut(block).insts.push(SsaInst::MatchInto {
+        subject,
+        pattern,
+        array,
+    });
+    Some(block)
 }
 
 /// `[[ … ]]` attached as an argument (the parser may emit `test` /

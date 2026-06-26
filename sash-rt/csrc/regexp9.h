@@ -61,6 +61,7 @@ struct Reinst{
  */
 struct Reprog{
 	Reinst	*startinst;	/* start pc */
+	int	nsub;		/* number of capturing subexpressions (sash DD#63) */
 	Reclass	class[128];	/* .data */
 	Reinst	firstinst[5];	/* .text */
 };

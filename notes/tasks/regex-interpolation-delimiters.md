@@ -32,22 +32,31 @@ false test is separately broken — `dd62-test-expr-ssavalue` F1).
   `echo $(match aXXb "X+")` → `XX`.
 - **A2** boolean: `if match abc "^a"; then echo y; else echo n; fi` → `y`;
   `if match abc "^z"; then echo y; else echo n; fi` → `n`.
-- **A3** capture out-array (array last): `match "aXXb" "a(X+)b" g; echo ${g[0]} ${g[1]}` → `aXXb XX`.
+- **A3** capture out-array (array last, **must-consume**): `array g=(); if match "aXXb" "a(X+)b" g; then echo "$(len g) ${g[0]} ${g[1]}"; fi` → `2 aXXb XX`. Bash-parity length (`#groups+1`); a bare 3-arg `match` is SB4018 (DD#70). DONE (63.cap1–7).
 - **A4** `$(sub …)` first: `echo $(sub abab "b" "B")` → `aBab`.
 - **A5** `$(gsub …)` all: `echo $(gsub abab "b" "B")` → `aBaB`.
 
 ### B. Interpolation = normal arg eval (function form)
 
 - **B1** interpolated pattern: `p="a.*b"; echo $(match axxb "$p")` → `axxb`.
-- **B2** single-quote disables: `echo $(match 'a.b' 'a.b')` → `a.b`
-  (literal `.`; matches the literal string `a.b`).
+- **B2** single-quote disables **interpolation only** (NOT regex-metachar
+  literalness — DD#63 has no literal-regex mode): `p=ell; echo $(match hello "$p")`
+  → `ell` (interpolates) vs `p=ell; x=$(match hello '$p'); echo "[$x]"` → `[]`
+  (literal pattern `$p`, `$`=end-anchor, no match). (The old draft
+  `$(match 'a.b' 'a.b')→a.b` was a non-test: no `$` to interpolate, and `.`
+  stayed the any-char metachar, matching by coincidence.)
 - **B3** literal slash, no delimiter: `echo $(sub "a/b/c" "/" "_")` → `a_b/c`.
 
-### C. Captures in the replacement (\0 / \1..\9)
+### C. Captures in the replacement (\0 / \1..\9) — DONE (63.cap8–12)
 
-- **C1** group ref: `echo $(sub "John Smith" "(\\w+) (\\w+)" "\\2 \\1")` → `Smith John`.
+- **C1** group ref: `echo $(sub "John Smith" "([A-Za-z]+) ([A-Za-z]+)" "\\2 \\1")` → `Smith John`.
 - **C2** whole-match \0: `echo $(gsub "a1b2" "[0-9]" "<\\0>")` → `a<1>b<2>`.
-- **C3** literal backslash `\\`: `echo $(sub "x" "x" "\\\\")` → `\` (one backslash).
+- **C3** literal backslash `\\`: `echo $(sub "x" "x" "\\")` → `\` (one
+  backslash). NOTE: under DD#64 the source is `"\\"` (two bytes); the old
+  draft `"\\\\"` assumed the pre-DD#64 double-quote collapse.
+- **C4** invalid `\`-escape → **SB4033**: `echo $(sub x x "\\a")` rejected
+  (only `\0`–`\9` and `\\` are valid; DD#64 leaves no shell backslash to
+  excuse it).
 
 ### D. Sugar desugarings
 

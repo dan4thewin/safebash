@@ -57,6 +57,11 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     if let Some(ref end) = program.end_block {
         check_dollar_question(end, &mut diags);
     }
+    // SB4033: invalid escape in a sub/gsub replacement
+    check_regex_replacements(&program.statements, &mut diags);
+    if let Some(ref end) = program.end_block {
+        check_regex_replacements(end, &mut diags);
+    }
     diags
 }
 
@@ -1163,6 +1168,88 @@ fn is_regex_mutation(c: &Command) -> bool {
         }
     }
     c.args.first().is_some_and(|a| expr_literal_str(a) == "=~")
+}
+
+/// DD#63/SB4033: a `sub`/`gsub` replacement may use `\0`–`\9` (backrefs)
+/// and `\\` (a literal backslash). Any other `\<char>` — or a trailing
+/// `\` — is a compile error (DD#64 removed shell backslash, so sash
+/// rejects the ambiguity rather than guessing, diverging from sed's
+/// leniency). Walks the function form `$(sub …)` / `$(gsub …)`, the only
+/// replacement surface currently implemented (the `s///` sugar desugars
+/// to it). A dynamic (interpolated) replacement is not statically
+/// checkable and is skipped.
+fn check_regex_replacements(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        walk_exprs_in_stmt(stmt, &mut |expr, span| {
+            if let ExprKind::CommandSubstitution(inner) = &expr.kind {
+                for s in inner {
+                    check_replacement_in_stmt(s, span, diags);
+                }
+            }
+        });
+    }
+}
+
+fn check_replacement_in_stmt(stmt: &Statement, span: Span, diags: &mut Vec<Diagnostic>) {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    let name = expr_literal_str(&c.name);
+    if (name != "sub" && name != "gsub") || c.args.len() != 3 {
+        return;
+    }
+    let Some(rep) = static_replacement_str(&c.args[2]) else {
+        return; // interpolated replacement — not statically checkable
+    };
+    if let Some(bad) = invalid_replacement_escape(&rep) {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4033",
+            format!(
+                "invalid escape `\\{}` in a {} replacement — only \\0–\\9 (backrefs) and \\\\ (literal backslash) are allowed",
+                bad, name
+            ),
+        ));
+    }
+}
+
+/// Extract the replacement's static byte string, or `None` if any part is
+/// interpolated (dynamic). `'…'`/`"…"`/concatenation of literals collapse
+/// to their bytes (DD#64: backslash is verbatim in both quote styles).
+fn static_replacement_str(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            let mut out = String::new();
+            for p in parts {
+                match &p.kind {
+                    ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => out.push_str(s),
+                    _ => return None,
+                }
+            }
+            Some(out)
+        }
+        _ => None,
+    }
+}
+
+/// Returns a description of the first invalid `\`-escape in a replacement,
+/// or `None` if every escape is a valid `\0`–`\9` / `\\`.
+fn invalid_replacement_escape(rep: &str) -> Option<String> {
+    let b = rep.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' {
+            match b.get(i + 1) {
+                Some(&c) if c.is_ascii_digit() || c == b'\\' => i += 2,
+                Some(&c) => return Some((c as char).to_string()),
+                None => return Some("<end of replacement>".to_string()),
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {

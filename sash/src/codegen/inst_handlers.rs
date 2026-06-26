@@ -1078,6 +1078,59 @@ pub(super) fn handle_mapfile(
     false
 }
 
+/// Handle SsaInst::MatchInto — DD#63 `match S P ARR` out-array form.
+///
+/// Lowers the subject/pattern to (ptr, len), resolves the destination
+/// array's table pointer (the array must be declared, e.g. `array g=()`),
+/// and calls `sash_regex_match_into`, which clears the table on entry and
+/// fills it with `[whole, g1..gN]` (bash-parity length). Also sets the
+/// boolean test result / `$?` like the 2-arg `match`, so `if match S P g`
+/// works. The subject is always clean (a tainted subject is rejected at
+/// the read site), so the array is clean.
+pub(super) fn handle_match_into(
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    array: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let (s_ptr, s_len) = lower_value(
+        subject,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.func_constants,
+        ctx.externs,
+        Some(ctx.exit_status_var),
+    );
+    let (p_ptr, p_len) = lower_value(
+        pattern,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.func_constants,
+        ctx.externs,
+        Some(ctx.exit_status_var),
+    );
+    let sv = find_array_slot(ctx.vars, array, "array");
+    let table_ptr = builder.use_var(sv.str_ptr());
+
+    let into_ref = module.declare_func_in_func(ctx.externs.regex_match_into, builder.func);
+    let call = builder
+        .ins()
+        .call(into_ref, &[s_ptr, s_len, p_ptr, p_len, table_ptr]);
+    let matched = builder.inst_results(call)[0]; // 1 = matched, 0 = not
+    builder.def_var(ctx.test_result_var, matched);
+    // $? = matched ? 0 : 1
+    let one = builder.ins().iconst(I64, 1);
+    let es = builder.ins().isub(one, matched);
+    builder.def_var(ctx.exit_status_var, es);
+    false
+}
+
 /// Handle SsaInst::SubscriptAssign.
 pub(super) fn handle_subscript_assign(
     array: &str,

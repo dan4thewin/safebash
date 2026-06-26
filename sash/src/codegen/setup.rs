@@ -347,6 +347,21 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         )
         .expect("declare sash_regex_match_str");
 
+    // sash_regex_match_into(str_ptr, str_len, pat_ptr, pat_len, table) -> i64
+    // DD#63: out-array capture form `match S P ARR`.
+    let mut regex_match_into_sig = module.make_signature();
+    for _ in 0..5 {
+        regex_match_into_sig.params.push(AbiParam::new(I64));
+    }
+    regex_match_into_sig.returns.push(AbiParam::new(I64));
+    let regex_match_into_func = module
+        .declare_function(
+            "sash_regex_match_into",
+            Linkage::Import,
+            &regex_match_into_sig,
+        )
+        .expect("declare sash_regex_match_into");
+
     // sash_fnmatch(pat_ptr, pat_len, str_ptr, str_len) -> i64
     let mut fnmatch_sig = module.make_signature();
     for _ in 0..4 {
@@ -717,6 +732,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         fnmatch: fnmatch_func,
         regex_replace: regex_replace_func,
         regex_match_str: regex_match_str_func,
+        regex_match_into: regex_match_into_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
         table_set: table_set_func,
@@ -955,6 +971,12 @@ impl<'a> Interner<'a> {
                 self.intern_value(value);
             }
             SsaInst::ArrayAppend { value, .. } => self.intern_value(value),
+            SsaInst::MatchInto {
+                subject, pattern, ..
+            } => {
+                self.intern_value(subject);
+                self.intern_value(pattern);
+            }
             SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
@@ -1125,7 +1147,9 @@ fn declare_inst_bases(
                     .or_insert_with(|| make_str_slot(builder));
             }
         }
-        SsaInst::Mapfile { array, .. } | SsaInst::ReadArray { array, .. } => {
+        SsaInst::Mapfile { array, .. }
+        | SsaInst::ReadArray { array, .. }
+        | SsaInst::MatchInto { array, .. } => {
             base_vars
                 .entry(array.clone())
                 .or_insert_with(|| make_str_slot(builder));
@@ -1312,6 +1336,12 @@ fn scan_inst_for_vars(inst: &SsaInst, refs: &mut std::collections::HashSet<Strin
             }
         }
         SsaInst::Test(test_expr) => scan_test_for_vars(test_expr, refs),
+        SsaInst::MatchInto {
+            subject, pattern, ..
+        } => {
+            scan_value_for_vars(subject, refs);
+            scan_value_for_vars(pattern, refs);
+        }
         _ => {}
     }
 }

@@ -165,6 +165,7 @@ fn classify_inst_def(
         | SsaInst::ArrayAppend { .. }
         | SsaInst::Mapfile { .. }
         | SsaInst::ReadArray { .. }
+        | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
         | SsaInst::CaptureStart
         | SsaInst::BlessAll { .. } // validates in place; BlessRetag defines the clean version
         | SsaInst::Pipeline { .. } => {}

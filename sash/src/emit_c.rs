@@ -240,6 +240,11 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_table_len(SashTable* t);").unwrap();
     writeln!(
         out,
+        "extern i64 sash_regex_match_into(const char* sp, i64 sl, const char* pp, i64 pl, SashTable* t);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern SashTable* sash_glob(const char* d, i64 dl, const char* p, i64 pl);"
     )
     .unwrap();
@@ -528,6 +533,12 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             let val = lower_test_expr(e, test_expr, types);
             writeln!(e.out, "    __test_result = {};", val).unwrap();
         }
+        // DD#63: `match S P ARR` out-array form → sash_regex_match_into.
+        SsaInst::MatchInto {
+            subject,
+            pattern,
+            array,
+        } => emit_match_into_c(e, subject, pattern, array, types),
         _ => {
             writeln!(
                 e.out,
@@ -1538,7 +1549,36 @@ fn emit_match_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     writeln!(e.out, "    __exit_status = 1 - {m};", m = m).unwrap();
 }
 
-/// ${var:offset} / ${var:offset:length}. Mirrors emit_substring
+/// DD#63: `match S P ARR` out-array form → `sash_regex_match_into`, which
+/// clears the destination table and fills it with `[whole, g1..gN]`
+/// (bash-parity). Also sets `__test_result` / `__exit_status` like the
+/// 2-arg `match`. The subject is always clean (a tainted subject is
+/// rejected at the read site), so the array is clean.
+fn emit_match_into_c(
+    e: &mut Emit,
+    subject: &SsaValue,
+    pattern: &SsaValue,
+    array: &str,
+    types: &VarTypes,
+) {
+    let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+    let (p_ptr, p_len) = lower_value_as_str(e, pattern, types);
+    let table_expr = lookup_table_var(array, types);
+    let m = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {m} = sash_regex_match_into({sp}, {sl}, {pp}, {pl}, (SashTable*){t});",
+        m = m,
+        sp = s_ptr,
+        sl = s_len,
+        pp = p_ptr,
+        pl = p_len,
+        t = table_expr,
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = {m};", m = m).unwrap();
+    writeln!(e.out, "    __exit_status = 1 - {m};", m = m).unwrap();
+}
 /// (codegen/value_handlers.rs:582). Operand is "offset" or
 /// "offset:length". sash_substring writes the result ptr to its
 /// return value and the new length to *out_len.

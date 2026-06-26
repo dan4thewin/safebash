@@ -82,6 +82,15 @@ impl SsaInst {
             SsaInst::ReadArray { array, fd, delim } => {
                 return self.emit_read_array(array, fd, delim, builder, module, ctx);
             }
+            SsaInst::MatchInto {
+                subject,
+                pattern,
+                array,
+            } => {
+                return super::inst_handlers::handle_match_into(
+                    subject, pattern, array, builder, module, ctx,
+                );
+            }
             SsaInst::CaptureStart => {
                 // Call sash_capture_start() → (saved_fd, pipe_read_fd)
                 // Store both in the capture Cranelift variables

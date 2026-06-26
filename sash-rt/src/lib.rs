@@ -1237,6 +1237,20 @@ pub unsafe extern "C" fn sash_table_len(t: *const SashTable) -> i64 {
     (*t).live_count as i64
 }
 
+/// Reset a table to empty in place, preserving its allocation. Used for
+/// the clear-on-entry semantics of `match S P ARR` (DD#63): each match
+/// call replaces the array contents, and a no-match leaves it empty.
+#[no_mangle]
+pub unsafe extern "C" fn sash_table_clear(t: *mut SashTable) {
+    let index_size = ((*t).index_mask + 1) as usize;
+    let idx = core::slice::from_raw_parts_mut((*t).indices, index_size);
+    for slot in idx.iter_mut() {
+        *slot = TABLE_EMPTY;
+    }
+    (*t).entry_count = 0;
+    (*t).live_count = 0;
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sash_table_delete(
     t: *mut SashTable,
@@ -1455,6 +1469,140 @@ pub unsafe extern "C" fn sash_regex_match_str(
     (str_ptr.add(start_off), (end_off - start_off) as i64)
 }
 
+/// DD#63 captures: the out-array form `match S P ARR`. Fills `table` (the
+/// destination array) with the whole match at index 0 and capture groups
+/// g1..gN at indices 1..N, where N is the pattern's capturing-group count
+/// (bash-parity: array length = N+1). A group that exists in the pattern
+/// but did not participate in the match is stored as the empty string.
+/// The table is cleared on entry, so a no-match leaves it empty. Returns 1
+/// if matched, 0 if not. Invalid regex aborts (`sash_exit(2)`), mirroring
+/// `sash_regex_match`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_regex_match_into(
+    str_ptr: *const u8,
+    str_len: i64,
+    pat_ptr: *const u8,
+    pat_len: i64,
+    table: *mut SashTable,
+) -> i64 {
+    sash_table_clear(table); // clear-on-entry (DD#63)
+
+    let pat_buf = sash_alloc((pat_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len as usize);
+    *pat_buf.add(pat_len as usize) = 0;
+
+    let str_buf = sash_alloc((str_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(str_ptr, str_buf, str_len as usize);
+    *str_buf.add(str_len as usize) = 0;
+
+    let prog = regcomp9(pat_buf);
+    if prog.is_null() {
+        sash_exit(2);
+    }
+    // Reprog.nsub (the capturing-group count) sits just past the leading
+    // `startinst` pointer in the struct (sash DD#63 engine field).
+    let nsub = (*(prog.add(core::mem::size_of::<*const u8>()) as *const i32)) as usize;
+    // The engine reports at most NSUBEXP (128) submatches; size the Resub
+    // buffer to whole + N groups so every group is surfaced (no 9-group cap).
+    let ngroups = if nsub > 127 { 127 } else { nsub };
+    let ms = ngroups + 1;
+    let resub = sash_alloc(ms * 16); // 16 bytes/entry (sp, ep)
+    core::ptr::write_bytes(resub, 0, ms * 16);
+
+    let matched = regexec9(prog, str_buf, resub, ms as i32);
+    if matched <= 0 {
+        return 0; // table already cleared → empty
+    }
+    let ptrs = resub as *const *const u8;
+    for i in 0..=ngroups {
+        let sp = *ptrs.add(2 * i);
+        let ep = *ptrs.add(2 * i + 1);
+        let (vptr, vlen): (*const u8, i64) = if sp.is_null() {
+            (b"".as_ptr(), 0) // non-participating group → empty string
+        } else {
+            let start_off = sp as usize - str_buf as usize;
+            let len = ep as usize - sp as usize;
+            // Copy the captured slice to heap so the array owns its data
+            // (the subject may be a temporary that outlives this call).
+            let cp = sash_alloc(if len == 0 { 1 } else { len });
+            core::ptr::copy_nonoverlapping(str_ptr.add(start_off), cp, len);
+            (cp, len as i64)
+        };
+        let key = (i as i64).to_ne_bytes();
+        sash_table_set(table, key.as_ptr(), 8, vptr, vlen);
+    }
+    1
+}
+
+/// DD#63: expand a `sub`/`gsub` replacement template against the current
+/// match's `Resub`. `\0` = whole match, `\1`..`\9` = capture groups, `\\`
+/// = a literal backslash. `\` + a non-digit is rejected at compile time
+/// (SB4033), so it should not reach here; defensively the two bytes are
+/// kept verbatim. A backref to a group that did not participate (null
+/// span) expands to nothing. Returns a heap buffer (ptr, len) the caller
+/// then copies into the result.
+unsafe fn expand_replacement(rep: &[u8], resub: *const *const u8) -> (*mut u8, usize) {
+    let group_len = |d: usize| -> usize {
+        let sp = *resub.add(2 * d);
+        let ep = *resub.add(2 * d + 1);
+        if sp.is_null() {
+            0
+        } else {
+            ep as usize - sp as usize
+        }
+    };
+    // Pass 1: total expanded length.
+    let mut out_len = 0usize;
+    let mut i = 0;
+    while i < rep.len() {
+        if rep[i] == b'\\' && i + 1 < rep.len() {
+            let c = rep[i + 1];
+            if c.is_ascii_digit() {
+                out_len += group_len((c - b'0') as usize);
+            } else if c == b'\\' {
+                out_len += 1;
+            } else {
+                out_len += 2;
+            }
+            i += 2;
+        } else {
+            out_len += 1;
+            i += 1;
+        }
+    }
+    let out = sash_alloc(if out_len == 0 { 1 } else { out_len });
+    // Pass 2: fill.
+    let mut w = 0usize;
+    i = 0;
+    while i < rep.len() {
+        if rep[i] == b'\\' && i + 1 < rep.len() {
+            let c = rep[i + 1];
+            if c.is_ascii_digit() {
+                let d = (c - b'0') as usize;
+                let sp = *resub.add(2 * d);
+                let glen = group_len(d);
+                if glen > 0 {
+                    core::ptr::copy_nonoverlapping(sp, out.add(w), glen);
+                    w += glen;
+                }
+            } else if c == b'\\' {
+                *out.add(w) = b'\\';
+                w += 1;
+            } else {
+                *out.add(w) = rep[i];
+                *out.add(w + 1) = rep[i + 1];
+                w += 2;
+            }
+            i += 2;
+        } else {
+            *out.add(w) = rep[i];
+            w += 1;
+            i += 1;
+        }
+    }
+    (out, w)
+}
+
 /// Regex substitution: s/pattern/replacement/flags
 /// flags: 'g' for global replace
 /// Returns new string (ptr, len). Caller owns the memory.
@@ -1529,9 +1677,15 @@ pub unsafe extern "C" fn sash_regex_replace(
         let match_start_off = match_start as usize - str_buf as usize;
         let match_end_off = match_end as usize - str_buf as usize;
 
+        // Expand the replacement template (\0-\9 backrefs, \\) against
+        // this match's Resub (DD#63), then size the result for pre-match
+        // text + the expanded replacement together.
+        let ptrs = resub.as_ptr() as *const *const u8;
+        let (exp_ptr, exp_len) = expand_replacement(rep, ptrs);
+
         // Copy pre-match text
         let pre_len = match_start_off;
-        let needed = result_len + pre_len + rep.len();
+        let needed = result_len + pre_len + exp_len;
         if needed > result_cap {
             result_cap = needed * 2;
             let new_buf = sash_alloc(result_cap);
@@ -1541,9 +1695,9 @@ pub unsafe extern "C" fn sash_regex_replace(
         core::ptr::copy_nonoverlapping(src.as_ptr().add(offset), result.add(result_len), pre_len);
         result_len += pre_len;
 
-        // Copy replacement
-        core::ptr::copy_nonoverlapping(rep.as_ptr(), result.add(result_len), rep.len());
-        result_len += rep.len();
+        // Copy expanded replacement
+        core::ptr::copy_nonoverlapping(exp_ptr, result.add(result_len), exp_len);
+        result_len += exp_len;
 
         offset += match_end_off;
         // Prevent infinite loop on zero-length match

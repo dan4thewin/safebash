@@ -12,6 +12,29 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-25 (cont.) — DD#63 captures (out-array + backrefs)
+
+Both capture surfaces, all three backends, after DG resolved D1–D6.
+
+- **`match S P ARR`** out-array: bash-parity length (engine `Reprog.nsub`),
+  non-participating group → `""`, clear-on-entry, still (B) must-consume.
+  New `SsaInst::MatchInto` + `sash_regex_match_into` + `sash_table_clear`.
+- **`\0`–`\9` backrefs** in `sub`/`gsub` (`sash_regex_replace` template
+  pass); invalid `\`-escape → **SB4033** (validate, all-modes).
+- **Taint airtight (D4):** tainted subject rejected at the read site
+  (SB5020) — captures always clean, no DD#61 change.
+- **Engine:** `Reprog.nsub` exposes the group count. `build.rs` now tracks
+  csrc/headers via `rerun-if-changed` (stale-object gotcha fixed).
+- **Backends:** native (codegen) + C (`emit_match_into_c`, shared runtime)
+  + janet (`sash-regex captures` CLI op + `string/split`; fixed a
+  pre-existing `$(len ARR)` janet gap, +1 janet_test).
+- Spec: regex.sh 63.cap1–12. Native **28/28, 0 failing** (gate); c & janet
+  24 + 4 native-only skips; zero regressions (c=58/janet=106 baseline).
+- **Finding:** the `sash-rt-tests` harness is pre-existing broken
+  (references removed `sash_streq`/`sash_arith_eval`; not on `mk test`).
+  Cargo core suites have ~122 pre-existing stale-test failures (old
+  `declare`/`${#arr[@]}` syntax) — not regressions.
+
 ### Session 2026-06-25 (cont.) — DD#70 (A)/(B) write-up + match boolean
 
 - **DD#70 written** (`notes/decisions/DD70-error-taxonomy-A-B.md`):

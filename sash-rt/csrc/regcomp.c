@@ -726,6 +726,7 @@ regcomp1(char *s, int literal, int dot_type)
 	dump(pp);
 #endif
 	pp = optimize(pp);
+	pp->nsub = cursubid;	/* sash DD#63: surface the group count */
 #ifdef DEBUG
 	print("start: %d\n", andp->first-pp->firstinst);
 	dump(pp);

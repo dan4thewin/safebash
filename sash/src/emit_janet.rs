@@ -684,6 +684,14 @@ fn emit_janet_test_cmd(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 /// matched / 1 not, no stdout), sets `__last_exit`, and yields the
 /// boolean so `(when (do …))` consumes it.
 fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if c.args.len() == 3 {
+        // DD#63 out-array form `match S P ARR`.
+        let s = emit_expr_inline(&c.args[0], ctx);
+        let p = emit_expr_inline(&c.args[1], ctx);
+        let arr = expr_to_literal(&c.args[2]);
+        writeln!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr)).unwrap();
+        return;
+    }
     if c.args.len() != 2 {
         writeln!(out, "false").unwrap();
         return;
@@ -696,6 +704,21 @@ fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
         s, p
     )
     .unwrap();
+}
+
+/// DD#63: `match S P ARR` out-array form. Shells to `sash-regex captures`
+/// (NUL-separated `[whole, g1..gN]`, bash-parity group count), splits the
+/// output into the destination array, sets `__last_exit`, and yields the
+/// boolean (matched) so a condition / `&&` / `||` consumes it. Mirrors the
+/// native `sash_regex_match_into`: clear-on-entry (a no-match leaves the
+/// array empty) and a clean array (the subject is always clean).
+fn emit_janet_match_into_expr(s: &str, p: &str, arr: &str) -> String {
+    format!(
+        "(let [_f (os/spawn [\"sash-regex\" \"captures\" {s} {p}] :p {{:out :pipe}}) \
+         _raw (or (:read (_f :out) :all) \"\") _rc (os/proc-wait _f) _m (zero? _rc)] \
+         (set {arr} (if _m (string/split (string/from-bytes 0) _raw) @[])) \
+         (set __last_exit (if _m 0 1)) _m)"
+    )
 }
 
 /// `return [code]` — Janet's `(return …)` form. Omits the operand
@@ -1081,6 +1104,15 @@ fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
         .unwrap();
         return;
     }
+    // DD#63 out-array form `match S P ARR` in a condition: populate the
+    // array and yield the boolean.
+    if name == "match" && c.args.len() == 3 {
+        let s = emit_expr_inline(&c.args[0], ctx);
+        let p = emit_expr_inline(&c.args[1], ctx);
+        let arr = expr_to_literal(&c.args[2]);
+        write!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr)).unwrap();
+        return;
+    }
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
         parts.push(emit_expr_inline(arg, ctx));
@@ -1298,6 +1330,14 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
             subj = subj,
             pat = pat,
         );
+    }
+    // `$(len ARR)` → element count of the named array. Mirrors native
+    // `sash_table_len` / C `sash_table_len`. The Janet array length is the
+    // element count. (The generic exec fallback below would try to run a
+    // nonexistent `len` command.)
+    if name == "len" && c.args.len() == 1 {
+        let arr = expr_to_literal(&c.args[0]);
+        return format!("(string (length {}))", arr);
     }
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {

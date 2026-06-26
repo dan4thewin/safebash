@@ -278,6 +278,16 @@ pub enum SsaInst {
         fd: i64,
         delim: Option<u8>,
     },
+    /// DD#63: `match S P ARR` out-array form. Fills `array` with
+    /// `[whole, g1..gN]` (bash-parity length = group count + 1), clears it
+    /// on entry, and sets the boolean test result / `$?` like 2-arg
+    /// `match`. The subject is always clean (a tainted subject is rejected
+    /// at the read site), so the array is clean.
+    MatchInto {
+        subject: SsaValue,
+        pattern: SsaValue,
+        array: String,
+    },
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
     /// End capturing, assign captured output to target

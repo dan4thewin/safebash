@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=16
+plan=28
 echo "1..$plan" >&3
 
 set +e
@@ -96,6 +96,85 @@ if in_modes native; then
 else
     skip_chk 63.2e; skip_chk 63.2f
 fi
+
+# ── D. captures: out-array form `match S P ARR` (DD#63) ───────────────
+# `match S P ARR` fills ARR with [whole, g1..gN] (array is the trailing
+# positional, like read -a / mapfile) and returns the boolean. Bash-parity
+# (DG, D1-B): ARR length = (#capturing groups in pattern)+1; an interior
+# group that exists but didn't participate is "" (counted, not skipped).
+# Clear-on-entry (D3): each call replaces ARR; no match → ARR is emptied.
+# Still a (B) must-consume boolean (DG, D2): a bare 3-arg `match` is an
+# error — consume it with if / && / `|| :`.
+
+# 63.cap1 one group: ARR = [whole, g1], length 2 (pre-populated → stale
+# entries are cleared on a successful match, not appended)
+run_sash 'array g=(old1 old2 old3)
+if match "aXXb" "a(X+)b" g; then echo "$(len g) ${g[0]} ${g[1]}"; fi'
+[[ $rc = 0 && $out = "2 aXXb XX" && -z $err ]]; chk 63.cap1
+
+# 63.cap2 no groups: ARR = [whole] only, length 1 (bash-parity, NOT 10)
+run_sash 'array g=()
+if match "abc" "b" g; then echo "$(len g) ${g[0]}"; fi'
+[[ $rc = 0 && $out = "1 b" && -z $err ]]; chk 63.cap2
+
+# 63.cap3 three groups
+run_sash 'array g=()
+if match "2026-06-25" "([0-9]+)-([0-9]+)-([0-9]+)" g; then
+    echo "$(len g) ${g[1]} ${g[2]} ${g[3]}"
+fi'
+[[ $rc = 0 && $out = "4 2026 06 25" && -z $err ]]; chk 63.cap3
+
+# 63.cap4 interior non-participating group: counted, value is ""
+run_sash 'array g=()
+if match "ac" "(a)(b)?(c)" g; then echo "$(len g) [${g[1]}][${g[2]}][${g[3]}]"; fi'
+[[ $rc = 0 && $out = "4 [a][][c]" && -z $err ]]; chk 63.cap4
+
+# 63.cap5 no match → ARR cleared (length 0) even when pre-populated;
+# boolean consumed by if/else. Tests clear-on-entry on the no-match path.
+run_sash 'array g=(x y z)
+if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
+[[ $rc = 0 && $out = "n 0" && -z $err ]]; chk 63.cap5
+
+# 63.cap6 bare 3-arg `match S P ARR` is a must-consume compile error (SB4018)
+# 63.cap7 `- match S P ARR` — `-` on a (B) construct is SB4019
+# Native-only (transform diagnostics not surfaced on --emit-c/--janet).
+if in_modes native; then
+    run_sash 'array g=()
+match abc abc g'
+    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
+
+    run_sash 'array g=()
+- match abc abc g'
+    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk 63.cap7
+else
+    skip_chk 63.cap6; skip_chk 63.cap7
+fi
+
+# ── E. captures: replacement backrefs \0..\9 in sub/gsub (DD#63) ──────
+# In a sub/gsub REPLACEMENT, `\0`=whole match, `\1`..`\9`=capture groups,
+# `\\`=literal backslash. `\`+any other char is a compile error (SB4033;
+# DG, D6). Under DD#64 the replacement is a verbatim string (no
+# double-quote collapse): a literal backslash is `"\\"` (two bytes).
+
+# 63.cap8 group reorder via \1 \2
+run_sash 'echo $(sub "John Smith" "([A-Za-z]+) ([A-Za-z]+)" "\2 \1")'
+[[ $rc = 0 && $out = "Smith John" && -z $err ]]; chk 63.cap8
+
+# 63.cap9 whole-match \0 (per gsub match)
+run_sash 'echo $(gsub "a1b2" "[0-9]" "<\0>")'
+[[ $rc = 0 && $out = "a<1>b<2>" && -z $err ]]; chk 63.cap9
+
+# 63.cap10 `\\` = one literal backslash (DD#64: source is "\\", two bytes)
+run_sash 'echo $(sub "x" "x" "\\")'
+[[ $rc = 0 && $out = '\' && -z $err ]]; chk 63.cap10
+
+# 63.cap11 backref to a non-participating group → empty
+run_sash 'echo $(sub "ac" "(a)(b)?(c)" "[\2]")'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk 63.cap11
+
+# 63.cap12 invalid `\`-escape in a replacement (\ + non-digit) → SB4033
+run_sash 'echo $(sub x x "\a")'
+[[ $rc != 0 && -z $out && $err == *SB4033* ]]; chk 63.cap12
 
 set -e
 tally

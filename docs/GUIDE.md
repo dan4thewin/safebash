@@ -336,7 +336,7 @@ argv, envp from the stack, calls `sash_main`.
 `sash_concat`, `sash_itoa`, `sash_atoi`, `sash_strlen`,
 `sash_substring`, `sash_strip_prefix`, `sash_strip_suffix`,
 `sash_toupper`, `sash_tolower`, `sash_regex_match`,
-`sash_regex_replace`, `sash_fnmatch`.
+`sash_regex_match_into`, `sash_regex_replace`, `sash_fnmatch`.
 
 All strings are `(ptr, len)` pairs with a null terminator at
 `ptr[len]`. This gives length-bounded operations for safety and
@@ -344,8 +344,16 @@ null-terminated C interop for `execve` without copying (DD#12).
 
 ### Regex
 
-Plan 9 regex engine, vendored from `contrib/plan9port-regexp`.
-Supports `${var:s/re/str/flags}` syntax (DD#39).
+Plan 9 regex engine, vendored from `contrib/plan9port-regexp`. A
+builtin family (`match` / `sub` / `gsub`) takes ordinary string args
+(DD#63); the `${var:s/re/str/flags}` / `[[ =~ ]]` syntaxes are thin
+sugar. **Captures** (DD#63): `match S P ARR` fills `ARR` with
+`[whole, g1..gN]` (bash-parity: `N` = the pattern's group count, surfaced
+via the engine's `Reprog.nsub`; a non-participating group is empty),
+clears the array on entry, and returns the boolean. `sub`/`gsub`
+replacements expand `\0`–`\9` backrefs and `\\`; any other `\<char>` is a
+compile error (SB4033). The Janet backend shells to the `sash-regex` CLI
+(`captures` op) so the oracle uses the same engine.
 
 ### I/O
 
