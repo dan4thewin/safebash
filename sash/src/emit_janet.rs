@@ -890,21 +890,21 @@ fn emit_janet_cat(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 }
 
 fn emit_redirected(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
-    if has_heredoc_redirect(&r.redirects) {
-        let body_text = collect_heredoc_body_text(&r.redirects);
-        emit_redirected_heredoc(out, ctx, &r.body.kind, &body_text, depth);
+    if has_herestring_redirect(&r.redirects) {
+        let body_text = collect_herestring_body_text(&r.redirects);
+        emit_redirected_herestring(out, ctx, &r.body.kind, &body_text, depth);
     } else {
-        emit_redirected_no_heredoc(out, ctx, r, depth);
+        emit_redirected_no_herestring(out, ctx, r, depth);
     }
 }
 
-fn has_heredoc_redirect(redirects: &[Redirect]) -> bool {
+fn has_herestring_redirect(redirects: &[Redirect]) -> bool {
     redirects
         .iter()
         .any(|rd| matches!(rd.op, RedirectOp::HereString))
 }
 
-fn collect_heredoc_body_text(redirects: &[Redirect]) -> String {
+fn collect_herestring_body_text(redirects: &[Redirect]) -> String {
     redirects
         .iter()
         .filter(|rd| matches!(rd.op, RedirectOp::HereString))
@@ -964,7 +964,7 @@ fn is_cat_no_args(kind: &StmtKind) -> bool {
     matches!(kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "cat" && c.args.is_empty())
 }
 
-fn emit_redirected_heredoc(
+fn emit_redirected_herestring(
     out: &mut String,
     ctx: &mut EmitCtx,
     body_kind: &StmtKind,
@@ -972,7 +972,7 @@ fn emit_redirected_heredoc(
     depth: usize,
 ) {
     if is_cat_no_args(body_kind) {
-        emit_redirected_cat_heredoc(out, body_text, depth);
+        emit_redirected_cat_herestring(out, body_text, depth);
         return;
     }
     if let StmtKind::Command(c) = body_kind {
@@ -981,11 +981,11 @@ fn emit_redirected_heredoc(
             return;
         }
     }
-    emit_redirected_generic_heredoc(out, ctx, body_kind, body_text, depth);
+    emit_redirected_generic_herestring(out, ctx, body_kind, body_text, depth);
 }
 
-/// `cat <<EOF ... EOF` — heredoc-as-string pattern; just print body.
-fn emit_redirected_cat_heredoc(out: &mut String, body_text: &str, depth: usize) {
+/// `cat <<< "string"` — herestring-as-string pattern; just print body.
+fn emit_redirected_cat_herestring(out: &mut String, body_text: &str, depth: usize) {
     indent(out, depth);
     let escaped = escape_for_janet_string(body_text.trim_end_matches('\n'));
     writeln!(out, "(print \"{}\")", escaped).unwrap();
@@ -1015,9 +1015,9 @@ fn emit_redirected_herestring_read(
     }
 }
 
-/// Generic command with heredoc — spawn the command and pipe the body
+/// Generic command with herestring — spawn the command and pipe the body
 /// to its stdin.
-fn emit_redirected_generic_heredoc(
+fn emit_redirected_generic_herestring(
     out: &mut String,
     ctx: &mut EmitCtx,
     body_kind: &StmtKind,
@@ -1028,7 +1028,7 @@ fn emit_redirected_generic_heredoc(
     let escaped = escape_for_janet_string(body_text);
     writeln!(out, "(do").unwrap();
     indent(out, depth + 1);
-    writeln!(out, "(def _heredoc_body \"{}\")", escaped).unwrap();
+    writeln!(out, "(def _herestring_body \"{}\")", escaped).unwrap();
     let (cmd_name, args) = extract_command_name_and_args(body_kind, ctx);
     let mut parts = vec![format!("\"{}\"", cmd_name)];
     parts.extend(args);
@@ -1040,7 +1040,7 @@ fn emit_redirected_generic_heredoc(
     )
     .unwrap();
     indent(out, depth + 1);
-    writeln!(out, "(:write (p :in) _heredoc_body)").unwrap();
+    writeln!(out, "(:write (p :in) _herestring_body)").unwrap();
     indent(out, depth + 1);
     writeln!(out, "(:close (p :in))").unwrap();
     indent(out, depth + 1);
@@ -1059,7 +1059,12 @@ fn extract_command_name_and_args(kind: &StmtKind, ctx: &EmitCtx) -> (String, Vec
     }
 }
 
-fn emit_redirected_no_heredoc(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
+fn emit_redirected_no_herestring(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    r: &Redirected,
+    depth: usize,
+) {
     for rd in &r.redirects {
         indent(out, depth);
         writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();

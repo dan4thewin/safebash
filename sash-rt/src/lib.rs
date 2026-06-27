@@ -2215,11 +2215,11 @@ pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
     }
 }
 
-/// Set up heredoc: create pipe, fork-write body to write end, dup2 read end to fd.
+/// Set up herestring: create pipe, fork-write body to write end, dup2 read end to fd.
 /// For simplicity in a static binary (no threads), we write synchronously then close.
-/// This works for small heredocs. Large ones would need fork.
+/// This works for small herestrings. Large ones would need fork.
 #[unsafe(no_mangle)]
-pub extern "C" fn sash_heredoc_redirect(fd: i64, body_ptr: *const u8, body_len: i64) {
+pub extern "C" fn sash_herestring_redirect(fd: i64, body_ptr: *const u8, body_len: i64) {
     if body_ptr.is_null() || body_len < 0 {
         return;
     }

@@ -12,6 +12,20 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-06-27 — cleanup: rename misnamed `heredoc` machinery → `herestring`
+
+DG-directed cleanup. Heredocs (`<<`/`<<-`) are dropped (lexer emits a
+`__HEREDOC__` sentinel → validator SB5002 rejects, pointing at `<<<`). But
+all the `*heredoc*`-named codegen/runtime/emit functions actually
+implement **herestrings** (`<<<`, `RedirectOp::HereString`) — a misleading
+holdover. Renamed across the 6 herestring files (incl. the C ABI symbol
+`sash_heredoc_redirect` → `sash_herestring_redirect`, consistent across
+sash-rt + native setup + emit_c). Left the genuine heredoc-rejection
+machinery (`scan_heredoc_sentinel`, `check_heredoc`, `heredoc_diag`,
+`__HEREDOC__`, SB5002) untouched. Pure rename: native 0-failing (535);
+c=58/janet=106 byte-identical; herestrings verified on native + C,
+heredoc still rejected.
+
 ### Session 2026-06-26 (unattended, round 3) — fix: `<<`/`<<=` mis-lexed as heredoc
 
 Closed `bug-arith-left-shift-heredoc` (last arith *lexing* gap). `scan_lt`

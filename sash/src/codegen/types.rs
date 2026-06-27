@@ -100,7 +100,7 @@ pub(super) struct ExternFuncs {
     pub(super) file_same_dev: cranelift_module::FuncId,
     pub(super) chdir: cranelift_module::FuncId,
     pub(super) getcwd: cranelift_module::FuncId,
-    pub(super) heredoc_redirect: cranelift_module::FuncId,
+    pub(super) herestring_redirect: cranelift_module::FuncId,
     pub(super) toupper_first: cranelift_module::FuncId,
     pub(super) tolower_first: cranelift_module::FuncId,
     pub(super) toupper_all: cranelift_module::FuncId,

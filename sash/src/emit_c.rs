@@ -217,7 +217,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern void sash_heredoc_redirect(i64 fd, const char* body_ptr, i64 body_len);"
+        "extern void sash_herestring_redirect(i64 fd, const char* body_ptr, i64 body_len);"
     )
     .unwrap();
     // Phase 4 — pipelines
@@ -1837,7 +1837,7 @@ fn emit_one_redirect(e: &mut Emit, r: &crate::ir::Redirect, fd: i64, types: &Var
     }
     match r.op {
         RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
-        RedirectOp::HereString => emit_heredoc_redirect(e, fd, &r.target, types),
+        RedirectOp::HereString => emit_herestring_redirect(e, fd, &r.target, types),
         _ => {
             writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
         }
@@ -1893,13 +1893,13 @@ fn emit_dup_output(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
 }
 
 /// `<<EOF` / `<<<"string"` — pipe body to stdin via
-/// sash_heredoc_redirect. Mirrors emit_heredoc_redirect
+/// sash_herestring_redirect. Mirrors emit_herestring_redirect
 /// (codegen/redirects.rs:183).
-fn emit_heredoc_redirect(e: &mut Emit, fd: i64, body: &crate::ir::Expr, types: &VarTypes) {
+fn emit_herestring_redirect(e: &mut Emit, fd: i64, body: &crate::ir::Expr, types: &VarTypes) {
     let (ptr, len) = ir_expr_as_str(e, body, types);
     writeln!(
         e.out,
-        "    sash_heredoc_redirect({fd}, {p}, {l});",
+        "    sash_herestring_redirect({fd}, {p}, {l});",
         fd = fd,
         p = ptr,
         l = len

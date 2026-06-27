@@ -48,7 +48,7 @@ pub(super) fn emit_redirects(
 /// least one redirect is a file `open(2)` (Write/Append/Read), so the
 /// caller can apply the DD#55 setup-failure semantics (skip body, fail
 /// status, abort governed by context). Returns `None` failure when no
-/// open redirect is present (dup/heredoc only).
+/// open redirect is present (dup/herestring only).
 pub(super) fn emit_redirects_guarded(
     redirects: &[crate::ir::Redirect],
     builder: &mut FunctionBuilder,
@@ -116,7 +116,7 @@ fn emit_save_fd(
 /// values); `DupOutput` and `HereString` get their own
 /// emitters. Unknown ops are no-ops (the save still happened).
 /// Returns `Some((failed, path_ptr, path_len))` for a file `open(2)`
-/// redirect (DD#55 setup-failure surfacing); `None` for dup/heredoc/noop.
+/// redirect (DD#55 setup-failure surfacing); `None` for dup/herestring/noop.
 fn emit_one_redirect(
     redir: &crate::ir::Redirect,
     fd_val: cranelift_codegen::ir::Value,
@@ -144,7 +144,7 @@ fn emit_one_redirect(
             emit_dup_output(fd_val, &redir.target, builder, module, externs);
         }
         RedirectOp::HereString => {
-            emit_heredoc_redirect(
+            emit_herestring_redirect(
                 fd_val,
                 &redir.target,
                 builder,
@@ -236,7 +236,7 @@ fn emit_dup_output(
 
 /// `<<EOF` / `<<<"string"` — pipe body text to stdin. Literal body
 /// missing from the literals map → skip (matches pre-refactor).
-fn emit_heredoc_redirect(
+fn emit_herestring_redirect(
     fd_val: cranelift_codegen::ir::Value,
     body: &crate::ir::Expr,
     builder: &mut FunctionBuilder,
@@ -260,10 +260,10 @@ fn emit_heredoc_redirect(
     } else {
         lower_ir_redirect_expr(body, builder, module, vars, literals, externs)
     };
-    let heredoc_ref = module.declare_func_in_func(externs.heredoc_redirect, builder.func);
+    let herestring_ref = module.declare_func_in_func(externs.herestring_redirect, builder.func);
     builder
         .ins()
-        .call(heredoc_ref, &[fd_val, body_ptr, body_len]);
+        .call(herestring_ref, &[fd_val, body_ptr, body_len]);
 }
 
 /// Restore saved fds after a command completes
