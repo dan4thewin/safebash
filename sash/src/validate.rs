@@ -362,6 +362,37 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
             reject_flat_map_literal(a, diags);
         }
     }
+    // SB4026 (Policy A): an `int`/`const` initializer that is a decimal
+    // literal must fit i64. (Arith literals are range-checked in the arith
+    // parser; this is the non-arith `int x=NNN` path. i64::MIN works because
+    // the `-` is part of the literal here, unlike in arithmetic.)
+    if matches!(d.var_type, VarType::Int) {
+        check_int_literal_range(d, diags);
+    }
+}
+
+/// SB4026: reject an out-of-range decimal literal assigned to an int var.
+fn check_int_literal_range(d: &Declaration, diags: &mut Vec<Diagnostic>) {
+    for a in &d.assignments {
+        let ExprKind::Literal(s) = &a.value.kind else {
+            continue;
+        };
+        if int_literal_out_of_range(s) {
+            diags.push(Diagnostic::error_span(
+                a.value.span,
+                "SB4026",
+                format!("integer literal out of range: {s}"),
+            ));
+        }
+    }
+}
+
+/// True when `s` is a decimal integer literal (optional leading `-`,
+/// then ASCII digits) whose magnitude does not fit i64. Non-integer
+/// strings (identifiers, hex like `0xFF`, empty) are NOT flagged here.
+fn int_literal_out_of_range(s: &str) -> bool {
+    let body = s.strip_prefix('-').unwrap_or(s);
+    !body.is_empty() && body.bytes().all(|b| b.is_ascii_digit()) && s.parse::<i64>().is_err()
 }
 
 /// SB4031 (DD#33): a flat `(a 1 b 2)` list parses as an indexed-array

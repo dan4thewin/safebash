@@ -24,6 +24,18 @@ fn arith_error(span: Span, message: String) -> Diagnostic {
     Diagnostic::error_at(span.line, span.col, "SB4020", message)
 }
 
+/// Create a parse error for an out-of-range integer literal (SB4026).
+/// Decimal magnitude > i64::MAX, or a hex/octal bit-pattern wider than
+/// 64 bits, is rejected at compile time (Policy A / DD#25).
+fn arith_range_error(span: Span, literal: &str) -> Diagnostic {
+    Diagnostic::error_at(
+        span.line,
+        span.col,
+        "SB4026",
+        format!("integer literal out of range: {literal}"),
+    )
+}
+
 // ── Public API ─────────────────────────────────────────────────────────
 
 /// Parse arithmetic expansion: content between $(( and ))
@@ -289,6 +301,11 @@ pub enum ArithKind {
 #[derive(Debug, Clone, PartialEq)]
 enum ATok {
     Num(i64),
+    /// An out-of-range integer literal (raw text retained for the
+    /// diagnostic). Rejected with SB4026 when the parser consumes it,
+    /// except the `-9223372036854775808` (i64::MIN) case folded by the
+    /// unary-neg peephole in `parse_unary`.
+    BadNum(String),
     Var(String),
     DollarVar(String),
     // Operators (ordered by length for tokenization)
@@ -411,8 +428,14 @@ fn scan_hex_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
     while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
         j += 1;
     }
-    let val = i64::from_str_radix(&input[start + 2..j], 16).unwrap_or(0);
-    (ATok::Num(val), j)
+    // Hex is a 64-bit bit-pattern (Policy A): parse as u64 and reinterpret
+    // to i64, so 0xFFFFFFFFFFFFFFFF == -1 (bash parity). Wider than 64 bits
+    // (or no digits, e.g. `0x`) is out of range -> SB4026.
+    let tok = match u64::from_str_radix(&input[start + 2..j], 16) {
+        Ok(v) => ATok::Num(v as i64),
+        Err(_) => ATok::BadNum(input[start..j].to_string()),
+    };
+    (tok, j)
 }
 
 fn scan_octal_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
@@ -420,8 +443,15 @@ fn scan_octal_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) 
     while j < bytes.len() && (b'0'..=b'7').contains(&bytes[j]) {
         j += 1;
     }
-    let val = i64::from_str_radix(&input[start + 1..j], 8).unwrap_or(0);
-    (ATok::Num(val), j)
+    // Octal is a 64-bit bit-pattern (Policy A): parse as u64, reinterpret to
+    // i64. Wider than 64 bits is out of range -> SB4026. (A lone `0` is
+    // scanned as decimal; `08`/`09` reach here with an empty octal span,
+    // which is rejected as out of range — matching bash.)
+    let tok = match u64::from_str_radix(&input[start + 1..j], 8) {
+        Ok(v) => ATok::Num(v as i64),
+        Err(_) => ATok::BadNum(input[start..j].to_string()),
+    };
+    (tok, j)
 }
 
 fn scan_decimal_digits(bytes: &[u8], start: usize) -> usize {
@@ -446,8 +476,15 @@ fn scan_based_literal(input: &str, bytes: &[u8], start: usize, base_end: usize) 
 }
 
 fn scan_decimal_literal(input: &str, start: usize, end: usize) -> (ATok, usize) {
-    let val: i64 = input[start..end].parse().unwrap_or(0);
-    (ATok::Num(val), end)
+    let text = &input[start..end];
+    // Decimal magnitude must fit i64 (Policy A: out of range -> SB4026).
+    // The i64::MIN case `-9223372036854775808` is handled by the unary-neg
+    // peephole in parse_unary, which folds `-<BadNum(9223372036854775808)>`.
+    let tok = match text.parse::<i64>() {
+        Ok(v) => ATok::Num(v),
+        Err(_) => ATok::BadNum(text.to_string()),
+    };
+    (tok, end)
 }
 
 /// Parse `base#digits` payload using bash's base-N digit encoding:
@@ -705,6 +742,21 @@ impl ArithParser {
     /// Parse prefix expressions and atoms.
     fn parse_prefix(&mut self) -> Result<ArithExpr, Diagnostic> {
         match self.peek().cloned() {
+            Some(ATok::PlusPlus) => self.parse_pre_incdec(true),
+            Some(ATok::MinusMinus) => self.parse_pre_incdec(false),
+            Some(ATok::Minus) => self.parse_unary(IrUnaryArithOp::Neg),
+            Some(ATok::Plus) => self.parse_unary(IrUnaryArithOp::Pos),
+            Some(ATok::Bang) => self.parse_unary(IrUnaryArithOp::Not),
+            Some(ATok::Tilde) => self.parse_unary(IrUnaryArithOp::BitNot),
+            _ => self.parse_prefix_atom(),
+        }
+    }
+
+    /// Atoms and operands: literals, variables, parenthesised forms. An
+    /// out-of-range `BadNum` is rejected here (SB4026); the `-i64::MIN`
+    /// case is folded earlier by the unary-neg peephole in `parse_unary`.
+    fn parse_prefix_atom(&mut self) -> Result<ArithExpr, Diagnostic> {
+        match self.peek().cloned() {
             Some(ATok::Num(n)) => {
                 self.advance();
                 Ok(ArithExpr::Literal(n))
@@ -717,13 +769,11 @@ impl ArithParser {
                 self.advance();
                 Ok(ArithExpr::DollarVar(name))
             }
-            Some(ATok::PlusPlus) => self.parse_pre_incdec(true),
-            Some(ATok::MinusMinus) => self.parse_pre_incdec(false),
-            Some(ATok::Minus) => self.parse_unary(IrUnaryArithOp::Neg),
-            Some(ATok::Plus) => self.parse_unary(IrUnaryArithOp::Pos),
-            Some(ATok::Bang) => self.parse_unary(IrUnaryArithOp::Not),
-            Some(ATok::Tilde) => self.parse_unary(IrUnaryArithOp::BitNot),
             Some(ATok::LParen) => self.parse_lparen_form(),
+            Some(ATok::BadNum(s)) => {
+                self.advance();
+                Err(arith_range_error(self.span, &s))
+            }
             Some(_) => {
                 // Unknown token — try to recover
                 self.advance();
@@ -754,6 +804,18 @@ impl ArithParser {
     /// precedence 25 (binds tighter than any binary).
     fn parse_unary(&mut self, op: IrUnaryArithOp) -> Result<ArithExpr, Diagnostic> {
         self.advance();
+        // i64::MIN peephole (Policy A): the bare literal 9223372036854775808
+        // is i64::MAX+1 (out of range as BadNum), but `-9223372036854775808`
+        // is the valid i64::MIN. Fold it here so i64::MIN is expressible as
+        // an arith literal (matches bash; the arith lexer splits the `-`).
+        if matches!(op, IrUnaryArithOp::Neg) {
+            if let Some(ATok::BadNum(s)) = self.peek() {
+                if s == "9223372036854775808" {
+                    self.advance();
+                    return Ok(ArithExpr::Literal(i64::MIN));
+                }
+            }
+        }
         let operand = self.parse_expr(25)?;
         Ok(ArithExpr::UnaryOp {
             op,

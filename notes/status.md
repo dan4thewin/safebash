@@ -12,7 +12,26 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
-### Session 2026-06-27 — cleanup: rename misnamed `heredoc` machinery → `herestring`
+### Session 2026-06-27 — feat: integer literal range & bit-patterns (Policy A, SB4026)
+
+DG ratified the disposition of out-of-range integer literals. Probing
+found the bug was broader than the task: **six** silent `0` miscompiles.
+Policy A (bash-faithful): a **decimal** literal whose magnitude exceeds
+i64 → compile error (SB4026); **hex/octal** are 64-bit bit-patterns
+(`u64`→`i64` reinterpret at scan time, so `0xFFFFFFFFFFFFFFFF` = -1);
+**i64::MIN** is expressible in arith via a unary-neg peephole
+(`-9223372036854775808`). Non-arith `int x=NNN` out-of-range also → SB4026
+(validator). New `ATok::BadNum`; `arith_range_error`. spec/arithmetic.sh
+section 26 (10 cases) native+c green, janet guards the i64 boundaries.
+Native 0-failing (545); spec.db diff = zero regressions. Also resolved
+two DD#25 follow-ups: left-shift = no trap (bits ≠ arithmetic, already
+correct); const-fold overflow = runtime trap stands (compile-error not
+"essentially free" — detection is discarded into a runtime op). Found +
+filed a new bug: based literals (`16#ff`→16) drop their digits because
+`#` is eaten as a comment (bug-arith-based-literal-hash-comment). See
+journal 124.
+
+
 
 DG-directed cleanup. Heredocs (`<<`/`<<-`) are dropped (lexer emits a
 `__HEREDOC__` sentinel → validator SB5002 rejects, pointing at `<<<`). But

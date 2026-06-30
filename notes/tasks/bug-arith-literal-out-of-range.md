@@ -1,16 +1,39 @@
 ---
 title: "BUG — arithmetic integer literal > i64::MAX silently parses as 0"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "`echo $(( 9223372036854775808 ))` does NOT silently yield 0"
-  - "DG decision: out-of-range literal → compile error (SB-code) vs saturate/trap"
-  - "native + c + janet consistent"
+  - "[DONE] `echo $(( 9223372036854775808 ))` is a compile error (SB4026), not silent 0"
+  - "[DONE, DG 2026-06-27] Policy A: decimal magnitude > i64::MAX → compile error; hex/octal are 64-bit bit-patterns (u64→i64 reinterpret, 0xFFFF…F = -1); i64::MIN expressible in arith via unary-neg peephole"
+  - "[DONE] non-arith `int x=NNN` out-of-range → SB4026 (validate.rs); i64::MIN still works"
+  - "[DONE] native + c consistent (janet skips i64::MAX/MIN boundary values — double rounds)"
+  - "[SPLIT OFF] based literals `base#digits` — separately broken (the `#` is eaten as a comment before the scanner); deferred to bug-arith-based-literal-hash-comment"
 ---
 
-# BUG — out-of-range integer literal silently becomes 0
+# RESOLVED 2026-06-27 (Policy A, DG)
+
+Implemented in `49…` (this session). Spec section 26 in
+spec/arithmetic.sh (10 cases, native+c green, janet guards the i64
+boundary values). See journal 124.
+
+- **Decimal** > i64::MAX → SB4026 (`scan_decimal_literal` returns a new
+  `ATok::BadNum(raw)`; the parser rejects it with `arith_range_error`).
+- **i64::MIN peephole**: `parse_unary` folds `-<BadNum(9223372036854775808)>`
+  → `Literal(i64::MIN)`, so `$(( -9223372036854775808 ))` works (bash parity).
+- **Hex/octal** are 64-bit bit-patterns: `u64::from_str_radix(..) as i64`
+  at scan time, so `0xFFFFFFFFFFFFFFFF` == -1, `0x8000000000000000` ==
+  i64::MIN; wider than 64 bits → SB4026.
+- **Non-arith** `int x=NNN` / `const x=NNN`: `validate_declaration`
+  rejects an out-of-range decimal literal (SB4026, `int_literal_out_of_range`).
+  i64::MIN keeps working because the `-` is part of the literal there.
+- **Based literals deferred** — see relationship note above.
+
+---
+
+# (original) BUG — out-of-range integer literal silently becomes 0
+
 
 Found 2026-06-26 while extending the DD#25 overflow sweep
 (`bug-runtime-arith-overflow-wraps` — Pow/Div).

@@ -12,8 +12,8 @@ gates:
   - "[DONE] DD#25 frontmatter/implementation note corrected"
   - "[DONE] native spec 0-failing; c/janet baseline held"
   - "[DONE 2026-06-26b] Pow (was saturate→now traps); Div i64::MIN/-1 (was SIGFPE→now clean trap), native+c. Neg already traps (0-x→ssub_overflow); Mod MIN/-1 = 0 (srem, correct)."
-  - "[OPEN/DECISION] Shl left-shift: the `<<` lexing bug is FIXED (bug-arith-left-shift-heredoc, 2026-06-26), so `1 << 63` now evaluates. Whether left-shift *overflow* (into/past the sign bit, or shift ≥ 64) should TRAP is a DG decision — shift overflow semantics are murkier than +,-,*. Not acted on."
-  - "[OPEN/DECISION] const-fold overflow: runtime trap (chosen) vs compile-time error — DG to ratify"
+  - "[RESOLVED 2026-06-27, DG] Shl left-shift: NO overflow check — shifts are bit manipulation, not arithmetic. `1 << 63` evaluates (the `<<` lexing bug was fixed 2026-06-26). Already correct in codegen (plain `ishl`, no trap). By design, not deferral."
+  - "[RESOLVED 2026-06-27, DG] const-fold overflow: runtime trap STANDS. DG: runtime sufficient unless compile-time detection is essentially free — investigated, it is NOT free. The fold detection (`checked_*`→None, expr_handlers.rs) is immediately discarded into a runtime ArithBinOp; surfacing it as a compile error needs a mutable diagnostics sink threaded through the entire `&VersionState`-immutable arith recursion (arith_to_ssa/binop_to_ssa/unaryop_to_ssa), or a new constant-evaluator in the validator (which does NOT fold today). Neither is free. All-literal overflow (e.g. `(( 2**63 + 1 ))`) already traps correctly at runtime."
   - "[SPLIT OFF] out-of-range integer *literal* → 0 — see `bug-arith-literal-out-of-range`"
 ---
 

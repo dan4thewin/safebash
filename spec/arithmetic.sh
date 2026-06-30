@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=44
+plan=54
 echo "1..$plan" >&3
 
 set +e
@@ -210,6 +210,65 @@ if (( x >= 5 )); then echo a; fi
 if (( x >= 4 )); then echo b; fi
 if (( x >= 6 )); then echo BAD; fi'
 [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 31.18
+
+# --- 26 integer literal range & bit-patterns (bug-arith-literal-out-of-range) ---
+# Policy A (DG 2026-06-27, bash-faithful): a DECIMAL literal whose magnitude
+# exceeds i64::MAX is a COMPILE ERROR (SB4026); hex/octal literals are 64-bit
+# BIT-PATTERNS — reinterpreted u64->i64 at scan time, so
+# 0xFFFFFFFFFFFFFFFF == -1 — and only error when wider than 64 bits; i64::MIN
+# is expressible as an arith literal via the unary-neg peephole. Compile-error
+# cases are front-end (all modes); the i64::MAX/MIN value cases are guarded
+# native,c (janet's double rounds the boundary values).
+# NB: based literals (base#digits) are excluded here — they are separately
+# broken (the `#` is eaten as a comment before the scanner), see
+# bug-arith-based-literal-hash-comment.
+
+# 26.1 decimal i64::MAX+1 -> compile error (was: silent 0)
+run_sash 'echo $(( 9223372036854775808 ))'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 26.1
+
+# 26.2 decimal far out of range -> compile error
+run_sash 'echo $(( 99999999999999999999999 ))'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 26.2
+
+# 26.3 non-arith int literal out of range -> compile error (was: silent 0)
+run_sash 'int x=99999999999999999999999
+echo $x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 26.3
+
+# 26.4 non-arith negative out of range -> compile error
+run_sash 'int x=-99999999999999999999999
+echo $x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 26.4
+
+# 26.5 hex wider than 64 bits -> compile error
+run_sash 'echo $(( 0x1FFFFFFFFFFFFFFFF ))'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 26.5
+
+# 26.6 hex all-ones is the bit-pattern -1 (bash parity); all modes
+run_sash 'echo $(( 0xFFFFFFFFFFFFFFFF ))'
+[[ $rc = 0 && $out = "-1" && -z $err ]]; chk 26.6
+
+# 26.7 octal still works (regression guard)
+run_sash 'echo $(( 017 ))'
+[[ $rc = 0 && $out = "15" && -z $err ]]; chk 26.7
+
+# 26.8-26.10 i64::MAX / i64::MIN magnitudes — guarded native,c
+if in_modes native,c; then
+    # 26.8 decimal i64::MAX is in range
+    run_sash 'echo $(( 9223372036854775807 ))'
+    [[ $rc = 0 && $out = "9223372036854775807" && -z $err ]]; chk 26.8
+
+    # 26.9 arith i64::MIN via unary-neg peephole (was: silent 0)
+    run_sash 'echo $(( -9223372036854775808 ))'
+    [[ $rc = 0 && $out = "-9223372036854775808" && -z $err ]]; chk 26.9
+
+    # 26.10 hex sign-bit pattern == i64::MIN (bash parity)
+    run_sash 'echo $(( 0x8000000000000000 ))'
+    [[ $rc = 0 && $out = "-9223372036854775808" && -z $err ]]; chk 26.10
+else
+    skip_chk 26.8; skip_chk 26.9; skip_chk 26.10
+fi
 
 set -e
 tally
