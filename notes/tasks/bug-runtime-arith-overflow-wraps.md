@@ -1,6 +1,6 @@
 ---
 title: "BUG (P0/security) — runtime integer overflow silently wraps (DD#25 violation); itoa(i64::MIN) panics"
-status: mostly-fixed
+status: done
 priority: P0
 kind: bug
 depends: []
