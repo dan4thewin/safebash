@@ -1,13 +1,35 @@
 ---
 title: emit_janet — argv/arg/argc backend parity (DD#60)
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
 gates:
-  - $(argc), $(arg N), $(argv)/$(argv N) for-in, array a=$(argv N) work in --janet
-  - argv.sh passes under SASH_MODE=janet
+  - "[DONE] $(argc), $(arg N), $(argv)/$(argv N) for-in, array a=$(argv N) work in --janet"
+  - "[DONE] argv.sh passes fully under SASH_MODE=janet"
 ---
+
+# RESOLVED 2026-07-03
+
+janet-native argv via `(dyn :args)` (= `[script, ARGS…]`, matching C's
+argv[0]=progname convention — `os/args` doesn't exist in this janet):
+- `$(argc)` → `(string (length (dyn :args)))`.
+- `$(arg N)` → `(get (dyn :args) N)`, 0-based, out-of-range aborts (av.t6);
+  negative literal is a validator compile error (av.t7).
+- `for x in $(argv N)` → `(each x [;(array/slice (dyn :args) (min N (length …)))] …)`
+  (clamped so N >= argc → zero iterations, av.s3).
+- `array a=$(argv N)` → `(array/slice (dyn :args) (min N (length …)))`.
+- New `argv_start_index` helper detects the argv splat at the IR level.
+
+**Bonus fix**: `for x in @a` was emitting `(each x [a])` — iterating the
+array as ONE value — for ALL arrays (pre-existing janet bug). `emit_for`
+now splices `@a` via `janet_arg_splat` → `;a`. Also added a janet `join`
+handler (`$(join @a)` → `(string/join a " ")`, `join SEP @a` → sep).
+
+Net: janet failing 106 → 82 (−24), zero regressions. Fixed argv.sh in
+full plus cascade wins in control_flow (cf.f3/f4/f7), wordsplit (ws.q4/q5),
+misc (28.2, 42.3, 42.5).
+
 
 # emit_janet — argv/arg/argc backend parity
 

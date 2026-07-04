@@ -278,11 +278,7 @@ fn emit_declaration_assignment(
     depth: usize,
 ) {
     indent(out, depth);
-    let val = if d.var_type == VarType::Int {
-        emit_expr_as_int(&a.value, ctx)
-    } else {
-        emit_expr_inline(&a.value, ctx)
-    };
+    let val = emit_decl_value(d, a, ctx);
     if ctx.is_declared(&a.name) {
         writeln!(out, "(set {} {})", a.name, val).unwrap();
     } else {
@@ -302,6 +298,19 @@ fn emit_declaration_assignment(
 
 /// Record a declared variable's janet type: int (numeric), map (assoc array,
 /// string-keyed), or a plain string/indexed-array binding.
+/// Compute the janet initializer for a declaration's assignment: int
+/// coercion, a DD#60 `$(argv N)` snapshot (clamped so N >= argc → empty
+/// array), or a plain inline value.
+fn emit_decl_value(d: &Declaration, a: &Assignment, ctx: &EmitCtx) -> String {
+    if d.var_type == VarType::Int {
+        emit_expr_as_int(&a.value, ctx)
+    } else if let Some(start) = argv_start_index(&a.value, ctx) {
+        format!("(array/slice (dyn :args) (min {start} (length (dyn :args))))")
+    } else {
+        emit_expr_inline(&a.value, ctx)
+    }
+}
+
 fn declare_decl_var(ctx: &mut EmitCtx, d: &Declaration, a: &Assignment) {
     if d.var_type == VarType::Int {
         ctx.declare_int(&a.name);
@@ -314,7 +323,22 @@ fn declare_decl_var(ctx: &mut EmitCtx, d: &Declaration, a: &Assignment) {
 
 fn emit_for(out: &mut String, ctx: &mut EmitCtx, f: &For, depth: usize) {
     indent(out, depth);
-    let words: Vec<String> = f.words.iter().map(|w| emit_expr_inline(w, ctx)).collect();
+    let mut words: Vec<String> = Vec::new();
+    for w in &f.words {
+        // DD#60: `for x in $(argv N)` iterates the args slice (index N..),
+        // clamped so N >= argc yields zero iterations (not a slice error).
+        if let Some(start) = argv_start_index(w, ctx) {
+            words.push(format!(
+                ";(array/slice (dyn :args) (min {start} (length (dyn :args))))"
+            ));
+        } else if let Some(array) = janet_arg_splat(&w.kind) {
+            // `for x in @a` — splice the array's elements, don't iterate the
+            // array as a single value.
+            words.push(format!(";{}", array));
+        } else {
+            words.push(emit_expr_inline(w, ctx));
+        }
+    }
     ctx.declare(&f.variable);
     writeln!(out, "(each {} [{}]", f.variable, words.join(" ")).unwrap();
     for s in &f.body {
@@ -1339,44 +1363,39 @@ fn emit_expr_command_substitution(stmts: &[Statement], ctx: &EmitCtx) -> String 
     "\"\"".to_string()
 }
 
+/// DD#60: recognise `$(argv)` / `$(argv N)` (an argv splat, not a scalar
+/// cmdsub). Returns the janet start-index expression (0 when N is omitted),
+/// or None if `expr` is not an argv splat.
+fn argv_start_index(expr: &Expr, ctx: &EmitCtx) -> Option<String> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let stmt = stmts.first()?;
+    let inner = match &stmt.kind {
+        StmtKind::Redirected(r) => &r.body.kind,
+        other => other,
+    };
+    let StmtKind::Command(c) = inner else {
+        return None;
+    };
+    if expr_to_literal(&c.name) != "argv" {
+        return None;
+    }
+    Some(match c.args.first() {
+        Some(a) => emit_expr_as_int(a, ctx),
+        None => "0".to_string(),
+    })
+}
+
 fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     let name = expr_to_literal(&c.name);
-    // DD#63: regex builtins shell out to the `sash-regex` helper, which
-    // uses the same vendored Plan 9 regexp9 engine as native/C — so the
-    // Janet oracle is byte-identical rather than faking regex with Janet's
-    // literal string/replace. `sub`/`gsub` take SUBJECT PATTERN REPLACEMENT.
-    if (name == "sub" || name == "gsub") && c.args.len() == 3 {
-        let subj = emit_expr_inline(&c.args[0], ctx);
-        let pat = emit_expr_inline(&c.args[1], ctx);
-        let rep = emit_expr_inline(&c.args[2], ctx);
-        return format!(
-            "(string/trim (with [f (os/spawn [\"sash-regex\" \"{op}\" {subj} {pat} {rep}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))",
-            op = name,
-            subj = subj,
-            pat = pat,
-            rep = rep,
-        );
+    if let Some(s) = cmdsub_regex_intrinsic(&name, c, ctx) {
+        return s;
     }
-    // `$(match S P)` → whole match (resub[0]) on stdout. Matching cases
-    // exit 0; the boolean `match S P` command form (exit status) is
-    // emitted separately as a statement.
-    if name == "match" && c.args.len() == 2 {
-        let subj = emit_expr_inline(&c.args[0], ctx);
-        let pat = emit_expr_inline(&c.args[1], ctx);
-        return format!(
-            "(string/trim (with [f (os/spawn [\"sash-regex\" \"match\" {subj} {pat}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))",
-            subj = subj,
-            pat = pat,
-        );
+    if let Some(s) = cmdsub_data_intrinsic(&name, c, ctx) {
+        return s;
     }
-    // `$(len ARR)` → element count of the named array. Mirrors native
-    // `sash_table_len` / C `sash_table_len`. The Janet array length is the
-    // element count. (The generic exec fallback below would try to run a
-    // nonexistent `len` command.)
-    if name == "len" && c.args.len() == 1 {
-        let arr = expr_to_literal(&c.args[0]);
-        return format!("(string (length {}))", arr);
-    }
+    // Generic fallback: shell out to the named command and capture stdout.
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
         parts.push(emit_expr_inline(arg, ctx));
@@ -1385,6 +1404,72 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
         "(string/trim (with [f (os/spawn [{}] :p {{:out :pipe}})] (:read (f :out) :all)))",
         parts.join(" ")
     )
+}
+
+/// DD#63 regex value intrinsics. `sub`/`gsub`/`match` shell out to the
+/// `sash-regex` helper (same vendored Plan 9 regexp9 engine as native/C),
+/// so the Janet oracle is byte-identical rather than faking regex with
+/// Janet's literal string ops. `sub`/`gsub` take SUBJECT PATTERN REPLACEMENT;
+/// `$(match S P)` yields the whole match (resub[0]) on stdout.
+fn cmdsub_regex_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if (name == "sub" || name == "gsub") && c.args.len() == 3 {
+        let subj = emit_expr_inline(&c.args[0], ctx);
+        let pat = emit_expr_inline(&c.args[1], ctx);
+        let rep = emit_expr_inline(&c.args[2], ctx);
+        return Some(format!(
+            "(string/trim (with [f (os/spawn [\"sash-regex\" \"{name}\" {subj} {pat} {rep}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))"
+        ));
+    }
+    if name == "match" && c.args.len() == 2 {
+        let subj = emit_expr_inline(&c.args[0], ctx);
+        let pat = emit_expr_inline(&c.args[1], ctx);
+        return Some(format!(
+            "(string/trim (with [f (os/spawn [\"sash-regex\" \"match\" {subj} {pat}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))"
+        ));
+    }
+    None
+}
+
+/// Data/collection value intrinsics that must NOT fall through to the
+/// generic exec fallback: `len` (array length), the DD#60 argv trio
+/// (`argc`/`arg`), and DD#41 `join`.
+fn cmdsub_data_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    // `$(len ARR)` → element count of the named array.
+    if name == "len" && c.args.len() == 1 {
+        let arr = expr_to_literal(&c.args[0]);
+        return Some(format!("(string (length {}))", arr));
+    }
+    // DD#60: `$(argc)` is C argc (program-name slot + user args); the emitted
+    // script runs as `janet .out.janet ARGS…`, so `(dyn :args)` = [script, …].
+    if name == "argc" {
+        return Some("(string (length (dyn :args)))".to_string());
+    }
+    // `$(arg N)` — 0-based scalar program arg (index 0 = program name);
+    // out-of-range aborts at runtime (negative literal is a validator error).
+    if name == "arg" && c.args.len() == 1 {
+        let idx = emit_expr_as_int(&c.args[0], ctx);
+        return Some(format!(
+            "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
+             (get (dyn :args) _ai) \
+             (do (eprint (get (dyn :args) 0) \": arg: index out of range\") (os/exit 1))))"
+        ));
+    }
+    cmdsub_join_intrinsic(name, c, ctx)
+}
+
+/// DD#41: `join @arr` → space-separated; `join SEP @arr` → SEP-separated.
+fn cmdsub_join_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if name != "join" {
+        return None;
+    }
+    match c.args.len() {
+        1 => janet_arg_splat(&c.args[0].kind).map(|a| format!("(string/join {a} \" \")")),
+        2 => janet_arg_splat(&c.args[1].kind).map(|array| {
+            let sep = emit_expr_inline(&c.args[0], ctx);
+            format!("(string/join {array} {sep})")
+        }),
+        _ => None,
+    }
 }
 
 fn emit_expr_concat(parts: &[Expr], ctx: &EmitCtx) -> String {
