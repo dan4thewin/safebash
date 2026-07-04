@@ -1,20 +1,26 @@
 ---
 title: "[[ ]] dispatch (cond) form + remove case/esac/glob-match (DD#66)"
-status: ready
+status: partial
 priority: P2
 kind: feature
 depends: [DD66-cond-form-dispatch, DD62-test-expr-simplification, DD63-regex-quoting-interpolation]
 gates:
-  - "TDD: spec tests below written first and red before code"
-  - "boolean [[ ]] unchanged; dispatch form selected by a { after the first pattern"
-  - "== is exact equality only (no alternation) in BOTH forms; =~ unanchored regex"
-  - "dispatch is a statement + catching construct: $? resets to 0 after (no group-status leak)"
-  - "|| { } is the optional default; first-match-wins; no fall-through"
-  - "dispatch form is statement-only — using it as a condition (if/while/until/!/&&/||) is a diagnostic"
-  - "case/esac removed (reserved-word diagnostic); =glob/fnmatch_impl/;&/;;& deleted; sash_glob (filenames) untouched"
-  - "converter rewrites bash case -> [[ ]] dispatch"
-  - "native spec clean; rust suite no net regression; complexity gate green"
+  - "[DONE 5231dd1] the [[ ]] dispatch form: `[[ SUBJECT ==|=~ PATTERN { grp } … || { grp } ]]`; == exact, =~ unanchored regex; first-match-wins; || default; statement-only (SB4028); native+c+janet (spec/dispatch.sh 22 cases); 0 regressions"
+  - "[SPLIT OFF -> dd66-remove-case] remove case/esac (reserved-word diagnostic), ;&/;;&, =glob/fnmatch_impl, CaseItem.fallthrough/resume; migrate case specs -> dispatch; converter bash case -> dispatch; docs"
 ---
+
+# STATUS 2026-07-04: additive dispatch DONE; case removal split off
+
+The dispatch form (the new capability) is implemented and green in all
+three backends (commit 5231dd1) — see spec/dispatch.sh. The destructive
+removal of `case` (a separate, large increment: spec migration + deleting
+the case/`;&`/`=glob`/`fnmatch` machinery across parser/lowering/backends +
+converter + docs) is filed as `dd66-remove-case`. Note: `ir::Case` now
+carries an `op` field (`=glob` legacy / `==`/`=~` dispatch); the removal
+deletes the `=glob` path.
+
+---
+
 
 # `[[ ]]` dispatch form + remove `case` (DD#66)
 

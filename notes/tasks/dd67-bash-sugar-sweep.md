@@ -1,15 +1,27 @@
 ---
 title: "DD#67 sweep: re-add name() func sugar, the convert switch, review rejected bash forms"
-status: ready
+status: partial
 priority: P3
 kind: feature
 depends: [DD67-native-syntax-sugar-policy]
 gates:
-  - "name() { } AND function name { } accepted as 1-to-1 sugar for fn name { } (same function IR)"
-  - "flat backticks `cmd` accepted as 1-to-1 sugar for $(cmd); nested backticks rejected with a diagnostic"
-  - "sash-convert gains a canonicalize mode emitting native-only syntax; compiler default preserves the user's form"
-  - "the keep/drop table for all rejected bash forms is produced and RATIFIED BY DG before any sugar is implemented"
+  - "[DONE e9849ad] name() { } AND function name { } accepted as 1-to-1 sugar for fn name { } (same function IR)"
+  - "[DONE def5c40] flat backticks `cmd` accepted as 1-to-1 sugar for $(cmd); nested backticks rejected (SB5020)"
+  - "[DONE c3875d1] single-bracket `[` is an ordinary literal char (no longer starts a test)"
+  - "[DONE 2026-06-21] keep/drop table ratified by DG"
+  - "[PENDING -> with dd68] sash-convert canonicalize mode: rewrites sugar -> native-only. The then/fi -> { } part REQUIRES dd68's brace forms, so this lands with dd68-brace-control-flow (name()/function -> fn and backticks -> $() included there)."
 ---
+
+# STATUS 2026-07-04: compiler sugar DONE; canonicalize mode coupled to dd68
+
+§1 (name()/function), §2 (flat + nested backticks), §4B ([ literal) are
+implemented + spec-covered (functions.sh:120, commands.sh:31/35). §3 (the
+sash-convert canonicalize / native-only mode) converts `then…fi`/`do…done`
+-> `{ }`, which cannot exist until dd68 adds the brace forms — so it is
+built jointly with `dd68-brace-control-flow`. §4 keep/drop table ratified.
+
+---
+
 
 # DD#67 sweep — re-adds, the convert switch, and the rejected-form review
 

@@ -12,7 +12,22 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
-### Session 2026-07-03 — c/janet backend-parity batch (6 tasks, 0 regressions)
+### Session 2026-07-04 (cont.) — language sweep DD#65-68 part 1
+
+DG: "do the language sweep." Shipped (0 regressions, native clean):
+- **dd67** verified already-done (name()/function/backticks/[literal).
+- **dd68 brace control flow** (c98ed29) — if/while/until/for `{ }`;
+  parser-only, same IR; spec/brace.sh 25 native-only.
+- **dd66 dispatch form** additive (5231dd1) —
+  `[[ SUBJECT ==|=~ PAT { grp } … || { grp } ]]`; == exact / =~ regex;
+  statement-only (SB4028); ir::Case gained `op`; native+c+janet;
+  spec/dispatch.sh 22.
+
+Remaining (filed): **dd66-remove-case** (destructive: reject case/;&/;;&,
+delete =glob/fnmatch, migrate specs, converter, docs) and **dd65 var
+modifiers** (atomic drop+rebuild). See journal 126.
+
+
 
 DG: "tackle the whole batch." Shipped the c/janet parity cluster spec-first,
 one commit per change, full-suite diff each time. **Native 0-failing
