@@ -61,6 +61,29 @@ accepted):
   wildcard) and `bug-echo-builtin-array-splat-ice` (P2: `echo @a` ICE).
   `bug-regex-rhs-space-quote` superseded by DD#71.
 
+### Session 2026-07-04 (cont.) — DD#71 Cluster A implemented (spec-first)
+
+DG: "Cluster A — DD#71 operand-words, spec-first." Shipped all five coupled
+components, one commit each, **0 regressions native/c/janet** every time.
+Native passing 595 → 635. See journal 128.
+- **star-wildcard** (95491f5) — dispatch `*` is a literal; `is_default` flag
+  replaces the `*` sentinel.
+- **operand-word** (9c71a99) — `=~` RHS is an operand word
+  (parse_operand_word); deleted parse_regex_rhs. Fixes quoted spaces, the
+  silent-`foobar` concat, and dynamic `=~ $pat`; comptime regex validation
+  extended to any static operand shape.
+- **multi-exact** (ce2dfec) — `[[ $x == a b c { … } ]]` (parser-only).
+- **boolean-reject** (fee53a6) — SB4025: a value binding in a boolean context
+  (if/while cond, left of &&/||, `!`) is a compile error. Fixes silent
+  `x=hi && echo $x`.
+- **assign-absorb** (3ede406) — assignment RHS absorbs `& && || |` as
+  literals (`a=foo|cat` → literal). AbsorbMode enum; `=(…)` unaffected.
+
+Filed `bug-test-operand-concat-splice` (P3, pre-existing `run$suf`). Tasks
+operand-word-absorb-mode / reject-nonstatus-in-boolean-context /
+bug-dispatch-literal-star-wildcard → done. Remaining sweep: **dd65 var
+modifiers** (vet-var-modifiers).
+
 
 
 DG: "tackle the whole batch." Shipped the c/janet parity cluster spec-first,

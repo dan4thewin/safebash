@@ -1,6 +1,6 @@
 ---
 title: "Reject a non-boolean/non-exit-status construct used in a boolean context (DD#70 dual)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []

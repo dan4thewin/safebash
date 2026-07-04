@@ -1,6 +1,6 @@
 ---
 title: "BUG — `[[ ]]` dispatch treats literal `*` as a catch-all wildcard (`||` is the only default)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []

@@ -1,6 +1,6 @@
 ---
 title: "Operand-word lexer mode: `=~`/`==` RHS + assignment values absorb to whitespace; delete parse_regex_rhs; multi-exact dispatch arms"
-status: ready
+status: done
 priority: P1
 kind: feature
 depends: []
