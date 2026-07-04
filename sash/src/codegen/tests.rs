@@ -411,7 +411,7 @@ fn lower_test_binary(
             let call = builder.ins().call(fn_ref, &[l_ptr, l_len, r_ptr, r_len]);
             builder.inst_results(call)[0]
         }
-        // `=glob`/`=~`/`==`/`!=`/`<`/`>`/file ops are handled above. Numeric
+        // `=~`/`==`/`!=`/`<`/`>`/file ops are handled above. Numeric
         // ops (`-eq`/`-lt`/…) never reach codegen: user-written ones are
         // rejected by SB5019, and synthesized loop bounds use the `(( ))`
         // arith path (transform/pipelines.rs::emit_for_bound), not tests.

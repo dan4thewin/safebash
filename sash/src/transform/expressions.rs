@@ -52,8 +52,8 @@ fn command_arg_splat(kind: &ExprKind) -> Option<String> {
 
 /// DD#62: pre-lower a `[[ ]]` `TestExpr` into an `SsaTest` whose value
 /// operands are `SsaValue` (so codegen uses the ordinary value path,
-/// with `assoc_arrays`-correct subscript key-typing). `=~`/`=glob` right
-/// operands stay as a raw pattern string.
+/// with `assoc_arrays`-correct subscript key-typing). The `=~` right
+/// operand stays as a raw pattern string.
 pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
     match test {
         TestExpr::Unary { op, operand } => SsaTest::Unary {
@@ -61,7 +61,7 @@ pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
             operand: expr_to_value(operand, state),
         },
         TestExpr::Binary { left, op, right } => {
-            let rhs = if op == "=~" || op == "=glob" {
+            let rhs = if op == "=~" {
                 SsaTestRhs::Pattern(expr_to_string(right))
             } else {
                 SsaTestRhs::Value(expr_to_value(right, state))

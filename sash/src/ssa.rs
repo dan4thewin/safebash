@@ -610,7 +610,7 @@ impl SsaValue {
 }
 
 /// (`lower_value`), so subscripts use `assoc_arrays` key-typing. Only
-/// `=~` / `=glob` keep a raw pattern string.
+/// `=~` keeps a raw pattern string.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaTest {
     Unary {
@@ -628,7 +628,7 @@ pub enum SsaTest {
 }
 
 /// The right operand of a `[[ ]]` binary test: a value (`==`/`!=`/`<`/`>`)
-/// or a raw pattern (`=~` regex / `=glob` case glob).
+/// or a raw pattern (`=~` regex, and the dispatch-arm patterns).
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaTestRhs {
     Value(SsaValue),
