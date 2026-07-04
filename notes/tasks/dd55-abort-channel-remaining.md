@@ -32,12 +32,18 @@ flag**. Native tracks per-segment suppression (see the SSA Pipeline). The
 fix needs that per-stage suppress info threaded into both emit_pipeline
 paths, then pipefail = last **non-suppressed** nonzero stage.
 
-## 2. c cmdsub abort (55.7, 55.8, 55.9)
+## 2. c cmdsub abort (55.7, 55.8, 55.9) — GATED on implementing c external cmdsub
 
 `x=$(/bin/false)` must abort (checked cmdsub); `x=$(- /bin/echo hello)`
-must not. emit_c's emit_cmdsub (value_handlers path) doesn't emit the
-status check. janet already passes 55.7/55.8 (os/spawn failure propagates)
-but fails 55.9 (the `-`-in-cmdsub suppress).
+must not. **Prerequisite discovered 2026-07-04**: emit_c's `emit_cmdsub`
+does not run external commands at all — it emits
+`/* TODO cmdsub exec: <name> (Phase 4) */` and returns `""` (verified:
+`x=$(/bin/echo hi)` → empty in c). So external `$(cmd)` must first be
+implemented in c (fork/exec, capture stdout, set the var), THEN add the
+DD#55 status check/abort. `SsaValue::CmdSubst` carries no `checked` flag
+today — it would need one (like Command/Pipeline) or the abort must be
+derived at the assignment site. janet already passes 55.7/55.8 (os/spawn
+failure propagates) but fails 55.9 (the `-`-in-cmdsub suppress).
 
 ## 3. Descriptive-message aborts (cd / echo-write / redirect-open) — c
 
