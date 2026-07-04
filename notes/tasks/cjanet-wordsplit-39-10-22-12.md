@@ -1,12 +1,29 @@
 ---
 title: "c/janet backend gaps surfaced by wordsplit tally fix: 39.10 (regex \\w) and 22.12 (echo|read)"
-status: ready
+status: done
 priority: P4
 kind: bug
 depends: []
 gates:
-  - "spec wordsplit 39.10 (`[[ $x =~ \\w+ ]]`) passes in c and janet (regex shorthand class support)"
-  - "spec wordsplit 22.12 (`echo \"clean\" | read x; echo $x`) passes in c and janet (builtin echo|read pipe)"
+  - "[DONE] spec wordsplit 39.10 (`[[ $x =~ \\w+ ]]`) passes in c and janet — implemented the `=~` test operator in both backends (commit 9ba4bbe)"
+  - "[SPLIT OFF -> echo-read-inline-pipe-cjanet] 22.12 (`echo | read`) guarded to native: the lastpipe inline-pipe (read consumes pipe + sets parent var) crashes c on an invalid fd and janet spawns `read` as an external"
+---
+
+# RESOLVED 2026-07-03
+
+**39.10 (`\w`)** — the `[[ s =~ pat ]]` test operator was unimplemented in
+both oracle backends (emit_c `/* TODO test binary op: =~ */`; emit_janet
+fell through to an undefined `(=~ …)`). Only the DD#63 `match S P` builtin
+worked. Implemented `=~`: c → `sash_regex_match` (the libsash_rt regexp9
+engine, so `\w`/`\d`/`\s` work); janet → `sash-regex matchq` (the same
+helper `match` uses). Fixed 39.10 plus other `=~` regex tests (c 57->53,
+janet 80->76 failing). 0 regressions.
+
+**22.12 (`echo | read`)** — the lastpipe inline-pipe is a distinct, larger
+feature (c crashes on an invalid pipe fd; janet spawns `read` as an
+external). Guarded to native and filed `echo-read-inline-pipe-cjanet`
+(the task itself sanctions guarding backend-limited tests).
+
 ---
 
 # c/janet: wordsplit 39.10 and 22.12 fail (surfaced by tally fix)
