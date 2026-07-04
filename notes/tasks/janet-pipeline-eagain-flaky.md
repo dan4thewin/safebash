@@ -1,14 +1,33 @@
 ---
 title: "janet backend pipelines are flaky (os/spawn pipe EAGAIN: 'Resource temporarily unavailable')"
-status: ready
+status: done
 priority: P4
 kind: bug
 depends: []
 gates:
-  - "a janet-emitted pipeline (e.g. `printf … | cat`) produces identical output on 100 consecutive runs (no 'Resource temporarily unavailable', no 'bad slot … got nil')"
+  - "[DONE] a janet-emitted pipeline produces identical output on 100 consecutive runs — verified 2-stage 0/100, 3-stage 0/60, 5000-line stress 0/60"
+  - "[DONE] wordsplit 22.18/22.19 un-guarded — now pass under janet"
 ---
 
-# janet pipelines: intermittent os/spawn pipe EAGAIN
+# RESOLVED 2026-07-03
+
+Root cause: janet's `:out :pipe` streams (and `os/pipe`'s default ends) are
+**non-blocking** (O_NONBLOCK, for the ev loop). The old emission chained
+stages with `:in (p{i-1} :out)`, handing a non-blocking fd to the next
+child's stdin — so the child (`cat`, `wc`, …) read EAGAIN
+("Resource temporarily unavailable") and the janet collector then saw nil.
+
+Fix (`emit_janet.rs` `emit_pipeline` / `emit_pipeline_stage` /
+`emit_pipeline_close_pipes` / `emit_pipeline_wait_and_collect`): connect
+stages with explicit **blocking** pipes `(os/pipe :WR)`, keep `:out :pipe`
+only on the last stage (janet drains it via the ev loop, where
+non-blocking is correct), close the parent's inter-stage ends so EOF
+propagates, and read the last stage before waiting (no buffer deadlock).
+
+---
+
+# (original) janet pipelines: intermittent os/spawn pipe EAGAIN
+
 
 ## Symptom
 

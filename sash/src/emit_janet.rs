@@ -567,21 +567,29 @@ fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize
         emit_stmt(out, ctx, &p.commands[0], depth);
         return;
     }
+    let last = p.commands.len() - 1;
     indent(out, depth);
     writeln!(out, "(do").unwrap();
     for (i, cmd) in p.commands.iter().enumerate() {
-        emit_pipeline_stage(out, ctx, cmd, i, depth + 1);
+        emit_pipeline_stage(out, ctx, cmd, i, last, depth + 1);
     }
+    emit_pipeline_close_pipes(out, last, depth + 1);
     emit_pipeline_wait_and_collect(out, p.commands.len(), depth + 1);
 }
 
-/// Emit one `os/spawn` stage. Stage 0 gets its own input; subsequent
-/// stages chain `:in` from the previous stage's `:out` pipe.
+/// Emit one `os/spawn` stage. Stages are connected by explicit
+/// `(os/pipe :WR)` pipes whose ends are BLOCKING — janet's default
+/// `:out :pipe` streams are non-blocking (for the ev loop), and handing a
+/// non-blocking fd to a child's stdin/stdout makes the child read/write
+/// EAGAIN ("Resource temporarily unavailable"). The last stage keeps
+/// `:out :pipe` because janet itself drains it via the ev loop, where
+/// non-blocking is correct.
 fn emit_pipeline_stage(
     out: &mut String,
     ctx: &mut EmitCtx,
     cmd: &Statement,
     i: usize,
+    last: usize,
     depth: usize,
 ) {
     let StmtKind::Command(c) = &cmd.kind else {
@@ -589,35 +597,51 @@ fn emit_pipeline_stage(
     };
     let cmd_name = expr_to_literal(&c.name);
     let parts = janet_command_parts(&cmd_name, c, ctx);
-    indent(out, depth);
-    if i == 0 {
-        writeln!(
-            out,
-            "(def p{} (os/spawn [{}] :p {{:out :pipe}}))",
-            i,
-            parts.join(" ")
-        )
-        .unwrap();
-    } else {
-        writeln!(
-            out,
-            "(def p{} (os/spawn [{}] :p {{:in (p{} :out) :out :pipe}}))",
-            i,
-            parts.join(" "),
-            i - 1
-        )
-        .unwrap();
+    if i < last {
+        indent(out, depth);
+        writeln!(out, "(def [_r{i} _w{i}] (os/pipe :WR))").unwrap();
     }
+    let in_spec = if i > 0 {
+        format!(":in _r{} ", i - 1)
+    } else {
+        String::new()
+    };
+    let out_spec = if i < last {
+        format!(":out _w{i}")
+    } else {
+        ":out :pipe".to_string()
+    };
+    indent(out, depth);
+    writeln!(
+        out,
+        "(def p{} (os/spawn [{}] :p {{{}{}}}))",
+        i,
+        parts.join(" "),
+        in_spec,
+        out_spec
+    )
+    .unwrap();
 }
 
-/// After all stages are spawned, wait for upstream procs, read the last
-/// stage's stdout into `result`, wait for it, and print result.
+/// The parent must close its copies of every inter-stage pipe end so that
+/// EOF propagates down the chain (otherwise a downstream reader never sees
+/// end-of-input). There are `last` inter-stage pipes (indices 0..last-1).
+fn emit_pipeline_close_pipes(out: &mut String, last: usize, depth: usize) {
+    if last == 0 {
+        return;
+    }
+    indent(out, depth);
+    for i in 0..last {
+        write!(out, "(:close _w{i}) (:close _r{i}) ").unwrap();
+    }
+    writeln!(out).unwrap();
+}
+
+/// Drain the last stage's stdout to EOF (which pulls data through the whole
+/// blocking chain), then reap every stage, then print. Reading before
+/// waiting avoids any pipe-buffer deadlock.
 fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: usize) {
     let last = n_commands - 1;
-    for i in 0..last {
-        indent(out, depth);
-        writeln!(out, "(os/proc-wait p{})", i).unwrap();
-    }
     indent(out, depth);
     writeln!(
         out,
@@ -625,8 +649,10 @@ fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: us
         last
     )
     .unwrap();
-    indent(out, depth);
-    writeln!(out, "(os/proc-wait p{})", last).unwrap();
+    for i in 0..n_commands {
+        indent(out, depth);
+        writeln!(out, "(os/proc-wait p{})", i).unwrap();
+    }
     indent(out, depth);
     writeln!(out, "(print result))").unwrap();
 }

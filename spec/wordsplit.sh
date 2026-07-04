@@ -254,21 +254,12 @@ run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @a @b'
 [[ $rc = 0 && $out = "x|y|z|" && -z $err ]]; chk 22.17
 
 # 22.18 empty array → ZERO args (cat reads stdin, not an empty-name file).
-# Pipeline → native/c only: Janet's os/spawn pipe path is racy (pre-existing).
-if in_modes native,c; then
-    run_sash 'array e=(); /usr/bin/printf STDIN | cat @e'
-    [[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
-else
-    skip_chk 22.18
-fi
+run_sash 'array e=(); /usr/bin/printf STDIN | cat @e'
+[[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
 
-# 22.19 splat in a pipeline stage (native/c; Janet os/spawn pipe is racy)
-if in_modes native,c; then
-    run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @a | cat'
-    [[ $rc = 0 && $out = $'[p]\n[q]\n[r]' && -z $err ]]; chk 22.19
-else
-    skip_chk 22.19
-fi
+# 22.19 splat in a pipeline stage (janet pipe plumbing fixed: os/pipe :WR)
+run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @a | cat'
+[[ $rc = 0 && $out = $'[p]\n[q]\n[r]' && -z $err ]]; chk 22.19
 
 # 20.1 inline `*` glob in command-arg position is a compile error (DD#20/#69:
 #      globs are array sugar; no inline glob expansion)
