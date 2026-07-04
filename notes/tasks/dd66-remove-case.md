@@ -1,6 +1,6 @@
 ---
 title: "DD#66 remove case/esac + =glob/fnmatch/;&/;;& (dispatch replaces it)"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: [dd66-cond-form-dispatch]
@@ -45,3 +45,24 @@ destructive half: delete the legacy `case…esac` construct now that
 - emit_janet `emit_case` currently also has the `bug-janet-case-glob` gap;
   removing the legacy-glob path closes that (the dispatch `==`/`=~` paths
   are correct).
+
+## Resolution (2026-07-04, f71c04a + follow-on)
+
+Done. `case` is a reserved-word compile error (**SB4029**) directing to the
+dispatch form; `parse_case`/`parse_case_item` deleted; `Tok::SemiAmp`/
+`Tok::DblSemiAmp` (`;&`/`;;&`) removed from the lexer + logos. `CaseItem`
+lost `fallthrough`/`resume`; `wire_case_exits` collapsed to "arm → merge";
+`glob_test`→`dispatch_test` (no `=glob` branch); merge label
+`case.merge`→`dispatch.merge` (both catching-construct matchers updated).
+`=glob`/`!=glob` removed from codegen + emit_c; `sash_fnmatch`/`fnmatch_impl`
+deleted from the runtime (`sash_glob`/`sash_glob_regex` for filename globs
+kept and verified). control_flow.sh cf.c1-c12 migrated to dispatch (glob
+arms → `=~` regex), +cf.c13/c14 case-reject; misc.sh 20.4 repointed; GUIDE/
+SUBSET updated. **0 regressions native/c/janet; janet cf.c6 now fixed**
+(the migrated regex path closes the old janet-case-glob gap).
+
+The **converter** gate is split: sash-convert now emits a MANUAL
+dispatch-form annotation for `case_statement` (the `subshell` convention);
+the full mechanical `case`→dispatch auto-rewrite (which needs a DG decision
+on one-op-vs-per-arm and the nested-body patch strategy) is filed as
+`converter-case-to-dispatch`.

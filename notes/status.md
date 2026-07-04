@@ -23,9 +23,22 @@ DG: "do the language sweep." Shipped (0 regressions, native clean):
   statement-only (SB4028); ir::Case gained `op`; native+c+janet;
   spec/dispatch.sh 22.
 
-Remaining (filed): **dd66-remove-case** (destructive: reject case/;&/;;&,
-delete =glob/fnmatch, migrate specs, converter, docs) and **dd65 var
-modifiers** (atomic drop+rebuild). See journal 126.
+Remaining (filed): **dd65 var modifiers** (atomic drop+rebuild).
+See journal 126.
+
+### Session 2026-07-04 (cont.) — DD#66 remove `case` (sweep part 2)
+
+DG: "continue — remove case first." Destructive half of DD#66 shipped
+(f71c04a) spec-first, **0 regressions native/c/janet**:
+- `case`/`esac` → reserved-word reject **SB4029**; `;&`/`;;&` tokens gone;
+  `CaseItem.fallthrough`/`resume`, `=glob`, `sash_fnmatch`/`fnmatch_impl`
+  all deleted (filename `sash_glob` kept). `case.merge`→`dispatch.merge`.
+- control_flow.sh cf.c1-c12 migrated to dispatch (+cf.c13/c14 reject);
+  janet cf.c6 flipped green → closes `bug-janet-case-glob` (dissolved).
+- Converter: MANUAL dispatch annotation for `case` (subshell convention);
+  full auto-rewrite is a DG decision → filed `converter-case-to-dispatch`.
+
+Remaining sweep: **dd65 var modifiers**. See journal 127.
 
 
 

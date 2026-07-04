@@ -1,6 +1,6 @@
 ---
 title: "c/janet: case glob patterns (h*) not matched (only exact literals + bare *)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,6 +10,14 @@ gates:
 ---
 
 # BUG — janet case emits glob patterns as exact literals
+
+> **Resolved 2026-07-04 (f71c04a), dissolved by DD#66** — as this task
+> predicted ("Likely mooted by DD#66"). `case` is removed; case patterns
+> can no longer be globs at all (dispatch is `==` exact or `=~` regex).
+> The legacy string-match glob path (`=glob`/`fnmatch_impl`) is deleted in
+> every backend, so janet can no longer miscompile it. spec cf.c6 was
+> migrated to the regex dispatch form and now **passes in janet** (it was
+> the one test this removal flipped green).
 
 Found 2026-07-03 while fixing `bug-janet-case-multipattern`.
 
