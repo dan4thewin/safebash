@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=7
+plan=13
 echo "1..$plan" >&3
 
 set +e
@@ -28,6 +28,22 @@ run_sash 'echo $(toupper foo)-$(tolower BAR)'
 # vm.tu7 the case-insensitive match idiom (DD#65: regex has no `i` flag)
 run_sash 'x=HeLLo; pat=hello; match $(tolower $x) $(tolower $pat) && echo same || echo diff'
 [[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.tu7
+
+# ── basename / dirname sugar (DD#65 — rewritten to a fixed-pattern sub) ──
+run_sash 'p=/a/b/c.txt; echo $(basename $p)'
+[[ $rc = 0 && $out = "c.txt" && -z $err ]]; chk vm.bn1
+run_sash 'p=/a/b/c.txt; echo $(dirname $p)'
+[[ $rc = 0 && $out = "/a/b" && -z $err ]]; chk vm.bn2
+# vm.bn3 a slashless path is its own basename
+run_sash 'p=foo.txt; echo $(basename $p)'
+[[ $rc = 0 && $out = "foo.txt" && -z $err ]]; chk vm.bn3
+run_sash 'p=/usr/bin; echo $(basename $p)'
+[[ $rc = 0 && $out = "bin" && -z $err ]]; chk vm.bn4
+run_sash 'p=/usr/bin; echo $(dirname $p)'
+[[ $rc = 0 && $out = "/usr" && -z $err ]]; chk vm.bn5
+# vm.bn6 basename of a literal path
+run_sash 'echo $(basename /x/y/z)'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk vm.bn6
 
 set -e
 tally

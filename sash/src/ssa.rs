@@ -141,6 +141,10 @@ pub enum BuiltinCmd {
     /// (irreducible: a regex `sub` cannot upper/lowercase).
     Toupper,
     Tolower,
+    /// `$(basename p)` / `$(dirname p)` — DD#65 path sugar: rewritten to a
+    /// fixed-pattern `sub` (`.*/` / `/[^/]*$` → empty).
+    Basename,
+    Dirname,
 
     /// Anything else: external command, user function call, dynamic
     /// expansion. The raw name in `SsaInst::Command::name` is the
@@ -192,6 +196,8 @@ impl BuiltinCmd {
             "match" => Self::Match,
             "toupper" => Self::Toupper,
             "tolower" => Self::Tolower,
+            "basename" => Self::Basename,
+            "dirname" => Self::Dirname,
             _ => Self::Other,
         }
     }

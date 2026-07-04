@@ -79,9 +79,28 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         BuiltinCmd::Match => regex_match_intrinsic(c, state),
         BuiltinCmd::Toupper => case_convert_intrinsic(c, state, true),
         BuiltinCmd::Tolower => case_convert_intrinsic(c, state, false),
+        BuiltinCmd::Basename => path_sugar_intrinsic(c, state, ".*/"),
+        BuiltinCmd::Dirname => path_sugar_intrinsic(c, state, "/[^/]*$"),
         BuiltinCmd::Echo => Some(echo_concat(c, state)),
         _ => None,
     }
+}
+
+/// DD#65: `$(basename p)` / `$(dirname p)` are **sugar** for a fixed-pattern
+/// `sub` — `basename` strips everything up to the last `/` (`.*/` → ``),
+/// `dirname` strips the trailing `/component` (`/[^/]*$` → ``). Reuses the
+/// `RegexReplace` path (no fork, no taint beyond the operand). `None` on
+/// wrong arity (falls through to the generic cmdsub path).
+fn path_sugar_intrinsic(c: &Command, state: &VersionState, pattern: &str) -> Option<SsaValue> {
+    if c.args.len() != 1 {
+        return None;
+    }
+    Some(SsaValue::RegexReplace {
+        subject: Box::new(expr_to_value(&c.args[0], state)),
+        pattern: Box::new(SsaValue::Literal(pattern.to_string())),
+        replacement: Box::new(SsaValue::Literal(String::new())),
+        global: false,
+    })
 }
 
 /// DD#65: `$(toupper s)` / `$(tolower s)` → `SsaValue::CaseConvert`. The

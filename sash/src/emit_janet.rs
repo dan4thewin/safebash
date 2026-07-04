@@ -1490,6 +1490,9 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     if let Some(s) = cmdsub_case_intrinsic(&name, c, ctx) {
         return s;
     }
+    if let Some(s) = cmdsub_path_intrinsic(&name, c, ctx) {
+        return s;
+    }
     if let Some(s) = cmdsub_data_intrinsic(&name, c, ctx) {
         return s;
     }
@@ -1540,6 +1543,19 @@ fn cmdsub_case_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
         return Some(format!("({f} {subj})"));
     }
     None
+}
+
+/// DD#65: `$(basename p)` / `$(dirname p)` — path sugar over a fixed-pattern
+/// `sub` (same sash-regex helper as `$(sub …)`, byte-identical to native/C).
+fn cmdsub_path_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if (name != "basename" && name != "dirname") || c.args.len() != 1 {
+        return None;
+    }
+    let subj = emit_expr_inline(&c.args[0], ctx);
+    let pat = if name == "basename" { ".*/" } else { "/[^/]*$" };
+    Some(format!(
+        "(string/trim (with [f (os/spawn [\"sash-regex\" \"sub\" {subj} \"{pat}\" \"\"] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))"
+    ))
 }
 
 /// Data/collection value intrinsics that must NOT fall through to the
