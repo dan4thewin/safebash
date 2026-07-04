@@ -282,7 +282,8 @@ Defined in `ir.rs`.
 ### Statement types (StmtKind)
 
 Assignment, Declaration, Command, Pipeline, List (&&/||), If, While,
-For, Case, Function, Redirected, Subshell, Group, ArithmeticCommand.
+For, Case (the `[[ ]]` dispatch form, DD#66), Function, Redirected,
+Subshell, Group, ArithmeticCommand.
 
 Subshell exists in the IR for bash-mode input but is coerced during
 lowering into sash primitives (DD#38).

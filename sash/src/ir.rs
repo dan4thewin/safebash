@@ -473,8 +473,7 @@ pub struct For {
 pub struct Case {
     pub value: Expr,
     pub items: Vec<CaseItem>,
-    /// DD#66: the match operator — `"=glob"` for legacy `case…esac`,
-    /// `"=="` (exact) or `"=~"` (regex) for the `[[ ]]` dispatch form.
+    /// DD#66: the dispatch match operator — `"=="` (exact) or `"=~"` (regex).
     pub op: String,
 }
 
@@ -482,8 +481,6 @@ pub struct Case {
 pub struct CaseItem {
     pub patterns: Vec<Expr>,
     pub body: Vec<Statement>,
-    pub fallthrough: bool, // ;& = fall through to next body
-    pub resume: bool,      // ;;& = resume pattern matching
 }
 
 #[derive(Debug, Clone, PartialEq)]

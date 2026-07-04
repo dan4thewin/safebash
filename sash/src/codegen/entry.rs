@@ -270,7 +270,7 @@ fn is_catching_construct_exit(label: &str) -> bool {
             | "for_cmd.exit"
             | "for_arr.exit"
             | "for_at.exit"
-            | "case.merge"
+            | "dispatch.merge"
     )
 }
 

@@ -373,15 +373,6 @@ fn lower_test_binary(
             let one = builder.ins().iconst(I64, 1);
             builder.ins().isub(one, matched)
         }
-        // Case-dispatch glob (injected by lowering): fnmatch(pattern,
-        // string). Note the arg swap — pattern is the right operand.
-        "=glob" => {
-            let fnmatch_ref = module.declare_func_in_func(externs.fnmatch, builder.func);
-            let call = builder
-                .ins()
-                .call(fnmatch_ref, &[r_ptr, r_len, l_ptr, l_len]);
-            builder.inst_results(call)[0]
-        }
         // DD#62: `=~` RHS is always a regex — quoting is grouping, not
         // literalization.
         "=~" => {

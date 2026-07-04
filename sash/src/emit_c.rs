@@ -121,11 +121,6 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_pow(i64 base, i64 exp);").unwrap();
     writeln!(
         out,
-        "extern i64 sash_fnmatch(const char* p, i64 pl, const char* s, i64 sl);"
-    )
-    .unwrap();
-    writeln!(
-        out,
         "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
@@ -504,7 +499,7 @@ fn is_catching_construct_exit(label: &str) -> bool {
             | "for_cmd.exit"
             | "for_arr.exit"
             | "for_at.exit"
-            | "case.merge"
+            | "dispatch.merge"
     )
 }
 
@@ -1243,11 +1238,10 @@ fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
     }
 }
 
-/// Lower a binary test. String ops (=, ==, !=) → sash_strcmp; case-dispatch
-/// glob (=glob) → sash_fnmatch(pattern, str). Numeric ops never reach here
-/// (user ones rejected by SB5019; synthesized loop bounds use the `(( ))`
-/// arith path). Other ops (=~, <, >, -nt, -ot, -ef) are not yet implemented
-/// in the C backend.
+/// Lower a binary test. String ops (=, ==, !=) → sash_strcmp; regex (`=~`) →
+/// sash_regex_match. Numeric ops never reach here (user ones rejected by
+/// SB5019; synthesized loop bounds use the `(( ))` arith path). Other ops
+/// (<, >, -nt, -ot, -ef) are not yet implemented in the C backend.
 fn lower_test_binary(
     e: &mut Emit,
     left: &SsaValue,
@@ -1258,7 +1252,6 @@ fn lower_test_binary(
     let (lp, ll) = lower_value_as_str(e, left, types);
     let (rp, rl) = test_rhs_as_str(e, right, types);
     // codegen returns 1 ⇔ match; sash_strcmp returns 0 on match (so invert).
-    // For =glob/!=glob the pattern is the RHS, string the LHS (arg swap).
     match op {
         "=" | "==" => format!(
             "((sash_strcmp({}, {}, {}, {})) == 0 ? 1 : 0)",
@@ -1267,11 +1260,6 @@ fn lower_test_binary(
         "!=" => format!(
             "((sash_strcmp({}, {}, {}, {})) != 0 ? 1 : 0)",
             lp, ll, rp, rl
-        ),
-        "=glob" => format!("(sash_fnmatch({}, {}, {}, {}))", rp, rl, lp, ll),
-        "!=glob" => format!(
-            "((sash_fnmatch({}, {}, {}, {})) == 0 ? 1 : 0)",
-            rp, rl, lp, ll
         ),
         // DD#63: `[[ s =~ pat ]]` — regex match via the vendored regexp9
         // engine in libsash_rt (same as native; `\w`/`\d`/`\s` supported).

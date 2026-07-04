@@ -113,7 +113,6 @@ pub(super) struct ExternFuncs {
     pub(super) glob_regex: cranelift_module::FuncId,
     pub(super) capture_start: cranelift_module::FuncId,
     pub(super) capture_end: cranelift_module::FuncId,
-    pub(super) fnmatch: cranelift_module::FuncId,
     pub(super) split_first_word: cranelift_module::FuncId,
     pub(super) split_field: cranelift_module::FuncId,
     pub(super) split_into_array: cranelift_module::FuncId,

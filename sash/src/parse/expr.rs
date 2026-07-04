@@ -271,11 +271,6 @@ fn parts_to_expr(parts: Vec<Expr>) -> Result<Expr, Diagnostic> {
     }
 }
 
-/// Parse a word in a context where it won't be concatenated.
-pub fn parse_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
-    parse_expr(scanner)
-}
-
 // ── Double-quoted string interpolation ───────────────────────────
 
 /// Convert lexer StringParts to IR Exprs for double-quoted strings.

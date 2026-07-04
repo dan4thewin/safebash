@@ -142,7 +142,9 @@ Stacked declarations supported: `local const int x=5`.
 - `while` / `until` / `do` / `done`
 - `for x in list`
 - `for (( ;; ))`
-- `case` with `;;`, `;&`, `;;&`
+- `[[ SUBJECT == pat { … } … || { … } ]]` dispatch — the exact/regex
+  match statement that replaces `case` (DD#66). `case`/`esac`/`;;`/`;&`/`;;&`
+  are removed and rejected.
 - `break`, `continue`, `return`
 
 ### Functions

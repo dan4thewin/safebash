@@ -100,10 +100,8 @@ pub enum Tok {
     Gt,         // >
     Lt,         // <
 
-    // Case
-    DblSemiAmp, // ;;&
-    SemiAmp,    // ;&
-    DblSemi,    // ;;
+    // Terminators
+    DblSemi, // ;;
 
     // Literals / values
     Word(String),

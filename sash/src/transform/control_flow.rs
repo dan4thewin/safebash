@@ -599,7 +599,7 @@ pub(super) fn lower_case(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let merge_block = ssa.new_block("case.merge");
+    let merge_block = ssa.new_block("dispatch.merge");
 
     if c.items.is_empty() {
         ssa.block_mut(block).terminator = Terminator::Goto(merge_block);
@@ -611,14 +611,7 @@ pub(super) fn lower_case(
 
     let check_blocks = build_check_blocks(ssa, c.items.len(), block);
 
-    wire_case_exits(
-        c,
-        ssa,
-        &case_blocks,
-        &case_exits,
-        &check_blocks,
-        merge_block,
-    );
+    wire_case_exits(ssa, &case_exits, merge_block);
 
     build_dispatch_chain(c, ssa, state, &case_blocks, &check_blocks, merge_block);
 
@@ -661,7 +654,7 @@ fn build_case_bodies(
 }
 
 /// Pre-create dispatch-chain blocks: index 0 is the entry block; the rest
-/// are fresh `case.check.N` blocks so resume (`;;&`) wiring can target them.
+/// are fresh `case.check.N` blocks a non-matching arm falls through to.
 fn build_check_blocks(ssa: &mut SsaProgram, n_items: usize, entry: BlockId) -> Vec<BlockId> {
     let mut check_blocks = Vec::with_capacity(n_items);
     check_blocks.push(entry);
@@ -671,30 +664,16 @@ fn build_check_blocks(ssa: &mut SsaProgram, n_items: usize, entry: BlockId) -> V
     check_blocks
 }
 
-/// Wire each arm's exit terminator: fall-through (`;&`) → next body,
-/// resume (`;;&`) → next check, normal (`;;`) → merge.
-fn wire_case_exits(
-    c: &Case,
-    ssa: &mut SsaProgram,
-    case_blocks: &[BlockId],
-    case_exits: &[BlockId],
-    check_blocks: &[BlockId],
-    merge_block: BlockId,
-) {
-    for (i, item) in c.items.iter().enumerate() {
-        let target = if item.fallthrough && i + 1 < case_blocks.len() {
-            case_blocks[i + 1]
-        } else if item.resume && i + 1 < check_blocks.len() {
-            check_blocks[i + 1]
-        } else {
-            merge_block
-        };
-        ssa.block_mut(case_exits[i]).terminator = Terminator::Goto(target);
+/// Wire each dispatch arm's body-exit to the merge block. (DD#66 dropped
+/// fall-through/resume, so an arm always exits straight to the merge.)
+fn wire_case_exits(ssa: &mut SsaProgram, case_exits: &[BlockId], merge_block: BlockId) {
+    for &exit in case_exits {
+        ssa.block_mut(exit).terminator = Terminator::Goto(merge_block);
     }
 }
 
 /// Build the pattern-dispatch chain across `check_blocks`. Wildcard arms
-/// become unconditional gotos; single-pattern arms emit one `=glob` test;
+/// become unconditional gotos; single-pattern arms emit one test;
 /// multi-pattern arms chain sub-blocks so any match jumps to the body.
 fn build_dispatch_chain(
     c: &Case,
@@ -725,8 +704,8 @@ fn build_dispatch_chain(
     }
 }
 
-/// Wire one `case` arm's check block: wildcard → unconditional goto;
-/// single pattern → one glob branch; multiple → a `=glob` test chain.
+/// Wire one dispatch arm's check block: wildcard → unconditional goto;
+/// single pattern → one test branch; multiple → a test chain.
 #[allow(clippy::too_many_arguments)]
 fn emit_dispatch_arm(
     ssa: &mut SsaProgram,
@@ -772,15 +751,10 @@ fn is_wildcard_arm(item: &CaseItem) -> bool {
         .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
 }
 
-fn glob_test(value: &SsaValue, pattern: &Expr, op: &str) -> SsaTest {
-    // Legacy `case` (=glob) keeps the source form; the DD#66 dispatch ops
-    // (`==` exact / `=~` regex) compare against the resolved literal value
-    // (quotes stripped) like the boolean `[[ … ]]` RHS.
-    let pat = if op == "=glob" {
-        expr_to_string(pattern)
-    } else {
-        dispatch_pattern_string(pattern)
-    };
+fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str) -> SsaTest {
+    // DD#66 dispatch ops (`==` exact / `=~` regex) compare against the resolved
+    // literal value (quotes stripped) like the boolean `[[ … ]]` RHS.
+    let pat = dispatch_pattern_string(pattern);
     SsaTest::Binary {
         left: value.clone(),
         op: op.to_string(),
@@ -810,7 +784,7 @@ fn emit_single_pattern_branch(
 ) {
     ssa.block_mut(current)
         .insts
-        .push(SsaInst::Test(glob_test(value, pattern, op)));
+        .push(SsaInst::Test(dispatch_test(value, pattern, op)));
     ssa.block_mut(current).terminator = Terminator::Branch {
         condition: "__test".to_string(),
         true_block,
@@ -833,7 +807,7 @@ fn emit_multi_pattern_chain(
     for (pi, pat) in patterns.iter().enumerate() {
         ssa.block_mut(pat_current)
             .insts
-            .push(SsaInst::Test(glob_test(value, pat, op)));
+            .push(SsaInst::Test(dispatch_test(value, pat, op)));
 
         let (true_block, false_block) = if pi + 1 < patterns.len() {
             let next_pat = ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1));

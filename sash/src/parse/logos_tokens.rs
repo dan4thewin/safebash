@@ -86,10 +86,6 @@ pub enum LogosTok {
     DblBracketOpen,
     #[token("]]")]
     DblBracketClose,
-    #[token(";;&")]
-    DblSemiAmp,
-    #[token(";&")]
-    SemiAmp,
     #[token(";;")]
     DblSemi,
     #[token(">>")]
@@ -165,8 +161,6 @@ pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
         LogosTok::DblParenClose => Tok::DblParenClose,
         LogosTok::DblBracketOpen => Tok::DblBracketOpen,
         LogosTok::DblBracketClose => Tok::DblBracketClose,
-        LogosTok::DblSemiAmp => Tok::DblSemiAmp,
-        LogosTok::SemiAmp => Tok::SemiAmp,
         LogosTok::DblSemi => Tok::DblSemi,
         LogosTok::DblGt => Tok::DblGt,
         LogosTok::GtAmp => Tok::GtAmp,

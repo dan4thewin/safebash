@@ -1,11 +1,11 @@
 #!/bin/bash
-# spec/control_flow.sh — while / case / for runtime behavior.
+# spec/control_flow.sh — while / dispatch / for runtime behavior.
 # Covers transform/control_flow.rs SSA lowering paths and the
-# matching Cranelift codegen for loops, case dispatch, and for-in.
+# matching Cranelift codegen for loops, [[ ]] dispatch, and for-in.
 set -eu
 . common.sh
 setup control_flow
-plan=43
+plan=45
 echo "1..$plan" >&3
 
 set +e
@@ -41,62 +41,71 @@ run_sash 'int i=0; while (( i < 2 )); do int j=0; while (( j < 2 )); do echo "$i
 run_sash 'int i=10; while (( i < 0 )); do echo never; (( i-- )); done; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.w7
 
-# --- case statements ---
+# --- dispatch statements ([[ ]] dispatch form, DD#66 — replaces case) ---
 
-# cf.c1 case with single matching arm
-run_sash 'x=hello; case $x in hello) echo greeted ;; esac'
+# cf.c1 dispatch with single matching arm
+run_sash 'x=hello; [[ $x == hello { echo greeted } ]]'
 [[ $rc = 0 && $out = "greeted" && -z $err ]]; chk cf.c1
 
-# cf.c2 case with default arm (*)
-run_sash 'x=foo; case $x in bar) echo bar ;; *) echo other ;; esac'
+# cf.c2 dispatch with default arm (||)
+run_sash 'x=foo; [[ $x == bar { echo bar } || { echo other } ]]'
 [[ $rc = 0 && $out = "other" && -z $err ]]; chk cf.c2
 
-# cf.c3 case with multiple arms, first matches
-run_sash 'x=one; case $x in one) echo 1 ;; two) echo 2 ;; three) echo 3 ;; esac'
+# cf.c3 dispatch with multiple arms, first matches
+run_sash 'x=one; [[ $x == one { echo 1 } two { echo 2 } three { echo 3 } ]]'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk cf.c3
 
-# cf.c4 case with multiple arms, middle matches
-run_sash 'x=two; case $x in one) echo 1 ;; two) echo 2 ;; three) echo 3 ;; esac'
+# cf.c4 dispatch with multiple arms, middle matches
+run_sash 'x=two; [[ $x == one { echo 1 } two { echo 2 } three { echo 3 } ]]'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk cf.c4
 
-# cf.c5 case with multi-pattern arm (a|b|c)
-run_sash 'x=b; case $x in a|b|c) echo abc ;; *) echo other ;; esac'
+# cf.c5 regex dispatch with alternation ^(a|b|c)$ (=~ replaces the a|b|c arm)
+run_sash 'x=b; [[ $x =~ ^(a|b|c)$ { echo abc } || { echo other } ]]'
 [[ $rc = 0 && $out = "abc" && -z $err ]]; chk cf.c5
 
-# cf.c5b multi-pattern arm with a NON-matching subject must fall through to a
-# later arm (regression gate for the janet a|b -> `_` catch-all bug).
-run_sash 'x=q; case $x in a|b|c) echo abc ;; *) echo other ;; esac'
+# cf.c5b regex alternation with a NON-matching subject falls through to ||
+# (regression gate for the janet a|b -> `_` catch-all bug).
+run_sash 'x=q; [[ $x =~ ^(a|b|c)$ { echo abc } || { echo other } ]]'
 [[ $rc = 0 && $out = "other" && -z $err ]]; chk cf.c5b
 
-# cf.c6 case with glob pattern (* suffix)
-run_sash 'x=hello; case $x in h*) echo h-prefix ;; *) echo other ;; esac'
+# cf.c6 regex prefix dispatch (the glob `h*` becomes the regex `^h`)
+run_sash 'x=hello; [[ $x =~ ^h { echo h-prefix } || { echo other } ]]'
 [[ $rc = 0 && $out = "h-prefix" && -z $err ]]; chk cf.c6
 
-# cf.c7 `?` is a literal in case patterns, NOT a single-char wildcard
-#       (DD#39 star-only glob): `?b` does not match `ab`, so the `*` arm wins.
-run_sash 'x=ab; case $x in ?b) echo wildcard ;; *) echo star-only ;; esac'
-[[ $rc = 0 && $out = "star-only" && -z $err ]]; chk cf.c7
+# cf.c7 regex `.` IS a single-char wildcard (unlike the *-only glob it
+#       replaces): `^.b$` matches `ab`.
+run_sash 'x=ab; [[ $x =~ ^.b$ { echo wildcard } || { echo star-only } ]]'
+[[ $rc = 0 && $out = "wildcard" && -z $err ]]; chk cf.c7
 
-# cf.c8 `[class]` is literal, NOT a character class (DD#39 star-only glob):
-#       `[0-9]` does not match `5`, so the `*` arm wins.
-run_sash 'x=5; case $x in [0-9]) echo charclass ;; *) echo star-only ;; esac'
-[[ $rc = 0 && $out = "star-only" && -z $err ]]; chk cf.c8
+# cf.c8 regex `[0-9]` IS a real character class (unlike the literal `[...]`
+#       of the *-only glob it replaces): `^[0-9]$` matches `5`.
+run_sash 'x=5; [[ $x =~ ^[0-9]$ { echo charclass } || { echo star-only } ]]'
+[[ $rc = 0 && $out = "charclass" && -z $err ]]; chk cf.c8
 
-# cf.c9 case with no matching arm and no default
-run_sash 'x=z; case $x in a) echo a ;; b) echo b ;; esac; echo done'
+# cf.c9 dispatch with no matching arm and no default is a no-op
+run_sash 'x=z; [[ $x == a { echo a } b { echo b } ]]; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.c9
 
-# cf.c10 case where arm bodies span multiple statements
-run_sash 'x=a; case $x in a) echo one; echo two ;; *) echo other ;; esac'
+# cf.c10 dispatch arm body spanning multiple statements
+run_sash 'x=a; [[ $x == a { echo one; echo two } || { echo other } ]]'
 [[ $rc = 0 && $out = $'one\ntwo' && -z $err ]]; chk cf.c10
 
-# cf.c11 case with variable expansion in scrutinee
-run_sash 'x=hello; case "$x" in hello) echo hi ;; esac'
+# cf.c11 dispatch with a quoted (interpolated) subject
+run_sash 'x=hello; [[ "$x" == hello { echo hi } ]]'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk cf.c11
 
-# cf.c12 case with empty arm body (just ;;)
-run_sash 'x=skip; case $x in skip) ;; *) echo nope ;; esac; echo done'
+# cf.c12 dispatch with an empty arm body
+run_sash 'x=skip; [[ $x == skip { } || { echo nope } ]]; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.c12
+
+# cf.c13 the removed `case` keyword is a compile error (DD#66)
+run_sash 'x=a; case $x in a) echo a ;; esac'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.c13
+
+# cf.c14 `case` reject fires regardless of the fall-through terminators used
+#        (`;&`/`;;&` are gone with case — DD#66)
+run_sash 'case x in a) echo a ;& b) echo b ;;& *) echo c ;; esac'
+[[ $rc != 0 && -z $out && -n $err ]]; chk cf.c14
 
 # --- for loops ---
 

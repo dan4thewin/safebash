@@ -47,7 +47,8 @@ fi
 run_sash 'echo hello | read x; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.3
 
-# 20.4 extglob @() rejected
+# 20.4 `case` is removed (DD#66) — rejected as a reserved word (this also
+#      subsumes the old extglob `@()` reject, which lived inside a case arm)
 run_sash 'case x in @(a|b)) echo yes;; esac'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 20.4
 

@@ -21,7 +21,7 @@ use super::arith::{
     collect_arith_content_raw, lower_arith_command, lower_c_style_for, parse_arith_command,
 };
 use super::error::parse_error;
-use super::expr::{parse_array_literal, parse_expr, parse_word, span_from};
+use super::expr::{parse_array_literal, parse_expr, span_from};
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
@@ -131,7 +131,7 @@ fn dispatch_statement(
         Tok::If => parse_if(scanner),
         Tok::While | Tok::Until => parse_while(scanner),
         Tok::For => parse_for(scanner),
-        Tok::Case => parse_case(scanner),
+        Tok::Case => Err(case_removed_error(span)),
         Tok::Fn | Tok::Function => parse_function(scanner, false),
         Tok::Local => parse_local(scanner),
         Tok::Int => parse_declaration(scanner, "int"),
@@ -513,99 +513,6 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
     Ok(Some(lower_c_style_for(init, cond, update, body, span)))
 }
 
-// ── case ─────────────────────────────────────────────────────
-
-fn parse_case(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
-    let sp = scanner.peek().span;
-    let span = span_from(scanner, sp.start);
-    scanner.next(); // consume 'case'
-
-    let value = parse_word(scanner)?;
-    skip_terminators(scanner);
-    expect(scanner, &Tok::In, span, "expected 'in' after case value")?;
-    skip_terminators(scanner);
-
-    let mut items = Vec::new();
-    while !scanner.at_eof() && !matches!(scanner.peek().token, Tok::Esac) {
-        skip_terminators(scanner);
-        if matches!(scanner.peek().token, Tok::Esac) {
-            break;
-        }
-        items.push(parse_case_item(scanner, span)?);
-    }
-
-    expect(scanner, &Tok::Esac, span, "expected 'esac'")?;
-
-    Ok(Some(Statement {
-        kind: StmtKind::Case(Case {
-            value,
-            items,
-            op: "=glob".to_string(),
-        }),
-        span,
-    }))
-}
-
-fn parse_case_item(scanner: &mut Scanner, span: Span) -> Result<CaseItem, Diagnostic> {
-    // Optional ( before first pattern
-    if matches!(scanner.peek().token, Tok::LParen) {
-        scanner.next();
-    }
-
-    // Parse patterns separated by |
-    let mut patterns = Vec::new();
-    loop {
-        let pat = parse_expr(scanner)?;
-        patterns.push(pat);
-        if matches!(scanner.peek().token, Tok::Pipe) {
-            scanner.next();
-        } else {
-            break;
-        }
-    }
-
-    // Expect )
-    expect(
-        scanner,
-        &Tok::RParen,
-        span,
-        "expected ')' after case pattern",
-    )?;
-
-    // Parse body
-    let body = parse_body_until(
-        scanner,
-        &[Tok::DblSemi, Tok::SemiAmp, Tok::DblSemiAmp, Tok::Esac],
-    )?;
-
-    let mut fallthrough = false;
-    let mut resume = false;
-    match scanner.peek().token {
-        Tok::DblSemi => {
-            scanner.next();
-        }
-        Tok::SemiAmp => {
-            fallthrough = true;
-            scanner.next();
-        }
-        Tok::DblSemiAmp => {
-            resume = true;
-            scanner.next();
-        }
-        Tok::Esac => {
-            // Last item without terminator — ok
-        }
-        _ => {}
-    }
-
-    Ok(CaseItem {
-        patterns,
-        body,
-        fallthrough,
-        resume,
-    })
-}
-
 // ── function ─────────────────────────────────────────────────
 
 fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statement>, Diagnostic> {
@@ -961,9 +868,9 @@ fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
 // ── negated command (! cmd) ──────────────────────────────────
 
 /// DD#66: the dispatch form is statement-only. True if `stmt` is a `[[ ]]`
-/// dispatch (a `Case` carrying `==`/`=~`, not the legacy `=glob` case).
+/// dispatch — every `Case` is a dispatch now that `case…esac` is removed.
 fn stmt_is_dispatch(stmt: &Statement) -> bool {
-    matches!(&stmt.kind, StmtKind::Case(c) if c.op != "=glob")
+    matches!(&stmt.kind, StmtKind::Case(_))
 }
 
 fn dispatch_stmt_only_error(span: Span) -> Diagnostic {
@@ -972,6 +879,20 @@ fn dispatch_stmt_only_error(span: Span) -> Diagnostic {
         "SB4028",
         "the `[[ ]]` dispatch form is a statement, not a boolean — use it as a \
          standalone statement (or `if BOOLEAN; then DISPATCH; fi`)"
+            .to_string(),
+    )
+}
+
+/// DD#66: `case`/`esac` are removed — the `[[ ]]` dispatch form replaces them.
+/// `case` remains a reserved word so its use produces this diagnostic instead
+/// of a confusing "unexpected word" error.
+fn case_removed_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4029",
+        "the `case` construct has been removed (DD#66) — use the `[[ ]]` dispatch \
+         form: `[[ $x == pat { … } other { … } || { … } ]]` (exact match) or \
+         `[[ $x =~ regex { … } || { … } ]]` (regex match)"
             .to_string(),
     )
 }
@@ -1104,8 +1025,6 @@ fn parse_dispatch(
     let mut items = vec![CaseItem {
         patterns: vec![*right],
         body: parse_brace_block(scanner, span)?,
-        fallthrough: false,
-        resume: false,
     }];
 
     loop {
@@ -1119,8 +1038,6 @@ fn parse_dispatch(
                         span,
                     }],
                     body: parse_brace_block(scanner, span)?,
-                    fallthrough: false,
-                    resume: false,
                 });
                 break;
             }
@@ -1130,8 +1047,6 @@ fn parse_dispatch(
                 items.push(CaseItem {
                     patterns: vec![pattern],
                     body: parse_brace_block(scanner, span)?,
-                    fallthrough: false,
-                    resume: false,
                 });
             }
         }
@@ -1856,8 +1771,6 @@ fn parse_command_element(
         | Tok::RBrace
         | Tok::LBrace
         | Tok::DblSemi
-        | Tok::SemiAmp
-        | Tok::DblSemiAmp
         | Tok::DblBracketClose
         | Tok::Eof => return Ok(false),
 
