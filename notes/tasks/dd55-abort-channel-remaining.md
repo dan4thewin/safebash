@@ -9,7 +9,7 @@ gates:
   - "c cmdsub abort: `x=$(/bin/false)` aborts, `x=$(- cmd)` does not (55.7, 55.8, 55.9)"
   - "cd / echo-write(EPIPE/ENOSPC) / redirect-open failures abort with the native descriptive message in c (55.20-29 un-guarded to native,c)"
   - "janet pipeline abort (bare failing pipeline aborts)"
-  - "DECISION for DG: janet abort diagnostics — the message-exact specs assert `test_bin: …`; janet's program name is the .janet script path, so it cannot match byte-for-byte. Relax janet asserts, synthesize a prog name, or keep those specs native,c-only?"
+  - "[RESOLVED, DG 2026-07-04] janet abort diagnostics use janet's OWN argv[0] (`(dyn :args) 0`) — that's faithful (`<argv0>: <reason>`); janet is a script, not a `test_bin`. The message-exact specs must NOT hardcode `test_bin`: assert the message SUFFIX (the `: <detail>` after the program name, which is backend-independent) or derive the expected progname per mode. Then un-guard 55.20-29 to all three modes."
 ---
 
 # DD#55 (A) abort — remaining work
@@ -48,15 +48,18 @@ with the same segments — but `cd` is currently a TODO in emit_c and
 echo-write-failure / redirect-open-failure aren't surfaced. Implement
 those + the abort message, then un-guard 55.20-29 to `native,c`.
 
-## 4. janet pipeline abort + the diagnostics DECISION
+## 4. janet pipeline abort + the diagnostics decision (RESOLVED)
 
-janet pipelines don't abort yet. And the message-exact specs reference
-`test_bin:` (the native/c binary). Janet runs as `janet .out.janet`, so
-its argv[0] is the script path — it cannot produce `test_bin: …`. DG
-decision needed: relax the janet asserts (rc-only), synthesize a program
-name in the emitted janet, or keep the message-exact specs native,c-only
-(the janet "illuminate the IR, not a byte-oracle" ceiling suggests the
-latter is acceptable).
+janet pipelines don't abort yet. And the descriptive-message aborts: DG
+ruled (2026-07-04) that **janet uses its own argv[0]** — `<argv0>:
+<reason>` with janet's actual program name (`(dyn :args) 0`, the script
+path) is the faithful form; janet is a script, not a `test_bin`. The
+divergence is a harness artifact, not a janet defect. So the message-exact
+specs (55.20-29) must not hardcode `test_bin`: assert the message SUFFIX
+(the `: <detail>` after the program name — backend-independent) or derive
+the expected progname per mode, then un-guard them to all three modes.
+janet's abort should therefore print `<argv0>: <reason>` to stderr via
+eprin before `(os/exit rc)`.
 
 ## References
 - native (A)-channel: emit_status_abort_check / emit_pipeline_abort_check
