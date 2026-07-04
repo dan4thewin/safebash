@@ -40,6 +40,27 @@ DG: "continue — remove case first." Destructive half of DD#66 shipped
 
 Remaining sweep: **dd65 var modifiers**. See journal 127.
 
+### Session 2026-07-04 (cont.) — DD#71 operand-words design (from dispatch follow-up)
+
+Design session (no code yet). DG steered "how does a `=~` regex include a
+space?" into **DD#71** (`notes/decisions/DD71-operand-words-value-bindings.md`,
+accepted):
+- **`=~` is sugar for `match()`; its RHS has no unique handling** — an
+  ordinary *operand word* (absorb metachars to whitespace, quote/`$`-aware),
+  same routine as `==`. Delete `parse_regex_rhs` + the `{` gap heuristic.
+- **Absorb-mode scope** = value positions that aren't connectable commands:
+  `[[ ]]` operands/patterns + assignment/declaration RHS. Command args stay
+  operator-mode. **Assignments are value bindings, not commands** (no status,
+  not `&&`/pipe/bg-able).
+- Falls out: **multi-exact dispatch arms** (`== a b c`, parser-only —
+  backends already do multi-pattern); both `=~` bugs fixed by construction.
+- Dynamic regex **supported** (validate-static / runtime-abort-dynamic).
+- Filed: `operand-word-absorb-mode` (impl), `reject-nonstatus-in-boolean-
+  context` (the DD#70 dual — `x=hi && …` becomes a clean reject), plus two
+  DG-caught bugs `bug-dispatch-literal-star-wildcard` (P1: `*` wrongly a
+  wildcard) and `bug-echo-builtin-array-splat-ice` (P2: `echo @a` ICE).
+  `bug-regex-rhs-space-quote` superseded by DD#71.
+
 
 
 DG: "tackle the whole batch." Shipped the c/janet parity cluster spec-first,

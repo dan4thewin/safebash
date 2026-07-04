@@ -1,9 +1,10 @@
 ---
 title: "BUG — `[[ =~ ]]` regex RHS silently drops spaces and rejects quotes (no way to match a space)"
-status: needs-decision
+status: superseded
 priority: P1
 kind: bug
 depends: []
+superseded-by: [DD71-operand-words-value-bindings, operand-word-absorb-mode]
 gates:
   - "a `=~` regex can contain a literal space (per the surface syntax DG chooses) and matches correctly"
   - "`x='foo bar'; [[ $x =~ <space-form> ]]` prints yes; `x=foobar` prints no (no silent concatenation)"
@@ -12,6 +13,13 @@ gates:
 ---
 
 # BUG — `=~` boolean RHS mangles whitespace and drops quotes
+
+> **SUPERSEDED 2026-07-04 by DD#71** (`operand-word-absorb-mode`). The
+> a/b/c "how to express a space" decision collapsed to "(a) normal
+> quoting": the `=~` RHS becomes an ordinary operand word (absorb to
+> whitespace, quote-aware), so both defects vanish by construction — there
+> is no bespoke collector left to drop spaces or ignore quote tokens. Kept
+> for the repro/root-cause record; implement via `operand-word-absorb-mode`.
 
 Found 2026-07-04 (DG asked "what if the pattern contains a space followed
 by `]]`?"). Two defects in the same code path.

@@ -62,5 +62,9 @@ emitters' wildcard/`_`-arm detection (`emit_janet.rs` `p == "\"*\""`,
 
 ## Relationship
 
-Surfaced alongside `bug-regex-rhs-space-quote`. Both predate the
-multi-exact-dispatch-arms work but are orthogonal to it (`==`-only).
+Surfaced alongside `bug-regex-rhs-space-quote`. Part of the DD#71 cluster
+(`notes/decisions/DD71-operand-words-value-bindings.md`): `*` is an ordinary
+literal operand (dispatch has no pattern language / no wildcards — `||` is
+the only default), the same "no pattern language" spirit as DD#66's `==`.
+Land together with `operand-word-absorb-mode` so dispatch pattern semantics
+are consistent (literal `*`, multi-exact arms, operand-word lexing).
