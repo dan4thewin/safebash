@@ -717,7 +717,7 @@ fn emit_dispatch_arm(
     next_check: BlockId,
     op: &str,
 ) {
-    if is_wildcard_arm(item) {
+    if is_default_arm(item) {
         ssa.block_mut(current).terminator = Terminator::Goto(case_block);
         return;
     }
@@ -745,10 +745,10 @@ fn emit_dispatch_arm(
     }
 }
 
-fn is_wildcard_arm(item: &CaseItem) -> bool {
-    item.patterns
-        .iter()
-        .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
+/// DD#71: the `|| { … }` default arm runs unconditionally when reached.
+/// `*` is an ordinary literal pattern, not a wildcard.
+fn is_default_arm(item: &CaseItem) -> bool {
+    item.is_default
 }
 
 fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str) -> SsaTest {
@@ -838,7 +838,7 @@ fn wire_no_match_path(
     check_blocks: &[BlockId],
     merge_block: BlockId,
 ) -> Option<BranchSnapshot> {
-    let has_wildcard = c.items.iter().any(is_wildcard_arm);
+    let has_wildcard = c.items.iter().any(is_default_arm);
     if has_wildcard {
         return None;
     }

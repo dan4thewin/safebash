@@ -1025,19 +1025,20 @@ fn parse_dispatch(
     let mut items = vec![CaseItem {
         patterns: vec![*right],
         body: parse_brace_block(scanner, span)?,
+        is_default: false,
     }];
 
     loop {
         match scanner.peek().token {
             Tok::OrOr => {
-                // `|| { group }` — the default arm (must be last).
+                // `|| { group }` — the default arm (must be last). No synthetic
+                // `*` pattern: DD#71 makes `*` an ordinary literal, so the
+                // default is flagged instead.
                 scanner.next();
                 items.push(CaseItem {
-                    patterns: vec![Expr {
-                        kind: ExprKind::Literal("*".to_string()),
-                        span,
-                    }],
+                    patterns: vec![],
                     body: parse_brace_block(scanner, span)?,
+                    is_default: true,
                 });
                 break;
             }
@@ -1047,6 +1048,7 @@ fn parse_dispatch(
                 items.push(CaseItem {
                     patterns: vec![pattern],
                     body: parse_brace_block(scanner, span)?,
+                    is_default: false,
                 });
             }
         }

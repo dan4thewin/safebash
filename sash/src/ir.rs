@@ -481,6 +481,10 @@ pub struct Case {
 pub struct CaseItem {
     pub patterns: Vec<Expr>,
     pub body: Vec<Statement>,
+    /// DD#66/#71: the `|| { … }` default arm. `*` is an ordinary literal
+    /// pattern (dispatch has no wildcards), so the default is flagged, not
+    /// a synthetic `*` pattern.
+    pub is_default: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

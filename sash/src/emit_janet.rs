@@ -378,8 +378,9 @@ fn emit_case_item(
         .iter()
         .map(|p| emit_expr_inline(p, ctx))
         .collect();
-    if pats.iter().any(|p| p == "\"*\"") {
-        // a `*` alternative makes the whole arm match anything (the default).
+    if item.is_default {
+        // the `|| { … }` default arm matches anything (DD#71 — `*` is a
+        // literal, not a wildcard).
         write!(out, "_ ").unwrap();
     } else if op == "=~" {
         // DD#66 regex dispatch: a guard that matches via the sash-regex

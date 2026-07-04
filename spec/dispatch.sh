@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=22
+plan=26
 echo "1..$plan" >&3
 
 set +e
@@ -54,6 +54,20 @@ run_sash "x='||'; [[ \$x == '||' { echo bar; } || { echo def; } ]]"
 [[ $rc = 0 && $out = "bar" && -z $err ]]; chk dp.d1
 run_sash 'x=hit; [[ $x == hit { echo h; } || { echo d; } ]]'
 [[ $rc = 0 && $out = "h" && -z $err ]]; chk dp.d2
+
+# ── E. literal `*` — dispatch has no wildcards; `||` is the only default ──
+# (bug-dispatch-literal-star-wildcard: `*` is an ordinary exact pattern)
+run_sash 'x=hi; [[ $x == * { echo star; } || { echo default; } ]]'
+[[ $rc = 0 && $out = "default" && -z $err ]]; chk dp.e1
+run_sash "x='*'; [[ \$x == * { echo star; } || { echo default; } ]]"
+[[ $rc = 0 && $out = "star" && -z $err ]]; chk dp.e2
+# E3 no default, no match (literal `*` != `hi`) → no-op
+run_sash 'x=hi; [[ $x == * { echo star; } ]]; echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk dp.e3
+# E4 `||` default still fires when no arm matches (regression: default arm
+#    no longer relies on a `*` sentinel)
+run_sash 'x=zzz; [[ $x == a { echo A; } b { echo B; } || { echo def; } ]]'
+[[ $rc = 0 && $out = "def" && -z $err ]]; chk dp.e4
 
 # ── G. disambiguation (boolean vs dispatch) ──────────────────────────
 # G1 no { ⇒ boolean compound intact
