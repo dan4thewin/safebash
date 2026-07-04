@@ -1,18 +1,36 @@
 ---
 title: "brace-block control flow (if/while/until/for) + then/fi/do/done sugar (DD#68)"
-status: ready
+status: done
 priority: P2
 kind: feature
-depends: [DD68-brace-control-flow, DD67-native-syntax-sugar-policy, DD66-cond-form-dispatch]
+depends: [DD68-brace-control-flow, DD67-native-syntax-sugar-policy]
 gates:
-  - "TDD: spec tests below written first and red before code"
-  - "if/while/until/for accept brace { } bodies; lower to the SAME existing IR"
-  - "condition is a command list ending at the first top-level {; brace-group conditions rejected"
-  - "then/fi & do/done still accepted (1-to-1 sugar, DD#67); no mixing within one construct"
-  - "else if accepted as else + nested if; elif unchanged"
-  - "$? / break / continue / redirects unchanged (parser-only)"
-  - "native spec clean; rust suite no net regression; complexity gate green"
+  - "[DONE] TDD: spec/brace.sh (25 cases) written first + red, then green"
+  - "[DONE] if/while/until/for accept brace { } bodies; lower to the SAME existing IR"
+  - "[DONE] condition is a command list ending at the first top-level { (command args now stop at LBrace); brace-group conditions rejected (SB4027)"
+  - "[DONE] then/fi & do/done still accepted (DD#67 sugar); no mixing within one construct"
+  - "[DONE] else if accepted as else + nested if; elif unchanged"
+  - "[DONE] $? / break / continue / redirects unchanged (parser-only, verified brace==keyword IR)"
+  - "[DONE] native spec clean (25/25); 0 regressions; parser unit tests green; complexity gate green"
 ---
+
+# DONE 2026-07-04
+
+Parser-only: `parse_if`/`parse_while`/`parse_for`/`parse_c_style_for` branch
+on `{` vs `then`/`do` after the condition (shared `parse_loop_body` /
+`parse_brace_block`); `else if` desugars to else+nested-if. Command
+argument parsing now stops at a top-level `{` so a bare-command condition
+(`if true { … }`) works. Brace-group conditions and missing bodies →
+SB4027. Both forms build the identical If/While/For IR — verified by
+comparing brace vs keyword output in native/c/janet.
+
+brace.sh is native-only (parser feature; native is the IR reference). The
+c/janet control-flow gaps it surfaced (janet elif/continue, c until) are
+pre-existing — the keyword forms fail identically — filed as
+`cf-backend-gaps-brace-surfaced`.
+
+---
+
 
 # brace-block control flow (DD#68)
 

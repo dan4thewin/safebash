@@ -258,14 +258,55 @@ fn parse_compound_list(scanner: &mut Scanner, stop: &[Tok]) -> Result<Vec<Statem
 
 // ── if/elif/else/fi ──────────────────────────────────────────
 
+/// DD#68: parse a `{ … }` block body (the `{` is at the cursor).
+fn parse_brace_block(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
+    expect(scanner, &Tok::LBrace, span, "expected '{' block body")?;
+    let body = parse_body_until(scanner, &[Tok::RBrace])?;
+    expect(
+        scanner,
+        &Tok::RBrace,
+        span,
+        "expected '}' to close the block body",
+    )?;
+    Ok(body)
+}
+
+/// DD#68: a `{ … }` group cannot be a control-flow condition (it is
+/// ambiguous with the brace body). The condition must be a `;`-list.
+fn brace_group_cond_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4027",
+        "a `{ }` group cannot be a condition — use a `;`-list (e.g. `if a; b { … }`)".to_string(),
+    )
+}
+
 fn parse_if(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'if'
 
-    let condition = parse_compound_list(scanner, &[Tok::Then])?;
-    expect(scanner, &Tok::Then, span, "expected 'then'")?;
+    let condition = parse_compound_list(scanner, &[Tok::Then, Tok::LBrace])?;
+    // DD#68: branch on the delimiter — `{` (brace form) or `then` (sugar).
+    match scanner.peek().token {
+        Tok::LBrace if condition.is_empty() => Err(brace_group_cond_error(span)),
+        Tok::LBrace => parse_if_brace(scanner, span, condition),
+        Tok::Then => parse_if_keyword(scanner, span, condition),
+        _ => Err(parse_error(
+            span,
+            "SB4027",
+            "expected a `{ }` body or `then` after the `if` condition".to_string(),
+        )),
+    }
+}
 
+/// The `then … [elif …] [else …] fi` sugar form of `if`.
+fn parse_if_keyword(
+    scanner: &mut Scanner,
+    span: Span,
+    condition: Vec<Statement>,
+) -> Result<Option<Statement>, Diagnostic> {
+    expect(scanner, &Tok::Then, span, "expected 'then'")?;
     let then_body = parse_body_until(scanner, &[Tok::Elif, Tok::Else, Tok::Fi])?;
 
     let mut elif_clauses = Vec::new();
@@ -300,6 +341,69 @@ fn parse_if(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     }))
 }
 
+/// DD#68: the brace form of `if` — `if COND { … } [elif COND { … }]…
+/// [else if COND { … }] [else { … }]`. Builds the same `If` IR as the
+/// `then/fi` sugar. `else if` desugars to `else` + a nested `if`.
+fn parse_if_brace(
+    scanner: &mut Scanner,
+    span: Span,
+    condition: Vec<Statement>,
+) -> Result<Option<Statement>, Diagnostic> {
+    let then_body = parse_brace_block(scanner, span)?;
+    let mut elif_clauses = Vec::new();
+    let mut else_body = None;
+    loop {
+        match scanner.peek().token {
+            Tok::Elif => {
+                scanner.next();
+                elif_clauses.push(parse_brace_elif(scanner, span)?);
+            }
+            Tok::Else => {
+                scanner.next();
+                else_body = Some(parse_brace_else(scanner, span)?);
+                break;
+            }
+            _ => break,
+        }
+    }
+    Ok(Some(Statement {
+        kind: StmtKind::If(If {
+            condition,
+            then_body,
+            elif_clauses,
+            else_body,
+        }),
+        span,
+    }))
+}
+
+/// DD#68: one `elif COND { … }` clause of a brace `if` (the `elif` is
+/// already consumed).
+fn parse_brace_elif(scanner: &mut Scanner, span: Span) -> Result<ElifClause, Diagnostic> {
+    let cond = parse_compound_list(scanner, &[Tok::LBrace])?;
+    if cond.is_empty() {
+        return Err(brace_group_cond_error(span));
+    }
+    let body = parse_brace_block(scanner, span)?;
+    Ok(ElifClause {
+        condition: cond,
+        body,
+    })
+}
+
+/// DD#68: the else clause of a brace `if` (the `else` is already
+/// consumed). `else if …` → a nested `if` statement; plain `else { … }`
+/// → a brace block.
+fn parse_brace_else(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
+    if matches!(scanner.peek().token, Tok::If) {
+        let nested = parse_if(scanner)?
+            .ok_or_else(|| parse_error(span, "SB4027", "expected `if`".to_string()))?;
+        Ok(vec![nested])
+    } else {
+        parse_brace_block(scanner, span)
+    }
+}
+
 // ── while/until ──────────────────────────────────────────────
 
 fn parse_while(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
@@ -308,10 +412,12 @@ fn parse_while(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let until = matches!(scanner.peek().token, Tok::Until);
     scanner.next(); // consume 'while' or 'until'
 
-    let condition = parse_compound_list(scanner, &[Tok::Do])?;
-    expect(scanner, &Tok::Do, span, "expected 'do'")?;
-    let body = parse_body_until(scanner, &[Tok::Done])?;
-    expect(scanner, &Tok::Done, span, "expected 'done'")?;
+    let condition = parse_compound_list(scanner, &[Tok::Do, Tok::LBrace])?;
+    // DD#68: `{` (brace form) or `do` (sugar).
+    if matches!(scanner.peek().token, Tok::LBrace) && condition.is_empty() {
+        return Err(brace_group_cond_error(span));
+    }
+    let body = parse_loop_body(scanner, span)?;
 
     Ok(Some(Statement {
         kind: StmtKind::While(While {
@@ -344,11 +450,11 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let mut words = Vec::new();
     if matches!(scanner.peek().token, Tok::In) {
         scanner.next(); // consume 'in'
-                        // Collect words until ; or newline or 'do'
+                        // Collect words until ; or newline or 'do' or '{' (DD#68)
         while !scanner.at_eof()
             && !matches!(
                 scanner.peek().token,
-                Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof
+                Tok::Semi | Tok::Newline | Tok::Do | Tok::Eof | Tok::LBrace
             )
         {
             words.push(parse_expr(scanner)?);
@@ -356,9 +462,7 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
         skip_terminators(scanner);
     }
 
-    expect(scanner, &Tok::Do, span, "expected 'do'")?;
-    let body = parse_body_until(scanner, &[Tok::Done])?;
-    expect(scanner, &Tok::Done, span, "expected 'done'")?;
+    let body = parse_loop_body(scanner, span)?;
 
     Ok(Some(Statement {
         kind: StmtKind::For(For {
@@ -368,6 +472,19 @@ fn parse_for(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
         }),
         span,
     }))
+}
+
+/// DD#68: parse a loop body — `{ … }` (brace form) or `do … done` (sugar).
+/// Both produce the same body `Vec<Statement>`.
+fn parse_loop_body(scanner: &mut Scanner, span: Span) -> Result<Vec<Statement>, Diagnostic> {
+    if matches!(scanner.peek().token, Tok::LBrace) {
+        parse_brace_block(scanner, span)
+    } else {
+        expect(scanner, &Tok::Do, span, "expected a `{ }` body or `do`")?;
+        let body = parse_body_until(scanner, &[Tok::Done])?;
+        expect(scanner, &Tok::Done, span, "expected 'done'")?;
+        Ok(body)
+    }
 }
 
 fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {
@@ -383,9 +500,7 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
     let update = parts.get(2).map(|s| s.trim()).unwrap_or("");
 
     skip_terminators(scanner);
-    expect(scanner, &Tok::Do, span, "expected 'do' after for (( ))")?;
-    let body = parse_body_until(scanner, &[Tok::Done])?;
-    expect(scanner, &Tok::Done, span, "expected 'done'")?;
+    let body = parse_loop_body(scanner, span)?;
 
     Ok(Some(lower_c_style_for(init, cond, update, body, span)))
 }
@@ -1582,56 +1697,8 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
         if scanner.at_eof() {
             break;
         }
-
-        match &scanner.peek().token {
-            Tok::Newline
-            | Tok::Semi
-            | Tok::Pipe
-            | Tok::AndAnd
-            | Tok::OrOr
-            | Tok::Amp
-            | Tok::RParen
-            | Tok::RBrace
-            | Tok::DblSemi
-            | Tok::SemiAmp
-            | Tok::DblSemiAmp
-            | Tok::DblBracketClose
-            | Tok::Eof => break,
-
-            // Redirects
-            Tok::Gt
-            | Tok::DblGt
-            | Tok::Lt
-            | Tok::GtAmp
-            | Tok::LtAmp
-            | Tok::LtGt
-            | Tok::AmpGt
-            | Tok::HereString => {
-                redirects.push(parse_redirect(scanner, span)?);
-            }
-
-            // File descriptor before redirect: 2>, 1>, etc.
-            Tok::Word(w) if is_fd_number(w) => {
-                let w = w.clone();
-                // Check if next token is a redirect operator
-                let next = scanner.peek_n(1);
-                if matches!(
-                    next.token,
-                    Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
-                ) {
-                    let fd: u32 = w.parse().unwrap_or(0);
-                    scanner.next(); // consume FD number
-                    let mut redir = parse_redirect(scanner, span)?;
-                    redir.fd = Some(fd);
-                    redirects.push(redir);
-                } else {
-                    args.push(parse_expr(scanner)?);
-                }
-            }
-
-            _ => {
-                args.push(parse_expr(scanner)?);
-            }
+        if !parse_command_element(scanner, span, &mut args, &mut redirects)? {
+            break;
         }
     }
 
@@ -1656,6 +1723,82 @@ fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>,
     }
 
     Ok(Some(stmt))
+}
+
+/// Parse one element of a command's argument/redirect list. Returns
+/// `false` at a terminator (`;`, newline, pipe, `{`, `]]`, …) so the
+/// caller stops the loop; `true` after consuming an arg or redirect.
+fn parse_command_element(
+    scanner: &mut Scanner,
+    span: Span,
+    args: &mut Vec<Expr>,
+    redirects: &mut Vec<Redirect>,
+) -> Result<bool, Diagnostic> {
+    match &scanner.peek().token {
+        Tok::Newline
+        | Tok::Semi
+        | Tok::Pipe
+        | Tok::AndAnd
+        | Tok::OrOr
+        | Tok::Amp
+        | Tok::RParen
+        | Tok::RBrace
+        | Tok::LBrace
+        | Tok::DblSemi
+        | Tok::SemiAmp
+        | Tok::DblSemiAmp
+        | Tok::DblBracketClose
+        | Tok::Eof => return Ok(false),
+
+        // Redirects
+        Tok::Gt
+        | Tok::DblGt
+        | Tok::Lt
+        | Tok::GtAmp
+        | Tok::LtAmp
+        | Tok::LtGt
+        | Tok::AmpGt
+        | Tok::HereString => {
+            redirects.push(parse_redirect(scanner, span)?);
+        }
+
+        // File descriptor before redirect: 2>, 1>, etc.
+        Tok::Word(w) if is_fd_number(w) => {
+            let w = w.clone();
+            parse_fd_prefixed(scanner, &w, span, args, redirects)?;
+        }
+
+        _ => {
+            args.push(parse_expr(scanner)?);
+        }
+    }
+    Ok(true)
+}
+
+/// Handle a leading file-descriptor word (`2` in `2>err`): if a redirect
+/// operator follows, parse an fd-tagged redirect; otherwise it is a plain
+/// argument.
+fn parse_fd_prefixed(
+    scanner: &mut Scanner,
+    w: &str,
+    span: Span,
+    args: &mut Vec<Expr>,
+    redirects: &mut Vec<Redirect>,
+) -> Result<(), Diagnostic> {
+    let next = scanner.peek_n(1);
+    if matches!(
+        next.token,
+        Tok::Gt | Tok::DblGt | Tok::GtAmp | Tok::LtAmp | Tok::Lt
+    ) {
+        let fd: u32 = w.parse().unwrap_or(0);
+        scanner.next(); // consume FD number
+        let mut redir = parse_redirect(scanner, span)?;
+        redir.fd = Some(fd);
+        redirects.push(redir);
+    } else {
+        args.push(parse_expr(scanner)?);
+    }
+    Ok(())
 }
 
 // ── Redirects ────────────────────────────────────────────────
