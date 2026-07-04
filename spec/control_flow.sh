@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup control_flow
-plan=42
+plan=43
 echo "1..$plan" >&3
 
 set +e
@@ -62,6 +62,11 @@ run_sash 'x=two; case $x in one) echo 1 ;; two) echo 2 ;; three) echo 3 ;; esac'
 # cf.c5 case with multi-pattern arm (a|b|c)
 run_sash 'x=b; case $x in a|b|c) echo abc ;; *) echo other ;; esac'
 [[ $rc = 0 && $out = "abc" && -z $err ]]; chk cf.c5
+
+# cf.c5b multi-pattern arm with a NON-matching subject must fall through to a
+# later arm (regression gate for the janet a|b -> `_` catch-all bug).
+run_sash 'x=q; case $x in a|b|c) echo abc ;; *) echo other ;; esac'
+[[ $rc = 0 && $out = "other" && -z $err ]]; chk cf.c5b
 
 # cf.c6 case with glob pattern (* suffix)
 run_sash 'x=hello; case $x in h*) echo h-prefix ;; *) echo other ;; esac'

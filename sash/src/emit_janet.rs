@@ -337,15 +337,22 @@ fn emit_case(out: &mut String, ctx: &mut EmitCtx, c: &Case, depth: usize) {
 
 fn emit_case_item(out: &mut String, ctx: &mut EmitCtx, item: &crate::ir::CaseItem, depth: usize) {
     indent(out, depth + 1);
-    if item.patterns.len() == 1 {
-        let pat = emit_expr_inline(&item.patterns[0], ctx);
-        if pat == "\"*\"" {
-            write!(out, "_ ").unwrap();
-        } else {
-            write!(out, "{} ", pat).unwrap();
-        }
-    } else {
+    let pats: Vec<String> = item
+        .patterns
+        .iter()
+        .map(|p| emit_expr_inline(p, ctx))
+        .collect();
+    if pats.iter().any(|p| p == "\"*\"") {
+        // a `*` alternative makes the whole arm match anything.
         write!(out, "_ ").unwrap();
+    } else if pats.len() == 1 {
+        write!(out, "{} ", pats[0]).unwrap();
+    } else {
+        // Multi-pattern arm `a|b|…` → a janet `match` guard alternation
+        // binding a fresh var (was incorrectly emitted as `_`, a catch-all
+        // that matched every subject).
+        let alts: Vec<String> = pats.iter().map(|p| format!("(= _casev {p})")).collect();
+        write!(out, "(_casev (or {})) ", alts.join(" ")).unwrap();
     }
     writeln!(out, "(do").unwrap();
     for s in &item.body {

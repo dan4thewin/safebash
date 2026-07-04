@@ -1,15 +1,31 @@
 ---
 title: BUG — Janet backend miscompiles multi-pattern case arms (a|b) → catch-all
-status: pending
+status: done
 priority: P1
 kind: bug
 depends: []
 gates:
-  - "janet multi-pattern case matches ONLY the listed keys (a|b matches a or b, not everything)"
-  - "janet_tests covers a multi-pattern arm with a non-matching subject reaching a later arm"
+  - "[DONE] janet multi-pattern case matches ONLY the listed keys (a|b matches a or b, not everything)"
+  - "[DONE] spec control_flow cf.c5b covers a multi-pattern arm with a non-matching subject reaching a later arm (native+c+janet green). Rust janet_tests is benched (spec is source of truth)."
 ---
 
-# BUG — Janet backend emits multi-pattern case arms as `_` (catch-all)
+# RESOLVED 2026-07-03
+
+`emit_case_item` (emit_janet.rs) emitted `_` (janet catch-all) for any arm
+with `patterns.len() > 1`, so `a|b` matched every subject. Fixed: a
+multi-pattern arm now emits a janet `match` guard alternation binding a
+fresh `_casev` — `(_casev (or (= _casev "a") (= _casev "b") …))`. A `*`
+alternative still collapses the whole arm to `_`. Regression gate:
+spec/control_flow.sh cf.c5b (`x=q; case … a|b|c) … *) …` → other),
+green in native+c+janet.
+
+NB: single-pattern GLOBS (`h*`) are still emitted as exact literals — a
+SEPARATE pre-existing gap, filed as `bug-janet-case-glob` (cf.c6).
+
+---
+
+# (original) BUG — Janet backend emits multi-pattern case arms as `_` (catch-all)
+
 
 ## Discovery
 
