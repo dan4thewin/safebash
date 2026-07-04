@@ -700,6 +700,7 @@ fn build_dispatch_chain(
             case_blocks[i],
             next_check,
             &c.op,
+            state,
         );
     }
 }
@@ -716,6 +717,7 @@ fn emit_dispatch_arm(
     case_block: BlockId,
     next_check: BlockId,
     op: &str,
+    state: &VersionState,
 ) {
     if is_default_arm(item) {
         ssa.block_mut(current).terminator = Terminator::Goto(case_block);
@@ -730,6 +732,7 @@ fn emit_dispatch_arm(
             case_block,
             next_check,
             op,
+            state,
         );
     } else {
         emit_multi_pattern_chain(
@@ -741,6 +744,7 @@ fn emit_dispatch_arm(
             case_block,
             next_check,
             op,
+            state,
         );
     }
 }
@@ -751,28 +755,25 @@ fn is_default_arm(item: &CaseItem) -> bool {
     item.is_default
 }
 
-fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str) -> SsaTest {
-    // DD#66 dispatch ops (`==` exact / `=~` regex) compare against the resolved
-    // literal value (quotes stripped) like the boolean `[[ … ]]` RHS.
-    let pat = dispatch_pattern_string(pattern);
+fn dispatch_test(value: &SsaValue, pattern: &Expr, op: &str, state: &VersionState) -> SsaTest {
+    // DD#66/#71 dispatch ops (`==` exact / `=~` regex) compare against the
+    // operand word: a static pattern is a quote-stripped `Pattern` string; a
+    // dynamic (interpolated) pattern is a runtime `Value`.
+    let right = if crate::transform::expressions::expr_is_dynamic(pattern) {
+        SsaTestRhs::Value(expr_to_value(pattern, state))
+    } else {
+        SsaTestRhs::Pattern(crate::transform::expressions::operand_pattern_string(
+            pattern,
+        ))
+    };
     SsaTest::Binary {
         left: value.clone(),
         op: op.to_string(),
-        right: SsaTestRhs::Pattern(pat),
+        right,
     }
 }
 
-/// DD#66: the literal comparison string for a dispatch pattern — strips
-/// single quotes and unwraps double quotes (a variable inside stays as
-/// its source form for now; dispatch patterns are literals in practice).
-fn dispatch_pattern_string(expr: &Expr) -> String {
-    match &expr.kind {
-        ExprKind::SingleQuoted(s) => s.clone(),
-        ExprKind::DoubleQuoted(parts) => parts.iter().map(dispatch_pattern_string).collect(),
-        _ => expr_to_string(expr),
-    }
-}
-
+#[allow(clippy::too_many_arguments)]
 fn emit_single_pattern_branch(
     ssa: &mut SsaProgram,
     current: BlockId,
@@ -781,10 +782,11 @@ fn emit_single_pattern_branch(
     true_block: BlockId,
     false_block: BlockId,
     op: &str,
+    state: &VersionState,
 ) {
     ssa.block_mut(current)
         .insts
-        .push(SsaInst::Test(dispatch_test(value, pattern, op)));
+        .push(SsaInst::Test(dispatch_test(value, pattern, op, state)));
     ssa.block_mut(current).terminator = Terminator::Branch {
         condition: "__test".to_string(),
         true_block,
@@ -802,12 +804,13 @@ fn emit_multi_pattern_chain(
     case_block: BlockId,
     next_check: BlockId,
     op: &str,
+    state: &VersionState,
 ) {
     let mut pat_current = current;
     for (pi, pat) in patterns.iter().enumerate() {
         ssa.block_mut(pat_current)
             .insts
-            .push(SsaInst::Test(dispatch_test(value, pat, op)));
+            .push(SsaInst::Test(dispatch_test(value, pat, op, state)));
 
         let (true_block, false_block) = if pi + 1 < patterns.len() {
             let next_pat = ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1));

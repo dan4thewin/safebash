@@ -70,6 +70,33 @@ fn parse_expansion_arm(
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
 /// concatenation of adjacent tokens, and array literals.
 pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
+    parse_word_parts(scanner, false)
+}
+
+/// DD#71: parse an *operand word* — like `parse_expr`, but regex/shell
+/// metacharacters (`( ) { } | !`) are absorbed as ordinary literal
+/// characters instead of terminating the word. Used for the `=~` RHS (and
+/// dispatch patterns): the operand runs to the next unquoted whitespace /
+/// `]]` / `&&` / `||`, with quotes and `$`-expansions honoured normally, so
+/// a bare `^(a|b)$` is one word and `'a b'` preserves its space.
+pub fn parse_operand_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
+    parse_word_parts(scanner, true)
+}
+
+/// The literal character a punctuation token contributes to an operand word.
+fn operand_punct_char(tok: &Tok) -> char {
+    match tok {
+        Tok::LParen => '(',
+        Tok::RParen => ')',
+        Tok::LBrace => '{',
+        Tok::RBrace => '}',
+        Tok::Pipe => '|',
+        Tok::Bang => '!',
+        _ => unreachable!("operand_punct_char: non-operand-punct token"),
+    }
+}
+
+fn parse_word_parts(scanner: &mut Scanner, absorb_punct: bool) -> Result<Expr, Diagnostic> {
     let mut parts: Vec<Expr> = Vec::new();
 
     loop {
@@ -95,6 +122,16 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
             | Tok::Backtick(_)
             | Tok::DollarDblParen => {
                 parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
+            }
+            Tok::LParen | Tok::RParen | Tok::LBrace | Tok::RBrace | Tok::Pipe | Tok::Bang
+                if absorb_punct =>
+            {
+                let ch = operand_punct_char(&tok);
+                scanner.next();
+                parts.push(Expr {
+                    kind: ExprKind::Literal(ch.to_string()),
+                    span,
+                });
             }
             Tok::Eq => {
                 scanner.next();

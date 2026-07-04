@@ -50,10 +50,37 @@ fn command_arg_splat(kind: &ExprKind) -> Option<String> {
     }
 }
 
-/// DD#62: pre-lower a `[[ ]]` `TestExpr` into an `SsaTest` whose value
-/// operands are `SsaValue` (so codegen uses the ordinary value path,
-/// with `assoc_arrays`-correct subscript key-typing). The `=~` right
-/// operand stays as a raw pattern string.
+/// A statically-known operand's comparison/pattern string: strip outer
+/// quotes so `'a b'` is the pattern `a b`, not `'a b'`, and concatenate
+/// multi-part (`Concat`) operands (e.g. bare `a(b`). Only meaningful when
+/// `expr_is_dynamic` is false.
+pub(super) fn operand_pattern_string(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::SingleQuoted(s) => s.clone(),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            parts.iter().map(operand_pattern_string).collect()
+        }
+        _ => expr_to_string(expr),
+    }
+}
+
+/// True if `expr` has any runtime-valued part (an expansion / cmdsub /
+/// arithmetic / subscript) — i.e. it is not a compile-time-constant string.
+pub(super) fn expr_is_dynamic(expr: &Expr) -> bool {
+    match &expr.kind {
+        ExprKind::Literal(_) | ExprKind::SingleQuoted(_) => false,
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            parts.iter().any(expr_is_dynamic)
+        }
+        _ => true,
+    }
+}
+
+/// DD#62/#71: pre-lower a `[[ ]]` `TestExpr` into an `SsaTest` whose value
+/// operands are `SsaValue` (so codegen uses the ordinary value path, with
+/// `assoc_arrays`-correct subscript key-typing). A **static** `=~` right
+/// operand is a raw `Pattern` string (comptime-validatable); a **dynamic**
+/// one (interpolated) is a runtime `Value` built and handed to regcomp.
 pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
     match test {
         TestExpr::Unary { op, operand } => SsaTest::Unary {
@@ -61,8 +88,8 @@ pub(super) fn test_to_ssa(test: &TestExpr, state: &VersionState) -> SsaTest {
             operand: expr_to_value(operand, state),
         },
         TestExpr::Binary { left, op, right } => {
-            let rhs = if op == "=~" {
-                SsaTestRhs::Pattern(expr_to_string(right))
+            let rhs = if op == "=~" && !expr_is_dynamic(right) {
+                SsaTestRhs::Pattern(operand_pattern_string(right))
             } else {
                 SsaTestRhs::Value(expr_to_value(right, state))
             };

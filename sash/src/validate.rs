@@ -569,23 +569,43 @@ fn test_references_var(test: &TestExpr, var: &str) -> bool {
     }
 }
 
-/// SB5023: validate literal regex patterns at compile time
+/// SB5023: validate a *static* regex pattern at compile time. The operand
+/// word may be a `Literal`, a quoted string, or a `Concat` of static parts
+/// (bare `(?=h)ello`); any interpolation makes it dynamic → validated at
+/// runtime instead (DD#71).
 fn check_regex_literal(test: &TestExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    if let TestExpr::Binary { op, right, .. } = test {
-        if op == "=~" {
-            // Only validate literal patterns (no variable interpolation)
-            if let ExprKind::Literal(pattern) = &right.kind {
-                if !pattern.contains('$') {
-                    if let Err(msg) = crate::regex_validate::validate_regex(pattern) {
-                        diags.push(Diagnostic::error_span(
-                            span,
-                            "SB5023",
-                            format!("invalid regex pattern: {}", msg),
-                        ));
-                    }
-                }
+    let TestExpr::Binary { op, right, .. } = test else {
+        return;
+    };
+    if op != "=~" {
+        return;
+    }
+    let Some(pattern) = static_regex_pattern(right) else {
+        return;
+    };
+    if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5023",
+            format!("invalid regex pattern: {}", msg),
+        ));
+    }
+}
+
+/// The compile-time-constant string of a `=~` operand, or `None` if any part
+/// is a runtime expansion (dynamic — not statically checkable). Quotes are
+/// stripped (they are grouping, not literalisation — DD#71).
+fn static_regex_pattern(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            let mut out = String::new();
+            for p in parts {
+                out.push_str(&static_regex_pattern(p)?);
             }
+            Some(out)
         }
+        _ => None,
     }
 }
 

@@ -21,7 +21,7 @@ use super::arith::{
     collect_arith_content_raw, lower_arith_command, lower_c_style_for, parse_arith_command,
 };
 use super::error::parse_error;
-use super::expr::{parse_array_literal, parse_expr, span_from};
+use super::expr::{parse_array_literal, parse_expr, parse_operand_word, span_from};
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
@@ -1044,7 +1044,7 @@ fn parse_dispatch(
             }
             Tok::DblBracketClose => break,
             _ => {
-                let pattern = parse_expr(scanner)?;
+                let pattern = parse_operand_word(scanner)?;
                 items.push(CaseItem {
                     patterns: vec![pattern],
                     body: parse_brace_block(scanner, span)?,
@@ -1184,7 +1184,10 @@ fn parse_binary_rhs(
     span: Span,
 ) -> Result<TestExpr, Diagnostic> {
     let right = if op == "=~" {
-        parse_regex_rhs(scanner, span)?
+        // DD#71: the `=~` RHS is an operand word (metachars literal, quote/
+        // $-aware, absorbed to the next whitespace/`]]`). No bespoke regex
+        // collector.
+        parse_operand_word(scanner)?
     } else {
         parse_test_operand(scanner, span)?
     };
@@ -1215,78 +1218,6 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
         ));
     }
     parse_expr(scanner)
-}
-
-/// Parse regex RHS in [[ =~ pattern ]]: collect tokens as literal until ]]
-/// Process one token of a `=~` regex RHS, appending to `pattern`. Returns
-/// false to stop (EOF, a boolean/close token, or the whitespace-separated
-/// `{` that is a DD#66 dispatch arm delimiter).
-fn regex_rhs_step(
-    scanner: &mut Scanner,
-    pattern: &mut String,
-    prev_end: &mut Option<usize>,
-) -> bool {
-    if scanner.at_eof() {
-        return false;
-    }
-    let cur_span = scanner.peek().span;
-    if matches!(scanner.peek().token, Tok::LBrace) && prev_end.is_some_and(|e| cur_span.start > e) {
-        return false;
-    }
-    match &scanner.peek().token {
-        Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr | Tok::Newline => return false,
-        Tok::Word(w) => {
-            pattern.push_str(w);
-            scanner.next();
-        }
-        Tok::Dollar(v) => {
-            pattern.push('$');
-            pattern.push_str(v);
-            scanner.next();
-        }
-        tok => {
-            if let Some(ch) = regex_punct_char(tok) {
-                pattern.push(ch);
-            }
-            scanner.next();
-        }
-    }
-    *prev_end = Some(cur_span.end);
-    true
-}
-
-/// Map a punctuation token to the literal character it contributes to a
-/// `=~` regex pattern (a pure dispatcher; unrecognised tokens contribute
-/// nothing).
-fn regex_punct_char(tok: &Tok) -> Option<char> {
-    match tok {
-        Tok::LBrace => Some('{'),
-        Tok::RBrace => Some('}'),
-        Tok::LParen => Some('('),
-        Tok::RParen => Some(')'),
-        Tok::Pipe => Some('|'),
-        Tok::Bang => Some('!'),
-        Tok::Dash => Some('-'),
-        Tok::Eq => Some('='),
-        _ => None,
-    }
-}
-
-fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let mut pattern = String::new();
-    let mut prev_end: Option<usize> = None;
-    while regex_rhs_step(scanner, &mut pattern, &mut prev_end) {}
-    if pattern.is_empty() {
-        return Err(parse_error(
-            span,
-            "SB4014",
-            "expected regex pattern after =~".to_string(),
-        ));
-    }
-    Ok(Expr {
-        kind: ExprKind::Literal(pattern),
-        span,
-    })
 }
 
 fn is_unary_test_op(op: &str) -> bool {
