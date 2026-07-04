@@ -136,6 +136,11 @@ struct EmitCtx {
     int_funcs: std::collections::HashSet<String>,
     functions: std::collections::HashSet<String>,
     map_vars: std::collections::HashSet<String>,
+    /// DD#55 (A): whether a failing external command in the current position
+    /// must abort. False in `-`-suppressed and `&&`/`||` left-operand
+    /// positions (the failure is caught there). Conditions use a separate
+    /// emit path and never abort.
+    checked: bool,
 }
 
 impl EmitCtx {
@@ -146,6 +151,7 @@ impl EmitCtx {
             int_funcs: std::collections::HashSet::new(),
             functions: std::collections::HashSet::new(),
             map_vars: std::collections::HashSet::new(),
+            checked: true,
         }
     }
 
@@ -427,14 +433,21 @@ fn emit_list_or(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
 /// and the per-command emitters). The chain's resulting `__last_exit` is the
 /// last command actually run — matching bash.
 fn emit_list_chain(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize, cond: &str) {
+    let outer = ctx.checked;
     indent(out, depth);
     writeln!(out, "(do").unwrap();
+    // The left operand's failure is caught by the chain — it never aborts.
+    ctx.checked = false;
     emit_stmt(out, ctx, &l.left, depth + 1);
     indent(out, depth + 1);
     writeln!(out, "(when {cond}").unwrap();
+    // The right runs as the chain's effective result — it inherits the
+    // ambient checked (aborts iff the whole chain is in a checked position).
+    ctx.checked = outer;
     emit_stmt(out, ctx, &l.right, depth + 2);
     indent(out, depth + 1);
     writeln!(out, "))").unwrap();
+    ctx.checked = outer;
 }
 
 fn emit_list_background(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
@@ -467,7 +480,11 @@ fn emit_comment(out: &mut String, text: &str, depth: usize) {
 fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth: usize) {
     indent(out, depth);
     writeln!(out, "(do").unwrap();
+    // `-` suppresses the result-verdict: the inner command must not abort.
+    let outer = ctx.checked;
+    ctx.checked = false;
     emit_stmt(out, ctx, inner, depth + 1);
+    ctx.checked = outer;
     indent(out, depth);
     writeln!(out, "  nil)").unwrap();
 }
@@ -862,14 +879,21 @@ fn emit_janet_general_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, 
         // the call leaves that in place, matching bash `$?` after a function.
         writeln!(out, "({}{})", cmd_name, args_str).unwrap();
     } else {
-        // External command: `os/execute` returns the child exit code.
+        // External command: `os/execute` returns the child exit code. In a
+        // checked position (bare statement — not `-`-suppressed, chain left,
+        // or condition) a nonzero exit aborts with that status: the DD#55 (A)
+        // channel (no diagnostic, matching native's msg=None external abort).
         let parts = janet_command_parts(cmd_name, c, ctx);
-        writeln!(
-            out,
-            "(set __last_exit (os/execute [{}] :p))",
-            parts.join(" ")
-        )
-        .unwrap();
+        let joined = parts.join(" ");
+        if ctx.checked {
+            writeln!(
+                out,
+                "(let [_rc (os/execute [{joined}] :p)] (set __last_exit _rc) (when (not= 0 _rc) (os/exit _rc)))"
+            )
+            .unwrap();
+        } else {
+            writeln!(out, "(set __last_exit (os/execute [{joined}] :p))").unwrap();
+        }
     }
 }
 

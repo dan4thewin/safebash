@@ -39,6 +39,10 @@ type VarTypes = HashMap<(String, u32), VarType>;
 struct Emit {
     out: String,
     next_temp: usize,
+    /// DD#56: the END-cleanup block id, if the program has one. A DD#55 (A)
+    /// abort routes THROUGH this block (so an `END { exit N }` / cleanup
+    /// still runs) rather than exiting directly. None → jump to `__exit`.
+    end_block: Option<BlockId>,
 }
 
 impl Emit {
@@ -46,6 +50,7 @@ impl Emit {
         Self {
             out: String::new(),
             next_temp: 0,
+            end_block: None,
         }
     }
     fn fresh(&mut self) -> String {
@@ -283,6 +288,7 @@ fn emit_prologue(out: &mut String) {
 /// SSA order, terminal `__exit:` label.
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
+    e.end_block = ssa.end_block;
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
     writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
     writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
@@ -510,11 +516,13 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             kind,
             args,
             redirects,
-            ..
-        } => emit_command(e, name, kind, args, redirects, types),
+            checked,
+        } => emit_command(e, name, kind, args, redirects, *checked, types),
         // Phase 4: SsaInst::Pipeline → fork chain with pipes.
         // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
-        SsaInst::Pipeline { stages, .. } => emit_pipeline(e, stages, types),
+        SsaInst::Pipeline {
+            stages, checked, ..
+        } => emit_pipeline(e, stages, *checked, types),
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -925,6 +933,7 @@ fn emit_command(
     kind: &BuiltinCmd,
     args: &[SsaValue],
     redirects: &[crate::ir::Redirect],
+    checked: bool,
     types: &VarTypes,
 ) {
     // Phase 4: redirects wrap the command. emit_redirects → lower_exec
@@ -953,7 +962,7 @@ fn emit_command(
             writeln!(e.out, "    __exit_status = 1;").unwrap();
             writeln!(e.out, "    __test_result = 0;").unwrap();
         }
-        BuiltinCmd::Other => emit_exec(e, name, args, types),
+        BuiltinCmd::Other => emit_exec(e, name, args, checked, types),
         // Phase 6: __let_exit — convert (( … )) result to status.
         // Mirrors emit_let_exit (codegen/dispatch.rs:978). Reads
         // first arg as int; if zero → status=1, test_result=0; else
@@ -994,7 +1003,7 @@ fn emit_let_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 /// with our envp, store the exit status into __exit_status. Also
 /// sets __test_result so a Branch terminator reading it sees
 /// success ⇔ exit==0.
-fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
+fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: &VarTypes) {
     let argv = emit_argv(e, name, args, types, "    ");
     writeln!(
         e.out,
@@ -1002,6 +1011,28 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) {
     )
     .unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+    // DD#55 (A): an unchecked (bare / not caught by if||, not `-`-suppressed)
+    // external command that exits nonzero aborts the program with that status.
+    // The `checked` flag is false in condition/suppressed positions (computed
+    // on the SSA), so this matches native's emit_status_abort_check.
+    if checked {
+        writeln!(
+            e.out,
+            "    if (__exit_status != 0) goto {};",
+            abort_target(e)
+        )
+        .unwrap();
+    }
+}
+
+/// DD#56: where a DD#55 (A) abort jumps — the END-cleanup block if present
+/// (so cleanup / `END { exit N }` runs, with the triggering status in
+/// `__exit_status`), otherwise the terminal `__exit` label.
+fn abort_target(e: &Emit) -> String {
+    match e.end_block {
+        Some(id) => format!("_blk_{}", id),
+        None => "__exit".to_string(),
+    }
 }
 
 /// Build a NUL-terminated `<tN>_argv` for `[name, args…]`, expanding any
@@ -1945,6 +1976,7 @@ fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
 fn emit_pipeline(
     e: &mut Emit,
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    checked: bool,
     types: &VarTypes,
 ) {
     let n = stages.len();
@@ -1952,11 +1984,11 @@ fn emit_pipeline(
         return;
     }
     if n == 1 {
-        // Degenerate pipeline — emit as a plain command. SSA shouldn't
-        // really hand us this, but be defensive.
+        // Degenerate 1-stage pipeline: emit as a plain command carrying the
+        // pipeline's own `checked` so a bare failing stage still aborts.
         let (name, args, redirects) = &stages[0];
         let kind = BuiltinCmd::from_name(name);
-        emit_command(e, name, &kind, args, redirects, types);
+        emit_command(e, name, &kind, args, redirects, checked, types);
         return;
     }
 
@@ -2016,6 +2048,17 @@ fn emit_pipeline(
     writeln!(e.out, "    }}").unwrap();
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+    // DD#55 (A): an unchecked pipeline whose (last-stage) status is nonzero
+    // aborts (routing through END per DD#56). `checked` is false in condition
+    // / `-`-suppressed positions.
+    if checked {
+        writeln!(
+            e.out,
+            "    if (__exit_status != 0) goto {};",
+            abort_target(e)
+        )
+        .unwrap();
+    }
 }
 
 /// One pipeline stage. Mirrors lower_pipeline_stage
