@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=69
+plan=70
 echo "1..$plan" >&3
 
 set +e
@@ -199,23 +199,19 @@ run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
 run_sash 'false && echo A || echo B'
 [[ $rc = 0 && $out = B && -z $err ]]; chk 62.7
 
-# 62.8-62.10 nested && / || chains — NATIVE only. The janet/c backends
-# evaluate chains by language value-truthiness, not exit status (and
-# don't set the status after every command), so a nested chain mis-runs
-# branches. Pre-existing; see bug-andor-backend-chain-status. Native
-# (primary) is the reference.
-if in_modes native; then
-    run_sash '[[ 1 = 1 ]] && echo A || echo B'
-    [[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
-    run_sash 'false && echo A || echo B && echo C'
-    [[ $rc = 0 && $out = $'B\nC' && -z $err ]]; chk 62.9
-    run_sash 'true || echo A && echo B'
-    [[ $rc = 0 && $out = B && -z $err ]]; chk 62.10
-else
-    skip_chk 62.8
-    skip_chk 62.9
-    skip_chk 62.10
-fi
+# 62.8-62.10 nested && / || chains. Now correct in all three backends
+# (bug-andor-backend-chain-status fixed): janet/c branch on exit status,
+# not language value-truthiness, and every command sets the status var.
+run_sash '[[ 1 = 1 ]] && echo A || echo B'
+[[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
+run_sash 'false && echo A || echo B && echo C'
+[[ $rc = 0 && $out = $'B\nC' && -z $err ]]; chk 62.9
+run_sash 'true || echo A && echo B'
+[[ $rc = 0 && $out = B && -z $err ]]; chk 62.10
+# 62.11 per-command status pin: a successful echo must leave status 0 so a
+# following `&& cmd` runs (the c/janet regression this fix closes).
+run_sash 'echo A && echo B && echo C'
+[[ $rc = 0 && $out = $'A\nB\nC' && -z $err ]]; chk 62.11
 
 
 # ── Additional coverage (2026-05-24) ──

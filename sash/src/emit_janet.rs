@@ -413,25 +413,28 @@ fn emit_list(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
 }
 
 fn emit_list_and(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
-    indent(out, depth);
-    writeln!(out, "(when (do").unwrap();
-    emit_stmt(out, ctx, &l.left, depth + 1);
-    indent(out, depth);
-    writeln!(out, ")").unwrap();
-    emit_stmt(out, ctx, &l.right, depth + 1);
-    indent(out, depth);
-    writeln!(out, ")").unwrap();
+    emit_list_chain(out, ctx, l, depth, "(= 0 __last_exit)");
 }
 
 fn emit_list_or(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
+    emit_list_chain(out, ctx, l, depth, "(not= 0 __last_exit)");
+}
+
+/// `a && b` / `a || b` run the LEFT for effect, then run the RIGHT based on
+/// the LEFT's exit STATUS (`__last_exit`), not its janet value. `&&` runs the
+/// right iff the left succeeded (status 0); `||` iff it failed. This requires
+/// every command to leave `__last_exit` set (see `janet_cmd_defaults_success`
+/// and the per-command emitters). The chain's resulting `__last_exit` is the
+/// last command actually run — matching bash.
+fn emit_list_chain(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize, cond: &str) {
     indent(out, depth);
-    writeln!(out, "(when (not (do").unwrap();
+    writeln!(out, "(do").unwrap();
     emit_stmt(out, ctx, &l.left, depth + 1);
-    indent(out, depth);
+    indent(out, depth + 1);
+    writeln!(out, "(when {cond}").unwrap();
+    emit_stmt(out, ctx, &l.right, depth + 2);
+    indent(out, depth + 1);
     writeln!(out, "))").unwrap();
-    emit_stmt(out, ctx, &l.right, depth + 1);
-    indent(out, depth);
-    writeln!(out, ")").unwrap();
 }
 
 fn emit_list_background(out: &mut String, ctx: &mut EmitCtx, l: &List, depth: usize) {
@@ -682,7 +685,12 @@ fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: us
     .unwrap();
     for i in 0..n_commands {
         indent(out, depth);
-        writeln!(out, "(os/proc-wait p{})", i).unwrap();
+        // A pipeline's exit status is the last stage's (bash, no pipefail).
+        if i == last {
+            writeln!(out, "(set __last_exit (os/proc-wait p{}))", i).unwrap();
+        } else {
+            writeln!(out, "(os/proc-wait p{})", i).unwrap();
+        }
     }
     indent(out, depth);
     writeln!(out, "(print result))").unwrap();
@@ -691,6 +699,7 @@ fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: us
 fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
     let cmd_name = expr_to_literal(&c.name);
     let kind = BuiltinCmd::from_name(&cmd_name);
+    let defaults_success = janet_cmd_defaults_success(&kind, &cmd_name);
     indent(out, depth);
     match kind {
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
@@ -718,6 +727,32 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
         _ if cmd_name == "cat" => emit_janet_cat(out, ctx, c),
         _ => emit_janet_general_command(out, ctx, c, &cmd_name),
     }
+    // DD#55/&&-||: every command must leave `__last_exit` set. The
+    // success-builtins get an unconditional 0 here; true/false/`:`, test,
+    // match and general commands set their own.
+    if defaults_success {
+        indent(out, depth);
+        writeln!(out, "(set __last_exit 0)").unwrap();
+    }
+}
+
+/// Builtins whose exit status is unconditionally 0. `true`/`false`/`:` and
+/// `match`/`test` set their own status; general/external commands set it from
+/// the child exit code; control-flow (exit/return/break/continue) transfers
+/// control. `cat` (stdin passthrough) succeeds.
+fn janet_cmd_defaults_success(kind: &BuiltinCmd, cmd_name: &str) -> bool {
+    if cmd_name == "cat" {
+        return true;
+    }
+    matches!(
+        kind,
+        BuiltinCmd::Echo
+            | BuiltinCmd::Printf
+            | BuiltinCmd::Read
+            | BuiltinCmd::Unset
+            | BuiltinCmd::Shift
+            | BuiltinCmd::Bless
+    )
 }
 
 /// `true` / `false` — set `__last_exit` and emit the literal.
@@ -731,8 +766,14 @@ fn emit_janet_const_bool(out: &mut String, success: bool) {
 /// test expression inline; silently no-ops if no Test arg is present.
 fn emit_janet_test_cmd(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     if let Some(arg) = c.args.first() {
-        write!(out, "{}", emit_test_expr(arg, ctx)).unwrap();
-        writeln!(out).unwrap();
+        // Statement-position `[[ … ]]` (e.g. LHS of `&&`/`||`): set the exit
+        // status (0 true / 1 false) so the chain branches on it.
+        writeln!(
+            out,
+            "(set __last_exit (if {} 0 1))",
+            emit_test_expr(arg, ctx)
+        )
+        .unwrap();
     }
 }
 
@@ -817,10 +858,18 @@ fn emit_janet_general_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, 
             args_str.push(' ');
             args_str.push_str(&emit_expr_inline(arg, ctx));
         }
+        // A user function sets `__last_exit` internally (its last command);
+        // the call leaves that in place, matching bash `$?` after a function.
         writeln!(out, "({}{})", cmd_name, args_str).unwrap();
     } else {
+        // External command: `os/execute` returns the child exit code.
         let parts = janet_command_parts(cmd_name, c, ctx);
-        writeln!(out, "(os/execute [{}] :p)", parts.join(" ")).unwrap();
+        writeln!(
+            out,
+            "(set __last_exit (os/execute [{}] :p))",
+            parts.join(" ")
+        )
+        .unwrap();
     }
 }
 

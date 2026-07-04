@@ -936,7 +936,14 @@ fn emit_command(
     };
 
     match kind {
-        BuiltinCmd::Echo => emit_echo(e, args, types),
+        BuiltinCmd::Echo => {
+            emit_echo(e, args, types);
+            // &&/|| chains branch on the status: a successful echo must leave
+            // status 0 (else a following `&& cmd` sees a stale nonzero and is
+            // skipped). Write-failure/EPIPE abort is handled separately (DD#55).
+            writeln!(e.out, "    __exit_status = 0;").unwrap();
+            writeln!(e.out, "    __test_result = 1;").unwrap();
+        }
         BuiltinCmd::Exit => emit_exit(e, args, types),
         BuiltinCmd::Noop | BuiltinCmd::True => {
             writeln!(e.out, "    __exit_status = 0;").unwrap();

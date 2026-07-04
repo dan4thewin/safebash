@@ -1,13 +1,32 @@
 ---
 title: "BUG — janet/c backends evaluate && / || chains by value-truthiness, not exit status"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "janet & c run nested && / || chains by exit status (matching native)"
-  - "spec wordsplit 62.8-62.10 pass under all 3 modes (then drop the in_modes native guard)"
+  - "[DONE] janet & c run nested && / || chains by exit status (matching native)"
+  - "[DONE] spec wordsplit 62.8-62.11 pass under all 3 modes (guard dropped; 62.11 added as a per-command-status pin)"
 ---
+
+# RESOLVED 2026-07-03
+
+**janet** (`emit_janet.rs`): `emit_list_and`/`emit_list_or` no longer branch
+on the left block's janet *value*; they run the left for effect then branch
+on `__last_exit` (`&&` → run right iff 0; `||` → iff not 0), via a shared
+`emit_list_chain`. Every command now leaves `__last_exit` set:
+`janet_cmd_defaults_success` gives echo/printf/read/unset/shift/bless/cat an
+unconditional 0; `emit_janet_test_cmd` sets `(if <test> 0 1)`;
+`emit_janet_general_command` sets it from `os/execute` (functions set it
+internally); pipelines set it from the last stage's `os/proc-wait`.
+
+**c** (`emit_c.rs`): `emit_echo` left `__exit_status` stale (native's
+`lower_echo` sets it), so `echo X && cmd` skipped `cmd`. The Echo dispatch
+now sets `__exit_status = 0` / `__test_result = 1` on success. (The
+&&/|| control flow itself is SSA-driven and was already correct in c.)
+
+Net: 0 regressions; 62.8-62.11 green in native+c+janet.
+
 
 # BUG — janet/c `&&`/`||` chains use value-truthiness, not exit status
 
