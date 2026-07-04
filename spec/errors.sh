@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=43
+plan=53
 echo "1..$plan" >&3
 
 set +e
@@ -263,6 +263,36 @@ run_sash 'echo "$#"'
 # e.dd46.t5 top-level $0 → directs to $(arg 0)
 run_sash 'echo "$0"'
 [[ $rc != 0 && -z $out && $err == *'use $(arg 0)'* ]]; chk e.dd46.t5
+
+# ── DD#70/#71 dual: a value binding used in a boolean context is rejected ──
+# A boolean context (if/while/until cond, left of &&/||, operand of !) must
+# consume a boolean or exit status; an assignment/declaration (a value
+# binding, DD#71) there is a compile error (SB4025).
+run_sash 'x=hi && echo $x'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br1
+run_sash 'if x=foo; then echo t; fi'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br2
+run_sash 'int n=0; while x=foo; do echo t; done'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br3
+run_sash 'x=foo || echo y'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br4
+run_sash '! x=foo'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br5
+# br6 a typed declaration is also a value binding
+run_sash 'if int x=5; then echo t; fi'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br6
+# br7 (positive) a real status producer is still a valid condition
+run_sash 'if true; then echo t; fi'
+[[ $rc = 0 && $out = "t" && -z $err ]]; chk e.br7
+# br8 (positive) a `[[ ]]` boolean test condition
+run_sash 'x=a; if [[ $x == a ]]; then echo t; fi'
+[[ $rc = 0 && $out = "t" && -z $err ]]; chk e.br8
+# br9 (positive) an assignment as a plain statement (not a condition) is fine
+run_sash 'x=foo; echo $x'
+[[ $rc = 0 && $out = "foo" && -z $err ]]; chk e.br9
+# br10 (positive) an assignment on the RIGHT of || (the consequent) is fine
+run_sash 'false || x=set; echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk e.br10
 
 set -e
 tally

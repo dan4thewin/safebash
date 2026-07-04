@@ -74,7 +74,14 @@ fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition: bool) {
     match &stmt.kind {
         StmtKind::Command(c) => validate_command(c, stmt.span, diags),
-        StmtKind::Declaration(d) => validate_declaration(d, stmt.span, diags),
+        StmtKind::Declaration(d) => {
+            // DD#70/#71: a typed declaration is a value binding, not a
+            // boolean/exit-status — it cannot be a condition.
+            if in_condition {
+                diags.push(nonstatus_in_condition_diag(stmt.span, "a declaration"));
+            }
+            validate_declaration(d, stmt.span, diags)
+        }
         StmtKind::Assignment(a) => validate_assignment_stmt(a, stmt.span, in_condition, diags),
         StmtKind::If(i) => validate_if(i, diags),
         StmtKind::While(w) => validate_while(w, diags),
@@ -85,23 +92,39 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             validate_arith_context(expr, stmt.span, in_condition, diags);
         }
         StmtKind::Comment(_) => {}
-        // Default for wrappers (Pipeline, Subshell, Suppressed,
-        // Redirected, List) and reset-context constructs (Function,
-        // Case). Forwarders propagate `in_condition`; resetters
-        // (Function, Case) drop it to false so a function body or
-        // case body is never validated as if it were in condition
-        // context.
-        _ => {
-            let inner = forwards_condition(stmt) && in_condition;
-            for body in stmt.child_bodies() {
-                for s in body {
-                    validate_stmt_ctx(s, diags, inner);
-                }
-            }
-        }
+        // Wrappers (List, Pipeline, Subshell, Suppressed, Redirected) and
+        // reset-context constructs (Function, Case) — see `validate_nested`.
+        _ => validate_nested(stmt, in_condition, diags),
     }
     // Validate all expressions in the statement
     walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
+}
+
+/// Recurse into a wrapper statement's children with the correct condition
+/// context. DD#70/#71: the left operand of `&&`/`||` and the operand of `!`
+/// are boolean contexts; other wrappers forward `in_condition`; resetters
+/// (Function, Case) drop it (via `forwards_condition`).
+fn validate_nested(stmt: &Statement, in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::List(l) => {
+            let left_cond = matches!(l.op, ListOp::And | ListOp::Or) || in_condition;
+            validate_stmt_ctx(&l.left, diags, left_cond);
+            validate_stmt_ctx(&l.right, diags, in_condition);
+        }
+        StmtKind::Pipeline(p) if p.negated => validate_children(&p.commands, true, diags),
+        _ => {
+            let inner = forwards_condition(stmt) && in_condition;
+            for body in stmt.child_bodies() {
+                validate_children(body, inner, diags);
+            }
+        }
+    }
+}
+
+fn validate_children(stmts: &[Statement], in_condition: bool, diags: &mut Vec<Diagnostic>) {
+    for s in stmts {
+        validate_stmt_ctx(s, diags, in_condition);
+    }
 }
 
 /// True for wrapping StmtKinds whose validation context is the
@@ -140,7 +163,25 @@ fn validate_assignment_stmt(
                 a.name
             ),
         ));
+    } else if in_condition {
+        // DD#70/#71: a (non-arith) assignment is a value binding, not a
+        // boolean/exit-status — it cannot be a condition.
+        diags.push(nonstatus_in_condition_diag(span, "an assignment"));
     }
+}
+
+/// DD#70/#71 dual (SB4025): a value binding (assignment / declaration) used
+/// where a boolean or exit status is consumed (an `if`/`while`/`until`
+/// condition, the left of `&&`/`||`, or the operand of `!`).
+fn nonstatus_in_condition_diag(span: Span, what: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB4025",
+        format!(
+            "{what} is a value binding, not a boolean or exit status — it cannot be used as a \
+             condition; sequence it instead (e.g. `x=foo; if …`)"
+        ),
+    )
 }
 
 fn validate_if(i: &If, diags: &mut Vec<Diagnostic>) {
