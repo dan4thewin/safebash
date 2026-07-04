@@ -44,8 +44,13 @@ A non-empty array splats to one verbatim arg per element. These forms map
 
 ## Scope (deliberately minimal)
 
-- **External commands only.** Builtins (`echo`/`printf`/…) and for-in are
-  exempt. External-vs-builtin is resolved at compile time (DD#23).
+- **External commands only.** The rule in §2 (empty-disposition) applies to
+  external commands. The **inline builtins are exactly `echo`/`true`/`false`/
+  `:`** (`transform/resolution.rs`); `printf` and everything else resolve to
+  an absolute path (DD#23) and are therefore **external** — a bare `@a` to
+  `printf`/`ls`/etc. requires `@{a:?}` like any external command. (Earlier
+  drafts wrongly listed `printf` as an exempt builtin.) for-in is exempt (its
+  zero-match handling is built in).
 - **No static-non-empty exemption.** Even `array a=(x y z); ls @a` errors;
   use `@{a:?}`. (May revisit if friction warrants.)
 - **No dominating-guard recognition.** A surrounding `(( ${#a[@]} ))`
@@ -55,6 +60,30 @@ A non-empty array splats to one verbatim arg per element. These forms map
   splat syntax; nothing is tracked through the type system. (Rejected
   alternatives: a `gate`/`check`/`qualify` statement, or a bless-style
   cardinality obligation — both add cognitive load for no gain here.)
+
+## 3. `echo` array splat requires an explicit join
+
+Ratified with DG 2026-07-04. §2's *cardinality* exemption for the inline
+builtins does **not** license `echo` to implicitly flatten an array.
+
+`echo`'s arg list is a **string-output sink** — its whole job is to
+space-join its arguments onto stdout. So `echo @a` is an *implicit
+array→string join*, exactly what DD#22 forbids for `"$a"`, and it is
+lossy: `a=("a b" "c"); echo @a` prints `a b c`, indistinguishable
+downstream from `("a" "b" "c")` — reintroducing the word-splitting
+ambiguity sash eliminates, right at echo's output (worst in a pipeline).
+
+**Rule:** an array splat (`@a`) passed to `echo` is a **compile error**;
+use an explicit join — **`echo $(join @a)`** (the `join` intrinsic, DD#41/
+DD#60). Literal args are unaffected: `echo a b c` is fine (three literals,
+no array structure to lose). `true`/`false`/`:` ignore their args, so this
+is moot for them. (New SB code in the splat family — SB5025–5027 — assigned
+at implementation; keep adjacent.)
+
+Contrast: a splat to an **external** command (`myprog @{a:?}`) is *not* a
+flatten — the program receives N **structured argv entries** (boundaries
+preserved), so the splat stands (with the §2 disposition). The flatten
+hazard is specific to a builtin whose *output* joins its args, i.e. `echo`.
 
 ## Dependencies / interactions
 
