@@ -173,3 +173,22 @@ fn annotate_native_no_annotation() {
         out
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// MANUAL ANNOTATIONS
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn manual_case_removed() {
+    // DD#66: `case`/`esac` are removed — the converter flags them with a
+    // MANUAL note directing to the `[[ ]]` dispatch form.
+    let out = convert(
+        "manual_case",
+        "#!/bin/bash\ncase $x in a) echo a ;; *) echo other ;; esac\n",
+    );
+    assert!(
+        out.contains("# MANUAL: case removed (DD#66)") && out.contains("dispatch form"),
+        "expected case-removal MANUAL annotation, got:\n{}",
+        out
+    );
+}

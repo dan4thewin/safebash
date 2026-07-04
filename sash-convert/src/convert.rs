@@ -138,6 +138,22 @@ fn walk_node(
         "variable_assignment" => {
             convert_arith_side_effect(node, source, patches, prefix_lines);
         }
+        "case_statement" => {
+            // DD#66 removed `case`/`esac` — the `[[ ]]` dispatch form replaces
+            // it. A faithful mechanical rewrite (one dispatch op across mixed
+            // exact/glob arms, glob→regex, nested arm-body patches) is a design
+            // decision, so annotate for now like `subshell`. Recursion below
+            // still converts inner constructs. (followup task:
+            // converter-case-to-dispatch)
+            let line = node.start_position().row;
+            prefix_lines.push((
+                line,
+                "# MANUAL: case removed (DD#66) — use the [[ ]] dispatch form: \
+                 `[[ $x == pat { … } other { … } || { … } ]]` (exact) or \
+                 `[[ $x =~ regex { … } ]]` (regex)"
+                    .into(),
+            ));
+        }
         _ => {}
     }
 
