@@ -1324,6 +1324,13 @@ fn emit_binary_test(left: &Expr, op: &str, right: &Expr, ctx: &EmitCtx) -> Strin
         "-lt" => format!("(< {} {})", l, r),
         "-ge" => format!("(>= {} {})", l, r),
         "-le" => format!("(<= {} {})", l, r),
+        // DD#63: `[[ s =~ pat ]]` — regex match via the sash-regex helper
+        // (same vendored regexp9 engine as native/C, so `\w`/`\d`/`\s`
+        // shorthand classes work); quiet matchq form (exit 0 = match).
+        "=~" => format!(
+            "(zero? (os/execute [\"sash-regex\" \"matchq\" {} {}] :p))",
+            l, r
+        ),
         _ => format!("({} {} {})", op, l, r),
     }
 }

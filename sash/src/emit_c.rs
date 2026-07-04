@@ -1273,6 +1273,10 @@ fn lower_test_binary(
             "((sash_fnmatch({}, {}, {}, {})) == 0 ? 1 : 0)",
             rp, rl, lp, ll
         ),
+        // DD#63: `[[ s =~ pat ]]` — regex match via the vendored regexp9
+        // engine in libsash_rt (same as native; `\w`/`\d`/`\s` supported).
+        // Returns 1 ⇔ match. Subject is the LHS, pattern the RHS.
+        "=~" => format!("(sash_regex_match({}, {}, {}, {}))", lp, ll, rp, rl),
         _ => {
             writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
             "0".to_string()
