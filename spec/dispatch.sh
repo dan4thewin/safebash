@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=26
+plan=32
 echo "1..$plan" >&3
 
 set +e
@@ -68,6 +68,25 @@ run_sash 'x=hi; [[ $x == * { echo star; } ]]; echo done'
 #    no longer relies on a `*` sentinel)
 run_sash 'x=zzz; [[ $x == a { echo A; } b { echo B; } || { echo def; } ]]'
 [[ $rc = 0 && $out = "def" && -z $err ]]; chk dp.e4
+
+# ── F. multi-exact arms (DD#71 — `== a b c` is a b OR c, first-match) ──
+run_sash 'x=b; [[ $x == a b c { echo hit; } || { echo no; } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.f1
+run_sash 'x=z; [[ $x == a b c { echo hit; } || { echo no; } ]]'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk dp.f2
+# F3 a multi-pattern arm after a single-pattern arm; middle group matches
+run_sash 'x=three; [[ $x == one { echo 1; } two three { echo 23; } || { echo d; } ]]'
+[[ $rc = 0 && $out = "23" && -z $err ]]; chk dp.f3
+# F4 two multi-pattern arms, neither matches → default
+run_sash 'x=q; [[ $x == a b { echo ab; } c d { echo cd; } || { echo def; } ]]'
+[[ $rc = 0 && $out = "def" && -z $err ]]; chk dp.f4
+# F5 a quoted (spaces) pattern within a multi-pattern arm
+run_sash 'x="a b"; [[ $x == "a b" c { echo hit; } || { echo no; } ]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.f5
+# F6 `=~` arms stay single-regex: a bare second word is NOT a second pattern
+#    (no explicit `{`), so it is a parse error
+run_sash 'x=a; [[ $x =~ a b { echo hit; } ]]'
+[[ $rc != 0 && -z $out && -n $err ]]; chk dp.f6
 
 # ── G. disambiguation (boolean vs dispatch) ──────────────────────────
 # G1 no { ⇒ boolean compound intact

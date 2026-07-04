@@ -973,9 +973,10 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 
     let test_expr = parse_test_expr(scanner, span)?;
 
-    // DD#66: dispatch form — a `{` after the first `SUBJECT ==|=~ PATTERN`
-    // switches from the boolean test to a multi-way dispatch statement.
-    if matches!(scanner.peek().token, Tok::LBrace) {
+    // DD#66/#71: dispatch form — a `{`, or (for `==`) additional bare-word
+    // patterns, after the first `SUBJECT ==|=~ PATTERN` switches from the
+    // boolean test to a multi-way dispatch statement.
+    if matches!(scanner.peek().token, Tok::LBrace) || dispatch_multi_follows(&test_expr, scanner) {
         return parse_dispatch(scanner, span, test_expr);
     }
 
@@ -994,6 +995,35 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
         }),
         span,
     }))
+}
+
+/// DD#71: multi-exact dispatch signal — a bare word (another pattern)
+/// following a `==` binary test, as in `[[ $x == a b { … } ]]`. `=~` (and
+/// any other op) require an explicit `{` to enter dispatch; a bare word
+/// after them is not a second pattern (a `=~` arm is a single regex).
+fn dispatch_multi_follows(test_expr: &TestExpr, scanner: &mut Scanner) -> bool {
+    matches!(test_expr, TestExpr::Binary { op, .. } if op == "==")
+        && scanner.peek().token.is_word_like()
+}
+
+/// Collect the patterns of one dispatch arm (up to the arm `{`), starting
+/// from `pats` (the first, already-parsed pattern). For `==`, multiple
+/// space-separated exact patterns are allowed (first-match-wins within the
+/// arm); a `=~` arm is a single regex, so no more are collected.
+fn collect_arm_patterns(
+    scanner: &mut Scanner,
+    mut pats: Vec<Expr>,
+    op: &str,
+) -> Result<Vec<Expr>, Diagnostic> {
+    if op == "==" {
+        while !matches!(
+            scanner.peek().token,
+            Tok::LBrace | Tok::DblBracketClose | Tok::OrOr | Tok::AndAnd | Tok::Newline | Tok::Eof
+        ) {
+            pats.push(parse_operand_word(scanner)?);
+        }
+    }
+    Ok(pats)
 }
 
 /// DD#66: parse the `[[ ]]` dispatch form. The first
@@ -1022,8 +1052,9 @@ fn parse_dispatch(
     }
 
     let value = *left;
+    let first_pats = collect_arm_patterns(scanner, vec![*right], &op)?;
     let mut items = vec![CaseItem {
-        patterns: vec![*right],
+        patterns: first_pats,
         body: parse_brace_block(scanner, span)?,
         is_default: false,
     }];
@@ -1044,9 +1075,10 @@ fn parse_dispatch(
             }
             Tok::DblBracketClose => break,
             _ => {
-                let pattern = parse_operand_word(scanner)?;
+                let first = parse_operand_word(scanner)?;
+                let pats = collect_arm_patterns(scanner, vec![first], &op)?;
                 items.push(CaseItem {
-                    patterns: vec![pattern],
+                    patterns: pats,
                     body: parse_brace_block(scanner, span)?,
                     is_default: false,
                 });
