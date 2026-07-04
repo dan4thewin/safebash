@@ -70,7 +70,7 @@ fn parse_expansion_arm(
 /// This handles: literals, $var, ${var...}, "...", '...', $(...), $((...)),
 /// concatenation of adjacent tokens, and array literals.
 pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
-    parse_word_parts(scanner, false)
+    parse_word_parts(scanner, AbsorbMode::None)
 }
 
 /// DD#71: parse an *operand word* — like `parse_expr`, but regex/shell
@@ -80,23 +80,51 @@ pub fn parse_expr(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
 /// `]]` / `&&` / `||`, with quotes and `$`-expansions honoured normally, so
 /// a bare `^(a|b)$` is one word and `'a b'` preserves its space.
 pub fn parse_operand_word(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
-    parse_word_parts(scanner, true)
+    parse_word_parts(scanner, AbsorbMode::Operand)
 }
 
-/// The literal character a punctuation token contributes to an operand word.
-fn operand_punct_char(tok: &Tok) -> char {
-    match tok {
-        Tok::LParen => '(',
-        Tok::RParen => ')',
-        Tok::LBrace => '{',
-        Tok::RBrace => '}',
-        Tok::Pipe => '|',
-        Tok::Bang => '!',
-        _ => unreachable!("operand_punct_char: non-operand-punct token"),
+/// DD#71: parse an *assignment value word* — a value binding is not a
+/// connectable command, so the command connectors `& && || |` (and the
+/// operand puncts) are absorbed as literal characters. The value runs to the
+/// next unquoted whitespace / `;` / newline (which still sequence statements),
+/// so `a=foo|cat` is the literal `foo|cat` and `a=foo&&bar` is `foo&&bar`.
+pub fn parse_assignment_value(scanner: &mut Scanner) -> Result<Expr, Diagnostic> {
+    parse_word_parts(scanner, AbsorbMode::Assign)
+}
+
+/// How punctuation/operator tokens are treated while building a word.
+#[derive(Clone, Copy, PartialEq)]
+enum AbsorbMode {
+    /// Normal shell word — operators terminate the word (command args).
+    None,
+    /// `[[ ]]` operand / dispatch pattern — regex metachars are literal.
+    Operand,
+    /// Assignment value — operand puncts *and* command connectors are literal.
+    Assign,
+}
+
+/// The literal text a token contributes to a word under `mode`, or `None`
+/// if the token terminates the word.
+fn absorb_text(tok: &Tok, mode: AbsorbMode) -> Option<&'static str> {
+    match mode {
+        AbsorbMode::None => None,
+        AbsorbMode::Operand | AbsorbMode::Assign => match tok {
+            Tok::LParen => Some("("),
+            Tok::RParen => Some(")"),
+            Tok::LBrace => Some("{"),
+            Tok::RBrace => Some("}"),
+            Tok::Pipe => Some("|"),
+            Tok::Bang => Some("!"),
+            // Command connectors are inert after an assignment value only.
+            Tok::Amp if mode == AbsorbMode::Assign => Some("&"),
+            Tok::AndAnd if mode == AbsorbMode::Assign => Some("&&"),
+            Tok::OrOr if mode == AbsorbMode::Assign => Some("||"),
+            _ => None,
+        },
     }
 }
 
-fn parse_word_parts(scanner: &mut Scanner, absorb_punct: bool) -> Result<Expr, Diagnostic> {
+fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Diagnostic> {
     let mut parts: Vec<Expr> = Vec::new();
 
     loop {
@@ -123,13 +151,11 @@ fn parse_word_parts(scanner: &mut Scanner, absorb_punct: bool) -> Result<Expr, D
             | Tok::DollarDblParen => {
                 parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
             }
-            Tok::LParen | Tok::RParen | Tok::LBrace | Tok::RBrace | Tok::Pipe | Tok::Bang
-                if absorb_punct =>
-            {
-                let ch = operand_punct_char(&tok);
+            _ if absorb_text(&tok, mode).is_some() => {
+                let text = absorb_text(&tok, mode).unwrap();
                 scanner.next();
                 parts.push(Expr {
-                    kind: ExprKind::Literal(ch.to_string()),
+                    kind: ExprKind::Literal(text.to_string()),
                     span,
                 });
             }

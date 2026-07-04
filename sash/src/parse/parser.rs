@@ -21,7 +21,9 @@ use super::arith::{
     collect_arith_content_raw, lower_arith_command, lower_c_style_for, parse_arith_command,
 };
 use super::error::parse_error;
-use super::expr::{parse_array_literal, parse_expr, parse_operand_word, span_from};
+use super::expr::{
+    parse_array_literal, parse_assignment_value, parse_expr, parse_operand_word, span_from,
+};
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
@@ -761,56 +763,60 @@ fn parse_declaration_assignments(
         if scanner.at_eof() || matches!(scanner.peek().token, Tok::Newline | Tok::Semi | Tok::Eof) {
             break;
         }
-
-        let name = expect_word(scanner, span, "expected variable name in declaration")?;
-
-        // Check for = or +=
-        if matches!(scanner.peek().token, Tok::Eq) {
-            scanner.next(); // consume =
-
-            // Check for array literal: =(...)
-            if matches!(scanner.peek().token, Tok::LParen) {
-                scanner.next();
-                let arr = parse_array_literal(scanner, span)?;
-                assignments.push(Assignment {
-                    name,
-                    index: None,
-                    op: AssignOp::Set,
-                    value: arr,
-                });
-            } else {
-                let value = parse_expr(scanner)?;
-                assignments.push(Assignment {
-                    name,
-                    index: None,
-                    op: AssignOp::Set,
-                    value,
-                });
-            }
-        } else if matches!(scanner.peek().token, Tok::PlusAssign) {
-            scanner.next(); // consume +=
-            let value = parse_expr(scanner)?;
-            assignments.push(Assignment {
-                name,
-                index: None,
-                op: AssignOp::Append,
-                value,
-            });
-        } else {
-            // Bare declaration: int x
-            assignments.push(Assignment {
-                name,
-                index: None,
-                op: AssignOp::Set,
-                value: Expr {
-                    kind: ExprKind::Literal(String::new()),
-                    span: Span { line: 0, col: 0 },
-                },
-            });
-        }
+        assignments.push(parse_one_decl_assignment(scanner, span)?);
     }
 
     Ok(assignments)
+}
+
+/// Parse one `name`, `name=value`, `name=(array)`, or `name+=value` within a
+/// declaration list. A scalar value uses `parse_assignment_value` (DD#71
+/// value-word absorb); `=(…)` stays an array literal.
+fn parse_one_decl_assignment(scanner: &mut Scanner, span: Span) -> Result<Assignment, Diagnostic> {
+    let name = expect_word(scanner, span, "expected variable name in declaration")?;
+
+    if matches!(scanner.peek().token, Tok::Eq) {
+        scanner.next(); // consume =
+        if matches!(scanner.peek().token, Tok::LParen) {
+            scanner.next();
+            let arr = parse_array_literal(scanner, span)?;
+            return Ok(Assignment {
+                name,
+                index: None,
+                op: AssignOp::Set,
+                value: arr,
+            });
+        }
+        let value = parse_assignment_value(scanner)?;
+        return Ok(Assignment {
+            name,
+            index: None,
+            op: AssignOp::Set,
+            value,
+        });
+    }
+
+    if matches!(scanner.peek().token, Tok::PlusAssign) {
+        scanner.next(); // consume +=
+        let value = parse_assignment_value(scanner)?;
+        return Ok(Assignment {
+            name,
+            index: None,
+            op: AssignOp::Append,
+            value,
+        });
+    }
+
+    // Bare declaration: int x
+    Ok(Assignment {
+        name,
+        index: None,
+        op: AssignOp::Set,
+        value: Expr {
+            kind: ExprKind::Literal(String::new()),
+            span: Span { line: 0, col: 0 },
+        },
+    })
 }
 
 // ── END block ────────────────────────────────────────────────
@@ -1542,7 +1548,7 @@ fn parse_assignment(scanner: &mut Scanner, span: Span) -> Result<Option<Statemen
         }));
     }
 
-    let value = parse_expr(scanner)?;
+    let value = parse_assignment_value(scanner)?;
 
     Ok(Some(Statement {
         kind: StmtKind::Assignment(Assignment {
