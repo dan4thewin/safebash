@@ -720,12 +720,14 @@ fn build_dispatch_chain(
             check_blocks[i],
             case_blocks[i],
             next_check,
+            &c.op,
         );
     }
 }
 
 /// Wire one `case` arm's check block: wildcard → unconditional goto;
 /// single pattern → one glob branch; multiple → a `=glob` test chain.
+#[allow(clippy::too_many_arguments)]
 fn emit_dispatch_arm(
     ssa: &mut SsaProgram,
     arm_idx: usize,
@@ -734,6 +736,7 @@ fn emit_dispatch_arm(
     current: BlockId,
     case_block: BlockId,
     next_check: BlockId,
+    op: &str,
 ) {
     if is_wildcard_arm(item) {
         ssa.block_mut(current).terminator = Terminator::Goto(case_block);
@@ -747,6 +750,7 @@ fn emit_dispatch_arm(
             &item.patterns[0],
             case_block,
             next_check,
+            op,
         );
     } else {
         emit_multi_pattern_chain(
@@ -757,6 +761,7 @@ fn emit_dispatch_arm(
             &item.patterns,
             case_block,
             next_check,
+            op,
         );
     }
 }
@@ -767,11 +772,30 @@ fn is_wildcard_arm(item: &CaseItem) -> bool {
         .any(|p| matches!(&p.kind, ExprKind::Literal(s) if s == "*"))
 }
 
-fn glob_test(value: &SsaValue, pattern: &Expr) -> SsaTest {
+fn glob_test(value: &SsaValue, pattern: &Expr, op: &str) -> SsaTest {
+    // Legacy `case` (=glob) keeps the source form; the DD#66 dispatch ops
+    // (`==` exact / `=~` regex) compare against the resolved literal value
+    // (quotes stripped) like the boolean `[[ … ]]` RHS.
+    let pat = if op == "=glob" {
+        expr_to_string(pattern)
+    } else {
+        dispatch_pattern_string(pattern)
+    };
     SsaTest::Binary {
         left: value.clone(),
-        op: "=glob".to_string(),
-        right: SsaTestRhs::Pattern(expr_to_string(pattern)),
+        op: op.to_string(),
+        right: SsaTestRhs::Pattern(pat),
+    }
+}
+
+/// DD#66: the literal comparison string for a dispatch pattern — strips
+/// single quotes and unwraps double quotes (a variable inside stays as
+/// its source form for now; dispatch patterns are literals in practice).
+fn dispatch_pattern_string(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::SingleQuoted(s) => s.clone(),
+        ExprKind::DoubleQuoted(parts) => parts.iter().map(dispatch_pattern_string).collect(),
+        _ => expr_to_string(expr),
     }
 }
 
@@ -782,10 +806,11 @@ fn emit_single_pattern_branch(
     pattern: &Expr,
     true_block: BlockId,
     false_block: BlockId,
+    op: &str,
 ) {
     ssa.block_mut(current)
         .insts
-        .push(SsaInst::Test(glob_test(value, pattern)));
+        .push(SsaInst::Test(glob_test(value, pattern, op)));
     ssa.block_mut(current).terminator = Terminator::Branch {
         condition: "__test".to_string(),
         true_block,
@@ -793,6 +818,7 @@ fn emit_single_pattern_branch(
     };
 }
 
+#[allow(clippy::too_many_arguments)]
 fn emit_multi_pattern_chain(
     ssa: &mut SsaProgram,
     arm_idx: usize,
@@ -801,12 +827,13 @@ fn emit_multi_pattern_chain(
     patterns: &[Expr],
     case_block: BlockId,
     next_check: BlockId,
+    op: &str,
 ) {
     let mut pat_current = current;
     for (pi, pat) in patterns.iter().enumerate() {
         ssa.block_mut(pat_current)
             .insts
-            .push(SsaInst::Test(glob_test(value, pat)));
+            .push(SsaInst::Test(glob_test(value, pat, op)));
 
         let (true_block, false_block) = if pi + 1 < patterns.len() {
             let next_pat = ssa.new_block(&format!("case.{}.pat.{}", arm_idx, pi + 1));

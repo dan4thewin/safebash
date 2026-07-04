@@ -287,6 +287,10 @@ fn parse_if(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     scanner.next(); // consume 'if'
 
     let condition = parse_compound_list(scanner, &[Tok::Then, Tok::LBrace])?;
+    // DD#66: the dispatch form is statement-only — not an `if` condition.
+    if condition.iter().any(stmt_is_dispatch) {
+        return Err(dispatch_stmt_only_error(span));
+    }
     // DD#68: branch on the delimiter — `{` (brace form) or `then` (sugar).
     match scanner.peek().token {
         Tok::LBrace if condition.is_empty() => Err(brace_group_cond_error(span)),
@@ -413,6 +417,10 @@ fn parse_while(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     scanner.next(); // consume 'while' or 'until'
 
     let condition = parse_compound_list(scanner, &[Tok::Do, Tok::LBrace])?;
+    // DD#66: the dispatch form is statement-only — not a loop condition.
+    if condition.iter().any(stmt_is_dispatch) {
+        return Err(dispatch_stmt_only_error(span));
+    }
     // DD#68: `{` (brace form) or `do` (sugar).
     if matches!(scanner.peek().token, Tok::LBrace) && condition.is_empty() {
         return Err(brace_group_cond_error(span));
@@ -529,7 +537,11 @@ fn parse_case(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     expect(scanner, &Tok::Esac, span, "expected 'esac'")?;
 
     Ok(Some(Statement {
-        kind: StmtKind::Case(Case { value, items }),
+        kind: StmtKind::Case(Case {
+            value,
+            items,
+            op: "=glob".to_string(),
+        }),
         span,
     }))
 }
@@ -948,12 +960,32 @@ fn parse_arith_stmt(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
 
 // ── negated command (! cmd) ──────────────────────────────────
 
+/// DD#66: the dispatch form is statement-only. True if `stmt` is a `[[ ]]`
+/// dispatch (a `Case` carrying `==`/`=~`, not the legacy `=glob` case).
+fn stmt_is_dispatch(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StmtKind::Case(c) if c.op != "=glob")
+}
+
+fn dispatch_stmt_only_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4028",
+        "the `[[ ]]` dispatch form is a statement, not a boolean — use it as a \
+         standalone statement (or `if BOOLEAN; then DISPATCH; fi`)"
+            .to_string(),
+    )
+}
+
 fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume '!'
 
     if let Some(stmt) = parse_statement(scanner)? {
+        // DD#66: `! [[ dispatch ]]` — the dispatch is statement-only.
+        if stmt_is_dispatch(&stmt) {
+            return Err(dispatch_stmt_only_error(span));
+        }
         // Wrap in a negated pipeline
         match stmt.kind {
             StmtKind::Pipeline(mut p) => {
@@ -1020,6 +1052,12 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 
     let test_expr = parse_test_expr(scanner, span)?;
 
+    // DD#66: dispatch form — a `{` after the first `SUBJECT ==|=~ PATTERN`
+    // switches from the boolean test to a multi-way dispatch statement.
+    if matches!(scanner.peek().token, Tok::LBrace) {
+        return parse_dispatch(scanner, span, test_expr);
+    }
+
     expect(scanner, &Tok::DblBracketClose, span, "expected ']]'")?;
 
     Ok(Some(Statement {
@@ -1033,6 +1071,76 @@ fn parse_test_command(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
                 span,
             }],
         }),
+        span,
+    }))
+}
+
+/// DD#66: parse the `[[ ]]` dispatch form. The first
+/// `SUBJECT (==|=~) PATTERN` was already parsed as `first` (a Binary
+/// test); the cursor is at the first arm's `{`. Grammar:
+/// `PATTERN { group }` (repeated) then an optional `|| { group }` default,
+/// closed by `]]`. Lowers to `ir::Case` carrying the `==`/`=~` op.
+fn parse_dispatch(
+    scanner: &mut Scanner,
+    span: Span,
+    first: TestExpr,
+) -> Result<Option<Statement>, Diagnostic> {
+    let TestExpr::Binary { left, op, right } = first else {
+        return Err(parse_error(
+            span,
+            "SB4028",
+            "the `[[ ]]` dispatch form needs `SUBJECT ==|=~ PATTERN { … }`".to_string(),
+        ));
+    };
+    if op != "==" && op != "=~" {
+        return Err(parse_error(
+            span,
+            "SB4028",
+            format!("`[[ ]]` dispatch uses `==` or `=~`, not `{op}`"),
+        ));
+    }
+
+    let value = *left;
+    let mut items = vec![CaseItem {
+        patterns: vec![*right],
+        body: parse_brace_block(scanner, span)?,
+        fallthrough: false,
+        resume: false,
+    }];
+
+    loop {
+        match scanner.peek().token {
+            Tok::OrOr => {
+                // `|| { group }` — the default arm (must be last).
+                scanner.next();
+                items.push(CaseItem {
+                    patterns: vec![Expr {
+                        kind: ExprKind::Literal("*".to_string()),
+                        span,
+                    }],
+                    body: parse_brace_block(scanner, span)?,
+                    fallthrough: false,
+                    resume: false,
+                });
+                break;
+            }
+            Tok::DblBracketClose => break,
+            _ => {
+                let pattern = parse_expr(scanner)?;
+                items.push(CaseItem {
+                    patterns: vec![pattern],
+                    body: parse_brace_block(scanner, span)?,
+                    fallthrough: false,
+                    resume: false,
+                });
+            }
+        }
+    }
+
+    expect(scanner, &Tok::DblBracketClose, span, "expected ']]'")?;
+
+    Ok(Some(Statement {
+        kind: StmtKind::Case(Case { value, items, op }),
         span,
     }))
 }
@@ -1193,61 +1301,64 @@ fn parse_test_operand(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnos
 }
 
 /// Parse regex RHS in [[ =~ pattern ]]: collect tokens as literal until ]]
-fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let mut pattern = String::new();
-    loop {
-        if scanner.at_eof() {
-            break;
+/// Process one token of a `=~` regex RHS, appending to `pattern`. Returns
+/// false to stop (EOF, a boolean/close token, or the whitespace-separated
+/// `{` that is a DD#66 dispatch arm delimiter).
+fn regex_rhs_step(
+    scanner: &mut Scanner,
+    pattern: &mut String,
+    prev_end: &mut Option<usize>,
+) -> bool {
+    if scanner.at_eof() {
+        return false;
+    }
+    let cur_span = scanner.peek().span;
+    if matches!(scanner.peek().token, Tok::LBrace) && prev_end.is_some_and(|e| cur_span.start > e) {
+        return false;
+    }
+    match &scanner.peek().token {
+        Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr | Tok::Newline => return false,
+        Tok::Word(w) => {
+            pattern.push_str(w);
+            scanner.next();
         }
-        match &scanner.peek().token {
-            Tok::DblBracketClose | Tok::AndAnd | Tok::OrOr => break,
-            Tok::Newline => break,
-            Tok::Word(w) => {
-                pattern.push_str(w);
-                scanner.next();
+        Tok::Dollar(v) => {
+            pattern.push('$');
+            pattern.push_str(v);
+            scanner.next();
+        }
+        tok => {
+            if let Some(ch) = regex_punct_char(tok) {
+                pattern.push(ch);
             }
-            Tok::LBrace => {
-                pattern.push('{');
-                scanner.next();
-            }
-            Tok::RBrace => {
-                pattern.push('}');
-                scanner.next();
-            }
-            Tok::LParen => {
-                pattern.push('(');
-                scanner.next();
-            }
-            Tok::RParen => {
-                pattern.push(')');
-                scanner.next();
-            }
-            Tok::Pipe => {
-                pattern.push('|');
-                scanner.next();
-            }
-            Tok::Bang => {
-                pattern.push('!');
-                scanner.next();
-            }
-            Tok::Dash => {
-                pattern.push('-');
-                scanner.next();
-            }
-            Tok::Dollar(v) => {
-                pattern.push('$');
-                pattern.push_str(v);
-                scanner.next();
-            }
-            Tok::Eq => {
-                pattern.push('=');
-                scanner.next();
-            }
-            _ => {
-                scanner.next();
-            }
+            scanner.next();
         }
     }
+    *prev_end = Some(cur_span.end);
+    true
+}
+
+/// Map a punctuation token to the literal character it contributes to a
+/// `=~` regex pattern (a pure dispatcher; unrecognised tokens contribute
+/// nothing).
+fn regex_punct_char(tok: &Tok) -> Option<char> {
+    match tok {
+        Tok::LBrace => Some('{'),
+        Tok::RBrace => Some('}'),
+        Tok::LParen => Some('('),
+        Tok::RParen => Some(')'),
+        Tok::Pipe => Some('|'),
+        Tok::Bang => Some('!'),
+        Tok::Dash => Some('-'),
+        Tok::Eq => Some('='),
+        _ => None,
+    }
+}
+
+fn parse_regex_rhs(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
+    let mut pattern = String::new();
+    let mut prev_end: Option<usize> = None;
+    while regex_rhs_step(scanner, &mut pattern, &mut prev_end) {}
     if pattern.is_empty() {
         return Err(parse_error(
             span,

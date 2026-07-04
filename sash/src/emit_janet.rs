@@ -359,13 +359,19 @@ fn emit_case(out: &mut String, ctx: &mut EmitCtx, c: &Case, depth: usize) {
     let val = emit_expr_inline(&c.value, ctx);
     writeln!(out, "(match {}", val).unwrap();
     for item in &c.items {
-        emit_case_item(out, ctx, item, depth);
+        emit_case_item(out, ctx, item, &c.op, depth);
     }
     indent(out, depth);
     writeln!(out, ")").unwrap();
 }
 
-fn emit_case_item(out: &mut String, ctx: &mut EmitCtx, item: &crate::ir::CaseItem, depth: usize) {
+fn emit_case_item(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    item: &crate::ir::CaseItem,
+    op: &str,
+    depth: usize,
+) {
     indent(out, depth + 1);
     let pats: Vec<String> = item
         .patterns
@@ -373,12 +379,20 @@ fn emit_case_item(out: &mut String, ctx: &mut EmitCtx, item: &crate::ir::CaseIte
         .map(|p| emit_expr_inline(p, ctx))
         .collect();
     if pats.iter().any(|p| p == "\"*\"") {
-        // a `*` alternative makes the whole arm match anything.
+        // a `*` alternative makes the whole arm match anything (the default).
         write!(out, "_ ").unwrap();
+    } else if op == "=~" {
+        // DD#66 regex dispatch: a guard that matches via the sash-regex
+        // helper (same engine as native/C), unanchored.
+        let alts: Vec<String> = pats
+            .iter()
+            .map(|p| format!("(zero? (os/execute [\"sash-regex\" \"matchq\" _casev {p}] :p))"))
+            .collect();
+        write!(out, "(_casev (or {})) ", alts.join(" ")).unwrap();
     } else if pats.len() == 1 {
         write!(out, "{} ", pats[0]).unwrap();
     } else {
-        // Multi-pattern arm `a|b|…` → a janet `match` guard alternation
+        // Multi-pattern exact arm `a|b|…` → a janet `match` guard alternation
         // binding a fresh var (was incorrectly emitted as `_`, a catch-all
         // that matched every subject).
         let alts: Vec<String> = pats.iter().map(|p| format!("(= _casev {p})")).collect();

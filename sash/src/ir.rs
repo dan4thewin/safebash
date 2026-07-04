@@ -473,6 +473,9 @@ pub struct For {
 pub struct Case {
     pub value: Expr,
     pub items: Vec<CaseItem>,
+    /// DD#66: the match operator — `"=glob"` for legacy `case…esac`,
+    /// `"=="` (exact) or `"=~"` (regex) for the `[[ ]]` dispatch form.
+    pub op: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
