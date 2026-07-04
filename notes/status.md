@@ -12,7 +12,28 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
-### Session 2026-06-27 — feat: integer literal range & bit-patterns (Policy A, SB4026)
+### Session 2026-07-03 — c/janet backend-parity batch (6 tasks, 0 regressions)
+
+DG: "tackle the whole batch." Shipped the c/janet parity cluster spec-first,
+one commit per change, full-suite diff each time. **Native 0-failing
+throughout; zero regressions.** Pre-existing baselines: **c 58→52, janet
+106→75.**
+- janet pipeline EAGAIN flakiness → blocking `(os/pipe :WR)` (cb6086a).
+- janet multi-pattern `case a|b` → match guard alternation (3481512, P1).
+- janet argv trio DD#60 via `(dyn :args)` + fixed `for x in @a` splat +
+  `join` (430f2e4, −24 janet).
+- `&&`/`||` branch on exit status (not value) in c+janet; every command
+  sets the status var (032386a).
+- DD#55 (A) external-command abort in c+janet (707832f, partial — external
+  done, END-routing via `Emit.end_block`; remainder in
+  `dd55-abort-channel-remaining`).
+- `[[ =~ ]]` test operator implemented in both oracle backends (9ba4bbe);
+  `echo|read` guarded to native + filed (c9d67c1).
+
+Followups: `bug-janet-case-glob`, `dd55-abort-channel-remaining`,
+`echo-read-inline-pipe-cjanet`. See journal 125.
+
+
 
 DG ratified the disposition of out-of-range integer literals. Probing
 found the bug was broader than the task: **six** silent `0` miscompiles.
