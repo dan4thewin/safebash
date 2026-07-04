@@ -1,15 +1,30 @@
 ---
 title: "C and janet backends lack the DD#55 (A)-channel implicit-exit abort"
-status: ready
+status: partial
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "bare `/bin/false` aborts (nonzero exit) in C and janet, matching native"
-  - "the DD#55 implicit exit check fires for external commands, pipelines, cmdsub, cd, echo, redirect-open in all three backends"
-  - "caught (if/||) and `-`-suppressed failures do NOT abort, in all three backends"
-  - "the W3 native-only specs (errors.sh 55.20-30) are un-guarded to run cross-mode once C/janet reach parity"
+  - "[DONE] bare `/bin/false` aborts (nonzero exit) in C and janet, matching native (spec 55.1 green all modes)"
+  - "[DONE] the implicit exit check fires for bare EXTERNAL commands + honors `-` suppress / if / || catch, routing through END (DD#56)"
+  - "[SPLIT OFF -> dd55-abort-channel-remaining] pipefail-on-non-last (21.3/55.10), c cmdsub abort (55.7-9), cd/echo-write/redirect descriptive-message parity (55.20-29), janet pipeline abort, and the janet-diagnostic DECISION"
 ---
+
+# PARTIAL 2026-07-03 (external abort landed; see dd55-abort-channel-remaining)
+
+Commit 707832f: a bare (unchecked) external command that exits nonzero
+aborts with that status in both c and janet. c threads the SSA `checked`
+flag through emit_command/emit_exec/emit_pipeline and `goto`s the abort
+target; DD#56 routing added via `Emit.end_block`/`abort_target` (fixes a
+56.3 regression). janet re-derives checked-ness structurally
+(`EmitCtx.checked`: false in `-`-suppressed and &&/|| left positions) and
+does `(os/exit rc)` on a checked external's nonzero exit. Suppress / if /
+|| catch all correctly do NOT abort. 0 regressions.
+
+The remaining channels are in `dd55-abort-channel-remaining`.
+
+---
+
 
 ## Context
 
