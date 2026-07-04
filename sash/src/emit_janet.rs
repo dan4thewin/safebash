@@ -1487,6 +1487,9 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     if let Some(s) = cmdsub_regex_intrinsic(&name, c, ctx) {
         return s;
     }
+    if let Some(s) = cmdsub_case_intrinsic(&name, c, ctx) {
+        return s;
+    }
     if let Some(s) = cmdsub_data_intrinsic(&name, c, ctx) {
         return s;
     }
@@ -1521,6 +1524,20 @@ fn cmdsub_regex_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Stri
         return Some(format!(
             "(string/trim (with [f (os/spawn [\"sash-regex\" \"match\" {subj} {pat}] :p {{:out :pipe}})] (or (:read (f :out) :all) \"\")))"
         ));
+    }
+    None
+}
+
+/// DD#65: `$(toupper s)` / `$(tolower s)` — ASCII case conversion.
+fn cmdsub_case_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if (name == "toupper" || name == "tolower") && c.args.len() == 1 {
+        let subj = emit_expr_inline(&c.args[0], ctx);
+        let f = if name == "toupper" {
+            "string/ascii-upper"
+        } else {
+            "string/ascii-lower"
+        };
+        return Some(format!("({f} {subj})"));
     }
     None
 }

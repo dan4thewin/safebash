@@ -119,6 +119,22 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
+        SsaValue::CaseConvert { subject, upper } => {
+            let (s_ptr, s_len) = lower_value(
+                subject,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let op = if *upper { "^^" } else { ",," };
+            crate::codegen::value_handlers::emit_case_conversion(
+                op, s_ptr, s_len, builder, module, externs,
+            )
+        }
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(
                 &SsaValue::Var(var.clone()),
@@ -945,6 +961,9 @@ fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<
         SsaValue::RegexMatch { subject, pattern } => {
             scan_value_for_vars(subject, refs);
             scan_value_for_vars(pattern, refs);
+        }
+        SsaValue::CaseConvert { subject, .. } => {
+            scan_value_for_vars(subject, refs);
         }
         _ => {}
     }

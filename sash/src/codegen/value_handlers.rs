@@ -739,7 +739,7 @@ fn emit_substring(
 /// ${var^} / ${var^^} / ${var,} / ${var,,} — case conversion.
 /// Allocates a 4096-byte stack buffer; the runtime writes the
 /// converted value and returns the new length.
-fn emit_case_conversion(
+pub(crate) fn emit_case_conversion(
     operator: &str,
     s_ptr: cranelift_codegen::ir::Value,
     s_len: cranelift_codegen::ir::Value,

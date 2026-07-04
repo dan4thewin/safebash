@@ -53,16 +53,17 @@ takes integer operands. Implement when these are touched.)
   flag): `match $(tolower $x) $(tolower $pat)`. `/usr/bin/tr` remains for
   arbitrary character translation.
 
-## Resolved — basename/dirname (2026-06-18)
+## Resolved — basename/dirname (2026-06-18 → **revised 2026-06-21/07-04**)
 
-- **No `basename`/`dirname` builtins.** Use `${var:s/…/…/}` / `sub`, or the
-  external `basename`/`dirname` (DG: fork cost is fine). **Caveat:** DD#23
-  (compile-time path resolution) is `status: partial` — `grep`/`ls`
-  resolve, but `basename`/`dirname` currently hit the runtime
-  `bare command passed to sash_exec` bug, and external capture is tainted
-  (`$(basename …)` → SB5020, needs bless). So the external path-manip story
-  needs DD#23 completed; filed as a dependency, not a blocker (DG uses
-  `:s/`).
+- **basename/dirname are SUGAR** (DG 2026-06-21, reconfirmed 2026-07-04):
+  the compiler rewrites `basename $p` → `$(sub $p '.*/')` and `dirname $p`
+  → `$(sub $p '/[^/]*$')` (or equivalent) at compile time — **no fork, no
+  taint, no DD#23 dependency**. This supersedes the earlier 2026-06-18 note
+  below (no builtins / use external), which is retained only for history.
+  ~~No `basename`/`dirname` builtins. Use `${var:s/…/…/}` / `sub`, or the
+  external `basename`/`dirname` (DG: fork cost is fine).~~ **Caveat (moot
+  under sugar):** DD#23 path-resolution is `partial`; the external route hit
+  the `bare command` runtime bug + taint — the sugar rewrite sidesteps both.
 
 ## Resolved (DG, 2026-06-21)
 

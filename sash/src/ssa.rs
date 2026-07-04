@@ -137,6 +137,10 @@ pub enum BuiltinCmd {
     /// `match SUBJECT PATTERN` — DD#63 regex match. As a command: boolean
     /// exit status. As `$(match …)`: prints the whole match (`resub[0]`).
     Match,
+    /// `$(toupper s)` / `$(tolower s)` — DD#65 case-conversion builtins
+    /// (irreducible: a regex `sub` cannot upper/lowercase).
+    Toupper,
+    Tolower,
 
     /// Anything else: external command, user function call, dynamic
     /// expansion. The raw name in `SsaInst::Command::name` is the
@@ -186,6 +190,8 @@ impl BuiltinCmd {
             "sub" => Self::Sub,
             "gsub" => Self::Gsub,
             "match" => Self::Match,
+            "toupper" => Self::Toupper,
+            "tolower" => Self::Tolower,
             _ => Self::Other,
         }
     }
@@ -533,6 +539,13 @@ pub enum SsaValue {
         subject: Box<SsaValue>,
         pattern: Box<SsaValue>,
     },
+    /// DD#65: `$(toupper s)` / `$(tolower s)` — ASCII case conversion of an
+    /// ordinary value operand (reuses the `sash_toupper_all`/`sash_tolower_all`
+    /// runtime the `${var^^}`/`${var,,}` operators used).
+    CaseConvert {
+        subject: Box<SsaValue>,
+        upper: bool,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -598,6 +611,7 @@ impl SsaValue {
                 ..
             } => vec![subject, pattern, replacement],
             SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
+            SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

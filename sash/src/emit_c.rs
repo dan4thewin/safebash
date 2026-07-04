@@ -644,6 +644,11 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
         // DD#63: $(match S P) → whole match via sash_regex_match_str.
         SsaValue::RegexMatch { subject, pattern } => emit_regex_match_c(e, subject, pattern, types),
+        // DD#65: $(toupper s) / $(tolower s) — reuse the case-conversion runtime.
+        SsaValue::CaseConvert { subject, upper } => {
+            let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+            emit_case_conversion_c(e, if *upper { "^^" } else { ",," }, &s_ptr, &s_len)
+        }
         // Phase 5 table/array/argv reads, plus the unhandled fallback.
         other => lower_value_as_str_aggregate(e, other, types),
     }

@@ -77,9 +77,25 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
         BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
         BuiltinCmd::Match => regex_match_intrinsic(c, state),
+        BuiltinCmd::Toupper => case_convert_intrinsic(c, state, true),
+        BuiltinCmd::Tolower => case_convert_intrinsic(c, state, false),
         BuiltinCmd::Echo => Some(echo_concat(c, state)),
         _ => None,
     }
+}
+
+/// DD#65: `$(toupper s)` / `$(tolower s)` → `SsaValue::CaseConvert`. The
+/// single operand is an ordinary lowered value (quoting/interpolation are
+/// normal argument evaluation). `None` (falls through to the generic cmdsub
+/// path) if the arity is wrong.
+fn case_convert_intrinsic(c: &Command, state: &VersionState, upper: bool) -> Option<SsaValue> {
+    if c.args.len() != 1 {
+        return None;
+    }
+    Some(SsaValue::CaseConvert {
+        subject: Box::new(expr_to_value(&c.args[0], state)),
+        upper,
+    })
 }
 
 /// DD#63: `$(sub S P R)` / `$(gsub S P R)` → `SsaValue::RegexReplace`.

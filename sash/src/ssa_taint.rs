@@ -324,29 +324,12 @@ fn value_is_tainted(
         SsaValue::ArithBinOp { left, right, .. } => {
             any_tainted([left.as_ref(), right.as_ref()], taint, user_functions)
         }
-        // DD#63: a regex replace inherits the taint of its operands.
-        SsaValue::RegexReplace {
-            subject,
-            pattern,
-            replacement,
-            ..
-        } => any_tainted(
-            [subject.as_ref(), pattern.as_ref(), replacement.as_ref()],
-            taint,
-            user_functions,
-        ),
-        SsaValue::RegexMatch { subject, pattern } => {
-            any_tainted([subject.as_ref(), pattern.as_ref()], taint, user_functions)
-        }
-        SsaValue::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => any_tainted(
-            [cond.as_ref(), true_val.as_ref(), false_val.as_ref()],
-            taint,
-            user_functions,
-        ),
+        // Operand-derived: taint if any owned sub-value is tainted — DD#63
+        // regex replace/match, DD#65 case-convert, and the ternary.
+        SsaValue::RegexReplace { .. }
+        | SsaValue::RegexMatch { .. }
+        | SsaValue::CaseConvert { .. }
+        | SsaValue::Ternary { .. } => any_tainted(value.child_values(), taint, user_functions),
 
         // Command substitution: the only variant whose taint
         // depends on the callee (builtins are clean, externals
