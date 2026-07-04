@@ -1,6 +1,6 @@
 ---
 title: BUG — case patterns ? and [...] silently never match (validator + runtime gap)
-status: pending
+status: done
 priority: P0
 kind: bug
 depends: []

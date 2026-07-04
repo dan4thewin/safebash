@@ -1,6 +1,6 @@
 ---
 title: "[[ ]] dispatch (cond) form + remove case/esac/glob-match (DD#66)"
-status: partial
+status: done
 priority: P2
 kind: feature
 depends: [DD66-cond-form-dispatch, DD62-test-expr-simplification, DD63-regex-quoting-interpolation]
