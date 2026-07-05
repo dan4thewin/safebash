@@ -1394,12 +1394,11 @@ fn emit_param_expansion(
         "arrvals" | "arrjoin" => emit_arr_values_joined(e, &s_ptr, operand),
         "arrkeys" => emit_arr_keys_joined(e, &s_ptr, operand),
         "glob" | "glob_regex" => emit_glob_c(e, operator, operand),
-        "%" | "%%" => emit_strip_suffix_c(e, operator, &s_ptr, &s_len, operand),
-        "#" | "##" => emit_strip_prefix_c(e, operator, &s_ptr, &s_len, operand),
-        ":-" | "-" => emit_default_value_c(e, &s_ptr, &s_len, operand),
-        ":+" | "+" => emit_alternate_value_c(e, &s_len, operand),
+        // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
+        // op here; `:-` is `SsaValue::DefaultValue`, and every dropped op
+        // rejects at parse (SB4034). The `:s/` sed op (`/`//`) is not yet
+        // supported in the C backend (falls through to the TODO stub).
         "substring" => emit_substring_c(e, &s_ptr, &s_len, operand),
-        "^" | "^^" | "," | ",," => emit_case_conversion_c(e, operator, &s_ptr, &s_len),
         _ => {
             writeln!(e.out, "    /* TODO param expansion op: {} */", operator).unwrap();
             ("\"\"".to_string(), "0".to_string())
@@ -1450,81 +1449,6 @@ fn load_var_or_empty_c(var: &VarRef, types: &VarTypes) -> CStr {
     ("\"\"".to_string(), "0".to_string())
 }
 
-/// ${var%pat} / ${var%%pat} — strip matching suffix. Mirrors
-/// emit_strip_suffix (codegen/value_handlers.rs:495). Runtime
-/// returns the new length; pointer unchanged.
-fn emit_strip_suffix_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str, pat: &str) -> CStr {
-    let t = e.fresh();
-    let longest = if op == "%%" { 1 } else { 0 };
-    writeln!(
-        e.out,
-        "    i64 {t}_l = sash_strip_suffix({sp}, {sl}, \"{pat}\", {pl}, {lg});",
-        t = t,
-        sp = s_ptr,
-        sl = s_len,
-        pat = c_escape(pat),
-        pl = pat.len(),
-        lg = longest
-    )
-    .unwrap();
-    (s_ptr.to_string(), format!("{}_l", t))
-}
-
-/// ${var#pat} / ${var##pat} — strip matching prefix. Mirrors
-/// emit_strip_prefix (codegen/value_handlers.rs:520). Runtime
-/// returns offset; pointer advances and length shrinks.
-fn emit_strip_prefix_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str, pat: &str) -> CStr {
-    let t = e.fresh();
-    let longest = if op == "##" { 1 } else { 0 };
-    writeln!(
-        e.out,
-        "    i64 {t}_off = sash_strip_prefix({sp}, {sl}, \"{pat}\", {pl}, {lg});",
-        t = t,
-        sp = s_ptr,
-        sl = s_len,
-        pat = c_escape(pat),
-        pl = pat.len(),
-        lg = longest
-    )
-    .unwrap();
-    (
-        format!("({} + {}_off)", s_ptr, t),
-        format!("({} - {}_off)", s_len, t),
-    )
-}
-
-/// ${var:-default} / ${var-default}. Mirrors emit_default_value
-/// (codegen/value_handlers.rs:544). sash_default_value(len) returns
-/// 1 if var is set (len > 0), 0 if not. Then we select between
-/// the var's (ptr, len) and the operand literal.
-fn emit_default_value_c(e: &mut Emit, s_ptr: &str, s_len: &str, default: &str) -> CStr {
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    i64 {t}_set = sash_default_value({sl});",
-        t = t,
-        sl = s_len
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    const char* {t}_p = {t}_set ? ({sp}) : \"{d}\";",
-        t = t,
-        sp = s_ptr,
-        d = c_escape(default)
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    i64 {t}_l = {t}_set ? ({sl}) : {dl};",
-        t = t,
-        sl = s_len,
-        dl = default.len()
-    )
-    .unwrap();
-    (format!("{}_p", t), format!("{}_l", t))
-}
-
 /// DD#65: `${var:-DEFAULT}` where DEFAULT is a full interpolating value already
 /// lowered to `(d_ptr, d_len)` C expressions (not a literal). Selects the var's
 /// `(ptr, len)` when set (len > 0), else the default's.
@@ -1557,35 +1481,6 @@ fn emit_default_value_expr_c(
         t = t,
         sl = s_len,
         dl = d_len
-    )
-    .unwrap();
-    (format!("{}_p", t), format!("{}_l", t))
-}
-
-/// ${var:+alt} / ${var+alt}. Mirrors emit_alternate_value
-/// (codegen/value_handlers.rs:562). If var is set: return alt; else
-/// return empty.
-fn emit_alternate_value_c(e: &mut Emit, s_len: &str, alt: &str) -> CStr {
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    i64 {t}_set = sash_default_value({sl});",
-        t = t,
-        sl = s_len
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    const char* {t}_p = {t}_set ? \"{a}\" : \"\";",
-        t = t,
-        a = c_escape(alt)
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "    i64 {t}_l = {t}_set ? {al} : 0;",
-        t = t,
-        al = alt.len()
     )
     .unwrap();
     (format!("{}_p", t), format!("{}_l", t))

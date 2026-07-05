@@ -1652,13 +1652,11 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
     };
     match op {
         ":-" => emit_pe_default(pe, ctx),
-        "%%" => emit_pe_suffix_strip_longest(&var_ref, &pe_operand_literal(pe)),
-        "%" => emit_pe_suffix_strip_shortest(&var_ref, &pe_operand_literal(pe)),
-        "##" => emit_pe_prefix_strip_longest(&var_ref, &pe_operand_literal(pe)),
-        "#" => emit_pe_prefix_strip_shortest(&var_ref, &pe_operand_literal(pe)),
-        "^^" | ",," | "^" | "," => emit_pe_case_op(&var_ref, op),
         "strlen" | "arrlen" => format!("(string (length {}))", var_ref),
         "substring" => emit_pe_substring(&var_ref, &pe_operand_literal(pe)),
+        // DD#65: `:s/` sed op keeps the raw `/`//` operator; the dropped
+        // `/`-family glob-replace was remapped to `glob_replace` (rejected
+        // at parse, SB4034). All other `${var:OP}` ops are dropped.
         "/" => emit_pe_replace(&var_ref, &pe_operand_literal(pe), false),
         "//" => emit_pe_replace(&var_ref, &pe_operand_literal(pe), true),
         _ => var_ref,
@@ -1685,91 +1683,6 @@ fn emit_pe_default(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
         format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
     } else {
         format!("(or (os/getenv \"{}\") {})", pe.name, default)
-    }
-}
-
-/// `${var%%pat}` — longest suffix strip.
-fn emit_pe_suffix_strip_longest(var_ref: &str, operand: &str) -> String {
-    if let Some(lit) = operand.strip_suffix('*') {
-        format!(
-            "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
-            var_ref, lit
-        )
-    } else if let Some(lit) = operand.strip_prefix('*') {
-        format!(
-            "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s 0 i) s))",
-            var_ref, lit
-        )
-    } else {
-        format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
-            var_ref, operand)
-    }
-}
-
-/// `${var%pat}` — shortest suffix strip.
-fn emit_pe_suffix_strip_shortest(var_ref: &str, operand: &str) -> String {
-    if let Some(lit) = operand.strip_suffix('*') {
-        format!(
-            "(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
-            var_ref, lit
-        )
-    } else if let Some(lit) = operand.strip_prefix('*') {
-        format!(
-            "(let [s {} i (last (string/find-all \"{}\" s))] (if i (string/slice s 0 i) s))",
-            var_ref, lit
-        )
-    } else {
-        format!("(let [s {} pat \"{}\"] (if (string/has-suffix? pat s) (string/slice s 0 (- (length s) (length pat))) s))",
-            var_ref, operand)
-    }
-}
-
-/// `${var##pat}` — longest prefix strip.
-fn emit_pe_prefix_strip_longest(var_ref: &str, operand: &str) -> String {
-    if let Some(lit) = operand.strip_prefix('*') {
-        format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
-            var_ref, lit, lit)
-    } else if let Some(lit) = operand.strip_suffix('*') {
-        format!("(let [s {} ps (string/find-all \"{}\" s)] (if (empty? ps) s (string/slice s (+ (last ps) (length \"{}\")))))",
-            var_ref, lit, lit)
-    } else {
-        format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
-            var_ref, operand)
-    }
-}
-
-/// `${var#pat}` — shortest prefix strip.
-fn emit_pe_prefix_strip_shortest(var_ref: &str, operand: &str) -> String {
-    if let Some(lit) = operand.strip_prefix('*') {
-        format!(
-            "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
-            var_ref, lit, lit
-        )
-    } else if let Some(lit) = operand.strip_suffix('*') {
-        format!(
-            "(let [s {} i (string/find \"{}\" s)] (if i (string/slice s (+ i (length \"{}\"))) s))",
-            var_ref, lit, lit
-        )
-    } else {
-        format!("(let [s {} pat \"{}\"] (if (string/has-prefix? pat s) (string/slice s (length pat)) s))",
-            var_ref, operand)
-    }
-}
-
-/// `${var^^}`, `${var,,}`, `${var^}`, `${var,}` — case transforms.
-fn emit_pe_case_op(var_ref: &str, op: &str) -> String {
-    match op {
-        "^^" => format!("(string/ascii-upper {})", var_ref),
-        ",," => format!("(string/ascii-lower {})", var_ref),
-        "^" => format!(
-            "(string (string/ascii-upper (string/slice {} 0 1)) (string/slice {} 1))",
-            var_ref, var_ref
-        ),
-        "," => format!(
-            "(string (string/ascii-lower (string/slice {} 0 1)) (string/slice {} 1))",
-            var_ref, var_ref
-        ),
-        _ => var_ref.to_string(),
     }
 }
 

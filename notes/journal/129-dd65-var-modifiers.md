@@ -147,3 +147,30 @@ the c/janet equivalents, `emit_pattern_replace`'s dropped `/#`//%` arms)
 is unreachable (parse rejects first) but still present. Removing it is a
 fail-loud + cleanliness improvement; done as its own commit to keep the
 reject diff reviewable.
+
+## Dead backend dispatch removed (2026-07-04, follow-up commit)
+
+Done (was "deferred" above). The dropped ops reject at parse, so their
+backend arms were unreachable. Removed, build-guided by `pub(crate)`
+dead-code detection (remove arm → build → remove the helper it orphaned):
+
+- **native** (`codegen/value_handlers.rs`): `emit_string_op_expansion`
+  reduced to `substring` + `/`//` (`:s/`) + an ICE fallback (fail-loud if a
+  reject ever regresses); dropped the `pat_ptr`/`pat_len` params and the
+  caller's now-needless `intern_literal_value`. Removed `emit_strip_suffix`,
+  `emit_strip_prefix`, `emit_alternate_value`. Kept (shared): `emit_default_value`
+  (DefaultValue), `emit_case_conversion` (CaseConvert), `emit_pattern_replace`
+  (`:s/`), `emit_substring`.
+- **c** (`emit_c.rs`): `emit_param_expansion` reduced to the array/glob/
+  strlen/substring set; removed `emit_strip_suffix_c`, `emit_strip_prefix_c`,
+  `emit_default_value_c` (old operand-string form), `emit_alternate_value_c`.
+  Kept `emit_default_value_expr_c` (DefaultValue) and `emit_case_conversion_c`
+  (CaseConvert). c `:s/` stays a TODO stub (pre-existing gap, c:39.x).
+- **janet** (`emit_janet.rs`): dropped the `%`/`%%`/`#`/`##`/`^`/`^^`/`,`/`,,`
+  arms; removed `emit_pe_suffix_strip_longest`/`_shortest`,
+  `emit_pe_prefix_strip_longest`/`_shortest`, `emit_pe_case_op`. Kept
+  `emit_pe_default`, `emit_pe_substring`, `emit_pe_replace` (`:s/`).
+
+0 behavior change (all removed code unreachable): native 0 / c 51 / janet
+74, `:s/` (39.3) still green. Dispatchers simplified well under the
+complexity gate.

@@ -52,13 +52,9 @@ pub(super) fn handle_param_expansion(
         {
             emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
         }
-        _ => {
-            let (pat_ptr, pat_len) = intern_literal_value(operand, literals, module, builder);
-            emit_string_op_expansion(
-                operator, operand, s_ptr, s_len, pat_ptr, pat_len, builder, module, literals,
-                externs,
-            )
-        }
+        _ => emit_string_op_expansion(
+            operator, operand, s_ptr, s_len, builder, module, literals, externs,
+        ),
     }
 }
 
@@ -590,27 +586,18 @@ fn emit_string_op_expansion(
     operand: &str,
     s_ptr: cranelift_codegen::ir::Value,
     s_len: cranelift_codegen::ir::Value,
-    pat_ptr: cranelift_codegen::ir::Value,
-    pat_len: cranelift_codegen::ir::Value,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    // DD#65 pruned the `${var:OP}` family: only `substring` (`:off:len`) and
+    // the `:s/` sed op (operator `/`//`) still reach codegen as a
+    // `ParamExpansion`. `:-` lowers to `SsaValue::DefaultValue`; every dropped
+    // op rejects at parse (SB4034), so a dropped op here is an ICE (fail loud).
     match operator {
-        "%%" | "%" => emit_strip_suffix(
-            operator, s_ptr, s_len, pat_ptr, pat_len, builder, module, externs,
-        ),
-        "##" | "#" => emit_strip_prefix(
-            operator, s_ptr, s_len, pat_ptr, pat_len, builder, module, externs,
-        ),
-        ":-" | "-" => emit_default_value(s_ptr, s_len, pat_ptr, pat_len, builder, module, externs),
-        ":+" | "+" => emit_alternate_value(s_len, pat_ptr, pat_len, builder, module, externs),
         "substring" => emit_substring(operand, s_ptr, s_len, builder, module, externs),
-        "^" | "^^" | "," | ",," => {
-            emit_case_conversion(operator, s_ptr, s_len, builder, module, externs)
-        }
-        "/" | "//" | "/#" | "/%" => emit_pattern_replace(
+        "/" | "//" => emit_pattern_replace(
             operator, operand, s_ptr, s_len, builder, module, literals, externs,
         ),
         _ => panic!(
@@ -618,58 +605,6 @@ fn emit_string_op_expansion(
             operator
         ),
     }
-}
-
-/// ${var%pat} / ${var%%pat} — strip matching suffix.
-/// `%%` strips the longest match, `%` the shortest. The runtime
-/// returns the new length; the pointer is unchanged.
-#[allow(clippy::too_many_arguments)]
-fn emit_strip_suffix(
-    operator: &str,
-    s_ptr: cranelift_codegen::ir::Value,
-    s_len: cranelift_codegen::ir::Value,
-    pat_ptr: cranelift_codegen::ir::Value,
-    pat_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let longest = builder
-        .ins()
-        .iconst(I64, if operator == "%%" { 1 } else { 0 });
-    let func_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
-    let call = builder
-        .ins()
-        .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
-    let new_len = builder.inst_results(call)[0];
-    (s_ptr, new_len)
-}
-
-/// ${var#pat} / ${var##pat} — strip matching prefix.
-/// `##` strips the longest match, `#` the shortest. The runtime
-/// returns the offset; the pointer advances and the length shrinks.
-#[allow(clippy::too_many_arguments)]
-fn emit_strip_prefix(
-    operator: &str,
-    s_ptr: cranelift_codegen::ir::Value,
-    s_len: cranelift_codegen::ir::Value,
-    pat_ptr: cranelift_codegen::ir::Value,
-    pat_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let longest = builder
-        .ins()
-        .iconst(I64, if operator == "##" { 1 } else { 0 });
-    let func_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
-    let call = builder
-        .ins()
-        .call(func_ref, &[s_ptr, s_len, pat_ptr, pat_len, longest]);
-    let offset = builder.inst_results(call)[0];
-    let new_ptr = builder.ins().iadd(s_ptr, offset);
-    let new_len = builder.ins().isub(s_len, offset);
-    (new_ptr, new_len)
 }
 
 /// ${var:-default} / ${var-default} — use var if set, else default.
@@ -687,25 +622,6 @@ pub(crate) fn emit_default_value(
     let is_set = builder.inst_results(call)[0];
     let result_ptr = builder.ins().select(is_set, s_ptr, pat_ptr);
     let result_len = builder.ins().select(is_set, s_len, pat_len);
-    (result_ptr, result_len)
-}
-
-/// ${var:+alt} / ${var+alt} — use alt if var is set/non-empty, else empty.
-fn emit_alternate_value(
-    s_len: cranelift_codegen::ir::Value,
-    pat_ptr: cranelift_codegen::ir::Value,
-    pat_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let func_ref = module.declare_func_in_func(externs.default_value, builder.func);
-    let call = builder.ins().call(func_ref, &[s_len]);
-    let is_set = builder.inst_results(call)[0];
-    let null = builder.ins().iconst(I64, 0);
-    let zero = builder.ins().iconst(I64, 0);
-    let result_ptr = builder.ins().select(is_set, pat_ptr, null);
-    let result_len = builder.ins().select(is_set, pat_len, zero);
     (result_ptr, result_len)
 }
 
