@@ -331,6 +331,17 @@ fn value_is_tainted(
         | SsaValue::CaseConvert { .. }
         | SsaValue::Ternary { .. } => any_tainted(value.child_values(), taint, user_functions),
 
+        // DD#65: `${var:-default}` yields either the var or the default, so it
+        // is tainted if either could be. (`child_values()` returns only the
+        // default, so the var is checked explicitly here.)
+        SsaValue::DefaultValue { var, default } => {
+            if taint_of_var(taint, var) == Taint::Tainted {
+                Taint::Tainted
+            } else {
+                any_tainted([default.as_ref()], taint, user_functions)
+            }
+        }
+
         // Command substitution: the only variant whose taint
         // depends on the callee (builtins are clean, externals
         // tainted, user fns clean by DD#24).

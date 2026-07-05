@@ -135,6 +135,31 @@ pub(super) fn lower_value(
                 op, s_ptr, s_len, builder, module, externs,
             )
         }
+        SsaValue::DefaultValue { var, default } => {
+            let (s_ptr, s_len) = lower_value(
+                &SsaValue::Var(var.clone()),
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let (d_ptr, d_len) = lower_value(
+                default,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            crate::codegen::value_handlers::emit_default_value(
+                s_ptr, s_len, d_ptr, d_len, builder, module, externs,
+            )
+        }
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(
                 &SsaValue::Var(var.clone()),
@@ -919,6 +944,12 @@ pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::H
         }
         SsaValue::ArithExpr { var, .. } if var.version == 0 => {
             maybe_insert_positional(&var.name, refs)
+        }
+        SsaValue::DefaultValue { var, default } => {
+            if var.version == 0 {
+                maybe_insert_positional(&var.name, refs);
+            }
+            scan_value_for_vars(default, refs);
         }
         other => scan_composite_children(other, refs),
     }

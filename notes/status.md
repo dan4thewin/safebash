@@ -12,6 +12,28 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-07-04 (cont.) — DD#65 var modifiers: `:-` word (`:- ≡ "…"`)
+
+DG-directed, spec-first, **0 regressions native/c/janet** (native 648→663
+before this entry's tests; c 52 / janet 74 unchanged). DD#65 build-up:
+- **toupper/tolower** builtins (bff8f82), **basename/dirname** sugar
+  (e755fc4) — earlier this session.
+- **`${var:-DEFAULT}` full interpolation** — DG settled the shape as
+  **`:- ≡ "…"`**: the default is *exactly* a double-quoted-string body.
+  Quotes (`'`/`"`) are ordinary literal bytes (no strip/group), whitespace
+  verbatim, `$…`/`` `…` `` interpolate; the **C-string is the any-byte
+  hatch** (`${x:-$'a\x7db'}` → `a}b`). For full consistency the `${…}`
+  brace matchers (`scan_brace_expansion` + `consume_dq_brace_expansion`)
+  dropped their quote/`\`-skip, so the **first unnested `}` closes**
+  (`${n:-'a}b'}` = `${n:-'a}` + `b'}`). Bare env var in a default now
+  rejects SB5018 (real interpolation context).
+- Lowering: operand → `ExprKind::DoubleQuoted` → `SsaValue::DefaultValue
+  { var, default }` (native + c select var-or-default; janet interpolates
+  at IR level). spec/var_modifiers.sh vm.dv1-11 (+ tu/bn) = 24, all modes.
+- DD#65 doc updated to the `:- ≡ "…"` model (superseded the earlier
+  "interpolating word context" framing). **Next:** the DD#65 drops
+  (`:=`/`:+`/`:?`/`#`/`##`/`%`/`%%`/`/`-family/`^`/`,`) — one commit.
+
 ### Session 2026-07-04 (cont.) — language sweep DD#65-68 part 1
 
 DG: "do the language sweep." Shipped (0 regressions, native clean):

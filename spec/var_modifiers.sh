@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=13
+plan=24
 echo "1..$plan" >&3
 
 set +e
@@ -44,6 +44,44 @@ run_sash 'p=/usr/bin; echo $(dirname $p)'
 # vm.bn6 basename of a literal path
 run_sash 'echo $(basename /x/y/z)'
 [[ $rc = 0 && $out = "z" && -z $err ]]; chk vm.bn6
+
+# ── `${var:-WORD}` default is a full interpolating word (DD#65) ──────
+# V1 plain literal default
+run_sash 'echo "${foo:-abc}"'
+[[ $rc = 0 && $out = "abc" && -z $err ]]; chk vm.dv1
+# V2 a literal `}` in the default via a $'...' C-string (the any-byte hatch;
+# `:- ≡ "…"`, so quotes no longer strip — the C-string is how you get a `}`)
+run_sash $'echo "${foo:-$\'a\\x7db\'}"'
+[[ $rc = 0 && $out = "a}b" && -z $err ]]; chk vm.dv2
+# V3 interpolation: an unset default interpolates a variable
+run_sash 'bar=hi; echo "${foo:-$bar}"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.dv3
+# V4 concatenation in the default
+run_sash 'x=a; y=b; echo "${foo:-$x$y}"'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk vm.dv4
+# V5 an unquoted `}` closes the expansion; trailing text concatenates
+run_sash 'echo "${foo:-a}b"'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk vm.dv5
+# V6 arithmetic (clean) is allowed in the default
+run_sash 'echo "${foo:-$((1+2))}"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk vm.dv6
+# V7 a set variable ignores the default entirely
+run_sash 'foo=hi; echo "${foo:-x}"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.dv7
+# V8 `:- ≡ "…"`: single-quotes are ordinary literal bytes (they no longer strip)
+run_sash 'echo "${foo:-'\''x'\''}"'
+[[ $rc = 0 && $out = "'x'" && -z $err ]]; chk vm.dv8
+# V9 whitespace is part of the value and kept verbatim (no run-collapsing)
+run_sash 'echo "${foo:-a  b}"'
+[[ $rc = 0 && $out = "a  b" && -z $err ]]; chk vm.dv9
+# V10 `'` is plain, so the first literal `}` closes the expansion: `${foo:-'a}`
+# (default `'a`) then `b'}` is ordinary trailing text (embed `}` via dv2's hatch)
+run_sash 'echo "${foo:-'\''a}b'\''}"'
+[[ $rc = 0 && $out = "'ab'}" && -z $err ]]; chk vm.dv10
+# V11 (negative of dv3) the default is a real interpolation context, so a bare
+# env var is rejected (SB5018) exactly as elsewhere — must use $(getenv HOME)
+run_sash 'echo "${foo:-$HOME}"'
+[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk vm.dv11
 
 set -e
 tally

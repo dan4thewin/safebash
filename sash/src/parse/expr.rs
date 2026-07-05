@@ -730,29 +730,9 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let op_str = op?;
     let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
     let operand = match (is_slash_op, operand_str.clone()) {
-        (true, Some(raw)) => {
-            if let Some(sep) = find_unescaped_slash(&raw) {
-                let pattern = &raw[..sep];
-                let replacement = &raw[sep + 1..];
-                let mut pat_regex = glob_to_regex(pattern);
-                if op_str == "/#" {
-                    pat_regex = format!("^{}", pat_regex);
-                }
-                if op_str == "/%" {
-                    pat_regex = format!("{}$", pat_regex);
-                }
-                Some(Box::new(Expr {
-                    kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
-                    span,
-                }))
-            } else {
-                let pat_regex = glob_to_regex(&raw);
-                Some(Box::new(Expr {
-                    kind: ExprKind::Literal(format!("{}\0", pat_regex)),
-                    span,
-                }))
-            }
-        }
+        (true, Some(raw)) => Some(build_slash_operand(&op_str, &raw, span)),
+        // DD#65: the `${var:-WORD}` default is a full interpolating word.
+        (false, Some(s)) if op_str == ":-" => Some(parse_default_word(&s, span)),
         _ => operand_str.map(|s| {
             Box::new(Expr {
                 kind: ExprKind::Literal(s),
@@ -766,6 +746,49 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
             operator: Some(op_str),
             operand,
         }),
+        span,
+    })
+}
+
+/// Build the `pattern\0replacement` operand literal for a `/`-family glob
+/// replace (`/`, `//`, `/#`, `/%`): the glob pattern is compiled to a regex,
+/// anchored for `/#`/`/%`, and packed with the replacement. Split out of
+/// `parse_standard_operator` to keep it under the complexity gate.
+fn build_slash_operand(op_str: &str, raw: &str, span: Span) -> Box<Expr> {
+    let text = if let Some(sep) = find_unescaped_slash(raw) {
+        let pattern = &raw[..sep];
+        let replacement = &raw[sep + 1..];
+        let mut pat_regex = glob_to_regex(pattern);
+        if op_str == "/#" {
+            pat_regex = format!("^{}", pat_regex);
+        }
+        if op_str == "/%" {
+            pat_regex = format!("{}$", pat_regex);
+        }
+        format!("{}\0{}", pat_regex, replacement)
+    } else {
+        format!("{}\0", glob_to_regex(raw))
+    };
+    Box::new(Expr {
+        kind: ExprKind::Literal(text),
+        span,
+    })
+}
+
+/// DD#65: the `${var:-WORD}` default is a double-quoted-string body whose
+/// terminator is the closing `}` (the brace scanner already stripped it), so
+/// the default is *exactly* a `"…"`: `$var`/`${…}`/`$(…)`/`$((…))`/`$'…'`/
+/// `` `…` `` interpolate; every other byte — including whitespace (kept
+/// verbatim) and quotes (`'`/`"` are literal) — is literal text. Any byte can
+/// still be encoded via a `$'…'` C-string (e.g. `$'a\x7db'` → `a}b`). The
+/// result is an `ExprKind::DoubleQuoted`, identical to a real double-quoted
+/// word. Empty → empty literal.
+fn parse_default_word(s: &str, span: Span) -> Box<Expr> {
+    let mut scanner = Scanner::new(s);
+    let parts = scanner.scan_default_body();
+    let exprs = string_parts_to_exprs(&parts, span, &scanner);
+    Box::new(Expr {
+        kind: ExprKind::DoubleQuoted(exprs),
         span,
     })
 }

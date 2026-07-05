@@ -673,7 +673,7 @@ fn emit_strip_prefix(
 }
 
 /// ${var:-default} / ${var-default} — use var if set, else default.
-fn emit_default_value(
+pub(crate) fn emit_default_value(
     s_ptr: cranelift_codegen::ir::Value,
     s_len: cranelift_codegen::ir::Value,
     pat_ptr: cranelift_codegen::ir::Value,

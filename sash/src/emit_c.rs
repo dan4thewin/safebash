@@ -649,6 +649,12 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
             emit_case_conversion_c(e, if *upper { "^^" } else { ",," }, &s_ptr, &s_len)
         }
+        // DD#65: ${var:-DEFAULT} — var if set, else the interpolated default.
+        SsaValue::DefaultValue { var, default } => {
+            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+            let (d_ptr, d_len) = lower_value_as_str(e, default, types);
+            emit_default_value_expr_c(e, &s_ptr, &s_len, &d_ptr, &d_len)
+        }
         // Phase 5 table/array/argv reads, plus the unhandled fallback.
         other => lower_value_as_str_aggregate(e, other, types),
     }
@@ -1514,6 +1520,43 @@ fn emit_default_value_c(e: &mut Emit, s_ptr: &str, s_len: &str, default: &str) -
         t = t,
         sl = s_len,
         dl = default.len()
+    )
+    .unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
+}
+
+/// DD#65: `${var:-DEFAULT}` where DEFAULT is a full interpolating value already
+/// lowered to `(d_ptr, d_len)` C expressions (not a literal). Selects the var's
+/// `(ptr, len)` when set (len > 0), else the default's.
+fn emit_default_value_expr_c(
+    e: &mut Emit,
+    s_ptr: &str,
+    s_len: &str,
+    d_ptr: &str,
+    d_len: &str,
+) -> CStr {
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_set = sash_default_value({sl});",
+        t = t,
+        sl = s_len
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    const char* {t}_p = {t}_set ? ({sp}) : ({dp});",
+        t = t,
+        sp = s_ptr,
+        dp = d_ptr
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    i64 {t}_l = {t}_set ? ({sl}) : ({dl});",
+        t = t,
+        sl = s_len,
+        dl = d_len
     )
     .unwrap();
     (format!("{}_p", t), format!("{}_l", t))

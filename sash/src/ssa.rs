@@ -552,6 +552,13 @@ pub enum SsaValue {
         subject: Box<SsaValue>,
         upper: bool,
     },
+    /// DD#65: `${var:-DEFAULT}` — `var` if set/non-empty, else the DEFAULT.
+    /// The default is a full interpolating value (unlike the literal-only
+    /// `ParamExpansion` operand), so `${foo:-$bar}` interpolates `bar`.
+    DefaultValue {
+        var: VarRef,
+        default: Box<SsaValue>,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -618,6 +625,7 @@ impl SsaValue {
             } => vec![subject, pattern, replacement],
             SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
             SsaValue::CaseConvert { subject, .. } => vec![subject],
+            SsaValue::DefaultValue { default, .. } => vec![default],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

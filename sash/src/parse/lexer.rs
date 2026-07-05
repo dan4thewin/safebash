@@ -696,31 +696,7 @@ impl Scanner {
     /// Scan ${...} — capture everything between { and matching }.
     /// Handles nested braces, quoted strings, and backslash escapes.
     fn scan_brace_expansion(&mut self, start: usize) -> SpannedToken {
-        let content_start = self.pos;
-        let mut depth = 1i32;
-        while self.pos < self.source.len() && depth > 0 {
-            match self.source[self.pos] {
-                b'{' => {
-                    depth += 1;
-                    self.pos += 1;
-                }
-                b'}' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        break;
-                    }
-                    self.pos += 1;
-                }
-                b'\'' => self.skip_balanced_squote(),
-                b'"' => self.skip_balanced_dquote(),
-                b'\\' => self.pos += 2,
-                _ => self.pos += 1,
-            }
-        }
-        let content = String::from_utf8_lossy(&self.source[content_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing }
-        }
+        let content = self.scan_braced_content();
         SpannedToken {
             token: Tok::DollarBrace(content),
             span: LexSpan {
@@ -728,6 +704,32 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// Scan `${…}` inner content by brace depth. `self.pos` is just past the
+    /// opening `{`; on return it is past the matching `}` and the result is
+    /// the text between them. DD#65: quotes and `\` are ordinary bytes, so the
+    /// first unnested `}` closes (embed a `}` via a `$'\x7d'` C-string). Shared
+    /// by the bare (`scan_brace_expansion`) and in-`"…"`
+    /// (`consume_dq_brace_expansion`) scanners.
+    fn scan_braced_content(&mut self) -> String {
+        let inner_start = self.pos;
+        let mut depth = 1i32;
+        while self.pos < self.source.len() && depth > 0 {
+            match self.source[self.pos] {
+                b'{' => depth += 1,
+                b'}' => depth -= 1,
+                _ => {}
+            }
+            if depth > 0 {
+                self.pos += 1;
+            }
+        }
+        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
+        if self.pos < self.source.len() {
+            self.pos += 1; // skip closing }
+        }
+        content
     }
 
     /// Scan '...' single-quoted string.
@@ -753,10 +755,27 @@ impl Scanner {
     /// Scan "..." double-quoted string with interpolation.
     fn scan_double_quoted(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // skip opening "
+        let parts = self.scan_interp_body(true);
+        if self.pos < self.source.len() {
+            self.pos += 1; // skip closing "
+        }
+        SpannedToken {
+            token: Tok::DoubleQuoted(parts),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
+    /// Walk a double-quoted-string body from `self.pos`, splitting it into
+    /// literal runs and `$…`/`` `…` `` expansion parts. When `stop_at_dquote`
+    /// the body ends at the next `"` (an ordinary `"…"` string); otherwise a
+    /// `"` is an ordinary literal byte and the body runs to end-of-input.
+    fn scan_interp_body(&mut self, stop_at_dquote: bool) -> Vec<StringPart> {
         let mut parts = Vec::new();
         let mut literal = String::new();
-
-        while self.pos < self.source.len() && self.source[self.pos] != b'"' {
+        while self.pos < self.source.len() && !(stop_at_dquote && self.source[self.pos] == b'"') {
             match self.source[self.pos] {
                 b'\\' => self.scan_dq_escape(&mut literal),
                 b'$' => self.scan_dq_dollar(&mut parts, &mut literal),
@@ -767,22 +786,18 @@ impl Scanner {
                 }
             }
         }
-
         if !literal.is_empty() {
             parts.push(StringPart::Literal(literal));
         }
+        parts
+    }
 
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing "
-        }
-
-        SpannedToken {
-            token: Tok::DoubleQuoted(parts),
-            span: LexSpan {
-                start,
-                end: self.pos,
-            },
-        }
+    /// DD#65: scan the entire remaining input as a double-quoted-string body
+    /// (no surrounding quotes; runs to end-of-input; a `"` is a literal byte).
+    /// Used for the `${var:-…}` default, which *is* a `"…"` body whose
+    /// terminator is the `}` the brace scanner already stripped.
+    pub(crate) fn scan_default_body(&mut self) -> Vec<StringPart> {
+        self.scan_interp_body(false)
     }
 
     /// Handle a `\` inside a `"…"` string. Per DD#64 the shell does **no**
@@ -865,38 +880,7 @@ impl Scanner {
     /// and advances past the closing `}`.
     fn consume_dq_brace_expansion(&mut self) -> String {
         self.pos += 1; // skip {
-        let inner_start = self.pos;
-        let mut depth = 1i32;
-        while self.pos < self.source.len() && depth > 0 {
-            match self.source[self.pos] {
-                b'{' => {
-                    depth += 1;
-                    self.pos += 1;
-                }
-                b'}' => {
-                    depth -= 1;
-                    if depth > 0 {
-                        self.pos += 1;
-                    }
-                }
-                b'\'' => self.skip_balanced_squote(),
-                b'"' => {
-                    // Nested " inside ${} — skip without re-scanning.
-                    self.pos += 1;
-                }
-                b'\\' => {
-                    self.pos += 2;
-                }
-                _ => {
-                    self.pos += 1;
-                }
-            }
-        }
-        let content = String::from_utf8_lossy(&self.source[inner_start..self.pos]).to_string();
-        if self.pos < self.source.len() {
-            self.pos += 1; // skip closing }
-        }
-        content
+        self.scan_braced_content()
     }
 
     /// `$((…))` — caller has not yet advanced past `((`. Returns the

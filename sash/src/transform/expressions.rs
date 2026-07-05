@@ -125,6 +125,19 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     let Some(op) = pe.operator.as_ref() else {
         return SsaValue::Var(var);
     };
+    // DD#65: `${var:-DEFAULT}` — the default is a full interpolating value
+    // (a `"…"` body), so carry it as an `SsaValue`, not a stringified operand.
+    if op == ":-" {
+        let default = pe
+            .operand
+            .as_ref()
+            .map(|e| expr_to_value(e, state))
+            .unwrap_or_else(|| SsaValue::Literal(String::new()));
+        return SsaValue::DefaultValue {
+            var,
+            default: Box::new(default),
+        };
+    }
     let operand = pe
         .operand
         .as_ref()
