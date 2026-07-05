@@ -48,6 +48,28 @@ textual-first-pass; `:off:len` takes integer operands.)
   family.
 - **`^` `,`** (first-char case) — niche bash curio.
 
+## Implemented — the drops reject SB4034 (2026-07-04)
+
+All dropped operators now reject at parse with **SB4034**
+(`is_dropped_param_operator` + `check_rejected_param_expansion`,
+`sash/src/parse/parser.rs`). One uniform code, one message pointing at the
+string-builtin families generically (DG 2026-07-04): *"…left the safe
+subset — use the string builtins (toupper/tolower, sub/gsub,
+basename/dirname) or the kept forms :- / :off:len / :s/"*. Per-op
+migration is **sash-convert's** job, not the compiler's (task
+`converter-var-modifier-migration`).
+
+Dropped set = every `split_operator` op except `:-`: `:=` `:+` `:?` `#`
+`##` `%` `%%` `^` `^^` `,` `,,`, plus the `/`-family glob-replace. The
+`/`-family is remapped to an internal `glob_replace` operator at parse
+(`parse_standard_operator`) so it is **distinguishable from the kept `:s/`
+sed op**, which shares the raw `/`//` operator strings — SB4034 targets
+`glob_replace`, leaving `:s/` (`/`//`) untouched. `split_operator` still
+*recognises* the dropped ops (so they reject explicitly rather than
+silently degrading `${x#a}` → `$x`). Spec: `spec/var_modifiers.sh`
+vm.dr1-15 (one per operator string), plus migrated `misc.sh` 52.6a/b and
+`wordsplit.sh` 39.4.
+
 ## Moved to builtins
 
 - **`^^` `,,`** (full upper/lower) → **`$(toupper s)` / `$(tolower s)`**

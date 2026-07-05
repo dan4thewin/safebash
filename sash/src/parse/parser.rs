@@ -2107,8 +2107,19 @@ fn check_rejected_param_expansion(
     span: Span,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if pe.operator.as_deref() == Some("!") {
-        diags.push(parse_error(
+    if let Some(d) = rejected_param_operator_diag(pe, span) {
+        diags.push(d);
+    }
+}
+
+/// The reject diagnostic for a rejected `${var:OP}` operator, or `None`. The
+/// operator is a single value, so at most one applies: indirect `${!x}`
+/// (SB4003), `@`-transforms (SB4015), and the DD#65 pruned modifier family
+/// (SB4034).
+fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
+    let op = pe.operator.as_deref()?;
+    if op == "!" {
+        return Some(parse_error(
             span,
             "SB4003",
             format!(
@@ -2117,19 +2128,51 @@ fn check_rejected_param_expansion(
             ),
         ));
     }
-    // SB4015: reject @-transforms (${var@P}, ${var@Q}, ${var@A} etc.)
-    if let Some(op) = pe.operator.as_deref() {
-        if op.starts_with('@') && op.len() == 2 {
-            diags.push(parse_error(
-                span,
-                "SB4015",
-                format!(
-                    "parameter transformation ${{var{}}} is not supported — use ^/^^/,/,, instead",
-                    op
-                ),
-            ));
-        }
+    if op.starts_with('@') && op.len() == 2 {
+        return Some(parse_error(
+            span,
+            "SB4015",
+            format!(
+                "parameter transformation ${{var{}}} is not supported — \
+                 use the $(toupper …) / $(tolower …) builtins",
+                op
+            ),
+        ));
     }
+    // DD#65: the pruned `${var:OP}` family — every `split_operator` op EXCEPT
+    // `:-` (assign-default/alt/error, prefix/suffix strip, glob replace, case).
+    // Rejects uniformly; migration to the builtins is sash-convert's job (see
+    // task `converter-var-modifier-migration`).
+    if is_dropped_param_operator(op) {
+        // `glob_replace` is the internal remap of the `/`-family; show the
+        // user-facing `/` in the diagnostic instead of the internal name.
+        let shown = if op == "glob_replace" { "/" } else { op };
+        return Some(parse_error(
+            span,
+            "SB4034",
+            format!(
+                "the '{}' parameter operator (in ${{{}…}}) left the safe subset — \
+                 use the string builtins (toupper/tolower, sub/gsub, basename/dirname) \
+                 or the kept forms :- / :off:len / :s/",
+                shown, pe.name
+            ),
+        ));
+    }
+    None
+}
+
+/// DD#65: operators dropped from the `${var:OP}` family — the full
+/// `split_operator` set minus the kept `:-`. The `/`-family glob-replace is
+/// remapped to `glob_replace` at parse (parse_standard_operator) so it is
+/// distinguishable here from the kept `:s/` sed op, which shares the raw
+/// `/`//` operator strings. Kept forms (`substring`/`:off:len`, `:s/`,
+/// `strlen`, `arrlen`/`arrkeys`/`arrvals`, `glob`) arrive via other parse
+/// paths and are not matched here.
+fn is_dropped_param_operator(op: &str) -> bool {
+    matches!(
+        op,
+        ":=" | ":+" | ":?" | "#" | "##" | "%" | "%%" | "glob_replace" | "^" | "^^" | "," | ",,"
+    )
 }
 
 /// Walk all expressions in a statement, calling f for each.

@@ -102,3 +102,48 @@ var **or** the default is), and both backends.
 DD#65 **drops** — reject `:=`/`:+`/`:?`(scalar)/`#`/`##`/`%`/`%%`/
 `/`-family/`^`/`,`, remove them from `split_operator` + all backend
 dispatch, spec-first, one commit (no transitional diagnostics).
+
+## Drops stage — SB4034 uniform reject (2026-07-04)
+
+DG-decided shape (three questions answered): **one** uniform diagnostic
+(not per-op, not multiple codes); the message points at the string-builtin
+families **generically**; **sash-convert owns the replacements** (filed
+`converter-var-modifier-migration`); all pruned ops are treated as one
+class of parse-time reject.
+
+- **SB4034** in `check_rejected_param_expansion` (now split into
+  `rejected_param_operator_diag`, the SB4003/SB4015/SB4034 chokepoint that
+  runs over the whole program from `parse`). `is_dropped_param_operator` =
+  every `split_operator` op except `:-`. Message: *"the 'OP' parameter
+  operator (in ${x…}) left the safe subset — use the string builtins
+  (toupper/tolower, sub/gsub, basename/dirname) or the kept forms :- /
+  :off:len / :s/"*.
+- **`split_operator` still recognises the dropped ops** — removing them
+  there would silently degrade `${x#a}` → `$x` (a silent miscompile). They
+  parse into a `ParameterExpansion` and reject explicitly instead.
+- **The `:s/` collision** (the one real subtlety): the kept `:s/` sed op
+  and the dropped `/`-family glob-replace both lowered to operator `/`//`.
+  Rejecting `/`//` would kill `:s/`. Fix: remap the **dropped** glob path
+  to an internal `glob_replace` operator at parse (`parse_standard_operator`),
+  leaving `:s/`'s `/`//` untouched for codegen. (First tried renaming the
+  *kept* `:s/` → `sed`/`sed_g`; that cascaded into the literal-collection
+  pass — `intern` keys off the operator — and ICE'd `:s/`. Renaming the
+  dropped side, which never reaches codegen, is the clean separation.) The
+  diagnostic maps `glob_replace` → `/` for display.
+- Fixed the stale **SB4015** message (it named `^/^^/,/,,`, now dropped →
+  points at the `$(toupper)`/`$(tolower)` builtins).
+- Spec: `spec/var_modifiers.sh` vm.dr1-15 (one per operator string, so the
+  reject set can't silently miss one), plan 24→39. Migrated the two
+  accept-tests that now reject: `misc.sh` 52.6a/b (`${x^^}`/`${x,,}`),
+  `wordsplit.sh` 39.4 (`${x/world/earth}`).
+- Verification: native **0 regressions**; janet **0**; **c improved by 1**
+  (c:39.4 was failing — c never supported `/`-glob in value position — now
+  it's a reject-test c passes). vm.dr1-15 green all three modes; `:s/`
+  (39.3) still green native/janet.
+
+Deferred to a **follow-up**: the now-dead backend dispatch for the dropped
+ops (native `emit_strip_prefix`/`emit_strip_suffix`/`emit_alternate_value`,
+the c/janet equivalents, `emit_pattern_replace`'s dropped `/#`//%` arms)
+is unreachable (parse rejects first) but still present. Removing it is a
+fail-loud + cleanliness improvement; done as its own commit to keep the
+reject diff reviewable.

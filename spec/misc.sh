@@ -122,13 +122,13 @@ run_sash 'x=hello; echo ${x@Q}'
 run_sash 'x=hello; echo ${x@E}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 52.5
 
-# 52.6a ${var^^} accepted
+# 52.6a ${var^^} dropped (DD#65) — use $(toupper); rejects SB4034
 run_sash 'x=hello; echo ${x^^}'
-[[ $rc = 0 && $out = "HELLO" && -z $err ]]; chk 52.6a
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk 52.6a
 
-# 52.6b ${var,,} accepted
+# 52.6b ${var,,} dropped (DD#65) — use $(tolower); rejects SB4034
 run_sash 'x=HELLO; echo ${x,,}'
-[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 52.6b
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk 52.6b
 
 # --- DD#54 sash-expand pipeline ---
 

@@ -728,17 +728,36 @@ fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
 fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let (op, operand_str) = split_operator(rest);
     let op_str = op?;
+    // DD#65: the `/`-family glob-replace is dropped. Give it a distinct
+    // operator (`glob_replace`) so `check_rejected_param_expansion` can reject
+    // it (SB4034) without touching the kept `:s/` sed op, which shares the raw
+    // `/`//` operator strings. No glob→regex lowering — it never reaches codegen.
     let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
-    let operand = match (is_slash_op, operand_str.clone()) {
-        (true, Some(raw)) => Some(build_slash_operand(&op_str, &raw, span)),
-        // DD#65: the `${var:-WORD}` default is a full interpolating word.
-        (false, Some(s)) if op_str == ":-" => Some(parse_default_word(&s, span)),
-        _ => operand_str.map(|s| {
+    if is_slash_op {
+        return Some(Expr {
+            kind: ExprKind::ParameterExpansion(ParameterExpansion {
+                name: name.to_string(),
+                operator: Some("glob_replace".to_string()),
+                operand: operand_str.map(|s| {
+                    Box::new(Expr {
+                        kind: ExprKind::Literal(s),
+                        span,
+                    })
+                }),
+            }),
+            span,
+        });
+    }
+    // DD#65: the `${var:-WORD}` default is a full interpolating word.
+    let operand = if op_str == ":-" {
+        operand_str.map(|s| parse_default_word(&s, span))
+    } else {
+        operand_str.map(|s| {
             Box::new(Expr {
                 kind: ExprKind::Literal(s),
                 span,
             })
-        }),
+        })
     };
     Some(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
@@ -746,31 +765,6 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
             operator: Some(op_str),
             operand,
         }),
-        span,
-    })
-}
-
-/// Build the `pattern\0replacement` operand literal for a `/`-family glob
-/// replace (`/`, `//`, `/#`, `/%`): the glob pattern is compiled to a regex,
-/// anchored for `/#`/`/%`, and packed with the replacement. Split out of
-/// `parse_standard_operator` to keep it under the complexity gate.
-fn build_slash_operand(op_str: &str, raw: &str, span: Span) -> Box<Expr> {
-    let text = if let Some(sep) = find_unescaped_slash(raw) {
-        let pattern = &raw[..sep];
-        let replacement = &raw[sep + 1..];
-        let mut pat_regex = glob_to_regex(pattern);
-        if op_str == "/#" {
-            pat_regex = format!("^{}", pat_regex);
-        }
-        if op_str == "/%" {
-            pat_regex = format!("{}$", pat_regex);
-        }
-        format!("{}\0{}", pat_regex, replacement)
-    } else {
-        format!("{}\0", glob_to_regex(raw))
-    };
-    Box::new(Expr {
-        kind: ExprKind::Literal(text),
         span,
     })
 }

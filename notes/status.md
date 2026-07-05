@@ -31,8 +31,13 @@ before this entry's tests; c 52 / janet 74 unchanged). DD#65 build-up:
   { var, default }` (native + c select var-or-default; janet interpolates
   at IR level). spec/var_modifiers.sh vm.dv1-11 (+ tu/bn) = 24, all modes.
 - DD#65 doc updated to the `:- ≡ "…"` model (superseded the earlier
-  "interpolating word context" framing). **Next:** the DD#65 drops
-  (`:=`/`:+`/`:?`/`#`/`##`/`%`/`%%`/`/`-family/`^`/`,`) — one commit.
+  "interpolating word context" framing). **drops** now shipped too:
+  every `${var:OP}` op except `:-` rejects **SB4034** (one uniform code,
+  generic-builtins message; sash-convert owns migration —
+  `converter-var-modifier-migration`). The kept `:s/` sed op was
+  disambiguated from the dropped `/`-glob by remapping the glob path to an
+  internal `glob_replace` operator. 0 regressions native/janet; c +1
+  (c:39.4). Remaining: remove now-dead backend dispatch (follow-up).
 
 ### Session 2026-07-04 (cont.) — language sweep DD#65-68 part 1
 

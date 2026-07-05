@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=24
+plan=39
 echo "1..$plan" >&3
 
 set +e
@@ -82,6 +82,47 @@ run_sash 'echo "${foo:-'\''a}b'\''}"'
 # env var is rejected (SB5018) exactly as elsewhere — must use $(getenv HOME)
 run_sash 'echo "${foo:-$HOME}"'
 [[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk vm.dv11
+
+# ── dropped ${var:OP} operators reject uniformly (DD#65, SB4034) ─────
+# Every split_operator op EXCEPT `:-` left the safe subset; each rejects with
+# SB4034 pointing at the string builtins. Migration is sash-convert's job. One
+# test per operator string so the reject set can't silently miss one.
+# dr1-3: assign-default / alt / error (:=, :+, :?)
+run_sash 'echo "${foo:=x}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr1
+run_sash 'foo=hi; echo "${foo:+x}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr2
+run_sash 'echo "${foo:?x}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr3
+# dr4-5: prefix strip (#, ##) → basename / sub
+run_sash 'x=abc; echo "${x#a}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr4
+run_sash 'x=abc; echo "${x##a}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr5
+# dr6-7: suffix strip (%, %%) → dirname / sub
+run_sash 'x=abc; echo "${x%c}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr6
+run_sash 'x=abc; echo "${x%%c}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr7
+# dr8-11: glob replace (/, //, /#, /%) → sub / gsub
+run_sash 'x=abc; echo "${x/a/Z}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr8
+run_sash 'x=aba; echo "${x//a/Z}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr9
+run_sash 'x=abc; echo "${x/#a/Z}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr10
+run_sash 'x=abc; echo "${x/%c/Z}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr11
+# dr12-13: first-char case (^, ,) — no replacement
+run_sash 'x=abc; echo "${x^}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr12
+run_sash 'x=ABC; echo "${x,}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr13
+# dr14-15: all-case (^^, ,,) → toupper / tolower builtins
+run_sash 'x=abc; echo "${x^^}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr14
+run_sash 'x=ABC; echo "${x,,}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr15
 
 set -e
 tally

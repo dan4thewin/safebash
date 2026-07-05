@@ -59,9 +59,9 @@ run_sash 'x="hello world"; x =~ s/world/earth/; echo $x'
 run_sash 'x="hello world"; echo ${x:s/world/earth/}'
 [[ $rc = 0 && $out = "hello earth" && -z $err ]]; chk 39.3
 
-# 39.4 ${var/pat/rep} accepted via glob-to-regex coercion
+# 39.4 ${var/pat/rep} dropped (DD#65) — use $(sub)/$(gsub); rejects SB4034
 run_sash 'x="hello world"; echo ${x/world/earth}'
-[[ $rc = 0 && $out = "hello earth" && -z $err ]]; chk 39.4
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk 39.4
 
 # 39.5 literal regex validated at compile time
 run_sash 'x="hello"; x =~ s/[invalid/repl/; echo $x'
