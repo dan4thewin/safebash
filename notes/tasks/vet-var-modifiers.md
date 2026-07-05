@@ -1,6 +1,6 @@
 ---
 title: "vet the ${var:OP} modifier family — keep / drop / rework each"
-status: ready
+status: done
 priority: P2
 kind: design
 depends: [DD64-no-shell-backslash, DD63-regex-quoting-interpolation]
@@ -12,6 +12,13 @@ gates:
 ---
 
 # vet the `${var:OP}` modifier family
+
+> **DONE 2026-07-04.** All stages shipped: toupper/tolower builtins
+> (bff8f82), basename/dirname sugar (e755fc4), the `:-` word on the
+> `:- ≡ "…"` model (6ffe982), the drops → SB4034 uniform reject (85a9aaf),
+> and the dead-backend-dispatch removal (d1d3144). Replacement/migration
+> moved to sash-convert (task `converter-var-modifier-migration`). See
+> DD#65 and journal 129. Gates below all satisfied.
 
 > **Verdict 2026-06-18 → DD#65.** Keep `:-`, `:off:len`, `:s/`. Drop
 > `:=` `:+` `:?`, the `#`/`##`/`%`/`%%` strip ops (use `basename`/`dirname`),
