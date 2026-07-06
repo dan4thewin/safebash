@@ -324,6 +324,19 @@ impl Scanner {
         use super::logos_tokens::{to_tok, LogosTok};
         use logos::Logos;
 
+        // DD#72: inside `$(( ))` (`arith_depth > 0`), `#` is NOT a comment —
+        // emit it as a single-char word so the arith re-lexer sees (and
+        // rejects) `base#digits` instead of the scanner truncating at the `#`.
+        if self.arith_depth > 0 && self.source[self.pos] == b'#' {
+            self.pos += 1;
+            return SpannedToken {
+                token: Tok::Word("#".to_string()),
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
+            };
+        }
         // Logos defaults to &str source; we hold bytes. The slice is
         // ASCII for every structural-byte dispatch (newline, `#`, `;`,
         // `|`, `&`, `(`, `)`, `{`, `}`, `>`) but comments may contain

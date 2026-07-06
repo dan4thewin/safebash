@@ -36,6 +36,22 @@ fn arith_range_error(span: Span, literal: &str) -> Diagnostic {
     )
 }
 
+/// Create a parse error for a malformed / unsupported numeric literal (SB4035,
+/// DD#72): a leading-zero integer (use `0o…` for octal or drop the zero), a
+/// bash arbitrary-base literal `base#digits` (use `0x`/`0o`/`0b`), or an
+/// invalid prefix digit (`0o8`). Distinct from SB4026 (out of range).
+fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
+    Diagnostic::error_at(
+        span.line,
+        span.col,
+        "SB4035",
+        format!(
+            "invalid numeric literal '{literal}' — use 0x/0o/0b prefixes; \
+             leading-zero octal and base#digits are not supported"
+        ),
+    )
+}
+
 // ── Public API ─────────────────────────────────────────────────────────
 
 /// Parse arithmetic expansion: content between $(( and ))
@@ -181,15 +197,31 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
     };
     let expr = parser.parse_expr(0)?;
     // Handle comma operator at top level
-    if parser.peek() == Some(&ATok::Comma) {
+    let result = if parser.peek() == Some(&ATok::Comma) {
         let mut exprs = vec![expr];
         while parser.peek() == Some(&ATok::Comma) {
             parser.advance();
             exprs.push(parser.parse_expr(0)?);
         }
-        Ok(ArithExpr::Comma(exprs))
+        ArithExpr::Comma(exprs)
     } else {
-        Ok(expr)
+        expr
+    };
+    reject_trailing_token(&parser, span)?;
+    Ok(result)
+}
+
+/// DD#72: after a full parse, any leftover token is a hard error (not a silent
+/// tail). A malformed literal (`BadLit`, e.g. a stray `#`) gives SB4035; any
+/// other trailing token is an SB4020 syntax error.
+fn reject_trailing_token(parser: &ArithParser, span: Span) -> Result<(), Diagnostic> {
+    match parser.peek() {
+        Some(ATok::BadLit(s)) => Err(arith_bad_literal_error(span, s)),
+        Some(_) => Err(arith_error(
+            span,
+            "unexpected token after arithmetic expression".to_string(),
+        )),
+        None => Ok(()),
     }
 }
 
@@ -306,6 +338,11 @@ enum ATok {
     /// except the `-9223372036854775808` (i64::MIN) case folded by the
     /// unary-neg peephole in `parse_unary`.
     BadNum(String),
+    /// A malformed / unsupported numeric literal (DD#72): a leading-zero
+    /// integer (`010`), a bash arbitrary-base literal (`16#ff`), an invalid
+    /// prefix digit (`0o8`), or an unknown byte in the arith stream. Rejected
+    /// with SB4035 when consumed. Distinct from `BadNum` (out-of-range, SB4026).
+    BadLit(String),
     Var(String),
     DollarVar(String),
     // Operators (ordered by length for tokenization)
@@ -361,8 +398,11 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
             tokens.push(tok);
             i = ni;
         } else {
-            // Unknown byte — silently skip (matches prior behaviour).
-            i += 1;
+            // Unknown byte (DD#72): a hard error, not a silent skip. Emit a
+            // BadLit spanning the byte so the parser rejects it (SB4035).
+            let ch = input[i..].chars().next().unwrap_or('?');
+            tokens.push(ATok::BadLit(ch.to_string()));
+            i += ch.len_utf8();
         }
     }
     tokens
@@ -398,60 +438,63 @@ fn match_arith_operator(bytes: &[u8], i: usize) -> Option<(ATok, usize)> {
     match_arith_op1(bytes[i]).map(|t| (t, i + 1))
 }
 
-/// Scan a number literal at `bytes[i..]`. Handles hex (`0x…`), octal
-/// (`0…`), arbitrary-base (`base#digits`), and decimal. Returns the
-/// recognised token and the byte index just past it.
+/// Scan a number literal at `bytes[i..]` (DD#72). Accepts decimal and the
+/// modern prefixes `0x`/`0o`/`0b`. A leading-zero integer (`010`) or a bash
+/// arbitrary-base literal (`16#ff`) is a malformed literal (`BadLit` → SB4035).
 fn scan_arith_number(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
-    if is_hex_prefix(bytes, i) {
-        return scan_hex_literal(input, bytes, i);
-    }
-    if is_octal_prefix(bytes, i) {
-        return scan_octal_literal(input, bytes, i);
+    if bytes[i] == b'0' && i + 1 < bytes.len() {
+        match bytes[i + 1] {
+            b'x' | b'X' => return scan_radix_literal(input, bytes, i, 16),
+            b'o' | b'O' => return scan_radix_literal(input, bytes, i, 8),
+            b'b' | b'B' => return scan_radix_literal(input, bytes, i, 2),
+            // Leading-zero integer (`010`, `08`): C-octal creep — rejected.
+            d if d.is_ascii_digit() => {
+                let end = scan_decimal_digits(bytes, i);
+                return (ATok::BadLit(input[i..end].to_string()), end);
+            }
+            _ => {}
+        }
     }
     let digits_end = scan_decimal_digits(bytes, i);
+    // bash arbitrary base `base#digits` (`16#ff`) — dropped (DD#72).
     if digits_end < bytes.len() && bytes[digits_end] == b'#' {
-        return scan_based_literal(input, bytes, i, digits_end);
+        let end = scan_base_hash_span(bytes, digits_end);
+        return (ATok::BadLit(input[i..end].to_string()), end);
     }
     scan_decimal_literal(input, i, digits_end)
 }
 
-fn is_hex_prefix(bytes: &[u8], i: usize) -> bool {
-    bytes[i] == b'0' && i + 1 < bytes.len() && (bytes[i + 1] == b'x' || bytes[i + 1] == b'X')
-}
-
-fn is_octal_prefix(bytes: &[u8], i: usize) -> bool {
-    bytes[i] == b'0' && i + 1 < bytes.len() && bytes[i + 1].is_ascii_digit()
-}
-
-fn scan_hex_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
-    let mut j = start + 2;
-    while j < bytes.len() && bytes[j].is_ascii_hexdigit() {
+/// Scan a `0x`/`0o`/`0b` prefixed literal (radix 16/8/2). The alphanumeric run
+/// after the two-byte prefix is the digit span; an empty or invalid-digit span
+/// is a `BadLit` (SB4035); an in-range value is `Num`; out of 64 bits is
+/// `BadNum` (SB4026). `0xFFFFFFFFFFFFFFFF` == -1 (bash bit-pattern parity).
+fn scan_radix_literal(input: &str, bytes: &[u8], start: usize, radix: u32) -> (ATok, usize) {
+    let digit_start = start + 2;
+    let mut j = digit_start;
+    while j < bytes.len() && bytes[j].is_ascii_alphanumeric() {
         j += 1;
     }
-    // Hex is a 64-bit bit-pattern (Policy A): parse as u64 and reinterpret
-    // to i64, so 0xFFFFFFFFFFFFFFFF == -1 (bash parity). Wider than 64 bits
-    // (or no digits, e.g. `0x`) is out of range -> SB4026.
-    let tok = match u64::from_str_radix(&input[start + 2..j], 16) {
-        Ok(v) => ATok::Num(v as i64),
-        Err(_) => ATok::BadNum(input[start..j].to_string()),
-    };
-    (tok, j)
+    let digits = &input[digit_start..j];
+    let valid = !digits.is_empty() && digits.bytes().all(|b| (b as char).is_digit(radix));
+    if !valid {
+        return (ATok::BadLit(input[start..j].to_string()), j);
+    }
+    match u64::from_str_radix(digits, radix) {
+        Ok(v) => (ATok::Num(v as i64), j),
+        Err(_) => (ATok::BadNum(input[start..j].to_string()), j),
+    }
 }
 
-fn scan_octal_literal(input: &str, bytes: &[u8], start: usize) -> (ATok, usize) {
-    let mut j = start + 1;
-    while j < bytes.len() && (b'0'..=b'7').contains(&bytes[j]) {
+/// Extent of a `base#digits` payload starting at the `#` (for the SB4035 span):
+/// the `#` plus the following bash base-digit run (alphanumerics / `_` / `@`).
+fn scan_base_hash_span(bytes: &[u8], hash: usize) -> usize {
+    let mut j = hash + 1;
+    while j < bytes.len()
+        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
+    {
         j += 1;
     }
-    // Octal is a 64-bit bit-pattern (Policy A): parse as u64, reinterpret to
-    // i64. Wider than 64 bits is out of range -> SB4026. (A lone `0` is
-    // scanned as decimal; `08`/`09` reach here with an empty octal span,
-    // which is rejected as out of range — matching bash.)
-    let tok = match u64::from_str_radix(&input[start + 1..j], 8) {
-        Ok(v) => ATok::Num(v as i64),
-        Err(_) => ATok::BadNum(input[start..j].to_string()),
-    };
-    (tok, j)
+    j
 }
 
 fn scan_decimal_digits(bytes: &[u8], start: usize) -> usize {
@@ -460,19 +503,6 @@ fn scan_decimal_digits(bytes: &[u8], start: usize) -> usize {
         j += 1;
     }
     j
-}
-
-fn scan_based_literal(input: &str, bytes: &[u8], start: usize, base_end: usize) -> (ATok, usize) {
-    let base: u32 = input[start..base_end].parse().unwrap_or(10);
-    let digit_start = base_end + 1;
-    let mut j = digit_start;
-    while j < bytes.len()
-        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
-    {
-        j += 1;
-    }
-    let val = parse_arith_base_digits(&input[digit_start..j], base);
-    (ATok::Num(val), j)
 }
 
 fn scan_decimal_literal(input: &str, start: usize, end: usize) -> (ATok, usize) {
@@ -485,22 +515,6 @@ fn scan_decimal_literal(input: &str, start: usize, end: usize) -> (ATok, usize) 
         Err(_) => ATok::BadNum(text.to_string()),
     };
     (tok, end)
-}
-
-/// Parse `base#digits` payload using bash's base-N digit encoding:
-/// 0-9, a-z (10-35), A-Z (36-61), `@` = 62, `_` = 63.
-fn parse_arith_base_digits(digits: &str, base: u32) -> i64 {
-    digits.chars().fold(0i64, |acc, c| {
-        let d = match c {
-            '0'..='9' => c as i64 - '0' as i64,
-            'a'..='z' => c as i64 - 'a' as i64 + 10,
-            'A'..='Z' => c as i64 - 'A' as i64 + 36,
-            '@' => 62,
-            '_' => 63,
-            _ => 0,
-        };
-        acc * base as i64 + d
-    })
 }
 
 /// Scan a `$`-prefixed variable: `$name` or `${name}`. Returns the
@@ -773,6 +787,10 @@ impl ArithParser {
             Some(ATok::BadNum(s)) => {
                 self.advance();
                 Err(arith_range_error(self.span, &s))
+            }
+            Some(ATok::BadLit(s)) => {
+                self.advance();
+                Err(arith_bad_literal_error(self.span, &s))
             }
             Some(_) => {
                 // Unknown token — try to recover

@@ -12,6 +12,25 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-07-05 (cont.) — DD#72 numeric literals in arithmetic
+
+DG questioned arbitrary bases ("we have 0xff/0377 — why base#?"). Became a
+full numeric-literal model + fixed **4 silent miscompiles** (`16#ff`→16,
+`2#1010`→2, `0o10`/`0b1010`→0) plus 2 silent-error sites (unknown-byte skip,
+no leftover-token check).
+
+- **Model (DD#72):** constants in `$(( ))` = decimal + `0x`/`0o`/`0b`;
+  reject leading-zero (`010`/`0377`) + `base#` + bad-prefix-digit cleanly
+  (SB4035). Runtime string→int (`sash_atoi`) = honor `0x`/`0o`/`0b`, else
+  decimal with leading zeros ignored (`x=010`→10, the anti-footgun; makes
+  bash `10#$var` unnecessary). DG: "honor prefixes but ignore leading
+  zeroes without the x/o/b".
+- `arith.rs` (BadLit→SB4035, radix scanner, trailing-token reject),
+  `lexer.rs` (`#` not a comment in arith), `sash-rt/inner.rs` (atoi radix
+  prefixes). `spec/arith_literals.sh` new (native/c 31/31; janet skips the 9
+  string-coercion tests — filed `janet-arith-string-coercion`). Migrated
+  arithmetic.sh 26.7 (`017` now rejects) +26.7b (`0o17`). **0 regressions.**
+
 ### Session 2026-07-05 (cont.) — P1: functions as pipeline stages
 
 DG picked `bug-function-in-pipeline` (P1, confirmed live: `fn f { echo hi

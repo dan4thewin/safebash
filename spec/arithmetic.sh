@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=54
+plan=55
 echo "1..$plan" >&3
 
 set +e
@@ -249,9 +249,13 @@ run_sash 'echo $(( 0x1FFFFFFFFFFFFFFFF ))'
 run_sash 'echo $(( 0xFFFFFFFFFFFFFFFF ))'
 [[ $rc = 0 && $out = "-1" && -z $err ]]; chk 26.6
 
-# 26.7 octal still works (regression guard)
+# 26.7 DD#72: C-octal `017` dropped — leading-zero rejects (SB4035); the
+# modern `0o17` octal prefix is the replacement and still yields 15.
 run_sash 'echo $(( 017 ))'
-[[ $rc = 0 && $out = "15" && -z $err ]]; chk 26.7
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 26.7
+# 26.7b the 0o octal prefix works (regression guard)
+run_sash 'echo $(( 0o17 ))'
+[[ $rc = 0 && $out = "15" && -z $err ]]; chk 26.7b
 
 # 26.8-26.10 i64::MAX / i64::MIN magnitudes — guarded native,c
 if in_modes native,c; then

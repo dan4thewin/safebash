@@ -9,35 +9,81 @@
 // 'never used' false positives but each test crate calls a different
 // subset, so the cleanup belongs at the include site, not here.
 
-/// Parse decimal bytes to i64. Returns 0 for empty/non-numeric input.
-/// Panics on overflow (DD#26: integer overflow traps).
+/// Parse a string to i64 for arithmetic coercion of runtime data (DD#72).
+/// Honors `0x`/`0o`/`0b` prefixes; otherwise decimal with leading zeros
+/// ignored (NO C-octal — `"010"` is 10, not 8). Returns 0 for empty/non-
+/// numeric input. Panics on overflow (DD#26: integer overflow traps).
 pub fn atoi_inner(bytes: &[u8]) -> i64 {
-    let mut result: i64 = 0;
-    let mut negative = false;
     let mut i = 0;
     while i < bytes.len() && bytes[i] == b' ' {
         i += 1;
     }
+    let mut negative = false;
     if i < bytes.len() && bytes[i] == b'-' {
         negative = true;
         i += 1;
     } else if i < bytes.len() && bytes[i] == b'+' {
         i += 1;
     }
-    while i < bytes.len() && bytes[i] >= b'0' && bytes[i] <= b'9' {
+    let magnitude = if let Some((radix, skip)) = radix_prefix(&bytes[i..]) {
+        parse_radix_magnitude(&bytes[i + skip..], radix)
+    } else {
+        parse_decimal_magnitude(&bytes[i..])
+    };
+    if negative {
+        magnitude
+            .checked_neg()
+            .expect("sash: integer overflow in atoi (negation)")
+    } else {
+        magnitude
+    }
+}
+
+/// Detect a `0x`/`0o`/`0b` prefix (case-insensitive). Returns (radix, prefix
+/// byte length) or None. A lone `0`/`0x`-with-no-digits is handled by the
+/// caller's digit loop (yields 0).
+fn radix_prefix(bytes: &[u8]) -> Option<(u32, usize)> {
+    if bytes.len() >= 2 && bytes[0] == b'0' {
+        match bytes[1] {
+            b'x' | b'X' => return Some((16, 2)),
+            b'o' | b'O' => return Some((8, 2)),
+            b'b' | b'B' => return Some((2, 2)),
+            _ => {}
+        }
+    }
+    None
+}
+
+/// Parse leading decimal digits; stops at the first non-digit. Leading zeros
+/// are ordinary decimal digits (no octal).
+fn parse_decimal_magnitude(bytes: &[u8]) -> i64 {
+    let mut result: i64 = 0;
+    let mut i = 0;
+    while i < bytes.len() && bytes[i].is_ascii_digit() {
         result = result
             .checked_mul(10)
             .and_then(|r| r.checked_add((bytes[i] - b'0') as i64))
             .expect("sash: integer overflow in atoi");
         i += 1;
     }
-    if negative {
-        result
-            .checked_neg()
-            .expect("sash: integer overflow in atoi (negation)")
-    } else {
-        result
+    result
+}
+
+/// Parse leading digits in `radix` (2/8/16); stops at the first invalid digit.
+fn parse_radix_magnitude(bytes: &[u8], radix: u32) -> i64 {
+    let mut result: i64 = 0;
+    let mut i = 0;
+    while i < bytes.len() {
+        let Some(d) = (bytes[i] as char).to_digit(radix) else {
+            break;
+        };
+        result = result
+            .checked_mul(radix as i64)
+            .and_then(|r| r.checked_add(d as i64))
+            .expect("sash: integer overflow in atoi");
+        i += 1;
     }
+    result
 }
 
 /// Format i64 as decimal into a provided buffer. Returns the slice used.

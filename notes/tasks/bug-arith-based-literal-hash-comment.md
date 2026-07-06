@@ -1,6 +1,6 @@
 ---
 title: "BUG — arithmetic based literal `base#digits` drops the digits (`#` eaten as comment)"
-status: ready
+status: done (DD#72)
 priority: P2
 kind: bug
 depends: []
