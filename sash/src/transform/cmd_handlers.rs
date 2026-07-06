@@ -468,7 +468,7 @@ pub(super) fn handle_function_call_or_command(
 
 /// DD#18: prefer a local function (`__local__name`) when in scope and defined;
 /// fall back to the global `name`.
-fn resolve_function_name(name: &str, state: &VersionState) -> String {
+pub(super) fn resolve_function_name(name: &str, state: &VersionState) -> String {
     let local_name = format!("__local__{}", name);
     if state.local_fn_scope.contains(&local_name) && state.function_bodies.contains_key(&local_name)
     {
@@ -586,7 +586,7 @@ fn save_caller_locals(
 
 /// Assign $1..$N from call args, clear $N+1..$9 (DD#46), and emit a
 /// diagnostic if the callee reads $K where K > argc.
-fn setup_callee_positionals(
+pub(super) fn setup_callee_positionals(
     name: &str,
     body: &[Statement],
     c: &Command,

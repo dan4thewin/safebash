@@ -1,5 +1,8 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
+use super::cmd_handlers::{
+    expand_dollar_at_in_body, resolve_function_name, setup_callee_positionals,
+};
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
@@ -513,25 +516,47 @@ fn is_lastpipe_read_last(last: &Statement) -> bool {
 
 /// Build pipeline stages from the producer commands (all but the last).
 /// Used by pipe-while-read and lastpipe-read shapes; both have identical loops.
+/// A known-function stage is inlined as a forked compound child (like the
+/// regular pipeline), not exec'd as a bare command.
 fn build_producer_stages(
     cmds: &[Statement],
+    ssa: &mut SsaProgram,
     state: &mut VersionState,
 ) -> Vec<(String, Vec<SsaValue>, Vec<Redirect>)> {
     let mut stages = vec![];
-    for cmd in cmds {
-        if let StmtKind::Command(c) = &cmd.kind {
-            let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-            stages.push((resolve_pipeline_command(&name), args, vec![]));
-        } else if let StmtKind::Redirected(r) = &cmd.kind {
-            if let StmtKind::Command(c) = &r.body.kind {
-                let name = expr_to_string(&c.name);
-                let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-                stages.push((resolve_pipeline_command(&name), args, r.redirects.clone()));
-            }
+    for (idx, cmd) in cmds.iter().enumerate() {
+        let (inner, redirects) = match &cmd.kind {
+            StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
+            other => (other, vec![]),
+        };
+        if let StmtKind::Command(c) = inner {
+            push_command_stage(c, redirects, idx, ssa, state, &mut stages);
         }
     }
     stages
+}
+
+/// Push a `Command` pipeline stage into `stages`: a known function inlines as a
+/// forked compound child (`__compound_<id>`, args bound); anything else resolves
+/// to an exec stage (DD#23 compile-time PATH). Shared by the regular pipeline
+/// and the producer-stage (pipe-while-read / lastpipe) builders.
+fn push_command_stage(
+    c: &Command,
+    redirects: Vec<Redirect>,
+    idx: usize,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    stages: &mut Vec<(String, Vec<SsaValue>, Vec<Redirect>)>,
+) {
+    let name = expr_to_string(&c.name);
+    if state.known_functions.contains(&name) {
+        if let Some(entry) = build_function_pipeline_stage(&name, c, ssa, state, idx) {
+            stages.push((format!("__compound_{}", entry), vec![], redirects));
+            return;
+        }
+    }
+    let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    stages.push((resolve_pipeline_command(&name), args, redirects));
 }
 
 /// Parse `read` flags (-d <c>, -d<c>, -f <c>, -f<c>) and collect var names.
@@ -587,7 +612,7 @@ fn handle_pipe_while_or_mapfile(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], state);
+    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state);
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: true,
@@ -631,7 +656,7 @@ fn handle_lastpipe_read(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], state);
+    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state);
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: true,
@@ -682,9 +707,7 @@ fn handle_regular_pipeline(
             other => (other, vec![]),
         };
         if let StmtKind::Command(c) = inner {
-            let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-            stages.push((resolve_pipeline_command(&name), args, redirects));
+            push_command_stage(c, redirects, idx, ssa, state, &mut stages);
         } else {
             // Compound stage: lower into its own SSA blocks, record entry for codegen
             let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
@@ -699,6 +722,46 @@ fn handle_regular_pipeline(
         capture_read_fd: false,
         checked: true,
     });
+}
+
+/// A `Command` pipeline stage that names a known function: inline the function
+/// body into its own SSA blocks (a forked compound child, recorded in
+/// `compound_pipeline_blocks` and named `__compound_<id>`), binding the call
+/// args as $1..$N. Mirrors the `{ }`-group compound stage, plus positional
+/// setup and a return target. Subshell semantics: the stage's variable
+/// assignments must not leak to the parent, so the version map is
+/// snapshotted/restored around the inline (only the forked child sees them).
+/// Returns the entry block id, or `None` if the body isn't registered.
+fn build_function_pipeline_stage(
+    name: &str,
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    idx: usize,
+) -> Option<usize> {
+    let resolved = resolve_function_name(name, state);
+    let mut body = state.function_bodies.get(&resolved).cloned()?;
+    // DD#60: expand $@/"$@" to the explicit positional list before lowering.
+    expand_dollar_at_in_body(&mut body, c.args.len());
+
+    let saved = state.snapshot();
+    let saved_return = state.return_target;
+
+    let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
+    setup_callee_positionals(name, &body, c, ssa, state, entry);
+
+    // `return` inside the body jumps to ret_block, which ends the forked child.
+    let ret_block = ssa.new_block(&format!("pipe_fn_ret_{}_{}", name, idx));
+    state.return_target = Some(ret_block);
+    let exit = lower_stmts(&body, ssa, state, entry);
+    ssa.block_mut(exit).terminator = Terminator::Goto(ret_block);
+    ssa.block_mut(ret_block).terminator = Terminator::Return;
+
+    state.return_target = saved_return;
+    state.restore(&saved);
+
+    ssa.compound_pipeline_blocks.push(entry);
+    Some(entry)
 }
 
 /// Handle StmtKind::Assignment — variable assignment with optional function collision check.

@@ -12,6 +12,24 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-07-05 (cont.) — P1: functions as pipeline stages
+
+DG picked `bug-function-in-pipeline` (P1, confirmed live: `fn f { echo hi
+}; f | cat` crashed with `sash: bug: bare command passed to sash_exec`,
+breaking the SB4021-4024 "wrap in a function" escape hatch). **Native
+fixed, 0 regressions.**
+
+- A known-function `Command` pipeline stage now inlines as a forked
+  `__compound_` child (args bound as $1..$N via `setup_callee_positionals`,
+  `$@` expanded, `return` → ret_block, subshell semantics via
+  `state.snapshot()`/`restore()`), instead of exec'ing the bare name.
+  Fixed both `handle_regular_pipeline` and `build_producer_stages`
+  (pipe-while-read/lastpipe); shared `push_command_stage` helper.
+- **c/janet**: pre-existing gap — they have no `__compound_` support at all
+  (even `{ }`/for/if stages fail: c `bare command`, janet `unknown symbol
+  p1`). DG-decided to split it out → `c-janet-compound-pipeline-stage` (P2).
+  `spec/pipe_functions.sh` (pf.1-11) is native-only guarded (like brace.sh).
+
 ### Session 2026-07-04 (cont.) — DD#65 var modifiers: `:-` word (`:- ≡ "…"`)
 
 DG-directed, spec-first, **0 regressions native/c/janet** (native 648→663

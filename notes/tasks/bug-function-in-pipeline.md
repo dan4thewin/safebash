@@ -1,6 +1,6 @@
 ---
 title: "BUG — a user function used in a pipeline hits runtime `bug: bare command passed to sash_exec`; breaks the SB4021-4024 escape hatch"
-status: ready
+status: done (native); c/janet split to c-janet-compound-pipeline-stage
 priority: P1
 kind: bug
 depends: []
