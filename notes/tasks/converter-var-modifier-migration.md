@@ -40,6 +40,10 @@ migration to the kept forms and the string builtins.
 | `${x:=d}`                 | `x=${x:-d}` (assign-default desugar)         |
 | `${x:+a}`                 | `[[ -n $x ]] && a` / conditional, else MANUAL |
 | `${x:?m}`                 | explicit emptiness check + error (MANUAL)    |
+| `${arr[@]/p/r}` `[@]//`   | `for x in @arr; do … $(sub/gsub $x p r) …; done` |
+| `${arr[@]#p}` `[@]##`     | `for x in @arr; do … $(sub $x '^p_regex' '') …; done` |
+| `${arr[@]%p}` `[@]%%`     | `for x in @arr; do … $(sub $x 'p_regex$' '') …; done` |
+| `${arr[@]^^}` `[@],,`     | `for x in @arr; do … $(toupper/tolower $x) …; done` |
 
 Note the kept forms are unchanged and need no rewrite: `${x:-default}`
 (now a full interpolating word, `:- ≡ "…"`), `${x:off:len}` (substring),

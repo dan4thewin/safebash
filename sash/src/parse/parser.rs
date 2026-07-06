@@ -2144,9 +2144,6 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
     // Rejects uniformly; migration to the builtins is sash-convert's job (see
     // task `converter-var-modifier-migration`).
     if is_dropped_param_operator(op) {
-        // `glob_replace` is the internal remap of the `/`-family; show the
-        // user-facing `/` in the diagnostic instead of the internal name.
-        let shown = if op == "glob_replace" { "/" } else { op };
         return Some(parse_error(
             span,
             "SB4034",
@@ -2154,21 +2151,47 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
                 "the '{}' parameter operator (in ${{{}…}}) left the safe subset — \
                  use the string builtins (toupper/tolower, sub/gsub, basename/dirname) \
                  or the kept forms :- / :off:len / :s/",
-                shown, pe.name
+                user_facing_operator(op),
+                pe.name
             ),
         ));
     }
     None
 }
 
+/// Map an internal dropped-operator string to the form the user wrote, for
+/// the SB4034 diagnostic: `glob_replace` → `/` (the `/`-family remap), the
+/// per-element array form `arrvals_<op>` → `[@]<op>`, everything else verbatim.
+fn user_facing_operator(op: &str) -> String {
+    if op == "glob_replace" {
+        return "/".to_string();
+    }
+    if let Some(core) = op.strip_prefix("arrvals_") {
+        return format!("[@]{}", core);
+    }
+    op.to_string()
+}
+
 /// DD#65: operators dropped from the `${var:OP}` family — the full
 /// `split_operator` set minus the kept `:-`. The `/`-family glob-replace is
 /// remapped to `glob_replace` at parse (parse_standard_operator) so it is
 /// distinguishable here from the kept `:s/` sed op, which shares the raw
-/// `/`//` operator strings. Kept forms (`substring`/`:off:len`, `:s/`,
-/// `strlen`, `arrlen`/`arrkeys`/`arrvals`, `glob`) arrive via other parse
-/// paths and are not matched here.
+/// `/`//` operator strings. The per-element **array** forms `${arr[@]OP}`
+/// (operator `arrvals_<op>`, `parse_subscript_operator`) are dropped too, for
+/// consistency with the scalar drop — the replacement is a `for x in @a` loop
+/// with `$(sub …)`/`$(gsub …)`. Kept forms (`substring`/`:off:len`, `:s/`,
+/// `strlen`, plain `arrvals`/`arrkeys`/`arrjoin` join, `glob`) arrive via other
+/// parse paths / operators and are not matched here.
 fn is_dropped_param_operator(op: &str) -> bool {
+    // Per-element array form: `arrvals_<raw op>` (the array parse path keeps the
+    // raw `/`//`, unlike the scalar `glob_replace` remap). Plain `arrvals`
+    // (`${a[@]}` join) has no trailing `_op` and is kept.
+    if let Some(core) = op.strip_prefix("arrvals_") {
+        return matches!(
+            core,
+            "/" | "//" | "#" | "##" | "%" | "%%" | "^" | "^^" | "," | ",,"
+        );
+    }
     matches!(
         op,
         ":=" | ":+" | ":?" | "#" | "##" | "%" | "%%" | "glob_replace" | "^" | "^^" | "," | ",,"

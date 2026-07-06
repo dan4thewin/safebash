@@ -70,6 +70,18 @@ silently degrading `${x#a}` → `$x`). Spec: `spec/var_modifiers.sh`
 vm.dr1-15 (one per operator string), plus migrated `misc.sh` 52.6a/b and
 `wordsplit.sh` 39.4.
 
+**Per-element array forms dropped too** (DG 2026-07-04, consistency): the
+`${arr[@]OP}` forms (operator `arrvals_<op>`, `parse_subscript_operator`,
+formerly DD#33) carried the same dropped ops mapped over elements — kept
+would be an asymmetry (scalar rejects, array works). They now also reject
+SB4034 (`is_dropped_param_operator` matches `arrvals_<op>`; the message
+shows `[@]<op>`). The replacement is a **`for x in @a` loop with
+`$(sub …)`/`$(gsub …)`** — migrated `types.sh` 33.16-33.18 to that form,
+which also *fixed* those tests in the c/janet backends (they never
+supported per-element array ops). Reject specs: `var_modifiers.sh`
+vm.dr16-18. The now-dead per-element codegen (`apply_per_element_op`,
+`per_elem_regex_replace`/`_strip_prefix`/`_strip_suffix`) was removed.
+
 ## Moved to builtins
 
 - **`^^` `,,`** (full upper/lower) → **`$(toupper s)` / `$(tolower s)`**

@@ -232,10 +232,10 @@ fn emit_array_join_expansion(
 
     builder.switch_to_block(item_block);
     builder.seal_block(item_block);
+    // DD#65: per-element modifiers (`${arr[@]OP}`) are dropped — they reject at
+    // parse (SB4034), so the operator here is always a plain join
+    // (`arrvals`/`arrkeys`/`arrjoin`) and the item is copied as-is.
     let (item_ptr, item_len) = fetch_item(builder, item_fn, s_ptr, idx_var);
-    let (item_ptr, item_len) = apply_per_element_op(
-        operator, operand, item_ptr, item_len, builder, module, literals, externs,
-    );
     copy_item_bytes(builder, item_ptr, item_len, buf_ptr, pos_slot);
     advance_loop_index(builder, idx_var, header);
 
@@ -376,145 +376,6 @@ fn fetch_item(
     let item_ptr = builder.inst_results(call)[0];
     let item_len = builder.ins().stack_load(I64, item_len_slot, 0);
     (item_ptr, item_len)
-}
-
-/// DD#33: per-element parameter expansion on arrvals (`${arr[@]/pat/rep}`
-/// and friends). For non-`arrvals_*` operators returns the item unchanged.
-#[allow(clippy::too_many_arguments)]
-fn apply_per_element_op(
-    operator: &str,
-    operand: &str,
-    item_ptr: cranelift_codegen::ir::Value,
-    item_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let Some(sub_op) = operator.strip_prefix("arrvals_") else {
-        return (item_ptr, item_len);
-    };
-    match sub_op {
-        "/" | "//" => per_elem_regex_replace(
-            sub_op == "//",
-            operand,
-            item_ptr,
-            item_len,
-            builder,
-            module,
-            literals,
-            externs,
-        ),
-        "#" | "##" => per_elem_strip_prefix(
-            sub_op == "##",
-            operand,
-            item_ptr,
-            item_len,
-            builder,
-            module,
-            literals,
-            externs,
-        ),
-        "%" | "%%" => per_elem_strip_suffix(
-            sub_op == "%%",
-            operand,
-            item_ptr,
-            item_len,
-            builder,
-            module,
-            literals,
-            externs,
-        ),
-        _ => (item_ptr, item_len),
-    }
-}
-
-/// `${arr[@]/pat/rep}` (sub_op=`/`) or `${arr[@]//pat/rep}` (sub_op=`//`,
-/// global). Operand is `regex\0replacement` (null-separated).
-#[allow(clippy::too_many_arguments)]
-fn per_elem_regex_replace(
-    global: bool,
-    operand: &str,
-    item_ptr: cranelift_codegen::ir::Value,
-    item_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let (pat_s, rep_s) = operand.split_once('\0').unwrap_or((operand, ""));
-    let (p_ptr, p_len) = intern_literal_string(pat_s, builder, module, literals);
-    let (r_ptr, r_len) = intern_literal_string(rep_s, builder, module, literals);
-    let global_v = builder.ins().iconst(I64, global as i64);
-    let regex_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-    let call = builder.ins().call(
-        regex_ref,
-        &[item_ptr, item_len, p_ptr, p_len, r_ptr, r_len, global_v],
-    );
-    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-}
-
-/// `${arr[@]#pat}` (longest=false) or `${arr[@]##pat}` (longest=true).
-#[allow(clippy::too_many_arguments)]
-fn per_elem_strip_prefix(
-    longest: bool,
-    operand: &str,
-    item_ptr: cranelift_codegen::ir::Value,
-    item_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let (op_ptr, op_len) = intern_literal_string(operand, builder, module, literals);
-    let longest_v = builder.ins().iconst(I64, longest as i64);
-    let strip_ref = module.declare_func_in_func(externs.strip_prefix, builder.func);
-    let call = builder
-        .ins()
-        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest_v]);
-    let offset = builder.inst_results(call)[0];
-    let res_ptr = builder.ins().iadd(item_ptr, offset);
-    let res_len = builder.ins().isub(item_len, offset);
-    (res_ptr, res_len)
-}
-
-/// `${arr[@]%pat}` (longest=false) or `${arr[@]%%pat}` (longest=true).
-#[allow(clippy::too_many_arguments)]
-fn per_elem_strip_suffix(
-    longest: bool,
-    operand: &str,
-    item_ptr: cranelift_codegen::ir::Value,
-    item_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let (op_ptr, op_len) = intern_literal_string(operand, builder, module, literals);
-    let longest_v = builder.ins().iconst(I64, longest as i64);
-    let strip_ref = module.declare_func_in_func(externs.strip_suffix, builder.func);
-    let call = builder
-        .ins()
-        .call(strip_ref, &[item_ptr, item_len, op_ptr, op_len, longest_v]);
-    let res_len = builder.inst_results(call)[0];
-    (item_ptr, res_len)
-}
-
-/// Look up an interned literal string and emit (ptr, len) values.
-/// Panics if the literal wasn't interned at codegen setup.
-fn intern_literal_string(
-    s: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let data_id = literals
-        .get(s)
-        .unwrap_or_else(|| panic!("ICE: literal not interned: {:?}", s));
-    let gv = module.declare_data_in_func(*data_id, builder.func);
-    let ptr = builder.ins().global_value(I64, gv);
-    let len = builder.ins().iconst(I64, s.len() as i64);
-    (ptr, len)
 }
 
 /// Append `item_len` bytes from `item_ptr` to the buffer at the

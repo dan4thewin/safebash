@@ -232,19 +232,20 @@ run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
 run_sash 'array a=(one two three); unset a; echo ${#a[@]}'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.11
 
-# --- DD#33 array per-element ops ---
+# --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
+# (the `${arr[@]OP}` forms now reject SB4034; see var_modifiers.sh vm.dr16-18)
 
-# 33.16 ${arr[@]/pat/rep} substitution per element
-run_sash 'array a=(foo bar baz); echo ${a[@]/ba/BA}'
-[[ $rc = 0 && $out = "foo BAr BAz" && -z $err ]]; chk 33.16
+# 33.16 per-element substitution via loop + sub (was ${arr[@]/ba/BA})
+run_sash 'array a=(foo bar baz); for x in @a; do echo $(sub $x ba BA); done'
+[[ $rc = 0 && $out = $'foo\nBAr\nBAz' && -z $err ]]; chk 33.16
 
-# 33.17 ${arr[@]#prefix} strip prefix per element
-run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
-[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.17
+# 33.17 per-element strip prefix via loop + sub `^pre_` (was ${arr[@]#pre_})
+run_sash 'array a=(pre_one pre_two three); for x in @a; do echo $(sub $x "^pre_" ""); done'
+[[ $rc = 0 && $out = $'one\ntwo\nthree' && -z $err ]]; chk 33.17
 
-# 33.18 ${arr[@]%%suffix} strip suffix per element
-run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
-[[ $rc = 0 && $out = "file doc note.md" && -z $err ]]; chk 33.18
+# 33.18 per-element strip suffix via loop + sub `\.txt$` (was ${arr[@]%%.txt})
+run_sash 'array a=(file.txt doc.txt note.md); for x in @a; do echo $(sub $x "\.txt$" ""); done'
+[[ $rc = 0 && $out = $'file\ndoc\nnote.md' && -z $err ]]; chk 33.18
 
 # --- DD#62 section A: [[ ]] operands are pre-lowered SsaValues ---
 # Subscript operands carry their map-vs-indexed key-ness from transform

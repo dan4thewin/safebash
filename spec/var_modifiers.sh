@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=39
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -123,6 +123,14 @@ run_sash 'x=abc; echo "${x^^}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr14
 run_sash 'x=ABC; echo "${x,,}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr15
+# dr16-18: the per-element ARRAY forms ${arr[@]OP} are dropped too (DD#65,
+# consistency with the scalar drop) — use a `for x in @a` loop + sub/gsub.
+run_sash 'array a=(foo bar baz); echo ${a[@]/ba/BA}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr16
+run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr17
+run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr18
 
 set -e
 tally

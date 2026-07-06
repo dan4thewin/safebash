@@ -174,3 +174,34 @@ dead-code detection (remove arm → build → remove the helper it orphaned):
 0 behavior change (all removed code unreachable): native 0 / c 51 / janet
 74, `:s/` (39.3) still green. Dispatchers simplified well under the
 complexity gate.
+
+## Per-element array forms dropped too (2026-07-04, DG decision)
+
+While removing the dead backend dispatch I found `apply_per_element_op`
+still using the strip runtime — which surfaced that the **per-element
+array** forms `${arr[@]#p}`/`${arr[@]%%p}`/`${arr[@]/p/r}` (operator
+`arrvals_<op>`, `parse_subscript_operator`, formerly "DD#33 array ops")
+**bypassed the scalar reject** and still worked. Same operators, now
+asymmetric. Flagged to DG (a genuine scope question DD#65's vet didn't
+cover); DG chose to **extend the drop to arrays for consistency**.
+
+- `is_dropped_param_operator` now also matches `arrvals_<op>` (the array
+  parse path keeps the raw `/`//`, so a separate `strip_prefix("arrvals_")`
+  arm handles it); plain `arrvals`/`arrkeys`/`arrjoin` (join) stay. The
+  diagnostic shows the user-facing `[@]<op>`.
+- Replacement = a **`for x in @a` loop with `$(sub …)`/`$(gsub …)`**
+  (verified: strip-prefix `^p`, strip-suffix `\.txt$`, replace all work).
+  Migrated `types.sh` 33.16-33.18 to that form; added `var_modifiers.sh`
+  vm.dr16-18 reject tests.
+- Removed the now-dead per-element codegen (`apply_per_element_op` +
+  `per_elem_regex_replace`/`_strip_prefix`/`_strip_suffix` +
+  `intern_literal_string`); `emit_array_join_expansion` copies items as-is.
+- **The migration *fixed* c and janet**: 33.16-33.18 were in the failing
+  baseline there (c/janet never supported per-element array ops); the
+  loop+sub form works, so c 52→48 and janet 74→71 (native still 0). 0
+  regressions.
+
+Follow-up filed: the `sash_strip_prefix`/`sash_strip_suffix` runtime
+functions + their `ExternFuncs` fields / setup declarations / emit_c
+extern decls are now fully dead (both scalar and array strip gone) — a
+runtime-ABI cleanup (task `remove-dead-strip-runtime`).

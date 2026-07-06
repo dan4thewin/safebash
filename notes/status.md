@@ -38,6 +38,11 @@ before this entry's tests; c 52 / janet 74 unchanged). DD#65 build-up:
   disambiguated from the dropped `/`-glob by remapping the glob path to an
   internal `glob_replace` operator. 0 regressions native/janet; c +1
   (c:39.4). Remaining: remove now-dead backend dispatch (follow-up).
+  **Also dropped the per-element array forms** `${arr[@]#p}`/`[@]/p/r`
+  (were an asymmetry vs the scalar drop; DG chose consistency) → reject
+  SB4034, migrated `types.sh` 33.16-33.18 to `for x in @a`+sub/gsub, which
+  *fixed* them in c/janet (c 52→48, janet 74→71; native still 0). Runtime
+  strip-fn cleanup filed (`remove-dead-strip-runtime`).
 
 ### Session 2026-07-04 (cont.) — language sweep DD#65-68 part 1
 
