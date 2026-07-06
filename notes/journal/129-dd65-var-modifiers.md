@@ -205,3 +205,16 @@ Follow-up filed: the `sash_strip_prefix`/`sash_strip_suffix` runtime
 functions + their `ExternFuncs` fields / setup declarations / emit_c
 extern decls are now fully dead (both scalar and array strip gone) — a
 runtime-ABI cleanup (task `remove-dead-strip-runtime`).
+
+## Follow-up: removed the orphaned glob→regex helpers (2026-07-05)
+
+DG asked "is `glob_replace` dead code?" — it is **not** (it's a live
+reject-only sentinel: `${x/a/b}` parses to operator `glob_replace`, the
+reject pass consumes it → SB4034, shown as `/`). But the question surfaced
+real leftover: `parse_subscript_operator` (the array path) still ran
+`glob_to_regex`/`find_unescaped_slash` to build a regex operand for
+`arrvals_/`, which is now rejected before the operand is ever used — the
+array parallel of the scalar `build_slash_operand` I'd already dropped.
+Simplified `parse_subscript_operator` to a plain operand and removed the
+now-orphaned `glob_to_regex` + `find_unescaped_slash` (no other callers).
+Behavior-neutral (identical spec.db: native 0 / c 48 / janet 71).

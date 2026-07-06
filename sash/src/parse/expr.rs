@@ -789,48 +789,30 @@ fn parse_default_word(s: &str, span: Span) -> Box<Expr> {
 
 fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr> {
     let (op, operand_str) = split_operator(after);
-    if let Some(op_str) = op {
-        if matches!(
-            op_str.as_str(),
-            "/" | "//" | "#" | "##" | "%" | "%%" | "^" | "^^" | "," | ",,"
-        ) {
-            let is_slash_op = op_str == "/" || op_str == "//";
-            let operand = match (is_slash_op, operand_str.clone()) {
-                (true, Some(raw)) => {
-                    if let Some(sep) = find_unescaped_slash(&raw) {
-                        let pattern = &raw[..sep];
-                        let replacement = &raw[sep + 1..];
-                        let pat_regex = glob_to_regex(pattern);
-                        Some(Box::new(Expr {
-                            kind: ExprKind::Literal(format!("{}\0{}", pat_regex, replacement)),
-                            span,
-                        }))
-                    } else {
-                        let pat_regex = glob_to_regex(&raw);
-                        Some(Box::new(Expr {
-                            kind: ExprKind::Literal(format!("{}\0", pat_regex)),
-                            span,
-                        }))
-                    }
-                }
-                _ => operand_str.map(|s| {
-                    Box::new(Expr {
-                        kind: ExprKind::Literal(s),
-                        span,
-                    })
-                }),
-            };
-            return Some(Expr {
-                kind: ExprKind::ParameterExpansion(ParameterExpansion {
-                    name: name.to_string(),
-                    operator: Some(format!("arrvals_{}", op_str)),
-                    operand,
-                }),
-                span,
-            });
-        }
+    let op_str = op?;
+    if !matches!(
+        op_str.as_str(),
+        "/" | "//" | "#" | "##" | "%" | "%%" | "^" | "^^" | "," | ",,"
+    ) {
+        return None;
     }
-    None
+    // DD#65: the per-element array modifiers `${arr[@]OP}` are dropped — they
+    // reject at parse (SB4034, operator `arrvals_<op>`). No glob→regex lowering:
+    // the operand is never used because the operator is rejected before codegen.
+    let operand = operand_str.map(|s| {
+        Box::new(Expr {
+            kind: ExprKind::Literal(s),
+            span,
+        })
+    });
+    Some(Expr {
+        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some(format!("arrvals_{}", op_str)),
+            operand,
+        }),
+        span,
+    })
 }
 
 // ── Operator splitting ─────────────────────────────────────────────
@@ -868,46 +850,6 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     }
 
     (None, None)
-}
-
-// ── Glob → regex conversion ─────────────────────────────────────────
-
-fn find_unescaped_slash(s: &str) -> Option<usize> {
-    let bytes = s.as_bytes();
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'\\' {
-            i += 2;
-        } else if bytes[i] == b'/' {
-            return Some(i);
-        } else {
-            i += 1;
-        }
-    }
-    None
-}
-
-fn glob_to_regex(glob: &str) -> String {
-    let mut re = String::with_capacity(glob.len() * 2);
-    let mut chars = glob.chars().peekable();
-    while let Some(c) = chars.next() {
-        match c {
-            '*' => re.push_str(".*"),
-            '?' => re.push('.'),
-            '\\' => {
-                if let Some(next) = chars.next() {
-                    re.push('\\');
-                    re.push(next);
-                }
-            }
-            '.' | '+' | '(' | ')' | '|' | '^' | '$' => {
-                re.push('\\');
-                re.push(c);
-            }
-            _ => re.push(c),
-        }
-    }
-    re
 }
 
 // ── Command substitution ───────────────────────────────────────────
