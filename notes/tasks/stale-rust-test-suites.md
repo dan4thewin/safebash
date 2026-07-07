@@ -1,6 +1,6 @@
 ---
 title: "Stale Rust test suites: sash-rt-tests broken + cargo core suites use old syntax"
-status: open
+status: ready
 priority: P3
 kind: chore
 ---

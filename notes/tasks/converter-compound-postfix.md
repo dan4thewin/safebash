@@ -1,6 +1,6 @@
 ---
 title: Converter handles compound-command postfix rejections
-status: todo
+status: ready
 depends: [align-parser-with-decisions]
 gates: []
 ---

@@ -1,5 +1,6 @@
 title: Subshell decomposition — lowerer should coerce to sash primitives
-status: obsolete
+status: superseded
+superseded-by: dd38-subshell-coercion-docs
 depends: dd38-subshell-coercion-docs
 severity: correctness
 gates: [38.4, 38.5]

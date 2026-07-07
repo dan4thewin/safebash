@@ -112,4 +112,4 @@ Non-empty arrays splat per-element (per `array-splat-command-arg`).
   `emit_glob_c` (sash_glob call). Specs wordsplit 20.5/20.6.
 - **Part 2 TODO** — `@{a:-WORD}`/`@{a:?WORD}` disposition + bare-`@a`-to-
   external reject. Blocked on the WORD-interpolation decision
-  (DECISION-glob-splat-disposition-word).
+  (glob-splat-disposition-word).
