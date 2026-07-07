@@ -42,7 +42,10 @@ a sash-convert canonicalize mode → moved to Tier 6._
    external — removed the Printf/Pwd builtins; execve capture tainted)
 7. `bug-test-operand-concat-splice` — DONE 2026-07-07 (NOT A BUG: repro was
    arithmetically wrong, `run`+`ing`=`runing`; bash agrees; guarded ow.11-13)
-8. `tilde-vs-dd53` (P3)
+8. `tilde-vs-dd53` — compiler half DONE 2026-07-07 (SB4036 focused reject);
+   converter rewrite half → Tier 6.
+
+**Tier 2 complete** (native compiler bugs); Tier 3 next.
 
 **Tier 3 — remaining compiler features (native)**
 9. `reject-undeclared-scalar-read` (P2)
@@ -79,6 +82,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 31. `converter-compound-postfix`
 32. `dd67-bash-sugar-sweep` §3 only — sash-convert canonicalize mode
     (compiler §1/§2/§4B already done; §3 couples to dd68 brace forms)
+33. `tilde-vs-dd53` converter half — rewrite bash `~`/`~/path` →
+    `$(getenv HOME)` (+ bless); compiler half done (SB4036)
 
 **Deferred to the very end:** `audit-rust-test-suites` (+ superseded
 `rust-test-suite-rot`, `stale-rust-test-suites`) — revisit its specific

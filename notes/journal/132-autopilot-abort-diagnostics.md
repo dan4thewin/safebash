@@ -135,3 +135,18 @@ too** (oracle-verified). The splice concat works: `suf=ing; x=runing;
 `concat_to_value` builds it fine. Added spec/operand_words.sh ow.11 (`==`
 splice), ow.12 (`=~` splice), ow.13 (negative), passing all modes. Closed
 as not-a-bug.
+
+## Task: tilde-vs-dd53 (Tier 2 #8) — compiler half DONE
+
+`echo ~` / `echo ~/x` gave the misleading `$HOME` SB5018 (parse_word_arm
+lowered `~`→SimpleExpansion("HOME")). Now `parse_word_arm` returns
+`Result` and rejects unquoted leading `~`/`~/path` with a focused
+**SB4036** directing to `$(getenv HOME)` (option (b) — parse-time
+diagnostic). Quoted (`'~'`/`"~"`) and mid-word (`a~b`) tildes untouched.
+spec/taint.sh tilde.1-3, all modes; 0 regressions. Converter rewrite half
+(bash `~` → `$(getenv HOME)`+bless) deferred to Tier 6 (convert); task now
+`partial`.
+
+## Tier 2 (native compiler bugs) — COMPLETE
+echo-splat ICE (SB5030), tighten-cmdsub-taint (printf/pwd external),
+concat-splice (not-a-bug), tilde (SB4036 compiler half). Tier 3 next.

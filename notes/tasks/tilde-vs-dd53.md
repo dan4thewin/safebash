@@ -1,6 +1,6 @@
 ---
 title: Tilde expansion produces SB5018-rejected $HOME
-status: ready
+status: partial
 priority: P3
 kind: bug
 depends: []
@@ -12,6 +12,18 @@ gates:
 ---
 
 # Tilde expansion produces SB5018-rejected $HOME
+
+> **Compiler half DONE (2026-07-07, autopilot).** `parse_word_arm` now
+> rejects an unquoted leading `~` / `~/path` with a focused **SB4036**
+> ("unquoted leading `~` is not expanded — use $(getenv HOME) …") instead
+> of lowering to `HOME` and hitting the misleading `$HOME` SB5018. Quoted
+> (`'~'`/`"~"`) and mid-word (`a~b`) tildes are untouched. spec/taint.sh
+> tilde.1/2/3 (all modes). 0 regressions.
+>
+> **Converter half PENDING (Tier 6):** sash-convert should rewrite bash
+> `~`/`~/path` → `$(getenv HOME)` (+ bless) so a converted script compiles.
+> That is the convert-tier work (convert is secondary to compiler work per
+> the DG ordering).
 
 ## Decision (DG, 2026-06-21): split compiler vs converter
 

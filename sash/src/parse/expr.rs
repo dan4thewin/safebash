@@ -139,7 +139,7 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
         match tok {
             Tok::Word(ref w) => {
                 let w = w.clone();
-                parts.push(parse_word_arm(scanner, w, span));
+                parts.push(parse_word_arm(scanner, w, span)?);
             }
             Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
                 parse_quoted_arm(scanner, &tok, span, &mut parts);
@@ -151,55 +151,11 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
             | Tok::DollarDblParen => {
                 parse_expansion_arm(scanner, &tok, span, start, &mut parts)?;
             }
-            _ if absorb_text(&tok, mode).is_some() => {
-                let text = absorb_text(&tok, mode).unwrap();
+            _ if literal_token_text(&tok, mode).is_some() => {
+                let text = literal_token_text(&tok, mode).unwrap();
                 scanner.next();
                 parts.push(Expr {
-                    kind: ExprKind::Literal(text.to_string()),
-                    span,
-                });
-            }
-            Tok::Eq => {
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::Literal("=".to_string()),
-                    span,
-                });
-            }
-            // Keywords that can appear as literal arguments
-            Tok::If
-            | Tok::Then
-            | Tok::Else
-            | Tok::Elif
-            | Tok::Fi
-            | Tok::While
-            | Tok::Until
-            | Tok::Do
-            | Tok::Done
-            | Tok::For
-            | Tok::In
-            | Tok::Case
-            | Tok::Esac
-            | Tok::Fn
-            | Tok::Function
-            | Tok::Local
-            | Tok::Int
-            | Tok::Const
-            | Tok::Array
-            | Tok::Map
-            | Tok::Bless
-            | Tok::End => {
-                let text = keyword_to_str(&tok);
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::Literal(text.to_string()),
-                    span,
-                });
-            }
-            Tok::Dash => {
-                scanner.next();
-                parts.push(Expr {
-                    kind: ExprKind::Literal("-".to_string()),
+                    kind: ExprKind::Literal(text),
                     span,
                 });
             }
@@ -210,38 +166,63 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
     parts_to_expr(parts)
 }
 
+/// Text of a token that lowers to a literal word part: `=`, `-`, the
+/// mode-dependent absorbable metacharacters, and reserved words used as
+/// bare arguments. `None` for tokens handled by their own match arm.
+fn literal_token_text(tok: &Tok, mode: AbsorbMode) -> Option<String> {
+    match tok {
+        Tok::Eq => Some("=".to_string()),
+        Tok::Dash => Some("-".to_string()),
+        Tok::If
+        | Tok::Then
+        | Tok::Else
+        | Tok::Elif
+        | Tok::Fi
+        | Tok::While
+        | Tok::Until
+        | Tok::Do
+        | Tok::Done
+        | Tok::For
+        | Tok::In
+        | Tok::Case
+        | Tok::Esac
+        | Tok::Fn
+        | Tok::Function
+        | Tok::Local
+        | Tok::Int
+        | Tok::Const
+        | Tok::Array
+        | Tok::Map
+        | Tok::Bless
+        | Tok::End => Some(keyword_to_str(tok).to_string()),
+        _ => absorb_text(tok, mode).map(str::to_string),
+    }
+}
+
 /// `Tok::Word` arm — handles tilde expansion (`~`, `~/path`), the
 /// `@arr` array-values shorthand, and bare literal words. Consumes
 /// the token before returning.
-fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Expr {
+fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, Diagnostic> {
     scanner.next();
-    if w == "~" {
-        Expr {
-            kind: ExprKind::SimpleExpansion("HOME".to_string()),
+    if w == "~" || w.starts_with("~/") {
+        // DD#53: no home-directory magic. An unquoted leading `~` has no
+        // clean compile-time meaning; reject it with a focused message
+        // (not the misleading $HOME SB5018) directing to the explicit form.
+        return Err(parse_error(
             span,
-        }
-    } else if w.starts_with("~/") {
-        Expr {
-            kind: ExprKind::Concat(vec![
-                Expr {
-                    kind: ExprKind::SimpleExpansion("HOME".to_string()),
-                    span,
-                },
-                Expr {
-                    kind: ExprKind::Literal(w[1..].to_string()),
-                    span,
-                },
-            ]),
-            span,
-        }
-    } else if w.starts_with('@') && w.len() > 1 {
-        Expr::param(&w[1..], Some("arrvals"), None, span)
-    } else {
-        Expr {
-            kind: ExprKind::Literal(w),
-            span,
-        }
+            "SB4036",
+            "unquoted leading `~` is not expanded — use $(getenv HOME) (with \
+             a bless), or quote it (`'~'` / `\"~\"`) for a literal tilde"
+                .to_string(),
+        ));
     }
+    if w.starts_with('@') && w.len() > 1 {
+        return Ok(Expr::param(&w[1..], Some("arrvals"), None, span));
+    }
+    Ok(Expr {
+        kind: ExprKind::Literal(w),
+        span,
+    })
 }
 
 /// `Tok::Dollar(name)` arm — checks for `$arr[i]` subscript syntax

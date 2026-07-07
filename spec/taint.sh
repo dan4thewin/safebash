@@ -365,5 +365,16 @@ else
     done
 fi
 
+# tilde.1 unquoted leading `~` → focused SB4036 (not the misleading $HOME
+# SB5018); DD#53 no home-directory magic. Compile-time reject, all modes.
+run_sash 'echo ~'
+[[ $rc != 0 && -z $out && $err == *SB4036* ]]; chk tilde.1
+# tilde.2 `~/path` → same SB4036
+run_sash 'echo ~/x'
+[[ $rc != 0 && -z $out && $err == *SB4036* ]]; chk tilde.2
+# tilde.3 quoted / mid-word tilde stays a literal (unaffected)
+run_sash "echo '~' \"~\" a~b"
+[[ $rc = 0 && $out = "~ ~ a~b" && -z $err ]]; chk tilde.3
+
 set -e
 tally
