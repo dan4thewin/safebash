@@ -1616,6 +1616,10 @@ fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
             check_argv_splat_body(&f.body, diags);
         }
         StmtKind::Declaration(d) => check_argv_splat_decl(d, diags),
+        StmtKind::Command(c) => {
+            check_echo_splat(c, diags);
+            stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
+        }
         _ => {
             stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
             for body in stmt.child_bodies() {
@@ -1758,6 +1762,38 @@ fn quoted_splat_diag(span: Span) -> Diagnostic {
 /// `$(argv)` / `$(argv N)` — the array-splat command substitution.
 fn is_argv_splat_expr(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "argv"))
+}
+
+/// DD#69 §3: `echo` join-and-prints its arguments, so a named-array splat
+/// there would flatten the array (DD#22) and reintroduce word-splitting
+/// downstream. Reject `echo @a` with SB5030, directing to the explicit
+/// `echo $(join @a)`. External commands keep the structured argv splat.
+fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return;
+    };
+    if name != "echo" {
+        return;
+    }
+    for arg in &c.args {
+        if is_named_array_splat(arg) {
+            diags.push(Diagnostic::error_span(
+                arg.span,
+                "SB5030",
+                "`echo` joins its arguments into one output stream, so an array \
+                 splat there would flatten the array (DD#22). Use an explicit \
+                 join: `echo $(join @a)`"
+                    .to_string(),
+            ));
+        }
+    }
+}
+
+/// `@a` / `${a[@]}` / `$a[@]` — a named-array value/key splat. Unlike
+/// [`is_splat_form`] this excludes `$(argv)` (already SB5025).
+fn is_named_array_splat(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::ParameterExpansion(pe)
+        if matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys")))
 }
 
 /// A bare splat form: `$(argv …)`, an `arrvals`/`arrkeys` parameter

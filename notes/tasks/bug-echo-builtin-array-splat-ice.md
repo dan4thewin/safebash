@@ -1,6 +1,6 @@
 ---
 title: "`echo @a` array splat: reject with a clean error directing to `echo $(join @a)` (currently ICEs)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -13,6 +13,15 @@ gates:
 ---
 
 # `echo @a` → reject, direct to `echo $(join @a)` (DD#69 §3)
+
+> **DONE (2026-07-07, autopilot).** New front-end code **SB5030** in
+> `validate::check_echo_splat` (a `StmtKind::Command` arm in
+> `check_argv_splat`): a named-array splat (`@a` / `${a[@]}`, an `arrvals`/
+> `arrkeys` ParameterExpansion) in an `echo` argument is a clean compile
+> error before codegen, so the `values.rs:61` ICE backstop is never hit.
+> `$(argv)` stays SB5025 (no double). External-command splats unchanged.
+> spec/types.sh 33.14 (bare→SB5030), 33.15 (`echo $(join @a)` positive),
+> 33.16 (mixed→SB5030); all pass native/c/janet, 0 regressions.
 
 Found 2026-07-04. Resolved by DG as **B** (2026-07-04): `echo @a` is a
 compile error, not a splat. See DD#69 §3.

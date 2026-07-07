@@ -86,3 +86,17 @@ Native abort diagnostics DONE for external / cmdsub / pipeline / regerror9
 (+ overflow already). bg-exec has a status diagnostic; errno-precision
 filed. c/janet parity is the separate `c-janet-dd55-abort-channel` /
 `dd55-abort-channel-remaining` work. 0 regressions native/c/janet.
+
+## Task: bug-echo-builtin-array-splat-ice (Tier 2 #1) — DONE
+
+`echo @a` ICE'd at codegen (`values.rs:61`, ArraySplat lowered as scalar).
+DG resolved (DD#69 §3, B): `echo` join-and-prints, so `@a` there is a
+compile error → use `echo $(join @a)`.
+
+Fix: new front-end **SB5030** in `validate::check_echo_splat` — a
+`StmtKind::Command` arm in `check_argv_splat` flags a named-array splat
+(`arrvals`/`arrkeys` ParameterExpansion) in an `echo` arg. `$(argv)` stays
+SB5025 (used `is_named_array_splat`, excluding cmdsub, to avoid a double
+diag). External splats untouched (`/bin/echo @a` still expands).
+spec/types.sh 33.14-16; 0 regressions native/c/janet. Backstop ICE now
+unreachable for echo.

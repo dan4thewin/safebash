@@ -36,7 +36,8 @@ sweep` compiler part is DONE (§1/§2/§4B shipped); its only remainder is §3,
 a sash-convert canonicalize mode → moved to Tier 6._
 
 **Tier 2 — compiler bugs (native)**
-5. `bug-echo-builtin-array-splat-ice` (P2, live ICE)
+5. ~~`bug-echo-builtin-array-splat-ice`~~ — DONE 2026-07-07 (SB5030 rejects
+   `echo @a`; ICE backstop unreachable)
 6. `tighten-cmdsub-taint-execve` (P2, security; unblocked by dd23)
 7. `bug-test-operand-concat-splice` (P3)
 8. `tilde-vs-dd53` (P3)

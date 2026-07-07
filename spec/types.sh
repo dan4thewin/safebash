@@ -290,6 +290,20 @@ run_sash 'array a=(x y); i=1; a[$i]+=z; echo ${a[1]}'
 run_sash 'map m=([k]=ab); m[k]+=cd; echo ${m[k]}'
 [[ $rc = 0 && $out = "abcd" && -z $err ]]; chk 33.13
 
+# 33.14 `echo @a` is a clean compile error (SB5030), not an ICE — echo joins
+# its args, so an array splat there would flatten the array (DD#22/DD#69 §3);
+# the user writes the explicit `echo $(join @a)`.
+run_sash 'array a=(one two three); echo @a'
+[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.14
+
+# 33.15 the directed-to explicit join compiles and prints the joined string
+run_sash 'array a=(one two three); echo $(join @a)'
+[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.15
+
+# 33.16 the reject also fires for a mixed splat (`echo x @a y`)
+run_sash 'array a=(one two); echo x @a y'
+[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.16
+
 set -e
 tally
 
