@@ -750,7 +750,6 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
             writeln!(out, "(break)").unwrap();
         }
         BuiltinCmd::Return => emit_janet_return(out, ctx, c),
-        BuiltinCmd::Printf => emit_janet_printf(out, ctx, c),
         BuiltinCmd::Read => emit_janet_read(out, ctx, c),
         BuiltinCmd::Bless => emit_janet_bless(out, c),
         BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
@@ -779,7 +778,6 @@ fn janet_cmd_defaults_success(kind: &BuiltinCmd, cmd_name: &str) -> bool {
     matches!(
         kind,
         BuiltinCmd::Echo
-            | BuiltinCmd::Printf
             | BuiltinCmd::Read
             | BuiltinCmd::Unset
             | BuiltinCmd::Shift
@@ -965,38 +963,6 @@ fn emit_janet_exit(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     }
 }
 
-fn emit_janet_printf(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
-    let args: Vec<String> = c
-        .args
-        .iter()
-        .enumerate()
-        .map(|(i, a)| {
-            // The format string (arg 0) has printf backslash escapes
-            // interpreted; the rest are ordinary values.
-            if i == 0 {
-                if let Some(fmt) = printf_format_literal(a) {
-                    return format!(
-                        "\"{}\"",
-                        escape_for_janet_string(&interpret_printf_escapes(&fmt))
-                    );
-                }
-            }
-            emit_expr_inline(a, ctx)
-        })
-        .collect();
-    if args.len() >= 2 {
-        writeln!(
-            out,
-            "(prin (string/format {} {}))",
-            args[0],
-            args[1..].join(" ")
-        )
-        .unwrap();
-    } else if args.len() == 1 {
-        writeln!(out, "(prin {})", args[0]).unwrap();
-    }
-}
-
 fn emit_janet_read(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     let var_name = c
         .args
@@ -1064,45 +1030,6 @@ fn escape_for_janet_string(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
-}
-
-/// `printf` interprets C-style backslash escapes in its format string.
-/// Apply them here (so `\n`→newline etc.) before the result is escaped for
-/// Janet string syntax — Janet's `string/format` does not interpret them.
-fn interpret_printf_escapes(s: &str) -> String {
-    let mut out = String::new();
-    let mut it = s.chars();
-    while let Some(c) = it.next() {
-        if c != '\\' {
-            out.push(c);
-            continue;
-        }
-        match it.next() {
-            Some('n') => out.push('\n'),
-            Some('t') => out.push('\t'),
-            Some('r') => out.push('\r'),
-            Some('\\') => out.push('\\'),
-            Some('a') => out.push('\x07'),
-            Some('b') => out.push('\x08'),
-            Some('f') => out.push('\x0c'),
-            Some('v') => out.push('\x0b'),
-            Some(other) => {
-                out.push('\\');
-                out.push(other);
-            }
-            None => out.push('\\'),
-        }
-    }
-    out
-}
-
-/// Literal text of a `printf` format argument, if it is a plain literal.
-fn printf_format_literal(e: &Expr) -> Option<String> {
-    match &e.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => printf_format_literal(&parts[0]),
-        _ => None,
-    }
 }
 
 fn is_cat_no_args(kind: &StmtKind) -> bool {

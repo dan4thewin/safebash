@@ -16,15 +16,20 @@ run_sash 'echo hello | /usr/bin/cat'
 run_sash 'x=$(echo hello); echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 14.2
 
-# 14.2b command substitution resolves an EXTERNAL command head (DD#23) —
-#        bare `printf`/`cat` used to reach sash_exec unresolved. native
-#        only: the C cmdsub exec is a Phase-4 TODO and the Janet os/spawn
-#        capture pipe is racy (janet-pipeline-eagain-flaky).
+# 14.2b command substitution of an EXTERNAL command (printf resolves to
+#        /usr/bin/printf via DD#23) has TAINTED capture — execve output is
+#        tainted, so using it needs a bless (SB5020). Compile-time, all modes.
+run_sash 'x=$(printf hi); echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.2b
+
+# 14.2c blessed, the external capture is usable. native only: the C cmdsub
+#        exec is a Phase-4 TODO and the Janet os/spawn capture pipe is racy
+#        (janet-pipeline-eagain-flaky).
 if in_modes native; then
-    run_sash 'x=$(printf hi); echo "$x"'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2b
+    run_sash 'x=$(printf hi); bless x [[ -n $x ]]; echo "$x"'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
 else
-    skip_chk 14.2b
+    skip_chk 14.2c
 fi
 
 # 67.4 flat backtick `cmd` is sugar for $(cmd) (DD#67)

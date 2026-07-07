@@ -222,7 +222,6 @@ impl SsaInst {
             BuiltinCmd::Cd => {
                 return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
             }
-            BuiltinCmd::Pwd => return self.emit_pwd(args, builder, module, ctx),
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
             BuiltinCmd::Shift => {
                 return super::inst_handlers::handle_shift(args, builder, module, ctx)
@@ -1212,38 +1211,6 @@ impl SsaInst {
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
         true // block is terminated
-    }
-
-    fn emit_pwd(
-        &self,
-        _args: &[SsaValue],
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) -> bool {
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        // pwd — getcwd, write to stdout
-        let len_slot =
-            builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-        let len_addr = builder.ins().stack_addr(I64, len_slot, 0);
-        let getcwd_ref = module.declare_func_in_func(externs.getcwd, builder.func);
-        let call = builder.ins().call(getcwd_ref, &[len_addr]);
-        let cwd_ptr = builder.inst_results(call)[0];
-        let cwd_len = builder.ins().stack_load(I64, len_slot, 0);
-        let stdout = builder.ins().iconst(I64, 1);
-        let write_ref = module.declare_func_in_func(externs.write, builder.func);
-        builder.ins().call(write_ref, &[stdout, cwd_ptr, cwd_len]);
-        // Write newline
-        let nl_id = literals.get("\n").expect("newline literal");
-        let nl_gv = module.declare_data_in_func(*nl_id, builder.func);
-        let nl_ptr = builder.ins().global_value(I64, nl_gv);
-        let nl_len = builder.ins().iconst(I64, 1);
-        builder.ins().call(write_ref, &[stdout, nl_ptr, nl_len]);
-        let zero = builder.ins().iconst(I64, 0);
-        builder.def_var(exit_status_var, zero);
-        false
     }
 
     fn emit_read_array(

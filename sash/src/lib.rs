@@ -338,7 +338,6 @@ fn builtin_command_set() -> std::collections::HashSet<&'static str> {
         ":",
         "exit",
         "cd",
-        "pwd",
         "wait",
         "shift",
         "read",
@@ -349,7 +348,6 @@ fn builtin_command_set() -> std::collections::HashSet<&'static str> {
         "__redirect_pop",
         "__store_bg_pid",
         "__table_delete",
-        "printf",
         "signal",
     ]
     .iter()

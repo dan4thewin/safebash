@@ -1,6 +1,6 @@
 ---
 title: "tighten cmdsub taint: execve(2)/execveat(2) output is tainted; delete the 'clean iff args clean' pass-through"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: [advance-dd23-resolution]
@@ -13,6 +13,28 @@ gates:
 ---
 
 # Tighten cmdsub taint — execve is the taint source
+
+> **DONE (2026-07-07, autopilot).** Root cause was deeper than the taint
+> pass: `printf`/`pwd` were **builtins** (`BuiltinCmd::Printf`/`Pwd`,
+> native `emit_pwd`, janet `emit_janet_printf`), so `is_resolvable_external`
+> skipped them and the front-end never resolved them to abs-paths — the CST
+> taint pass saw bare `printf` (clean) while SSA basename-classified it
+> (tainted) → the SSA ICE backstop fired. DG: "printf and pwd are external;
+> any builtin of printf/pwd is a bug."
+>
+> Fix: removed the `Printf`/`Pwd` `BuiltinCmd` variants (+ `from_name`,
+> native `emit_pwd`, janet `emit_janet_printf` and its dead escape helpers,
+> the `builtin_command_set` entries). Now `from_name`→`Other` →
+> `is_resolvable_external`→true → `printf`/`pwd` resolve to
+> `/usr/bin/printf` / `/usr/bin/pwd` and exec everywhere (c already did).
+> `cmd_subst_taint` reclassified: `echo` → clean list, the `echo|printf|pwd`
+> pass-through arm deleted (printf/pwd → tainted via the external default),
+> the unused `taint` param dropped. The CST twin (`cmdsub_is_taint_source`)
+> needed no change — it keys on the now-resolved abs-path.
+>
+> `$(printf hi)` unblessed → SB5020 (front-end, span-bearing), no ICE.
+> spec/commands.sh 14.2b flipped clean→SB5020 (all modes), 14.2c blessed
+> positive (native). 0 regressions native/c/janet.
 
 DG: "anytime execve(2)/execveat(2) occur, that is external and any output
 captured is tainted." The current `cmd_subst_taint` (ssa_taint.rs) wrongly

@@ -100,3 +100,28 @@ SB5025 (used `is_named_array_splat`, excluding cmdsub, to avoid a double
 diag). External splats untouched (`/bin/echo @a` still expands).
 spec/types.sh 33.14-16; 0 regressions native/c/janet. Backstop ICE now
 unreachable for echo.
+
+## Task: tighten-cmdsub-taint-execve (Tier 2 #6) — DONE (via printf/pwd bug)
+
+Started as a taint reclassification; DG diagnosed the root cause: `printf`
+and `pwd` were **builtins** (`BuiltinCmd::Printf`/`Pwd`), so
+`is_resolvable_external` skipped them → the front-end never resolved them
+to abs-paths → CST taint saw bare `printf` (clean) while SSA basename-
+classified it (tainted) → SSA ICE backstop. DG: "printf and pwd are
+external; any builtin of printf/pwd is a bug."
+
+Fix (native + janet; c already externals them):
+- Removed `BuiltinCmd::Printf`/`Pwd` (enum + `from_name`), native
+  `emit_pwd`, janet `emit_janet_printf` (+ its now-dead `interpret_printf_
+  escapes`/`printf_format_literal`), and the `builtin_command_set` entries.
+  `from_name`→`Other` → resolved to `/usr/bin/printf` / `/usr/bin/pwd`,
+  exec'd like any external.
+- `cmd_subst_taint`: `echo`→clean list; deleted the `echo|printf|pwd`
+  pass-through (printf/pwd → tainted via the external default); dropped the
+  now-unused `taint` param. CST twin (`cmdsub_is_taint_source`) unchanged —
+  it already keys on the (now-resolved) abs-path.
+
+`$(printf hi)` unblessed → SB5020 (front-end), no ICE. Also fixes the ICE
+`bug-echo`-style mismatch for external cmdsubs. spec/commands.sh 14.2b
+flipped clean→SB5020 (all modes) + 14.2c blessed positive (native). 0
+regressions native/c/janet.

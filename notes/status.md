@@ -38,7 +38,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 **Tier 2 — compiler bugs (native)**
 5. ~~`bug-echo-builtin-array-splat-ice`~~ — DONE 2026-07-07 (SB5030 rejects
    `echo @a`; ICE backstop unreachable)
-6. `tighten-cmdsub-taint-execve` (P2, security; unblocked by dd23)
+6. `tighten-cmdsub-taint-execve` — DONE 2026-07-07 (printf/pwd made
+   external — removed the Printf/Pwd builtins; execve capture tainted)
 7. `bug-test-operand-concat-splice` (P3)
 8. `tilde-vs-dd53` (P3)
 

@@ -103,7 +103,6 @@ pub enum BuiltinCmd {
     Exit,
     Exec,
     Cd,
-    Pwd,
     Wait,
     Shift,
     /// `command` builtin (bypass function lookup).
@@ -121,7 +120,6 @@ pub enum BuiltinCmd {
     Signal,
     Trap,
     Unset,
-    Printf,
 
     // ─── Sash-native intrinsics ───
     /// `$(len ...)` — string or array length.
@@ -174,7 +172,6 @@ impl BuiltinCmd {
             "exit" => Self::Exit,
             "exec" => Self::Exec,
             "cd" => Self::Cd,
-            "pwd" => Self::Pwd,
             "wait" => Self::Wait,
             "shift" => Self::Shift,
             "command" => Self::CommandBuiltin,
@@ -187,7 +184,6 @@ impl BuiltinCmd {
             "signal" => Self::Signal,
             "trap" => Self::Trap,
             "unset" => Self::Unset,
-            "printf" => Self::Printf,
             "len" => Self::Len,
             "keys" => Self::Keys,
             "join" => Self::Join,

@@ -345,7 +345,7 @@ fn value_is_tainted(
         // Command substitution: the only variant whose taint
         // depends on the callee (builtins are clean, externals
         // tainted, user fns clean by DD#24).
-        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, taint, user_functions),
+        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, user_functions),
     }
 }
 
@@ -376,37 +376,27 @@ fn any_tainted<'a>(
 }
 
 /// Compute the taint of a `$(...)` command substitution. The first
-/// argv element is the command name; basename lookup classifies it:
+/// argv element is the (resolved) command name; basename lookup
+/// classifies the capture by COMMAND, not args — a cmdsub's args are
+/// necessarily clean (reading a tainted value is SB5020 everywhere except
+/// inside a bless test):
 ///
-/// - `getenv` / `argv` — external input, always tainted.
-/// - Known-safe sash builtins (`len`, `keys`, etc.) — clean, pure
-///   computation.
-/// - `echo` / `printf` / `pwd` — output is clean if all args are
-///   clean (pass-through pure functions).
+/// - `getenv` / `argv` / `arg` — external input, always tainted.
+/// - Internal builtins (`echo`, `len`, `getcwd`, `getpid`, …) — clean,
+///   in-process, no exec.
 /// - User-defined functions — clean by DD#24.
-/// - Everything else (external commands) — tainted; explicit
-///   `bless` required to launder.
-fn cmd_subst_taint(
-    argv: &[SsaValue],
-    taint: &HashMap<String, Taint>,
-    user_functions: &std::collections::HashSet<String>,
-) -> Taint {
+/// - Everything else runs via execve/execveat (`printf`, `pwd`, `cat`,
+///   …) — tainted; an explicit `bless` is required to launder (DG:
+///   "anytime execve(2)/execveat(2) occur, captured output is tainted").
+fn cmd_subst_taint(argv: &[SsaValue], user_functions: &std::collections::HashSet<String>) -> Taint {
     let Some(SsaValue::Literal(cmd)) = argv.first() else {
         return Taint::Tainted;
     };
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
         "getenv" | "argv" | "arg" => Taint::Tainted,
-        "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
-        | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => Taint::Clean,
-        "echo" | "printf" | "pwd" => {
-            // Pass-through builtins: output clean iff all args clean.
-            if any_tainted(argv[1..].iter(), taint, user_functions) == Taint::Clean {
-                Taint::Clean
-            } else {
-                Taint::Tainted
-            }
-        }
+        "echo" | "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid"
+        | "getppid" | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => Taint::Clean,
         _ => {
             if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
                 Taint::Clean
