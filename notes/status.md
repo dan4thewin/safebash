@@ -23,11 +23,15 @@ earlier, but nearly all `depends:` are satisfied (DD docs or done tasks;
 `tighten-cmdsub-taint-execve`), so the tiers apply cleanly. **⚠ = blocked
 on a DG decision before it can complete.**
 
-**Tier 1 — finish partials**
-1. `dd55-abort-channel-remaining` (P2)
-2. `abort-diagnostics-remaining` (P2)
-3. `implement-getpid-builtins` (P3, partial) ⚠ random semantics
-4. `dd67-bash-sugar-sweep` (P3, partial)
+**Tier 1 — finish partials (native)**
+1. `abort-diagnostics-remaining` (P2) — native `<argv0>:` abort messages
+2. `implement-getpid-builtins` (P3, partial) ⚠ random semantics
+
+_Correction 2026-07-07 (autopilot): `dd55-abort-channel-remaining` moved to
+Tier 4 — it is entirely c/janet backend work (native landed in `707832f`),
+so it follows the native tiers per the native-first rule. `dd67-bash-sugar-
+sweep` compiler part is DONE (§1/§2/§4B shipped); its only remainder is §3,
+a sash-convert canonicalize mode → moved to Tier 6._
 
 **Tier 2 — compiler bugs (native)**
 5. `bug-echo-builtin-array-splat-ice` (P2, live ICE)
@@ -44,13 +48,16 @@ on a DG decision before it can complete.**
 14. `argv-snapshot-to-outparam` (P2) ⚠ auto-declare
 
 **Tier 4 — c/janet backend parity** (native is the gate; after tiers 1-3)
-15. `c-janet-dd55-abort-channel` (partial — do first)
-16. `c-janet-compound-pipeline-stage`
-17. `cf-backend-gaps-brace-surfaced`
-18. `echo-read-inline-pipe-cjanet`
-19. `janet-arith-string-coercion`
-20. `cmdsub-followups-taint-intrinsics-c`
-21. `oracle-blessall-mapfile`
+15. `c-janet-dd55-abort-channel` (partial — do first) ⧉ reconcile overlap
+    with `dd55-abort-channel-remaining` (both are DD#55 abort in c/janet)
+16. `dd55-abort-channel-remaining` (P2) — pipefail/c-cmdsub/descriptive
+    msgs/janet pipeline (moved from Tier 1: all backend)
+17. `c-janet-compound-pipeline-stage`
+18. `cf-backend-gaps-brace-surfaced`
+19. `echo-read-inline-pipe-cjanet`
+20. `janet-arith-string-coercion`
+21. `cmdsub-followups-taint-intrinsics-c`
+22. `oracle-blessall-mapfile`
 
 **Tier 5 — hardening / infra / cleanup** (compiler-related → before convert)
 22. `eliminate-ice-arms-via-types` (bug-surface; may pull up near tier 2)
@@ -65,6 +72,8 @@ on a DG decision before it can complete.**
 29. `converter-case-to-dispatch` (P3, policy resolved)
 30. `converter-var-modifier-migration` (P3)
 31. `converter-compound-postfix`
+32. `dd67-bash-sugar-sweep` §3 only — sash-convert canonicalize mode
+    (compiler §1/§2/§4B already done; §3 couples to dd68 brace forms)
 
 **Deferred to the very end:** `audit-rust-test-suites` (+ superseded
 `rust-test-suite-rot`, `stale-rust-test-suites`) — revisit its specific
