@@ -62,11 +62,25 @@ pub(super) fn handle_pipeline(
     parent_close_pipes(builder, capture_read_fd, &pipe_slots, &pe);
     save_capture_fd(builder, capture_read_fd, &pipe_slots, ctx.pipe_read_fd_var);
 
-    let final_worst = wait_for_children(builder, n, checked, pid_slot, &pe);
+    // DD#55: materialize each stage's name for the abort diagnostic
+    // (`<argv0>: <failing-stage>: command failed (exit N)`).
+    let mut stage_names = Vec::with_capacity(n);
+    for (name, _, _) in stages {
+        stage_names.push(diag_static_seg(name, ctx.literals, module, builder));
+    }
+    let (final_worst, fail_name_ptr, fail_name_len) =
+        wait_for_children(builder, checked, pid_slot, &pe, &stage_names);
     update_pipeline_status(builder, final_worst, ctx);
 
     if checked {
-        emit_pipeline_abort_check(builder, module, ctx, final_worst);
+        emit_pipeline_abort_check(
+            builder,
+            module,
+            ctx,
+            final_worst,
+            fail_name_ptr,
+            fail_name_len,
+        );
     }
     false
 }
@@ -344,23 +358,32 @@ fn save_capture_fd(
 /// is skipped when the pipeline is suppression-marked (`checked=false`).
 fn wait_for_children(
     builder: &mut FunctionBuilder,
-    n: usize,
     checked: bool,
     pid_slot: cranelift_codegen::ir::StackSlot,
     pe: &PipelineExterns,
-) -> cranelift_codegen::ir::Value {
+    names: &[(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)],
+) -> (
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+    cranelift_codegen::ir::Value,
+) {
     let worst_var = builder.declare_var(I64);
+    let name_ptr_var = builder.declare_var(I64);
+    let name_len_var = builder.declare_var(I64);
     let init_zero = builder.ins().iconst(I64, 0);
     builder.def_var(worst_var, init_zero);
+    builder.def_var(name_ptr_var, init_zero);
+    builder.def_var(name_len_var, init_zero);
 
-    for i in 0..n {
+    for (i, &(np, nl)) in names.iter().enumerate() {
         let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
         let call = builder.ins().call(pe.wait, &[pid]);
         let status = builder.inst_results(call)[0];
         if i == 0 && !checked {
             continue;
         }
-        // Update worst: if worst == 0 && status != 0, worst = status
+        // Update worst: if worst == 0 && status != 0, worst = status (and
+        // record that stage's name for the DD#55 diagnostic).
         let cur_worst = builder.use_var(worst_var);
         let zero = builder.ins().iconst(I64, 0);
         let worst_is_zero = builder.ins().icmp(IntCC::Equal, cur_worst, zero);
@@ -368,8 +391,18 @@ fn wait_for_children(
         let should_update = builder.ins().band(worst_is_zero, status_nonzero);
         let new_worst = builder.ins().select(should_update, status, cur_worst);
         builder.def_var(worst_var, new_worst);
+        let cur_np = builder.use_var(name_ptr_var);
+        let cur_nl = builder.use_var(name_len_var);
+        let new_np = builder.ins().select(should_update, np, cur_np);
+        let new_nl = builder.ins().select(should_update, nl, cur_nl);
+        builder.def_var(name_ptr_var, new_np);
+        builder.def_var(name_len_var, new_nl);
     }
-    builder.use_var(worst_var)
+    (
+        builder.use_var(worst_var),
+        builder.use_var(name_ptr_var),
+        builder.use_var(name_len_var),
+    )
 }
 
 fn update_pipeline_status(
@@ -391,6 +424,8 @@ fn emit_pipeline_abort_check(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
     final_worst: cranelift_codegen::ir::Value,
+    fail_name_ptr: cranelift_codegen::ir::Value,
+    fail_name_len: cranelift_codegen::ir::Value,
 ) {
     let abort_block = builder.create_block();
     let cont_block = builder.create_block();
@@ -402,6 +437,12 @@ fn emit_pipeline_abort_check(
 
     builder.switch_to_block(abort_block);
     builder.seal_block(abort_block);
+    // DD#55 diagnostic: `<argv0>: <failing-stage>: command failed (exit N)`.
+    let emsg_status_ref = module.declare_func_in_func(ctx.externs.emsg_status, builder.func);
+    builder.ins().call(
+        emsg_status_ref,
+        &[fail_name_ptr, fail_name_len, final_worst],
+    );
     if let Some(end_cl) = ctx.end_cl_block {
         builder.def_var(ctx.exit_status_var, final_worst);
         builder.ins().jump(end_cl, &[]);

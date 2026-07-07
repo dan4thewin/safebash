@@ -972,6 +972,12 @@ fn emit_cmdsub_exec(
 
         builder.switch_to_block(abort_block);
         builder.seal_block(abort_block);
+        // DD#55 diagnostic: `<argv0>: <name>: command failed (exit N)`.
+        if let Some(SsaValue::Literal(name)) = argv_values.first() {
+            let (np, nl) = super::inst_handlers::diag_static_seg(name, literals, module, builder);
+            let emsg_status_ref = module.declare_func_in_func(externs.emsg_status, builder.func);
+            builder.ins().call(emsg_status_ref, &[np, nl, cmd_status]);
+        }
         // TODO: DD#56 — route to END block for cmdsub abort
         let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
         builder.ins().call(exit_ref, &[cmd_status]);

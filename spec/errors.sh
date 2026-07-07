@@ -97,7 +97,8 @@ run_sash 'fn f { local x=$(/bin/false); }; f'
 
 # 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)
 run_sash 'x=$(/bin/false)'
-[[ $rc != 0 && -z $err ]]; chk 55.8
+[[ $rc != 0 && -z $err ]] \
+  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.8
 
 # 55.9 x=$(- cmd) captures output, discards exit
 run_sash 'x=$(- /bin/echo hello); echo $x'
@@ -105,7 +106,8 @@ run_sash 'x=$(- /bin/echo hello); echo $x'
 
 # 55.10 pipefail always on
 run_sash '/bin/false | /bin/true'
-[[ $rc != 0 && -z $err ]]; chk 55.10
+[[ $rc != 0 && -z $err ]] \
+  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.10
 
 # 55.11 - cmd1 | cmd2 suppresses cmd1 but checks cmd2
 run_sash '- /bin/false | /bin/true'

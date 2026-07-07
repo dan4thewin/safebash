@@ -43,3 +43,15 @@ bg-exec is errno-based (fits sash_emsg); regerror9 is a prefix change.
   [[ $rerr == *"...command failed (exit 1)"* ]]`), one chk, cross-mode-safe.
 - Verified: bare aborts w/ msg; `-`/`||` stay silent. 0 regressions
   native/c/janet (authoritative latest-run-per-test diff).
+
+## Class 2+3: cmdsub + pipeline messages — DONE
+
+- cmdsub (`x=$(/bin/false)`, 55.8): in the value_handlers abort block, emit
+  `sash_emsg_status(name, status)` (name = `argv_values.first()` literal).
+- pipeline (`/bin/false | /bin/true`, 55.10): `wait_for_children` now also
+  tracks the failing stage's name (select alongside the worst-status
+  select) and returns `(worst, name_ptr, name_len)`;
+  `emit_pipeline_abort_check` emits the status message naming that stage.
+  `handle_pipeline` materializes each stage name via `diag_static_seg`.
+- Verified: both name the failing command + exit; `-`-suppressed stay
+  silent; last-stage failure named correctly. 0 native regressions.
