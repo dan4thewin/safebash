@@ -27,7 +27,9 @@ on a DG decision before it can complete.**
 1. ~~`abort-diagnostics-remaining`~~ — DONE 2026-07-07 (native abort
    diagnostics for external/cmdsub/pipeline/regerror9; bg-exec uses the
    status form, errno-precision filed as `bg-exec-errno-message`).
-2. `implement-getpid-builtins` (P3, partial) ⚠ random semantics
+2. ~~`implement-getpid-builtins`~~ — DONE 2026-07-07 (getpid + random landed
+   native+c; `$(random)` = non-negative i64 via getrandom(2). janet class
+   gap filed as `janet-getpid-class-intrinsics`, Tier 4). **Tier 1 COMPLETE.**
 
 _Correction 2026-07-07 (autopilot): `dd55-abort-channel-remaining` moved to
 Tier 4 — it is entirely c/janet backend work (native landed in `707832f`),
@@ -66,6 +68,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 20. `janet-arith-string-coercion`
 21. `cmdsub-followups-taint-intrinsics-c`
 22. `oracle-blessall-mapfile`
+23. `janet-getpid-class-intrinsics` — janet execs getpid-class names as
+    fake commands; add os/getpid/os/getenv/os/cryptorand/… dispatch
 
 **Tier 5 — hardening / infra / cleanup** (compiler-related → before convert)
 22. `eliminate-ice-arms-via-types` (bug-surface; may pull up near tier 2)

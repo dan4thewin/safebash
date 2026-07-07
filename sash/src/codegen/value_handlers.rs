@@ -667,6 +667,18 @@ fn try_native_intrinsic(
             let pid = builder.inst_results(call)[0];
             Some(emit_int_to_str(builder, module, externs, pid))
         }
+        "getpid" => {
+            let func_ref = module.declare_func_in_func(externs.getpid, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let pid = builder.inst_results(call)[0];
+            Some(emit_int_to_str(builder, module, externs, pid))
+        }
+        "random" => {
+            let func_ref = module.declare_func_in_func(externs.random, builder.func);
+            let call = builder.ins().call(func_ref, &[]);
+            let val = builder.inst_results(call)[0];
+            Some(emit_int_to_str(builder, module, externs, val))
+        }
         "getcwd" => {
             let func_ref = module.declare_func_in_func(externs.getcwd, builder.func);
             let out_slot = builder.create_sized_stack_slot(StackSlotData::new(

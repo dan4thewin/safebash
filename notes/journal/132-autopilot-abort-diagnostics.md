@@ -150,3 +150,20 @@ spec/taint.sh tilde.1-3, all modes; 0 regressions. Converter rewrite half
 ## Tier 2 (native compiler bugs) — COMPLETE
 echo-splat ICE (SB5030), tighten-cmdsub-taint (printf/pwd external),
 concat-splice (not-a-bug), tilde (SB4036 compiler half). Tier 3 next.
+
+## Task: implement-getpid-builtins (Tier 1 #2) — DONE (native+c)
+
+DG decision: `$(random)` = non-negative 63-bit i64 (0..i64::MAX) from
+getrandom(2) (rustix `rand` feature — same CSPRNG as /dev/urandom, cleaner
+than an explicit device open). Added `sash_random` (sign bit cleared).
+Wired the two missing arms: `getpid` (native value_handlers — c already had
+it) and `random` (native + c). All getpid-class intrinsics now work as
+clean in-process builtins in the oracles.
+
+spec/functions.sh 42.7 (getpid numeric + clean capture, no bless), 42.8
+(random non-negative), 42.9 (two draws differ) — guarded native,c. 0
+regressions.
+
+Discovered janet execs the WHOLE getpid-class as fake commands
+(`(os/spawn ["getppid"])` etc. — getenv/argc too), a pre-existing gap →
+filed `janet-getpid-class-intrinsics` (Tier 4). **Tier 1 COMPLETE.**

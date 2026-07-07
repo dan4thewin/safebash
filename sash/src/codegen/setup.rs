@@ -610,6 +610,11 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_getppid", Linkage::Import, &getpid_sig)
         .expect("declare");
 
+    // sash_random() -> i64  (same nullary → i64 signature)
+    let random_func = module
+        .declare_function("sash_random", Linkage::Import, &getpid_sig)
+        .expect("declare");
+
     // sash_getcwd(out_len) -> ptr  (same sig as existing)
     // Already declared via pwd — reuse getcwd_func below
 
@@ -765,6 +770,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         tolower_all: tolower_all_func,
         getpid: getpid_func,
         getppid: getppid_func,
+        random: random_func,
         epochseconds: epochseconds_func,
         trap: trap_func,
         glob: glob_func,

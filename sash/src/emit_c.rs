@@ -189,6 +189,7 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
+    writeln!(out, "extern i64 sash_random(void);").unwrap();
     writeln!(out, "extern char* sash_getcwd(i64* out_len);").unwrap();
     // Phase 4 — external exec
     writeln!(
@@ -1695,6 +1696,11 @@ fn try_native_intrinsic_c(
             let t = e.fresh();
             writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
             Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        "random" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_r = sash_random();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_r", t)))
         }
         "getcwd" => {
             let t = e.fresh();

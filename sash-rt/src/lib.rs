@@ -2367,6 +2367,18 @@ pub extern "C" fn sash_getppid() -> i64 {
     }
 }
 
+/// A non-negative 63-bit random integer in `[0, i64::MAX]`, drawn from
+/// `getrandom(2)` (the same kernel CSPRNG as `/dev/urandom`). DG
+/// (2026-07-07): `$(random)` range. Clearing the sign bit keeps it
+/// non-negative and uniform over 63 bits.
+#[no_mangle]
+pub extern "C" fn sash_random() -> i64 {
+    let mut buf = [0u8; 8];
+    // 8 bytes is never a short read from the seeded CSPRNG.
+    let _ = rustix::rand::getrandom(&mut buf, rustix::rand::GetRandomFlags::empty());
+    i64::from_ne_bytes(buf) & i64::MAX
+}
+
 // ═══════════════════════════════════════════════════════════════
 // sash_split_first_word — split first whitespace-delimited word
 // ═══════════════════════════════════════════════════════════════

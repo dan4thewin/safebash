@@ -82,6 +82,29 @@ run_sash 'echo $(argc)' a b c
 run_sash 'x=$(arg 99); bless x [[ -n $x ]]; echo $x' hello
 [[ $rc != 0 && -z $out ]]; chk 42.6
 
+# 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
+#      without a bless). native,c only: janet lacks the getpid-class.
+if in_modes native,c; then
+    run_sash 'x=$(getpid); [[ $x =~ ^[0-9]+$ ]] && echo Y || echo N'
+    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7
+else
+    skip_chk 42.7
+fi
+# 42.8 $(random) — non-negative i64 (0..i64::MAX), clean capture
+if in_modes native,c; then
+    run_sash 'a=$(random); [[ $a =~ ^[0-9]+$ ]] && echo Y || echo N'
+    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.8
+else
+    skip_chk 42.8
+fi
+# 42.9 two $(random) draws differ (distinct entropy)
+if in_modes native,c; then
+    run_sash 'a=$(random); b=$(random); [[ $a != $b ]] && echo Y || echo N'
+    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.9
+else
+    skip_chk 42.9
+fi
+
 # 46.1 top-level $1..$N → compile error
 run_sash 'echo $1'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 46.1

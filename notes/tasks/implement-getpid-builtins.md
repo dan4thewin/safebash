@@ -1,6 +1,6 @@
 ---
 title: "implement getpid-class internal builtins (getpid/getppid/getcwd/epochseconds/random/argc); $$ = sugar for getpid"
-status: partial
+status: done
 priority: P3
 kind: feature
 depends: []
@@ -12,6 +12,24 @@ gates:
 ---
 
 # Implement the getpid-class internal builtins
+
+> **DONE (2026-07-07, autopilot) for native + c.** The two missing arms
+> landed: `getpid` (native `value_handlers` arm — c already had it) and
+> `random` (new runtime `sash_random` + native/c arms). `$(random)` returns
+> a **non-negative 63-bit i64 (0..i64::MAX)** from `getrandom(2)` (rustix
+> `rand` feature; same CSPRNG as /dev/urandom), sign bit cleared — DG's
+> range decision. All getpid-class intrinsics
+> (echo/getcwd/getpid/getppid/epochseconds/random/argc + `$$`) are clean,
+> in-process, no exec. printf/pwd were moved OUT to external this session
+> (commit 846d96b). spec/functions.sh 42.7 (getpid numeric + clean
+> capture), 42.8 (random non-negative), 42.9 (two draws differ), guarded
+> native,c. 0 regressions.
+>
+> **janet is OUT of scope here (filed `janet-getpid-class-intrinsics`):**
+> janet emits `(os/spawn ["getppid"])` etc. for the WHOLE class — it tries
+> to exec the intrinsics as external commands. That is a pre-existing janet
+> backend gap for every getpid-class name (getenv/argc too), not specific
+> to getpid/random; it belongs to the c/janet parity tier.
 
 ## Verified state (2026-07-06) — PARTIAL
 
