@@ -12,6 +12,68 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-07-06/07 — backlog prioritization (DG rule)
+
+DG set the working order for all remaining tasks: **(1) finish partially
+completed work → (2) fix compiler bugs → (3) implement remaining compiler
+features → (4) c/janet backend parity → (5) convert tasks.** "Convert is
+secondary to anything compiler-related." Dependencies may pull an item
+earlier, but nearly all `depends:` are satisfied (DD docs or done tasks;
+`advance-dd23-resolution` is now done, unblocking
+`tighten-cmdsub-taint-execve`), so the tiers apply cleanly. **⚠ = blocked
+on a DG decision before it can complete.**
+
+**Tier 1 — finish partials**
+1. `dd55-abort-channel-remaining` (P2)
+2. `abort-diagnostics-remaining` (P2)
+3. `implement-getpid-builtins` (P3, partial) ⚠ random semantics
+4. `dd67-bash-sugar-sweep` (P3, partial)
+
+**Tier 2 — compiler bugs (native)**
+5. `bug-echo-builtin-array-splat-ice` (P2, live ICE)
+6. `tighten-cmdsub-taint-execve` (P2, security; unblocked by dd23)
+7. `bug-test-operand-concat-splice` (P3)
+8. `tilde-vs-dd53` (P3)
+
+**Tier 3 — remaining compiler features (native)**
+9. `reject-undeclared-scalar-read` (P2)
+10. `regex-interpolation-delimiters` (P2)
+11. `dd70-error-model-contract-spec` (P2)
+12. `glob-as-array-splat-disposition` (P2)
+13. `glob-splat-disposition-word` (P2)
+14. `argv-snapshot-to-outparam` (P2) ⚠ auto-declare
+
+**Tier 4 — c/janet backend parity** (native is the gate; after tiers 1-3)
+15. `c-janet-dd55-abort-channel` (partial — do first)
+16. `c-janet-compound-pipeline-stage`
+17. `cf-backend-gaps-brace-surfaced`
+18. `echo-read-inline-pipe-cjanet`
+19. `janet-arith-string-coercion`
+20. `cmdsub-followups-taint-intrinsics-c`
+21. `oracle-blessall-mapfile`
+
+**Tier 5 — hardening / infra / cleanup** (compiler-related → before convert)
+22. `eliminate-ice-arms-via-types` (bug-surface; may pull up near tier 2)
+23. `excise-dormant-coercion-machinery` (P6) ⚠ remove vs revive
+24. `audit-string-keyed-builtin-dispatch`
+25. `fuzz-validator`
+26. `brush-rerun`
+27. `r47-validate-rs-per-rule-tests` (P7)
+
+**Tier 6 — convert (last among work)**
+28. `converter-positional-use-needs-bless` (P2) ⚠ hoist vs MANUAL
+29. `converter-case-to-dispatch` (P3, policy resolved)
+30. `converter-var-modifier-migration` (P3)
+31. `converter-compound-postfix`
+
+**Deferred to the very end:** `audit-rust-test-suites` (+ superseded
+`rust-test-suite-rot`, `stale-rust-test-suites`) — revisit its specific
+actions with DG at pickup.
+
+**Out-of-band (not in the linear sequence):** `cohort-complexity-cog-cc`
+(perpetual ratchet, pre-commit-gated), `r47-promote-monitoring-rules`
+(process).
+
 ### Session 2026-07-05 (cont.) — DD#72 numeric literals in arithmetic
 
 DG questioned arbitrary bases ("we have 0xff/0377 — why base#?"). Became a
