@@ -1,6 +1,6 @@
 ---
 title: "audit / prune / rehabilitate the Rust test suites (sash/tests/) — significant bit-rot"
-status: ready
+status: deferred
 priority: P2
 kind: chore
 depends: []
@@ -12,6 +12,17 @@ gates:
 ---
 
 # Audit / prune / rehabilitate the Rust test suites
+
+> **DEFERRED to the end (DG, 2026-07-07).** This is the LAST task — pick it
+> up only once the language sweep and the c/janet backend work have settled,
+> so the suites are rehabilitated against a stable surface instead of being
+> re-fixed as behavior keeps changing. The concrete plan below (the
+> frontmatter **gates** and the **Approach** section) is **provisional**:
+> when this is finally started, first re-inventory the failures fresh, then
+> **revisit the specific actions with DG** — what to delete vs. rewrite,
+> whether/how to re-enable `mk test` as a gate, the global-state-leak fix,
+> and the `sash-rt-tests` rehab — rather than executing the plan recorded
+> here as-is. Nothing here is ratified until that revisit.
 
 DG (2026-06-21): "the spec tests are the current source of truth, the other
 tests seem to have significant bit-rot due to substantial code changes —
