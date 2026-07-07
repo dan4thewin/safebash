@@ -1,9 +1,16 @@
 ---
 title: "Stale Rust test suites: sash-rt-tests broken + cargo core suites use old syntax"
-status: ready
+status: superseded
+superseded-by: audit-rust-test-suites
 priority: P3
 kind: chore
 ---
+
+> **SUPERSEDED 2026-07-06** — consolidated into
+> `notes/tasks/audit-rust-test-suites.md` (the canonical Rust-test-rot
+> task). The unique finding here (the `sash-rt-tests` link breakage against
+> removed `sash_streq` / `sash_arith_eval` externs, and wiring it into
+> `mk test`) is now a gate + "Absorbed detail" note there. Kept for history.
 
 # Stale Rust test suites (pre-existing, found during DD#63 captures)
 

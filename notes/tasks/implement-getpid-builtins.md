@@ -1,6 +1,6 @@
 ---
 title: "implement getpid-class internal builtins (getpid/getppid/getcwd/epochseconds/random/argc); $$ = sugar for getpid"
-status: ready
+status: partial
 priority: P3
 kind: feature
 depends: []
@@ -13,11 +13,46 @@ gates:
 
 # Implement the getpid-class internal builtins
 
-These names sit in `cmd_subst_taint`'s clean list but are implemented
-nowhere — they fail as `$(getpid)` and as direct commands. DG: build them
-as real **internal builtins** (in-process, no execve → clean), and make
-**`$$` sugar for `getpid`**. `getcwd` is the builtin form (use it instead
-of the external `pwd`, which execs → tainted).
+## Verified state (2026-07-06) — PARTIAL
+
+Behavioral check (native, release binary), one builtin per script:
+
+| builtin           | status | note |
+|-------------------|:------:|------|
+| `$(getppid)`      |   ✓    | value_handlers dispatch arm + `sash_getppid` |
+| `$(getcwd)`       |   ✓    | dispatch arm + `sash_getcwd` |
+| `$(epochseconds)` |   ✓    | dispatch arm + `sash_epochseconds` |
+| `$(argc)`         |   ✓    | dispatch arm |
+| `$$`              |   ✓    | wired as its own special-var path |
+| `$(getpid)`       |   ✗    | **compiles, then runtime-aborts** exit 127: `bug: bare command passed to sash_exec` |
+| `$(random)`       |   ✗    | same runtime abort |
+
+Root cause of the two failures: `getpid` and `random` are in
+`sash/src/resolve.rs`'s intrinsic-skip list (and the cmdsub clean-list),
+so resolution does **not** turn them into external commands — but
+`sash/src/codegen/value_handlers.rs`'s cmdsub-intrinsic dispatch has arms
+for `epochseconds` / `getppid` / `getcwd` / `getenv` / `argc` / `signum`
+and **no `getpid` / `random` arm**. So they emit as a bare command name
+and hit the DD#23 `sash_exec` guard at runtime. An advertised-clean
+builtin that runtime-aborts is a sharp edge.
+
+Remaining work:
+1. Add a `getpid` dispatch arm (runtime `sash_getpid` already exists —
+   `$$` uses it).
+2. Add a `random` arm — needs a runtime `sash_random` **and a semantics
+   decision** (bash `$RANDOM` is 0..32767; range / seeding for sash?).
+3. Defensive alternative worth considering: until a name is lowered, drop
+   it from the intrinsic-skip / clean lists so `$(name)` gets a clean
+   `SB5011` at compile instead of a runtime `bug:` abort.
+4. c / janet parity + spec tests.
+
+## Original intent
+
+These names sit in `cmd_subst_taint`'s clean list; `getpid` / `random`
+are not yet lowered (above). DG: build them as real **internal builtins**
+(in-process, no execve → clean), and make **`$$` sugar for `getpid`**.
+`getcwd` is the builtin form (use it instead of the external `pwd`, which
+execs → tainted).
 
 Runtime support likely needs `sash_getpid`/`sash_getppid`/`sash_getcwd`/
 … (rustix syscalls); wire each into the cmdsub-capture / intrinsic path

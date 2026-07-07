@@ -1,6 +1,7 @@
 ---
 title: Rust test suite rot — ~158 pre-existing failures at HEAD
-status: ready
+status: superseded
+superseded-by: audit-rust-test-suites
 priority: P1
 kind: bug
 depends: []
@@ -8,6 +9,12 @@ gates:
   - mk test (cargo test --release in sash/) is green, OR
   - stale tests are migrated/removed and the remaining set passes
 ---
+
+> **SUPERSEDED 2026-07-06** — consolidated into
+> `notes/tasks/audit-rust-test-suites.md` (the canonical Rust-test-rot
+> task). The unique findings here (SB4020→SB5020 stale codes, output-
+> mismatch per-case triage, the per-suite count table, parallel flakiness)
+> were folded into that task's "Absorbed detail" section. Kept for history.
 
 # Rust test suite rot — pre-existing failures at HEAD
 

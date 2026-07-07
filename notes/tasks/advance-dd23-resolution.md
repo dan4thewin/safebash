@@ -1,6 +1,6 @@
 ---
 title: "advance DD#23: hoist command resolution ahead of the front-end; unresolved = fatal; --sysroot incl. squashfs"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
@@ -12,6 +12,22 @@ gates:
 ---
 
 # Advance DD#23 — compile-time resolution ahead of the front-end
+
+> **DONE (verified 2026-07-06).** All four gates pass behaviorally:
+> - `resolve::resolve_commands(&mut program)` runs at `sash/src/lib.rs:108`,
+>   **before** `validate::validate` (157), `check_taint` (167) and
+>   `type_check` (175) — so the front-end sees resolved absolute paths.
+> - An unresolvable command is a **fatal compile error**: `frobnicate_xyz`
+>   → `error [SB5011] command 'frobnicate_xyz' not found` (exit 1), not a
+>   runtime failure.
+> - `sash/src/resolve.rs` honors `--sysroot=<dir>` and
+>   `--sysroot=<image.squashfs>` (reads `unsquashfs -l`).
+> - The `bare command passed to sash_exec` runtime path is unreachable for
+>   genuine externals (they're resolved or fatal at compile). (It remains
+>   reachable only for names wrongly listed as intrinsics but not lowered —
+>   `getpid` / `random`; that is `implement-getpid-builtins`, not a
+>   resolution gap.)
+> Body below kept for history.
 
 DD#23 (status: partial): "External commands are resolved to absolute
 paths at compile time… `--sysroot=/mnt/target`… `--sysroot=image.squashfs`
