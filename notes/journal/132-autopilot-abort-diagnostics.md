@@ -55,3 +55,34 @@ bg-exec is errno-based (fits sash_emsg); regerror9 is a prefix change.
   `handle_pipeline` materializes each stage name via `diag_static_seg`.
 - Verified: both name the failing command + exit; `-`-suppressed stay
   silent; last-stage failure named correctly. 0 native regressions.
+
+## Class 4: regerror9 prefix — DONE
+
+Runtime `regerror9` reprefixed `sash: regexp error: …` → `<argv0>: regexp
+error: …` (mirrors sash_emsg's argv0 logic). Verified behaviorally with a
+runtime-invalid dynamic pattern (`[[ x =~ $p ]]`, p=`[` → `<argv0>: regexp
+error: malformed '[]'`). No dedicated spec (a runtime regex-error test
+needs env/argv plumbing; behaviorally verified).
+
+## Class 5: bg-exec — status message already emitted; errno filed
+
+Surprise: `/nonexistent &; wait` ALREADY prints `<argv0>: <name>: command
+failed (exit 127)` — the bg child runs through `handle_general_command` →
+`sash_run` (fork/exec/wait), so the external status message (§1) already
+covers it. 55.16 now asserts that status message (native).
+
+The gate wanted the *errno* form (`<name>: No such file or directory`).
+Producing that cleanly is entangled: exec-FAILURE (missing binary, 127)
+is indistinguishable from a process that ran and exited 127, at the
+parent. Emitting the errno in the child (`sash_exec`/`sash_run`) would
+double with the parent status message (fg/pipeline too). This needs a
+design decision (how exec-failure should read across fg/bg/pipeline) →
+filed `bg-exec-errno-message`. My initial `sash_exec` attempt was reverted
+(wrong function + double-message).
+
+## Status
+
+Native abort diagnostics DONE for external / cmdsub / pipeline / regerror9
+(+ overflow already). bg-exec has a status diagnostic; errno-precision
+filed. c/janet parity is the separate `c-janet-dd55-abort-channel` /
+`dd55-abort-channel-remaining` work. 0 regressions native/c/janet.

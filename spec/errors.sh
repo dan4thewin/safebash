@@ -131,10 +131,12 @@ run_sash 'fn f -> int { return 0; }'
 run_sash 'fn f -> int { - /bin/false; return $?; }'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.15
 
-# 55.16 background exec failure aborts parent
+# 55.16 background exec failure aborts parent (diagnosed via the external
+# status message today; errno-precision refinement is a separate task)
 run_sash '/nonexistent_binary_xyz &
 wait'
-[[ $rc != 0 && -z $err ]]; chk 55.16
+[[ $rc != 0 && -z $err ]] \
+  && { ! in_modes native || [[ $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; }; chk 55.16
 
 # 55.17 $(status) only valid as first expression in handling branch
 run_sash 'cmd || { s=$(status); echo $s; }'

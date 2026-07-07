@@ -1427,8 +1427,19 @@ extern "C" {
 
 #[no_mangle]
 pub unsafe extern "C" fn regerror9(s: *const u8) {
-    // Write "sash: regexp error: <msg>\n" to stderr
-    let prefix = b"sash: regexp error: ";
+    // Write "<argv0>: regexp error: <msg>\n" to stderr (DD#55: diagnostics
+    // are prefixed with the program name, argv[0], for consistency).
+    let sep: &[u8] = b": ";
+    let argv = sash_argv;
+    if !argv.is_null() {
+        let a0 = *argv;
+        if !a0.is_null() {
+            let l = strlen(a0);
+            sash_write(2, a0, l as i64);
+        }
+    }
+    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    let prefix = b"regexp error: ";
     sash_write(2, prefix.as_ptr(), prefix.len() as i64);
     if !s.is_null() {
         let len = strlen(s);
