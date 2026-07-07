@@ -115,9 +115,26 @@ grammar), swap the op, delete the `case` surface + `=glob`/`fnmatch` +
 ## Converter
 
 `sash-convert` rewrites bash `case $x in a) … ;; b|c) … ;; *) … esac` into
-the dispatch form. Exact arms → `==`; the common `a|b|c` and glob arms
-(`*.ext`, `?`, `[…]`) → `=~` with the regex equivalent (anchored as the
-arm intends). Bash `*)` → `|| { … }`.
+the dispatch form, **split by risk** (DG, 2026-07-06 — see
+`notes/tasks/converter-case-to-dispatch.md`):
+
+- **All-literal case → auto-rewrite, compilable.** Single-literal arms
+  and literal `a|b|c` alternation arms → a `==` dispatch (multi-exact
+  `== a b c` for alternation, DD#71); `*)` → `|| { … }`; arm bodies get
+  their inner conversions; an informational `# sash-convert:` comment is
+  emitted.
+- **Any glob-metachar arm (`*`/`?`/`[…]`) or `;&`/`;;&` fall-through →
+  comment + keep original.** The converter does NOT auto-write regex: it
+  emits the best-effort anchored-`=~` dispatch (`*.sh`→`^.*\.sh$`, etc.)
+  as a `# sash-convert:` **comment** and leaves the original `case` in
+  place, which fails to compile (SB4029). This deliberate fail-loud
+  forces a human to review the converter-written regex rather than
+  silently trust it.
+- MANUAL annotation stays only for genuinely unparseable input.
+
+One dispatch states a single op, so a compilable dispatch never mixes
+`==`/`=~`; under split-by-risk any glob presence routes the whole
+construct to the comment path anyway.
 
 ## Supersedes / relates
 
