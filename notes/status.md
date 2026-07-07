@@ -24,7 +24,9 @@ earlier, but nearly all `depends:` are satisfied (DD docs or done tasks;
 on a DG decision before it can complete.**
 
 **Tier 1 — finish partials (native)**
-1. `abort-diagnostics-remaining` (P2) — native `<argv0>:` abort messages
+1. ~~`abort-diagnostics-remaining`~~ — DONE 2026-07-07 (native abort
+   diagnostics for external/cmdsub/pipeline/regerror9; bg-exec uses the
+   status form, errno-precision filed as `bg-exec-errno-message`).
 2. `implement-getpid-builtins` (P3, partial) ⚠ random semantics
 
 _Correction 2026-07-07 (autopilot): `dd55-abort-channel-remaining` moved to
