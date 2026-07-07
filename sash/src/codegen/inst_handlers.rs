@@ -566,8 +566,9 @@ pub(super) fn handle_general_command(
             c.exit_status_var,
         );
         // DD#55 (A): implicit exit check — abort if the command's status is
-        // nonzero, unless it was caught (if/||) or suppressed (-). External
-        // command diagnostics are a separate pass; no message here yet.
+        // nonzero, unless it was caught (if/||) or suppressed (-). The
+        // external diagnostic is `<argv0>: <name>: command failed (exit N)`.
+        let (np, nl) = diag_static_seg(name, c.literals, m, b);
         emit_status_abort_check(
             b,
             m,
@@ -575,7 +576,10 @@ pub(super) fn handle_general_command(
             c.exit_status_var,
             c.end_cl_block,
             checked,
-            None,
+            Some(AbortMsg::Status {
+                name_ptr: np,
+                name_len: nl,
+            }),
         );
         emit_signal_exit_check(b, m, c);
     });
@@ -620,13 +624,21 @@ fn emit_signal_exit_check(
     builder.seal_block(sig_cont_block);
 }
 
-/// DD#55 abort diagnostic segments (already-lowered `(ptr,len)` Values),
-/// rendered by `sash_emsg` as `<argv0>: <seg1>[: <seg2>]: <reason>`.
-pub(super) struct AbortMsg {
-    pub(super) seg1_ptr: cranelift_codegen::ir::Value,
-    pub(super) seg1_len: cranelift_codegen::ir::Value,
-    pub(super) seg2_ptr: cranelift_codegen::ir::Value,
-    pub(super) seg2_len: cranelift_codegen::ir::Value,
+/// DD#55 abort diagnostic. Either an errno-based message rendered by
+/// `sash_emsg` as `<argv0>: <seg1>[: <seg2>]: <strerror>`, or a
+/// status-based message rendered by `sash_emsg_status` as
+/// `<argv0>: <name>: command failed (exit N)` (external/pipeline/cmdsub).
+pub(super) enum AbortMsg {
+    Errno {
+        seg1_ptr: cranelift_codegen::ir::Value,
+        seg1_len: cranelift_codegen::ir::Value,
+        seg2_ptr: cranelift_codegen::ir::Value,
+        seg2_len: cranelift_codegen::ir::Value,
+    },
+    Status {
+        name_ptr: cranelift_codegen::ir::Value,
+        name_len: cranelift_codegen::ir::Value,
+    },
 }
 
 /// Materialize a pre-interned static diagnostic segment ("cd",
@@ -768,10 +780,26 @@ pub(super) fn emit_status_abort_check(
     builder.seal_block(abort_block);
     // DD#55: descriptive diagnostic to stderr, only on the actual abort.
     if let Some(m) = msg {
-        let emsg_ref = module.declare_func_in_func(externs.emsg, builder.func);
-        builder
-            .ins()
-            .call(emsg_ref, &[m.seg1_ptr, m.seg1_len, m.seg2_ptr, m.seg2_len]);
+        match m {
+            AbortMsg::Errno {
+                seg1_ptr,
+                seg1_len,
+                seg2_ptr,
+                seg2_len,
+            } => {
+                let emsg_ref = module.declare_func_in_func(externs.emsg, builder.func);
+                builder
+                    .ins()
+                    .call(emsg_ref, &[seg1_ptr, seg1_len, seg2_ptr, seg2_len]);
+            }
+            AbortMsg::Status { name_ptr, name_len } => {
+                let emsg_status_ref =
+                    module.declare_func_in_func(externs.emsg_status, builder.func);
+                builder
+                    .ins()
+                    .call(emsg_status_ref, &[name_ptr, name_len, status]);
+            }
+        }
     }
     if let Some(end_cl) = end_cl_block {
         // DD#56: jump to END block instead of exiting directly
@@ -838,7 +866,7 @@ pub(super) fn handle_cd(
     // caught (if/||) or suppressed (-) cd does not. Diagnostic on abort:
     // `<argv0>: cd: <path>: <reason>`.
     let (s1p, s1l) = diag_static_seg("cd", ctx.literals, module, builder);
-    let msg = AbortMsg {
+    let msg = AbortMsg::Errno {
         seg1_ptr: s1p,
         seg1_len: s1l,
         seg2_ptr: ptr,

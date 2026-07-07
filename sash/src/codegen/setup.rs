@@ -44,6 +44,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_emsg", Linkage::Import, &emsg_sig)
         .expect("declare sash_emsg");
 
+    // sash_emsg_status(name_ptr, name_len, status) -> () — DD#55
+    // status-based abort diagnostic (`command failed (exit N)`, no errno).
+    let mut emsg_status_sig = Signature::new(CallConv::SystemV);
+    for _ in 0..3 {
+        emsg_status_sig.params.push(AbiParam::new(I64));
+    }
+    let emsg_status_func = module
+        .declare_function("sash_emsg_status", Linkage::Import, &emsg_status_sig)
+        .expect("declare sash_emsg_status");
+
     // sash_arith_overflow() -> ! — DD#25 overflow trap (no params/returns).
     let arith_overflow_sig = Signature::new(CallConv::SystemV);
     let arith_overflow_func = module
@@ -701,6 +711,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         write: write_func,
         exit: exit_func,
         emsg: emsg_func,
+        emsg_status: emsg_status_func,
         arith_overflow: arith_overflow_func,
         run: run_func,
         getenv: getenv_func,

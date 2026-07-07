@@ -215,6 +215,36 @@ pub extern "C" fn sash_emsg(
     sash_write(2, nl.as_ptr(), nl.len() as i64);
 }
 
+/// Write a DD#55 status-based abort diagnostic to stderr (no exit):
+///   `<argv0>: <name>: command failed (exit <status>)\n`
+/// Used for external / pipeline / command-substitution aborts, where the
+/// failure is a nonzero child exit status (there is no errno). `argv0` is
+/// the program name; `name` is the command that failed.
+#[no_mangle]
+pub extern "C" fn sash_emsg_status(name_ptr: *const u8, name_len: i64, status: i64) {
+    let sep: &[u8] = b": ";
+    let argv = unsafe { sash_argv };
+    if !argv.is_null() {
+        let a0 = unsafe { *argv };
+        if !a0.is_null() {
+            let l = unsafe { strlen(a0) };
+            sash_write(2, a0, l as i64);
+        }
+    }
+    sash_write(2, sep.as_ptr(), sep.len() as i64);
+    if !name_ptr.is_null() && name_len > 0 {
+        sash_write(2, name_ptr, name_len);
+        sash_write(2, sep.as_ptr(), sep.len() as i64);
+    }
+    let head: &[u8] = b"command failed (exit ";
+    sash_write(2, head.as_ptr(), head.len() as i64);
+    let mut buf = [0u8; 24];
+    let n = write_i64(&mut buf, status);
+    sash_write(2, buf.as_ptr(), n as i64);
+    let tail: &[u8] = b")\n";
+    sash_write(2, tail.as_ptr(), tail.len() as i64);
+}
+
 // ═══════════════════════════════════════════════════════════════
 // sash_exit
 // ═══════════════════════════════════════════════════════════════

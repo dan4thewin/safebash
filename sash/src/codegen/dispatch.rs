@@ -1499,7 +1499,7 @@ fn emit_echo_body(
     let (s1p, s1l) =
         super::inst_handlers::diag_static_seg("echo: write error", ctx.literals, module, builder);
     let (s2p, s2l) = super::inst_handlers::diag_empty_seg(builder);
-    let msg = super::inst_handlers::AbortMsg {
+    let msg = super::inst_handlers::AbortMsg::Errno {
         seg1_ptr: s1p,
         seg1_len: s1l,
         seg2_ptr: s2p,

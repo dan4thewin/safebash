@@ -65,10 +65,11 @@ else
     skip_chk 25.1
 fi
 
-# 55.1 external cmd nonzero aborts
+# 55.1 external cmd nonzero aborts (+ DD#55 diagnostic to stderr in native)
 run_sash '/bin/false
 echo should_not_reach'
-[[ $rc != 0 && $out != *"should_not_reach"* && -z $err ]]; chk 55.1
+[[ $rc != 0 && $out != *"should_not_reach"* && -z $err ]] \
+  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.1
 
 # 55.2 variable assignment no exit check
 run_sash 'x=hello; echo $x'
