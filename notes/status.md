@@ -40,7 +40,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
    `echo @a`; ICE backstop unreachable)
 6. `tighten-cmdsub-taint-execve` — DONE 2026-07-07 (printf/pwd made
    external — removed the Printf/Pwd builtins; execve capture tainted)
-7. `bug-test-operand-concat-splice` (P3)
+7. `bug-test-operand-concat-splice` — DONE 2026-07-07 (NOT A BUG: repro was
+   arithmetically wrong, `run`+`ing`=`runing`; bash agrees; guarded ow.11-13)
 8. `tilde-vs-dd53` (P3)
 
 **Tier 3 — remaining compiler features (native)**

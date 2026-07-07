@@ -52,6 +52,17 @@ run_sash 'pat=^z; x=abc; [[ $x =~ $pat ]] && echo Y || echo N'
 # ow.10 an interpolated group pattern
 run_sash 'pat="^(cat|dog)$"; x=dog; [[ $x =~ $pat ]] && echo Y || echo N'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.10
+# ow.11 a spliced literal+variable operand (`run$suf`) concatenates in the
+# `==` RHS: run+ing = runing (NOT running — a mis-stated bug repro; matches
+# bash). See bug-test-operand-concat-splice (not-a-bug).
+run_sash 'suf=ing; x=runing; [[ $x == run$suf ]] && echo Y || echo N'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.11
+# ow.12 the same splice in the `=~` RHS
+run_sash 'suf=ing; x=runing; [[ $x =~ run$suf ]] && echo Y || echo N'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk ow.12
+# ow.13 spliced operand negative
+run_sash 'suf=xyz; x=running; [[ $x == run$suf ]] && echo Y || echo N'
+[[ $rc = 0 && $out = "N" && -z $err ]]; chk ow.13
 
 set -e
 tally

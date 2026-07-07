@@ -1,6 +1,6 @@
 ---
 title: "BUG — a `[[ ]]` test operand spliced from a literal + a variable (`run$suf`) doesn't concatenate at runtime"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -11,6 +11,15 @@ gates:
 ---
 
 # BUG — literal+var test operand doesn't concatenate
+
+> **NOT A BUG (2026-07-07, autopilot).** The repro is arithmetically
+> mistaken: `run` + `ing` = `runing`, **not** `running`, so
+> `x=running; [[ $x == run$suf ]]` is correctly `N` — **bash returns `N`
+> too** (verified against the oracle). The splice concat works: with
+> correct expectations `suf=ing; x=runing; [[ $x == run$suf ]]` → `Y`, and
+> the `=~` case matches. `expr_to_value(Concat)` → `concat_to_value` builds
+> the concatenation fine. Guarded by spec/operand_words.sh ow.11 (`==`
+> splice), ow.12 (`=~` splice), ow.13 (negative), all modes. Closed.
 
 Found 2026-07-04 while writing the DD#71 operand-word specs.
 

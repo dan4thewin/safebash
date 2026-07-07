@@ -125,3 +125,13 @@ Fix (native + janet; c already externals them):
 `bug-echo`-style mismatch for external cmdsubs. spec/commands.sh 14.2b
 flipped clean→SB5020 (all modes) + 14.2c blessed positive (native). 0
 regressions native/c/janet.
+
+## Task: bug-test-operand-concat-splice (Tier 2 #7) — NOT A BUG
+
+The repro `suf=ing; x=running; [[ $x == run$suf ]]` expected Y, but
+`run`+`ing` = `runing` ≠ `running`, so N is correct — **bash returns N
+too** (oracle-verified). The splice concat works: `suf=ing; x=runing;
+[[ $x == run$suf ]]` → Y (and `=~` matches). `expr_to_value(Concat)` →
+`concat_to_value` builds it fine. Added spec/operand_words.sh ow.11 (`==`
+splice), ow.12 (`=~` splice), ow.13 (negative), passing all modes. Closed
+as not-a-bug.
