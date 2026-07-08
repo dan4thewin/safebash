@@ -1,6 +1,6 @@
 ---
 title: "Excise (or revive) the dormant Coercion machinery in emit_source.rs"
-status: ready
+status: done
 priority: P6
 kind: work
 depends: []
@@ -10,6 +10,17 @@ gates:
   - "if kept: a recorder actually populates COERCIONS, or the dead code carries a clear 'reserved' note + a test pinning the verbatim behavior"
   - "no spec/rust regression; --extract still round-trips the source"
 ---
+
+> **DONE / already excised — verified 2026-07-08.** Commit `4e87034`
+> ("dead code: remove vestigial emit_source module — Coercion never
+> constructed") already removed exactly the option-1 (excise) scope. There
+> is no `emit_source.rs` and zero `Coercion`/`COERCIONS` references in the
+> tree; `.sash_source` is embedded verbatim by
+> `codegen/entry.rs::embed_sash_source` (DD#45), `--extract` round-trips it
+> (`lib.rs::dump_sash_source`), and `--emit-source`/`--annotate` now
+> reject-and-direct-to-sash-convert. DG (2026-07-08): no reason to keep dead
+> code. Task closed as moot.
+
 
 # Excise (or revive) the dormant Coercion machinery
 

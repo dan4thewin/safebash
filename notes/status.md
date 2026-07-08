@@ -74,7 +74,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 
 **Tier 5 — hardening / infra / cleanup** (compiler-related → before convert)
 22. `eliminate-ice-arms-via-types` (bug-surface; may pull up near tier 2)
-23. `excise-dormant-coercion-machinery` (P6) ⚠ remove vs revive
+23. ~~`excise-dormant-coercion-machinery`~~ — DONE (already excised in
+    `4e87034`; verified 2026-07-08, no Coercion refs remain)
 24. `audit-string-keyed-builtin-dispatch`
 25. `fuzz-validator`
 26. `brush-rerun`
