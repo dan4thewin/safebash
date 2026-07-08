@@ -58,10 +58,16 @@ unless we decide `argv` auto-declares (confirm against `mapfile`).
 5. **Converter** (`sash-convert`): if it emits `array a=$(argv …)`,
    switch to `argv [N] a`.
 
-## Open
+## Resolved (DG, 2026-07-08)
 
-- Does `argv a` auto-declare `a`, or require `array a=()` first? Match
-  `mapfile`/`read -a` (confirm their behavior, then mirror).
+- **`argv [N] a` AUTO-DECLARES `a`** — no prior `array a=()` needed,
+  mirroring `mapfile -t a` / `read -a a` (verified: sash already
+  auto-declares on assignment and on bulk-read; the `array a=()` before
+  `mapfile` in the DD#60 specs is stylistic, not required — spec 24.4
+  `mapfile -t arr` on an undeclared `arr` compiles past declaration and is
+  rejected only by the taint check on use). Requiring an explicit decl
+  would make `argv` the odd one out vs. read/mapfile. The auto-declared
+  array is tainted (DD#61), so a use needs a bless-all.
 
 ## Cross-refs
 

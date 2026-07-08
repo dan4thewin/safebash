@@ -55,7 +55,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 11. `dd70-error-model-contract-spec` (P2)
 12. `glob-as-array-splat-disposition` (P2)
 13. `glob-splat-disposition-word` (P2)
-14. `argv-snapshot-to-outparam` (P2) ⚠ auto-declare
+14. `argv-snapshot-to-outparam` (P2) — auto-declare resolved (DG 2026-07-08:
+    `argv [N] a` auto-declares, mirroring mapfile/read); ready to implement
 
 **Tier 4 — c/janet backend parity** (native is the gate; after tiers 1-3)
 15. `c-janet-dd55-abort-channel` (partial — do first) ⧉ reconcile overlap
