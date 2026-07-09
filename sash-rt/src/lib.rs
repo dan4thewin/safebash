@@ -299,7 +299,10 @@ pub extern "C" fn sash_fork() -> i64 {
     match unsafe { rustix::runtime::kernel_fork() } {
         Ok(rustix::runtime::Fork::Child(_)) => 0,
         Ok(rustix::runtime::Fork::ParentOf(pid)) => pid.as_raw_nonzero().get() as i64,
-        Err(_) => -1,
+        Err(e) => {
+            set_last_errno(e);
+            -1
+        }
     }
 }
 
@@ -325,7 +328,14 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
             rustix::runtime::exit_group(127);
         }
 
-        let _ = rustix::runtime::execve(cmd_cstr, argv, envp);
+        // execve only returns on failure — it yields the `Errno` directly.
+        // DD#55: the child owns exec errors — report `<argv0>: <cmd>:
+        // <errno>` at the point of failure (covers fg via sash_run, bg, and
+        // pipeline stages), then exit 127. The parent's `command failed
+        // (exit N)` is separate and fires only when the failure is uncaught.
+        let e = rustix::runtime::execve(cmd_cstr, argv, envp);
+        set_last_errno(e);
+        sash_emsg(cmd, cmd_bytes.len() as i64, core::ptr::null(), 0);
         rustix::runtime::exit_group(127);
     }
 }
@@ -466,6 +476,14 @@ pub extern "C" fn sash_run(argv: *const *const u8, envp: *const *const u8) -> i6
     } else if pid > 0 {
         sash_wait(pid)
     } else {
+        // fork(2) failed — the parent owns fork errors. Report
+        // `<argv0>: <cmd>: <errno>` (errno set by sash_fork); the caller's
+        // uncaught-abort check aborts the program unless it is caught.
+        let cmd = unsafe { *argv };
+        if !cmd.is_null() {
+            let cmd_len = unsafe { strlen(cmd) };
+            sash_emsg(cmd, cmd_len as i64, core::ptr::null(), 0);
+        }
         127
     }
 }

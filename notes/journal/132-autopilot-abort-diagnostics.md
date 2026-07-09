@@ -167,3 +167,24 @@ regressions.
 Discovered janet execs the WHOLE getpid-class as fake commands
 (`(os/spawn ["getppid"])` etc. — getenv/argc too), a pre-existing gap →
 filed `janet-getpid-class-intrinsics` (Tier 4). **Tier 1 COMPLETE.**
+
+## Decision #4: bg-exec-errno-message — RESOLVED + DONE
+
+DG's model: split the exec/fork diagnostic by who owns the syscall.
+- child (in execve) always reports `<argv0>: <cmd>: <errno>` at the point
+  of failure, then exit 127 (the *what*).
+- parent reports `<argv0>: <cmd>: <errno>` on a fork(2) failure.
+- parent's DD#55 `command failed (exit N)` is unchanged — already gated on
+  UNCAUGHT (emit_status_abort_check's abort flag), so it's the
+  *why-aborting* signal, not a duplicate. DG: "why should the parent report
+  the 127 unless it is an uncaught situation?"
+
+No CLOEXEC pipe needed. Behavior: caught exec-failure → child errno only;
+uncaught → child errno + uncaught-abort line; ran-and-exited-nonzero →
+command-failed only.
+
+Impl (sash-rt): sash_exec reports the exec errno (rustix execve returns
+Errno directly on failure — the earlier E0308 was treating it as Result);
+sash_fork preserves errno via set_last_errno; sash_run's fork-failure arm
+reports it. spec/errors.sh 55.16 (bg errno), 55.30 (fg uncaught both
+lines), 55.31 (caught → errno only). 0 regressions.

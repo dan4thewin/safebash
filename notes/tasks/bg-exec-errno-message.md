@@ -1,11 +1,33 @@
 ---
 title: "exec-failure errno diagnostic: distinguish a missing-binary 127 from a real exit-127"
-status: blocked
-blocked-on: DG decision
+status: done
 priority: P3
-kind: decision
+kind: bug
 depends: []
 ---
+
+> **RESOLVED + DONE (DG, 2026-07-08).** DG's model dissolved the
+> entanglement without a CLOEXEC pipe: split the diagnostic by **who owns
+> the syscall** —
+> - **child** (in `execve`): always reports `<argv0>: <cmd>: <errno>` at
+>   the point of failure (covers fg via `sash_run`, bg, pipeline stages),
+>   then exits 127. This is the *what*.
+> - **parent** (fork site, `sash_run`): reports `<argv0>: <cmd>: <errno>`
+>   only on a `fork(2)` failure (its own syscall).
+> - **parent** DD#55 abort (`command failed (exit N)`): unchanged — already
+>   gated on **uncaught** (`emit_status_abort_check`'s `abort` flag). It is
+>   the *why-aborting* signal, not a duplicate.
+>
+> So there is no spurious double: caught exec-failure → only the child's
+> errno; uncaught → child errno + the (warranted) uncaught-abort line; a
+> command that RAN and exited nonzero → only `command failed (exit N)`.
+>
+> Implemented in sash-rt: `sash_exec` reports the exec errno (execve returns
+> `Errno` directly on failure); `sash_fork` preserves the errno
+> (`set_last_errno`); `sash_run`'s fork-failure arm reports it. spec/errors.sh
+> 55.16 (bg errno), 55.30 (fg uncaught → both lines), 55.31 (caught → errno
+> only, no command-failed). 0 regressions native/c/janet.
+
 
 # exec-failure errno message (fg / bg / pipeline)
 

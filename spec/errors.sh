@@ -131,12 +131,32 @@ run_sash 'fn f -> int { return 0; }'
 run_sash 'fn f -> int { - /bin/false; return $?; }'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.15
 
-# 55.16 background exec failure aborts parent (diagnosed via the external
-# status message today; errno-precision refinement is a separate task)
+# 55.16 background exec failure — the CHILD reports the exec errno at the
+#       point of failure; the parent's uncaught abort adds command-failed.
 run_sash '/nonexistent_binary_xyz &
 wait'
 [[ $rc != 0 && -z $err ]] \
-  && { ! in_modes native || [[ $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; }; chk 55.16
+  && { ! in_modes native || [[ $rerr == *"/nonexistent_binary_xyz: No such file or directory"* ]]; }; chk 55.16
+
+# 55.30 fg UNCAUGHT exec failure → child errno detail + parent uncaught
+#       abort (both lines). DD#55: child owns exec errors; parent's
+#       command-failed fires because it is uncaught. native (msg format).
+if in_modes native; then
+    run_sash '/nonexistent_binary_xyz
+echo unreached'
+    [[ $rc != 0 && -z $out \
+       && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
+       && $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; chk 55.30
+fi
+
+# 55.31 CAUGHT exec failure (`|| …`) → only the child's errno detail; the
+#       parent does NOT abort, so no command-failed line.
+if in_modes native; then
+    run_sash '/nonexistent_binary_xyz || echo caught'
+    [[ $rc = 0 && $out = "caught" && -z $err \
+       && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
+       && $rerr != *"command failed"* ]]; chk 55.31
+fi
 
 # 55.17 $(status) only valid as first expression in handling branch
 run_sash 'cmd || { s=$(status); echo $s; }'
