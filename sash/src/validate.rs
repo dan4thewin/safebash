@@ -2562,3 +2562,35 @@ fn flag_if_unknown(name: &str, span: Span, known: &HashSet<String>, diags: &mut 
         ),
     ));
 }
+
+/// DD#63: a `${var:s/…}` payload missing a mandatory `/` field delimiter is
+/// parsed as an `s_malformed` sentinel (the `${…}` value path cannot itself
+/// raise a parse diagnostic). Reject it here — SB4032. The `var =~ s/…`
+/// mutation form raises the same code directly at parse time (its path is
+/// `Result`-returning).
+pub fn check_malformed_sed(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| flag_malformed_sed(e, &mut diags));
+    }
+    diags
+}
+
+fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::ParameterExpansion(pe) = &e.kind else {
+        return;
+    };
+    if pe.operator.as_deref() == Some("s_malformed") {
+        diags.push(Diagnostic::error_span(
+            e.span,
+            "SB4032",
+            "malformed `${…:s/…}` substitution — expected s/RE/SUB/[flags] \
+             with three `/` delimiters"
+                .to_string(),
+        ));
+    }
+}

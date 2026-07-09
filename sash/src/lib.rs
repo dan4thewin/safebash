@@ -154,7 +154,8 @@ fn apply_and_check_flags(flags: &[&str]) {
 /// before command resolution so a rejected construct surfaces its own
 /// diagnostic rather than a spurious SB4032 on the tokens it leaves behind.
 fn run_structural_checks(input: &str, program: &crate::ir::Program) {
-    let vdiags = validate::validate(program);
+    let mut vdiags = validate::validate(program);
+    vdiags.extend(validate::check_malformed_sed(program));
     if !vdiags.is_empty() {
         print_diags(input, &vdiags);
         std::process::exit(1);

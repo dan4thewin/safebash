@@ -726,6 +726,15 @@ impl Scanner {
     /// by the bare (`scan_brace_expansion`) and in-`"…"`
     /// (`consume_dq_brace_expansion`) scanners.
     fn scan_braced_content(&mut self) -> String {
+        if let Some(content) = self.try_scan_sed_braced_content() {
+            return content;
+        }
+        self.scan_by_brace_depth()
+    }
+
+    /// The default `${…}` scan: the first unnested `}` closes (DD#65 — quotes
+    /// and `\` are ordinary bytes). `self.pos` is just past the opening `{`.
+    fn scan_by_brace_depth(&mut self) -> String {
         let inner_start = self.pos;
         let mut depth = 1i32;
         while self.pos < self.source.len() && depth > 0 {
@@ -743,6 +752,57 @@ impl Scanner {
             self.pos += 1; // skip closing }
         }
         content
+    }
+
+    /// DD#63 Path B: `${name:s/RE/SUB/flags}` — the three `/`-delimited
+    /// fields make a bare `{`/`}` inside RE/SUB literal, so scan by slash
+    /// count instead of brace depth (the default `}` closer would otherwise
+    /// truncate `${v:s/a}b/z/}` at the first `}`). On a well-formed payload,
+    /// returns `name:s/RE/SUB/flags` and advances past the closing `}`. On an
+    /// unterminated payload (a `"`/newline/EOF arrives before the third `/`
+    /// and its `}`), returns the best-effort content and stops *at* the
+    /// boundary byte — the parser's `try_sed_op` then flags SB4032. Returns
+    /// `None` when this is not a `:s/` expansion (caller falls back to the
+    /// brace-depth scan).
+    fn try_scan_sed_braced_content(&mut self) -> Option<String> {
+        let start = self.pos;
+        let body_start = self.sed_prefix_end(start)?;
+        let (end, closed) = self.scan_sed_payload(body_start);
+        let content = String::from_utf8_lossy(&self.source[start..end]).to_string();
+        self.pos = if closed { end + 1 } else { end };
+        Some(content)
+    }
+
+    /// If the `${…}` body opens with `NAME:s/`, return the byte index just
+    /// past the `:s/`; otherwise `None`. `start` is the first content byte.
+    fn sed_prefix_end(&self, start: usize) -> Option<usize> {
+        let src = &self.source;
+        let i = scan_ident_end(src, start)?;
+        if i + 3 <= src.len() && &src[i..i + 3] == b":s/" {
+            Some(i + 3)
+        } else {
+            None
+        }
+    }
+
+    /// Scan an `s/…` payload from `from` (just past the first `/`). Two more
+    /// `/` delimiters end RE and SUB; then flags run to the closing `}`.
+    /// Returns `(end, closed)`: `end` is the closing `}` when `closed`, else
+    /// the boundary byte (`"`/newline/EOF) of an unterminated payload.
+    fn scan_sed_payload(&self, from: usize) -> (usize, bool) {
+        let src = &self.source;
+        let mut j = from;
+        let mut slashes = 0u8;
+        while j < src.len() {
+            match src[j] {
+                b'"' | b'\n' => return (j, false),
+                b'/' if slashes < 2 => slashes += 1,
+                b'}' if slashes >= 2 => return (j, true),
+                _ => {}
+            }
+            j += 1;
+        }
+        (j, false)
     }
 
     /// Scan '...' single-quoted string.
@@ -1173,6 +1233,20 @@ impl Scanner {
         }
         None
     }
+}
+
+/// Byte index just past the `[A-Za-z_][A-Za-z0-9_]*` identifier at `start`,
+/// or `None` if there is no identifier there.
+fn scan_ident_end(src: &[u8], start: usize) -> Option<usize> {
+    let first = *src.get(start)?;
+    if !(first.is_ascii_alphabetic() || first == b'_') {
+        return None;
+    }
+    let mut i = start + 1;
+    while i < src.len() && (src[i].is_ascii_alphanumeric() || src[i] == b'_') {
+        i += 1;
+    }
+    Some(i)
 }
 
 /// Map a scanned word to its keyword token, falling back to `Tok::Word`.

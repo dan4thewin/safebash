@@ -1,6 +1,6 @@
 ---
 title: "regex builtins match/sub/gsub + thin sugar + captures (DD#63)"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: [DD63-regex-quoting-interpolation]

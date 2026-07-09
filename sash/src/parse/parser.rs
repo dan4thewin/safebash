@@ -1630,7 +1630,12 @@ fn parse_split_subscript_index(scanner: &mut Scanner, span: Span) -> Result<Expr
     Ok(idx)
 }
 
-/// Parse regex mutation: var =~ s/pat/rep/ or var =~ s/pat/rep/flags
+/// Parse regex mutation: `var =~ s/RE/SUB/[flags]`. Desugars to
+/// `var = $(sub|gsub "$var" RE SUB)` (DD#63) — RE/SUB are re-parsed as
+/// interpolating words, so `$x` in a field expands. The `s/…` text is
+/// stitched back from the adjacent tokens (the lexer split any embedded
+/// `$x`/`${x}` into their own tokens). A payload missing a mandatory `/`
+/// delimiter is SB4032.
 fn parse_regex_mutation(
     scanner: &mut Scanner,
     span: Span,
@@ -1638,48 +1643,84 @@ fn parse_regex_mutation(
 ) -> Result<Option<Statement>, Diagnostic> {
     scanner.next(); // consume variable name
     scanner.next(); // consume =~
-                    // Collect the regex expression (s/pat/rep/ or s/pat/rep/flags)
-    let regex_expr = if let Tok::Word(ref w) = scanner.peek().token {
-        let w = w.clone();
-        scanner.next();
-        w
-    } else {
-        // Try to collect from multiple adjacent tokens
-        let mut s = String::new();
-        while !scanner.at_eof()
-            && !matches!(
-                scanner.peek().token,
-                Tok::Semi | Tok::Newline | Tok::Pipe | Tok::AndAnd | Tok::OrOr | Tok::Eof
-            )
-        {
-            if !s.is_empty() && !scanner.next_is_adjacent() {
-                break;
-            }
-            match &scanner.peek().token {
-                Tok::Word(w) => {
-                    s.push_str(w);
-                    scanner.next();
-                }
-                _ => break,
-            }
-        }
-        s
-    };
-    // Emit as Command { name: var, args: [regex] } — transform recognizes
-    // this pattern: command name is variable, single arg starts with s/
+    let raw = reconstruct_sed_raw(scanner);
+    let body = raw
+        .strip_prefix("s/")
+        .ok_or_else(|| sed_malformed_err(span))?;
+    validate_static_sed_re(body, span)?;
+    let subject = quoted_var_subject(var_name, span);
+    let value =
+        super::expr::build_sed_sub(body, subject, span).ok_or_else(|| sed_malformed_err(span))?;
     Ok(Some(Statement {
-        kind: StmtKind::Command(Command {
-            name: Expr {
-                kind: ExprKind::Literal(var_name.to_string()),
-                span,
-            },
-            args: vec![Expr {
-                kind: ExprKind::Literal(regex_expr),
-                span,
-            }],
+        kind: StmtKind::Assignment(Assignment {
+            name: var_name.to_string(),
+            index: None,
+            op: AssignOp::Set,
+            value,
         }),
         span,
     }))
+}
+
+/// Stitch the `s/RE/SUB/flags` text back from the adjacent tokens after
+/// `=~` (the lexer split any embedded `$x`/`${x}` into their own tokens).
+fn reconstruct_sed_raw(scanner: &mut Scanner) -> String {
+    let mut raw = String::new();
+    while !scanner.at_eof() {
+        if !raw.is_empty() && !scanner.next_is_adjacent() {
+            break;
+        }
+        match &scanner.peek().token {
+            Tok::Word(w) => raw.push_str(w),
+            Tok::Dollar(v) => {
+                raw.push('$');
+                raw.push_str(v);
+            }
+            Tok::DollarBrace(c) => raw.push_str(&format!("${{{}}}", c)),
+            _ => break,
+        }
+        scanner.next();
+    }
+    raw
+}
+
+fn sed_malformed_err(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4032",
+        "malformed `=~ s/…` substitution — expected s/RE/SUB/[flags] with three `/` delimiters"
+            .to_string(),
+    )
+}
+
+/// Preserve the DD#39 compile-time regex check on the `=~` mutation form: a
+/// STATIC (non-interpolating) pattern is validated now; an interpolating one
+/// (`$x` in the pattern) is a runtime regcomp check.
+fn validate_static_sed_re(body: &str, span: Span) -> Result<(), Diagnostic> {
+    let Some((re, _, _)) = super::expr::split_sed_fields(body) else {
+        return Ok(());
+    };
+    if !re.contains('$') {
+        if let Err(msg) = crate::regex_validate::validate_regex(re) {
+            return Err(parse_error(
+                span,
+                "SB5023",
+                format!("invalid regex in substitution: {}", msg),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// `"$var"` as a single interpolating substitution subject.
+fn quoted_var_subject(var_name: &str, span: Span) -> Expr {
+    Expr {
+        kind: ExprKind::DoubleQuoted(vec![Expr {
+            kind: ExprKind::SimpleExpansion(var_name.to_string()),
+            span,
+        }]),
+        span,
+    }
 }
 
 fn parse_command(scanner: &mut Scanner, span: Span) -> Result<Option<Statement>, Diagnostic> {

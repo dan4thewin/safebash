@@ -630,29 +630,73 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     })
 }
 
-/// `${var:s/regex/replacement/flags}` — DD#39 sed expression.
+/// `${var:s/regex/replacement/flags}` — DD#63 substitution sugar. Desugars
+/// to `$(sub|gsub "$var" RE SUB)` with RE/SUB parsed as interpolating words
+/// (so `$x` in a field expands). A payload missing either mandatory `/`
+/// field delimiter is malformed: return a `s_malformed` sentinel that the
+/// validator turns into SB4032 — the `${…}` value path cannot itself raise
+/// a parse diagnostic.
 fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
-    let sed_content = rest.strip_prefix(":s/")?;
-    let slash_pos = sed_content.find('/')?;
-    let pattern = &sed_content[..slash_pos];
-    let after = &sed_content[slash_pos + 1..];
-    let (replacement, flags) = if let Some(flag_slash) = after.rfind('/') {
-        (&after[..flag_slash], &after[flag_slash + 1..])
-    } else {
-        (after, "")
-    };
-    let is_global = flags.contains('g');
-    let combined = format!("{}\0{}", pattern, replacement);
-    let op = if is_global { "//" } else { "/" };
+    let body = rest.strip_prefix(":s/")?;
+    let subject = quoted_var_expr(name, span);
+    if let Some(expr) = build_sed_sub(body, subject, span) {
+        return Some(expr);
+    }
     Some(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
-            operator: Some(op.to_string()),
+            operator: Some("s_malformed".to_string()),
             operand: Some(Box::new(Expr {
-                kind: ExprKind::Literal(combined),
+                kind: ExprKind::Literal(rest.to_string()),
                 span,
             })),
         }),
+        span,
+    })
+}
+
+/// `"$var"` as a single interpolating argument (the substitution subject).
+fn quoted_var_expr(name: &str, span: Span) -> Expr {
+    Expr {
+        kind: ExprKind::DoubleQuoted(vec![Expr {
+            kind: ExprKind::SimpleExpansion(name.to_string()),
+            span,
+        }]),
+        span,
+    }
+}
+
+/// Split an `RE/SUB/flags` payload (the text after the leading `s/`) into
+/// its three fields. Returns `None` when either mandatory `/` delimiter is
+/// absent (a malformed substitution).
+pub(crate) fn split_sed_fields(body: &str) -> Option<(&str, &str, &str)> {
+    let re_end = body.find('/')?;
+    let rest = &body[re_end + 1..];
+    let sub_end = rest.find('/')?;
+    Some((&body[..re_end], &rest[..sub_end], &rest[sub_end + 1..]))
+}
+
+/// Build `$(sub|gsub SUBJECT RE SUB)` from an `RE/SUB/flags` payload. RE/SUB
+/// become interpolating double-quoted words (`$x` expands); regex
+/// metacharacters are ordinary literal bytes. `g` in the flags selects
+/// `gsub`. Returns `None` for a malformed (missing-delimiter) payload.
+pub(crate) fn build_sed_sub(body: &str, subject: Expr, span: Span) -> Option<Expr> {
+    let (re, sub, flags) = split_sed_fields(body)?;
+    let cmd_name = if flags.contains('g') { "gsub" } else { "sub" };
+    let re_expr = *parse_default_word(re, span);
+    let sub_expr = *parse_default_word(sub, span);
+    let cmd = Statement {
+        kind: StmtKind::Command(Command {
+            name: Expr {
+                kind: ExprKind::Literal(cmd_name.to_string()),
+                span,
+            },
+            args: vec![subject, re_expr, sub_expr],
+        }),
+        span,
+    };
+    Some(Expr {
+        kind: ExprKind::CommandSubstitution(vec![cmd]),
         span,
     })
 }

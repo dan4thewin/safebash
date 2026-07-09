@@ -232,3 +232,56 @@ Specs: spec/undeclared.sh ud.1-16, all 3 modes, 0 regressions.
   falls through to `expr_to_string`'s debug `"$(...)"` placeholder, which
   leaks to runtime output. Single-statement works. Decision (DG): implement
   vs reject. Guarded ud.16 to native + assert-no-SB5031-only.
+
+## Tier 3 #10: regex-interpolation-delimiters — DONE (DD#63 D/E/G)
+
+Prior DD#63 work (builtins match/sub/gsub, captures, backrefs — checkpoint
+007) was done. Remaining delta this task: interpolation (D7/D8), `\xnn`
+(E1/E2), and `${var:s}` Path B brace/delimiter handling (G group).
+
+**Root causes (mapped via explore agent):**
+- Both sugars flattened fields to flat `Literal` strings at parse time
+  (`\0`-packed for `${var:s}`; a single `s/…` word for `=~`), so `$x` in a
+  field never interpolated. `=~ s/$x/Y/` even miscompiled (the lexer split
+  `$x` into its own token; only `s/` was captured → "bare command passed to
+  sash_exec").
+- The vendored engine had no `\xnn`.
+- The lexer's `scan_braced_content` counted braces only, so `${v:s/a}b/z/}`
+  truncated at the first `}`.
+
+**Fixes:**
+1. `\xnn` in `sash-rt/csrc/regcomp.c::nextc` (+ `hexdigit`): two hex digits
+   → one byte; short/non-hex → `rcerror`. (E1/E2, G6.)
+2. Lexer Path B: `scan_braced_content` delegates to
+   `try_scan_sed_braced_content` when the body opens `NAME:s/` — scans the
+   three `/`-delimited fields by slash count (braces literal until the 3rd
+   `/`), closing `}` only after. Unterminated (a `"`/newline/EOF before the
+   close) stops at the boundary → parser flags SB4032. (G1/G2/G3/G5/G8.)
+3. Re-route at parse: `try_sed_op` and `parse_regex_mutation` both build
+   `$(sub|gsub "$var" RE SUB)` with RE/SUB via `parse_default_word` (the
+   DD#65 interpolating-word parser). Unifies on the working RegexReplace
+   path; interpolation falls out (D7/D8). `=~` reconstructs the raw `s/…`
+   from adjacent tokens (incl. `$x`/`${x}`).
+4. Malformed → SB4032: the `=~` path (Result-returning) errors directly; the
+   `${var:s}` value path (can't raise a parse diagnostic) emits an
+   `s_malformed` ParameterExpansion sentinel that a new fatal validate pass
+   (`check_malformed_sed`, wired into run_structural_checks) rejects.
+5. Compile-time regex validation (DD#39, for 39.5) kept on the `=~` static
+   pattern only (matches old asymmetry: `${var:s}` never validated).
+
+The old `${var:s}` (`ParameterExpansion "/"`/`"//"`) and `=~`
+(`regex_replace` ParamExpansion) transform+codegen are now runtime-
+unreachable but still compiled (no dead-code warning). Filed
+retire-legacy-sed-regex-replace-machinery to remove them.
+
+**Decision surfaced + filed (decide-regex-bare-brace):** the engine
+deliberately requires `\{` for a literal brace (bare `{` starts an
+interval; errors otherwise: "use \{ for literal"). `}` is already literal
+(so G1 works). The task gate G3 assumed bare `{` literal (bash-compat) —
+adjusted 63.g3 to the engine-correct `\{` form (guarded native,c) and filed
+the bash-compat-vs-`\{` decision for DG. Path B itself is verified for the
+`{` byte.
+
+Specs: spec/regex.sh 63.d7/d8/e1/e2/g1-g8 (native 40/40; c/janet skip only
+mode-guarded cases). 0 regressions all modes. Refactored the new lexer/
+parser/validate fns under the complexity gate.

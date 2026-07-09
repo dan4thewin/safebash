@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=28
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -175,6 +175,100 @@ run_sash 'echo $(sub "ac" "(a)(b)?(c)" "[\2]")'
 # 63.cap12 invalid `\`-escape in a replacement (\ + non-digit) → SB4033
 run_sash 'echo $(sub x x "\a")'
 [[ $rc != 0 && -z $out && $err == *SB4033* ]]; chk 63.cap12
+
+# ── D. sugar interpolation: the s/// fields are ordinary interpolating
+#      words, so $var in the pattern or replacement is expanded (DD#63). ──
+
+# 63.d7 `v =~ s/RE/SUB/` mutation sugar interpolates the PATTERN
+run_sash 'x=b
+v=abc
+v =~ s/$x/Y/
+echo $v'
+[[ $rc = 0 && $out = "aYc" && -z $err ]]; chk 63.d7
+
+# 63.d8 `${v:s/RE/SUB/}` expression sugar interpolates the REPLACEMENT
+run_sash 'r=Y
+v=abc
+echo ${v:s/b/$r/}'
+[[ $rc = 0 && $out = "aYc" && -z $err ]]; chk 63.d8
+
+# ── E. `\xnn` hex escape in the regex pattern (vendored engine). ──────
+# native,c only: the janet backend uses its own regex, not the vendored
+# Plan 9 engine that grows \xnn (see janet regex parity).
+
+# 63.e1 `\x20` matches a literal space
+if in_modes native,c; then
+    run_sash 'if match "a b" "a\x20b"; then echo y; else echo n; fi'
+    [[ $rc = 0 && $out = "y" && -z $err ]]; chk 63.e1
+else
+    skip_chk 63.e1
+fi
+
+# 63.e2 `\x` + a non-hex digit is rejected (not silently literal)
+if in_modes native,c; then
+    run_sash 'if match "axb" "a\xZZb"; then echo y; else echo n; fi'
+    [[ $rc != 0 ]]; chk 63.e2
+else
+    skip_chk 63.e2
+fi
+
+# ── G. `${var:s/RE/SUB/[g]}` brace handling (Path B) + malformed → err ─
+# The lexer scans the three `/`-delimited fields, so a bare `{`/`}` inside
+# RE/SUB is literal and does NOT close the `${…}`. A malformed `:s`
+# payload (wrong delimiter count / unterminated) is a compile error
+# (SB4032), never a silent fallback.
+
+# 63.g1 bare `}` in RE is literal (does not close the expansion)
+run_sash "var='a}b'
+echo \"\${var:s/a}b/z/}\""
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g1
+
+# 63.g2 bare `}` in SUB is literal
+run_sash 'var=axb
+echo "${var:s/x/}/}"'
+[[ $rc = 0 && $out = "a}b" && -z $err ]]; chk 63.g2
+
+# 63.g3 a `{` byte in RE does not close the `${…}` (Path B). The engine
+#       requires `\{` for a literal brace (a bare `{` starts an interval);
+#       whether bare `{` should be literal is a separate open decision
+#       (decide-regex-bare-brace). This still exercises Path B: the `{`
+#       byte in `a\{b` must not truncate the expansion.
+if in_modes native,c; then
+    run_sash "var='a{b'
+echo \"\${var:s/a\{b/z/}\""
+    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g3
+else
+    skip_chk 63.g3
+fi
+
+# 63.g4 literal text after a valid close concatenates (NOT an error)
+run_sash 'var=axb
+echo "${var:s/x/z/}tail"'
+[[ $rc = 0 && $out = "azbtail" && -z $err ]]; chk 63.g4
+
+# 63.g5 unterminated `:s` payload → SB4032 (not a silent $var + literal)
+run_sash 'var=ab
+echo "${var:s/a}"'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.g5
+
+# 63.g6 the delimiter `/` itself, escaped as `\x2f`, is a literal slash
+if in_modes native,c; then
+    run_sash "var='a/b'
+echo \"\${var:s/a\x2fb/z/}\""
+    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g6
+else
+    skip_chk 63.g6
+fi
+
+# 63.g7 no-brace baseline unchanged (Path B scans the 3 fields identically)
+run_sash 'x="hello world"
+echo "${x:s/world/earth/}"'
+[[ $rc = 0 && $out = "hello earth" && -z $err ]]; chk 63.g7
+
+# 63.g8 missing the mandatory trailing `/` (only two delimiters) → SB4032
+run_sash 'var=ab
+echo "${var:s/a/b}"'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.g8
 
 set -e
 tally

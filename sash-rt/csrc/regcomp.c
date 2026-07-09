@@ -389,6 +389,19 @@ newclass(void)
 	return &(classp[nclass++]);
 }
 
+/* value of one hex digit, or -1 if not a hex digit */
+static	int
+hexdigit(int c)
+{
+	if(c >= '0' && c <= '9')
+		return c - '0';
+	if(c >= 'a' && c <= 'f')
+		return c - 'a' + 10;
+	if(c >= 'A' && c <= 'F')
+		return c - 'A' + 10;
+	return -1;
+}
+
 static	int
 nextc(Rune *rp)
 {
@@ -399,6 +412,17 @@ nextc(Rune *rp)
 	exprp += chartorune(rp, exprp);
 	if(*rp == '\\'){
 		exprp += chartorune(rp, exprp);
+		if(*rp == 'x'){
+			/* \xNN — exactly two hex digits become one byte.
+			 * A short or non-hex escape is a compile error, never
+			 * a silent literal 'x'. */
+			int hi = hexdigit((uchar)exprp[0]);
+			int lo = hi < 0 ? -1 : hexdigit((uchar)exprp[1]);
+			if(lo < 0)
+				rcerror("bad \\xNN hex escape in regex");
+			*rp = (hi << 4) | lo;
+			exprp += 2;
+		}
 		return 1;
 	}
 	if(*rp == 0)

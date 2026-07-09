@@ -57,7 +57,16 @@ a sash-convert canonicalize mode → moved to Tier 6._
    command-substitution bodies with subshell scope. `spec/undeclared.sh`
    ud.1-16 all 3 modes; 0 regressions. Filed janet-scalar-zero-value and
    bug-multistatement-cmdsub-placeholder surfaced by the specs.)
-10. `regex-interpolation-delimiters` (P2)
+10. `regex-interpolation-delimiters` (P2) — DONE 2026-07-08 (DD#63 D/E/G:
+    both `${var:s/…}` and `var =~ s/…` re-routed at parse to interpolating
+    `$(sub|gsub "$var" RE SUB)` — `$x` in a field now expands (D7/D8).
+    `\xnn` hex escape in the vendored engine (E1/E2). Lexer Path B
+    (`scan_braced_content`) scans the `:s/` fields by slash count so a `{`/`}`
+    byte doesn't truncate `${…}` (G1/G2/G3), malformed payload → SB4032
+    (G5/G8). spec/regex.sh 63.d7/d8/e1/e2/g1-g8; 0 regressions. Filed:
+    decide-regex-bare-brace (bare `{` literal vs `\{`), and
+    retire-legacy-sed-regex-replace-machinery (the old `:s`/regex_replace
+    transform+codegen is now unreachable, remove it).)
 11. `dd70-error-model-contract-spec` (P2)
 12. `glob-as-array-splat-disposition` (P2)
 13. `glob-splat-disposition-word` (P2)
