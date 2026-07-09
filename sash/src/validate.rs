@@ -2313,3 +2313,252 @@ fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diag
         ));
     }
 }
+
+// ── SB5031: reject a scalar read of a name introduced nowhere (typo) ──
+//
+// DD#62 Model B (DG 2026-07-08): scalar zero values are meaningful
+// (untyped → "", int → 0), so a KNOWN-but-maybe-unset read yields the zero
+// value and is allowed. The only rejection is the typo: a scalar read whose
+// name is introduced nowhere in scope. This is a single-pass scope-
+// membership check (a "may"/union analysis), NOT definite-assignment
+// dataflow — no branch intersection, no zero-trip-loop modeling.
+
+/// Names introduced in a scope: assignment LHS, int/array/map/const
+/// declaration names, `for` loop variables, and read/mapfile targets.
+/// Descends control-flow bodies (same scope) but NOT nested function
+/// bodies (a new scope).
+fn collect_scope_names(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Assignment(a) => {
+                set.insert(a.name.clone());
+            }
+            StmtKind::Declaration(d) => insert_decl_names(d, set),
+            StmtKind::For(f) => {
+                set.insert(f.variable.clone());
+                collect_scope_names(&f.body, set);
+            }
+            StmtKind::Command(c) => collect_read_targets(c, set),
+            StmtKind::Function(_) => {} // separate scope — do not collect
+            _ => collect_child_scope_names(stmt, set),
+        }
+    }
+}
+
+fn insert_decl_names(d: &Declaration, set: &mut HashSet<String>) {
+    for a in &d.assignments {
+        set.insert(a.name.clone());
+    }
+}
+
+fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
+    for body in stmt.child_bodies() {
+        collect_scope_names(body, set);
+    }
+}
+
+/// `read x`, `read -a a`, `mapfile -t a`, `readarray a` introduce their
+/// non-flag literal argument names.
+fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
+    let name = expr_literal_str(&c.name);
+    if !matches!(name, "read" | "mapfile" | "readarray") {
+        return;
+    }
+    for arg in &c.args {
+        insert_read_target_arg(arg, set);
+    }
+}
+
+/// A non-flag literal argument to `read`/`mapfile`/`readarray` names a
+/// variable the command introduces.
+fn insert_read_target_arg(arg: &Expr, set: &mut HashSet<String>) {
+    if let ExprKind::Literal(s) = &arg.kind {
+        if !s.starts_with('-') {
+            set.insert(s.clone());
+        }
+    }
+}
+
+/// A plausible user identifier — excludes punctuation specials ($?, $$,
+/// $!, $#, $@, $*, $-) and positionals ($1…) by construction.
+fn is_plain_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// Names handled by other rules (their own diagnostics) — skip so the typo
+/// check never double-diagnoses.
+fn handled_elsewhere(name: &str) -> bool {
+    ENV_VARS.contains(&name) || REJECTED_VARS.iter().any(|(n, _)| *n == name) || name == "LINENO"
+    // compiler-managed (parse lowers it to a literal)
+}
+
+/// DD#62 Model B: reject a scalar read of a name introduced nowhere in
+/// scope. Reads = `SimpleExpansion` and bare `ParameterExpansion` (no
+/// operator — `${x:-…}` is the explicit opt-out). Subscripts are container
+/// reads (out of scope); their index is still checked.
+pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut globals = HashSet::new();
+    collect_scope_names(&program.statements, &mut globals);
+    if let Some(ref end) = program.end_block {
+        collect_scope_names(end, &mut globals);
+    }
+    check_reads_in_scope(&program.statements, &globals, &mut diags);
+    if let Some(ref end) = program.end_block {
+        check_reads_in_scope(end, &globals, &mut diags);
+    }
+    diags
+}
+
+fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Function(f) => check_function_scope(f, known, diags),
+            // `bless` with a decodable form is handled specially (below);
+            // a non-bless / malformed one falls through to the default arm.
+            StmtKind::Command(c) if try_check_bless_stmt(c, known, diags) => {}
+            _ => check_stmt_exprs_and_bodies(stmt, known, diags),
+        }
+    }
+}
+
+/// A nested function is a new scope: its own introductions plus the
+/// enclosing (global) names it can see.
+fn check_function_scope(f: &Function, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let mut fn_known = HashSet::new();
+    collect_scope_names(&f.body, &mut fn_known);
+    fn_known.extend(known.iter().cloned());
+    check_reads_in_scope(&f.body, &fn_known, diags);
+}
+
+/// `bless ARR in VAR [[ …$VAR… ]]` (and the map form) introduce
+/// predicate-local binder variable(s): check the test with them added,
+/// and don't treat the binder/array literals as reads. Returns `true`
+/// when the statement was a decodable bless (and has been checked).
+fn try_check_bless_stmt(c: &Command, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) -> bool {
+    if expr_literal_str(&c.name) != "bless" {
+        return false;
+    }
+    let Some((form, test)) = crate::ir::classify_bless(&c.args) else {
+        return false;
+    };
+    let mut bless_known = known.clone();
+    match form {
+        crate::ir::BlessForm::Indexed { binder, .. } => {
+            bless_known.insert(binder.to_string());
+        }
+        crate::ir::BlessForm::Map { key, val, .. } => {
+            bless_known.insert(key.to_string());
+            bless_known.insert(val.to_string());
+        }
+        crate::ir::BlessForm::Scalar { .. } => {}
+    }
+    check_test_reads(test, &bless_known, diags);
+    true
+}
+
+/// Default statement handling: check its own expressions, then recurse
+/// into any control-flow child bodies (same scope).
+fn check_stmt_exprs_and_bodies(
+    stmt: &Statement,
+    known: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    stmt.direct_exprs(&mut |e| check_expr_reads(e, known, diags));
+    for body in stmt.child_bodies() {
+        check_reads_in_scope(body, known, diags);
+    }
+}
+
+fn check_expr_reads(expr: &Expr, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) => flag_if_unknown(name, expr.span, known, diags),
+        ExprKind::ParameterExpansion(pe) => {
+            check_param_expansion_reads(pe, expr.span, known, diags)
+        }
+        ExprKind::Subscript { index, .. } => check_expr_reads(index, known, diags),
+        ExprKind::CommandSubstitution(stmts) => check_cmdsub_reads(stmts, known, diags),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            check_exprs(parts, known, diags)
+        }
+        ExprKind::AssocArray(pairs) => check_assoc_values(pairs, known, diags),
+        ExprKind::Test(t) => check_test_reads(t, known, diags),
+        _ => {}
+    }
+}
+
+/// A bare `${x}` (no operator) is a read; `${x:-…}` and friends are the
+/// explicit opt-out. Any operand (default word etc.) is itself checked.
+fn check_param_expansion_reads(
+    pe: &ParameterExpansion,
+    span: Span,
+    known: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if pe.operator.is_none() {
+        flag_if_unknown(&pe.name, span, known, diags);
+    }
+    if let Some(ref operand) = pe.operand {
+        check_expr_reads(operand, known, diags);
+    }
+}
+
+/// A command substitution runs in a subshell: its statements see the
+/// enclosing scope plus their own (subshell-local) introductions, which
+/// do NOT leak back out.
+fn check_cmdsub_reads(stmts: &[Statement], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let mut sub_known = known.clone();
+    collect_scope_names(stmts, &mut sub_known);
+    check_reads_in_scope(stmts, &sub_known, diags);
+}
+
+fn check_exprs(parts: &[Expr], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for p in parts {
+        check_expr_reads(p, known, diags);
+    }
+}
+
+fn check_assoc_values(
+    pairs: &[(String, Expr)],
+    known: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (_, v) in pairs {
+        check_expr_reads(v, known, diags);
+    }
+}
+
+fn check_test_reads(test: &TestExpr, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match test {
+        TestExpr::Unary { operand, .. } => check_expr_reads(operand, known, diags),
+        TestExpr::Binary { left, right, .. } => {
+            check_expr_reads(left, known, diags);
+            check_expr_reads(right, known, diags);
+        }
+        TestExpr::Not(inner) => check_test_reads(inner, known, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_test_reads(l, known, diags);
+            check_test_reads(r, known, diags);
+        }
+    }
+}
+
+fn flag_if_unknown(name: &str, span: Span, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    if !is_plain_identifier(name) || handled_elsewhere(name) || known.contains(name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5031",
+        format!(
+            "'${}' is assigned nowhere (possible typo) — assign it first, \
+             or write ${{{}:-DEFAULT}} for an intentional default",
+            name, name
+        ),
+    ));
+}

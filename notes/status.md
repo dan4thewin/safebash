@@ -50,7 +50,13 @@ a sash-convert canonicalize mode → moved to Tier 6._
 **Tier 2 complete** (native compiler bugs); Tier 3 next.
 
 **Tier 3 — remaining compiler features (native)**
-9. `reject-undeclared-scalar-read` (P2)
+9. `reject-undeclared-scalar-read` (P2) — DONE 2026-07-08 (DD#62 Model B:
+   meaningful zero value + a scalar typo check. SB5031 rejects a scalar
+   read of a name introduced nowhere in scope; `${x:-…}` is the opt-out.
+   Single-pass scope-membership, not definite-assignment. Recurses into
+   command-substitution bodies with subshell scope. `spec/undeclared.sh`
+   ud.1-16 all 3 modes; 0 regressions. Filed janet-scalar-zero-value and
+   bug-multistatement-cmdsub-placeholder surfaced by the specs.)
 10. `regex-interpolation-delimiters` (P2)
 11. `dd70-error-model-contract-spec` (P2)
 12. `glob-as-array-splat-disposition` (P2)

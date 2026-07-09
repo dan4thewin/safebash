@@ -112,3 +112,32 @@ run zero times) and use-before-assign fall out of the same all-paths rule.
 A typed declaration's zero-init (`int x` → 0, `array a` → empty) counts as
 an assignment — settle the exact "declaration zero-inits" set in the task.
 See task `reject-undeclared-scalar-read`.
+
+## Amendment (DG, 2026-07-08) — Model B: meaningful zero + typo check only
+
+The definite-assignment escalation above is **superseded**. DG: "the
+footgun is the misspelled variable … in Go the zero value is preferably
+meaningful — we boxed ourselves into a corner such that the zero value is
+useless."
+
+- **Scalar zero values are meaningful** (untyped → `""`, `int` → `0`,
+  container → empty) — the runtime already produces these. A bare read
+  `$x` of a **known** variable that happens to be unassigned on some path
+  is **allowed** and yields the zero value (Go-like). `if c; then x=1; fi;
+  echo $x` is fine (prints the zero on the else path), NOT an error.
+- **The only rejection is the typo:** a scalar read `$x` / `${x}` whose
+  name is introduced **nowhere in scope** (assignment, declaration, loop
+  var, `read`/`mapfile` target — anywhere in the current function scope or
+  the enclosing top-level scope). That is a cheap single-pass **scope
+  membership** check (a "may"/union analysis), NOT the definite-assignment
+  dataflow (no branch intersection, no zero-trip-loop modeling, no SSA
+  backstop).
+- `${x:-WORD}` stays the explicit "non-empty default" opt-out (always
+  allowed). Containers (`${a[i]}`) are out of scope for the typo check for
+  now (element reads yield the zero value; a nowhere-introduced container
+  is a possible follow-up).
+- Rationale/tradeoff: this catches the high-value footgun (typo → silent
+  empty → `rm -rf "$PREFIX/"`), which is a *scope* property, not a
+  dataflow one. The price (a forgot-to-assign-on-one-branch logic bug
+  reads the zero value instead of erroring) is the same price Go pays for
+  a meaningful zero value. SB5031. See task `reject-undeclared-scalar-read`.

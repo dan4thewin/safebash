@@ -167,6 +167,7 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
     let mut tdiags = validate::check_taint(program);
     tdiags.extend(validate::check_positionals(program));
     tdiags.extend(validate::check_argv_splat(program));
+    tdiags.extend(validate::check_undeclared_reads(program));
     if !tdiags.is_empty() {
         print_diags(input, &tdiags);
         std::process::exit(1);

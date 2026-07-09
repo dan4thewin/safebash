@@ -188,3 +188,47 @@ Errno directly on failure — the earlier E0308 was treating it as Result);
 sash_fork preserves errno via set_last_errno; sash_run's fork-failure arm
 reports it. spec/errors.sh 55.16 (bg errno), 55.30 (fg uncaught both
 lines), 55.31 (caught → errno only). 0 regressions.
+
+## Tier 3 #9: reject-undeclared-scalar-read — DONE (DD#62 Model B)
+
+DG pivoted the design mid-implementation. The original task was a
+definite-assignment (must-analysis, intersection-at-joins) escalation so a
+read on a path where the var might be unset was rejected. DG: "the footgun
+is the misspelled variable... in Go the zero value is preferably meaningful
+— we've boxed ourselves into a corner where the zero value is useless."
+
+**Model B** (amends DD#62): scalar zero values ARE meaningful (untyped→"",
+int→0 — the runtime already produces these). Reject ONLY a scalar read of a
+name introduced NOWHERE in scope — a pure typo/scope-membership check. This
+is a single-pass may/union analysis, NOT dataflow: `if c; then x=1; fi;
+echo $x` COMPILES. `${x:-WORD}` is the explicit opt-out.
+
+Impl: `check_undeclared_reads` pass in validate.rs (SB5031), wired into
+run_semantic_checks. Known-set = per-scope introductions (assignment LHS,
+int/array/map/const decl, for-var, read/mapfile/readarray targets) ∪
+globals. Functions inherit enclosing globals; a name introduced only in a
+sibling function is unknown. Reads = SimpleExpansion + bare
+ParameterExpansion (operator present ⇒ opt-out). Specials/positionals
+auto-excluded (is_plain_identifier); ENV/REJECTED keep their own codes;
+$LINENO parse-lowers to a Literal so it's invisible anyway.
+
+Two subtleties handled:
+- **bless binder**: `bless ARR in VAR [[…$VAR…]]` introduces predicate-local
+  binder(s) (Indexed.binder, Map.key+val via classify_bless) — added to
+  known when checking the test, and the binder/array literals aren't treated
+  as reads. (Over-fired on 15 native specs before this fix.)
+- **command substitution**: recurse into `$(…)` bodies with SUBSHELL scope
+  (outer known ∪ the sub's own introductions, which don't leak out). Catches
+  `echo $(echo $typo)`; allows `echo $(x=1; echo $x)`.
+
+Specs: spec/undeclared.sh ud.1-16, all 3 modes, 0 regressions.
+
+**Two bugs surfaced by the new specs (filed, not worked around):**
+- `janet-scalar-zero-value`: janet emits `(var n )` for `int n` (no
+  zero-init) and `(or (os/getenv "x") "")` for a bare scalar read
+  (env-fallback — violates DD#53). Guarded ud.5/6/11 to native,c.
+- `bug-multistatement-cmdsub-placeholder`: a `$(…)` body of >1 statement is
+  never executed — `single_command_subst` bails at len!=1 and the value
+  falls through to `expr_to_string`'s debug `"$(...)"` placeholder, which
+  leaks to runtime output. Single-statement works. Decision (DG): implement
+  vs reject. Guarded ud.16 to native + assert-no-SB5031-only.

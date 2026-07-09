@@ -1,21 +1,53 @@
 ---
-title: "Reject a bare scalar read that is not definitely assigned (DD#62 zero-value model)"
-status: ready
+title: "Reject a scalar read of a name introduced nowhere in scope (typo check; DD#62 Model B)"
+status: done
 priority: P2
 kind: feature
 depends: [DD62-test-expr-simplification]
 gates:
-  - "echo $foo (assigned nowhere) is a compile error (new SB code)"
-  - "msg=hi; echo $mgs (typo) is rejected"
-  - "if c; then x=1; fi; echo $x is rejected (c-false path reaches $x unassigned)"
+  - "echo $foo (introduced nowhere) is a compile error (SB5031)"
+  - "msg=hi; echo $mgs (typo) is rejected; the message names the variable and suggests ${mgs:-DEFAULT}"
   - "x=1; echo $x compiles; echo ${x:-default} always compiles"
-  - "while/for bodies that may run zero times do not count as assigning the body's targets"
-  - "typed zero-init counts as assigned: int x -> 0, array a -> empty (settle the exact set)"
-  - "diagnostic points at ${x:-...} for intentional maybe-unset"
-  - "spec tests; native + c + janet; no net regression"
+  - "if c; then x=1; fi; echo $x COMPILES (meaningful zero on the else path — Model B, NOT rejected)"
+  - "a name introduced by assignment / int|array|map decl / for-var / read|mapfile target anywhere in the scope is 'known' (order-insensitive)"
+  - "functions see enclosing (global) names; a name introduced only inside another function is unknown"
+  - "specials ($?/$$/$!/$#/$LINENO) and positionals ($1/$@) are not flagged (handled elsewhere / auto-excluded); ENV_VARS/REJECTED_VARS keep their own codes"
+  - "spec tests; native + c + janet identical (front-end check); no net regression"
 ---
 
-# Reject a not-definitely-assigned scalar read
+# Reject a scalar read of a nowhere-introduced name (typo check)
+
+> **Model B (DG, 2026-07-08 — DD#62 amendment).** NOT definite-assignment
+> dataflow. Scalar zero values are meaningful (untyped→"", int→0); the only
+> rejection is the **typo**: a scalar read whose name is introduced nowhere
+> in scope. A known-but-maybe-unset read is allowed (yields the zero
+> value). Cheap single-pass scope-membership (union/may), no branch
+> intersection, no zero-trip-loop modeling, no SSA backstop. The
+> superseded definite-assignment design is kept below for history.
+
+## Model B design (implement this)
+
+A new front-end pass `validate::check_undeclared_reads`:
+1. **Collect** the "known" scalar names per scope. Top-level (globals) =
+   names introduced anywhere in `program.statements` (+ end_block),
+   descending control-flow bodies (if/while/for/case/list/group) but NOT
+   nested function bodies. Per function: its own introductions ∪ globals.
+   Introductions: assignment LHS, `int/array/map/const` declaration names,
+   `for` loop var, `read`/`mapfile`/`readarray` targets.
+2. **Check reads.** Walk each scope; a scalar read is `SimpleExpansion(n)`
+   or a bare `ParameterExpansion{name:n, operator:None}`. If `n` is a plain
+   identifier (`^[A-Za-z_][A-Za-z0-9_]*$`), not in ENV_VARS/REJECTED_VARS
+   (their own codes), and not in the scope's known set → **SB5031**. A
+   `${x:-…}` (operator present) is the opt-out; skip its `name` but still
+   check reads inside the operand. Subscripts (`${a[i]}`) are out of scope
+   (container); still recurse the index.
+3. Wire into `cli_main` alongside `check_taint`/`check_positionals`.
+
+`$LINENO` needs no special-case (parse lowers it to a `Literal`, invisible
+here). CmdSubst-internal reads may be deferred (conservative — a miss, not
+a false reject).
+
+# Reject a not-definitely-assigned scalar read (SUPERSEDED — history)
 
 ## Decision (DG, 2026-06-21) — DD#62
 
