@@ -12,6 +12,32 @@ gates:
 
 # sash-convert — top-level positional uses need bless
 
+## Resolved (DG, 2026-07-08) — option 1 (hoist + placeholder bless + MANUAL)
+
+For each top-level positional **read**, sash-convert emits the env-var-style
+hoist (the `$HOME` model already in `convert_simple_expansion`): a prefix
+line that captures the source, a **placeholder bless** with a permissive
+predicate, and a `# MANUAL(sash-convert):` marker telling the user to
+tighten it. The inline use is replaced with the hoisted var.
+
+- **scalar read** `echo "$1"` →
+  ```bash
+  arg1=$(arg 1); bless arg1 [[ -n $arg1 ]]   # MANUAL(sash-convert): tighten predicate
+  echo "$arg1"
+  ```
+- **for-in** `for x in "$@"; do …` → after the syntactic rewrite to
+  `for x in $(argv); do …`, inject a body-leading
+  `bless x [[ -n $x ]]  # MANUAL(sash-convert): tighten predicate`.
+- **command-arg splat** `cmd "$@"` → snapshot to an array, bless-all, and
+  pass: `argv a; bless a in e [[ -n $e ]]  # MANUAL(sash-convert): …; cmd @a`
+  (once `argv-snapshot-to-outparam` lands; until then a `MANUAL` marker).
+
+The placeholder predicate (`[[ -n $x ]]`) is permissive-but-compiling so the
+converted script builds; the `MANUAL` marker forces human review. This
+beats option 2 (MANUAL-only, no working scaffold) and option 3 (status quo,
+non-compiling output). Convert-tier work.
+
+
 ## Re-scoped (2026-06-16)
 
 Originally filed as `converter-command-arg-splat` (just `cmd "$@"`). On

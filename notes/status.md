@@ -82,7 +82,8 @@ a sash-convert canonicalize mode → moved to Tier 6._
 27. `r47-validate-rs-per-rule-tests` (P7)
 
 **Tier 6 — convert (last among work)**
-28. `converter-positional-use-needs-bless` (P2) ⚠ hoist vs MANUAL
+28. `converter-positional-use-needs-bless` (P2) — RESOLVED (DG 2026-07-08:
+    option 1, hoist + placeholder bless + MANUAL marker, $HOME-style)
 29. `converter-case-to-dispatch` (P3, policy resolved)
 30. `converter-var-modifier-migration` (P3)
 31. `converter-compound-postfix`
