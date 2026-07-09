@@ -30,9 +30,9 @@ pub(super) fn handle_command(
     let name = expr_to_string(&c.name);
     let kind = BuiltinCmd::from_name(&name);
 
-    // DD#70 (B): `match` is a boolean that must be consumed — a bare or
-    // `-`-suppressed `match` is a compile error.
-    check_match_must_consume(kind, stmt, state);
+    // DD#70 (B): `match` and a bare `[[ … ]]` are booleans that must be
+    // consumed — a bare or `-`-suppressed one is a compile error.
+    check_boolean_must_consume(kind, stmt, state);
 
     // DD#63: the 3-arg out-array form `match S P ARR` (the 2-arg boolean
     // and `$(match …)` value forms fall through).
@@ -200,24 +200,29 @@ fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionSta
     }
 }
 
-/// DD#70 (B): `match` is a boolean that **must be consumed**. In a
-/// consuming position (if/while/&&/||) it is fine. Otherwise it is a
-/// compile error in the "ignored result" family (adjacent to SB4016):
-/// SB4018 for a bare `match`, SB4019 when `-` is applied to it (a
+/// DD#70 (B): `match` and a bare `[[ … ]]` are booleans that **must be
+/// consumed**. In a consuming position (if/while/&&/||) they are fine.
+/// Otherwise it is a compile error in the "ignored result" family (adjacent
+/// to SB4016): SB4018 for a bare result, SB4019 when `-` is applied (a
 /// must-consume result has no runtime verdict to suppress).
-fn check_match_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
-    if kind != BuiltinCmd::Match || state.in_condition > 0 {
+fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
+    let construct = match kind {
+        BuiltinCmd::Match => "match",
+        BuiltinCmd::Test => "[[ … ]]",
+        _ => return,
+    };
+    if state.in_condition > 0 {
         return;
     }
     let diag = if state.suppressed > 0 {
         format!(
-            "{}:{}: error [SB4019] `-` cannot suppress `match` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
-            stmt.span.line, stmt.span.col
+            "{}:{}: error [SB4019] `-` cannot suppress `{}` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
+            stmt.span.line, stmt.span.col, construct
         )
     } else {
         format!(
-            "{}:{}: error [SB4018] `match` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
-            stmt.span.line, stmt.span.col
+            "{}:{}: error [SB4018] `{}` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
+            stmt.span.line, stmt.span.col, construct
         )
     };
     state.diagnostics.push(diag);

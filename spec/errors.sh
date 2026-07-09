@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=53
+plan=61
 echo "1..$plan" >&3
 
 set +e
@@ -318,6 +318,73 @@ run_sash 'x=foo; echo $x'
 # br10 (positive) an assignment on the RIGHT of || (the consequent) is fine
 run_sash 'false || x=set; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.br10
+
+# ── DD#70 (A)/(B) error-model contract ───────────────────────────────
+# (B) must-consume booleans: `match` (regex.sh 63.1c-2f) and a bare
+# `[[ … ]]`. A bare boolean is a compile error; if/&&/|| consume it;
+# `|| :` discards it; `-` on a (B) construct is a compile error.
+# SB4018/SB4019 are transform diagnostics — native-only (not surfaced on
+# --emit-c / --janet yet; see c-janet-dd55-abort-channel).
+
+# e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
+# e.b70.tdash `-` on a `[[ … ]]` (a must-consume boolean) → SB4019
+if in_modes native; then
+    run_sash '[[ a = a ]]'
+    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
+
+    run_sash '- [[ a = a ]]'
+    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk e.b70.tdash
+else
+    skip_chk e.b70.tbare; skip_chk e.b70.tdash
+fi
+
+# e.b70.tdisc `[[ … ]] || :` explicitly discards the boolean → ok
+run_sash '[[ a = a ]] || :
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.tdisc
+
+# e.b70.tand a `[[ … ]] && action` consumes it (runs on true)
+run_sash '[[ a = a ]] && echo hit'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk e.b70.tand
+
+# e.b70.tor a `[[ … ]] || action` consumes it (runs on false)
+run_sash '[[ a = b ]] || echo miss'
+[[ $rc = 0 && $out = "miss" && -z $err ]]; chk e.b70.tor
+
+# e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
+# native-only: the c/janet backends don't yet compile a `-> int` function
+# used in `|| :` position (see c-janet-fn-int-discard).
+if in_modes native; then
+    run_sash 'fn f -> int { return 3 }
+f || :
+echo done'
+    [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.fndisc
+else
+    skip_chk e.b70.fndisc
+fi
+
+# (A) abort channel: a CAUGHT failure prints NOTHING to stderr (the
+# `<argv0>: …` diagnostic is only for an *uncaught* abort).
+# e.a70.silent `if /bin/false` → else branch, no runtime diagnostic
+if in_modes native; then
+    run_sash 'if /bin/false; then echo y; else echo n; fi'
+    [[ $rc = 0 && $out = "n" && -z $rerr ]]; chk e.a70.silent
+else
+    skip_chk e.a70.silent
+fi
+
+# (A) dynamic (interpolated) bad regex → runtime regcomp abort with the
+# `regexp error: …` diagnostic (compile-time validation only covers a
+# static pattern). native-only: the c/janet spec harnesses discard runtime
+# stderr, so the `rerr` diagnostic can only be asserted natively.
+# e.a70.regcomp
+if in_modes native; then
+    run_sash 'p="[bad"
+if match hello "$p"; then echo y; else echo n; fi'
+    [[ $rc != 0 && $rerr == *"regexp error"* ]]; chk e.a70.regcomp
+else
+    skip_chk e.a70.regcomp
+fi
 
 set -e
 tally

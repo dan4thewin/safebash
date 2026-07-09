@@ -1,5 +1,5 @@
 title: "DD#70 (A)/(B) error-model — comprehensive contract spec"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []

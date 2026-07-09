@@ -67,7 +67,15 @@ a sash-convert canonicalize mode → moved to Tier 6._
     decide-regex-bare-brace (bare `{` literal vs `\{`), and
     retire-legacy-sed-regex-replace-machinery (the old `:s`/regex_replace
     transform+codegen is now unreachable, remove it).)
-11. `dd70-error-model-contract-spec` (P2)
+11. `dd70-error-model-contract-spec` (P2) — DONE 2026-07-08 (filled the
+    gaps: bare `[[ … ]]` is now a must-consume (B) boolean —
+    check_boolean_must_consume generalized from match to also cover
+    BuiltinCmd::Test → SB4018 bare / SB4019 `- [[ ]]`; consumed (if/&&/||/`|| :`)
+    and dispatch `[[ … { } ]]` forms unaffected. Contract tests added to
+    spec/errors.sh: e.b70.tbare/tdash/tdisc/tand/tor/fndisc, e.a70.silent/
+    regcomp. rerr-asserting + `-> int`-discard cases are native-only (the
+    c/janet harnesses discard runtime stderr; c/janet also can't yet compile
+    a `-> int` fn in `|| :` — filed c-janet-fn-int-discard). 0 regressions.)
 12. `glob-as-array-splat-disposition` (P2)
 13. `glob-splat-disposition-word` (P2)
 14. `argv-snapshot-to-outparam` (P2) — auto-declare resolved (DG 2026-07-08:

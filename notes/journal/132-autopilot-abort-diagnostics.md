@@ -285,3 +285,37 @@ the bash-compat-vs-`\{` decision for DG. Path B itself is verified for the
 Specs: spec/regex.sh 63.d7/d8/e1/e2/g1-g8 (native 40/40; c/janet skip only
 mode-guarded cases). 0 regressions all modes. Refactored the new lexer/
 parser/validate fns under the complexity gate.
+
+## Tier 3 #11: dd70-error-model-contract-spec — DONE
+
+Most of the DD#70 (A)/(B) contract was already implemented+tested (55.x
+abort/catch/suppress+diagnostics; 63.1c-2f match must-consume; abort
+diagnostics from Tier 1). This task filled the gaps and consolidated the
+contract into spec/errors.sh.
+
+**Feature gap closed — bare `[[ … ]]` is a (B) must-consume boolean.**
+`check_match_must_consume` → `check_boolean_must_consume`, generalized to
+also fire for `BuiltinCmd::Test` (a bare `[[ … ]]` is `Command{name:"[[",
+args:[Test]}`). Bare → SB4018; `- [[ … ]]` → SB4019; consumed positions
+(if/while/&&/||, `|| :`) are fine via the existing `state.in_condition`
+gate. Verified safe against every existing `[[ ]]` spec:
+- `bless x [[ … ]]` predicates are `BuiltinCmd::Bless`, not Test.
+- `[[ … { } ]]` dispatch (DD#66) is a separate control-flow statement, not
+  a Test-arg Command (dp.a4/a5 still compile).
+- for-in synthetic `[[ __ai -lt … ]]` bound checks are lowered directly,
+  not via handle_command.
+- `! [[ … ]]` is `NegateTestResult`, not Test.
+- ow.7 (`[[ $x =~ foo bar ]]`) already errors at parse (SB4014).
+0 regressions across all modes.
+
+**Contract tests (spec/errors.sh):** e.b70.tbare (SB4018), e.b70.tdash
+(SB4019), e.b70.tdisc (`|| :`), e.b70.tand, e.b70.tor, e.b70.fndisc
+(`-> int` via `|| :`), e.a70.silent (caught → no rerr diagnostic),
+e.a70.regcomp (dynamic bad regex → runtime `regexp error`).
+
+**Native-only guards + gap filed:** the c/janet spec harnesses run the
+binary with `2>/dev/null` and never populate `rerr`, so any rerr-asserting
+test (silent, regcomp) is native-only. e.b70.fndisc is native-only too:
+`fn f -> int { return 3 }; f || :` fails to compile in c (gcc rejects the
+emitted C) and errors in janet — a genuine backend gap, filed
+c-janet-fn-int-discard.
