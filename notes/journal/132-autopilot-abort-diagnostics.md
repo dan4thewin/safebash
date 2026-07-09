@@ -319,3 +319,19 @@ test (silent, regcomp) is native-only. e.b70.fndisc is native-only too:
 `fn f -> int { return 3 }; f || :` fails to compile in c (gcc rejects the
 emitted C) and errors in janet — a genuine backend gap, filed
 c-janet-fn-int-discard.
+
+## Tier 3 #12/#13: glob-splat disposition — Part 1 done, Part 2 scoped
+
+Investigated glob-as-array-splat-disposition (#12) and found **Part 1 is
+already implemented**: `for f in *` iterates per-element and inline `*` in a
+command arg is SB5029. Set #12 → partial.
+
+Part 2 (external-splat empty-disposition `@{a:-WORD}`/`@{a:?WORD}` + bare-@a-
+external → SB5032) is the same work as the focused task
+glob-splat-disposition-word (#13). It's a full-stack, new-syntax feature:
+`@{…}` needs new lexer tokenization (today `@{a:-foo}` mis-parses as `@` + a
+`{ }` command group), then parser/validate/transform/codegen/runtime. The
+design is DG-resolved (2026-06-21) — no blocker. Mapped the full
+implementation surface (via an explore agent) and appended a concrete,
+anchor-by-anchor implementation-ready plan to #13 so it can be executed
+directly next. SB5032 reserved for the bare-@a-external error.

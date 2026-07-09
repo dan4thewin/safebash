@@ -76,8 +76,15 @@ a sash-convert canonicalize mode → moved to Tier 6._
     regcomp. rerr-asserting + `-> int`-discard cases are native-only (the
     c/janet harnesses discard runtime stderr; c/janet also can't yet compile
     a `-> int` fn in `|| :` — filed c-janet-fn-int-discard). 0 regressions.)
-12. `glob-as-array-splat-disposition` (P2)
-13. `glob-splat-disposition-word` (P2)
+12. `glob-as-array-splat-disposition` (P2) — PART 1 DONE (for-in globs
+    per-element; inline `*` → SB5029). Part 2 (external-splat disposition)
+    == #13; task set to `partial`.
+13. `glob-splat-disposition-word` (P2) — READY, next up. `@{a:-WORD}` /
+    `@{a:?WORD}` external-splat empty-disposition + bare-`@a`-to-external →
+    SB5032. Design DG-resolved; full implementation-ready code map appended
+    to the task (2026-07-08). Full-stack: new `@{…}` lexer token → parser →
+    validate (is_external_source gate) → transform → codegen empty-branch →
+    runtime abort (sash_emsg `<progname>: WORD`).
 14. `argv-snapshot-to-outparam` (P2) — auto-declare resolved (DG 2026-07-08:
     `argv [N] a` auto-declares, mirroring mapfile/read); ready to implement
 

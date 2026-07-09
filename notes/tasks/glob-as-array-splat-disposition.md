@@ -1,6 +1,6 @@
 ---
 title: "globs are array sugar; @a splat into external commands requires an empty-disposition (@{a:-foo}/@{a:?bang})"
-status: ready
+status: partial
 priority: P2
 kind: feature
 depends: [array-splat-command-arg]
@@ -18,6 +18,18 @@ gates:
 
 Design decided with DG 2026-06-20 (see also the discussion that produced
 `array-splat-command-arg` and `for-loop-arith-condition`).
+
+## STATUS (2026-07-08): Part 1 DONE; Part 2 == `glob-splat-disposition-word` (#13)
+
+- **Part 1 is implemented** (verified 2026-07-08): `for f in *` iterates
+  per-element (glob→array), and inline `*` in a command argument is a
+  compile error **SB5029** ("inline `*` glob is not allowed … use `array
+  a=(*); … @a`"). `array a=(*)` unchanged.
+- **Part 2 (external-splat empty-disposition) is NOT done** and is the same
+  work as the focused task `glob-splat-disposition-word` (#13), which
+  carries DG's resolved WORD semantics (2026-06-21). Implement it there;
+  this task closes when #13 lands. A full implementation-ready plan (from a
+  2026-07-08 code map) lives in #13.
 
 ## Part 1 — reframe DD#20: globs ARE arrays
 
