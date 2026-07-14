@@ -503,3 +503,52 @@ cf-backend-gaps-brace-surfaced), NOT arith.
 
 **Session totals: c 47→18, janet 70→41, native 0 (gate green throughout),
 6 code commits, 0 regressions.**
+
+## 2026-07-14 (cont.) — unset collections + read-herestring; session wrap
+
+**a355d38 — unset array/map (DD#30) c+janet.** c: emit_assign now handles
+the `__new_table__` sentinel (→ sash_table_new); janet: `${#a[@]}` nil-safe
+via `(length (or a ""))`. → 30.11 both. (Also: the earlier "c array-length
+segfault" was a red herring — my manual gcc dropped `-fno-stack-protector`;
+the harness flag is correct.)
+
+**3511fe4 — read from herestring + multi-part DoubleQuoted.** c: emit_readline
+now applies its redirects (was ignoring them → read from inherited stdin);
+ir_expr_as_str concatenates multi-part DoubleQuoted (a herestring body
+`"hello"` parses as multi-part, so it had emitted empty via the TODO — broke
+`cat <<< "word"` in c generally). janet: expr_to_literal same multi-part
+generalization. → 24.6 both.
+
+## SESSION SUMMARY (Tier 4 c/janet parity, 2026-07-14, unattended)
+
+8 code commits, **native 0 throughout (gate green), 0 regressions**:
+| commit  | area                                   | c        | janet    |
+|---------|----------------------------------------|----------|----------|
+| dc10423 | DD#20 lastpipe read/mapfile + bare decl| 47→38    | 70→61    |
+| e7c530f | c_var_name distinct + enforce diags    | 38→31    | 61→53    |
+| 73de6d2 | DD#58 int-func-in-arith                 | 31→22    | 53→50    |
+| 28948e7 | dtoi/itod intrinsics                    | 22→18    | 50→46    |
+| 28db76d | janet arith string→int coercion (_num) | 18       | 46→41    |
+| a355d38 | unset collection (DD#30)               | 18→17    | 41→40    |
+| 3511fe4 | read-herestring + DoubleQuoted         | 17→16    | 40→39    |
+
+**Net: c 47→16 (−31), janet 70→39 (−31).**
+
+Tasks closed: echo-read-inline-pipe-cjanet, janet-arith-string-coercion.
+
+**Remaining (all feature-sized, next session):**
+- 56.x signals/END (c 7, janet 15) — biggest; needs the `signal` builtin
+  (IGN/DFL/FLAG/EXIT dispositions), `$(signum)`, END-block integration.
+  janet lacks END entirely.
+- 55.x DD#55 abort remainder — needs: (a) c external `$(cmd)` cmdsub
+  (emit_cmdsub is TODO for externals) → 55.7/8; (b) pipefail with
+  per-segment `-` suppress (55.10/11, 20.6, 21.3) — the pipeline stage
+  tuples carry no suppress flag, and a `-`-suppressed pipeline sets
+  checked=false but keeps a nonzero status, so naive pipefail regresses
+  55.11; DG-design-sensitive; (c) `$!`/StoreBgPid background pid (38.5,
+  55.19).
+- janet singletons: cf.f9 (C-style multi-init scoping — vars declared in a
+  nested `(do)` don't escape to the loop), cf.f10 (loop var persistence),
+  cf.f12 (`for x in $@`), 14.3 (wait), 16.1, 17.1, 18.1-3, 33.10 (`$(keys)`
+  + `${m[$k]}`), 42.1, 48.2, 53.2 — heterogeneous.
+- c singletons: 24.12 (bless runtime-fail exit).
