@@ -628,6 +628,18 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
         writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
         return;
     }
+    // DD#30: `unset arr` lowers to `arr = "__new_table__"` — allocate a
+    // fresh empty table in the slot (mirrors handle_new_table_assign).
+    if matches!(value, SsaValue::Literal(s) if s == "__new_table__") {
+        let base = c_var_name(&target.name, target.version);
+        writeln!(
+            e.out,
+            "    {0}_ptr = (const char*)sash_table_new(0); {0}_len = 0;",
+            base
+        )
+        .unwrap();
+        return;
+    }
     let base = c_var_name(&target.name, target.version);
     match target.var_type {
         VarType::String => {

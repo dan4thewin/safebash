@@ -1976,7 +1976,7 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
     };
     match op {
         ":-" => emit_pe_default(pe, ctx),
-        "strlen" | "arrlen" => format!("(string (length {}))", var_ref),
+        "strlen" | "arrlen" => format!("(string (length (or {} \"\")))", var_ref),
         "substring" => emit_pe_substring(&var_ref, &pe_operand_literal(pe)),
         // DD#65: `:s/` sed op keeps the raw `/`//` operator; the dropped
         // `/`-family glob-replace was remapped to `glob_replace` (rejected
