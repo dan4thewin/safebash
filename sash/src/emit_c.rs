@@ -569,8 +569,12 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         // Single-target read (read VAR). fd=-1 is the lastpipe sentinel
         // (read from the captured pipe fd). __read_eof tracks EOF.
         SsaInst::ReadLine {
-            target, fd, delim, ..
-        } => emit_readline(e, target, *fd, *delim, types),
+            target,
+            fd,
+            delim,
+            redirects,
+            ..
+        } => emit_readline(e, target, *fd, *delim, redirects, types),
         // read VAR1 VAR2 … [-f<sep>] — split one line across N targets.
         SsaInst::ReadLineMulti {
             targets,
@@ -1428,7 +1432,25 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
         ExprKind::SimpleExpansion(name) => latest_var_as_str(name, types),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => ir_expr_as_str(e, &parts[0], types),
+        ExprKind::DoubleQuoted(parts) => {
+            if parts.is_empty() {
+                return ("\"\"".to_string(), "0".to_string());
+            }
+            let (mut acc_ptr, mut acc_len) = ir_expr_as_str(e, &parts[0], types);
+            for p in &parts[1..] {
+                let (pp, pl) = ir_expr_as_str(e, p, types);
+                let t = e.fresh();
+                writeln!(
+                    e.out,
+                    "    i64 {t}_l; const char* {t}_p = (const char*)sash_concat({ap}, {al}, {pp}, {pl}, &{t}_l);",
+                    t = t, ap = acc_ptr, al = acc_len, pp = pp, pl = pl
+                )
+                .unwrap();
+                acc_ptr = format!("{}_p", t);
+                acc_len = format!("{}_l", t);
+            }
+            (acc_ptr, acc_len)
+        }
         _ => {
             writeln!(
                 e.out,
@@ -2591,7 +2613,17 @@ fn emit_table_key(e: &mut Emit, array: &str, index: &VarRef, types: &VarTypes) -
 /// emit_readline (codegen/dispatch.rs:876). delim=None uses
 /// newline; delim=Some(b) uses that byte. Sets __exit_status = 1
 /// on EOF, 0 otherwise.
-fn emit_readline(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>, _types: &VarTypes) {
+fn emit_readline(
+    e: &mut Emit,
+    target: &VarRef,
+    fd: i64,
+    delim: Option<u8>,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) {
+    // `read VAR < file` / `read VAR <<< word` — apply the redirect (e.g.
+    // herestring → fd 0) around the read, then restore.
+    let saved = emit_redirects(e, redirects, types);
     let t = e.fresh();
     let fdx = c_read_fd(fd);
     let call = match delim {
@@ -2609,6 +2641,7 @@ fn emit_readline(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>, _typ
         t = t
     )
     .unwrap();
+    emit_restore(e, &saved);
 }
 
 /// The C fd expression for a read: fd=-1 is the lastpipe sentinel

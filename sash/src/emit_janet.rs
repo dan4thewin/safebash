@@ -2077,7 +2077,11 @@ fn expr_to_literal(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),
         ExprKind::SimpleExpansion(var) => format!("${}", var),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => expr_to_literal(&parts[0]),
+        ExprKind::DoubleQuoted(parts) => parts
+            .iter()
+            .map(expr_to_literal)
+            .collect::<Vec<_>>()
+            .join(""),
         _ => "?".to_string(),
     }
 }
