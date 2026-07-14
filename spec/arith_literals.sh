@@ -73,7 +73,9 @@ run_sash 'echo $((5 # 3))'
 # native/c use sash_atoi (DD#72); janet coerces string-vars-in-arith via its
 # own runtime and can't `:+` a string var (pre-existing janet limitation — it
 # illustrates the IR, native/c are the numeric oracles). Guard to native,c.
-if in_modes native,c; then
+# DD#72 numeric-literal data coercion in arithmetic. Janet coerces string
+# vars to int at each arith use site (`_num`), honoring 0x/0o/0b and
+# leading-zero-decimals — so these run in all three modes.
 # honors 0x/0o/0b prefixes
 run_sash 'x=0xff; echo $((x + 0))'
 [[ $rc = 0 && $out = "255" && -z $err ]]; chk nl.s1
@@ -97,11 +99,6 @@ run_sash 'x=-0xff; echo $((x + 0))'
 # zero
 run_sash 'x=0; echo $((x + 0))'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk nl.s10
-else
-    skip_chk nl.s1; skip_chk nl.s2; skip_chk nl.s3; skip_chk nl.s4
-    skip_chk nl.s5; skip_chk nl.s6; skip_chk nl.s7; skip_chk nl.s8
-    skip_chk nl.s10
-fi
 
 set -e
 tally

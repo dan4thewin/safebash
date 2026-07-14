@@ -36,6 +36,19 @@ pub fn emit_janet(program: &Program) -> String {
 
     ctx.declare("__last_exit");
     writeln!(out, "(var __last_exit 0)").unwrap();
+    // Arithmetic operates on integers, but sash variables hold strings
+    // (bash semantics). `_num` coerces a string operand to an integer at
+    // each arithmetic use site, honoring DD#72 (0x/0o/0b prefixes; a
+    // leading-zero decimal like 010 stays base-10). A value that is already
+    // a number passes through; a non-numeric string yields 0.
+    writeln!(
+        out,
+        "(defn _num [v] (if (number? v) v (let [s (string v) neg (string/has-prefix? \"-\" s) \
+b (if neg (slice s 1) s) r (cond (string/has-prefix? \"0o\" b) (scan-number (string \"8r\" (slice b 2))) \
+(string/has-prefix? \"0b\" b) (scan-number (string \"2r\" (slice b 2))) (scan-number b)) \
+n (or r 0)] (if neg (- n) n))))"
+    )
+    .unwrap();
     for stmt in &program.statements {
         emit_stmt(&mut out, &mut ctx, stmt, 0);
     }
@@ -2079,9 +2092,9 @@ fn arith_dollar_var_to_janet(name: &str) -> String {
         "__last_exit".to_string()
     } else if name != "0" && !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()) {
         let idx = name.parse::<u32>().unwrap_or(1).saturating_sub(1);
-        format!("(scan-number (or (get _args {}) \"0\"))", idx)
+        format!("(_num (or (get _args {}) 0))", idx)
     } else {
-        name.to_string()
+        format!("(_num {})", name)
     }
 }
 
@@ -2135,7 +2148,7 @@ fn arith_compound_assign_to_janet(var: &str, op: crate::ir::IrArithOp, value: St
         Mod => "%",
         _ => "?",
     };
-    format!("(set {} ({} {} {}))", var, op_str, var, value)
+    format!("(set {} ({} (_num {}) {}))", var, op_str, var, value)
 }
 
 /// Emit a unary arithmetic op as janet.
@@ -2161,7 +2174,7 @@ fn arith_expr_to_janet(expr: &crate::ir::ArithExpr, ctx: &EmitCtx) -> String {
         ArithExpr::Var(name) => arith_var_to_janet(name, ctx),
         ArithExpr::DollarVar(name) => arith_dollar_var_to_janet(name),
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
-            format!("({} {} 1)", if *inc { "+" } else { "-" }, var)
+            format!("({} (_num {}) 1)", if *inc { "+" } else { "-" }, var)
         }
         ArithExpr::FuncCall { name, args } => arith_funccall_to_janet(name, args, ctx),
         ArithExpr::Paren(inner) => arith_expr_to_janet(inner, ctx),
@@ -2206,12 +2219,13 @@ fn arith_op_expr_to_janet(expr: &crate::ir::ArithExpr, ctx: &EmitCtx) -> String 
     }
 }
 
-/// A bare arith name: a nullary `-> int` function call, else a var ref.
+/// A bare arith name: a nullary `-> int` function call, else a var ref
+/// coerced to an integer (`_num`) for arithmetic.
 fn arith_var_to_janet(name: &str, ctx: &EmitCtx) -> String {
     if ctx.is_int_func(name) {
         format!("({})", name)
     } else {
-        name.to_string()
+        format!("(_num {})", name)
     }
 }
 
