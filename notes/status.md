@@ -107,7 +107,18 @@ a sash-convert canonicalize mode → moved to Tier 6._
 19. ~~`echo-read-inline-pipe-cjanet`~~ — DONE (dc10423): DD#20 lastpipe
     read/mapfile for c+janet + bare `array`/`map` decl fix (janet). Extended
     beyond the single-read gate to 22.4-10/22.12. c 47→38, janet 70→61.
-20. `janet-arith-string-coercion`
+20. `janet-arith-string-coercion` — also unblocks janet 58.2/58.3 (int-func
+    args in arith). See task note.
+
+**Tier 4 extra (not a pre-filed task) — DONE this session (2026-07-14):**
+- DD#58 int-func-in-arith c+janet (73de6d2): c 58.1-8 (fixed the `$?`-assign
+  → __exit_status mis-wire); janet 58.1/4/5/8 (nullary `(f)` call + `_ret`
+  label numeric return). janet 58.2/3 → janet-arith-string-coercion.
+- c_var_name distinct special-var names + enforce transform diagnostics for
+  c/janet/manifest (e7c530f): fixed dup-`__ptr` compile error + made the
+  oracles reject SB4016-class programs like native. Fixed 0.6/46.4/48.1/
+  55.12/13/14/17c/16.2/0.5.
+- Session tally: **c 47→22, janet 70→50, native 0** (gate green throughout).
 21. `cmdsub-followups-taint-intrinsics-c`
 22. `oracle-blessall-mapfile`
 23. `janet-getpid-class-intrinsics` — janet execs getpid-class names as

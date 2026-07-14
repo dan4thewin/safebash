@@ -42,3 +42,11 @@ guard on `nl.s1`-`nl.s10`.
   string-coercion story.
 - Consistent with other janet numeric divergences (e.g. bug-janet-int-overflow,
   wontfix; janet uses idiomatic numbers).
+
+## 58.2/58.3 dependency (2026-07-14)
+
+DD#58 int-func-in-arith with args (`fn add -> int { return $(($1+$2)); }`,
+`$(( (add 3 4) ))`) fails in janet only because `(add 3 4)` passes numeric
+args while the body does `(scan-number (get _args 0))` — scan-number errors
+on a number. Fixing the string/number coercion here (a `number?`-guarded
+coerce, or passing string args) unblocks janet spec 58.2 and 58.3.

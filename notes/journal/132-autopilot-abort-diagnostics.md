@@ -446,3 +446,40 @@ all green, no bypass.
 - Next biggest shared clusters: 58.x (int-func-in-`$((f))`: c dup-`__ptr`,
   janet assigns the fn instead of calling), 36.x (dtoi), 55.x (DD#55 abort),
   56.x (signals, mostly janet).
+
+## 2026-07-14 (cont.) — c/janet hardening + DD#58 int-func-in-arith
+
+Two more commits after the lastpipe work.
+
+**e7c530f — distinct special-var C names + enforce transform diags.**
+Investigating the 58.x cluster surfaced a c codegen bug: `c_var_name`
+collapsed every non-alphanumeric char to `_`, so `$#`/`$?`/`$@`/`$*`/`$!`/
+`$$` all became the same C identifier (`__ptr`) → duplicate declaration
+(compile error) + variable aliasing. Fixed: each special char → a distinct
+`_c<code>` token. That in turn unmasked a latent gap: `--emit-c`/`--janet`/
+`--manifest` called `ir_to_ssa_typed` and *discarded* its diagnostics, so
+they emitted (and ran) programs native rejects (SB4016 etc.). native
+enforces these via codegen::compile_to_object; added `enforce_transform_diags`
+so the alt-output backends reject the same programs. (55.13 had been passing
+in c only because the dup-decl made the bad C fail to compile.)
+→ c 38→31, janet 61→53; fixed compile-error specs 0.6/46.4/48.1/55.12/13/14
+  + 58.6/58.7. 0 regressions.
+
+**73de6d2 — DD#58 int-func-in-arith c + janet.**
+- c: `return N` in a lifted int-func lowers to `Assign(?, N)`; emit_assign
+  wrote `?` to the generic string slot but `$?` reads come from
+  __exit_status → capture saw 0. Now Assign to `?` sets __exit_status (int),
+  mirroring native's handle_exit_status_assign. → c 58.1-8 all pass.
+- janet: (1) arith `$((f))` for a known int-func emits `(f)` not bare `f`
+  (threaded ctx through arith_expr_to_janet, split into two dispatchers +
+  helpers for the complexity gate); (2) int-func bodies wrap in `(label _ret
+  …)` and `return N` → `(return _ret <numeric>)` (bare janet return needs a
+  label; numeric for arith). → janet 58.1/4/5/8 pass.
+→ c 31→22, janet 53→50; 0 regressions.
+
+**Session tally: c 47→22, janet 70→50, native 0 throughout.**
+
+Remaining janet 58.2/58.3 need arith string→int coercion of function args
+(`return $(($1+$2))` with `(add 3 4)` numeric args vs the body's
+scan-number) — folded into `janet-arith-string-coercion`. Next shared
+clusters: 36.x (dtoi), 55.x (DD#55 abort), 56.x (signals, mostly janet).
