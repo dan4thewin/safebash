@@ -1782,6 +1782,9 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     if let Some(s) = cmdsub_data_intrinsic(&name, c, ctx) {
         return s;
     }
+    if let Some(s) = cmdsub_num_intrinsic(&name, c, ctx) {
+        return s;
+    }
     // Generic fallback: shell out to the named command and capture stdout.
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
@@ -1869,6 +1872,28 @@ fn cmdsub_data_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
         ));
     }
     cmdsub_join_intrinsic(name, c, ctx)
+}
+
+/// DD (fixed-point) numeric intrinsics. `$(dtoi DIGITS DECIMAL)` parses a
+/// fixed-point decimal to a scaled integer; `$(itod DIGITS VALUE)` renders
+/// it back. Janet is illustration (not the numeric oracle), so this uses
+/// idiomatic float arithmetic rather than the byte-exact runtime routines.
+fn cmdsub_num_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if name == "dtoi" && c.args.len() == 2 {
+        let digits = emit_expr_as_int(&c.args[0], ctx);
+        let dec = emit_expr_inline(&c.args[1], ctx);
+        return Some(format!(
+            "(let [_dg {digits}] (string (math/round (* (scan-number {dec}) (math/pow 10 _dg)))))"
+        ));
+    }
+    if name == "itod" && c.args.len() == 2 {
+        let digits = emit_expr_as_int(&c.args[0], ctx);
+        let value = emit_expr_as_int(&c.args[1], ctx);
+        return Some(format!(
+            "(let [_dg {digits}] (string/format (string \"%.\" _dg \"f\") (/ {value} (math/pow 10 _dg))))"
+        ));
+    }
+    None
 }
 
 /// DD#41: `join @arr` → space-separated; `join SEP @arr` → SEP-separated.
