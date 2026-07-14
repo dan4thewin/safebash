@@ -141,6 +141,10 @@ struct EmitCtx {
     /// positions (the failure is caught there). Conditions use a separate
     /// emit path and never abort.
     checked: bool,
+    /// True while emitting the body of a `-> int` function: `return N`
+    /// yields the numeric value via the `_ret` label (DD#58 nullary calls
+    /// read it in arithmetic), rather than a bare `(return …)`.
+    in_int_func: bool,
 }
 
 impl EmitCtx {
@@ -152,6 +156,7 @@ impl EmitCtx {
             functions: std::collections::HashSet::new(),
             map_vars: std::collections::HashSet::new(),
             checked: true,
+            in_int_func: false,
         }
     }
 
@@ -169,7 +174,6 @@ impl EmitCtx {
         self.map_vars.contains(name)
     }
 
-    #[allow(dead_code)]
     fn is_int_func(&self, name: &str) -> bool {
         self.int_funcs.contains(name)
     }
@@ -223,7 +227,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         StmtKind::Group(g) => emit_group(out, ctx, g, depth),
         StmtKind::Comment(text) => emit_comment(out, text, depth),
         StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
-        StmtKind::ArithTest(expr) => emit_arith_test(out, expr, depth),
+        StmtKind::ArithTest(expr) => emit_arith_test(out, ctx, expr, depth),
     }
 }
 
@@ -428,7 +432,8 @@ fn emit_case_item(
 
 fn emit_function_def(out: &mut String, ctx: &mut EmitCtx, f: &Function, depth: usize) {
     ctx.define_function(&f.name);
-    if f.return_type == VarType::Int {
+    let is_int = f.return_type == VarType::Int;
+    if is_int {
         ctx.int_funcs.insert(f.name.clone());
     }
     indent(out, depth);
@@ -437,8 +442,21 @@ fn emit_function_def(out: &mut String, ctx: &mut EmitCtx, f: &Function, depth: u
     } else {
         writeln!(out, "(defn {} []", f.name).unwrap();
     }
+    // A `-> int` function's body is wrapped in a `_ret` label so `return N`
+    // can yield its numeric value (janet's bare `(return …)` needs a label).
+    if is_int {
+        indent(out, depth + 1);
+        writeln!(out, "(label _ret").unwrap();
+    }
+    let saved = ctx.in_int_func;
+    ctx.in_int_func = is_int;
     for s in &f.body {
         emit_stmt(out, ctx, s, depth + 1);
+    }
+    ctx.in_int_func = saved;
+    if is_int {
+        indent(out, depth + 1);
+        writeln!(out, ")").unwrap();
     }
     indent(out, depth);
     writeln!(out, ")").unwrap();
@@ -523,9 +541,9 @@ fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth
     writeln!(out, "  nil)").unwrap();
 }
 
-fn emit_arith_test(out: &mut String, expr: &ArithExpr, depth: usize) {
+fn emit_arith_test(out: &mut String, ctx: &EmitCtx, expr: &ArithExpr, depth: usize) {
     indent(out, depth);
-    writeln!(out, "(not= 0 {})", arith_expr_to_janet(expr)).unwrap();
+    writeln!(out, "(not= 0 {})", arith_expr_to_janet(expr, ctx)).unwrap();
 }
 
 fn emit_if(out: &mut String, ctx: &mut EmitCtx, i: &If, depth: usize) {
@@ -1119,6 +1137,16 @@ fn emit_janet_match_into_expr(s: &str, p: &str, arr: &str) -> String {
 /// `return [code]` — Janet's `(return …)` form. Omits the operand
 /// when no code is supplied.
 fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    // Inside a `-> int` function, `return N` yields N's numeric value out of
+    // the `_ret` label so DD#58 nullary calls read it as an integer.
+    if ctx.in_int_func {
+        let val = match c.args.first() {
+            Some(code) => emit_expr_as_int(code, ctx),
+            None => "0".to_string(),
+        };
+        writeln!(out, "(return _ret {})", val).unwrap();
+        return;
+    }
     if let Some(code) = c.args.first() {
         let val = emit_expr_inline(code, ctx);
         writeln!(out, "(return {})", val).unwrap();
@@ -1482,7 +1510,7 @@ fn emit_condition_inline(out: &mut String, ctx: &EmitCtx, stmt: &Statement) {
         // `(( … ))` condition: true iff the arith value is non-zero. Arith
         // comparisons/logicals now yield 1/0 integers (arith_binop_to_janet),
         // so this is correct for both comparison and value forms.
-        StmtKind::ArithTest(a) => write!(out, "(not= 0 {})", arith_expr_to_janet(a)).unwrap(),
+        StmtKind::ArithTest(a) => write!(out, "(not= 0 {})", arith_expr_to_janet(a, ctx)).unwrap(),
         _ => write!(out, "true").unwrap(),
     }
 }
@@ -1631,7 +1659,7 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => int_literal_to_janet(s),
         ExprKind::SimpleExpansion(var) => int_expansion_to_janet(var, expr, ctx),
-        ExprKind::Arithmetic(a) => arith_expr_to_janet(a),
+        ExprKind::Arithmetic(a) => arith_expr_to_janet(a, ctx),
         _ => format!("(scan-number {})", emit_expr_inline(expr, ctx)),
     }
 }
@@ -1666,7 +1694,7 @@ fn emit_expr_inline(expr: &Expr, ctx: &EmitCtx) -> String {
         ExprKind::DoubleQuoted(parts) => emit_expr_double_quoted(parts, ctx),
         ExprKind::ParameterExpansion(pe) => emit_param_expansion_inline(pe, ctx),
         ExprKind::CommandSubstitution(stmts) => emit_expr_command_substitution(stmts, ctx),
-        ExprKind::Arithmetic(a) => format!("(string {})", arith_expr_to_janet(a)),
+        ExprKind::Arithmetic(a) => format!("(string {})", arith_expr_to_janet(a, ctx)),
         ExprKind::Concat(parts) => emit_expr_concat(parts, ctx),
         ExprKind::Array(elems) => emit_expr_array(elems, ctx),
         ExprKind::AssocArray(pairs) => emit_expr_assoc_array(pairs, ctx),
@@ -2098,51 +2126,76 @@ fn arith_unaryop_to_janet(op: crate::ir::IrUnaryArithOp, operand: String) -> Str
 }
 
 /// Convert a structured ArithExpr to Janet code.
-fn arith_expr_to_janet(expr: &crate::ir::ArithExpr) -> String {
+fn arith_expr_to_janet(expr: &crate::ir::ArithExpr, ctx: &EmitCtx) -> String {
     use crate::ir::ArithExpr;
     match expr {
         ArithExpr::Literal(n) => n.to_string(),
-        ArithExpr::Var(name) => name.clone(),
+        // DD#58: a bare name that is a known `-> int` function is a nullary
+        // call (`$((f))` → `(f)`), mirroring the transform's var_to_ssa
+        // (transform/expr_handlers.rs). Otherwise it's a variable reference.
+        ArithExpr::Var(name) => arith_var_to_janet(name, ctx),
         ArithExpr::DollarVar(name) => arith_dollar_var_to_janet(name),
-        ArithExpr::BinOp { left, op, right } => {
-            arith_binop_to_janet(*op, arith_expr_to_janet(left), arith_expr_to_janet(right))
-        }
-        ArithExpr::UnaryOp { op, operand } => {
-            arith_unaryop_to_janet(*op, arith_expr_to_janet(operand))
-        }
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
             format!("({} {} 1)", if *inc { "+" } else { "-" }, var)
         }
+        ArithExpr::FuncCall { name, args } => arith_funccall_to_janet(name, args, ctx),
+        ArithExpr::Paren(inner) => arith_expr_to_janet(inner, ctx),
+        _ => arith_op_expr_to_janet(expr, ctx),
+    }
+}
+
+/// The operator / assignment / control ArithExpr arms (split out of
+/// arith_expr_to_janet to keep each dispatcher narrow).
+fn arith_op_expr_to_janet(expr: &crate::ir::ArithExpr, ctx: &EmitCtx) -> String {
+    use crate::ir::ArithExpr;
+    match expr {
+        ArithExpr::BinOp { left, op, right } => arith_binop_to_janet(
+            *op,
+            arith_expr_to_janet(left, ctx),
+            arith_expr_to_janet(right, ctx),
+        ),
+        ArithExpr::UnaryOp { op, operand } => {
+            arith_unaryop_to_janet(*op, arith_expr_to_janet(operand, ctx))
+        }
         ArithExpr::Assign { var, value } => {
-            format!("(set {} {})", var, arith_expr_to_janet(value))
+            format!("(set {} {})", var, arith_expr_to_janet(value, ctx))
         }
         ArithExpr::CompoundAssign { var, op, value } => {
-            arith_compound_assign_to_janet(var, *op, arith_expr_to_janet(value))
+            arith_compound_assign_to_janet(var, *op, arith_expr_to_janet(value, ctx))
         }
         ArithExpr::Ternary {
             cond,
             true_val,
             false_val,
-        } => {
-            format!(
-                "(if {} {} {})",
-                arith_expr_to_janet(cond),
-                arith_expr_to_janet(true_val),
-                arith_expr_to_janet(false_val)
-            )
-        }
+        } => format!(
+            "(if {} {} {})",
+            arith_expr_to_janet(cond, ctx),
+            arith_expr_to_janet(true_val, ctx),
+            arith_expr_to_janet(false_val, ctx)
+        ),
         ArithExpr::Comma(exprs) => {
-            let parts: Vec<String> = exprs.iter().map(arith_expr_to_janet).collect();
+            let parts: Vec<String> = exprs.iter().map(|e| arith_expr_to_janet(e, ctx)).collect();
             format!("(do {})", parts.join(" "))
         }
-        ArithExpr::FuncCall { name, args } => {
-            let arg_strs: Vec<String> = args.iter().map(arith_expr_to_janet).collect();
-            if arg_strs.is_empty() {
-                format!("({})", name)
-            } else {
-                format!("({} {})", name, arg_strs.join(" "))
-            }
-        }
-        ArithExpr::Paren(inner) => arith_expr_to_janet(inner),
+        _ => String::new(),
+    }
+}
+
+/// A bare arith name: a nullary `-> int` function call, else a var ref.
+fn arith_var_to_janet(name: &str, ctx: &EmitCtx) -> String {
+    if ctx.is_int_func(name) {
+        format!("({})", name)
+    } else {
+        name.to_string()
+    }
+}
+
+/// A DD#58 arith sexpr call `(name args…)`.
+fn arith_funccall_to_janet(name: &str, args: &[crate::ir::ArithExpr], ctx: &EmitCtx) -> String {
+    let arg_strs: Vec<String> = args.iter().map(|e| arith_expr_to_janet(e, ctx)).collect();
+    if arg_strs.is_empty() {
+        format!("({})", name)
+    } else {
+        format!("({} {})", name, arg_strs.join(" "))
     }
 }

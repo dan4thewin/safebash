@@ -608,6 +608,16 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
 /// For string targets: assign both `_ptr` and `_len`.
 /// For int targets: assign the single i64.
 fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes) {
+    // Assignment to `$?` sets the dedicated __exit_status (an i64), not a
+    // regular var slot — mirrors handle_exit_status_assign
+    // (codegen/inst_handlers.rs:517). `return N` in a lifted `-> int`
+    // function lowers to `Assign(?, N)`, and the caller reads it back via
+    // `$?`, so writes and reads must share __exit_status.
+    if target.name == "?" {
+        let int_expr = lower_value_as_int(e, value, types);
+        writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
+        return;
+    }
     let base = c_var_name(&target.name, target.version);
     match target.var_type {
         VarType::String => {
