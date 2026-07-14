@@ -224,16 +224,11 @@ run_sash 'x="\d+"; echo $x'
 run_sash 'x="abc123"; [[ $x =~ \w+ ]] && echo yes'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 39.10
 
-# 22.12 echo|read is clean (builtin pipe, no exec) — native only. `echo | read`
-# is the lastpipe inline-pipe (the read builtin consumes the pipe and sets a
-# PARENT variable): c crashes on an invalid pipe fd and janet spawns `read`
-# as an external. See echo-read-inline-pipe-cjanet.
-if in_modes native; then
-    run_sash 'echo "clean" | read x; echo $x'
-    [[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
-else
-    skip_chk 22.12
-fi
+# 22.12 echo|read is clean (builtin pipe, no exec). `echo | read` is the
+# lastpipe inline-pipe: the read builtin consumes the pipe and sets a PARENT
+# variable, in-process (no fork). Native, c, and janet all support it.
+run_sash 'echo "clean" | read x; echo $x'
+[[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
 
 # 22.13 printf|mapfile is tainted (printf execs)
 run_sash 'array arr; printf "x\n" | mapfile -t arr; echo ${arr[0]}'

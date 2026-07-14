@@ -283,6 +283,22 @@ fn emit_prologue(out: &mut String) {
     // Phase 5 — read
     writeln!(out, "extern sash_pair sash_read_line(i64 fd);").unwrap();
     writeln!(out, "extern sash_pair sash_read_delim(i64 fd, i64 delim);").unwrap();
+    writeln!(
+        out,
+        "extern sash_pair sash_split_first_word(const char* p, i64 l, const char** rp, i64* rl);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern sash_pair sash_split_field(const char* p, i64 l, i64 delim, const char** rp, i64* rl);"
+    )
+    .unwrap();
+    writeln!(out, "extern sash_pair sash_read_all(i64 fd);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_split_into_array(const char* p, i64 l, i64 delim, unsigned char* tbl);"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 }
 
@@ -296,6 +312,10 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
     writeln!(e.out, "    i64 __test_result = 0;").unwrap();
     writeln!(e.out, "    (void)__test_result;").unwrap();
+    // DD#20 lastpipe: a capturing pipeline stashes its final stage's
+    // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
+    writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
+    writeln!(e.out, "    (void)__pipe_read_fd;").unwrap();
     declare_vars(&mut e.out, &types);
 
     // Phase 1: only main-body blocks. fn_* (function bodies) come
@@ -523,8 +543,10 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         // Phase 4: SsaInst::Pipeline → fork chain with pipes.
         // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
         SsaInst::Pipeline {
-            stages, checked, ..
-        } => emit_pipeline(e, stages, *checked, types),
+            stages,
+            checked,
+            capture_read_fd,
+        } => emit_pipeline(e, stages, *checked, *capture_read_fd, types),
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -534,12 +556,28 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             is_integer_key,
         } => emit_subscript_assign(e, array, index, value, *is_integer_key, types),
         // Phase 5: SsaInst::ReadLine → sash_read_line/sash_read_delim.
-        // Single-target read (read VAR). For Phase 5 we ignore
-        // redirects and clean_pipe (always read from fd given,
-        // typically 0). __read_eof tracks EOF.
+        // Single-target read (read VAR). fd=-1 is the lastpipe sentinel
+        // (read from the captured pipe fd). __read_eof tracks EOF.
         SsaInst::ReadLine {
             target, fd, delim, ..
         } => emit_readline(e, target, *fd, *delim, types),
+        // read VAR1 VAR2 … [-f<sep>] — split one line across N targets.
+        SsaInst::ReadLineMulti {
+            targets,
+            fd,
+            delim,
+            field_sep,
+            ..
+        } => emit_readline_multi(e, targets, *fd, *delim, *field_sep, types),
+        // mapfile -t ARR / mapfile -m MAP — bulk-read fd into an array/map.
+        SsaInst::Mapfile {
+            array,
+            fd,
+            map_mode,
+            separator,
+        } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
+        // read -a ARR — split one line into an array by delimiter.
+        SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
         // SsaInst::Test stores its result into __test_result. Codegen
         // (dispatch.rs:108-118): result = lower_test_expr(...);
         // builder.def_var(test_result_var, result). Branch terminator
@@ -1969,21 +2007,23 @@ fn emit_restore(e: &mut Emit, saved: &[SavedFdC]) {
 /// via dup2, parent waits for all children, exit status comes
 /// from the last stage.
 ///
-/// Phase 4 scope: 2+ stage pipelines of external commands and
-/// inline builtins (echo, true, false, :). No lastpipe / capture
-/// support (`capture_read_fd` from the codegen path is for the
-/// `while read` lastpipe optimization — deferred).
+/// When `capture_read_fd` (DD#20 lastpipe), an extra pipe carries the
+/// final stage's stdout to the parent: its read end is stashed in
+/// `__pipe_read_fd` for a following ReadLine/ReadLineMulti/Mapfile
+/// (fd=-1) to consume in-process. Mirrors save_capture_fd /
+/// parent_close_pipes (codegen/inst_handlers.rs).
 fn emit_pipeline(
     e: &mut Emit,
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
     checked: bool,
+    capture_read_fd: bool,
     types: &VarTypes,
 ) {
     let n = stages.len();
     if n == 0 {
         return;
     }
-    if n == 1 {
+    if n == 1 && !capture_read_fd {
         // Degenerate 1-stage pipeline: emit as a plain command carrying the
         // pipeline's own `checked` so a bare failing stage still aborts.
         let (name, args, redirects) = &stages[0];
@@ -1993,10 +2033,49 @@ fn emit_pipeline(
     }
 
     let p = e.fresh();
+    // With capture, an extra pipe (index n-1) carries last-stage → parent.
+    let num_pipes = if capture_read_fd { n } else { n - 1 };
     writeln!(e.out, "    /* pipeline: {} stages */", n).unwrap();
 
-    // Create n-1 pipes upfront.
-    for i in 0..(n - 1) {
+    emit_pipeline_create_pipes(e, &p, num_pipes);
+    // pid slots — one per stage.
+    writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
+
+    for (i, (name, args, redirects)) in stages.iter().enumerate() {
+        emit_pipeline_stage(
+            e,
+            &p,
+            i,
+            n,
+            num_pipes,
+            capture_read_fd,
+            name,
+            args,
+            redirects,
+            types,
+        );
+    }
+
+    emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
+    emit_pipeline_wait(e, &p, n);
+    writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
+    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+    // DD#55 (A): an unchecked pipeline whose (last-stage) status is nonzero
+    // aborts (routing through END per DD#56). `checked` is false in condition
+    // / `-`-suppressed positions.
+    if checked {
+        writeln!(
+            e.out,
+            "    if (__exit_status != 0) goto {};",
+            abort_target(e)
+        )
+        .unwrap();
+    }
+}
+
+/// Create `num_pipes` anonymous pipes for a pipeline.
+fn emit_pipeline_create_pipes(e: &mut Emit, p: &str, num_pipes: usize) {
+    for i in 0..num_pipes {
         writeln!(
             e.out,
             "    i64 {p}_pipe{i}[2]; sash_pipe({p}_pipe{i});",
@@ -2005,25 +2084,30 @@ fn emit_pipeline(
         )
         .unwrap();
     }
-    // pid slots — one per stage.
-    writeln!(e.out, "    i64 {p}_pids[{n}];", p = p, n = n).unwrap();
+}
 
-    for (i, (name, args, redirects)) in stages.iter().enumerate() {
-        emit_pipeline_stage(e, &p, i, n, name, args, redirects, types);
+/// Parent closes all pipe fds after forking, except (when capturing) the
+/// final pipe's read end, which is stashed in `__pipe_read_fd`.
+fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, capture_read_fd: bool) {
+    for i in 0..num_pipes {
+        if capture_read_fd && i == num_pipes - 1 {
+            writeln!(e.out, "    sash_close({p}_pipe{i}[1]);", p = p, i = i).unwrap();
+            writeln!(e.out, "    __pipe_read_fd = {p}_pipe{i}[0];", p = p, i = i).unwrap();
+        } else {
+            writeln!(
+                e.out,
+                "    sash_close({p}_pipe{i}[0]); sash_close({p}_pipe{i}[1]);",
+                p = p,
+                i = i
+            )
+            .unwrap();
+        }
     }
+}
 
-    // Parent: close all pipe fds.
-    for i in 0..(n - 1) {
-        writeln!(
-            e.out,
-            "    sash_close({p}_pipe{i}[0]); sash_close({p}_pipe{i}[1]);",
-            p = p,
-            i = i
-        )
-        .unwrap();
-    }
-
-    // Wait for all children; status = last stage's exit.
+/// Parent waits for all `n` children; `{p}_status` becomes the last
+/// stage's exit (bash pipeline status, no pipefail).
+fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize) {
     writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
     writeln!(
         e.out,
@@ -2046,30 +2130,23 @@ fn emit_pipeline(
     )
     .unwrap();
     writeln!(e.out, "    }}").unwrap();
-    writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
-    writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
-    // DD#55 (A): an unchecked pipeline whose (last-stage) status is nonzero
-    // aborts (routing through END per DD#56). `checked` is false in condition
-    // / `-`-suppressed positions.
-    if checked {
-        writeln!(
-            e.out,
-            "    if (__exit_status != 0) goto {};",
-            abort_target(e)
-        )
-        .unwrap();
-    }
 }
 
 /// One pipeline stage. Mirrors lower_pipeline_stage
 /// (codegen/inst_handlers.rs:118). Fork; in child wire pipes via
 /// dup2 + close all pipe fds + exec; in parent record pid.
+///
+/// `num_pipes` is n-1 normally, or n with `capture_read_fd` (the extra
+/// pipe carries the last stage's stdout to the parent). The last stage
+/// wires stdout to that capture pipe when capturing.
 #[allow(clippy::too_many_arguments)]
 fn emit_pipeline_stage(
     e: &mut Emit,
     p: &str,
     i: usize,
     n: usize,
+    num_pipes: usize,
+    capture_read_fd: bool,
     name: &str,
     args: &[SsaValue],
     redirects: &[crate::ir::Redirect],
@@ -2084,30 +2161,7 @@ fn emit_pipeline_stage(
     )
     .unwrap();
 
-    // Wire stdin from previous pipe's read end.
-    if i > 0 {
-        writeln!(
-            e.out,
-            "        sash_dup2({p}_pipe{prev}[0], 0);",
-            p = p,
-            prev = i - 1
-        )
-        .unwrap();
-    }
-    // Wire stdout to next pipe's write end.
-    if i < n - 1 {
-        writeln!(e.out, "        sash_dup2({p}_pipe{i}[1], 1);", p = p, i = i).unwrap();
-    }
-    // Close all pipe fds in child.
-    for j in 0..(n - 1) {
-        writeln!(
-            e.out,
-            "        sash_close({p}_pipe{j}[0]); sash_close({p}_pipe{j}[1]);",
-            p = p,
-            j = j
-        )
-        .unwrap();
-    }
+    emit_stage_child_pipes(e, p, i, n, num_pipes, capture_read_fd);
 
     // Stage-level redirects (these go inside the child).
     if !redirects.is_empty() {
@@ -2133,6 +2187,47 @@ fn emit_pipeline_stage(
     }
 
     writeln!(e.out, "    }}").unwrap();
+}
+
+/// In the forked child: wire stdin from the previous pipe, stdout to the
+/// next (or capture) pipe, then close every pipe fd. `num_pipes` is n-1
+/// normally, or n with `capture_read_fd`.
+fn emit_stage_child_pipes(
+    e: &mut Emit,
+    p: &str,
+    i: usize,
+    n: usize,
+    num_pipes: usize,
+    capture_read_fd: bool,
+) {
+    if i > 0 {
+        writeln!(
+            e.out,
+            "        sash_dup2({p}_pipe{prev}[0], 0);",
+            p = p,
+            prev = i - 1
+        )
+        .unwrap();
+    }
+    if i < n - 1 || capture_read_fd {
+        let pipe_idx = if i < num_pipes { i } else { num_pipes - 1 };
+        writeln!(
+            e.out,
+            "        sash_dup2({p}_pipe{idx}[1], 1);",
+            p = p,
+            idx = pipe_idx
+        )
+        .unwrap();
+    }
+    for j in 0..num_pipes {
+        writeln!(
+            e.out,
+            "        sash_close({p}_pipe{j}[0]); sash_close({p}_pipe{j}[1]);",
+            p = p,
+            j = j
+        )
+        .unwrap();
+    }
 }
 
 /// Per-stage external exec. Same shape as emit_exec but uses
@@ -2433,9 +2528,10 @@ fn emit_table_key(e: &mut Emit, array: &str, index: &VarRef, types: &VarTypes) -
 /// on EOF, 0 otherwise.
 fn emit_readline(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>, _types: &VarTypes) {
     let t = e.fresh();
+    let fdx = c_read_fd(fd);
     let call = match delim {
-        None => format!("sash_read_line({})", fd),
-        Some(b) => format!("sash_read_delim({}, {})", fd, b),
+        None => format!("sash_read_line({})", fdx),
+        Some(b) => format!("sash_read_delim({}, {})", fdx, b),
     };
     writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
     let base = c_var_name(&target.name, target.version);
@@ -2446,6 +2542,178 @@ fn emit_readline(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>, _typ
         e.out,
         "    __exit_status = ({t}.ptr == (const char*)0) ? 1 : 0;",
         t = t
+    )
+    .unwrap();
+}
+
+/// The C fd expression for a read: fd=-1 is the lastpipe sentinel
+/// (consume the captured pipe read end), else the literal fd.
+fn c_read_fd(fd: i64) -> String {
+    if fd == -1 {
+        "__pipe_read_fd".to_string()
+    } else {
+        fd.to_string()
+    }
+}
+
+/// `read VAR1 VAR2 …` — read one line and split it across N targets.
+/// Mirrors emit_readline_multi (codegen/dispatch.rs:432): each target but
+/// the last takes one field (by `field_sep`, else whitespace); the last
+/// takes the remainder. Sets __test_result = (line non-empty).
+fn emit_readline_multi(
+    e: &mut Emit,
+    targets: &[VarRef],
+    fd: i64,
+    delim: Option<u8>,
+    field_sep: Option<u8>,
+    _types: &VarTypes,
+) {
+    let t = e.fresh();
+    let fdx = c_read_fd(fd);
+    let call = match delim {
+        None => format!("sash_read_line({})", fdx),
+        Some(b) => format!("sash_read_delim({}, {})", fdx, b),
+    };
+    writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
+    writeln!(e.out, "    __test_result = ({t}.len > 0) ? 1 : 0;", t = t).unwrap();
+    // Running cursor over the line: (cur_p, cur_l).
+    writeln!(
+        e.out,
+        "    const char* {t}_cp = {t}.ptr; i64 {t}_cl = {t}.len;",
+        t = t
+    )
+    .unwrap();
+    let last = targets.len().saturating_sub(1);
+    for (i, target) in targets.iter().enumerate() {
+        let base = c_var_name(&target.name, target.version);
+        if i == last {
+            writeln!(
+                e.out,
+                "    {0}_ptr = {t}_cp; {0}_len = {t}_cl;",
+                base,
+                t = t
+            )
+            .unwrap();
+        } else {
+            emit_readline_field(e, &base, &t, field_sep);
+        }
+    }
+}
+
+/// Split the next field off the `{t}_cp/{t}_cl` cursor into `base` and
+/// advance the cursor to the remainder (by `field_sep`, else whitespace).
+fn emit_readline_field(e: &mut Emit, base: &str, t: &str, field_sep: Option<u8>) {
+    let w = e.fresh();
+    let split = match field_sep {
+        Some(sep) => format!(
+            "sash_split_field({t}_cp, {t}_cl, {sep}, &{w}_rp, &{w}_rl)",
+            t = t,
+            sep = sep,
+            w = w
+        ),
+        None => format!(
+            "sash_split_first_word({t}_cp, {t}_cl, &{w}_rp, &{w}_rl)",
+            t = t,
+            w = w
+        ),
+    };
+    writeln!(e.out, "    const char* {w}_rp; i64 {w}_rl;", w = w).unwrap();
+    writeln!(e.out, "    sash_pair {w} = {split};", w = w, split = split).unwrap();
+    writeln!(
+        e.out,
+        "    {0}_ptr = {w}.ptr; {0}_len = {w}.len;",
+        base,
+        w = w
+    )
+    .unwrap();
+    writeln!(e.out, "    {t}_cp = {w}_rp; {t}_cl = {w}_rl;", t = t, w = w).unwrap();
+}
+
+/// `mapfile -t ARR` / `mapfile -m MAP` — bulk-read lines from `fd` into an
+/// array (key = next integer index) or a map (split KEY<sep>VALUE, skip
+/// blank keys). Mirrors handle_mapfile (codegen/inst_handlers.rs:1037).
+fn emit_mapfile(
+    e: &mut Emit,
+    array: &str,
+    fd: i64,
+    map_mode: bool,
+    separator: char,
+    types: &VarTypes,
+) {
+    let table_expr = lookup_table_var(array, types);
+    let fdx = c_read_fd(fd);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    SashTable* {t}_tbl = (SashTable*){tbl};",
+        t = t,
+        tbl = table_expr
+    )
+    .unwrap();
+    writeln!(e.out, "    for (;;) {{").unwrap();
+    writeln!(
+        e.out,
+        "        sash_pair {t}_ln = sash_read_line({fd});",
+        t = t,
+        fd = fdx
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "        if ({t}_ln.ptr == (const char*)0) break;",
+        t = t
+    )
+    .unwrap();
+    if map_mode {
+        writeln!(e.out, "        const char* {t}_vp; i64 {t}_vl;", t = t).unwrap();
+        writeln!(
+            e.out,
+            "        sash_pair {t}_k = sash_split_field({t}_ln.ptr, {t}_ln.len, {sep}, &{t}_vp, &{t}_vl);",
+            t = t,
+            sep = separator as u32
+        )
+        .unwrap();
+        writeln!(e.out, "        if ({t}_k.len == 0) continue;", t = t).unwrap();
+        writeln!(
+            e.out,
+            "        sash_table_set({t}_tbl, {t}_k.ptr, {t}_k.len, {t}_vp, {t}_vl);",
+            t = t
+        )
+        .unwrap();
+    } else {
+        writeln!(e.out, "        i64 {t}_k = sash_table_len({t}_tbl);", t = t).unwrap();
+        writeln!(
+            e.out,
+            "        sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {t}_ln.ptr, {t}_ln.len);",
+            t = t
+        )
+        .unwrap();
+    }
+    writeln!(e.out, "    }}").unwrap();
+}
+
+/// `read -a ARR` — slurp `fd` and split it into `array` by `delim`
+/// (default space). Mirrors emit_read_array (codegen/dispatch.rs:1219):
+/// sash_read_all + sash_split_into_array.
+fn emit_read_array(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, types: &VarTypes) {
+    let table_expr = lookup_table_var(array, types);
+    let fdx = c_read_fd(fd);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    sash_pair {t} = sash_read_all({fd});",
+        t = t,
+        fd = fdx
+    )
+    .unwrap();
+    writeln!(e.out, "    __test_result = ({t}.len > 0) ? 1 : 0;", t = t).unwrap();
+    let d = delim.map(|b| b as i64).unwrap_or(b' ' as i64);
+    writeln!(
+        e.out,
+        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, {d}, (unsigned char*){tbl});",
+        t = t,
+        d = d,
+        tbl = table_expr
     )
     .unwrap();
 }
