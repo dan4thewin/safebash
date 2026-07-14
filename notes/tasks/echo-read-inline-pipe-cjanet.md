@@ -1,6 +1,6 @@
 ---
 title: "c/janet: `echo | read` lastpipe inline-pipe (read consumes pipe + sets parent var)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -51,3 +51,22 @@ instead of spawning.
 - janet: detect a `read` (or other builtin) last stage in `emit_pipeline`
   and emit an in-process read + variable bind rather than os/spawn.
 - Then un-guard `wordsplit.sh` 22.12 (currently `in_modes native`).
+
+## RESOLVED (2026-07-14, commit dc10423)
+
+Implemented for c and janet, and extended beyond the single-`read` gate to
+the whole read/mapfile lastpipe family (22.4-22.10, 22.12).
+
+- **c** (`emit_c`): `emit_pipeline` now honors `capture_read_fd` (extra
+  last-stage→parent pipe, read end stashed in `__pipe_read_fd`), fixing the
+  fd=-1 (u32::MAX) rustix crash. Added `ReadLine`(fd=-1)/`ReadLineMulti`/
+  `Mapfile`/`ReadArray` emit arms (were TODO no-ops) reusing the runtime
+  split/read primitives.
+- **janet** (`emit_janet`): `emit_pipeline` detects a `read`/`mapfile` last
+  stage and binds vars in-process from the captured producer output. Also
+  fixed a coupled pre-existing bug: bare `array a;`/`map m;` emitted `""`
+  and didn't register the map type (broke `${m[key]}`); now emit `@[]`/`@{}`
+  from the `-a`/`-A` decl flag.
+- Un-guarded wordsplit 22.12 to all modes.
+
+native 0 (unchanged); c 47→38, janet 70→61; 0 regressions.

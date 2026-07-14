@@ -403,3 +403,46 @@ external-only scoping. **Migrated** wordsplit 22.14-19 (bare `@a` to
 exemption. spec/glob_splat.sh gs.1-13 native/c/janet (gs.6 abort native-only,
 rerr); 0 regressions all modes. Tier 3 (all native compiler features) is now
 fully complete.
+
+## 2026-07-14 — Tier 4 unattended: c/janet lastpipe read/mapfile (dc10423)
+
+First Tier 4 (c/janet parity) task under the unattended SOP. Fresh
+multi-mode sweep to map failures: native **0** (gate green), c **47**,
+janet **70**. Biggest *shared* cluster was 22.4-10 (wordsplit read/mapfile
+as a pipeline last stage) — task `echo-read-inline-pipe-cjanet`.
+
+**Root causes**
+- **c**: `emit_pipeline` ignored `capture_read_fd`. For `echo|read` the
+  producer Pipeline has 1 stage → the `n==1` degenerate path emitted a plain
+  command (prints, then) `ReadLine{fd:-1}` read literal fd -1 → rustix
+  `fd != u32::MAX` assertion. `ReadLineMulti`/`Mapfile`/`ReadArray` were TODO
+  no-ops entirely.
+- **janet**: `emit_pipeline` os/spawns every stage → `read`/`mapfile` became
+  `(os/spawn ["read" …])` "not found". *Coupled* pre-existing bug: bare
+  `array a;`/`map m;` → `declare_decl_var` inferred map-ness from the
+  *initializer* (`AssocArray`), so a bare (empty-literal) decl fell through
+  to a plain string binding → `(var m "")` and `${m[key]}` used
+  `(scan-number key)` (integer path). Fixed to read the `-a`/`-A` decl flag.
+
+**Fix** (native is the oracle; mirror its structure)
+- c `emit_pipeline`: capture path creates `n` pipes (extra last→parent),
+  parent keeps the final read end in `__pipe_read_fd`; ReadLine/Multi/Mapfile/
+  ReadArray at fd=-1 consume it. Reused sash_split_first_word/field/
+  into_array + sash_read_all runtime primitives.
+- janet `emit_pipeline`: `detect_lastpipe` → run producers as os/spawn,
+  `(:read (p_last :out) :all)`, bind vars in-process (single read, `-f`
+  multi, mapfile `-t` array, `-m` map). Bare decl emits `@[]`/`@{}` + map
+  registration.
+
+**Result**: c 47→**38**, janet 70→**61**, native **0** unchanged, **0
+regressions**. Fixed 22.4-10, 22.12 (un-guarded), + collateral 20.3 (another
+lastpipe read) and 54.1 (mapfile-m into map). Complexity gate: refactored 6
+flagged functions (cog 8-15) by extracting helpers / flattening to else-if —
+all green, no bypass.
+
+**Process notes**
+- spec.db is native-only; c/janet results are computed at run time. Map them
+  with a `SPEC_TSV` sweep + awk on `mode:id` — do not rely on run.sh's tally.
+- Next biggest shared clusters: 58.x (int-func-in-`$((f))`: c dup-`__ptr`,
+  janet assigns the fn instead of calling), 36.x (dtoi), 55.x (DD#55 abort),
+  56.x (signals, mostly janet).

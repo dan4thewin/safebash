@@ -104,7 +104,9 @@ a sash-convert canonicalize mode → moved to Tier 6._
     msgs/janet pipeline (moved from Tier 1: all backend)
 17. `c-janet-compound-pipeline-stage`
 18. `cf-backend-gaps-brace-surfaced`
-19. `echo-read-inline-pipe-cjanet`
+19. ~~`echo-read-inline-pipe-cjanet`~~ — DONE (dc10423): DD#20 lastpipe
+    read/mapfile for c+janet + bare `array`/`map` decl fix (janet). Extended
+    beyond the single-read gate to 22.4-10/22.12. c 47→38, janet 70→61.
 20. `janet-arith-string-coercion`
 21. `cmdsub-followups-taint-intrinsics-c`
 22. `oracle-blessall-mapfile`
