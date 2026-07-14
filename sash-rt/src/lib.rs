@@ -570,6 +570,46 @@ pub unsafe extern "C" fn sash_argv_snapshot(start: i64) -> *mut SashTable {
     t
 }
 
+/// DD#69: resolve an external `@{a:…}` splat to the table to expand.
+/// Non-empty array → the array itself. Empty array: `:?` (abort=1) aborts
+/// (exit 1, `<argv0>: WORD` on stderr); `:-` with a WORD (has_word=1) → a
+/// fresh 1-element table `[WORD]`; bare `@{a:-}` (has_word=0) → the empty
+/// array (zero args).
+#[no_mangle]
+pub unsafe extern "C" fn sash_splat_disposition(
+    tbl: *mut SashTable,
+    word_ptr: *const u8,
+    word_len: i64,
+    has_word: i64,
+    abort: i64,
+) -> *mut SashTable {
+    if sash_table_len(tbl) > 0 {
+        return tbl;
+    }
+    if abort != 0 {
+        let argv = sash_argv;
+        if !argv.is_null() {
+            let a0 = *argv;
+            if !a0.is_null() {
+                sash_write(2, a0, strlen(a0) as i64);
+            }
+        }
+        sash_write(2, b": ".as_ptr(), 2);
+        if !word_ptr.is_null() && word_len > 0 {
+            sash_write(2, word_ptr, word_len);
+        }
+        sash_write(2, b"\n".as_ptr(), 1);
+        sash_exit(1);
+    }
+    if has_word != 0 {
+        let t = sash_table_new(4);
+        let key = 0i64.to_ne_bytes();
+        sash_table_set(t, key.as_ptr(), 8, word_ptr, word_len);
+        return t;
+    }
+    tbl
+}
+
 #[cold]
 #[inline(never)]
 fn sash_panic_argv(idx: i64, argc: i64) -> ! {

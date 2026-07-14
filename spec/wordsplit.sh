@@ -240,28 +240,31 @@ run_sash 'array arr; printf "x\n" | mapfile -t arr; echo ${arr[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.13
 
 # 22.14 @a command-arg splat → one verbatim arg per element (DD#20/#22).
-# /usr/bin/printf runs as a real external in all three backends.
-run_sash 'array a=(one two three); /usr/bin/printf "[%s]\n" @a'
+# DD#69: an external splat needs a disposition even for a literal array;
+# `@{a:?…}` requires non-empty (never fires here). /usr/bin/printf runs as a
+# real external in all three backends.
+run_sash 'array a=(one two three); /usr/bin/printf "[%s]\n" @{a:?empty}'
 [[ $rc = 0 && $out = $'[one]\n[two]\n[three]' && -z $err ]]; chk 22.14
 
 # 22.15 no word splitting WITHIN an element: a value with a space is one arg
-run_sash 'array a=("a b" c); /usr/bin/printf "[%s]\n" @a'
+run_sash 'array a=("a b" c); /usr/bin/printf "[%s]\n" @{a:?empty}'
 [[ $rc = 0 && $out = $'[a b]\n[c]' && -z $err ]]; chk 22.15
 
 # 22.16 splat interleaves with scalar args, preserving order
-run_sash 'array a=(x y); /usr/bin/printf "%s|" pre @a post'
+run_sash 'array a=(x y); /usr/bin/printf "%s|" pre @{a:?empty} post'
 [[ $rc = 0 && $out = "pre|x|y|post|" && -z $err ]]; chk 22.16
 
 # 22.17 multiple splats expand in order
-run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @a @b'
+run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @{a:?e} @{b:?e}'
 [[ $rc = 0 && $out = "x|y|z|" && -z $err ]]; chk 22.17
 
-# 22.18 empty array → ZERO args (cat reads stdin, not an empty-name file).
-run_sash 'array e=(); /usr/bin/printf STDIN | cat @e'
+# 22.18 empty array → ZERO args via the `@{e:-}` disposition (cat reads
+# stdin, not an empty-name file).
+run_sash 'array e=(); /usr/bin/printf STDIN | cat @{e:-}'
 [[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
 
 # 22.19 splat in a pipeline stage (janet pipe plumbing fixed: os/pipe :WR)
-run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @a | cat'
+run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @{a:?e} | cat'
 [[ $rc = 0 && $out = $'[p]\n[q]\n[r]' && -z $err ]]; chk 22.19
 
 # 20.1 inline `*` glob in command-arg position is a compile error (DD#20/#69:

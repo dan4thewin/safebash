@@ -1,6 +1,6 @@
 ---
 title: "glob-splat Part 2: `@{a:-WORD}` / `@{a:?WORD}` external-splat empty-disposition (DD#69)"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: [array-splat-command-arg]

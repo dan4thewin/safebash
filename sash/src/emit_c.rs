@@ -186,6 +186,12 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_argc;").unwrap();
     writeln!(out, "extern char* sash_argv_get(i64 idx, i64* out_len);").unwrap();
     writeln!(out, "extern void* sash_argv_snapshot(i64 start);").unwrap();
+    writeln!(
+        out,
+        "extern void* sash_splat_disposition(void* tbl, const char* w, \
+         i64 wl, i64 has_word, i64 abort);"
+    )
+    .unwrap();
     writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
@@ -1091,15 +1097,7 @@ fn emit_argv_splat(
         .iter()
         .filter(|a| !matches!(a, SsaValue::ArraySplat { .. }))
         .count();
-    let mut splat_lens: Vec<(String, String)> = Vec::new();
-    for arg in args {
-        if let SsaValue::ArraySplat { array } = arg {
-            let tbl = lookup_table_var(array, types);
-            let len = format!("{}_len{}", t, splat_lens.len());
-            writeln!(e.out, "{ind}i64 {len} = sash_table_len((SashTable*){tbl});").unwrap();
-            splat_lens.push((tbl, len));
-        }
-    }
+    let splat_lens = cache_splat_tables_c(e, ind, t, args, types);
     let total = std::iter::once(format!("{}", 1 + scalar_count))
         .chain(splat_lens.iter().map(|(_, l)| l.clone()))
         .collect::<Vec<_>>()
@@ -1127,6 +1125,59 @@ fn emit_argv_splat(
         }
     }
     writeln!(e.out, "{ind}{argv}[{t}_w] = (const char*)0;").unwrap();
+}
+
+/// DD#69: cache each `@a` splat's (effective-table, len) — applying the
+/// empty-disposition via `sash_splat_disposition` — for the c argv builder.
+fn cache_splat_tables_c(
+    e: &mut Emit,
+    ind: &str,
+    t: &str,
+    args: &[SsaValue],
+    types: &VarTypes,
+) -> Vec<(String, String)> {
+    let mut splat_lens: Vec<(String, String)> = Vec::new();
+    for arg in args {
+        if let SsaValue::ArraySplat { array, disposition } = arg {
+            let raw = lookup_table_var(array, types);
+            let tbl = match disposition {
+                None => raw,
+                Some(d) => emit_splat_disposition_c(e, ind, t, splat_lens.len(), &raw, d, types),
+            };
+            let len = format!("{}_len{}", t, splat_lens.len());
+            writeln!(e.out, "{ind}i64 {len} = sash_table_len((SashTable*){tbl});").unwrap();
+            splat_lens.push((tbl, len));
+        }
+    }
+    splat_lens
+}
+
+/// DD#69: resolve an external splat's empty-disposition to the effective
+/// table via `sash_splat_disposition`; returns the `void*` variable name.
+fn emit_splat_disposition_c(
+    e: &mut Emit,
+    ind: &str,
+    t: &str,
+    idx: usize,
+    raw_tbl: &str,
+    d: &crate::ssa::ArraySplatDisposition,
+    types: &VarTypes,
+) -> String {
+    let (word_ptr, word_len) = if d.has_word {
+        lower_value_as_str(e, &d.word, types)
+    } else {
+        ("(const char*)0".to_string(), "0".to_string())
+    };
+    let eff = format!("{}_disp{}", t, idx);
+    writeln!(
+        e.out,
+        "{ind}void* {eff} = sash_splat_disposition((SashTable*){raw_tbl}, \
+         {word_ptr}, {word_len}, {hw}, {ab});",
+        hw = d.has_word as i64,
+        ab = d.abort as i64,
+    )
+    .unwrap();
+    eff
 }
 
 /// Echo: mirrors `lower_echo` from codegen/commands.rs:21.

@@ -32,10 +32,46 @@ pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
 /// Outside command-arg position `@a` keeps its joined-string meaning via
 /// [`expr_to_value`].
 pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
+    if let ExprKind::ParameterExpansion(pe) = &expr.kind {
+        if let Some(disposition) = splat_disposition(pe, state) {
+            return SsaValue::ArraySplat {
+                array: pe.name.clone(),
+                disposition: Some(disposition),
+            };
+        }
+    }
     match command_arg_splat(&expr.kind) {
-        Some(array) => SsaValue::ArraySplat { array },
+        Some(array) => SsaValue::ArraySplat {
+            array,
+            disposition: None,
+        },
         None => expr_to_value(expr, state),
     }
+}
+
+/// DD#69: `@{a:-WORD}` / `@{a:?WORD}` → the empty-disposition (operator
+/// `arrvals_default` / `arrvals_abort`; the WORD is the interpolating
+/// operand, absent for the bare `@{a:-}`). `None` for a plain `arrvals`.
+fn splat_disposition(
+    pe: &ParameterExpansion,
+    state: &VersionState,
+) -> Option<crate::ssa::ArraySplatDisposition> {
+    let abort = match pe.operator.as_deref() {
+        Some("arrvals_default") => false,
+        Some("arrvals_abort") => true,
+        _ => return None,
+    };
+    let has_word = pe.operand.is_some();
+    let word = pe
+        .operand
+        .as_ref()
+        .map(|e| expr_to_value(e, state))
+        .unwrap_or_else(|| SsaValue::Literal(String::new()));
+    Some(crate::ssa::ArraySplatDisposition {
+        word: Box::new(word),
+        has_word,
+        abort,
+    })
 }
 
 /// Recognise `@a` and the equivalent single-part `"${a[@]}"` as an array

@@ -719,6 +719,21 @@ impl Scanner {
         }
     }
 
+    /// DD#69: `@{a:-WORD}` / `@{a:?WORD}` external-splat disposition. `self.pos`
+    /// is at the `@`. Scans the whole `@{…}` (brace-depth / DD#65 semantics,
+    /// like `${…}`) into a single `Word` so `parse_word_arm` can decode it.
+    fn scan_at_brace(&mut self, start: usize) -> SpannedToken {
+        self.pos += 2; // skip `@{`
+        let content = self.scan_braced_content();
+        SpannedToken {
+            token: Tok::Word(format!("@{{{}}}", content)),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
     /// Scan `${…}` inner content by brace depth. `self.pos` is just past the
     /// opening `{`; on return it is past the matching `}` and the result is
     /// the text between them. DD#65: quotes and `\` are ordinary bytes, so the
@@ -1167,6 +1182,13 @@ impl Scanner {
     /// Accumulates bytes until a word-breaking character, then checks
     /// the result against the keyword table.
     fn scan_word(&mut self, start: usize) -> SpannedToken {
+        // DD#69: a leading `@{…}` is a splat-disposition — scan it whole so
+        // `parse_word_arm` decodes it (a bare `@{` never reaches here except
+        // as `@` + `{`, which the byte dispatcher already routes).
+        if self.source.get(self.pos) == Some(&b'@') && self.source.get(self.pos + 1) == Some(&b'{')
+        {
+            return self.scan_at_brace(start);
+        }
         let mut word = String::new();
 
         if let Some(eq_tok) = self.scan_word_chars(start, &mut word) {

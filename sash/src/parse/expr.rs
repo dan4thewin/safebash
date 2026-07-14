@@ -216,6 +216,9 @@ fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, 
                 .to_string(),
         ));
     }
+    if w.starts_with("@{") {
+        return parse_at_brace_disposition(&w, span);
+    }
     if w.starts_with('@') && w.len() > 1 {
         return Ok(Expr::param(&w[1..], Some("arrvals"), None, span));
     }
@@ -223,6 +226,65 @@ fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, 
         kind: ExprKind::Literal(w),
         span,
     })
+}
+
+/// DD#69: `@{a:-WORD}` / `@{a:?WORD}` external-splat disposition. The array
+/// splats per-element when non-empty; when empty, `:-` substitutes WORD as a
+/// single argument (bare `@{a:-}` → zero args) and `:?` aborts at runtime
+/// with WORD. WORD is a full interpolating word (like the scalar
+/// `${x:-WORD}` default). Only `:-` and `:?` are valid (no `:=`/`:+`).
+/// Encoded as a `ParameterExpansion` with operator `arrvals_default` /
+/// `arrvals_abort` and the WORD as its operand.
+fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
+    let malformed = || {
+        parse_error(
+            span,
+            "SB5033",
+            "`@{…}` splat disposition must be `@{a:-WORD}` (empty → the single \
+             arg WORD) or `@{a:?WORD}` (empty → abort with WORD) — only `:-` \
+             and `:?` are valid"
+                .to_string(),
+        )
+    };
+    let inner = w
+        .strip_prefix("@{")
+        .and_then(|s| s.strip_suffix('}'))
+        .ok_or_else(malformed)?;
+    let colon = inner.find(':').ok_or_else(malformed)?;
+    let name = &inner[..colon];
+    let after = &inner[colon + 1..];
+    let (op, word) = if let Some(rest) = after.strip_prefix('-') {
+        ("arrvals_default", rest)
+    } else if let Some(rest) = after.strip_prefix('?') {
+        ("arrvals_abort", rest)
+    } else {
+        return Err(malformed());
+    };
+    if !is_identifier(name) {
+        return Err(malformed());
+    }
+    // Empty WORD (`@{a:-}`) → no operand → zero args on empty; a present
+    // WORD → a single substituted arg. `:?` always aborts on empty.
+    let operand = if word.is_empty() {
+        None
+    } else {
+        Some(parse_default_word(word, span))
+    };
+    Ok(Expr {
+        kind: ExprKind::ParameterExpansion(ParameterExpansion {
+            name: name.to_string(),
+            operator: Some(op.to_string()),
+            operand,
+        }),
+        span,
+    })
+}
+
+/// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.
+fn is_identifier(s: &str) -> bool {
+    let mut chars = s.chars();
+    matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
 }
 
 /// `Tok::Dollar(name)` arm — checks for `$arr[i]` subscript syntax

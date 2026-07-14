@@ -76,15 +76,17 @@ a sash-convert canonicalize mode → moved to Tier 6._
     regcomp. rerr-asserting + `-> int`-discard cases are native-only (the
     c/janet harnesses discard runtime stderr; c/janet also can't yet compile
     a `-> int` fn in `|| :` — filed c-janet-fn-int-discard). 0 regressions.)
-12. `glob-as-array-splat-disposition` (P2) — PART 1 DONE (for-in globs
-    per-element; inline `*` → SB5029). Part 2 (external-splat disposition)
-    == #13; task set to `partial`.
-13. `glob-splat-disposition-word` (P2) — READY, next up. `@{a:-WORD}` /
-    `@{a:?WORD}` external-splat empty-disposition + bare-`@a`-to-external →
-    SB5032. Design DG-resolved; full implementation-ready code map appended
-    to the task (2026-07-08). Full-stack: new `@{…}` lexer token → parser →
-    validate (is_external_source gate) → transform → codegen empty-branch →
-    runtime abort (sash_emsg `<progname>: WORD`).
+12. `glob-as-array-splat-disposition` (P2) — DONE 2026-07-08 (Part 1 was
+    already done; Part 2 == #13, now landed → whole task done).
+13. `glob-splat-disposition-word` (P2) — DONE 2026-07-08 (DD#69 Part 2:
+    external-splat empty-disposition. Bare `@a` into an external command
+    (`/`-prefixed post-resolve head) → SB5032; `@{a:-WORD}` (empty → single
+    arg WORD; `@{a:-}` → 0 args) / `@{a:?WORD}` (empty → abort exit 1
+    `<progname>: WORD`); only `:-`/`:?` (else SB5033). New `@{…}` lexer token
+    (scan_at_brace) → parser (arrvals_default/arrvals_abort) → SsaValue::
+    ArraySplat.disposition → runtime sash_splat_disposition, applied by all
+    three argv builders. spec/glob_splat.sh gs.1-13; wordsplit 22.14-19
+    migrated; 0 regressions. **Tier 3 fully COMPLETE.**)
 14. `argv-snapshot-to-outparam` (P2) — DONE 2026-07-08 (DD#60 revision:
     `array a=$(argv N)` → the out-param builtin `argv [N] a`. New
     BuiltinCmd::Argv + SsaInst::ArgvFill (mirrors Mapfile/MatchInto);

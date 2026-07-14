@@ -912,16 +912,57 @@ fn emit_janet_general_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, 
 }
 
 /// Build the Janet command tuple parts `["cmd" arg…]`, expanding any
-/// `@a` splat to a `;` splice (DD#20/DD#22 — one element per value).
+/// `@a` / `@{a:…}` splat to a `;` splice (DD#20/DD#22 — one element per
+/// value; DD#69 empty-disposition).
 fn janet_command_parts(cmd_name: &str, c: &Command, ctx: &mut EmitCtx) -> Vec<String> {
     let mut parts = vec![format!("\"{}\"", cmd_name)];
     for arg in &c.args {
-        match janet_arg_splat(&arg.kind) {
-            Some(array) => parts.push(format!(";{}", array)),
+        match janet_splat_splice(arg, ctx) {
+            Some(splice) => parts.push(splice),
             None => parts.push(emit_expr_inline(arg, ctx)),
         }
     }
     parts
+}
+
+/// The `;`-splice for a command-arg `@a` / `@{a:-WORD}` / `@{a:?WORD}`
+/// splat: non-empty → the array; empty → the WORD (`:-`, one element),
+/// zero args (bare `@{a:-}`), or an abort (`:?`).
+fn janet_splat_splice(arg: &Expr, ctx: &mut EmitCtx) -> Option<String> {
+    let pe = splat_pe(arg)?;
+    let n = &pe.name;
+    match pe.operator.as_deref() {
+        Some("arrvals") => Some(format!(";{}", n)),
+        Some("arrvals_default") => Some(match &pe.operand {
+            Some(w) => format!(
+                ";(if (empty? {n}) @[{}] {n})",
+                emit_expr_inline(w, ctx),
+                n = n
+            ),
+            None => format!(";{}", n),
+        }),
+        Some("arrvals_abort") => {
+            let w = pe
+                .operand
+                .as_ref()
+                .map(|w| emit_expr_inline(w, ctx))
+                .unwrap_or_else(|| "\"\"".to_string());
+            Some(format!(";(if (empty? {n}) (error {}) {n})", w, n = n))
+        }
+        _ => None,
+    }
+}
+
+/// The `ParameterExpansion` behind a `@a` / single-part `"${a[@]}"` arg.
+fn splat_pe(arg: &Expr) -> Option<&ParameterExpansion> {
+    match &arg.kind {
+        ExprKind::ParameterExpansion(pe) => Some(pe),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
+            ExprKind::ParameterExpansion(pe) => Some(pe),
+            _ => None,
+        },
+        _ => None,
+    }
 }
 
 /// Recognise `@a` / single-part `"${a[@]}"` (ParameterExpansion

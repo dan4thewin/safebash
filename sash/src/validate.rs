@@ -1618,6 +1618,7 @@ fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
         StmtKind::Declaration(d) => check_argv_splat_decl(d, diags),
         StmtKind::Command(c) => {
             check_echo_splat(c, diags);
+            check_external_splat(c, diags);
             stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
         }
         _ => {
@@ -1632,6 +1633,42 @@ fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 fn check_argv_splat_body(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     for s in stmts {
         check_argv_splat_stmt(s, diags);
+    }
+}
+
+/// DD#69: a bare `@a` array splat (no empty-disposition) passed to an
+/// EXTERNAL command is SB5032 — an empty array would silently run the
+/// command with too few args. Require `@{a:-WORD}` / `@{a:?WORD}`. Builtins
+/// and for-in are exempt (this only runs for external command statements).
+fn check_external_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
+    // Post-resolution (DD#23) an external command's head is an absolute path;
+    // builtins, user functions and intrinsics keep bare names and are exempt
+    // (DD#69: the rule is external-only).
+    if !expr_literal_str(&c.name).starts_with('/') {
+        return;
+    }
+    for arg in &c.args {
+        if is_bare_arrvals_splat(&arg.kind) {
+            diags.push(Diagnostic::error_span(
+                arg.span,
+                "SB5032",
+                "a bare `@a` array splat into an external command is unsafe — an \
+                 empty array would run it with too few arguments. State the empty \
+                 case: `@{a:-WORD}` (empty → the single arg WORD) or `@{a:?WORD}` \
+                 (empty → abort with WORD)"
+                    .to_string(),
+            ));
+        }
+    }
+}
+
+/// A bare `@a` / single-part `"${a[@]}"` splat (operator `arrvals`), i.e.
+/// WITHOUT a `@{a:-…}` / `@{a:?…}` disposition.
+fn is_bare_arrvals_splat(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::ParameterExpansion(pe) => pe.operator.as_deref() == Some("arrvals"),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_bare_arrvals_splat(&parts[0].kind),
+        _ => false,
     }
 }
 

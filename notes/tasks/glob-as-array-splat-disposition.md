@@ -1,6 +1,6 @@
 ---
 title: "globs are array sugar; @a splat into external commands requires an empty-disposition (@{a:-foo}/@{a:?bang})"
-status: partial
+status: done
 priority: P2
 kind: feature
 depends: [array-splat-command-arg]

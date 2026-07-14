@@ -57,7 +57,7 @@ pub(super) fn lower_value(
                 name
             );
         }
-        SsaValue::ArraySplat { array } => {
+        SsaValue::ArraySplat { array, .. } => {
             panic!(
                 "ICE: ArraySplat (@{}) must be expanded by the argv builder, \
                  not lowered as a scalar value",

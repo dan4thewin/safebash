@@ -367,3 +367,39 @@ mapfile / read -a / match S P arr).
 spec/argv.sh migrated (av.n1-7, av.x5 → `argv [N] a`) + av.rej1/2 (old form
 rejected) + av.rej3 (slice past end → empty). native/c/janet all 37 pass;
 0 regressions. Tier 3 (all native compiler features) COMPLETE.
+
+## Tier 3 #13: glob-splat-disposition-word — DONE (DD#69 Part 2)
+
+External-splat empty-disposition. A bare `@a` into an external command is
+now SB5032; it must carry `@{a:-WORD}` (empty → the single arg WORD; bare
+`@{a:-}` → zero args) or `@{a:?WORD}` (empty → abort, exit 1,
+`<progname>: WORD`). Only `:-`/`:?` (else SB5033). WORD is a `${x:-WORD}`-
+style interpolating word, substituted as ONE element. Builtins, user
+functions, intrinsics (join/len/…), and for-in are exempt.
+
+Full stack:
+- **Lexer** (`scan_at_brace`): `@{…}` scans into one Word (brace-depth /
+  DD#65, like `${…}`) — `@` alone stays a normal word.
+- **Parser** (`parse_at_brace_disposition`): decode `@{name:OP WORD}`;
+  `:-`→`arrvals_default`, `:?`→`arrvals_abort`; WORD via `parse_default_word`
+  (empty WORD → operand None → zero args); malformed → SB5033.
+- **SsaValue::ArraySplat** gained a `disposition {word, has_word, abort}`;
+  `arg_to_value`/`splat_disposition` build it.
+- **Runtime** `sash_splat_disposition(tbl, word, wl, has_word, abort)`:
+  non-empty → tbl; empty → abort (`<argv0>: WORD`, exit 1) / 1-elem [WORD] /
+  empty. Applied by all three argv builders (native `resolve_splat_tables` +
+  `emit_splat_disposition`, c `cache_splat_tables_c` +
+  `emit_splat_disposition_c`, janet `janet_splat_splice` inline).
+- **Validate** (`check_external_splat`): a bare `@a` (operator `arrvals`, no
+  disposition) in a `/`-prefixed (resolved-external) command arg → SB5032.
+  Scoped by the resolved `/`-prefix (post-DD#23), which precisely excludes
+  builtins/functions/intrinsics — `is_external_source` over-classifies bare
+  non-builtins (e.g. `join`), so it is NOT used here.
+
+**Key finding — `echo @a` (SB5030) vs the disposition:** `echo` is a builtin
+so it's exempt from SB5032, but still SB5030 (DD#22 flatten). gs.7 pins the
+external-only scoping. **Migrated** wordsplit 22.14-19 (bare `@a` to
+`/usr/bin/printf`/`cat`) to dispositions — DD#69 has no static-non-empty
+exemption. spec/glob_splat.sh gs.1-13 native/c/janet (gs.6 abort native-only,
+rerr); 0 regressions all modes. Tier 3 (all native compiler features) is now
+fully complete.

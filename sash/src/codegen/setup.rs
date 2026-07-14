@@ -105,6 +105,21 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_argv_snapshot", Linkage::Import, &argv_snapshot_sig)
         .expect("declare sash_argv_snapshot");
 
+    // sash_splat_disposition(tbl, word_ptr, word_len, has_word, abort) -> tbl
+    // (DD#69 external `@{a:-WORD}` / `@{a:?WORD}` empty-disposition)
+    let mut splat_disposition_sig = Signature::new(CallConv::SystemV);
+    for _ in 0..5 {
+        splat_disposition_sig.params.push(AbiParam::new(I64));
+    }
+    splat_disposition_sig.returns.push(AbiParam::new(I64));
+    let splat_disposition_func = module
+        .declare_function(
+            "sash_splat_disposition",
+            Linkage::Import,
+            &splat_disposition_sig,
+        )
+        .expect("declare sash_splat_disposition");
+
     // sash_signal_flag(signum) -> i64
     let mut signal_flag_sig = Signature::new(CallConv::SystemV);
     signal_flag_sig.params.push(AbiParam::new(I64)); // signum
@@ -787,6 +802,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argv: argv_data,
         argv_get: argv_get_func,
         argv_snapshot: argv_snapshot_func,
+        splat_disposition: splat_disposition_func,
         signal_flag: signal_flag_func,
         dtoi: dtoi_func,
         itod: itod_func,
@@ -891,6 +907,12 @@ impl<'a> Interner<'a> {
                     self.intern(k);
                 }
             }
+            // DD#69: the `@{a:…}` splat disposition's WORD is nested outside
+            // `child_values` (kept lean) — intern it here.
+            SsaValue::ArraySplat {
+                disposition: Some(d),
+                ..
+            } => self.intern_value(&d.word),
             _ => {}
         }
         for child in v.child_values() {

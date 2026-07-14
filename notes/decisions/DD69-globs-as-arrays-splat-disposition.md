@@ -100,3 +100,23 @@ hazard is specific to a builtin whose *output* joins its args, i.e. `echo`.
 
 - `array-splat-command-arg` — per-element splat (prerequisite).
 - `glob-as-array-splat-disposition` — §1 + §2 implementation.
+
+## Implemented (2026-07-08)
+
+Part 1 (globs-are-arrays: for-in glob per-element, inline-`*` → SB5029) and
+Part 2 (external-splat empty-disposition) are both done.
+
+Part 2 (`glob-splat-disposition-word`): a bare `@a` into an external command
+(post-DD#23 resolution, a `/`-prefixed head) is **SB5032**; `@{a:-WORD}`
+(empty → the single arg WORD; bare `@{a:-}` → zero args) and `@{a:?WORD}`
+(empty → abort, exit 1, `<progname>: WORD`) carry the disposition. Only
+`:-`/`:?` (SB5033 otherwise). WORD is a `${x:-WORD}`-style interpolating
+word, substituted as ONE element. Builtins (echo still SB5030), user
+functions, intrinsics (join/len/…), and for-in are exempt.
+
+Lexer scans `@{…}` into one Word (`scan_at_brace`); parser decodes it
+(`parse_at_brace_disposition` → `arrvals_default`/`arrvals_abort`);
+`SsaValue::ArraySplat` gained a `disposition`; the argv builders (native
+`resolve_splat_tables`, c `cache_splat_tables_c`, janet `janet_splat_splice`)
+apply it via the runtime `sash_splat_disposition`. spec/glob_splat.sh gs.1-13
+native/c/janet; wordsplit 22.14-19 migrated to dispositions; 0 regressions.

@@ -601,7 +601,25 @@ pub enum SsaValue {
     /// builders intercept it); elsewhere `@a` keeps its joined meaning.
     ArraySplat {
         array: String,
+        /// DD#69 external-splat empty-disposition (`@{a:-WORD}` /
+        /// `@{a:?WORD}`). `None` = bare `@a` (empty → zero args).
+        disposition: Option<ArraySplatDisposition>,
     },
+}
+
+/// DD#69: what an external-command `@{a:…}` splat does when the array is
+/// empty. Non-empty always splats per-element.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ArraySplatDisposition {
+    /// The WORD (interpolating): the single substituted arg on `:-`, or the
+    /// abort message on `:?`.
+    pub word: Box<SsaValue>,
+    /// `@{a:-WORD}` has a WORD → empty array yields the one arg WORD; bare
+    /// `@{a:-}` has none → empty array yields zero args.
+    pub has_word: bool,
+    /// `:?` — on empty, abort (exit 1, `<progname>: WORD`) instead of
+    /// substituting.
+    pub abort: bool,
 }
 
 impl SsaValue {

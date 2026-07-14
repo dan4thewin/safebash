@@ -324,18 +324,28 @@ fn build_argv_runtime(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
-    // 1) argc = #scalars + Σ sash_table_len(splat). (cmd is a scalar.)
+    // 0) Pre-resolve each `@a` splat to the table to expand (DD#69
+    //    disposition applied once, so argc and the fill agree).
+    let splat_tables = resolve_splat_tables(
+        values,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+
+    // 1) argc = #scalars + Σ sash_table_len(effective splat). (cmd is a scalar.)
     let scalar_count = values
         .iter()
         .filter(|a| !matches!(a, SsaValue::ArraySplat { .. }))
         .count();
     let mut argc = builder.ins().iconst(I64, scalar_count as i64);
-    for v in values {
-        if let SsaValue::ArraySplat { array } = v {
-            let tbl = array_table_ptr(array, vars, builder);
-            let len = emit_table_len_call(tbl, builder, module, externs);
-            argc = builder.ins().iadd(argc, len);
-        }
+    for &tbl in &splat_tables {
+        let len = emit_table_len_call(tbl, builder, module, externs);
+        argc = builder.ins().iadd(argc, len);
     }
 
     // 2) heap argv of (argc+1)*8 bytes.
@@ -350,12 +360,14 @@ fn build_argv_runtime(
     let zero = builder.ins().iconst(I64, 0);
     builder.def_var(widx, zero);
 
-    // 4) fill: scalars directly, splats per element.
+    // 4) fill: scalars directly, splats per element (from the pre-resolved
+    //    effective tables, in splat order).
+    let mut si = 0;
     for v in values {
         match v {
-            SsaValue::ArraySplat { array } => {
-                let tbl = array_table_ptr(array, vars, builder);
-                emit_splat_fill(builder, module, externs, base, widx, tbl);
+            SsaValue::ArraySplat { .. } => {
+                emit_splat_fill(builder, module, externs, base, widx, splat_tables[si]);
+                si += 1;
             }
             scalar => {
                 let (ptr, _) = lower_value(
@@ -382,6 +394,44 @@ fn build_argv_runtime(
     base
 }
 
+/// DD#69: pre-resolve each `@a` command-arg splat to the effective table to
+/// expand (applying the empty-disposition once, so argc and the fill agree
+/// and a `:?` aborts exactly once). One entry per `ArraySplat`, in order.
+#[allow(clippy::too_many_arguments)]
+fn resolve_splat_tables(
+    values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Vec<cranelift_codegen::ir::Value> {
+    let mut splat_tables = Vec::new();
+    for v in values {
+        if let SsaValue::ArraySplat { array, disposition } = v {
+            let tbl = array_table_ptr(array, vars, builder);
+            let eff = match disposition {
+                None => tbl,
+                Some(d) => emit_splat_disposition(
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    func_constants,
+                    externs,
+                    exit_status_var,
+                    tbl,
+                    d,
+                ),
+            };
+            splat_tables.push(eff);
+        }
+    }
+    splat_tables
+}
+
 /// Load an array variable's table pointer by name.
 fn array_table_ptr(
     array: &str,
@@ -390,6 +440,45 @@ fn array_table_ptr(
 ) -> cranelift_codegen::ir::Value {
     let sv = super::types::find_array_slot(vars, array, "array");
     builder.use_var(sv.str_ptr())
+}
+
+/// DD#69: apply an external-splat empty-disposition, returning the table to
+/// expand — non-empty array → the array; empty → `sash_splat_disposition`
+/// (WORD single arg for `:-`, abort for `:?`, empty for bare `@{a:-}`).
+#[allow(clippy::too_many_arguments)]
+fn emit_splat_disposition(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+    tbl: cranelift_codegen::ir::Value,
+    d: &crate::ssa::ArraySplatDisposition,
+) -> cranelift_codegen::ir::Value {
+    let (word_ptr, word_len) = if d.has_word {
+        lower_value(
+            &d.word,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )
+    } else {
+        let zero = builder.ins().iconst(I64, 0);
+        (zero, zero)
+    };
+    let has_word = builder.ins().iconst(I64, d.has_word as i64);
+    let abort = builder.ins().iconst(I64, d.abort as i64);
+    let disp_ref = module.declare_func_in_func(externs.splat_disposition, builder.func);
+    let call = builder
+        .ins()
+        .call(disp_ref, &[tbl, word_ptr, word_len, has_word, abort]);
+    builder.inst_results(call)[0]
 }
 
 /// `sash_table_len(tbl)` → i64.

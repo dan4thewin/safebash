@@ -305,7 +305,7 @@ fn value_is_tainted(
         SsaValue::Subscript { array, .. }
         | SsaValue::TableValue { array, .. }
         | SsaValue::TableKey { array, .. }
-        | SsaValue::ArraySplat { array } => taint_of_name(taint, array),
+        | SsaValue::ArraySplat { array, .. } => taint_of_name(taint, array),
 
         // Always-tainted: program argv is external input by construction.
         SsaValue::ArgvIndex(_) => Taint::Tainted,
