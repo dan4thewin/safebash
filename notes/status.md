@@ -85,8 +85,15 @@ a sash-convert canonicalize mode → moved to Tier 6._
     to the task (2026-07-08). Full-stack: new `@{…}` lexer token → parser →
     validate (is_external_source gate) → transform → codegen empty-branch →
     runtime abort (sash_emsg `<progname>: WORD`).
-14. `argv-snapshot-to-outparam` (P2) — auto-declare resolved (DG 2026-07-08:
-    `argv [N] a` auto-declares, mirroring mapfile/read); ready to implement
+14. `argv-snapshot-to-outparam` (P2) — DONE 2026-07-08 (DD#60 revision:
+    `array a=$(argv N)` → the out-param builtin `argv [N] a`. New
+    BuiltinCmd::Argv + SsaInst::ArgvFill (mirrors Mapfile/MatchInto);
+    removed SsaValue::ArgvSnapshot. Auto-declares the array (transform emits
+    an empty-array Assign to reserve the versioned `a_0` slot, then fills —
+    also fixes the mapfile-style ICE on `len` of an undeclared fill target)
+    + registers it in the type checker. Fills a tainted array (DD#61):
+    taint_read_target extended to argv. Old `array a=$(argv …)` → SB5025.
+    native/c/janet all 37 argv specs; 0 regressions. **Tier 3 COMPLETE.**
 
 **Tier 4 — c/janet backend parity** (native is the gate; after tiers 1-3)
 15. `c-janet-dd55-abort-channel` (partial — do first) ⧉ reconcile overlap

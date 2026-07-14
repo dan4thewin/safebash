@@ -751,6 +751,7 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
         }
         BuiltinCmd::Return => emit_janet_return(out, ctx, c),
         BuiltinCmd::Read => emit_janet_read(out, ctx, c),
+        BuiltinCmd::Argv => emit_janet_argv(out, ctx, c),
         BuiltinCmd::Bless => emit_janet_bless(out, c),
         BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
         // `cat` is not a builtin — special-cased so we can shortcut
@@ -960,6 +961,29 @@ fn emit_janet_exit(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
         }
     } else {
         writeln!(out, "(os/exit 0)").unwrap();
+    }
+}
+
+/// DD#60: `argv [N] a` fills the trailing array with the program argv
+/// slice `(dyn :args)[start:]` (clamped so start >= argc → empty). The
+/// trailing positional is the array; an optional leading integer is the
+/// slice start. Auto-declares the array (like `read`/mapfile).
+fn emit_janet_argv(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    let args: Vec<String> = c.args.iter().map(expr_to_literal).collect();
+    let Some(array) = args.last().cloned() else {
+        return;
+    };
+    let start = match args.len() {
+        1 => "0".to_string(),
+        2 => args[0].clone(),
+        _ => return,
+    };
+    let slice = format!("(array/slice (dyn :args) (min {start} (length (dyn :args))))");
+    if !ctx.is_declared(&array) {
+        ctx.declare(&array);
+        writeln!(out, "(var {array} {slice})").unwrap();
+    } else {
+        writeln!(out, "(set {array} {slice})").unwrap();
     }
 }
 

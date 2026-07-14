@@ -344,6 +344,14 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     if cmd_name == "bless" {
         check_bless_form(c, span, env, errors);
     }
+    if cmd_name == "argv" {
+        // DD#60: `argv [N] a` fills (and auto-declares) the trailing array
+        // as an indexed collection — register it so a later bless / len /
+        // iteration sees an array, not a scalar.
+        if let Some(arr) = c.args.last() {
+            env.collections.insert(expr_to_name(arr));
+        }
+    }
 
     // DD#33: check subscript key types in command args
     for arg in &c.args {

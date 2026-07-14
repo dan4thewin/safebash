@@ -240,14 +240,6 @@ pub(super) fn lower_value(
         SsaValue::ArgvIndex(idx_ref) => {
             lower_argv_index_value(idx_ref, builder, module, vars, externs)
         }
-        SsaValue::ArgvSnapshot { start } => {
-            let start_val = builder.ins().iconst(I64, *start);
-            let snap_ref = module.declare_func_in_func(externs.argv_snapshot, builder.func);
-            let call = builder.ins().call(snap_ref, &[start_val]);
-            let table_ptr = builder.inst_results(call)[0];
-            let zero = builder.ins().iconst(I64, 0);
-            (table_ptr, zero)
-        }
         SsaValue::TableValue { array, index } => {
             lower_table_value_value(array, index, builder, module, vars, externs)
         }

@@ -73,7 +73,7 @@ fn try_builtin(
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
-        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, *block),
+        BuiltinCmd::Mapfile | BuiltinCmd::Argv => try_fill_array(kind, c, ssa, state, *block),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
@@ -434,6 +434,57 @@ fn handle_return_stmt(
 /// `mapfile -t arr` / `readarray -t arr` → Mapfile instruction.
 /// Returns `None` if no array name is present (caller falls through to
 /// general command handling).
+/// Array out-param fills: `mapfile`/`readarray` and DD#60 `argv [N] a`.
+fn try_fill_array(
+    kind: BuiltinCmd,
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    match kind {
+        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, block),
+        BuiltinCmd::Argv => try_handle_argv(c, ssa, state, block),
+        _ => None,
+    }
+}
+
+/// DD#60: `argv [N] a` out-param builtin. The trailing positional is the
+/// destination array; an optional leading non-negative integer is the
+/// slice start (`argv a` = whole argv, `argv N a` = argv[N:]). Emits an
+/// `ArgvFill` instruction (auto-declares + taints the array, like
+/// mapfile / read -a). Returns `None` for any other shape.
+fn try_handle_argv(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
+    let array = args.last()?.clone();
+    let start = match args.len() {
+        1 => 0,
+        2 => args[0].parse::<i64>().ok().filter(|n| *n >= 0)?,
+        _ => return None,
+    };
+    // Auto-declare (DG 2026-07-08): if `a` isn't already an array, create
+    // the versioned slot the same way `array a=()` does (an empty
+    // IndexedArray assign creates `a_0`), so the fill and later
+    // len/iteration/element reads agree with no prior `array a=()`.
+    if !state.collections.contains(&array) {
+        state.collections.insert(array.clone());
+        let target = state.define(&array);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target,
+            value: SsaValue::IndexedArray(vec![]),
+        });
+    }
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::ArgvFill { array, start });
+    Some(block)
+}
+
 fn try_handle_mapfile(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Option<BlockId> {
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
     let mut map_mode = false;

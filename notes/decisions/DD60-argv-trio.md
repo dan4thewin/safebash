@@ -6,7 +6,11 @@ Program-argument access in sash-native. Supersedes DD#42's `$(argv N)`
 scalar shape with a three-builtin surface that follows C `argc`/`argv`
 semantics and composes with the DD#24 taint model and DD#61 array rules.
 
-## Revision 2026-06-17 — snapshot is an out-param (pending)
+## Revision 2026-06-17 — snapshot is an out-param (implemented 2026-07-08)
+
+Implemented in `argv-snapshot-to-outparam`: `argv [N] a` (out-param fill,
+auto-declares + taints the array; `array a=$(argv …)` now rejected SB5025).
+Native/c/janet green, 0 regressions. spec/argv.sh av.n1-7/x5/rej1-3.
 
 The **snapshot form changes** from `array a=$(argv N)` (an assignment
 whose RHS yields an array) to an **out-param builtin** `argv [N] a` (the

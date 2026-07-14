@@ -1200,6 +1200,28 @@ pub(super) fn handle_match_into(
     false
 }
 
+/// Handle SsaInst::ArgvFill — DD#60 `argv [N] a` out-param form. Calls
+/// `sash_argv_snapshot(start)` (builds a fresh indexed table from the
+/// program argv slice argv[start..argc]) and stores it into the
+/// destination array's slot. Auto-declares the array (the slot was
+/// reserved by the setup scan); the array is tainted (DD#61), governed by
+/// the validate CST pass.
+pub(super) fn handle_argv_fill(
+    array: &str,
+    start: i64,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    let start_val = builder.ins().iconst(I64, start);
+    let snap_ref = module.declare_func_in_func(ctx.externs.argv_snapshot, builder.func);
+    let call = builder.ins().call(snap_ref, &[start_val]);
+    let table_ptr = builder.inst_results(call)[0];
+    let sv = find_array_slot(ctx.vars, array, "array");
+    builder.def_var(sv.str_ptr(), table_ptr);
+    false
+}
+
 /// Handle SsaInst::SubscriptAssign.
 pub(super) fn handle_subscript_assign(
     array: &str,

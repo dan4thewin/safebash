@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=34
+plan=37
 echo "1..$plan" >&3
 
 set +e
@@ -64,37 +64,41 @@ run_sash 'for x in $(argv 0); do bless x [[ -n $x ]]; echo "$x"; done' a b c
 run_sash 'for x in $(argv 1); do echo "$x"; done' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.s5
 
-# ── Snapshot to named array ──────────────────────────────────────
+# ── argv snapshot → out-param builtin `argv [N] a` (DD#60) ───────────
+# `argv a` fills array a with all program args; `argv N a` fills the
+# argv[N:] slice (array last, like read -a / mapfile / match S P arr).
+# Auto-declares `a` (DG 2026-07-08) — no prior `array a=()` needed. The
+# filled array is tainted (DD#61): bless-all before reading.
 
-# av.n1 array a=$(argv) snapshots the whole array; bless-all then iterate @a
-run_sash 'array a=$(argv); bless x in a [[ -n $x ]]; for x in @a; do echo "$x"; done' a b c
+# av.n1 `argv a` fills the whole array; bless-all then iterate @a
+run_sash 'argv a; bless x in a [[ -n $x ]]; for x in @a; do echo "$x"; done' a b c
 [[ $rc = 0 && $out == *$'\na\nb\nc' ]]; chk av.n1
 
 # av.n2 len of an argv-slice snapshot (count needs no bless)
-run_sash 'array a=$(argv 1); echo $(len a)' a b c
+run_sash 'argv 1 a; echo $(len a)' a b c
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk av.n2
 
 # av.n3 independent snapshots: slice and whole sized separately
-run_sash 'array a=$(argv 1); array b=$(argv); echo $(len a) $(len b)' a b
+run_sash 'argv 1 a; argv b; echo $(len a) $(len b)' a b
 [[ $rc = 0 && $out = "2 3" && -z $err ]]; chk av.n3
 
 # av.n4 join over a blessed snapshot (DD#41 collection builtin)
-run_sash 'array a=$(argv 1); bless x in a [[ -n $x ]]; echo $(join @a)' a b c
+run_sash 'argv 1 a; bless x in a [[ -n $x ]]; echo $(join @a)' a b c
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk av.n4
 
 # av.n5 iterating a tainted snapshot @a without bless-all is a clean error,
 # not an ICE — DD#61 requires bless-all the array before reading it.
-run_sash 'array a=$(argv 1); for x in @a; do echo "$x"; done' a b c
+run_sash 'argv 1 a; for x in @a; do echo "$x"; done' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n5
 
 # av.n6 joining a tainted snapshot @a without bless-all is a clean error
 # (negative for av.n4) — the cmdsub arg `@a` is a use site of tainted data.
-run_sash 'array a=$(argv 1); echo $(join @a)' a b c
+run_sash 'argv 1 a; echo $(join @a)' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n6
 
 # av.n7 subscripting a tainted snapshot without bless-all is a clean error
 # (negative for av.x5) — reading $a[0] exposes an element, needs bless-all.
-run_sash 'array a=$(argv); echo $a[0]' a b c
+run_sash 'argv a; echo $a[0]' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n7
 
 # ── Taint rules ──────────────────────────────────────────────────
@@ -116,7 +120,7 @@ run_sash 'x=$(arg 1); bless x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.x4
 
 # av.x5 snapshot array, bless-all, then read an element — accepted
-run_sash 'array a=$(argv); bless x in a [[ -n $x ]]; echo $a[0]' a b c
+run_sash 'argv a; bless x in a [[ -n $x ]]; echo $a[0]' a b c
 [[ $rc = 0 && -n $out && -z $err ]]; chk av.x5
 
 # av.x6 splat for-in with per-iteration body-bless, then use — accepted
@@ -172,6 +176,22 @@ f a b c'
 # av.h4 top-level $# inside (( )) is rejected (DD#46, SB5024)
 run_sash 'if (( $# < 2 )); then echo x; fi'
 [[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk av.h4
+
+# ── DD#60 revision: the old snapshot-assignment form is rejected ─────
+
+# av.rej1 `array a=$(argv)` (old snapshot assignment) → rejected; a command
+#         substitution no longer yields an array — use `argv a`.
+run_sash 'array a=$(argv); echo done' a b c
+[[ $rc != 0 && -z $out && -n $err ]]; chk av.rej1
+
+# av.rej2 `array a=$(argv 1)` (old slice snapshot assignment) → rejected
+run_sash 'array a=$(argv 1); echo done' a b c
+[[ $rc != 0 && -z $out && -n $err ]]; chk av.rej2
+
+# av.rej3 a slice start past the end → empty array (zero iters), not an
+#         abort (parity with the old `$(argv N)` behavior)
+run_sash 'argv 5 a; echo $(len a)' a b
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk av.rej3
 
 set -e
 tally

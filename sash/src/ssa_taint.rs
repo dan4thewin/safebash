@@ -166,6 +166,7 @@ fn classify_inst_def(
         | SsaInst::Mapfile { .. }
         | SsaInst::ReadArray { .. }
         | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
+        | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
         | SsaInst::CaptureStart
         | SsaInst::BlessAll { .. } // validates in place; BlessRetag defines the clean version
         | SsaInst::Pipeline { .. } => {}
@@ -307,7 +308,7 @@ fn value_is_tainted(
         | SsaValue::ArraySplat { array } => taint_of_name(taint, array),
 
         // Always-tainted: program argv is external input by construction.
-        SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => Taint::Tainted,
+        SsaValue::ArgvIndex(_) => Taint::Tainted,
 
         // Var-rooted: taint inherited from the named variable's status.
         SsaValue::Var(vref)

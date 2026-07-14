@@ -422,14 +422,6 @@ fn compute_declaration_value(
     if is_empty_collection_init(a, is_array, is_assoc) {
         return empty_collection_value(&a.name, is_assoc, state);
     }
-    // DD#60: `array a=$(argv N)` snapshots the program argv slice into a
-    // tainted indexed array (DD#61 bulk-read source).
-    if is_array {
-        if let Some(start) = argv_snapshot_start(&a.value) {
-            state.collections.insert(a.name.clone());
-            return SsaValue::ArgvSnapshot { start };
-        }
-    }
     let val = expr_to_value(&a.value, state);
     let val = lift_int_func_calls(val, ssa, state, block);
     track_collection_kind(&a.name, &val, state);
@@ -453,32 +445,6 @@ fn empty_collection_value(name: &str, is_assoc: bool, state: &mut VersionState) 
         SsaValue::AssocArray(vec![])
     } else {
         SsaValue::IndexedArray(vec![])
-    }
-}
-
-/// If `value` is `$(argv)` / `$(argv N)`, return the slice start index
-/// (0 for bare `$(argv)`, N for a literal `$(argv N)`).
-fn argv_snapshot_start(value: &Expr) -> Option<i64> {
-    let ExprKind::CommandSubstitution(stmts) = &value.kind else {
-        return None;
-    };
-    let inner = match stmts.first().map(|s| &s.kind) {
-        Some(StmtKind::Redirected(r)) => &r.body.kind,
-        Some(other) => other,
-        None => return None,
-    };
-    let StmtKind::Command(c) = inner else {
-        return None;
-    };
-    if !matches!(&c.name.kind, ExprKind::Literal(s) if s == "argv") {
-        return None;
-    }
-    match c.args.first() {
-        None => Some(0),
-        Some(a) => match &a.kind {
-            ExprKind::Literal(s) => s.parse::<i64>().ok().filter(|n| *n >= 0),
-            _ => None,
-        },
     }
 }
 

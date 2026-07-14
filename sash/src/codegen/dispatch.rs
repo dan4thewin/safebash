@@ -91,6 +91,9 @@ impl SsaInst {
                     subject, pattern, array, builder, module, ctx,
                 );
             }
+            SsaInst::ArgvFill { array, start } => {
+                return super::inst_handlers::handle_argv_fill(array, *start, builder, module, ctx);
+            }
             SsaInst::CaptureStart => {
                 // Call sash_capture_start() → (saved_fd, pipe_read_fd)
                 // Store both in the capture Cranelift variables

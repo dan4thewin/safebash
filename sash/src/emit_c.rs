@@ -548,6 +548,7 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             pattern,
             array,
         } => emit_match_into_c(e, subject, pattern, array, types),
+        SsaInst::ArgvFill { array, start } => emit_argv_fill_c(e, array, *start),
         _ => {
             writeln!(
                 e.out,
@@ -671,7 +672,7 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         SsaValue::IndexedArray(elems) => emit_indexed_array(e, elems, types),
         SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
-        SsaValue::ArgvIndex(_) | SsaValue::ArgvSnapshot { .. } => emit_c_argv_value(e, value),
+        SsaValue::ArgvIndex(_) => emit_c_argv_value(e, value),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
         SsaValue::Subscript {
             array,
@@ -729,17 +730,6 @@ fn emit_c_argv_value(e: &mut Emit, value: &SsaValue) -> CStr {
             )
             .unwrap();
             (format!("{}_p", t), format!("{}_l", t))
-        }
-        SsaValue::ArgvSnapshot { start } => {
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    void* {t}_tab = sash_argv_snapshot({start});",
-                t = t,
-                start = start
-            )
-            .unwrap();
-            (format!("(const char*){}_tab", t), "0".to_string())
         }
         _ => unreachable!("emit_c_argv_value: non-argv value"),
     }
@@ -1566,6 +1556,24 @@ fn emit_match_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
     .unwrap();
     writeln!(e.out, "    __test_result = {m};", m = m).unwrap();
     writeln!(e.out, "    __exit_status = 1 - {m};", m = m).unwrap();
+}
+
+/// DD#60: `argv [N] a` → `sash_argv_snapshot(start)` builds a fresh indexed
+/// table from the program argv slice; store it into the destination array
+/// (the empty-array declaration the transform emits first reserves the
+/// slot). Mirrors codegen's `handle_argv_fill`.
+fn emit_argv_fill_c(e: &mut Emit, array: &str, start: i64) {
+    let base = c_var_name(array, 0);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    void* {t} = sash_argv_snapshot({start}); \
+         {base}_ptr = (const char*){t}; {base}_len = 0;",
+        t = t,
+        start = start,
+        base = base
+    )
+    .unwrap();
 }
 
 /// DD#63: `match S P ARR` out-array form → `sash_regex_match_into`, which

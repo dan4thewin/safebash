@@ -1,6 +1,6 @@
 ---
 title: "argv snapshot → out-param builtin: array a=$(argv N) becomes `argv [N] a`"
-status: ready
+status: done
 priority: P2
 kind: refactor
 depends: [DD60-argv-trio]

@@ -114,6 +114,9 @@ pub enum BuiltinCmd {
     Read,
     /// `mapfile` / `readarray` (same builtin).
     Mapfile,
+    /// DD#60: `argv [N] a` fills array `a` with the program argv slice
+    /// (out-param builtin like mapfile / read -a).
+    Argv,
     Break,
     Continue,
     Return,
@@ -178,6 +181,7 @@ impl BuiltinCmd {
             "bless" => Self::Bless,
             "read" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,
+            "argv" => Self::Argv,
             "break" => Self::Break,
             "continue" => Self::Continue,
             "return" => Self::Return,
@@ -296,6 +300,10 @@ pub enum SsaInst {
         pattern: SsaValue,
         array: String,
     },
+    /// DD#60: `argv [N] a` — fill `array` with the program argv slice
+    /// argv[start..argc] (0-indexed). Auto-declares and taints the array
+    /// (a bulk-read source like mapfile / read -a; DD#61).
+    ArgvFill { array: String, start: i64 },
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
     /// End capturing, assign captured output to target
@@ -565,11 +573,6 @@ pub enum SsaValue {
     },
     /// Positional parameter by index: argv[i+1] (for dynamic for loops)
     ArgvIndex(VarRef),
-    /// DD#60: `array a=$(argv N)` snapshot — build an indexed table from
-    /// the program argv slice argv[start..argc] (0-indexed). Tainted.
-    ArgvSnapshot {
-        start: i64,
-    },
     /// Indexed array literal: (val0, val1, val2, ...)
     /// Creates a hash table with integer keys "0", "1", "2", ...
     IndexedArray(Vec<SsaValue>),

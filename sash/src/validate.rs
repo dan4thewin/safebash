@@ -1635,12 +1635,22 @@ fn check_argv_splat_body(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// `array a=$(argv …)` snapshots are allowed; every other assignment value
-/// (and subscript index) is checked for splat misuse.
+/// DD#60 revision: `array a=$(argv …)` is no longer a snapshot — a command
+/// substitution does not yield an array. Reject it (directing to the
+/// out-param `argv [N] a`); every other assignment value (and subscript
+/// index) is checked for splat misuse.
 fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
     let is_array_decl = d.flags.iter().any(|fl| fl == "-a" || fl == "-A");
     for a in &d.assignments {
         if is_array_decl && is_argv_splat_expr(&a.value) {
+            diags.push(Diagnostic::error_span(
+                a.value.span,
+                "SB5025",
+                "`array a=$(argv …)` is not an array snapshot — a command \
+                 substitution does not yield an array; use the out-param form \
+                 `argv [N] a` (DD#60)"
+                    .to_string(),
+            ));
             continue;
         }
         check_argv_splat_expr(&a.value, diags);
@@ -1685,8 +1695,8 @@ fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
             expr.span,
             "SB5025",
             "$(argv) is an array splat — it is valid only as the sole source of \
-             a for-in loop or the RHS of `array a=$(argv …)`; use $(arg N) for a \
-             single argument"
+             a for-in loop; snapshot into an array with `argv [N] a`, or use \
+             $(arg N) for a single argument"
                 .to_string(),
         ));
     }
@@ -2070,7 +2080,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if name == "read" || name == "mapfile" {
+    if name == "read" || name == "mapfile" || name == "argv" {
         taint_read_target(c, tainted);
     } else if name == "bless" {
         taint_bless(c, span, tainted, diags);

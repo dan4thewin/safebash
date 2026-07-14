@@ -335,3 +335,35 @@ design is DG-resolved (2026-06-21) — no blocker. Mapped the full
 implementation surface (via an explore agent) and appended a concrete,
 anchor-by-anchor implementation-ready plan to #13 so it can be executed
 directly next. SB5032 reserved for the bare-@a-external error.
+
+## Tier 3 #14: argv-snapshot-to-outparam — DONE (DD#60 revision)
+
+Moved the argv snapshot from `array a=$(argv N)` (the only cmdsub→array
+special case) to the out-param builtin `argv [N] a` (trailing array, like
+mapfile / read -a / match S P arr).
+
+- **ssa.rs**: `BuiltinCmd::Argv` + `SsaInst::ArgvFill { array, start }`
+  (mirrors Mapfile/MatchInto); removed `SsaValue::ArgvSnapshot`.
+- **transform** (stmt_handlers `try_handle_argv`): `argv a` (start 0) /
+  `argv N a` (start N); trailing positional is the array. **Auto-declare**
+  (DG resolved): if `a` isn't already a collection, emit an empty
+  `IndexedArray` Assign first — this reserves the *versioned* slot `a_0`
+  that `find_array_slot` resolves. (Discovered the ICE root cause: the
+  setup slot-scan inserts the plain name `a`, but reads use `a_0`; without
+  a decl/assign there's no `a_0`. mapfile has the same latent ICE on
+  `len` of an undeclared target — filed nothing yet, argv now does it
+  right.) Removed the old `argv_snapshot_start` cmdsub detection.
+- **type_check** (`check_command`): register `argv`'s trailing array as a
+  collection so bless / len / iteration see an array, not a scalar.
+- **codegen**: `handle_argv_fill` (call `sash_argv_snapshot(start)`, store
+  the table into the array slot); dispatch arm.
+- **validate**: `taint_read_target` extended to `argv` (fills a tainted
+  array, DD#61 → bless-all before read); `check_argv_splat_decl` now
+  REJECTS `array a=$(argv …)` (SB5025, directing to `argv [N] a`) instead
+  of exempting it.
+- **c/janet parity**: `emit_argv_fill_c` (SSA-based inst) and
+  `emit_janet_argv` (IR-based command; `(array/slice (dyn :args) …)`).
+
+spec/argv.sh migrated (av.n1-7, av.x5 → `argv [N] a`) + av.rej1/2 (old form
+rejected) + av.rej3 (slice past end → empty). native/c/janet all 37 pass;
+0 regressions. Tier 3 (all native compiler features) COMPLETE.
