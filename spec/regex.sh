@@ -228,11 +228,11 @@ run_sash 'var=axb
 echo "${var:s/x/}/}"'
 [[ $rc = 0 && $out = "a}b" && -z $err ]]; chk 63.g2
 
-# 63.g3 a `{` byte in RE does not close the `${…}` (Path B). The engine
-#       requires `\{` for a literal brace (a bare `{` starts an interval);
-#       whether bare `{` should be literal is a separate open decision
-#       (decide-regex-bare-brace). This still exercises Path B: the `{`
-#       byte in `a\{b` must not truncate the expansion.
+# 63.g3 a `{` byte in RE does not close the `${…}` (Path B). A literal brace
+#       needs `\{` (a bare `{` opens a `{n,m}` interval) — DD#39 ruling
+#       (2026-07-08): `{`/`[` require their escape for a literal, bash-faithful
+#       (glibc regcomp errors on a bare `{` too). This exercises Path B: the
+#       `{` byte in `a\{b` must not truncate the expansion.
 if in_modes native,c; then
     run_sash "var='a{b'
 echo \"\${var:s/a\{b/z/}\""

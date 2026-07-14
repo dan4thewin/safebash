@@ -1,11 +1,31 @@
 ---
 title: "DECISION: bare `{` in a regex — literal (bash-compatible) or require `\\{`?"
-status: open
+status: resolved
 priority: P2
 kind: decision
 depends: []
+resolution: "KEEP `\\{`-required (DG 2026-07-08). A literal `{`/`[` needs its escape (`\\{`/`\\[`); a bare/invalid one is an error, never a silent literal. Bash-faithful (glibc regcomp errors on bare `{` too) + uniform with `[`. Recorded in DD#39; no spec change (63.g3 already uses `\\{`)."
 gates:
-  - "DG rules: does a bare `{` that does not open a valid `{n,m}` interval match a literal `{` (bash/grep ERE behavior), or must a literal brace be written `\\{` (the vendored engine's current behavior)?"
+  - "RESOLVED: keep `\\{`-required. See DD39-glob-regex.md 'Clarification (2026-07-08)'."
+---
+
+## RESOLUTION (DG, 2026-07-08): keep `\{`-required
+
+Kept the strict behavior. A `{`/`[` opens a construct (interval / class);
+to match a literal one, escape it (`\{` / `\[`); a bare `{` (not a valid
+`{n,m}`) or an unterminated/invalid `[` is a **regex error, never a silent
+literal**. One uniform rule for both.
+
+**Deciding evidence** — bash's own `=~` engine (glibc `regcomp
+REG_EXTENDED`) **errors** on a bare `{` (rc=2, "Unmatched \{") *and* on an
+unterminated `[`, exactly like sash. GNU grep/sed/awk and Perl/RE2 are
+lenient on `{` (treat it as literal) but still error on `[`. Since sash
+subsets bash and targets bash-faithful semantics, we match bash (the strict
+engine), not GNU grep. Full survey + rationale live in
+`DD39-glob-regex.md` ("Clarification (2026-07-08)").
+
+Original question and options below (retained for history).
+
 ---
 
 # Bare `{` in a regex: literal vs. require `\{`
