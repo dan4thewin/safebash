@@ -473,19 +473,19 @@ fn declare_vars(out: &mut String, types: &VarTypes) {
 /// wrote the right value).
 ///
 /// Special vars like `1`, `2`, …, `9`, `#`, `?`, `$`, `@` are
-/// sanitised: non-alphanumerics → `_`, and a leading digit is
-/// prefixed with `p` so the C identifier is well-formed.
+/// sanitised: each non-alphanumeric char becomes a distinct `_c<code>`
+/// token (so `$#`, `$?`, `$@`, `$*`, `$!`, `$$` do NOT collide onto one
+/// C identifier), and a leading digit is prefixed with `p` so the C
+/// identifier is well-formed.
 fn c_var_name(name: &str, _version: u32) -> String {
-    let sanitized: String = name
-        .chars()
-        .map(|c| {
-            if c.is_alphanumeric() || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
+    let mut sanitized = String::with_capacity(name.len());
+    for c in name.chars() {
+        if c.is_alphanumeric() || c == '_' {
+            sanitized.push(c);
+        } else {
+            sanitized.push_str(&format!("_c{}", c as u32));
+        }
+    }
     if sanitized
         .chars()
         .next()

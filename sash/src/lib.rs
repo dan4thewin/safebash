@@ -113,6 +113,14 @@ pub fn cli_main(args: Vec<String>) {
 
     run_semantic_checks(input, &program);
 
+    // Transform-time compile errors (SB4016/17/18/…: ignored non-void
+    // results, etc.) are backend-independent. native enforces them inside
+    // codegen::compile_to_object; enforce them here too so the c / janet /
+    // manifest oracles reject exactly the programs native rejects.
+    if flags_request_alt_output(&parsed.flags) {
+        enforce_transform_diags(input, &program);
+    }
+
     if maybe_emit_alt_output(&parsed.flags, &program) {
         return;
     }
@@ -181,6 +189,26 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
                 "{}:{}:{}: error [SB4030] {}",
                 input, te.span.line, te.span.col, te.message
             );
+        }
+        std::process::exit(1);
+    }
+}
+
+/// True if any flag selects an alternative (non-native) output backend.
+fn flags_request_alt_output(flags: &[&str]) -> bool {
+    flags.contains(&"--janet") || flags.contains(&"--emit-c") || flags.contains(&"--manifest")
+}
+
+/// Run the AST→SSA transform purely for its compile-error diagnostics
+/// (SB4016/17/18/…) and exit if any fired. Mirrors the diag surfacing in
+/// codegen::compile_to_object so the alt-output backends reject the same
+/// programs native does.
+fn enforce_transform_diags(input: &str, program: &crate::ir::Program) {
+    let type_map = type_check::infer_types(program);
+    let (_ssa, diags) = transform::ir_to_ssa_typed(program, type_map);
+    if !diags.is_empty() {
+        for d in &diags {
+            eprintln!("{}:{}", input, d);
         }
         std::process::exit(1);
     }
