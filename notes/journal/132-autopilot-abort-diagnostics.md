@@ -483,3 +483,23 @@ Remaining janet 58.2/58.3 need arith string→int coercion of function args
 (`return $(($1+$2))` with `(add 3 4)` numeric args vs the body's
 scan-number) — folded into `janet-arith-string-coercion`. Next shared
 clusters: 36.x (dtoi), 55.x (DD#55 abort), 56.x (signals, mostly janet).
+
+## 2026-07-14 (cont.) — dtoi/itod (36.x) + janet arith coercion
+
+**28948e7 — dtoi/itod fixed-point intrinsics (c+janet).** c added
+sash_dtoi/sash_itod calls in try_native_intrinsic_c (were TODO); janet added
+cmdsub_num_intrinsic (float-based, illustration). → c 22→18, janet 50→46.
+Fixes 36.1-36.4 both modes.
+
+**28db76d — janet arith string→int coercion (`_num`).** sash vars hold
+strings; arith needs ints. `_num` coerces operands (var/`$x`/`$1`/compound-
+assign read/inc-dec), DD#72-aware (0x via scan-number, 0o/0b via janet
+radix, leading-zero decimals base-10). → janet 46→41. Fixes 58.2/58.3,
+cf.f5, cf.f8, 16.2; un-guards nl.s1-s10. Closed janet-arith-string-coercion.
+
+Remaining janet cf gaps (cf.f9 multi-init scoping, cf.f10 loop-var
+persistence, cf.f12 `$@` iteration) are distinct control-flow issues (task
+cf-backend-gaps-brace-surfaced), NOT arith.
+
+**Session totals: c 47→18, janet 70→41, native 0 (gate green throughout),
+6 code commits, 0 regressions.**

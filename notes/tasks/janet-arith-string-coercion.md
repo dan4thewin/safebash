@@ -1,6 +1,6 @@
 ---
 title: "janet: coerce string variables to int in arithmetic ($((x+0)) where x is a string)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -50,3 +50,11 @@ DD#58 int-func-in-arith with args (`fn add -> int { return $(($1+$2)); }`,
 args while the body does `(scan-number (get _args 0))` — scan-number errors
 on a number. Fixing the string/number coercion here (a `number?`-guarded
 coerce, or passing string args) unblocks janet spec 58.2 and 58.3.
+
+## RESOLVED (2026-07-14, commit 28db76d)
+
+Added a `_num` preamble helper coercing arith operands to int at each use
+site (bare `x`, `$x`, `$1`, compound-assign target read, inc/dec). DD#72
+0x/0o/0b honored via janet radix `8r`/`2r` (scan-number handles 0x + leading
+zeros but not 0o/0b). Fixes janet 58.2/58.3, cf.f5, cf.f8, 16.2; un-guarded
+arith_literals nl.s1-s10 to all modes. c/native unchanged; 0 regressions.
