@@ -72,3 +72,19 @@ eprin before `(os/exit rc)`.
   (sash/src/codegen/inst_handlers.rs); AbortMsg + diag_static_seg.
 - c: emit_exec/emit_pipeline/abort_target (sash/src/emit_c.rs).
 - janet: emit_janet_general_command + EmitCtx.checked (sash/src/emit_janet.rs).
+
+## Pipefail + per-segment suppression: DONE (2026-07-24, commit 845f494)
+
+The pipefail/per-segment-`-` half is resolved as a full DD#55 semantics pass
+(ratified with DG). A pipeline's aggregate is now context-independent (worst
+over non-suppressed segments); position decides only abort-vs-branch.
+Represented via a per-segment `suppressed` mask on the SSA `Pipeline`
+(native/emit_c) and from the AST (emit_janet). Fixed 20.6/21.3/55.10/55.11 in
+c AND janet, plus pipefail-in-conditions, leading-`-` later-stage abort, and
+non-first-`-` stage-drop. `pipeline && C`/`pipeline || C` now rejected
+(SB4023). Specs errors.sh 55.32-40. See DD55-error-model.md + journal.
+
+**Still remaining under this task:** c external `$(cmd)` cmdsub abort
+(55.7/8/9 — emit_cmdsub is still a TODO for externals), descriptive-message
+aborts (cd/echo-write/redirect-open, 55.20-29 native-only), and `$!`/getcpid
+(38.5, 55.19). These are independent of the pipefail work.

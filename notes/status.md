@@ -123,11 +123,16 @@ un-guarded nl.s1-10.
   55.12/13/14/17c/16.2/0.5.
 - dtoi/itod (28948e7), janet arith coercion (28db76d), unset collection
   (a355d38: 30.11), read-herestring + multi-part DoubleQuoted (3511fe4: 24.6).
-- Session tally: **c 47→16, janet 70→39, native 0** (gate green throughout;
-  8 code commits; 0 regressions). Remaining Tier 4 is feature-sized: 56.x
-  signals/END, 55.x DD#55-abort remainder (c external cmdsub, pipefail
-  per-segment suppress ⚠DG-design, `$!` bg-pid), janet control-flow
-  singletons (cf.f9/f10/f12), scattered singletons. See journal 132.
+- **DD#55 pipeline semantics pass** (845f494, DG-ratified): context-independent
+  aggregate (pipefail over non-suppressed segments); position decides only
+  abort-vs-branch. Fixed pipefail-in-conditions, leading-`-` later-stage
+  abort, non-first-`-` stage-drop; `pipeline &&/|| C` → SB4023. Per-segment
+  `suppressed` mask on SSA Pipeline. specs 55.32-40. native 792→801.
+- Session tally: **c 47→13, janet 70→37, native 0** (gate green throughout;
+  10 code commits; 0 regressions). Remaining Tier 4 is feature-sized: 56.x
+  signals/END, DD#55-abort remainder (c external cmdsub 55.7/8/9, `$!`
+  38.5/55.19, descriptive msgs), janet control-flow singletons (cf.f9/f10/
+  f12), scattered singletons. See journal 132.
 21. `cmdsub-followups-taint-intrinsics-c`
 22. `oracle-blessall-mapfile`
 23. `janet-getpid-class-intrinsics` — janet execs getpid-class names as

@@ -552,3 +552,39 @@ Tasks closed: echo-read-inline-pipe-cjanet, janet-arith-string-coercion.
   cf.f12 (`for x in $@`), 14.3 (wait), 16.1, 17.1, 18.1-3, 33.10 (`$(keys)`
   + `${m[$k]}`), 42.1, 48.2, 53.2 — heterogeneous.
 - c singletons: 24.12 (bless runtime-fail exit).
+
+## 2026-07-24 — DD#55 pipeline semantics pass (DG-directed, commit 845f494)
+
+DG chose to fix the SEMANTICS (not just the c/janet representation) after the
+investigation surfaced that `-` per-segment suppression was never represented
+as data — it was faked two wrong ways (leading `-` → whole-pipeline
+checked=false; non-first `-` → drop the stage), and an undocumented
+`i == 0 && !checked` skip in native's wait_for_children conflated leading-`-`
+with condition context. One root cause, four bugs.
+
+**Ruling (DG):** honor DD#55 as written — a pipeline's truth value is ONE
+definition everywhere (worst over non-suppressed segments = pipefail);
+position decides only the consequence (abort vs branch). And `pipeline &&/||
+C` is ambiguous postfix → reject (SB4023, same class as &&/|| on a compound;
+DG: reuse the code). All four fixed together.
+
+**Key discovery during impl:** sash parses `a | b && c` as `Pipeline[a,
+List(b && c)]` — the recursive stage parse ABSORBS the `&&` into the last
+stage as a subshell (non-standard precedence). So the SB4023 reject fires on
+a `List(And|Or)` last stage, not on a trailing `&&` at the pipeline level.
+And leading `- a | b` parses as `Suppressed(Pipeline)`, non-leading as
+`Pipeline[.., Suppressed(..)]` — the asymmetry behind bugs #2/#3. Fixed by
+normalizing `Suppressed(Pipeline[s0,..])` → `Pipeline[Suppressed(s0),..]` at
+parse time, so `-` is uniformly per-segment.
+
+**Representation:** per-segment `suppressed: Vec<bool>` on SSA `Pipeline`
+(native codegen + emit_c read it; emit_janet derives it from the AST).
+Deleted native's `i == 0 && !checked` skip. emit_janet got a real pipeline
+rewrite: `emit_pipeline_do` runs every stage (unwrapping Suppressed),
+aggregates over non-suppressed, passes output through verbatim (`prin`, no
+trim — fixes a spurious blank line on empty output), and pipeline conditions
+emit `(zero? …)`.
+
+native 0/792→801 (9 new specs, gate green); c 16→13, janet 39→37; 0
+regressions. Rust integration suites unchanged vs HEAD (their failures are
+the pre-existing stale-`declare`/`$HOME` tests — audit-rust-test-suites).
