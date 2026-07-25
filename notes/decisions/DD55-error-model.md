@@ -80,6 +80,44 @@ the programmer's responsibility — use `- cmd` on the producing
 side or choose tools that don't trigger it (`sed -n 1p` over
 `head -1`).
 
+### Aggregate is context-independent; position decides the consequence (2026-07-24)
+
+The pipeline's truth value is **one** definition everywhere: the worst
+exit status over its **non-suppressed** segments (pipefail). *Position*
+decides only the consequence, never the aggregate:
+
+- **statement position** — a nonzero aggregate aborts (routes through END).
+- **condition position** (`if` / `while` / `until` test, operand of `!`) —
+  the aggregate is the truth value; it does not abort.
+
+So `if /bin/false | /bin/true; then …` takes the **else** branch — a
+first-segment failure counts, exactly like bash `set -o pipefail`. A
+`-` on **any** segment (first, middle, or last) excludes only that
+segment's status from the aggregate; the segment still **runs** (it is a
+real pipe stage — `echo x | - grep y` runs grep, it is not dropped).
+
+This corrects a prior implementation bug where a pipeline in a non-abort
+context silently ignored its **first** segment (an undocumented
+`i == 0 && !checked` skip that conflated leading-`-` suppression with
+condition context), and where a non-first `-` dropped the stage entirely.
+
+### `&&` / `||` do not take a pipeline operand
+
+A pipeline may not be the **left** operand of `&&` / `||`
+(`cmd1 | cmd2 && cmd3` is rejected, **SB4023** — the same rule that
+rejects `&&`/`||` postfix on a compound). It reads ambiguously (what does
+`&&` test?); use an explicit condition instead:
+
+```
+if cmd1 | cmd2; then cmd3; fi        # instead of  cmd1 | cmd2 && cmd3
+if cmd1 | cmd2; then :; else cmd3; fi # instead of  cmd1 | cmd2 || cmd3
+```
+
+A pipeline as the **consequent** (`cmd && a | b`), a trailing redirect
+(`a | b > f`), a background pipeline (`a | b &`), and `! a | b` all remain
+legal — only the ambiguous postfix `pipeline && …` / `pipeline || …` is
+rejected.
+
 ## Background processes (`cmd &`)
 
 Exec failure (fork or exec fails) is checked — the parent aborts.

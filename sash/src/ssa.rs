@@ -315,6 +315,10 @@ pub enum SsaInst {
         capture_read_fd: bool,
         /// DD#55: if true, nonzero aggregate status aborts
         checked: bool,
+        /// DD#55 per-segment `-` suppression, aligned with `stages`. A
+        /// suppressed stage still runs (real pipe stage); only its exit
+        /// status is excluded from the pipefail aggregate. Empty ⇒ none.
+        suppressed: Vec<bool>,
     },
     /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.

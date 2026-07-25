@@ -145,11 +145,13 @@ impl SsaInst {
                 stages,
                 capture_read_fd,
                 checked,
+                suppressed,
             } => {
                 return super::inst_handlers::handle_pipeline(
                     stages,
                     *capture_read_fd,
                     *checked,
+                    suppressed,
                     builder,
                     module,
                     ctx,

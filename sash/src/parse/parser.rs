@@ -957,16 +957,46 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
     {
         scanner.next(); // consume '-'
         if let Some(stmt) = parse_statement(scanner)? {
-            Ok(Some(Statement {
-                kind: StmtKind::Suppressed(Box::new(stmt)),
-                span,
-            }))
+            Ok(Some(push_suppression_into_pipeline(stmt, span)))
         } else {
             Ok(None)
         }
     } else {
         // Not a suppressed command — treat as simple command starting with -
         parse_simple_or_assignment(scanner)
+    }
+}
+
+/// A leading `-` on a pipeline suppresses only the FIRST segment (DD#55),
+/// so normalize `Suppressed(Pipeline[s0, s1..])` to
+/// `Pipeline[Suppressed(s0), s1..]` — a uniform per-segment representation
+/// matching the non-first `cmd1 | - cmd2` form. A `-` on any other statement
+/// suppresses that whole statement, as before.
+fn push_suppression_into_pipeline(stmt: Statement, span: Span) -> Statement {
+    let stmt_span = stmt.span;
+    match stmt.kind {
+        StmtKind::Pipeline(mut p) if !p.commands.is_empty() => {
+            let first = p.commands.remove(0);
+            let fspan = first.span;
+            p.commands.insert(
+                0,
+                Statement {
+                    kind: StmtKind::Suppressed(Box::new(first)),
+                    span: fspan,
+                },
+            );
+            Statement {
+                kind: StmtKind::Pipeline(p),
+                span: stmt_span,
+            }
+        }
+        other => Statement {
+            kind: StmtKind::Suppressed(Box::new(Statement {
+                kind: other,
+                span: stmt_span,
+            })),
+            span,
+        },
     }
 }
 
@@ -1919,13 +1949,13 @@ fn parse_trailing_pipeline(
         scanner.next();
         skip_terminators(scanner);
         if let Some(next_stmt) = parse_statement(scanner)? {
-            match next_stmt.kind {
-                StmtKind::Pipeline(p) => commands.extend(p.commands),
-                _ => commands.push(next_stmt),
-            }
+            append_pipeline_stage(&mut commands, next_stmt);
             break;
         }
     }
+    // DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — see
+    // reject_pipeline_and_or_postfix.
+    reject_pipeline_and_or_postfix(&commands, span)?;
     Ok(if commands.len() > 1 {
         Statement {
             kind: StmtKind::Pipeline(Pipeline {
@@ -1937,6 +1967,41 @@ fn parse_trailing_pipeline(
     } else {
         commands.into_iter().next().unwrap()
     })
+}
+
+/// Append a parsed `|`-stage, flattening a nested pipeline (right-associative
+/// `a | b | c` → one flat stage list).
+fn append_pipeline_stage(commands: &mut Vec<Statement>, next_stmt: Statement) {
+    match next_stmt.kind {
+        StmtKind::Pipeline(p) => commands.extend(p.commands),
+        _ => commands.push(next_stmt),
+    }
+}
+
+/// DD#55 / SB4023: `pipeline && C` / `pipeline || C` is rejected — a `&&`/
+/// `||` after a pipeline is ambiguous postfix (what does it test?), the same
+/// rule as `&&`/`||` on a compound. The recursive stage parse absorbs the
+/// trailing `&&`/`||` into the last stage as a `List`, so a `List(And|Or)`
+/// last stage is exactly that rejected form. (`A && a | b` — a pipeline as
+/// the *consequent* — parses cleanly and is not caught here.)
+fn reject_pipeline_and_or_postfix(commands: &[Statement], span: Span) -> Result<(), Diagnostic> {
+    let is_and_or = commands.last().is_some_and(|last| {
+        matches!(
+            last.kind,
+            StmtKind::List(List {
+                op: ListOp::And | ListOp::Or,
+                ..
+            })
+        )
+    });
+    if is_and_or {
+        return Err(parse_error(
+            span,
+            "SB4023",
+            "&& / || on a pipeline are not supported — use `if pipeline; then …; fi`".to_string(),
+        ));
+    }
+    Ok(())
 }
 
 /// If `&&`, `||`, or `&` follows, wrap `stmt` in a `List` with the

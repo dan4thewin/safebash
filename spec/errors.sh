@@ -113,6 +113,52 @@ run_sash '/bin/false | /bin/true'
 run_sash '- /bin/false | /bin/true'
 [[ $rc = 0 && -z $err ]]; chk 55.11
 
+# --- DD#55 pipeline aggregate is context-independent (2026-07-24) ---
+
+# 55.32 pipefail in a condition: a FIRST-segment failure counts (else branch).
+# (Corrects the old stage-0 skip: `if false|true` used to take THEN.)
+run_sash 'if /bin/false | /bin/true; then echo T; else echo E; fi'
+[[ $rc = 0 && $out = "E" && -z $err ]]; chk 55.32
+
+# 55.33 pipefail in a condition: last-segment failure also counts (else).
+run_sash 'if /bin/true | /bin/false; then echo T; else echo E; fi'
+[[ $rc = 0 && $out = "E" && -z $err ]]; chk 55.33
+
+# 55.34 pipefail in a condition: all-succeed takes then.
+run_sash 'if /bin/true | /bin/true; then echo T; else echo E; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 55.34
+
+# 55.35 leading `-` suppresses only the FIRST segment: a later-stage failure
+# still aborts (AFTER must not run). Was a bug: `-` unchecked the whole pipe.
+run_sash '- /bin/true | /bin/false
+echo AFTER'
+[[ $rc != 0 && $out != *"AFTER"* && -z $err ]] \
+  && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.35
+
+# 55.36 leading `-` on a first-segment failure does NOT abort; AFTER runs.
+run_sash '- /bin/false | /bin/true
+echo AFTER'
+[[ $rc = 0 && $out = "AFTER" && -z $err ]]; chk 55.36
+
+# 55.37 a non-first `-` segment still RUNS (only its status is suppressed):
+# grep filters the input, so output is empty — the stage is not dropped.
+run_sash 'echo hello | - /bin/grep nomatch
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 55.37
+
+# 55.38 `pipeline && cmd` is rejected (SB4023) — ambiguous postfix; use `if`.
+run_sash '/bin/false | /bin/true && echo foo'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 55.38
+
+# 55.39 `pipeline || cmd` is likewise rejected (SB4023).
+run_sash '/bin/false | /bin/true || echo foo'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 55.39
+
+# 55.40 a pipeline as the CONSEQUENT of && stays legal (not a postfix).
+run_sash '/bin/true && /bin/echo ok | /bin/cat'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 55.40
+
+
 # 55.12 $(f) for -> int function is type error (use $((f)) instead)
 run_sash 'fn f -> int { return 42; }
 echo $(f)'

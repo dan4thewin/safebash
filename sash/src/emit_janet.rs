@@ -690,14 +690,59 @@ fn emit_pipeline(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize
         emit_lastpipe_pipeline(out, ctx, p, &lp, depth);
         return;
     }
+    // Statement position: run the pipeline (sets __last_exit to the DD#55
+    // aggregate), then abort on a nonzero aggregate when checked.
+    let checked = ctx.checked;
+    emit_pipeline_do(out, ctx, p, depth);
+    writeln!(out).unwrap();
+    if checked {
+        indent(out, depth);
+        writeln!(out, "(when (not= 0 __last_exit) (os/exit __last_exit))").unwrap();
+    }
+}
+
+/// Emit a `(do …)` block that runs every stage (a `-`-suppressed stage still
+/// runs — its status is just excluded), prints the last stage's output, sets
+/// `__last_exit` to the DD#55 aggregate (first-nonzero over the non-suppressed
+/// stages), and *returns* `__last_exit`. Used both as a statement and, via
+/// `(zero? …)`, as a condition.
+fn emit_pipeline_do(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: usize) {
     let last = p.commands.len() - 1;
+    let suppressed: Vec<bool> = p
+        .commands
+        .iter()
+        .map(|c| matches!(c.kind, StmtKind::Suppressed(_)))
+        .collect();
     indent(out, depth);
     writeln!(out, "(do").unwrap();
     for (i, cmd) in p.commands.iter().enumerate() {
         emit_pipeline_stage(out, ctx, cmd, i, last, depth + 1);
     }
     emit_pipeline_close_pipes(out, last, depth + 1);
-    emit_pipeline_wait_and_collect(out, p.commands.len(), depth + 1);
+    indent(out, depth + 1);
+    writeln!(out, "(def result (or (:read (p{} :out) :all) \"\"))", last).unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "(set __last_exit 0)").unwrap();
+    for (i, &sup) in suppressed.iter().enumerate() {
+        indent(out, depth + 1);
+        if sup {
+            // Suppressed stage: reap only, status excluded from the aggregate.
+            writeln!(out, "(os/proc-wait p{})", i).unwrap();
+        } else {
+            writeln!(
+                out,
+                "(let [_s (os/proc-wait p{})] (when (and (zero? __last_exit) (not= 0 _s)) (set __last_exit _s)))",
+                i
+            )
+            .unwrap();
+        }
+    }
+    indent(out, depth + 1);
+    // Pass the last stage's output through verbatim (`prin`, no added newline)
+    // so an empty pipeline prints nothing rather than a spurious blank line.
+    writeln!(out, "(prin result)").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "__last_exit)").unwrap();
 }
 
 /// A pipeline whose last stage is an in-process builtin consumer
@@ -955,6 +1000,12 @@ fn emit_pipeline_stage(
     last: usize,
     depth: usize,
 ) {
+    // DD#55: a `-`-suppressed stage still runs — unwrap to the inner command
+    // (its status is excluded from the aggregate in emit_pipeline_do).
+    let cmd = match &cmd.kind {
+        StmtKind::Suppressed(inner) => inner.as_ref(),
+        _ => cmd,
+    };
     let StmtKind::Command(c) = &cmd.kind else {
         return;
     };
@@ -998,31 +1049,6 @@ fn emit_pipeline_close_pipes(out: &mut String, last: usize, depth: usize) {
         write!(out, "(:close _w{i}) (:close _r{i}) ").unwrap();
     }
     writeln!(out).unwrap();
-}
-
-/// Drain the last stage's stdout to EOF (which pulls data through the whole
-/// blocking chain), then reap every stage, then print. Reading before
-/// waiting avoids any pipe-buffer deadlock.
-fn emit_pipeline_wait_and_collect(out: &mut String, n_commands: usize, depth: usize) {
-    let last = n_commands - 1;
-    indent(out, depth);
-    writeln!(
-        out,
-        "(def result (string/trim (:read (p{} :out) :all)))",
-        last
-    )
-    .unwrap();
-    for i in 0..n_commands {
-        indent(out, depth);
-        // A pipeline's exit status is the last stage's (bash, no pipefail).
-        if i == last {
-            writeln!(out, "(set __last_exit (os/proc-wait p{}))", i).unwrap();
-        } else {
-            writeln!(out, "(os/proc-wait p{})", i).unwrap();
-        }
-    }
-    indent(out, depth);
-    writeln!(out, "(print result))").unwrap();
 }
 
 fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statement, depth: usize) {
@@ -1517,13 +1543,21 @@ fn emit_redirected_no_herestring(
 }
 
 /// Emit a condition (test_command) inline for if/while.
-fn emit_condition_inline(out: &mut String, ctx: &EmitCtx, stmt: &Statement) {
+fn emit_condition_inline(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement) {
     match &stmt.kind {
         StmtKind::Command(c) => emit_command_condition(out, ctx, c),
         // `(( … ))` condition: true iff the arith value is non-zero. Arith
         // comparisons/logicals now yield 1/0 integers (arith_binop_to_janet),
         // so this is correct for both comparison and value forms.
         StmtKind::ArithTest(a) => write!(out, "(not= 0 {})", arith_expr_to_janet(a, ctx)).unwrap(),
+        // DD#55: a pipeline condition is true iff its aggregate (pipefail over
+        // the non-suppressed segments) is zero. The pipeline still runs and
+        // prints; only its status feeds the branch.
+        StmtKind::Pipeline(p) if p.commands.len() > 1 => {
+            write!(out, "(zero? ").unwrap();
+            emit_pipeline_do(out, ctx, p, 0);
+            write!(out, ")").unwrap();
+        }
         _ => write!(out, "true").unwrap(),
     }
 }

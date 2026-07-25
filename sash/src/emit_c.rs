@@ -556,7 +556,8 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             stages,
             checked,
             capture_read_fd,
-        } => emit_pipeline(e, stages, *checked, *capture_read_fd, types),
+            suppressed,
+        } => emit_pipeline(e, stages, *checked, *capture_read_fd, suppressed, types),
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -2104,6 +2105,7 @@ fn emit_pipeline(
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
     checked: bool,
     capture_read_fd: bool,
+    suppressed: &[bool],
     types: &VarTypes,
 ) {
     let n = stages.len();
@@ -2144,12 +2146,11 @@ fn emit_pipeline(
     }
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
-    emit_pipeline_wait(e, &p, n);
+    emit_pipeline_wait(e, &p, n, suppressed);
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
-    // DD#55 (A): an unchecked pipeline whose (last-stage) status is nonzero
-    // aborts (routing through END per DD#56). `checked` is false in condition
-    // / `-`-suppressed positions.
+    // DD#55: a nonzero aggregate aborts in a `checked` (statement) position;
+    // `checked` is false in condition / END positions (no abort there).
     if checked {
         writeln!(
             e.out,
@@ -2192,31 +2193,25 @@ fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, capture_r
     }
 }
 
-/// Parent waits for all `n` children; `{p}_status` becomes the last
-/// stage's exit (bash pipeline status, no pipefail).
-fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize) {
+/// Parent waits for (reaps) all `n` children, computing the DD#55
+/// aggregate = first-nonzero status over the NON-suppressed stages.
+/// A `-`-suppressed stage still ran; only its status is excluded.
+fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize, suppressed: &[bool]) {
     writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
-    writeln!(
-        e.out,
-        "    for (i64 {p}_w = 0; {p}_w < {n}; {p}_w++) {{",
-        p = p,
-        n = n
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        i64 {p}_st = sash_wait({p}_pids[{p}_w]);",
-        p = p
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        if ({p}_w == {last}) {p}_status = {p}_st;",
-        p = p,
-        last = n - 1
-    )
-    .unwrap();
-    writeln!(e.out, "    }}").unwrap();
+    for i in 0..n {
+        if suppressed.get(i).copied().unwrap_or(false) {
+            writeln!(e.out, "    sash_wait({p}_pids[{i}]);", p = p, i = i).unwrap();
+        } else {
+            writeln!(
+                e.out,
+                "    {{ i64 {p}_st = sash_wait({p}_pids[{i}]); \
+                 if ({p}_status == 0 && {p}_st != 0) {p}_status = {p}_st; }}",
+                p = p,
+                i = i
+            )
+            .unwrap();
+        }
+    }
 }
 
 /// One pipeline stage. Mirrors lower_pipeline_stage

@@ -673,6 +673,7 @@ fn handle_pipe_while_or_mapfile(
         stages,
         capture_read_fd: true,
         checked: true,
+        suppressed: vec![],
     });
     if is_mapfile {
         block = lower_one(last, ssa, state, block);
@@ -717,6 +718,7 @@ fn handle_lastpipe_read(
         stages,
         capture_read_fd: true,
         checked: true,
+        suppressed: vec![],
     });
     if let StmtKind::Command(c) = &last.kind {
         let (var_names, delim, field_sep) = parse_read_flags(&c.args);
@@ -753,31 +755,55 @@ fn handle_regular_pipeline(
     block: BlockId,
 ) {
     let mut stages = vec![];
+    let mut suppressed = vec![];
     for (idx, cmd) in p.commands.iter().enumerate() {
-        let (inner, redirects) = match &cmd.kind {
-            StmtKind::Suppressed(_s) => {
-                // - prefix in pipeline: skip suppressed stages entirely
-                continue;
-            }
-            StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
-            other => (other, vec![]),
+        // DD#55: a `-`-suppressed segment still RUNS (real pipe stage); only
+        // its exit status is excluded from the aggregate. Peel the Suppressed
+        // wrapper and record the mask, rather than dropping the stage.
+        let (unwrapped, is_suppressed) = match &cmd.kind {
+            StmtKind::Suppressed(inner) => (inner.as_ref(), true),
+            _ => (cmd, false),
         };
-        if let StmtKind::Command(c) = inner {
-            push_command_stage(c, redirects, idx, ssa, state, &mut stages);
-        } else {
-            // Compound stage: lower into its own SSA blocks, record entry for codegen
-            let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
-            let compound_exit = lower_one(cmd, ssa, state, compound_entry);
-            ssa.block_mut(compound_exit).terminator = Terminator::Return;
-            ssa.compound_pipeline_blocks.push(compound_entry);
-            stages.push((format!("__compound_{}", compound_entry), vec![], vec![]));
+        let stages_before = stages.len();
+        lower_one_pipeline_stage(unwrapped, idx, ssa, state, &mut stages);
+        // push_command_stage may add >1 stage (function inlining); mark each.
+        suppressed.resize(stages.len(), false);
+        if is_suppressed {
+            suppressed[stages_before..].fill(true);
         }
     }
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: false,
         checked: true,
+        suppressed,
     });
+}
+
+/// Lower a single (already Suppressed-peeled) pipeline stage into `stages`:
+/// a `Command` becomes a direct stage (possibly several, via function
+/// inlining); any compound is lowered into its own SSA blocks and recorded
+/// as a `__compound_<id>` forked child.
+fn lower_one_pipeline_stage(
+    stmt: &Statement,
+    idx: usize,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    stages: &mut Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
+) {
+    let (inner, redirects) = match &stmt.kind {
+        StmtKind::Redirected(r) => (&r.body.kind, r.redirects.clone()),
+        other => (other, vec![]),
+    };
+    if let StmtKind::Command(c) = inner {
+        push_command_stage(c, redirects, idx, ssa, state, stages);
+    } else {
+        let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
+        let compound_exit = lower_one(stmt, ssa, state, compound_entry);
+        ssa.block_mut(compound_exit).terminator = Terminator::Return;
+        ssa.compound_pipeline_blocks.push(compound_entry);
+        stages.push((format!("__compound_{}", compound_entry), vec![], vec![]));
+    }
 }
 
 /// A `Command` pipeline stage that names a known function: inline the function

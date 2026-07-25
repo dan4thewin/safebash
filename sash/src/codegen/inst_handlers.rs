@@ -25,6 +25,7 @@ pub(super) fn handle_pipeline(
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
     capture_read_fd: bool,
     checked: bool,
+    suppressed: &[bool],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -69,7 +70,7 @@ pub(super) fn handle_pipeline(
         stage_names.push(diag_static_seg(name, ctx.literals, module, builder));
     }
     let (final_worst, fail_name_ptr, fail_name_len) =
-        wait_for_children(builder, checked, pid_slot, &pe, &stage_names);
+        wait_for_children(builder, suppressed, pid_slot, &pe, &stage_names);
     update_pipeline_status(builder, final_worst, ctx);
 
     if checked {
@@ -354,11 +355,12 @@ fn save_capture_fd(
 }
 
 /// Wait for all N children, returning the pipefail "worst" exit status
-/// as a Cranelift Value. DD#55.10: worst = first nonzero; DD#55: stage 0
-/// is skipped when the pipeline is suppression-marked (`checked=false`).
+/// as a Cranelift Value. DD#55: aggregate = worst (first-nonzero) status
+/// over the **non-suppressed** stages. A `-`-suppressed stage is excluded
+/// from the aggregate (its status doesn't count), but it still ran.
 fn wait_for_children(
     builder: &mut FunctionBuilder,
-    checked: bool,
+    suppressed: &[bool],
     pid_slot: cranelift_codegen::ir::StackSlot,
     pe: &PipelineExterns,
     names: &[(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)],
@@ -379,7 +381,9 @@ fn wait_for_children(
         let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
         let call = builder.ins().call(pe.wait, &[pid]);
         let status = builder.inst_results(call)[0];
-        if i == 0 && !checked {
+        // DD#55: a `-`-suppressed stage still ran, but its status is excluded
+        // from the aggregate.
+        if suppressed.get(i).copied().unwrap_or(false) {
             continue;
         }
         // Update worst: if worst == 0 && status != 0, worst = status (and
