@@ -346,108 +346,20 @@ fn print_diags(input: &str, diags: &[diagnostic::Diagnostic]) {
 }
 
 /// `--manifest`: emit one path per line for every external dependency.
+///
+/// The manifest is collected at the single command-resolution funnel
+/// (`transform::resolution::resolve_pipeline_command`) during lowering and
+/// surfaced on `SsaProgram::external_deps`. Because every external form —
+/// direct commands, pipeline stages, and `$( … )` substitutions — passes
+/// through that funnel, and only names that resolve to a real path (contain
+/// `/`) are recorded, the manifest can neither miss an external nor leak a
+/// builtin or compiler-internal sigil.
 fn emit_manifest(program: &crate::ir::Program) {
     let type_map = type_check::infer_types(program);
     let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
-    let builtins = builtin_command_set();
-    let path_var = std::env::var("PATH").unwrap_or_default();
-    let sysroot = get_sysroot();
-    let deps = collect_external_deps(&ssa, &builtins, &path_var, sysroot.as_deref());
-    for dep in &deps {
+    for dep in &ssa.external_deps {
         println!("{}", dep);
     }
-}
-
-/// Commands handled by the runtime rather than an external binary;
-/// resolve_dep filters these out of the manifest.
-fn builtin_command_set() -> std::collections::HashSet<&'static str> {
-    [
-        "echo",
-        "true",
-        "false",
-        ":",
-        "exit",
-        "cd",
-        "wait",
-        "shift",
-        "read",
-        "exec",
-        "command",
-        "[[",
-        "__redirect_push",
-        "__redirect_pop",
-        "__store_bg_pid",
-        "__table_delete",
-        "signal",
-    ]
-    .iter()
-    .copied()
-    .collect()
-}
-
-fn collect_external_deps(
-    ssa: &ssa::SsaProgram,
-    builtins: &std::collections::HashSet<&str>,
-    path_var: &str,
-    sysroot: Option<&str>,
-) -> std::collections::BTreeSet<String> {
-    let mut deps = std::collections::BTreeSet::new();
-    for block in ssa.blocks.values() {
-        for inst in &block.insts {
-            collect_inst_deps(inst, builtins, path_var, sysroot, &mut deps);
-        }
-    }
-    deps
-}
-
-fn collect_inst_deps(
-    inst: &ssa::SsaInst,
-    builtins: &std::collections::HashSet<&str>,
-    path_var: &str,
-    sysroot: Option<&str>,
-    deps: &mut std::collections::BTreeSet<String>,
-) {
-    match inst {
-        ssa::SsaInst::Command { name, .. } => {
-            if let Some(path) = resolve_dep(name, builtins, path_var, sysroot) {
-                deps.insert(path);
-            }
-        }
-        ssa::SsaInst::Pipeline { stages, .. } => {
-            for (name, _, _) in stages {
-                if let Some(path) = resolve_dep(name, builtins, path_var, sysroot) {
-                    deps.insert(path);
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-fn resolve_dep(
-    name: &str,
-    builtins: &std::collections::HashSet<&str>,
-    path_var: &str,
-    sysroot: Option<&str>,
-) -> Option<String> {
-    if name.starts_with('/') {
-        return Some(name.to_string());
-    }
-    if builtins.contains(name) {
-        return None;
-    }
-    for dir in path_var.split(':') {
-        let target_path = format!("{}/{}", dir, name);
-        let exists = if let Some(sr) = sysroot {
-            crate::sysroot_file_exists(sr, &target_path)
-        } else {
-            std::path::Path::new(&target_path).is_file()
-        };
-        if exists {
-            return Some(target_path);
-        }
-    }
-    Some(name.to_string())
 }
 
 /// Default path: type-check, taint-verify, codegen, and link a static ELF.

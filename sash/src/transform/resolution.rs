@@ -3,7 +3,22 @@
 //! TRUST: resolve_pipeline_command uses compile-time PATH resolution (DD#23).
 //! No runtime PATH lookup — the resolved absolute path is embedded in the binary.
 
-pub(super) fn resolve_pipeline_command(name: &str) -> String {
+/// Resolve an external command head to the path the binary will `exec`, and
+/// record it for `--manifest`. This is the single funnel every external form
+/// passes through — direct commands, pipeline stages, and `$( … )` argv[0] —
+/// so recording here cannot miss an external nor leak a builtin/internal
+/// sigil: inline builtins (`echo`/`true`/`false`/`:`) and unresolved bare
+/// names have no `/` and are skipped; sigils and user functions never reach
+/// this function at all.
+pub(super) fn resolve_pipeline_command(name: &str, state: &crate::ssa::VersionState) -> String {
+    let resolved = resolve_command_head(name);
+    if resolved.contains('/') {
+        state.external_deps.borrow_mut().insert(resolved.clone());
+    }
+    resolved
+}
+
+fn resolve_command_head(name: &str) -> String {
     if name.contains('/') {
         return name.to_string();
     }

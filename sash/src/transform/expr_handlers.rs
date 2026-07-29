@@ -158,7 +158,7 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
     // inlines them.
     let head = match &c.name.kind {
         ExprKind::Literal(name) => {
-            SsaValue::Literal(super::resolution::resolve_pipeline_command(name))
+            SsaValue::Literal(super::resolution::resolve_pipeline_command(name, state))
         }
         _ => expr_to_value(&c.name, state),
     };

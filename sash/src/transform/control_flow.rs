@@ -493,21 +493,33 @@ fn build_pipeline_stages_from_cmdsubst(
 ) -> Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)> {
     let mut stages = vec![];
     for stmt in stmts {
-        let cmd_stmt = match &stmt.kind {
-            StmtKind::Redirected(r) => &r.body,
-            _ => stmt,
-        };
-        if let StmtKind::Command(c) = &cmd_stmt.kind {
-            let name = expr_to_string(&c.name);
-            let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-            let redirs = match &stmt.kind {
-                StmtKind::Redirected(r) => r.redirects.clone(),
-                _ => vec![],
-            };
-            stages.push((resolve_pipeline_command(&name), args, redirs));
+        if let Some(stage) = build_cmdsubst_stage(stmt, state) {
+            stages.push(stage);
         }
     }
     stages
+}
+
+/// Lower one `$( … )` pipeline stage statement to `(resolved_name, args,
+/// redirects)`. Returns `None` for a non-command statement.
+fn build_cmdsubst_stage(
+    stmt: &Statement,
+    state: &mut VersionState,
+) -> Option<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)> {
+    let cmd_stmt = match &stmt.kind {
+        StmtKind::Redirected(r) => &r.body,
+        _ => stmt,
+    };
+    let StmtKind::Command(c) = &cmd_stmt.kind else {
+        return None;
+    };
+    let name = expr_to_string(&c.name);
+    let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    let redirs = match &stmt.kind {
+        StmtKind::Redirected(r) => r.redirects.clone(),
+        _ => vec![],
+    };
+    Some((resolve_pipeline_command(&name, state), args, redirs))
 }
 
 fn emit_cmdsubst_pipe_while_read(

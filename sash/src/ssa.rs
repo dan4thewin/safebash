@@ -727,6 +727,11 @@ pub struct SsaProgram {
     pub exiting_signals: std::collections::HashSet<i64>,
     /// DD#14: compound pipeline stage entry blocks (reachable roots)
     pub compound_pipeline_blocks: Vec<BlockId>,
+    /// `--manifest`: absolute paths of every external program this program
+    /// execs — direct commands, pipeline stages, and `$( … )` substitutions.
+    /// Collected at the single resolution funnel (`resolve_pipeline_command`)
+    /// so it cannot miss an external nor leak a builtin/internal sigil.
+    pub external_deps: std::collections::BTreeSet<String>,
     next_block_id: usize,
 }
 
@@ -738,6 +743,7 @@ impl SsaProgram {
             end_block: None,
             exiting_signals: std::collections::HashSet::new(),
             compound_pipeline_blocks: Vec::new(),
+            external_deps: std::collections::BTreeSet::new(),
             next_block_id: 0,
         }
     }
@@ -880,6 +886,13 @@ pub struct VersionState {
     pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
     pub diagnostics: Vec<String>,
+    /// `--manifest` collection: every command name resolved to a real
+    /// executable path (contains `/`) at the resolution funnel. Interior-
+    /// mutable so the immutable expression-evaluation path (`expr_to_value`
+    /// → `build_argv`) can record `$( … )` externals without threading
+    /// `&mut` through the whole evaluator. Surfaced onto
+    /// `SsaProgram::external_deps` at the end of `ir_to_ssa_typed`.
+    pub external_deps: std::cell::RefCell<std::collections::BTreeSet<String>>,
 }
 
 impl VersionState {
@@ -904,6 +917,7 @@ impl VersionState {
             exit_trap: None,
             exiting_signals: std::collections::HashSet::new(),
             diagnostics: Vec::new(),
+            external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }
 

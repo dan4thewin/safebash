@@ -1292,3 +1292,123 @@ fn neg_unsuppressed_false_aborts() {
         "should not reach after /bin/false"
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// --manifest — the external-program dependency list.
+//
+// Collected at the single command-resolution funnel, so it must list
+// every external the program execs (including those inside `$( … )`)
+// and must never leak a shell builtin or a compiler-internal sigil
+// (e.g. `__let_exit` from `(( … ))`).
+// ═══════════════════════════════════════════════════════════════
+
+/// Run `sash <script> --manifest`, returning the emitted paths.
+fn manifest(name: &str, script: &str) -> Vec<String> {
+    let src = write_tmp(&format!("manifest_{}.sh", name), script);
+    let out = sash_cmd(&[&src, "--manifest"]);
+    assert!(
+        out.status.success(),
+        "manifest compile failed for {}: {}",
+        name,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .map(|l| l.to_string())
+        .collect()
+}
+
+/// An external used *only* inside a `$( … )` substitution must appear
+/// in the manifest (chain-of-trust: a rootfs built from the manifest
+/// would otherwise be missing it). Regression for the demo-prep finding.
+#[test]
+fn manifest_includes_command_substitution_external() {
+    let deps = manifest(
+        "cmdsub",
+        "x=$(date +%s); bless x [[ -n $x ]]; echo \"$x\"\n",
+    );
+    assert!(
+        deps.iter().any(|d| d.ends_with("/date")),
+        "expected the $(date) external in the manifest, got: {:?}",
+        deps
+    );
+}
+
+/// `(( … ))` as a statement/condition lowers to the internal `LetExit`
+/// sigil. It must never appear in an external-programs manifest.
+/// Regression for the demo-prep finding.
+#[test]
+fn manifest_excludes_internal_let_exit_sigil() {
+    let deps = manifest("letexit", "if (( 1 + 1 )); then echo hi; fi\n");
+    assert!(
+        !deps.iter().any(|d| d.contains("__let_exit")),
+        "manifest leaked the __let_exit sigil: {:?}",
+        deps
+    );
+    // The only command is the `echo` builtin — no external to list.
+    assert!(
+        deps.is_empty(),
+        "expected an empty manifest, got: {:?}",
+        deps
+    );
+}
+
+/// No compiler-internal `__…` sigil may ever reach the manifest.
+#[test]
+fn manifest_excludes_all_internal_sigils() {
+    // `! …` emits the `NegateTestResult` sigil; `> file` emits the
+    // redirect-push/pop sigils. Neither may appear in the manifest.
+    let deps = manifest(
+        "sigils",
+        "if ! date; then echo hi > /tmp/sash_mani_sig; fi\n",
+    );
+    assert!(
+        !deps.iter().any(|d| d.contains("__")),
+        "manifest leaked an internal sigil: {:?}",
+        deps
+    );
+    assert!(
+        deps.iter().any(|d| d.ends_with("/date")),
+        "expected the negated external in the manifest, got: {:?}",
+        deps
+    );
+}
+
+/// Every stage of a pipeline is an exec and must be listed.
+#[test]
+fn manifest_includes_pipeline_stages() {
+    let deps = manifest("pipe", "date | cat\n");
+    assert!(
+        deps.iter().any(|d| d.ends_with("/date")) && deps.iter().any(|d| d.ends_with("/cat")),
+        "expected both pipeline stages, got: {:?}",
+        deps
+    );
+}
+
+/// A user-defined function is inlined, not exec'd — its name must not
+/// appear; the externals inside its body must.
+#[test]
+fn manifest_excludes_user_functions_lists_body() {
+    let deps = manifest("userfn", "fn g() { date +%s; }\ng\n");
+    assert!(
+        deps.iter().any(|d| d.ends_with("/date")),
+        "expected the function body's external, got: {:?}",
+        deps
+    );
+    assert!(
+        !deps.iter().any(|d| d == "g" || d.ends_with("/g")),
+        "manifest leaked the user function name: {:?}",
+        deps
+    );
+}
+
+/// Shell builtins run in-process (no exec) and must not be listed.
+#[test]
+fn manifest_excludes_builtins() {
+    let deps = manifest("builtins", "echo hi\n:\ntrue\n");
+    assert!(
+        deps.is_empty(),
+        "expected an empty manifest for builtins only, got: {:?}",
+        deps
+    );
+}

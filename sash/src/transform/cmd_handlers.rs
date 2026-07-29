@@ -173,7 +173,7 @@ pub(super) fn handle_trap(
     }
     // Unsupported trap form — emit as regular command
     let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-    let resolved = resolve_pipeline_command(name);
+    let resolved = resolve_pipeline_command(name, state);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::command(resolved, args, vec![], true));
@@ -670,7 +670,7 @@ fn emit_external_command(
         .map(|a| eval_arg_and_check_int_capture(a, state))
         .collect();
     ssa.block_mut(block).insts.push(SsaInst::command(
-        resolve_pipeline_command(name),
+        resolve_pipeline_command(name, state),
         args,
         Vec::new(),
         true,

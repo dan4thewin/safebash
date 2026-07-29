@@ -665,7 +665,7 @@ fn push_command_stage(
         }
     }
     let args: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
-    stages.push((resolve_pipeline_command(&name), args, redirects));
+    stages.push((resolve_pipeline_command(&name, state), args, redirects));
 }
 
 /// Parse `read` flags (-d <c>, -d<c>, -f <c>, -f<c>) and collect var names.

@@ -6,6 +6,7 @@ kind: bug
 depends: []
 gates:
   - "`echo $(x=1; echo $x)` must either execute (print `1`) or be rejected at compile time — never silently print the literal string `$(...)`"
+  - "`x=$(a | b)` (pipeline body — same code path) likewise executes or is rejected, never the placeholder; its stages then appear in `--manifest`"
   - "decision needed (DG): implement multi-statement `$(…)` execution, or reject it at validation with a clear diagnostic"
 ---
 
@@ -75,6 +76,19 @@ stray placeholder is impossible.
   new SB5031 typo check correctly recurses into command-substitution
   bodies and validates their reads (subshell scope), which exposed that
   the *runtime* never executes multi-statement bodies.
+- Re-confirmed 2026-07-29 during the `--manifest` fix (journal 134) via a
+  **pipeline** body: `x=$(/bin/echo hi | /bin/cat)` → `got:$(...)`. Same
+  root cause — `single_command_subst` returns `None` because the single
+  statement is a `Pipeline`, not a `Command`. So the trigger is "body is
+  not exactly one `Command`", which includes both multi-statement bodies
+  *and* single-pipeline bodies.
+- Dovetails with `--manifest`: once option 1 lands, the pipeline stages
+  resolve through `resolve_pipeline_command` and auto-appear in the
+  manifest (journal 134). Under option 2 they are rejected, mooting it.
+- While fixing, audit **every** `SsaValue::Expr(expr_to_string(...))`
+  fallback in `expr_handlers.rs` / `expressions.rs` for other shapes that
+  reach codegen as literal text — the `"$(...)"` / `"$(( ... ))"` debug
+  arms must be unreachable from codegen (assert or restructure).
 - `spec/undeclared.sh` ud.16 is currently guarded to `native` and asserts
   only that the validator does not false-positive (no SB5031), NOT the
   runtime output, precisely because of this bug. Un-guard / strengthen it
