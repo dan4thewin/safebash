@@ -7,6 +7,12 @@ commands.
 
 ## 1. A glob is sugar for an array
 
+> **Amended by DD#73 (2026-07-29):** a glob element is no longer the
+> *verbatim* directory-entry name but a **lexically normalized absolute
+> path** (`array a=(*)` in `/work` → `/work/foo`). Rationale: referential
+> stability across `chdir`, and closing glob-sourced option-injection
+> (`-rf` → `/work/-rf`). Everything else in this section is unchanged.
+
 `*` (star-only, DD#39 — no `?`/`[]`/`**`) expands to an **array**, with
 **one verbatim element per directory entry**: no word splitting (DD#22),
 so a filename containing spaces or newlines is exactly one element. The
