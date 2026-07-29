@@ -517,35 +517,88 @@ fn try_handle_mapfile(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Opti
 /// Handle StmtKind::Pipeline — multi-command pipe chains.
 pub(super) fn handle_pipeline(
     p: &Pipeline,
-    _stmt: &Statement,
+    stmt: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    // DD#70: `! X` is a (B) must-consume boolean — bare/consequent → SB4018,
+    // `-` → SB4019. And `!` *consumes* its operand, so lower it in a boolean
+    // context (an inner `[[ … ]]`/`match` must not itself fire — the `!` is
+    // its consumer).
+    if !p.negated {
+        return lower_pipeline_body(p, ssa, state, block);
+    }
+    check_negation_must_consume(stmt, state);
+    state.in_condition += 1;
+    let block = lower_pipeline_body(p, ssa, state, block);
+    state.in_condition -= 1;
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::sigil(BuiltinCmd::NegateTestResult, vec![], true));
+    block
+}
+
+/// Lower the pipeline's stages (ignoring negation, handled by the caller):
+/// dispatch multi-stage forms (while/mapfile/lastpipe/regular) or lower a
+/// single command directly.
+fn lower_pipeline_body(
+    p: &Pipeline,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
     if p.commands.len() > 1 {
-        let last = &p.commands[p.commands.len() - 1];
-        let is_while_read = matches!(&last.kind, StmtKind::While(_));
-        let is_mapfile = is_mapfile_last(last);
-        let is_lastpipe_read = is_lastpipe_read_last(last);
-
-        if is_while_read || is_mapfile {
-            block = handle_pipe_while_or_mapfile(p, last, is_mapfile, ssa, state, block);
-        } else if is_lastpipe_read {
-            handle_lastpipe_read(p, last, ssa, state, block);
-        } else {
-            handle_regular_pipeline(p, ssa, state, block);
-        }
-    } else {
-        for cmd in &p.commands {
-            block = lower_one(cmd, ssa, state, block);
-        }
+        return dispatch_multistage_pipeline(p, ssa, state, block);
     }
-    if p.negated {
-        ssa.block_mut(block)
-            .insts
-            .push(SsaInst::sigil(BuiltinCmd::NegateTestResult, vec![], true));
+    for cmd in &p.commands {
+        block = lower_one(cmd, ssa, state, block);
     }
     block
+}
+
+/// Route a genuine multi-stage pipeline (`len > 1`) to the matching lowering
+/// based on its last stage: `while read`/`mapfile`, `lastpipe read`, or a
+/// regular fork/exec chain.
+fn dispatch_multistage_pipeline(
+    p: &Pipeline,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let last = &p.commands[p.commands.len() - 1];
+    let is_while_read = matches!(&last.kind, StmtKind::While(_));
+    let is_mapfile = is_mapfile_last(last);
+    if is_while_read || is_mapfile {
+        return handle_pipe_while_or_mapfile(p, last, is_mapfile, ssa, state, block);
+    }
+    if is_lastpipe_read_last(last) {
+        handle_lastpipe_read(p, last, ssa, state, block);
+    } else {
+        handle_regular_pipeline(p, ssa, state, block);
+    }
+    block
+}
+
+/// DD#70 (B): `! X` produces a must-consume boolean (for any operand). In a
+/// consuming position (if/while/&&/||) it is fine; a bare result is SB4018,
+/// and `-` applied to it is SB4019.
+fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
+    if state.in_condition > 0 {
+        return;
+    }
+    let diag = if state.suppressed > 0 {
+        format!(
+            "{}:{}: error [SB4019] `-` cannot suppress `!` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
+            stmt.span.line, stmt.span.col
+        )
+    } else {
+        format!(
+            "{}:{}: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
+            stmt.span.line, stmt.span.col
+        )
+    };
+    state.diagnostics.push(diag);
 }
 
 fn is_mapfile_last(last: &Statement) -> bool {

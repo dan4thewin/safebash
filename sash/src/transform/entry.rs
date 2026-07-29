@@ -88,17 +88,25 @@ fn install_end_block(ssa: &mut SsaProgram, state: &mut VersionState) {
 /// the first match.
 fn mark_unchecked_in_conditions(ssa: &mut SsaProgram) {
     for block in ssa.blocks.values_mut() {
-        if !matches!(block.terminator, Terminator::Branch { .. }) {
-            continue;
+        if matches!(block.terminator, Terminator::Branch { .. }) {
+            uncheck_last_condition_inst(&mut block.insts);
         }
-        for inst in block.insts.iter_mut().rev() {
-            match inst {
-                SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
-                    *checked = false;
-                    break;
-                }
-                _ => {}
+    }
+}
+
+/// Mark the last status-bearing inst of a condition block `checked = false`.
+/// DD#70: a `NegateTestResult` sigil sits *after* the operand it negates, so
+/// skip it — the real command/pipeline (which the `!` catches) is the one to
+/// uncheck.
+fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
+    for inst in insts.iter_mut().rev() {
+        match inst {
+            SsaInst::Command { name, .. } if name == "__negate_test_result" => continue,
+            SsaInst::Command { checked, .. } | SsaInst::Pipeline { checked, .. } => {
+                *checked = false;
+                return;
             }
+            _ => {}
         }
     }
 }

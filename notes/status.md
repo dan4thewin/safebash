@@ -1161,5 +1161,8 @@ Pending: `audit-string-keyed-builtin-dispatch` (36 sites),
 `extract-instctx-setup` (15 sites in dispatch.rs),
 `r47-promote-monitoring-rules` (redirected to skill design).
 Deferred: `audit-run3` (schedule after next big feature wave).
-Todo: `converter-compound-postfix` (SB402x in sash-convert).
+Todo: `converter-compound-postfix` (SB402x in sash-convert),
+`bang-precedence-and-suppress` (`! X && Y` should parse `(!X)&&Y`;
+`- ! X` → SB4019; c/janet `!` parity — parser-precedence tail of DD#70's
+`!`-must-consume work, whose native core shipped 2026-07-29).
 

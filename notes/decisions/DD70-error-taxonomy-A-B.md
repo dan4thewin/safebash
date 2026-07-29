@@ -155,3 +155,27 @@ silent.
   (external/pipeline/cmdsub/bg/overflow) — `abort-diagnostics-remaining`;
   (B) for `match` as a boolean command — DD#63 increment; the whole (A)
   channel in the C and janet oracles — `c-janet-dd55-abort-channel`.
+
+## Addendum (2026-07-24): `!` (negation) is a (B) must-consume boolean
+
+`! X` produces a logical negation of `X`'s truth value — pure in-process
+logic you authored — so it is a channel-(B) result for **any** operand
+(`! external`, `! pipeline`, `! [[ … ]]`, `! match`). It has **exactly**
+`[[ … ]]`'s positional rules:
+
+- bare `! X` → **SB4018** (result unused). *(Previously a bare `! external`
+  was silently accepted and aborted at run time — a bug: `! /bin/false;
+  echo done` never printed `done`.)*
+- `Y && ! X` / `Y || ! X` (consequent position) → **SB4018**.
+- `- ! X` → **SB4019** (`-` is meaningless on a (B) construct).
+- consumed positions — `if`/`while`/`until ! X`, `! X && …`, `! X || …`,
+  `! X || :` — negate the aggregate. The operand is **caught** (unchecked,
+  no abort); `!` flips the resulting truth value.
+
+`!` consumes its operand: the operand is lowered in a boolean context (so an
+inner `[[ … ]]`/`match` does not itself fire SB4018 — the `!` is its
+consumer), and the `! X` result is what must be consumed. This makes
+`! external` uniform with `! [[ … ]]` (which was already SB4018 when bare).
+
+DG (2026-07-24): "a bare command is not a boolean context … `! /bin/false;
+echo done` seems worse than useless." Reuses SB4018/SB4019 — no new codes.
