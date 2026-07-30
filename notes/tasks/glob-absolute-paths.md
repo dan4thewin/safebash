@@ -1,9 +1,11 @@
 ---
 title: "DD#73 — glob expansion yields normalized absolute paths"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
+resolved: 2026-07-29
+resolution: "Runtime-only change in sash-rt (sash_normalize_abs, sash_glob_abs_prefix; sash_glob/sash_glob_regex store <abs-dir>/name; sash_getcwd records errno on failure). Current globs are cwd-only so it's a getcwd() prefix. emit_c inherits via libsash_rt.a; janet has no file globs. spec/glob.sh g.1-6 + wordsplit 20.6; native+c 0 regressions. Journal 135. Surfaced+filed bug-emit-c-splat-vla-jump."
 gates:
   - "a glob element is a lexically-normalized ABSOLUTE path: `array a=(*)` in /work yields /work/foo (not foo); `sub/*` → /work/sub/foo; `./*` → /work/foo; `../x/*` → normalized parent; `/etc/*` unchanged"
   - "lexical only — symlinks are NOT resolved (no realpath); absolute = getcwd() joined with the pattern dir when relative"

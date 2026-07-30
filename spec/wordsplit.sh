@@ -288,10 +288,12 @@ else
     skip_chk 20.5
 fi
 
-# 20.6 for-in glob: iterates per matched entry, no word splitting (native/c)
+# 20.6 for-in glob: iterates per matched entry, no word splitting (native/c).
+#      DD#73: the element is a normalized absolute path `<cwd>/only.www`.
 if in_modes native,c; then
     run_sash '/usr/bin/touch only.www; for f in *.www; do echo "[$f]"; done'
-    [[ $rc = 0 && $out = "[only.www]" && -z $err ]]; chk 20.6
+    cwd=$(pwd -P)
+    [[ $rc = 0 && $out = "[$cwd/only.www]" && -z $err ]]; chk 20.6
 else
     skip_chk 20.6
 fi

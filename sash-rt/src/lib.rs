@@ -2304,6 +2304,9 @@ pub extern "C" fn sash_getcwd(out_len: *mut i64) -> *const u8 {
             lateout("r11") _,
         );
         if ret < 0 {
+            // Record errno so a caller that aborts (DD#73 glob) renders the
+            // real reason via sash_emsg.
+            SASH_LAST_ERRNO = -ret;
             *out_len = 0;
             return core::ptr::null();
         }
@@ -2776,6 +2779,89 @@ extern "C" fn sash_flag_restorer() {
 
 // ── Directory reading (glob support) ─────────────────────────
 
+/// DD#73: lexically normalize an absolute path (`input` must be absolute).
+/// Collapses `//`, `.`, and `..` segments textually — NO symlink
+/// resolution (lexical, not `realpath`). Writes into `out`, returns length.
+fn sash_normalize_abs(input: &[u8], out: &mut [u8; 4096]) -> usize {
+    let mut starts = [0usize; 256];
+    let mut nseg = 0usize;
+    let mut len = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        while i < input.len() && input[i] == b'/' {
+            i += 1;
+        }
+        let seg_start = i;
+        while i < input.len() && input[i] != b'/' {
+            i += 1;
+        }
+        let seg = &input[seg_start..i];
+        if seg.is_empty() || seg == b"." {
+            continue;
+        }
+        if seg == b".." {
+            if nseg > 0 {
+                nseg -= 1;
+                len = starts[nseg];
+            }
+            continue;
+        }
+        if nseg < 256 && len + 1 + seg.len() <= 4096 {
+            starts[nseg] = len;
+            nseg += 1;
+            out[len] = b'/';
+            len += 1;
+            out[len..len + seg.len()].copy_from_slice(seg);
+            len += seg.len();
+        }
+    }
+    if len == 0 {
+        out[0] = b'/';
+        len = 1;
+    }
+    len
+}
+
+/// DD#73: normalized absolute directory prefix (no trailing slash) for a
+/// glob whose directory portion is `dir`. A relative `dir` is resolved
+/// against `getcwd()`; a failed `getcwd` aborts through the DD#55 channel,
+/// like any syscall failure — NEVER a silent fallback to the bare
+/// (relative, injectable) form. Result written into `out`; returns length.
+fn sash_glob_abs_prefix(dir: &[u8], out: &mut [u8; 4096]) -> usize {
+    let mut raw = [0u8; 4096];
+    let mut n = 0usize;
+    if dir.first() != Some(&b'/') {
+        let mut cwd_len: i64 = 0;
+        let cwd_ptr = sash_getcwd(&mut cwd_len);
+        if cwd_ptr.is_null() {
+            let seg1 = b"glob";
+            let seg2 = b"getcwd";
+            sash_emsg(
+                seg1.as_ptr(),
+                seg1.len() as i64,
+                seg2.as_ptr(),
+                seg2.len() as i64,
+            );
+            sash_exit(1);
+        }
+        let cwd = unsafe { core::slice::from_raw_parts(cwd_ptr, cwd_len as usize) };
+        let cl = cwd.len().min(4095);
+        raw[..cl].copy_from_slice(&cwd[..cl]);
+        n = cl;
+    }
+    // Append the dir portion unless it is a bare "." (already == cwd).
+    if dir != b"." {
+        if n > 0 && n < 4095 {
+            raw[n] = b'/';
+            n += 1;
+        }
+        let dl = dir.len().min(4095 - n);
+        raw[n..n + dl].copy_from_slice(&dir[..dl]);
+        n += dl;
+    }
+    sash_normalize_abs(&raw[..n], out)
+}
+
 /// Read directory entries matching a star-glob pattern.
 /// Pattern supports: "*.ext", "prefix*", "prefix*suffix", "*".
 /// Returns a table (indexed array) of matching filenames.
@@ -2825,6 +2911,9 @@ pub extern "C" fn sash_glob(
     let table = unsafe { sash_table_new(16) } as *mut u8;
     let mut buf = [0u8; 4096];
     let mut idx: i64 = 0;
+    // DD#73: every element is `<abs-dir>/name`, not the bare dirent name.
+    let mut prefix_buf = [0u8; 4096];
+    let prefix_len = sash_glob_abs_prefix(dir, &mut prefix_buf);
 
     loop {
         let nread: i64;
@@ -2869,18 +2958,25 @@ pub extern "C" fn sash_glob(
                 if matches {
                     // Key is raw i64 bytes (same format as codegen IndexedArray)
                     let idx_bytes = idx.to_ne_bytes();
-                    // Copy name to heap — buf is stack-local and will be overwritten
-                    let name_copy = unsafe { sash_alloc(name.len()) };
+                    // DD#73: store `<prefix>/name` (absolute), not the bare name.
+                    let total = prefix_len + 1 + name.len();
+                    let elem = unsafe { sash_alloc(total) };
                     unsafe {
-                        core::ptr::copy_nonoverlapping(name.as_ptr(), name_copy, name.len());
+                        core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
+                        *elem.add(prefix_len) = b'/';
+                        core::ptr::copy_nonoverlapping(
+                            name.as_ptr(),
+                            elem.add(prefix_len + 1),
+                            name.len(),
+                        );
                     }
                     unsafe {
                         sash_table_set(
                             table as *mut SashTable,
                             idx_bytes.as_ptr(),
                             8,
-                            name_copy,
-                            name.len() as i64,
+                            elem,
+                            total as i64,
                         );
                     }
                     idx += 1;
@@ -2943,6 +3039,9 @@ pub extern "C" fn sash_glob_regex(
     let table = unsafe { sash_table_new(16) } as *mut u8;
     let mut buf = [0u8; 4096];
     let mut idx: i64 = 0;
+    // DD#73: every element is `<abs-dir>/name`, not the bare dirent name.
+    let mut prefix_buf = [0u8; 4096];
+    let prefix_len = sash_glob_abs_prefix(dir, &mut prefix_buf);
 
     loop {
         let nread: i64;
@@ -2984,14 +3083,25 @@ pub extern "C" fn sash_glob_regex(
                 let matched = unsafe { regexec9(prog, name_buf, resub.as_mut_ptr(), 10) };
                 if matched > 0 {
                     let idx_bytes = idx.to_ne_bytes();
-                    // name_buf is already heap-allocated, reuse it (just don't free it)
+                    // DD#73: store `<prefix>/name` (absolute), not the bare name.
+                    let total = prefix_len + 1 + name.len();
+                    let elem = unsafe { sash_alloc(total) };
+                    unsafe {
+                        core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
+                        *elem.add(prefix_len) = b'/';
+                        core::ptr::copy_nonoverlapping(
+                            name.as_ptr(),
+                            elem.add(prefix_len + 1),
+                            name.len(),
+                        );
+                    }
                     unsafe {
                         sash_table_set(
                             table as *mut SashTable,
                             idx_bytes.as_ptr(),
                             8,
-                            name_buf,
-                            name.len() as i64,
+                            elem,
+                            total as i64,
                         );
                     }
                     idx += 1;

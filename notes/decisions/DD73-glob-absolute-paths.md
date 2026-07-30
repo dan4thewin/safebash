@@ -118,3 +118,15 @@ whether sash adopts a broader rule (auto-`--` where supported, reject
 ## Tasks
 
 - `glob-absolute-paths` — implement §Decision + §Form (runtime, specs, docs).
+
+## Implemented (2026-07-29)
+
+Runtime-only change in `sash-rt` (`sash_normalize_abs`, `sash_glob_abs_prefix`;
+`sash_glob`/`sash_glob_regex` store `<abs-dir>/name`; `sash_getcwd` records
+errno on failure). Current globs are cwd-only (`emit_glob_expansion` hardcodes
+`dir="."`), so absolutization is a `getcwd()` prefix; the normalize/relative-
+dir-join is forward-looking. `emit_c` inherits it via `libsash_rt.a`; Janet
+does not expand file globs (out of scope). Specs: new `spec/glob.sh` g.1–g.6
+(incl. the `-rf` option-injection pin and a `cd /` referential-stability
+pin) + `wordsplit.sh` 20.6; native+c 0 regressions. Journal 135. A separate
+pre-existing c-backend bug surfaced (`bug-emit-c-splat-vla-jump`), filed.

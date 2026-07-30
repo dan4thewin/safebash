@@ -212,7 +212,13 @@ handled).
 
 ### Globs
 
-`*` only for file matching — `?` and `[...]` rejected (DD#39).
+`*` only for file matching — `?` and `[...]` rejected (DD#39). A glob
+expands to an **array** (DD#69), and each element is a **normalized
+absolute path** (DD#73): `array a=(*)` run in `/work` yields `/work/foo`,
+not `foo`. This gives referential stability across a `chdir` and keeps a
+`-`-leading filename from being reparsed as an *option* by an external
+command (`/work/-rf`, not `-rf`). For the short name, loop the array and
+use `$(basename …)`.
 
 ---
 

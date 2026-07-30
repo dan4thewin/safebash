@@ -1164,5 +1164,7 @@ Deferred: `audit-run3` (schedule after next big feature wave).
 Todo: `converter-compound-postfix` (SB402x in sash-convert),
 `bang-precedence-and-suppress` (`! X && Y` should parse `(!X)&&Y`;
 `- ! X` → SB4019; c/janet `!` parity — parser-precedence tail of DD#70's
-`!`-must-consume work, whose native core shipped 2026-07-29).
+`!`-must-consume work, whose native core shipped 2026-07-29),
+`bug-emit-c-splat-vla-jump` (c-backend: external `@{a:?}` splat after a
+preceding statement emits non-compiling C — goto into VLA scope; native ok).
 
