@@ -561,18 +561,28 @@ impl SsaInst {
 
         builder.switch_to_block(fail_block);
         builder.seal_block(fail_block);
-        // Write "bless: validation failed\n" to stderr, then exit(1)
-        let msg = "bless: validation failed\n";
-        let msg_id = literals[msg];
-        let msg_gv = module.declare_data_in_func(msg_id, builder.func);
-        let msg_ptr = builder.ins().global_value(I64, msg_gv);
-        let msg_len = builder.ins().iconst(I64, msg.len() as i64);
-        let fd_2 = builder.ins().iconst(I64, 2); // stderr
-        let write_ref = module.declare_func_in_func(externs.write, builder.func);
-        builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
-        let one = builder.ins().iconst(I64, 1);
-        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[one]);
+        // bless failed: `<argv0>: bless: <name> = '<val>' failed the gate`,
+        // exit(1). Name + value tell the user which gate failed and why.
+        let name_id = literals[source.name.as_str()];
+        let name_gv = module.declare_data_in_func(name_id, builder.func);
+        let name_ptr = builder.ins().global_value(I64, name_gv);
+        let name_len = builder.ins().iconst(I64, source.name.len() as i64);
+        // The source value (for `= '<val>'`) if it is a string slot.
+        let src_key = format!("{}_{}", source.name, source.version);
+        let (val_ptr, val_len) = match vars.get(src_key.as_str()) {
+            Some(VarSlot::Str { ptr, len }) => {
+                let (p, l) = (*ptr, *len);
+                (builder.use_var(p), builder.use_var(l))
+            }
+            _ => {
+                let z = builder.ins().iconst(I64, 0);
+                (z, z)
+            }
+        };
+        let bless_fail_ref = module.declare_func_in_func(externs.bless_fail, builder.func);
+        builder
+            .ins()
+            .call(bless_fail_ref, &[name_ptr, name_len, val_ptr, val_len]);
         builder
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -695,19 +705,7 @@ impl SsaInst {
         // so the predicate's pre-lowered operand refs resolve to exactly
         // these slots. Removed after the loop so the outer scope is
         // unaffected (DD#61 shadow semantics).
-        let mut binder_keys = Vec::new();
-        let mut binder_ptrs = Vec::new();
-        let mut binder_lens = Vec::new();
-        for b in binders {
-            let key = b.display();
-            let bp = builder.declare_var(I64);
-            let bl = builder.declare_var(I64);
-            ctx.vars
-                .insert(key.clone(), VarSlot::Str { ptr: bp, len: bl });
-            binder_keys.push(key);
-            binder_ptrs.push(bp);
-            binder_lens.push(bl);
-        }
+        let (binder_keys, binder_ptrs, binder_lens) = declare_bless_binders(binders, ctx, builder);
 
         let header = builder.create_block();
         let body = builder.create_block();
@@ -761,7 +759,7 @@ impl SsaInst {
             // fail: "bless: validation failed" → stderr, exit(1)
             builder.switch_to_block(fail);
             builder.seal_block(fail);
-            self.emit_bless_fail(builder, module, ctx.literals, externs);
+            self.emit_bless_fail(&source.name, builder, module, ctx.literals, externs);
             // cont: counter++ ; loop
             builder.switch_to_block(cont);
             builder.seal_block(cont);
@@ -788,27 +786,27 @@ impl SsaInst {
         false
     }
 
-    /// Emit the bless failure path: write "bless: validation failed" to
-    /// stderr and exit(1). Shared by scalar `Bless` and statement-form
-    /// `BlessAll`.
+    /// Emit the bless failure path: `<argv0>: bless: <name> failed the gate`
+    /// to stderr, then exit(1). Shared by the statement-form `BlessAll`
+    /// (no single scalar value — the value clause is omitted). Scalar
+    /// `Bless` emits its own call inline (it also passes the value).
     fn emit_bless_fail(
         &self,
+        name: &str,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         literals: &std::collections::HashMap<String, cranelift_module::DataId>,
         externs: &ExternFuncs,
     ) {
-        let msg = "bless: validation failed\n";
-        let msg_id = literals[msg];
-        let msg_gv = module.declare_data_in_func(msg_id, builder.func);
-        let msg_ptr = builder.ins().global_value(I64, msg_gv);
-        let msg_len = builder.ins().iconst(I64, msg.len() as i64);
-        let fd_2 = builder.ins().iconst(I64, 2);
-        let write_ref = module.declare_func_in_func(externs.write, builder.func);
-        builder.ins().call(write_ref, &[fd_2, msg_ptr, msg_len]);
-        let one = builder.ins().iconst(I64, 1);
-        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[one]);
+        let name_id = literals[name];
+        let name_gv = module.declare_data_in_func(name_id, builder.func);
+        let name_ptr = builder.ins().global_value(I64, name_gv);
+        let name_len = builder.ins().iconst(I64, name.len() as i64);
+        let zero = builder.ins().iconst(I64, 0);
+        let bless_fail_ref = module.declare_func_in_func(externs.bless_fail, builder.func);
+        builder
+            .ins()
+            .call(bless_fail_ref, &[name_ptr, name_len, zero, zero]);
         builder
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -1424,6 +1422,36 @@ fn finalize_exec(
 
 /// Call `sash_table_value` / `sash_table_key` `(table, index)` and return
 /// the `(ptr, len)` pair, using a fresh stack slot for the out-length.
+/// DD#61: declare per-binder `(ptr,len)` slots for a bless-all predicate and
+/// register them in `ctx.vars` under the binders' globally-unique SSA keys
+/// (so the pre-lowered predicate operands resolve to exactly these slots).
+/// Returns `(keys, ptrs, lens)` for the caller to bind and later remove.
+#[allow(clippy::type_complexity)]
+fn declare_bless_binders(
+    binders: &[VarRef],
+    ctx: &mut InstCtx,
+    builder: &mut FunctionBuilder,
+) -> (
+    Vec<String>,
+    Vec<cranelift_frontend::Variable>,
+    Vec<cranelift_frontend::Variable>,
+) {
+    let mut keys = Vec::new();
+    let mut ptrs = Vec::new();
+    let mut lens = Vec::new();
+    for b in binders {
+        let key = b.display();
+        let bp = builder.declare_var(I64);
+        let bl = builder.declare_var(I64);
+        ctx.vars
+            .insert(key.clone(), VarSlot::Str { ptr: bp, len: bl });
+        keys.push(key);
+        ptrs.push(bp);
+        lens.push(bl);
+    }
+    (keys, ptrs, lens)
+}
+
 fn emit_table_lookup(
     func: cranelift_module::FuncId,
     table_ptr: cranelift_codegen::ir::Value,

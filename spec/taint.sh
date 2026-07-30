@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=67
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -375,6 +375,18 @@ run_sash 'echo ~/x'
 # tilde.3 quoted / mid-word tilde stays a literal (unaffected)
 run_sash "echo '~' \"~\" a~b"
 [[ $rc = 0 && $out = "~ ~ a~b" && -z $err ]]; chk tilde.3
+
+# 24.20 a failed bless names the variable and shows its value (native only —
+#       the c/janet harnesses discard runtime stderr). Regression for the
+#       terse `bless: validation failed`.
+if in_modes native; then
+    run_sash 'x=$(getenv HOME)
+bless x [[ $x =~ ^NEVER$ ]]
+echo $x'
+    [[ $rc = 1 && $rerr == *"bless: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
+else
+    skip_chk 24.20
+fi
 
 set -e
 tally

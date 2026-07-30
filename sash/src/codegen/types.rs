@@ -52,6 +52,7 @@ pub(super) struct ExternFuncs {
     pub(super) exit: cranelift_module::FuncId,
     pub(super) emsg: cranelift_module::FuncId,
     pub(super) emsg_status: cranelift_module::FuncId,
+    pub(super) bless_fail: cranelift_module::FuncId,
     pub(super) arith_overflow: cranelift_module::FuncId,
     pub(super) run: cranelift_module::FuncId,
     pub(super) getenv: cranelift_module::FuncId,

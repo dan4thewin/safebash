@@ -288,9 +288,9 @@ fn check_inline_glob(c: &Command, diags: &mut Vec<Diagnostic>) {
             diags.push(Diagnostic::error_span(
                 arg.span,
                 "SB5029",
-                "inline `*` glob is not allowed in command arguments — a glob is \
-                 array sugar: use `array a=(*); … @a`. Quote it (\"*\") for a literal \
-                 asterisk."
+                "inline `*` glob is not allowed in command arguments — use an \
+                 array: `array a=(*); … @a` (or quote \"*\" for a literal \
+                 asterisk)"
                     .to_string(),
             ));
         }

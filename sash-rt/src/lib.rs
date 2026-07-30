@@ -254,6 +254,44 @@ pub extern "C" fn sash_exit(status: i64) -> ! {
     rustix::runtime::exit_group(status as i32)
 }
 
+/// Bless-gate failure diagnostic, then exit(1):
+///   `<argv0>: bless: <name> = '<val>' failed the gate\n`
+/// The ` = '<val>'` clause is omitted when `val_len == 0` (e.g. a bless-all
+/// over a collection, where there is no single scalar value). Naming the
+/// variable and showing its value tells the user *which* gate failed and
+/// *why* (the value that did not satisfy the predicate).
+#[no_mangle]
+pub extern "C" fn sash_bless_fail(
+    name_ptr: *const u8,
+    name_len: i64,
+    val_ptr: *const u8,
+    val_len: i64,
+) -> ! {
+    let argv = unsafe { sash_argv };
+    if !argv.is_null() {
+        let a0 = unsafe { *argv };
+        if !a0.is_null() {
+            let l = unsafe { strlen(a0) };
+            sash_write(2, a0, l as i64);
+        }
+    }
+    let head: &[u8] = b": bless: ";
+    sash_write(2, head.as_ptr(), head.len() as i64);
+    if !name_ptr.is_null() && name_len > 0 {
+        sash_write(2, name_ptr, name_len);
+    }
+    if !val_ptr.is_null() && val_len > 0 {
+        let open: &[u8] = b" = '";
+        sash_write(2, open.as_ptr(), open.len() as i64);
+        sash_write(2, val_ptr, val_len);
+        let close: &[u8] = b"'";
+        sash_write(2, close.as_ptr(), close.len() as i64);
+    }
+    let tail: &[u8] = b" failed the gate\n";
+    sash_write(2, tail.as_ptr(), tail.len() as i64);
+    sash_exit(1)
+}
+
 /// DD#25: integer overflow trap. Writes `<argv0>: arithmetic overflow\n`
 /// to stderr and exits non-zero. Called from the codegen overflow-check
 /// abort blocks (native + C backends) when a runtime +, -, or * over- or
