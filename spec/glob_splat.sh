@@ -8,7 +8,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=15
+plan=19
 echo "1..$plan" >&3
 
 set +e
@@ -89,6 +89,25 @@ run_sash 'array a=(x y); echo @{a:?}'
 # gs.15 likewise the `@{a:-WORD}` disposition to `echo` → SB5030, not an ICE.
 run_sash 'array a=(x y); echo @{a:-w}'
 [[ $rc != 0 && $err == *SB5030* ]]; chk gs.15
+
+# gs.16 DD#69 addendum: a splat is not a scalar — `x=@a` in scalar-assignment
+#       context is SB5025 (use `$(join @a)` for a string, `${a[i]}` for one).
+run_sash 'array a=(x y); x=@a; /bin/echo "$x"'
+[[ $rc != 0 && $err == *SB5025* ]]; chk gs.16
+
+# gs.17 likewise a DISPOSITIONED splat in scalar context → SB5025.
+run_sash 'array a=(x y); x=@{a:?}; /bin/echo "$x"'
+[[ $rc != 0 && $err == *SB5025* ]]; chk gs.17
+
+# gs.18 DD#69 addendum: the `@{a:…}` empty-disposition is command-argument-
+#       only — `for f in @{a:?}` is SB5034 (a for-in source is the bare `@a`).
+run_sash 'array a=(x y); for f in @{a:?}; do /bin/echo "$f"; done'
+[[ $rc != 0 && $err == *SB5034* ]]; chk gs.18
+
+# gs.19 quotes are literal (bash-compatible), NOT a splat: `echo "@a"` prints
+#       the literal `@a` (the native splat is the UNQUOTED `@a`). Not rejected.
+run_sash 'array a=(x y); echo "@a"'
+[[ $rc = 0 && $out = "@a" && -z $err ]]; chk gs.19
 
 set -e
 tally

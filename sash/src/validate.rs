@@ -1616,6 +1616,7 @@ fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
             check_argv_splat_body(&f.body, diags);
         }
         StmtKind::Declaration(d) => check_argv_splat_decl(d, diags),
+        StmtKind::Assignment(a) => check_argv_splat_assignment(a, diags),
         StmtKind::Command(c) => {
             check_echo_splat(c, diags);
             check_external_splat(c, diags);
@@ -1703,6 +1704,10 @@ fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
     for w in &f.words {
         if is_argv_splat_expr(w) {
             argv_splats += 1;
+        } else if is_disposition_splat(w) {
+            // DD#69 addendum: the empty-disposition is command-argument-only;
+            // a for-in source is the bare `@a` (its own zero-match handling).
+            diags.push(disposition_position_diag(w.span));
         } else {
             // Catches a quoted splat word (SB5026) and any nested misuse.
             check_argv_splat_expr(w, diags);
@@ -1717,6 +1722,56 @@ fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
                 .to_string(),
         ));
     }
+}
+
+/// DD#69 addendum: a named-array splat (`@a` / `@{a:?}`) is not a scalar —
+/// it is legal only as a command argument or a for-in source. As an
+/// assignment RHS or subscript index it is SB5025.
+fn check_argv_splat_assignment(a: &Assignment, diags: &mut Vec<Diagnostic>) {
+    if is_named_array_splat(&a.value) {
+        diags.push(named_splat_scalar_diag(a.value.span));
+    } else {
+        check_argv_splat_expr(&a.value, diags);
+    }
+    match &a.index {
+        Some(idx) if is_named_array_splat(idx) => diags.push(named_splat_scalar_diag(idx.span)),
+        Some(idx) => check_argv_splat_expr(idx, diags),
+        None => {}
+    }
+}
+
+/// SB5025 for a named-array splat used where a scalar is expected (DD#69
+/// addendum / DD#60 context rule extended to the native `@a` form).
+fn named_splat_scalar_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5025",
+        "an array splat `@a` is not a scalar — it is valid only as a command \
+         argument or a for-in source; use `$(join @a)` for a joined string, \
+         or `${a[i]}` for a single element"
+            .to_string(),
+    )
+}
+
+/// A dispositioned array splat `@{a:-WORD}` / `@{a:?WORD}` (operator
+/// `arrvals_default` / `arrvals_abort`) — distinct from the bare `@a`
+/// (`arrvals`), which is a valid for-in source.
+fn is_disposition_splat(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::ParameterExpansion(pe)
+        if matches!(pe.operator.as_deref(), Some("arrvals_default") | Some("arrvals_abort")))
+}
+
+/// SB5034 for a `@{a:…}` empty-disposition used outside a command argument
+/// (DD#69 addendum): for-in header, scalar, test, arith.
+fn disposition_position_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5034",
+        "the `@{a:-…}` / `@{a:?…}` empty-disposition is only valid on a splat \
+         passed as a command argument — a for-in source uses the bare `@a` \
+         (it has its own zero-match handling)"
+            .to_string(),
+    )
 }
 
 /// SB5026 (quoted splat) or SB5025 (bare argv splat in a non-splat context)

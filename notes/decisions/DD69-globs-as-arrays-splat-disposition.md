@@ -126,3 +126,43 @@ Lexer scans `@{…}` into one Word (`scan_at_brace`); parser decodes it
 `resolve_splat_tables`, c `cache_splat_tables_c`, janet `janet_splat_splice`)
 apply it via the runtime `sash_splat_disposition`. spec/glob_splat.sh gs.1-13
 native/c/janet; wordsplit 22.14-19 migrated to dispositions; 0 regressions.
+
+## Addendum (2026-07-30): the empty-disposition is command-argument-only; a splat is not a scalar
+
+Ratified with DG. Clarifies where the `@{a:…}` disposition and the bare
+`@a` splat are legal, closing enforcement gaps found via an ICE
+(`echo @{a:?}`) and DG's review of DD#22 / DD#60.
+
+**A splat is a distinct syntactic category, not a scalar.** A named-array
+splat (`@a`, or a dispositioned `@{a:-WORD}` / `@{a:?WORD}`) is legal
+**only** in a splat position:
+
+- as an **argument to a command** (external: bare `@a` is SB5032, must
+  carry a disposition; `@{a:?}` / `@{a:-}` OK. `echo` still SB5030), and
+- as the **sole source of a for-in header**, where it must be the **bare**
+  `@a` (for-in has its own zero-match handling — DD#69 §1).
+
+Every other position is a compile error — mirroring DD#60's rule for
+`$(argv)`, now extended to the native `@a` form:
+
+- **scalar assignment** `x=@a` / `x=@{a:?}` → **SB5025** (a splat is not a
+  scalar; use `$(join @a)` for a joined string, or `${a[i]}` for one
+  element). *(Previously silently flattened to a joined string.)*
+- **the empty-disposition outside a command argument** → **SB5034**. In
+  particular `for f in @{a:?}` is rejected — a for-in source is the bare
+  `@a` (the `:-`/`:?` cardinality behavior only means something when
+  splatting into a command's argv). (A splat in a test / arith context is
+  already rejected by those contexts' own checks — SB4018 / SB4035 — no
+  new code needed there.)
+
+**Quotes are literal (bash-compatible), NOT a splat.** In sash-native the
+splat sigil is the *unquoted* word `@a`; inside `"…"` a `@` is an ordinary
+literal character (`"user@host"`, `"@handle"`). So `echo "@a"` prints `@a`
+and `echo "@{a:?}"` prints `@{a:?}`, exactly as bash does — these are **not**
+quoted splats and are **not** rejected. DD#22's "quoting an array splat is a
+compile error" targets the *recognizable* bash-style spellings
+(`"${a[@]}"` / `"$(argv)"`, which sash-convert coerces), not the native
+literal `"@a"`. For an array's contents as a string, use `$(join @a)`.
+
+Codes: SB5025 (splat in scalar context — reused), **SB5034** (empty-
+disposition outside a command argument — new).
