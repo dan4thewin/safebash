@@ -1840,7 +1840,7 @@ fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
 /// [`is_splat_form`] this excludes `$(argv)` (already SB5025).
 fn is_named_array_splat(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::ParameterExpansion(pe)
-        if matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys")))
+        if is_arrvals_splat_op(pe.operator.as_deref()))
 }
 
 /// A bare splat form: `$(argv …)`, an `arrvals`/`arrkeys` parameter
@@ -1850,11 +1850,20 @@ fn is_splat_form(expr: &Expr) -> bool {
         ExprKind::CommandSubstitution(stmts) => {
             cmdsub_command_is(stmts, "argv") || cmdsub_command_is(stmts, "keys")
         }
-        ExprKind::ParameterExpansion(pe) => {
-            matches!(pe.operator.as_deref(), Some("arrvals") | Some("arrkeys"))
-        }
+        ExprKind::ParameterExpansion(pe) => is_arrvals_splat_op(pe.operator.as_deref()),
         _ => false,
     }
+}
+
+/// A named-array value/key splat operator: `arrvals` / `arrkeys`, or any
+/// dispositioned / per-element `arrvals_*` form — `@{a:?}`, `@{a:-WORD}`,
+/// `@{a^^}`, etc. (the parser encodes all of these as `arrvals_<op>`).
+/// Recognizing the `arrvals_*` family here is what keeps a dispositioned
+/// splat from slipping past the splat guards (SB5030 / SB5026) into a
+/// scalar value lowering (which ICEs).
+fn is_arrvals_splat_op(op: Option<&str>) -> bool {
+    matches!(op, Some("arrvals") | Some("arrkeys"))
+        || matches!(op, Some(s) if s.starts_with("arrvals_"))
 }
 
 /// True if the single-command substitution invokes `name`.

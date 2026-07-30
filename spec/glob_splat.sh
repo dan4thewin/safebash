@@ -8,7 +8,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=13
+plan=15
 echo "1..$plan" >&3
 
 set +e
@@ -77,6 +77,18 @@ run_sash 'array a=(); /usr/bin/printf "[%s]" @{a:-a b}'
 # gs.13 a non-empty splat still passes each element as its own arg
 run_sash 'array a=(one two); /usr/bin/printf "[%s]" @{a:?x}'
 [[ $rc = 0 && $out = "[one][two]" && -z $err ]]; chk gs.13
+
+# gs.14 DD#69 §3 + ICE fix: a DISPOSITIONED splat `@{a:?}` to `echo` is the
+#       same flatten hazard as bare `@a`, so it is SB5030 — NOT an ICE.
+#       (Regression: `echo @{a:?}` previously slipped past SB5030 because the
+#       `arrvals_abort` operator was unrecognized, reaching a scalar value
+#       lowering that panicked at codegen/values.rs.)
+run_sash 'array a=(x y); echo @{a:?}'
+[[ $rc != 0 && $err == *SB5030* ]]; chk gs.14
+
+# gs.15 likewise the `@{a:-WORD}` disposition to `echo` → SB5030, not an ICE.
+run_sash 'array a=(x y); echo @{a:-w}'
+[[ $rc != 0 && $err == *SB5030* ]]; chk gs.15
 
 set -e
 tally

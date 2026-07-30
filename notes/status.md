@@ -1166,5 +1166,8 @@ Todo: `converter-compound-postfix` (SB402x in sash-convert),
 `- ! X` → SB4019; c/janet `!` parity — parser-precedence tail of DD#70's
 `!`-must-consume work, whose native core shipped 2026-07-29),
 `bug-emit-c-splat-vla-jump` (c-backend: external `@{a:?}` splat after a
-preceding statement emits non-compiling C — goto into VLA scope; native ok).
+preceding statement emits non-compiling C — goto into VLA scope; native ok),
+`bug-quoted-array-splat-echo-literal` (quoted array splat to echo —
+`echo "@a"` / `echo "@{a:?}"` — emits literal text instead of expanding/
+rejecting; silent wrong output, pre-existing).
 
