@@ -218,25 +218,32 @@ fn validate_while(w: &While, diags: &mut Vec<Diagnostic>) {
 fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
     // Check glob patterns and unquoted expansions in for-loop words
     for w in &f.words {
-        check_unquoted_glob(w, diags);
-        // SB5009: unquoted $var in for-loop words implies word splitting.
-        // `$@`/`$*` are array splats (handled by the positional/splat
-        // passes), not word-splitting scalars, so they are exempt here.
-        if let ExprKind::SimpleExpansion(var) = &w.kind {
-            if var != "@" && var != "*" {
-                diags.push(Diagnostic::error_span(
-                    w.span,
-                    "SB5009",
-                    format!(
-                        "unquoted ${} in for-loop would word-split — quote it or use an array",
-                        var
-                    ),
-                ));
-            }
-        }
+        check_for_word(w, diags);
     }
     for s in &f.body {
         validate_stmt_ctx(s, diags, false);
+    }
+}
+
+/// Check one for-in source word: glob metacharacters (SB5006) and an
+/// unquoted scalar expansion that would imply word splitting (SB5009).
+/// `$@` / `$*` are array splats (handled by the positional/splat passes),
+/// not word-splitting scalars, so they are exempt.
+fn check_for_word(w: &Expr, diags: &mut Vec<Diagnostic>) {
+    check_unquoted_glob(w, diags);
+    if let ExprKind::SimpleExpansion(var) = &w.kind {
+        if var != "@" && var != "*" {
+            diags.push(Diagnostic::error_span(
+                w.span,
+                "SB5009",
+                format!(
+                    "`${}` in a for-loop does not word-split — word splitting \
+                     is eliminated by design; iterate an array instead: \
+                     `for x in @arr`",
+                    var
+                ),
+            ));
+        }
     }
 }
 
