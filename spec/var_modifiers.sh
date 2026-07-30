@@ -84,7 +84,7 @@ run_sash 'echo "${foo:-$HOME}"'
 [[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk vm.dv11
 
 # ── dropped ${var:OP} operators reject uniformly (DD#65, SB4034) ─────
-# Every split_operator op EXCEPT `:-` left the safe subset; each rejects with
+# Every split_operator op EXCEPT `:-` was dropped from sash; each rejects with
 # SB4034 pointing at the string builtins. Migration is sash-convert's job. One
 # test per operator string so the reject set can't silently miss one.
 # dr1-3: assign-default / alt / error (:=, :+, :?)

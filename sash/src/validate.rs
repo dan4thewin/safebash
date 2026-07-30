@@ -313,8 +313,7 @@ fn heredoc_diag(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5002",
-        "heredocs (<< / <<-) are not supported in sash — use herestrings (<<<) or variables"
-            .to_string(),
+        "sash has no heredocs — use a herestring (<<<) with a multi-line \"…\" string".to_string(),
     )
 }
 
@@ -342,18 +341,27 @@ fn check_export_or_declare(name: &str, c: &Command, span: Span, diags: &mut Vec<
         diags.push(Diagnostic::error_span(
             span,
             "SB5001",
-            "'export' is not allowed — use int/const/array/map instead".to_string(),
+            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
+             variable for a command"
+                .to_string(),
         ));
     } else if name == "declare" {
-        for arg in &c.args {
-            let s = expr_literal_str(arg);
-            if s == "-x" || s.contains('x') && s.starts_with('-') {
-                diags.push(Diagnostic::error_span(
-                    span,
-                    "SB5001",
-                    "'declare -x' is not allowed — use int/const/array/map instead".to_string(),
-                ));
-            }
+        check_declare_x_flag(c, span, diags);
+    }
+}
+
+/// SB5001: reject `declare -x` (export via `declare`).
+fn check_declare_x_flag(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    for arg in &c.args {
+        let s = expr_literal_str(arg);
+        if s == "-x" || (s.contains('x') && s.starts_with('-')) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5001",
+                "`declare -x` is rejected — sash has no export; use \
+                 `/usr/bin/env NAME=value …`"
+                    .to_string(),
+            ));
         }
     }
 }
@@ -364,13 +372,16 @@ fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
         diags.push(Diagnostic::error_span(
             span,
             "SB4001",
-            format!("'{}' is not allowed in sash", name),
+            format!(
+                "`{}` is rejected — sash forbids dynamic command execution",
+                name
+            ),
         ));
     } else if name == "coproc" {
         diags.push(Diagnostic::error_span(
             span,
             "SB4001",
-            "'coproc' is not allowed in sash".to_string(),
+            "sash has no `coproc` — asynchronous coprocesses are outside its model".to_string(),
         ));
     }
 }
@@ -394,7 +405,9 @@ fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>
         diags.push(Diagnostic::error_span(
             span,
             "SB5001",
-            "'export' is not allowed — use int/const/array/map instead".to_string(),
+            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
+             variable for a command"
+                .to_string(),
         ));
     }
     // SB4031 (DD#33): a map literal must use the `[key]=value` form.
@@ -480,10 +493,7 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
                 diags.push(Diagnostic::error_span(
                     expr.span,
                     "SB5006",
-                    format!(
-                        "** globstar is not supported in sash — only * is allowed: {}",
-                        s
-                    ),
+                    format!("sash has only `*` globs — `**` is omitted: {}", s),
                 ));
             }
         }
@@ -661,7 +671,7 @@ fn check_unsupported_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
                 diags.push(Diagnostic::error_span(
                     operand.span,
                     "SB5028",
-                    "'-v' is not supported — use -n to test for a non-empty value".to_string(),
+                    "sash has no `[[ -v ]]` — use -n to test for a non-empty value".to_string(),
                 ));
             }
         }
@@ -876,47 +886,32 @@ fn arith_brief(expr: &ArithExpr) -> String {
 /// SB5006: check for ? and [...] glob in unquoted expressions
 fn check_unquoted_glob(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
-        ExprKind::Literal(s) => {
-            if s.contains('?') {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5006",
-                    format!("? glob is not supported in sash — only * is allowed: {}", s),
-                ));
-            } else if s.contains('[') && s.contains(']') {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5006",
-                    format!(
-                        "[...] glob is not supported in sash — only * is allowed: {}",
-                        s
-                    ),
-                ));
-            }
-        }
+        ExprKind::Literal(s) => check_glob_chars_in_literal(s, expr.span, diags),
         ExprKind::Concat(parts) => {
             for p in parts {
                 if let ExprKind::Literal(s) = &p.kind {
-                    if s.contains('?') {
-                        diags.push(Diagnostic::error_span(
-                            p.span,
-                            "SB5006",
-                            format!("? glob is not supported in sash — only * is allowed: {}", s),
-                        ));
-                    } else if s.contains('[') && s.contains(']') {
-                        diags.push(Diagnostic::error_span(
-                            p.span,
-                            "SB5006",
-                            format!(
-                                "[...] glob is not supported in sash — only * is allowed: {}",
-                                s
-                            ),
-                        ));
-                    }
+                    check_glob_chars_in_literal(s, p.span, diags);
                 }
             }
         }
         _ => {}
+    }
+}
+
+/// SB5006: flag `?` / `[…]` in one literal string (sash globs are `*`-only).
+fn check_glob_chars_in_literal(s: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if s.contains('?') {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5006",
+            format!("sash has only `*` globs — `?` is omitted: {}", s),
+        ));
+    } else if s.contains('[') && s.contains(']') {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5006",
+            format!("sash has only `*` globs — `[…]` is omitted: {}", s),
+        ));
     }
 }
 
@@ -1686,7 +1681,7 @@ fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
                 "SB5025",
                 "`array a=$(argv …)` is not an array snapshot — a command \
                  substitution does not yield an array; use the out-param form \
-                 `argv [N] a` (DD#60)"
+                 `argv [N] a`"
                     .to_string(),
             ));
             continue;
@@ -1718,7 +1713,7 @@ fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
             f.words[0].span,
             "SB5027",
             "a for-in over $(argv) must use $(argv) as its sole source — it \
-             cannot be mixed with other words or sources (DD#60)"
+             cannot be mixed with other words or sources"
                 .to_string(),
         ));
     }
@@ -1855,8 +1850,8 @@ fn quoted_splat_diag(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5026",
-        "quoting an array splat is not allowed — quotes yield a single string \
-         (DD#22); use the bare form (@arr or $(argv))"
+        "quoting an array splat is not allowed — quotes yield a single string; \
+         use the bare form (@arr or $(argv))"
             .to_string(),
     )
 }
@@ -1883,7 +1878,7 @@ fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
                 arg.span,
                 "SB5030",
                 "`echo` joins its arguments into one output stream, so an array \
-                 splat there would flatten the array (DD#22). Use an explicit \
+                 splat there would flatten the array. Use an explicit \
                  join: `echo $(join @a)`"
                     .to_string(),
             ));
@@ -2039,7 +2034,7 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             "SB5020",
             format!(
                 "iterating tainted array '{arr}' without bless — bless-all \
-                 it first: `bless x in {arr} [[ … ]]` (DD#61)"
+                 it first: `bless x in {arr} [[ … ]]`"
             ),
         ));
     }
@@ -2405,7 +2400,7 @@ fn check_collection_reader_taint(
                 arg.span,
                 format!(
                     "keys of tainted map '{name}' without bless — bless-all \
-                     it first: `bless k v in {name} [[ … ]]` (DD#61)"
+                     it first: `bless k v in {name} [[ … ]]`"
                 ),
                 diags,
             );

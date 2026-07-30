@@ -194,25 +194,33 @@ fn compound_postfix_rejection(next: &Tok) -> Option<(&'static str, String)> {
     ) {
         return Some((
             "SB4021",
-            "redirects on compound commands are not supported — wrap in a function".to_string(),
+            "a redirect on a compound command isn't allowed — wrap the compound \
+             in a function"
+                .to_string(),
         ));
     }
     if matches!(next, Tok::Pipe) {
         return Some((
             "SB4022",
-            "pipes on compound commands are not supported — wrap in a function".to_string(),
+            "a pipe on a compound command isn't allowed — wrap the compound in a \
+             function"
+                .to_string(),
         ));
     }
     if matches!(next, Tok::AndAnd | Tok::OrOr) {
         return Some((
             "SB4023",
-            "&& / || on compound commands are not supported — wrap in a function".to_string(),
+            "`&&` / `||` on a compound command isn't allowed — wrap the compound \
+             in a function"
+                .to_string(),
         ));
     }
     if matches!(next, Tok::Amp) {
         return Some((
             "SB4024",
-            "& on compound commands is not supported — wrap in a function".to_string(),
+            "`&` on a compound command isn't allowed — wrap the compound in a \
+             function"
+                .to_string(),
         ));
     }
     None
@@ -896,7 +904,7 @@ fn case_removed_error(span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB4029",
-        "the `case` construct has been removed (DD#66) — use the `[[ ]]` dispatch \
+        "the `case` construct has been removed — use the `[[ ]]` dispatch \
          form: `[[ $x == pat { … } other { … } || { … } ]]` (exact match) or \
          `[[ $x =~ regex { … } || { … } ]]` (regex match)"
             .to_string(),
@@ -1444,25 +1452,32 @@ fn rejected_keyword_msg(w: &str) -> Option<(&'static str, String)> {
     match w {
         "eval" => Some((
             "SB4001",
-            "'eval' is not allowed in the safe subset".to_string(),
+            "`eval` is rejected — it runs code assembled at runtime, which \
+             can't be checked statically"
+                .to_string(),
         )),
         "source" | "." => Some((
             "SB4002",
-            "'source' / '.' is not allowed — use sash-convert to inline source files".to_string(),
+            "`source` / `.` is rejected — it loads code at runtime".to_string(),
         )),
         "export" => Some((
             "SB5001",
-            "'export' is not allowed — use FOO=bar before a command instead".to_string(),
+            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
+             variable for a command"
+                .to_string(),
         )),
         "declare" | "typeset" => Some((
             "SB5001",
-            format!("'{}' is not allowed — use int/const/array/map instead", w),
+            format!(
+                "sash declares with `int` / `const` / `array` / `map`, not `{}`",
+                w
+            ),
         )),
         "readonly" => Some((
             "SB5001",
-            "'readonly' is not allowed — use 'const' instead".to_string(),
+            "sash declares read-only values with `const`, not `readonly`".to_string(),
         )),
-        "select" => Some(("SB5001", "'select' is not supported in sash".to_string())),
+        "select" => Some(("SB5001", "sash has no `select`".to_string())),
         _ => None,
     }
 }
@@ -1998,7 +2013,7 @@ fn reject_pipeline_and_or_postfix(commands: &[Statement], span: Span) -> Result<
         return Err(parse_error(
             span,
             "SB4023",
-            "&& / || on a pipeline are not supported — use `if pipeline; then …; fi`".to_string(),
+            "`&&` / `||` on a pipeline isn't allowed — use `if pipeline; then …; fi`".to_string(),
         ));
     }
     Ok(())
@@ -2200,7 +2215,7 @@ fn check_rejected_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
             diags.push(parse_error(
                 expr.span,
                 "SB5020",
-                "nested backticks are not allowed — use $(...) for nesting".to_string(),
+                "nested backticks are ambiguous — use $(...) for nesting".to_string(),
             ));
         }
         ExprKind::ParameterExpansion(pe) => check_rejected_param_expansion(pe, expr.span, diags),
@@ -2229,7 +2244,8 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             span,
             "SB4003",
             format!(
-                "indirect expansion ${{!{}}} is not allowed in the safe subset",
+                "indirect expansion ${{!{}}} is rejected — a runtime-chosen \
+                 variable name can't be checked statically",
                 pe.name
             ),
         ));
@@ -2239,8 +2255,8 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             span,
             "SB4015",
             format!(
-                "parameter transformation ${{var{}}} is not supported — \
-                 use the $(toupper …) / $(tolower …) builtins",
+                "`${{var{}}}` isn't part of sash — use the $(toupper …) / \
+                 $(tolower …) builtins",
                 op
             ),
         ));
@@ -2254,9 +2270,9 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             span,
             "SB4034",
             format!(
-                "the '{}' parameter operator (in ${{{}…}}) left the safe subset — \
+                "the `{}` parameter operator (in ${{{}…}}) isn't part of sash — \
                  use the string builtins (toupper/tolower, sub/gsub, basename/dirname) \
-                 or the kept forms :- / :off:len / :s/",
+                 or the :- / :off:len / :s/ forms",
                 user_facing_operator(op),
                 pe.name
             ),
