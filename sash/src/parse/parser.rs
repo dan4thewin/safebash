@@ -1452,13 +1452,15 @@ fn rejected_keyword_msg(w: &str) -> Option<(&'static str, String)> {
     match w {
         "eval" => Some((
             "SB4001",
-            "`eval` is rejected — it runs code assembled at runtime, which \
-             can't be checked statically"
+            "`eval` is rejected — a sash program's behavior is fixed at compile \
+             time; there is no runtime interpreter to run constructed code"
                 .to_string(),
         )),
         "source" | "." => Some((
             "SB4002",
-            "`source` / `.` is rejected — it loads code at runtime".to_string(),
+            "`source` / `.` is rejected — a sash program's behavior is fixed at \
+             compile time"
+                .to_string(),
         )),
         "export" => Some((
             "SB5001",
@@ -2244,8 +2246,8 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             span,
             "SB4003",
             format!(
-                "indirect expansion ${{!{}}} is rejected — a runtime-chosen \
-                 variable name can't be checked statically",
+                "indirect expansion ${{!{}}} is rejected — sash resolves every \
+                 variable reference at compile time",
                 pe.name
             ),
         ));
