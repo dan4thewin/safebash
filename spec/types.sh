@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=64
+plan=67
 echo "1..$plan" >&3
 
 set +e
@@ -233,6 +233,23 @@ run_sash 'fn f -> int { return 10; }
 int x=$(( (f) + 1 ))
 echo "$x"'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk 58.8
+
+# 58.9 `int n=$(f)` for a -> int function is SB4018 (use $((f))). This is the
+#      int-typed DECLARATION path — it previously bypassed the capture check
+#      that echo/$x= already had and silently produced 0.
+run_sash 'fn f -> int { return 42; }
+int n=$(f); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 58.9
+
+# 58.10 `n += $(f)` (int append) is likewise SB4018, not a silent += 0.
+run_sash 'fn f -> int { return 42; }
+int n=0; n+=$(f); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 58.10
+
+# 58.11 the directed-to arithmetic form captures the return value.
+run_sash 'fn f -> int { return 42; }
+int n=$((f)); echo $n'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.11
 
 # --- DD#30 unset semantics ---
 

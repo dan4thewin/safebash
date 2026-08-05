@@ -48,6 +48,29 @@ pub(super) fn lift_int_func_calls(
     }
 }
 
+/// DD#55: `$(f)` for an `-> int` function captures stdout (empty → a silent
+/// `0`), not the returned value — a category error. If `val` is such a
+/// capture, push SB4018 (directing to `$((f))`) and return `true` so the
+/// caller aborts the capture. Applied at every non-arithmetic value-capture
+/// site (typed declaration, `+=`, plain assignment, command argument).
+pub(super) fn reject_int_func_capture(
+    val: &SsaValue,
+    span: Span,
+    state: &mut VersionState,
+) -> bool {
+    let SsaValue::FuncCall(fname) = val else {
+        return false;
+    };
+    if !state.function_int_typed.contains(fname.as_str()) {
+        return false;
+    }
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
+        span.line, span.col, fname, fname
+    ));
+    true
+}
+
 /// Inline a -> int function call, returning an SsaValue::Var pointing
 /// to the temp variable holding the return value.
 pub(super) fn inline_int_func(

@@ -6,7 +6,7 @@ use super::cmd_handlers::{
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
-use super::functions::{collect_local_vars, lift_int_func_calls};
+use super::functions::{collect_local_vars, lift_int_func_calls, reject_int_func_capture};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts};
@@ -967,6 +967,12 @@ fn handle_append_assign(
     block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
+    // DD#55: `var += $(f)` for an `-> int` function is the same category error
+    // as a plain capture — stdout (empty) is not the returned value. Reject
+    // (→ `$((f))`) instead of silently appending 0. (See compute_declaration_value.)
+    if reject_int_func_capture(&val, a.value.span, state) {
+        return block;
+    }
     match val {
         SsaValue::IndexedArray(elems) => {
             for elem in elems {

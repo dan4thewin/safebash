@@ -5,7 +5,7 @@
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
 use super::expressions::expr_to_value;
-use super::functions::{collect_returns, lift_int_func_calls};
+use super::functions::{collect_returns, lift_int_func_calls, reject_int_func_capture};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -423,6 +423,14 @@ fn compute_declaration_value(
         return empty_collection_value(&a.name, is_assoc, state);
     }
     let val = expr_to_value(&a.value, state);
+    // DD#55: `$(f)` for an `-> int` function is a category error — a command
+    // substitution captures stdout, but an int function *returns* its value.
+    // Direct to `$((f))`, matching the plain-assignment / argument paths.
+    // Without this the `FuncCall` falls through `lift_int_func_calls` (which
+    // only lifts `IntFuncCall`) and is captured as empty stdout → a silent `0`.
+    if reject_int_func_capture(&val, a.value.span, state) {
+        return SsaValue::Literal("0".to_string());
+    }
     let val = lift_int_func_calls(val, ssa, state, block);
     track_collection_kind(&a.name, &val, state);
     val
