@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=58
+plan=64
 echo "1..$plan" >&3
 
 set +e
@@ -155,6 +155,26 @@ run_sash 'int x=$(dtoi 2 "3.14"); echo $(itod 2 $x)'
 # 36.4 dtoi/itod are builtins
 run_sash 'echo $(dtoi 0 "42")'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 36.4
+
+# 36.5 $(len arr) is int-typed — assignable to an int var (was wrongly typed
+#      string → SB4030). len yields an array's element count.
+run_sash 'array a=(x y z); int n=$(len a); echo $n'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 36.5
+
+# 36.6 $(epochseconds) is int-typed too. (The janet backend does not implement
+#      the epochseconds intrinsic yet — it tries to exec it — so guard the
+#      runtime to native,c; the int-typing fix itself is backend-independent.)
+if in_modes native,c; then
+    run_sash 'int n=$(epochseconds); echo $((n > 0))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 36.6
+else
+    skip_chk 36.6
+fi
+
+# 36.7 a string-returning value function stays string: `int n=$(toupper s)` is
+#      still a type error (SB4030) — the int whitelist wasn't over-broadened.
+run_sash 'int n=$(toupper hi)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 36.7
 
 # 41.1 array declaration
 run_sash 'array arr=(a b c); echo ${arr[0]}'
