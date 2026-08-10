@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=20
+plan=29
 echo "1..$plan" >&3
 
 set +e
@@ -143,6 +143,47 @@ pick a b c'
 run_sash 'function g { echo G; }
 g'
 [[ $rc = 0 && $out = "G" && -z $err ]]; chk 67.3
+
+# --- DD#74: `return N` drives the enclosing condition (predicate functions) ---
+
+# 74.1 `return 0` makes `if f` take the then-branch (was silently "no")
+run_sash 'is_ok() { return 0; }
+if is_ok; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.1
+
+# 74.2 `return 1` → else-branch
+run_sash 'is_ok() { return 1; }
+if is_ok; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.2
+
+# 74.3 `! f` negates the return value. (janet: `!` in a condition is a
+#      separate pre-existing gap — it lowers to `true`; see the janet-predicate
+#      task — so guard the runtime to native,c.)
+if in_modes native,c; then
+    run_sash 'is_ok() { return 0; }
+if ! is_ok; then echo neg; else echo pos; fi'
+    [[ $rc = 0 && $out = "pos" && -z $err ]]; chk 74.3
+else
+    skip_chk 74.3
+fi
+
+# 74.4 the return value drives the branch even when a prior [[ ]] disagrees —
+#      [[ false ]] but the function falls through to `return 0` → then
+run_sash 'f() { [[ -e /nonexistent_dd74 ]] && return 1
+return 0 }
+if f; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.4
+
+# 74.5 meaningful codes beyond 1: `return 2` is false for the branch
+run_sash 'f() { return 2; }
+if f; then echo t; else echo f; fi'
+[[ $rc = 0 && $out = "f" && -z $err ]]; chk 74.5
+
+# 74.6 a return-based predicate in a while condition
+run_sash 'int i=0
+lt3() { if (( i < 3 )); then return 0; else return 1; fi }
+while lt3; do echo $i; (( i++ )); done'
+[[ $rc = 0 && $out = $'0\n1\n2' && -z $err ]]; chk 74.6
 
 set -e
 tally

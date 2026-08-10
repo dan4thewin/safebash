@@ -631,6 +631,10 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
     if target.name == "?" {
         let int_expr = lower_value_as_int(e, value, types);
         writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
+        // DD#74: keep __test_result in sync so a function's `return N` drives
+        // an enclosing if/while/!/&&/|| condition (mirrors native
+        // inst_handlers.rs handle_exit_status_assign).
+        writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
         return;
     }
     // DD#30: `unset arr` lowers to `arr = "__new_table__"` — allocate a
@@ -1037,6 +1041,12 @@ fn emit_command(
             writeln!(e.out, "    __test_result = 1;").unwrap();
         }
         BuiltinCmd::Other => emit_exec(e, name, args, checked, types),
+        // DD#70: `! X` — flip the test result and $? (mirrors native
+        // emit_negate_test_result). Was an unimplemented TODO, breaking `! f`.
+        BuiltinCmd::NegateTestResult => {
+            writeln!(e.out, "    __test_result = 1 - __test_result;").unwrap();
+            writeln!(e.out, "    __exit_status = (__exit_status == 0) ? 1 : 0;").unwrap();
+        }
         // Phase 6: __let_exit — convert (( … )) result to status.
         // Mirrors emit_let_exit (codegen/dispatch.rs:978). Reads
         // first arg as int; if zero → status=1, test_result=0; else

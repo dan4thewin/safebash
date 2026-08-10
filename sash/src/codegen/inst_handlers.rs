@@ -542,6 +542,13 @@ fn handle_exit_status_assign(
         }
     };
     builder.def_var(ctx.exit_status_var, int_val);
+    // DD#74: keep test_result_var in sync with $? so a function's `return N`
+    // drives an enclosing if/while/!/&&/|| condition (test_result = 1 iff the
+    // status is 0), exactly as a command does (see commands.rs run path).
+    let zero = builder.ins().iconst(I64, 0);
+    let ok = builder.ins().icmp(IntCC::Equal, int_val, zero);
+    let result = builder.ins().uextend(I64, ok);
+    builder.def_var(ctx.test_result_var, result);
 }
 
 fn handle_regular_assign(

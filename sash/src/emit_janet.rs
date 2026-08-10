@@ -455,22 +455,19 @@ fn emit_function_def(out: &mut String, ctx: &mut EmitCtx, f: &Function, depth: u
     } else {
         writeln!(out, "(defn {} []", f.name).unwrap();
     }
-    // A `-> int` function's body is wrapped in a `_ret` label so `return N`
-    // can yield its numeric value (janet's bare `(return …)` needs a label).
-    if is_int {
-        indent(out, depth + 1);
-        writeln!(out, "(label _ret").unwrap();
-    }
+    // Every function body is wrapped in a `_ret` label so `return` is
+    // catchable: a `-> int` function yields its numeric value (`return _ret N`);
+    // a predicate/void function returns nil after setting __last_exit (DD#74).
+    indent(out, depth + 1);
+    writeln!(out, "(label _ret").unwrap();
     let saved = ctx.in_int_func;
     ctx.in_int_func = is_int;
     for s in &f.body {
         emit_stmt(out, ctx, s, depth + 1);
     }
     ctx.in_int_func = saved;
-    if is_int {
-        indent(out, depth + 1);
-        writeln!(out, ")").unwrap();
-    }
+    indent(out, depth + 1);
+    writeln!(out, ")").unwrap();
     indent(out, depth);
     writeln!(out, ")").unwrap();
 }
@@ -1185,10 +1182,13 @@ fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
         return;
     }
     if let Some(code) = c.args.first() {
-        let val = emit_expr_inline(code, ctx);
-        writeln!(out, "(return {})", val).unwrap();
+        // DD#74: a plain (predicate) function's `return N` sets its exit
+        // status so an enclosing `if f`/`while f` (which checks __last_exit)
+        // sees it — janet's bare `(return …)` value is not used for status.
+        let val = emit_expr_as_int(code, ctx);
+        writeln!(out, "(do (set __last_exit {}) (return _ret nil))", val).unwrap();
     } else {
-        writeln!(out, "(return)").unwrap();
+        writeln!(out, "(do (set __last_exit 0) (return _ret nil))").unwrap();
     }
 }
 
@@ -1571,9 +1571,40 @@ fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
         }
         return;
     }
-    // DD#63: `match S P` boolean command → the `sash-regex` helper. Use
-    // the quiet `matchq` op (exit status only) so the matched text does
-    // NOT leak to stdout; `(zero? …)` is the condition truth.
+    // DD#63: `match S P [ARR]` boolean command → the `sash-regex` helper.
+    if try_emit_match_condition(out, ctx, &name, c) {
+        return;
+    }
+    // DD#74: a user function used as a condition — call it (which sets
+    // __last_exit, incl. via `return N`), then branch on that status. Without
+    // this, the name would be os/execute'd as an external program.
+    if ctx.is_function(&name) {
+        emit_func_call_condition(out, ctx, &name, c);
+        return;
+    }
+    let mut parts = vec![format!("\"{}\"", name)];
+    for arg in &c.args {
+        parts.push(emit_expr_inline(arg, ctx));
+    }
+    write!(out, "(zero? (os/execute [{}] :p))", parts.join(" ")).unwrap();
+}
+
+/// A user function call used as an if/while condition: call it (its body,
+/// incl. a DD#74 `return N`, sets `__last_exit`), then the condition is
+/// `__last_exit == 0`.
+fn emit_func_call_condition(out: &mut String, ctx: &EmitCtx, name: &str, c: &Command) {
+    let mut args_str = String::new();
+    for arg in &c.args {
+        args_str.push(' ');
+        args_str.push_str(&emit_expr_inline(arg, ctx));
+    }
+    write!(out, "(do ({}{}) (zero? __last_exit))", name, args_str).unwrap();
+}
+
+/// DD#63: `match S P` / `match S P ARR` as an if/while condition. Returns
+/// true (and emits) when handled. `matchq` yields exit-status only (no stdout
+/// leak); the out-array form populates ARR and yields the boolean.
+fn try_emit_match_condition(out: &mut String, ctx: &EmitCtx, name: &str, c: &Command) -> bool {
     if name == "match" && c.args.len() == 2 {
         let s = emit_expr_inline(&c.args[0], ctx);
         let p = emit_expr_inline(&c.args[1], ctx);
@@ -1583,22 +1614,16 @@ fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
             s, p
         )
         .unwrap();
-        return;
+        return true;
     }
-    // DD#63 out-array form `match S P ARR` in a condition: populate the
-    // array and yield the boolean.
     if name == "match" && c.args.len() == 3 {
         let s = emit_expr_inline(&c.args[0], ctx);
         let p = emit_expr_inline(&c.args[1], ctx);
         let arr = expr_to_literal(&c.args[2]);
         write!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr)).unwrap();
-        return;
+        return true;
     }
-    let mut parts = vec![format!("\"{}\"", name)];
-    for arg in &c.args {
-        parts.push(emit_expr_inline(arg, ctx));
-    }
-    write!(out, "(zero? (os/execute [{}] :p))", parts.join(" ")).unwrap();
+    false
 }
 
 /// Check if an expression is known to be integer-typed.
