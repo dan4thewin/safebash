@@ -50,12 +50,14 @@ A non-empty array splats to one verbatim arg per element. These forms map
 
 ## Scope (deliberately minimal)
 
-- **External commands only.** The rule in §2 (empty-disposition) applies to
-  external commands. The **inline builtins are exactly `echo`/`true`/`false`/
-  `:`** (`transform/resolution.rs`); `printf` and everything else resolve to
-  an absolute path (DD#23) and are therefore **external** — a bare `@a` to
-  `printf`/`ls`/etc. requires `@{a:?}` like any external command. (Earlier
-  drafts wrongly listed `printf` as an exempt builtin.) for-in is exempt (its
+- **External programs only.** The rule in §2 (empty-disposition) applies to
+  external programs (anything resolved to an absolute path — DD#23). The
+  **sash-language constructs that splice their argv in-process are exactly
+  `echo` and `:`** (`transform/resolution.rs`); `printf`, `true`, `false`
+  and everything else resolve to an absolute path and are therefore
+  **external programs** — a bare `@a` to `printf`/`ls`/`true`/etc. requires
+  `@{a:?}` like any external program. (Earlier drafts wrongly listed
+  `printf` — and `true`/`false` — as exempt.) for-in is exempt (its
   zero-match handling is built in).
 - **No static-non-empty exemption.** Even `array a=(x y z); ls @a` errors;
   use `@{a:?}`. (May revisit if friction warrants.)
@@ -69,8 +71,9 @@ A non-empty array splats to one verbatim arg per element. These forms map
 
 ## 3. `echo` array splat requires an explicit join
 
-Ratified with DG 2026-07-04. §2's *cardinality* exemption for the inline
-builtins does **not** license `echo` to implicitly flatten an array.
+Ratified with DG 2026-07-04. §2's *cardinality* exemption for the
+argv-splicing constructs (`echo`/`:`) does **not** license `echo` to
+implicitly flatten an array.
 
 `echo`'s arg list is a **string-output sink** — its whole job is to
 space-join its arguments onto stdout. So `echo @a` is an *implicit
@@ -82,14 +85,16 @@ ambiguity sash eliminates, right at echo's output (worst in a pipeline).
 **Rule:** an array splat (`@a`) passed to `echo` is a **compile error**;
 use an explicit join — **`echo $(join @a)`** (the `join` intrinsic, DD#41/
 DD#60). Literal args are unaffected: `echo a b c` is fine (three literals,
-no array structure to lose). `true`/`false`/`:` ignore their args, so this
-is moot for them. (New SB code in the splat family — SB5025–5027 — assigned
-at implementation; keep adjacent.)
+no array structure to lose). `:` ignores its args, so this is moot for it
+(`true`/`false` are now external programs — a bare `@a` to them is SB5032
+like any external program). (New SB code in the splat family — SB5025–5027
+— assigned at implementation; keep adjacent.)
 
 Contrast: a splat to an **external** command (`myprog @{a:?}`) is *not* a
 flatten — the program receives N **structured argv entries** (boundaries
 preserved), so the splat stands (with the §2 disposition). The flatten
-hazard is specific to a builtin whose *output* joins its args, i.e. `echo`.
+hazard is specific to a sash-language construct whose *output* joins its
+args, i.e. `echo`.
 
 ## Dependencies / interactions
 
@@ -117,8 +122,8 @@ Part 2 (`glob-splat-disposition-word`): a bare `@a` into an external command
 (empty → the single arg WORD; bare `@{a:-}` → zero args) and `@{a:?WORD}`
 (empty → abort, exit 1, `<progname>: WORD`) carry the disposition. Only
 `:-`/`:?` (SB5033 otherwise). WORD is a `${x:-WORD}`-style interpolating
-word, substituted as ONE element. Builtins (echo still SB5030), user
-functions, intrinsics (join/len/…), and for-in are exempt.
+word, substituted as ONE element. The argv-splicing constructs (echo still
+SB5030), user functions, value functions (join/len/…), and for-in are exempt.
 
 Lexer scans `@{…}` into one Word (`scan_at_brace`); parser decodes it
 (`parse_at_brace_disposition` → `arrvals_default`/`arrvals_abort`);
@@ -166,3 +171,28 @@ literal `"@a"`. For an array's contents as a string, use `$(join @a)`.
 
 Codes: SB5025 (splat in scalar context — reused), **SB5034** (empty-
 disposition outside a command argument — new).
+
+## Addendum (2026-07-30): `true`/`false` are external programs; "builtin" retired
+
+Directed by DG. Two coupled cleanups.
+
+**`true`/`false` are externalized.** They were inline status-setters (a
+`BuiltinCmd::True`/`False` that just set `$?`, never forking). They now
+resolve to `/usr/bin/true`/`/usr/bin/false` (DD#23) like any other program.
+Rationale (DG, least surprise): "if there is a program named `false`, you
+should be able to run it." There is no sash-language boolean type; the
+argv-splicing set shrinks to exactly `echo` and `:`. An internal always-fail
+is `! :` (or a function that `return 1`s); a bare `false` is a deliberate
+invocation of `/usr/bin/false` and aborts (DD#55) like any failing command.
+sash-convert emits a CHECK comment on bash `true`/`false` so a reader can
+confirm the externalized semantics (`sash-convert-check-comment-true-false`).
+
+**"Builtin" terminology retired.** The old split (builtin vs external
+command) obscured what these names are. Reframed: `echo`, `break`, `:`,
+`bless`, `read`, `[[ … ]]`, the value functions (`toupper`, `len`, `keys`,
+`join`, `sub`, `gsub`, `match`, `basename`, `dirname`, `argv`, `getenv`,
+`epochseconds`, …), etc. are **parts of the sash language**; anything
+resolved to a path is an **external program**, *not* part of the language.
+The value functions are legal only inside `$( )` (rejected as a command —
+SB5011). This addendum's wording (and the §Scope / §3 edits above) use
+"sash-language construct" and "external program" throughout.

@@ -263,7 +263,7 @@ fn lower_pipeline_builtin(
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
 ) -> bool {
-    if !matches!(name, "echo" | "true" | "false" | ":") {
+    if !matches!(name, "echo" | ":") {
         return false;
     }
     if name == "echo" {
@@ -282,11 +282,8 @@ fn lower_pipeline_builtin(
             Some(ctx.exit_status_var),
         );
     }
-    let exit_code = if name == "false" {
-        builder.ins().iconst(I64, 1)
-    } else {
-        builder.ins().iconst(I64, 0)
-    };
+    // echo / `:` in a pipeline stage exit 0 (true/false are now external).
+    let exit_code = builder.ins().iconst(I64, 0);
     let exit_ref = module.declare_func_in_func(ctx.externs.exit, builder.func);
     builder.ins().call(exit_ref, &[exit_code]);
     builder.ins().trap(TrapCode::unwrap_user(1));

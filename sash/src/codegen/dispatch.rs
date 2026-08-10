@@ -218,9 +218,7 @@ impl SsaInst {
             BuiltinCmd::TrapSignal => self.emit_trap_signal(args, builder, module, ctx),
             BuiltinCmd::SignalFlag => self.emit_signal_flag(args, builder, module, ctx),
             BuiltinCmd::TableDelete => return self.emit_table_delete(args, builder, module, ctx),
-            BuiltinCmd::Noop | BuiltinCmd::True | BuiltinCmd::False => {
-                self.emit_noop_true_false(kind, builder, ctx)
-            }
+            BuiltinCmd::Noop => self.emit_noop(builder, ctx),
             BuiltinCmd::Match => self.emit_match(args, builder, module, ctx),
             BuiltinCmd::Exit => return self.emit_exit(args, builder, module, ctx),
             BuiltinCmd::Exec => return self.emit_exec(name, args, redirects, builder, module, ctx),
@@ -343,19 +341,13 @@ impl SsaInst {
         }
     }
 
-    fn emit_noop_true_false(
-        &self,
-        kind: &BuiltinCmd,
-        builder: &mut FunctionBuilder,
-        ctx: &mut InstCtx,
-    ) {
-        let is_false = matches!(kind, BuiltinCmd::False);
-        let val = if is_false { 0i64 } else { 1i64 };
-        let v = builder.ins().iconst(I64, val);
-        builder.def_var(ctx.test_result_var, v);
-        // $? = 0 for true/:, 1 for false
-        let es = builder.ins().iconst(I64, if is_false { 1 } else { 0 });
-        builder.def_var(ctx.exit_status_var, es);
+    fn emit_noop(&self, builder: &mut FunctionBuilder, ctx: &mut InstCtx) {
+        // `:` succeeds silently: test_result = 1, $? = 0. (true/false are
+        // external programs now.)
+        let one = builder.ins().iconst(I64, 1);
+        builder.def_var(ctx.test_result_var, one);
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(ctx.exit_status_var, zero);
     }
 
     /// DD#63: `match SUBJECT PATTERN` boolean command. Calls the real

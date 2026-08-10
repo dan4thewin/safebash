@@ -90,7 +90,13 @@ fn install_end_block(ssa: &mut SsaProgram, state: &mut VersionState) {
 /// the first match.
 fn mark_unchecked_in_conditions(ssa: &mut SsaProgram) {
     for block in ssa.blocks.values_mut() {
-        if matches!(block.terminator, Terminator::Branch { .. }) {
+        // `if`/`&&`/`||` conditions end in a Branch; `while`/`until` conditions
+        // end in a Loop. In both, the last command is in condition position and
+        // must not abort on a nonzero exit (it is the loop-exit / else path).
+        if matches!(
+            block.terminator,
+            Terminator::Branch { .. } | Terminator::Loop { .. }
+        ) {
             uncheck_last_condition_inst(&mut block.insts);
         }
     }

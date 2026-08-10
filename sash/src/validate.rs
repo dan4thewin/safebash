@@ -1147,8 +1147,6 @@ const BUILTINS: &[&str] = &[
     // Output
     "echo",
     // Control flow
-    "true",
-    "false",
     ":",
     "exit",
     "return",
@@ -1234,6 +1232,20 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         return;
     };
     if is_regex_mutation(c) {
+        return;
+    }
+    // DD#23: a command name must be resolvable at compile time. A variable or
+    // other expansion (`$x foo`) is a runtime-chosen command — reject it here
+    // rather than letting it reach `sash_exec` at runtime.
+    if !matches!(&c.name.kind, ExprKind::Literal(_)) {
+        diags.push(Diagnostic::error_span(
+            c.name.span,
+            "SB5011",
+            "a command name must be a literal path — a variable or expansion \
+             can't be resolved at compile time; use the literal path, or \
+             `/usr/bin/env` for a runtime tool"
+                .to_string(),
+        ));
         return;
     }
     let name = expr_literal_str(&c.name);

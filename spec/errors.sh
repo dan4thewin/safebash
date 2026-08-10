@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=61
+plan=64
 echo "1..$plan" >&3
 
 set +e
@@ -431,6 +431,23 @@ if match hello "$p"; then echo y; else echo n; fi'
 else
     skip_chk e.a70.regcomp
 fi
+
+# 55.41 an external command in a `while` condition is CAUGHT (a nonzero exit
+#       ends the loop), like `if` — it must not abort. bash: `done`, rc 0.
+#       Regression: the while-condition command was not marked unchecked
+#       (only `if`/Branch conditions were), so it aborted on the terminating
+#       false evaluation.
+run_sash 'while /bin/false; do echo x; done; echo done'
+[[ $rc = 0 && $out = "done" && -z $err && -z $rerr ]]; chk 55.41
+
+# cmdvar.1 a variable used as a command name is a COMPILE error (a command
+#          can't be resolved at runtime — DD#23). Was a runtime crash
+#          ("bug: bare command passed to sash_exec"). const is no exception
+#          yet (const-fold is a future task).
+run_sash 'x=/usr/bin/echo; $x hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.1
+run_sash 'const x=/usr/bin/echo; $x hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.2
 
 set -e
 tally

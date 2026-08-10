@@ -1032,13 +1032,9 @@ fn emit_command(
             writeln!(e.out, "    __test_result = 1;").unwrap();
         }
         BuiltinCmd::Exit => emit_exit(e, args, types),
-        BuiltinCmd::Noop | BuiltinCmd::True => {
+        BuiltinCmd::Noop => {
             writeln!(e.out, "    __exit_status = 0;").unwrap();
             writeln!(e.out, "    __test_result = 1;").unwrap();
-        }
-        BuiltinCmd::False => {
-            writeln!(e.out, "    __exit_status = 1;").unwrap();
-            writeln!(e.out, "    __test_result = 0;").unwrap();
         }
         BuiltinCmd::Other => emit_exec(e, name, args, checked, types),
         // Phase 6: __let_exit — convert (( … )) result to status.
@@ -2259,11 +2255,8 @@ fn emit_pipeline_stage(
             emit_echo(e, args, types);
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
-        BuiltinCmd::True | BuiltinCmd::Noop => {
+        BuiltinCmd::Noop => {
             writeln!(e.out, "        sash_exit(0);").unwrap();
-        }
-        BuiltinCmd::False => {
-            writeln!(e.out, "        sash_exit(1);").unwrap();
         }
         _ => emit_pipeline_exec(e, name, args, types),
     }

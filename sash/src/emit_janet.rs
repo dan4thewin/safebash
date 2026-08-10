@@ -1058,8 +1058,6 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
     indent(out, depth);
     match kind {
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
-        BuiltinCmd::True => emit_janet_const_bool(out, true),
-        BuiltinCmd::False => emit_janet_const_bool(out, false),
         // `:` no-op — succeeds silently (the canonical `|| :` discard).
         BuiltinCmd::Noop => emit_janet_const_bool(out, true),
         BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),

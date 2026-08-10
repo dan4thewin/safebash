@@ -98,8 +98,6 @@ pub enum BuiltinCmd {
     Test,
     /// `:` — no-op.
     Noop,
-    True,
-    False,
     Exit,
     Exec,
     Cd,
@@ -170,8 +168,6 @@ impl BuiltinCmd {
             "echo" => Self::Echo,
             "[[" => Self::Test,
             ":" => Self::Noop,
-            "true" => Self::True,
-            "false" => Self::False,
             "exit" => Self::Exit,
             "exec" => Self::Exec,
             "cd" => Self::Cd,
