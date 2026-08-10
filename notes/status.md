@@ -12,6 +12,23 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-08-10 — `[[ ]]` whitespace-optional, like `(( ))`
+
+DG (demo) hit an asymmetry: `return((1==1))` parsed but `return[[a=a]]`
+didn't. Root cause: `[`/`]` are word chars (subscripts), so `[[`/`]]` only
+tokenized when whitespace-delimited, while `(`/`)` are word-breaks. Fix
+(`scan_word_chars`): break a word on a **doubled** bracket (`[[`/`]]`), so
+`[[ … ]]` is whitespace-optional everywhere (`if[[…]]`, `while[[…]]`,
+`![[…]]`, compact `[[a==a]]`, DD#74 `return[[…]]`); a single `[`/`]` still
+absorbs as a subscript char. Safe because sash subscripts need a `$` sigil
+(`a[${b[0]}]` ends in `}]`, never `]]`); a repo-wide search found 0 glued
+brackets in sash source. Also guard-converted the arm's nested `if`s,
+dropping `scan_word_chars` cognitive 14→3 (grandfathered gate violator).
+Specs `spec/dispatch.sh` H1–H9; **0 regressions, 27 new passing** (9×3
+native/c/janet); Rust failure set identical to HEAD. DD#59 addendum. Dispatch
+`==` spacing inconsistency (SB4028) filed separately
+(`dispatch-compact-operator-spacing`).
+
 ### Session 2026-08-09 — DD#74 predicate functions (phases 1-3)
 
 DG established DD#74: a function used in a *boolean context* (an `if`/`elif`/

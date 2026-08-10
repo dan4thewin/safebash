@@ -1220,33 +1220,25 @@ impl Scanner {
             match b {
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'{' | b'}' | b'<'
                 | b'>' | b'#' | b'"' | b'\'' | b'`' | b'$' => break,
-                b'=' => {
-                    if word.is_empty() {
-                        self.pos += 1;
-                        return Some(SpannedToken {
-                            token: Tok::Eq,
-                            span: LexSpan {
-                                start,
-                                end: self.pos,
-                            },
-                        });
-                    }
-                    if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                        break;
-                    }
-                    break;
-                }
-                b'+' => {
-                    if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'=' {
-                        break;
-                    }
-                    word.push('+');
+                // A bare leading `=` is its own token; otherwise `=` ends the word.
+                b'=' if word.is_empty() => {
                     self.pos += 1;
+                    return Some(SpannedToken {
+                        token: Tok::Eq,
+                        span: LexSpan {
+                            start,
+                            end: self.pos,
+                        },
+                    });
                 }
-                b'[' | b']' => {
-                    word.push(b as char);
-                    self.pos += 1;
-                }
+                b'=' => break,
+                // `+=` breaks the word (compound-assign operator).
+                b'+' if self.source.get(self.pos + 1) == Some(&b'=') => break,
+                // A doubled `[[` / `]]` delimits a test/dispatch — break so the
+                // byte dispatcher tokenizes it (`scan_lbracket`/`scan_rbracket`),
+                // making `[[ … ]]` whitespace-optional like `(( … ))`. A single
+                // bracket stays a subscript char (falls to the default arm).
+                b'[' | b']' if self.source.get(self.pos + 1) == Some(&b) => break,
                 _ => {
                     word.push(b as char);
                     self.pos += 1;

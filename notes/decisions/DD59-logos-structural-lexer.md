@@ -122,3 +122,41 @@ behaviour on them, useful if we ever revisit that decision.
 - If the per-call `LogosTok::lexer(slice)` construction shows up
   in profiles, switch to `Lexer::morph` or maintain a single
   lexer per scanner instance — the DFA itself is static.
+
+## Addendum (2026-08-10) — `[[`/`]]` whitespace-optional, like `(( ))`
+
+`[[` and `]]` now tokenize even when glued to an adjacent word or
+its contents, so `if[[…]]`, `return[[…]]`, and the compact
+interior `[[a==a]]` all parse — symmetric with `(( ))`, which was
+already whitespace-optional (`(`/`)` are word-breaks).
+
+Root cause of the old asymmetry: `[`/`]` are word characters (for
+subscripts like `a[0]`), so `scan_word_chars` absorbed a bracket
+that followed word bytes; `[[`/`]]` only reached the byte
+dispatcher (→ `scan_lbracket`/`scan_rbracket`) when they led a
+token after whitespace. `(`/`)` are in the word-break set, so
+`((` always split.
+
+Fix (`scan_word_chars`): break the word when the current bracket
+is **doubled** — i.e. the next byte equals the current `[` or `]`.
+A single `[`/`]` still absorbs as a subscript char. This is safe
+because a doubled bracket only ever means a `[[ … ]]` delimiter in
+sash: a variable/expression subscript index requires a `$` sigil
+(`a[$i]`, `a[${b[0]}]`), so nested subscripts end in `}]`, never a
+bare `]]`; the literal-bare `a[b[0]]` that would produce `]]` is
+already rejected (SB4030). A codebase-wide search found zero glued
+`[[`/`]]` in any sash source.
+
+The same edit also converted the nested `if`s in `scan_word_chars`
+(the `=`/`+`/bracket arms) to match guards, dropping its cognitive
+complexity from ~14 to 3.
+
+Not changed: the **dispatch** form still requires spaces around
+`==`/`=~` (`[[ $x == a { … } ]]`); compact `[[ $x==a … ]]` is
+SB4028. That is a dispatch-parser rule, independent of bracket
+tokenization (the boolean test `[[a==a]]` accepts compact `==`).
+Filed as `dispatch-compact-operator-spacing` if the inconsistency
+is worth closing.
+
+Specs: `spec/dispatch.sh` H1–H9 (`dp.ws1`–`dp.ws9`), covering the
+compact/adjacent forms plus subscript and `(( ))` regressions.

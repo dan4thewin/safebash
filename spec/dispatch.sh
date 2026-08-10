@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=32
+plan=41
 echo "1..$plan" >&3
 
 set +e
@@ -104,6 +104,37 @@ run_sash 'x=a; [[ $x == a ]] || echo o'
 [[ $rc = 0 && -z $out && -z $err ]]; chk dp.g4a
 run_sash 'x=b; if [[ $x == a ]]; then echo t; else echo f; fi'
 [[ $rc = 0 && $out = "f" && -z $err ]]; chk dp.g4b
+
+# ── H. whitespace-optional [[ ]] — symmetric with (( )) ──────────────
+# `[[` / `]]` tokenize even when glued to adjacent words or their contents
+# (a single `[`/`]` stays a subscript char). See DD#59.
+# H1 boolean test, compact interior
+run_sash 'x=a; if [[a==a]]; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.ws1
+# H2 no space after `if` before `[[`
+run_sash 'x=a; if[[ $x == a ]]; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.ws2
+# H3 fully compact `if[[$x==a]]`
+run_sash 'x=a; if[[$x==a]]; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.ws3
+# H4 `while[[` adjacency (loop body skipped)
+run_sash 'x=b; while[[ $x == a ]]; do echo loop; done; echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk dp.ws4
+# H5 negation `![[` adjacency
+run_sash 'x=b; if ![[ $x == a ]]; then echo neg; fi'
+[[ $rc = 0 && $out = "neg" && -z $err ]]; chk dp.ws5
+# H6 dispatch form, `[[`/`]]` glued to subject/close
+run_sash 'x=a; [[$x == a { echo hit } || { echo no }]]'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk dp.ws6
+# H7 DD#74 `return[[ … ]]` predicate, compact
+run_sash 'fn f{return[[a==a]]}; if f; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.ws7
+# H8 regression: a single `[` is still a subscript char
+run_sash 'array a=(5 6 7); a[0]=9; echo ${a[0]}'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk dp.ws8
+# H9 regression: `(( ))` still whitespace-optional
+run_sash 'if((1==1)); then echo p; fi'
+[[ $rc = 0 && $out = "p" && -z $err ]]; chk dp.ws9
 
 set -e
 tally
