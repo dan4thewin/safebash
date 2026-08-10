@@ -80,17 +80,7 @@ impl Statement {
     /// custom handling for specific StmtKind variants.
     pub fn child_bodies(&self) -> Vec<&[Statement]> {
         match &self.kind {
-            StmtKind::If(i) => {
-                let mut bodies: Vec<&[Statement]> = vec![&i.condition, &i.then_body];
-                for elif in &i.elif_clauses {
-                    bodies.push(&elif.condition);
-                    bodies.push(&elif.body);
-                }
-                if let Some(ref eb) = i.else_body {
-                    bodies.push(eb);
-                }
-                bodies
-            }
+            StmtKind::If(i) => Self::if_child_bodies(i),
             StmtKind::While(w) => vec![&w.condition, &w.body],
             StmtKind::For(f) => vec![&f.body],
             StmtKind::Case(c) => c.items.iter().map(|item| item.body.as_slice()).collect(),
@@ -102,7 +92,9 @@ impl Statement {
                 std::slice::from_ref(l.right.as_ref()),
             ],
             StmtKind::Group(g) => vec![&g.body],
-            StmtKind::Suppressed(inner) => vec![std::slice::from_ref(inner.as_ref())],
+            StmtKind::Suppressed(inner) | StmtKind::ReturnProducer(inner) => {
+                vec![std::slice::from_ref(inner.as_ref())]
+            }
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
             | StmtKind::Command(_)
@@ -131,7 +123,9 @@ impl Statement {
                 std::slice::from_mut(l.right.as_mut()),
             ],
             StmtKind::Group(g) => vec![&mut g.body],
-            StmtKind::Suppressed(inner) => vec![std::slice::from_mut(inner.as_mut())],
+            StmtKind::Suppressed(inner) | StmtKind::ReturnProducer(inner) => {
+                vec![std::slice::from_mut(inner.as_mut())]
+            }
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
             | StmtKind::Command(_)
@@ -143,6 +137,18 @@ impl Statement {
     /// The child statement bodies of an `if` (condition, then, each elif's
     /// condition + body, and else), mutable. Factored out of
     /// [`Self::child_bodies_mut`] to keep that dispatcher simple.
+    fn if_child_bodies(i: &If) -> Vec<&[Statement]> {
+        let mut bodies: Vec<&[Statement]> = vec![&i.condition, &i.then_body];
+        for elif in &i.elif_clauses {
+            bodies.push(&elif.condition);
+            bodies.push(&elif.body);
+        }
+        if let Some(ref eb) = i.else_body {
+            bodies.push(eb);
+        }
+        bodies
+    }
+
     fn if_child_bodies_mut(i: &mut If) -> Vec<&mut [Statement]> {
         let mut bodies: Vec<&mut [Statement]> = vec![&mut i.condition, &mut i.then_body];
         for elif in &mut i.elif_clauses {
@@ -329,6 +335,12 @@ pub enum StmtKind {
     /// (( expr )) used as a condition — arithmetic test.
     /// Distinct from [[ ]] which is string/file tests only.
     ArithTest(Box<ArithExpr>),
+
+    /// DD#74: `return <producer>` — a predicate return whose status is a
+    /// producer (a command, `[[ … ]]`, or `(( … ))`), not a literal code.
+    /// The producer is evaluated (consumed — it never aborts), and the
+    /// function returns its exit status. `return N` stays a `Command`.
+    ReturnProducer(Box<Statement>),
 }
 
 // ── Individual statement types ────────────────────────────────

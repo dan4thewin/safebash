@@ -51,7 +51,35 @@ pub(super) fn lower_one(
         StmtKind::Comment(_) => block,
         StmtKind::ArithTest(expr) => lower_arith_test_stmt(expr, stmt, ssa, state, &mut block),
         StmtKind::Suppressed(inner) => lower_suppressed_stmt(inner, ssa, state, block),
+        StmtKind::ReturnProducer(inner) => lower_return_producer(inner, ssa, state, block),
     }
+}
+
+/// DD#74: `return <producer>` — evaluate the producer (a command, `[[ … ]]`,
+/// or `(( … ))`), which sets `$?`/test_result, then return that status. The
+/// producer is *consumed* by the return, so its command is unchecked (it must
+/// not abort on a nonzero exit — that status is exactly the return value).
+fn lower_return_producer(
+    inner: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    // The producer is consumed by the return (like a condition): bump
+    // in_condition so a `[[ … ]]`/`(( … ))` producer isn't flagged
+    // must-consume (SB4018), and uncheck its command so it doesn't abort.
+    state.in_condition += 1;
+    let block = lower_one(inner, ssa, state, block);
+    state.in_condition -= 1;
+    super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(block).insts);
+    // The producer already left its status in $?/test_result; terminate the
+    // function (Goto the return target when inlined, else Return).
+    if let Some(target) = state.return_target {
+        ssa.block_mut(block).terminator = Terminator::Goto(target);
+    } else {
+        ssa.block_mut(block).terminator = Terminator::Return;
+    }
+    ssa.new_block("after_return_producer")
 }
 
 /// `while`/`until`. For `until`, desugar to `while ! cond` by lowering as

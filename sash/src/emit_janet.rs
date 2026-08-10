@@ -241,7 +241,23 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         StmtKind::Comment(text) => emit_comment(out, text, depth),
         StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
         StmtKind::ArithTest(expr) => emit_arith_test(out, ctx, expr, depth),
+        StmtKind::ReturnProducer(inner) => emit_return_producer(out, ctx, inner, depth),
     }
+}
+
+/// DD#74: `return <producer>` — evaluate the producer as a condition and set
+/// `__last_exit` to the resulting status (0 true / 1 false), then return. (The
+/// exact code of a `return CMD` is narrowed to 0/1 here; native/c preserve it.)
+fn emit_return_producer(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth: usize) {
+    let mut cond = String::new();
+    emit_condition_inline(&mut cond, ctx, inner);
+    indent(out, depth);
+    writeln!(
+        out,
+        "(do (set __last_exit (if {} 0 1)) (return _ret nil))",
+        cond
+    )
+    .unwrap();
 }
 
 fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: usize) {

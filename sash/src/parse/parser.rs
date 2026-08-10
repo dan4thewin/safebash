@@ -148,6 +148,7 @@ fn dispatch_statement(
         Tok::Word(ref w) if w == "-" => parse_suppressed(scanner),
         Tok::DblBracketOpen => parse_test_command(scanner),
         Tok::Bless => parse_bless(scanner),
+        Tok::Word(ref w) if w == "return" => parse_return(scanner),
         Tok::Word(_) if is_paren_function(scanner) => parse_paren_function(scanner),
         _ => parse_simple_or_assignment(scanner),
     }
@@ -909,6 +910,40 @@ fn case_removed_error(span: Span) -> Diagnostic {
          `[[ $x =~ regex { … } || { … } ]]` (regex match)"
             .to_string(),
     )
+}
+
+/// DD#74: `return` — either the value form (`return N` / `return $?` / bare,
+/// the existing command path) or a producer form (`return [[ … ]]` /
+/// `return (( … ))` / `return CMD`). The producer's status becomes the
+/// function's; it is consumed (never aborts). Disambiguation: `[[`/`((`, or a
+/// non-numeric command word after `return`, is a producer; a numeric literal,
+/// a `$`-expansion, or end-of-statement is a value.
+fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+    let after = scanner.peek_n(1).token.clone();
+    let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen)
+        || matches!(&after, Tok::Word(w) if !w.chars().all(|c| c.is_ascii_digit()));
+    if !is_producer {
+        return parse_simple_or_assignment(scanner);
+    }
+    let sp = scanner.peek().span;
+    let span = span_from(scanner, sp.start);
+    scanner.next(); // consume 'return'
+    let producer = match scanner.peek().token {
+        Tok::DblBracketOpen => parse_test_command(scanner)?,
+        Tok::DblParen => parse_arith_stmt(scanner)?,
+        _ => parse_simple_or_assignment(scanner)?,
+    };
+    match producer {
+        Some(p) => Ok(Some(Statement {
+            kind: StmtKind::ReturnProducer(Box::new(p)),
+            span,
+        })),
+        None => Err(parse_error(
+            span,
+            "SB4014",
+            "return: expected a status producer (a command, `[[ … ]]`, or `(( … ))`)".to_string(),
+        )),
+    }
 }
 
 fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {

@@ -112,6 +112,9 @@ fn validate_nested(stmt: &Statement, in_condition: bool, diags: &mut Vec<Diagnos
             validate_stmt_ctx(&l.right, diags, in_condition);
         }
         StmtKind::Pipeline(p) if p.negated => validate_children(&p.commands, true, diags),
+        // DD#74: `return <producer>` — validate the producer as a condition
+        // (a `[[ ]]`/`(( ))`/command status producer, consumed by the return).
+        StmtKind::ReturnProducer(inner) => validate_stmt_ctx(inner, diags, true),
         _ => {
             let inner = forwards_condition(stmt) && in_condition;
             for body in stmt.child_bodies() {

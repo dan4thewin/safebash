@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=29
+plan=35
 echo "1..$plan" >&3
 
 set +e
@@ -184,6 +184,41 @@ run_sash 'int i=0
 lt3() { if (( i < 3 )); then return 0; else return 1; fi }
 while lt3; do echo $i; (( i++ )); done'
 [[ $rc = 0 && $out = $'0\n1\n2' && -z $err ]]; chk 74.6
+
+# --- DD#74 phase 2: `return <producer>` (command / [[ ]] / (( )) ) ---
+
+# 74.7 `return [[ … ]]` returns the test's boolean
+run_sash 'has() { return [[ ok == ok ]] }
+if has; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.7
+
+# 74.8 `return [[ … ]]` — false test → else
+run_sash 'has() { return [[ ok == no ]] }
+if has; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.8
+
+# 74.9 `return (( … ))` returns the arith truth
+run_sash 'int x=5; int lo=1; int hi=9
+in_range() { return (( x >= lo && x <= hi )) }
+if in_range; then echo in; else echo out; fi'
+[[ $rc = 0 && $out = "in" && -z $err ]]; chk 74.9
+
+# 74.10 `return (( … ))` — false → else
+run_sash 'int x=50
+small() { return (( x < 10 )) }
+if small; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.10
+
+# 74.11 `return CMD` returns the command's exit status; the command is
+#       consumed by the return (never aborts)
+run_sash 'has_root() { return /bin/grep -q root /etc/passwd }
+if has_root; then echo found; else echo none; fi'
+[[ $rc = 0 && $out = "found" && -z $err ]]; chk 74.11
+
+# 74.12 `return CMD` with a failing command → false, no abort
+run_sash 'never() { return /bin/false }
+if never; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.12
 
 set -e
 tally

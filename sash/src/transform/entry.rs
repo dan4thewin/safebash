@@ -116,7 +116,7 @@ fn mark_unchecked_in_conditions(ssa: &mut SsaProgram) {
 /// DD#70: a `NegateTestResult` sigil sits *after* the operand it negates, so
 /// skip it — the real command/pipeline (which the `!` catches) is the one to
 /// uncheck.
-fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
+pub(super) fn uncheck_last_condition_inst(insts: &mut [SsaInst]) {
     for inst in insts.iter_mut().rev() {
         match inst {
             SsaInst::Command { name, .. } if name == "__negate_test_result" => continue,
