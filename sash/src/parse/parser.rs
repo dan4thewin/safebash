@@ -1249,6 +1249,127 @@ fn try_parse_leading_unary(
     Ok(None)
 }
 
+/// Try to extract a compact `==` or `=~` operator from an Expr.
+/// Returns Option<(left_expr, op, right_expr)> if successful.
+fn extract_compact_operator(expr: &Expr) -> Option<(Expr, String, Expr)> {
+    match &expr.kind {
+        ExprKind::Literal(s) => extract_from_literal(s, expr.span),
+        ExprKind::Concat(parts) => extract_from_concat(parts, expr.span),
+        _ => None,
+    }
+}
+
+/// Extract compact operator from a literal string (e.g., "a==b").
+fn extract_from_literal(s: &str, span: Span) -> Option<(Expr, String, Expr)> {
+    if let Some(pos) = s.find("==") {
+        let (left, right) = (&s[..pos], &s[pos + 2..]);
+        if !left.is_empty() && !right.is_empty() {
+            return Some((
+                Expr {
+                    kind: ExprKind::Literal(left.to_string()),
+                    span,
+                },
+                "==".to_string(),
+                Expr {
+                    kind: ExprKind::Literal(right.to_string()),
+                    span,
+                },
+            ));
+        }
+    }
+    if let Some(pos) = s.find("=~") {
+        let (left, right) = (&s[..pos], &s[pos + 2..]);
+        if !left.is_empty() && !right.is_empty() {
+            return Some((
+                Expr {
+                    kind: ExprKind::Literal(left.to_string()),
+                    span,
+                },
+                "=~".to_string(),
+                Expr {
+                    kind: ExprKind::Literal(right.to_string()),
+                    span,
+                },
+            ));
+        }
+    }
+    None
+}
+
+/// Extract compact operator from a Concat expression.
+/// Handles Concat([..., Literal("=="), ...]) and Concat([..., Literal("==rest")])
+fn extract_from_concat(parts: &[Expr], span: Span) -> Option<(Expr, String, Expr)> {
+    // Check for operator as a middle part: Concat([a, Literal("=="), b])
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 && i < parts.len() - 1 {
+            if let ExprKind::Literal(s) = &part.kind {
+                if let Some(op) = match_operator(s) {
+                    let left = build_expr_from_parts(&parts[..i], span);
+                    let right = build_expr_from_parts(&parts[i + 1..], span);
+                    return Some((left, op, right));
+                }
+            }
+        }
+    }
+
+    // Check for operator in last part: Concat([..., Literal("==rest")])
+    if let Some(last_part) = parts.last() {
+        if let ExprKind::Literal(s) = &last_part.kind {
+            if let Some((op_str, rest_start)) = extract_leading_operator(s) {
+                let left = build_expr_from_parts(&parts[..parts.len() - 1], span);
+                return Some((
+                    left,
+                    op_str,
+                    Expr {
+                        kind: ExprKind::Literal(s[rest_start..].to_string()),
+                        span,
+                    },
+                ));
+            }
+        }
+    }
+    None
+}
+
+/// Match if a literal is exactly an operator ("==" or "=~").
+fn match_operator(s: &str) -> Option<String> {
+    if s == "==" {
+        Some("==".to_string())
+    } else if s == "=~" {
+        Some("=~".to_string())
+    } else {
+        None
+    }
+}
+
+/// Check if a literal starts with an operator; return (op, rest_index).
+fn extract_leading_operator(s: &str) -> Option<(String, usize)> {
+    if s.starts_with("==") && s.len() > 2 {
+        Some(("==".to_string(), 2))
+    } else if s.starts_with("=~") && s.len() > 2 {
+        Some(("=~".to_string(), 2))
+    } else {
+        None
+    }
+}
+
+/// Build an Expr from a slice of Expr parts.
+fn build_expr_from_parts(parts: &[Expr], span: Span) -> Expr {
+    if parts.is_empty() {
+        Expr {
+            kind: ExprKind::Literal(String::new()),
+            span,
+        }
+    } else if parts.len() == 1 {
+        parts[0].clone()
+    } else {
+        Expr {
+            kind: ExprKind::Concat(parts.to_vec()),
+            span,
+        }
+    }
+}
+
 fn parse_test_binary_tail(
     left: Expr,
     scanner: &mut Scanner,
@@ -1284,7 +1405,18 @@ fn parse_test_binary_tail(
             scanner.next();
             parse_binary_rhs(left, ">".to_string(), scanner, span)
         }
-        _ => Ok(implicit_nonempty(left)),
+        _ => {
+            // Try to extract a compact `==` or `=~` operator from the left operand
+            // (e.g., `$x==a` in `[[ $x==a { ... } ]]`)
+            if let Some((left_expr, op, right_expr)) = extract_compact_operator(&left) {
+                return Ok(TestExpr::Binary {
+                    left: Box::new(left_expr),
+                    op,
+                    right: Box::new(right_expr),
+                });
+            }
+            Ok(implicit_nonempty(left))
+        }
     }
 }
 

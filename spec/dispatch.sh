@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=41
+plan=49
 echo "1..$plan" >&3
 
 set +e
@@ -135,6 +135,33 @@ run_sash 'array a=(5 6 7); a[0]=9; echo ${a[0]}'
 # H9 regression: `(( ))` still whitespace-optional
 run_sash 'if((1==1)); then echo p; fi'
 [[ $rc = 0 && $out = "p" && -z $err ]]; chk dp.ws9
+
+# I1–I8: dispatch compact operator parity (symmetric with boolean test)
+# I1 dispatch form with compact `==`
+run_sash '[[ a==a { echo yes } || { echo no } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co1
+# I2 dispatch form with compact `==`, non-matching
+run_sash '[[ a==b { echo no } || { echo yes } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co2
+# I3 dispatch form with compact `=~`
+run_sash '[[ a=~a { echo yes } || { echo no } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co3
+# I4 dispatch form with compact operator on variable
+run_sash 'x=a; [[ $x==a { echo yes } || { echo no } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co4
+# I5 dispatch form with compact operator, multiple patterns
+run_sash '[[ a==a b c { echo a } || { echo no } ]]'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk dp.co5
+# I6 dispatch compact with negation
+run_sash 'x=b; if [[ $x==a { echo yes } || { echo no } ]]; then echo outer; fi'
+[[ $rc = 0 && $out = "no
+outer" && -z $err ]]; chk dp.co6
+# I7 dispatch compact `=~` with variable
+run_sash 'x=abc; [[ $x=~b { echo yes } || { echo no } ]]'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co7
+# I8 nested dispatch (compact) inside loop
+run_sash 'for x in a b c; do [[ $x==b { echo "$x"; break } || { :; } ]]; done'
+[[ $rc = 0 && $out = "b" && -z $err ]]; chk dp.co8
 
 set -e
 tally
