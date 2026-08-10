@@ -10,7 +10,7 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
     };
     if let Some(name) = name_opt {
         if state.known_functions.contains(name.as_str()) {
-            return SsaValue::FuncCall(name);
+            return func_call_capture(name, c, state);
         }
         if let Some(v) = try_native_intrinsic(&name, c, state) {
             return v;
@@ -22,6 +22,19 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         _ => vec![],
     };
     SsaValue::CmdSubst { argv, redirects }
+}
+
+/// `$(f …)` on a known user function. Option C: an `-> int` function
+/// *returns* its value, captured as an `IntFuncCall` (identical to `$((f))`,
+/// lifted into a temp downstream); any other function's result is its stdout
+/// (`FuncCall`).
+fn func_call_capture(name: String, c: &Command, state: &VersionState) -> SsaValue {
+    if state.function_int_typed.contains(name.as_str()) {
+        let args = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+        SsaValue::IntFuncCall { name, args }
+    } else {
+        SsaValue::FuncCall(name)
+    }
 }
 
 /// Extract `$(<single-command>)` shape: returns the original outer

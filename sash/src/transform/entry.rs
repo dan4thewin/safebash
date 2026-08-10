@@ -14,6 +14,16 @@ pub fn ir_to_ssa_typed(
     let mut state = VersionState::with_types(type_map);
 
     state.known_functions = collect_function_names(program);
+    // Pre-populate int-typed function names so `$(f)` / `$((f))` capture the
+    // return value even for a forward reference (parallels known_functions;
+    // lower_function also inserts lazily for nested defs).
+    for stmt in &program.statements {
+        if let StmtKind::Function(f) = &stmt.kind {
+            if f.return_type == VarType::Int {
+                state.function_int_typed.insert(f.name.clone());
+            }
+        }
+    }
 
     let entry = ssa.new_block("entry");
     ssa.entry = entry;

@@ -6,7 +6,7 @@ use super::cmd_handlers::{
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
-use super::functions::{collect_local_vars, lift_int_func_calls, reject_int_func_capture};
+use super::functions::{collect_local_vars, lift_int_func_args, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts};
@@ -233,7 +233,7 @@ fn handle_bless_stmt(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     // DD#24 scalar / DD#61 array & map bless forms.
     if let Some((form, test)) = classify_bless(&c.args) {
@@ -273,23 +273,8 @@ fn handle_bless_stmt(
         return block;
     }
     // Fallback: no TestExpr — emit as regular command (caught by taint checker)
-    let args: Vec<SsaValue> = c
-        .args
-        .iter()
-        .map(|a| {
-            let v = expr_to_value(a, state);
-            // DD#55: $(f) for -> int function is a type error
-            if let SsaValue::FuncCall(fname) = &v {
-                if state.function_int_typed.contains(fname.as_str()) {
-                    state.diagnostics.push(format!(
-                        "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                        a.span.line, a.span.col, fname, fname
-                    ));
-                }
-            }
-            v
-        })
-        .collect();
+    let raw: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    let args = lift_int_func_args(raw, ssa, state, &mut block);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::command(name.to_string(), args, vec![], true));
@@ -914,7 +899,7 @@ pub(super) fn handle_assignment(
     if a.op == crate::ir::AssignOp::Append {
         return handle_append_assign(a, state, ssa, block);
     }
-    handle_plain_assign(a, stmt, state, ssa, block)
+    handle_plain_assign(a, state, ssa, block)
 }
 
 /// DD#58: emit SB4019 if a variable name collides with a known function.
@@ -964,15 +949,12 @@ fn handle_append_assign(
     a: &Assignment,
     state: &mut VersionState,
     ssa: &mut SsaProgram,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
-    // DD#55: `var += $(f)` for an `-> int` function is the same category error
-    // as a plain capture — stdout (empty) is not the returned value. Reject
-    // (→ `$((f))`) instead of silently appending 0. (See compute_declaration_value.)
-    if reject_int_func_capture(&val, a.value.span, state) {
-        return block;
-    }
+    // Option C: `var += $(f)` on an `-> int` function is an IntFuncCall;
+    // materialize it (like `$((f))`) before the append. No-op otherwise.
+    let val = lift_int_func_calls(val, ssa, state, &mut block);
     match val {
         SsaValue::IndexedArray(elems) => {
             for elem in elems {
@@ -1029,26 +1011,20 @@ fn append_scalar(
 /// calls and emits a single `Assign`.
 fn handle_plain_assign(
     a: &Assignment,
-    stmt: &Statement,
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     mut block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
     if let SsaValue::FuncCall(fname) = &val {
-        // DD#55: $(f) for -> int function is a type error
-        if state.function_int_typed.contains(fname.as_str()) {
-            state.diagnostics.push(format!(
-                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                stmt.span.line, stmt.span.col, fname, fname
-            ));
-            return block;
-        }
+        // A string function's result is its stdout; inline-capture it.
+        // (An `-> int` function is an IntFuncCall here, not a FuncCall — it
+        // falls through to lift_int_func_calls, capturing the return value.)
         if let Some(b) = try_capture_inline(a, fname, state, ssa, block) {
             return b;
         }
     }
-    // DD#58: lift IntFuncCall out of arithmetic expressions
+    // DD#58 / Option C: lift IntFuncCall (from `$(f)` / `$((f))`) into a temp.
     let val = lift_int_func_calls(val, ssa, state, &mut block);
     let target = state.define(&a.name);
     ssa.block_mut(block)

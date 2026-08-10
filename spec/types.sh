@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=67
+plan=69
 echo "1..$plan" >&3
 
 set +e
@@ -218,10 +218,11 @@ run_sash 'fn f -> int { return 1; }
 if ((f > 0)); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.5
 
-# 58.6 $(f) for -> int function is type error
+# 58.6 $(f) on a -> int function captures the RETURN value (Option C): `$(f)`
+#      is equivalent to `$((f))`. A string var receives it as a string.
 run_sash 'fn f -> int { return 42; }
-x=$(f)'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 58.6
+x=$(f); echo $x'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.6
 
 # 58.7 function/variable name collision is error
 run_sash 'fn x { echo hi; }
@@ -234,22 +235,33 @@ int x=$(( (f) + 1 ))
 echo "$x"'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk 58.8
 
-# 58.9 `int n=$(f)` for a -> int function is SB4018 (use $((f))). This is the
-#      int-typed DECLARATION path — it previously bypassed the capture check
-#      that echo/$x= already had and silently produced 0.
+# 58.9 Option C: `int n=$(f)` on a -> int function captures the return value
+#      (identical to `$((f))`) — the `$()`/`$(())` unification. (Was a silent
+#      0, then briefly SB4018; now it just works.)
 run_sash 'fn f -> int { return 42; }
 int n=$(f); echo $n'
-[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 58.9
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.9
 
-# 58.10 `n += $(f)` (int append) is likewise SB4018, not a silent += 0.
+# 58.10 `n += $(f)` likewise captures + adds the return value (n: 0 → 42).
 run_sash 'fn f -> int { return 42; }
 int n=0; n+=$(f); echo $n'
-[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 58.10
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.10
 
-# 58.11 the directed-to arithmetic form captures the return value.
+# 58.11 the arithmetic form is equivalent — same result.
 run_sash 'fn f -> int { return 42; }
 int n=$((f)); echo $n'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.11
+
+# 58.12 Option C in a command ARGUMENT: `echo $(f)` prints the return value,
+#       and it works embedded in a double-quoted string too.
+run_sash 'fn f -> int { return 42; }
+echo "port=$(f)"'
+[[ $rc = 0 && $out = "port=42" && -z $err ]]; chk 58.12
+
+# 58.13 `$(f arg…)` passes positional args to the int function.
+run_sash 'fn add -> int { return $(( $1 + $2 )); }
+int n=$(add 3 4); echo $n'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 58.13
 
 # --- DD#30 unset semantics ---
 

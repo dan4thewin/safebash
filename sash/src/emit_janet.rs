@@ -1813,8 +1813,28 @@ fn argv_start_index(expr: &Expr, ctx: &EmitCtx) -> Option<String> {
     })
 }
 
+/// Option C: `$(f)` on an `-> int` function yields the return value (like
+/// `$((f))`), not stdout. Stringify the call so it flows through janet's
+/// existing cmdsub consumers uniformly (echo prints it; an int assignment's
+/// `scan-number (string/trim …)` wrapper parses it back).
+fn cmdsub_int_func(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
+    if !ctx.is_int_func(name) {
+        return None;
+    }
+    let arg_strs: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
+    let call = if arg_strs.is_empty() {
+        format!("({})", name)
+    } else {
+        format!("({} {})", name, arg_strs.join(" "))
+    };
+    Some(format!("(string {})", call))
+}
+
 fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     let name = expr_to_literal(&c.name);
+    if let Some(s) = cmdsub_int_func(&name, c, ctx) {
+        return s;
+    }
     if let Some(s) = cmdsub_regex_intrinsic(&name, c, ctx) {
         return s;
     }

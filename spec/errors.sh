@@ -159,10 +159,12 @@ run_sash '/bin/true && /bin/echo ok | /bin/cat'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 55.40
 
 
-# 55.12 $(f) for -> int function is type error (use $((f)) instead)
+# 55.12 Option C: `echo $(f)` on a -> int function prints its RETURN value
+#       (`$(f)` ≡ `$((f))`). (Was a "cannot capture" error before the
+#       $()/$(()) unification.)
 run_sash 'fn f -> int { return 42; }
 echo $(f)'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 55.12
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 55.12
 
 # 55.13 bare call of non-void function → compile error
 run_sash 'fn f -> int { return 42; }

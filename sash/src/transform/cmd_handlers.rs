@@ -1,7 +1,7 @@
 //! Command-specific handlers extracted from handle_command.
 
 use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
-use super::functions::{collect_local_vars, collect_max_positional};
+use super::functions::{collect_local_vars, collect_max_positional, lift_int_func_args};
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
 use crate::ir::*;
@@ -662,13 +662,12 @@ fn emit_external_command(
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
-    block: BlockId,
+    mut block: BlockId,
 ) -> BlockId {
-    let args: Vec<SsaValue> = c
-        .args
-        .iter()
-        .map(|a| eval_arg_and_check_int_capture(a, state))
-        .collect();
+    let raw: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    // Option C: `$(f)` / `$((f))` on an `-> int` function is an IntFuncCall;
+    // materialize it into a temp so the argv is scalar (unlifted → codegen ICE).
+    let args = lift_int_func_args(raw, ssa, state, &mut block);
     ssa.block_mut(block).insts.push(SsaInst::command(
         resolve_pipeline_command(name, state),
         args,
@@ -676,19 +675,4 @@ fn emit_external_command(
         true,
     ));
     block
-}
-
-/// Lower an argument expression and emit SB4018 if it captures an
-/// `-> int` function with `$( )` (DD#55).
-fn eval_arg_and_check_int_capture(a: &Expr, state: &mut VersionState) -> SsaValue {
-    let v = arg_to_value(a, state);
-    if let SsaValue::FuncCall(fname) = &v {
-        if state.function_int_typed.contains(fname.as_str()) {
-            state.diagnostics.push(format!(
-                "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-                a.span.line, a.span.col, fname, fname
-            ));
-        }
-    }
-    v
 }

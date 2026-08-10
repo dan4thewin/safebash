@@ -44,31 +44,33 @@ pub(super) fn lift_int_func_calls(
                 false_val: Box::new(f),
             }
         }
+        SsaValue::Concat(parts) => {
+            // A double-quoted string with an embedded `$(f)` / `$((f))` lowers
+            // to a Concat; lift each part so a nested IntFuncCall materializes.
+            let lifted = parts
+                .into_iter()
+                .map(|p| lift_int_func_calls(p, ssa, state, block))
+                .collect();
+            SsaValue::Concat(lifted)
+        }
         other => other, // no IntFuncCall inside
     }
 }
 
-/// DD#55: `$(f)` for an `-> int` function captures stdout (empty → a silent
-/// `0`), not the returned value — a category error. If `val` is such a
-/// capture, push SB4018 (directing to `$((f))`) and return `true` so the
-/// caller aborts the capture. Applied at every non-arithmetic value-capture
-/// site (typed declaration, `+=`, plain assignment, command argument).
-pub(super) fn reject_int_func_capture(
-    val: &SsaValue,
-    span: Span,
+/// Option C (DD#55): materialize any `IntFuncCall` (produced by `$(f)` /
+/// `$((f))` on an `-> int` function) in a command's argument list into a temp
+/// variable via [`lift_int_func_calls`]. An `IntFuncCall` that reaches codegen
+/// unlifted is an ICE, so every arg-building site that can carry a `$(f)`
+/// capture routes its argv through this.
+pub(super) fn lift_int_func_args(
+    args: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
     state: &mut VersionState,
-) -> bool {
-    let SsaValue::FuncCall(fname) = val else {
-        return false;
-    };
-    if !state.function_int_typed.contains(fname.as_str()) {
-        return false;
-    }
-    state.diagnostics.push(format!(
-        "{}:{}: error [SB4018] $({}): cannot capture -> int function with $() — use $(({}))",
-        span.line, span.col, fname, fname
-    ));
-    true
+    block: &mut BlockId,
+) -> Vec<SsaValue> {
+    args.into_iter()
+        .map(|v| lift_int_func_calls(v, ssa, state, block))
+        .collect()
 }
 
 /// Inline a -> int function call, returning an SsaValue::Var pointing
