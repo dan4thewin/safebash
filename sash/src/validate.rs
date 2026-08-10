@@ -32,37 +32,66 @@ use crate::ir::*;
 pub fn validate(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
 
-    // Collect declared function names
+    // Top-level statements, plus any `__END__` block, as a single list of
+    // blocks so every check runs over each.
+    let blocks: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
+        .chain(program.end_block.as_deref())
+        .collect();
+
+    // Collect declared function names across all blocks first, so a check
+    // in one block sees a function defined in another.
     let mut functions = HashSet::new();
-    collect_functions(&program.statements, &mut functions);
-    if let Some(ref end) = program.end_block {
-        collect_functions(end, &mut functions);
+    for &block in &blocks {
+        collect_functions(block, &mut functions);
     }
 
-    for stmt in &program.statements {
-        validate_stmt(stmt, &mut diags);
-    }
-    if let Some(ref end) = program.end_block {
-        for stmt in end {
+    for &block in &blocks {
+        for stmt in block {
             validate_stmt(stmt, &mut diags);
         }
+        check_commands(block, &functions, &mut diags); // SB5011: command resolution
+        check_dollar_question(block, &mut diags); // SB5012: $? availability
+        check_regex_replacements(block, &mut diags); // SB4033: sub/gsub replacement escape
     }
-    // SB5011: command resolution
-    check_commands(&program.statements, &functions, &mut diags);
-    if let Some(ref end) = program.end_block {
-        check_commands(end, &functions, &mut diags);
-    }
-    // SB5012: $? availability
-    check_dollar_question(&program.statements, &mut diags);
-    if let Some(ref end) = program.end_block {
-        check_dollar_question(end, &mut diags);
-    }
-    // SB4033: invalid escape in a sub/gsub replacement
-    check_regex_replacements(&program.statements, &mut diags);
-    if let Some(ref end) = program.end_block {
-        check_regex_replacements(end, &mut diags);
-    }
+    // SB4037 (DD#74): a function used as a predicate must `return` on every path
+    check_predicate_definite_return(program, &functions, &mut diags);
     diags
+}
+
+/// SB4037 (DD#74): a function used in a boolean context must supply its
+/// status via an explicit `return` on every path.
+fn check_predicate_definite_return(
+    program: &Program,
+    functions: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut predicate_uses = HashSet::new();
+    collect_predicate_uses(&program.statements, functions, &mut predicate_uses);
+    if let Some(ref end) = program.end_block {
+        collect_predicate_uses(end, functions, &mut predicate_uses);
+    }
+    if predicate_uses.is_empty() {
+        return;
+    }
+    let mut fn_defs: Vec<(&str, Span, &[Statement])> = Vec::new();
+    collect_function_defs(&program.statements, &mut fn_defs);
+    if let Some(ref end) = program.end_block {
+        collect_function_defs(end, &mut fn_defs);
+    }
+    for (name, span, body) in &fn_defs {
+        let short = name.strip_prefix("__local__").unwrap_or(name);
+        if predicate_uses.contains(short) && !body_always_returns(body) {
+            diags.push(Diagnostic::error_span(
+                *span,
+                "SB4037",
+                format!(
+                    "function `{short}` is used as a predicate but does not `return` on every \
+                     path — a function in a boolean context must end each path with an explicit \
+                     `return` (a command, `[[ … ]]`, `(( … ))`, or a status code)"
+                ),
+            ));
+        }
+    }
 }
 
 // ── Statement-level validation ─────────────────────────────────────
@@ -1219,6 +1248,133 @@ fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
             _ => {}
         }
     }
+}
+
+// ── DD#74: predicate functions must definite-return ────────────────
+//
+// A function used in a *boolean context* (an if/elif/while/until
+// condition, a `! f` negation, or a `&&`/`||` operand) is a predicate:
+// its truth value is its exit status, which — per DD#74 — must come
+// from an explicit `return` on every path. Falling off the end (an
+// implicit trailing-command status) is a compile error; the trailing
+// command would abort-on-fail rather than yield a status.
+
+/// Collect every function definition as (name, def-span, body), walking
+/// nested/local functions too.
+fn collect_function_defs<'a>(
+    stmts: &'a [Statement],
+    out: &mut Vec<(&'a str, Span, &'a [Statement])>,
+) {
+    for stmt in stmts {
+        if let StmtKind::Function(f) = &stmt.kind {
+            out.push((f.name.as_str(), stmt.span, f.body.as_slice()));
+        }
+        for body in stmt.child_bodies() {
+            collect_function_defs(body, out);
+        }
+    }
+}
+
+/// Collect the names of functions used in a boolean context.
+fn collect_predicate_uses(stmts: &[Statement], funcs: &HashSet<String>, out: &mut HashSet<String>) {
+    for stmt in stmts {
+        collect_predicate_uses_stmt(stmt, funcs, out);
+    }
+}
+
+fn collect_predicate_uses_stmt(
+    stmt: &Statement,
+    funcs: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    match &stmt.kind {
+        StmtKind::If(i) => {
+            mark_condition_predicate(&i.condition, funcs, out);
+            for elif in &i.elif_clauses {
+                mark_condition_predicate(&elif.condition, funcs, out);
+            }
+        }
+        StmtKind::While(w) => mark_condition_predicate(&w.condition, funcs, out),
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            mark_predicate_operand(&l.left, funcs, out);
+            mark_predicate_operand(&l.right, funcs, out);
+        }
+        StmtKind::Pipeline(p) if p.negated => {
+            for c in &p.commands {
+                mark_predicate_operand(c, funcs, out);
+            }
+        }
+        _ => {}
+    }
+    for body in stmt.child_bodies() {
+        collect_predicate_uses(body, funcs, out);
+    }
+}
+
+/// The last statement of a condition supplies its truth value.
+fn mark_condition_predicate(
+    cond: &[Statement],
+    funcs: &HashSet<String>,
+    out: &mut HashSet<String>,
+) {
+    if let Some(last) = cond.last() {
+        mark_predicate_operand(last, funcs, out);
+    }
+}
+
+/// Record `stmt` as a predicate use if it is (or resolves through
+/// negation / `&&` / `||` to) a bare call of a known function.
+fn mark_predicate_operand(stmt: &Statement, funcs: &HashSet<String>, out: &mut HashSet<String>) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            let name = expr_literal_str(&c.name);
+            if !name.is_empty() && funcs.contains(name) {
+                out.insert(name.to_string());
+            }
+        }
+        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => {
+            mark_predicate_operand(&p.commands[0], funcs, out);
+        }
+        StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            mark_predicate_operand(&l.left, funcs, out);
+            mark_predicate_operand(&l.right, funcs, out);
+        }
+        _ => {}
+    }
+}
+
+/// DD#74 definite-return: does every path through this body end in an
+/// explicit `return`?
+fn body_always_returns(stmts: &[Statement]) -> bool {
+    stmts.last().is_some_and(stmt_always_returns)
+}
+
+fn stmt_always_returns(stmt: &Statement) -> bool {
+    match &stmt.kind {
+        StmtKind::ReturnProducer(_) => true,
+        StmtKind::Command(c) => expr_literal_str(&c.name) == "return",
+        StmtKind::If(i) => if_always_returns(i),
+        StmtKind::Group(g) => body_always_returns(&g.body),
+        StmtKind::Redirected(r) => stmt_always_returns(&r.body),
+        StmtKind::Case(c) => case_always_returns(c),
+        _ => false,
+    }
+}
+
+/// An `if` definite-returns iff it has an `else` and every branch
+/// (then, each elif, else) definite-returns.
+fn if_always_returns(i: &If) -> bool {
+    i.else_body
+        .as_ref()
+        .is_some_and(|eb| body_always_returns(eb))
+        && body_always_returns(&i.then_body)
+        && i.elif_clauses.iter().all(|e| body_always_returns(&e.body))
+}
+
+/// A dispatch (`case`) definite-returns iff it has a default arm and
+/// every arm body definite-returns.
+fn case_always_returns(c: &Case) -> bool {
+    c.items.iter().any(|it| it.is_default) && c.items.iter().all(|it| body_always_returns(&it.body))
 }
 
 fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {

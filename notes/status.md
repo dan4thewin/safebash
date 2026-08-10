@@ -12,6 +12,27 @@ _Regenerated 2026-06-19 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
 <!-- END: mk-status -->
 
+### Session 2026-08-09 — DD#74 predicate functions (phases 1-3)
+
+DG established DD#74: a function used in a *boolean context* (an `if`/`elif`/
+`while`/`until` condition, `! f`, or a `&&`/`||` operand) is a **predicate**;
+its status comes only from an explicit `return` — no implicit trailing-command
+status. Shipped native/c/janet, 0 native regressions:
+
+- **Phase 1** (`81c50dc`) — `return N` drives the enclosing condition (it now
+  syncs `test_result_var`, not just `$?`). Fixed c's missing `!` sigil and
+  janet's `if <userfunc>`.
+- **Phase 2** (`0adfc36`) — `return <producer>`: `return CMD` / `return [[ ]]`
+  / `return (( ))`. New `StmtKind::ReturnProducer`; the command form is
+  consumed (never aborts).
+- **Phase 3** — definite-return in a boolean context (**SB4037**):
+  `check_predicate_definite_return` in validate.rs rejects a predicate that can
+  fall off its end. A bare-only void call (a procedure) is unaffected. specs
+  74.13–74.18. Refactored `validate()` (cog 8→4) to clear the complexity gate
+  after touching it.
+
+Prior focus below.
+
 ### Session 2026-07-06/07 — backlog prioritization (DG rule)
 
 DG set the working order for all remaining tasks: **(1) finish partially

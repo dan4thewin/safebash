@@ -98,5 +98,21 @@ No defensive quotes — sash has no word-splitting (DD#22).
 2. `return <producer>`: parser accepts `return` + command / `[[ … ]]` /
    `(( … ))`; lower so the producer sets `$?`/`test_result_var` and `return`
    propagates it (CMD in `return` position never aborts — it is consumed).
-3. Definite-return enforcement for boolean-context functions (new SB code);
+3. Definite-return enforcement for boolean-context functions (**SB4037**);
    remove the implicit-trailing-status predicate path.
+
+### Implemented (native/c/janet, 0 native regressions)
+
+- Phase 1 (`return N` drives the condition) — commit `81c50dc`.
+- Phase 2 (`return <producer>`) — commit `0adfc36`.
+- Phase 3 (definite-return, **SB4037**) — `check_predicate_definite_return`
+  in `validate.rs`. A function is a *predicate* iff it is used in a boolean
+  context (an `if`/`elif`/`while`/`until` condition, a `! f` negation, or a
+  `&&`/`||` operand — the last statement of the condition, plus operands,
+  are the predicate positions). Every path of such a function must end in an
+  explicit `return`: `stmt_always_returns` treats `return`/`return <producer>`
+  as returning; an `if` returns iff it has an `else` and all branches return;
+  a `[[ … ]]` dispatch returns iff it has a default (`||`) arm and all arms
+  return; groups/redirections recurse. A function called **only** bare (a
+  procedure) needs no `return`. Enforced in the front end, so it covers native
+  and c (shared SSA); janet inherits the same front-end diagnostic.

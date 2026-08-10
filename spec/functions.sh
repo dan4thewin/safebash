@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=35
+plan=41
 echo "1..$plan" >&3
 
 set +e
@@ -219,6 +219,40 @@ if has_root; then echo found; else echo none; fi'
 run_sash 'never() { return /bin/false }
 if never; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.12
+
+# --- DD#74 phase 3: a boolean-context function must definite-return ---
+
+# 74.13 a function used in `if` must `return` on all paths — a bare trailing
+#       command is no longer an implicit predicate → compile error
+run_sash 'maybe() { echo hi }
+if maybe; then echo yes; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 74.13
+
+# 74.14 the explicit-return form is accepted
+run_sash 'ok() { return 0 }
+if ok; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.14
+
+# 74.15 a fall-through path (if without else) in a predicate → compile error
+run_sash 'p() { if [[ ok == ok ]]; then return 0; fi }
+if p; then echo y; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 74.15
+
+# 74.16 if/else where both branches return → accepted
+run_sash 'p() { if [[ ok == ok ]]; then return 0; else return 1; fi }
+if p; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 74.16
+
+# 74.17 a void function (no return) called bare is still fine — only a
+#       boolean-context use requires definite-return
+run_sash 'greet() { echo hi }
+greet'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 74.17
+
+# 74.18 `! f` also requires f to be a predicate
+run_sash 'maybe() { echo hi }
+if ! maybe; then echo y; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 74.18
 
 set -e
 tally
