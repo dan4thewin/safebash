@@ -1,9 +1,10 @@
 ---
 title: "janet backend: predicate/function gaps (if <userfunc>, ! in condition, return propagation)"
-status: ready
+status: deferred
 priority: P3
 kind: bug
 depends: []
+effort: effort-janet-backend-parity
 gates:
   - "`! f` (and `! <cmd>`/`! [[ ]]`) in an if/while condition negates correctly in janet (today it lowers to `true` — emit_condition_inline `_ => \"true\"`); un-skip functions.sh 74.3"
   - "pre-existing janet function-spec failures pass or are separately tasked: 17.1 ($(func) capture), 18.1-18.3, 42.1, 48.2"

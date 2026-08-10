@@ -1,6 +1,6 @@
 ---
 title: "Dispatch `[[ … ]]` requires spaces around `==`/`=~`, unlike the boolean test"
-status: open
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -8,6 +8,17 @@ gates:
   - "`[[ $x==a { … } ]]` (compact operator) parses like `[[ $x == a { … } ]]`, OR the boolean test is made to match (both require spaces) — DG decides which direction"
   - "boolean `[[a==a]]` and dispatch `[[$x==a{…}]]` agree on operator spacing"
 ---
+
+## Resolution (2026-08-10, ee3a2fa)
+
+DG chose **loosen** — the dispatch parser now accepts a compact `==`/`=~`,
+matching the boolean test. Tightening was rejected because it would have
+broken the compact boolean tests (`[[a==a]]`, H1/H3/H7) added the same day
+in the DD#59 whitespace work. `parse_test_binary_tail` now calls
+`extract_compact_operator` in its default arm, splitting a `Literal`/`Concat`
+that embeds `==`/`=~` into a proper `Binary` (variable refs preserved).
+Specs: `spec/dispatch.sh` I1–I8 (`dp.co1`–`dp.co8`). 0 native regressions.
+
 
 ## Context
 

@@ -1,9 +1,10 @@
 ---
 title: "janet: implement the getpid-class intrinsics (getenv/argc/getpid/getppid/getcwd/epochseconds/random) instead of exec'ing them"
-status: ready
+status: deferred
 priority: P3
 kind: bug
 depends: []
+effort: effort-janet-backend-parity
 gates:
   - "janet `$(getpid)` / `$(getppid)` → the real pids (os/getpid; getppid via a syscall/ffi or os/proc), not `(os/spawn [\"getppid\"])`"
   - "janet `$(getenv NAME)` → the env value (os/getenv), `$(getcwd)` → os/cwd, `$(epochseconds)` → os/time, `$(argc)` → arg count"
