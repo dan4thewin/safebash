@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-10, late) — dispatch operator parity COMPLETE ════════
+
+**Pushed `ee3a2fa` on `hand-parser`.** Achieved dispatch-boolean parity for compact
+operators (==, =~). Issue: `[[ $x==a { … } ]]` required spaces; `[[ $x==a ]]`
+worked fine. Root cause: parser's `parse_test_binary_tail` returned a Unary
+(implicit `-n`) when no token-level binary operator followed. Fix: added
+`extract_compact_operator` group (4 helpers) to detect and split compact
+operators in Literal and Concat expressions, recreating proper Expr structures
+and preserving variable references. Dispatch form now works identically to
+boolean test: compact, spaced, with variables, with multiple patterns, with `=~`.
+
+Spec: added tests I1–I8 (dp.co1–dp.co8) covering compact parity. Verification:
+spec tests PASSED (1696 native passing, net new ~20 from dispatch tests).
+Complexity: initially flagged high cog, refactored to flatten nesting
+(extract_from_literal, extract_from_concat, match_operator, extract_leading_operator).
+
+Closed task: dispatch-compact-operator-spacing (P3).
+
+## ════════ (prior status below) ════════
+---
+title: Status
+modified: 2026-06-07
 ---
 title: Status
 modified: 2026-06-07
