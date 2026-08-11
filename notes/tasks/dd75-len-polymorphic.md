@@ -1,25 +1,42 @@
 ---
 title: "DD#75 §2 — len is type-polymorphic (array/map → count, string → bytes); ${#x} is Int sugar for $(len x)"
-status: ready
+status: partial
 priority: P2
 kind: task
 depends: []
 gates:
-  - "len <array|map> → element/entry count; len <string> → byte length (DD#12); len <undefined/unknown> → compile error (no garbage)"
-  - "dispatch is on the operand's TYPE (state.collections), not the `$` sigil (retires the len a vs len $a syntactic split)"
-  - "${#x} is Int-typed sugar for $(len x): int n=${#s} and int n=${#a} compile (was SB4030); ${#a} on an array yields the count (was 0)"
-  - "$(( (len a) + 1 )) and $(( ${#a} + 1 )) evaluate the count (see intrinsics-lengths-in-arithmetic)"
-  - "0 native/c/janet spec regressions; specs in types.sh pin the polymorphism + int-typing"
+  - "[done] len <array|map> → count; len <string> → byte length; dispatch on TYPE (state.collections), not the `$` sigil (fixes the `len <string>` garbage)"
+  - "[done] ${#x} is Int-typed sugar: int n=${#s} and int n=${#a} compile (was SB4030); ${#a} on an array yields the count (was 0)"
+  - "[deferred → intrinsics-lengths-in-arithmetic] $(( (len a) + 1 )) and $(( ${#a} + 1 )) evaluate the count (still 1 — arith path unresolved)"
+  - "[deferred] len <undefined> → compile error (today: strlen of empty → 0; SAFE — no garbage/segfault — but not yet a hard reject)"
+  - "[done] 0 native/c/janet spec regressions"
 ---
 
 # DD#75 §2 — polymorphic `len`; `${#x}` Int sugar
 
-Implements DD#75 §2. **Supersedes** `length-operator-int-typing` and
-`len-nonarray-operand-reject`, and satisfies the length half of
-`intrinsics-lengths-in-arithmetic`.
+## Resolution (2026-08-11, partial)
 
-Go semantics: `len x` is an int keyed on `x`'s type. `${#x}` is the operator
-sugar for `$(len x)` (the only surviving `${#…}` form after §5). Fixes the
-scalar-`len` garbage bug by dispatching on type and rejecting unknown names.
+Shipped the core (test-first, `spec/types.sh` 75.1–75.6):
 
-See DD#75 §2. Demo-motivated (DG: "definitely want `$(( (len a) + 1 ))` to work").
+- **`len` type-dispatch** (`transform/expr_handlers.rs::try_len_intrinsic`):
+  a collection → `arrlen` (count), else → `strlen` (bytes). Handles `@a`,
+  bare, and `$var`. Retires the `len a` vs `len $a` syntactic split and fixes
+  the `len <string>` garbage (was `arrlen`/`table_len` on a non-table).
+- **`${#x}` Int + count** (`type_check.rs::parameter_expansion_type` →
+  `strlen`/`arrlen` are `Int`; `transform/expressions.rs::
+  parameter_expansion_to_value` → `${#collection}` lowers to `arrlen`). So
+  `int n=${#s}` (5) and `int n=${#a}` (3) compile, and `${#a}` renders the
+  count. **Supersedes** `length-operator-int-typing`.
+
+## Remaining
+
+- **Arithmetic** (`$(( (len a) + 1 ))`, `$(( ${#a} + 1 ))` → still `1`): the
+  arith path doesn't evaluate the intrinsic/length. Owned by
+  `intrinsics-lengths-in-arithmetic`.
+- **Undefined-`len` hard reject**: `len nope` compiles to `strlen` of an
+  empty var → `0`. This is **safe** (no garbage/segfault — the
+  memory-safety concern from `len-nonarray-operand-reject` is resolved by
+  the dispatch), but DD#75 §2 wants a compile error. Add a
+  `check_len_operand` reject (mirror `check_join_operand`) — deferred to
+  avoid late scope/regression risk (loop-var / param false-positive care).
+

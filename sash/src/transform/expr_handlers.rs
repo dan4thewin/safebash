@@ -183,25 +183,31 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+    // DD#75 §2: dispatch on the operand's TYPE, not the `$` sigil. A
+    // collection (array/map) → element/entry count; anything else (a string
+    // scalar) → byte length. This retires the old `len a` vs `len $a`
+    // syntactic split that made `len <string>` read a non-table (garbage).
     let arg = c.args.first()?;
-    let arg_str = expr_to_string(arg);
-    if let Some(var_name) = arg_str.strip_prefix('$') {
-        // len $var → string length
-        let v = state.lookup(var_name);
-        Some(SsaValue::ParamExpansion {
-            var: v,
-            operator: "strlen".to_string(),
-            operand: String::new(),
-        })
+    let name = match &arg.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            pe.name.clone()
+        }
+        _ => {
+            let s = expr_to_string(arg);
+            s.strip_prefix('$').unwrap_or(&s).to_string()
+        }
+    };
+    let v = state.lookup(&name);
+    let operator = if state.collections.contains(&name) {
+        "arrlen"
     } else {
-        // len arr → array length
-        let v = state.lookup(&arg_str);
-        Some(SsaValue::ParamExpansion {
-            var: v,
-            operator: "arrlen".to_string(),
-            operand: String::new(),
-        })
-    }
+        "strlen"
+    };
+    Some(SsaValue::ParamExpansion {
+        var: v,
+        operator: operator.to_string(),
+        operand: String::new(),
+    })
 }
 
 fn try_keys_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {

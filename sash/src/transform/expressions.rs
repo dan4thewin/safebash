@@ -179,9 +179,17 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
         .as_ref()
         .map(|e| expr_to_string(e))
         .unwrap_or_default();
+    // DD#75 §2: `${#x}` is the length of x dispatched on type — for a
+    // collection it is the element/entry count (`arrlen`), not the byte length
+    // of a scalar slot (`strlen`, which would read 0). `${#s}` stays strlen.
+    let operator = if op == "strlen" && state.collections.contains(&pe.name) {
+        "arrlen".to_string()
+    } else {
+        op.clone()
+    };
     SsaValue::ParamExpansion {
         var,
-        operator: op.clone(),
+        operator,
         operand,
     }
 }

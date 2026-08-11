@@ -138,10 +138,13 @@ fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
     let Some(op) = pe.operator.as_deref() else {
         return env.var_type(&pe.name);
     };
-    if op == ":-" || op == "-" {
-        env.var_type(&pe.name)
-    } else {
-        VarType::String
+    match op {
+        // `${var:-default}` / `${var-default}` preserve the variable's type.
+        ":-" | "-" => env.var_type(&pe.name),
+        // DD#75 §2: a length (`${#x}` → strlen/arrlen) is an int.
+        "strlen" | "arrlen" => VarType::Int,
+        // All other strip ops (`%`, `#`, `/`, …) produce strings.
+        _ => VarType::String,
     }
 }
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=75
+plan=81
 echo "1..$plan" >&3
 
 set +e
@@ -378,6 +378,27 @@ fi
 # 33.22 join on a NON-array operand is a clean compile error, never a segfault
 run_sash 's=hi; echo $(join s ",")'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 33.22
+
+# DD#75 §2 — polymorphic `len`: dispatch on the operand's TYPE, not the `$`
+# sigil (array/map → count; string → byte length; undefined → compile error).
+# 75.1 len on a string → byte length (was garbage: arrlen on a non-table)
+run_sash 's=hello; int n=$(len s); echo $n'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.1
+# 75.2 len on an array → element count
+run_sash 'array a=(1 2 3); int n=$(len a); echo $n'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.2
+# 75.3 len on a map → entry count
+run_sash 'map m=([x]=1 [y]=2); int n=$(len m); echo $n'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.3
+# 75.4 ${#s} (string length) is Int-typed sugar for $(len s): int n=${#s}
+run_sash 's=hello; int n=${#s}; echo $n'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.4
+# 75.5 ${#a} on an array → element count (Int), was SB4030 / 0
+run_sash 'array a=(1 2 3); int n=${#a}; echo $n'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.5
+# 75.6 ${#a} in a string context still renders the count
+run_sash 'array a=(x y z w); echo ${#a}'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk 75.6
 
 set -e
 tally
