@@ -234,6 +234,7 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
     match &stmt.kind {
         StmtKind::Command(c) => {
             check_subscript_types(&c.name, env, errors);
+            check_join_operand(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
             }
@@ -242,6 +243,41 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
             check_subscript_types(&a.value, env, errors);
         }
         _ => {}
+    }
+}
+
+/// DD#75: `join`'s array operand (the first argument — `join arr [sep]`)
+/// must be a declared array/map. A scalar / undefined / literal operand
+/// would segfault in codegen (`arrjoin` on a non-table), so reject it here.
+fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if expr_to_name(&c.name) != "join" {
+        return;
+    }
+    let Some(arr) = c.args.first() else {
+        return;
+    };
+    let name = join_operand_name(arr);
+    if name.is_empty() || env.collections.contains(&name) {
+        return;
+    }
+    errors.push(TypeError {
+        message: format!(
+            "`join` needs an array or map as its first operand — `{name}` is not a \
+             collection; declare it with `array`/`map` (or splat a collection with `@{name}`)"
+        ),
+        span,
+    });
+}
+
+/// The collection name a `join` operand refers to: `@a` (arrvals splat) → `a`;
+/// a bare name → itself; anything else → empty (not a simple name operand).
+fn join_operand_name(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            pe.name.clone()
+        }
+        ExprKind::Literal(s) => s.clone(),
+        _ => String::new(),
     }
 }
 
@@ -368,6 +404,7 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     }
 
     // DD#33: check subscript key types in command args
+    check_join_operand(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
     }

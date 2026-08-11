@@ -1,6 +1,6 @@
 ---
 title: "P1 memory-safety: join <arr> <sep> (explicit separator) segfaults"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -10,24 +10,30 @@ gates:
   - "0 native/c/janet spec regressions; add a spec pinning explicit-separator join"
 ---
 
-# `join <arr> <sep>` segfaults
+# `join` explicit separator + non-array operand (RESOLVED)
 
-## Discovery
+## Resolution (2026-08-11)
 
-Found 2026-08-11 while designing DD#75 (the `*`-join → `$(join …)` replacement):
+The task premise was slightly off. The real picture, once investigated:
 
-```
-array t=(a b c); echo $(join t ",")
-# → Segmentation fault (exit 139)
-```
+- The intrinsic's form was `join SEP arr` (separator **first**). DG decided
+  (2026-08-11) to make it **`join arr SEP`** (array first, separator second —
+  least-surprise, collection-first, consistent with `len`/`keys`). Swapped in
+  `transform/expr_handlers.rs::join_intrinsic`.
+- The **segfault** was a *non-array operand* in the array slot (`join a ","`
+  under the old order parsed `,` as the array; `arrjoin` on a non-table →
+  segfault). Fixed by a compile-time reject in `type_check.rs`
+  (`check_join_operand`): `join`'s first operand must be a declared array/map,
+  else **SB4030** ("`join` needs an array or map as its first operand …").
 
-Bare `$(join t)` (default space) works; passing an explicit separator crashes.
-The runtime signature is `sash_join_args(argv, argc, sep_ptr, sep_len, out_len)`
-(`sash/src/codegen/setup.rs:340`) — the explicit-separator path mishandles the
-separator argument.
+`join "," @a` (old sep-first) is no longer used; `join @a ","` / `join a ","`
+(new order) → `x,y,z`. `join a` (space) unchanged.
 
-## Why it matters
+**Test-first**: `spec/types.sh` 33.19–33.22 (join arr sep, multi-char sep,
+default space, non-array reject). Rust `sash_join_comma`/`sash_join_multi_char_sep`
+updated to the new order. native 0 failing; c/janet at baseline.
 
-DD#75 retires the implicit-join `*` forms (`${a[*]}`, `$*`) in favour of the
-**explicit** `$(join a SEP)`. That replacement must not crash — and a segfault
-is a memory-safety escape in a safe-subset compiler. P1.
+**janet deferred**: janet's join only handles `@a` space-join — bare-name
+`join a` execs `/usr/bin/join`, and a separator errors. Guarded 33.19–33.21 to
+native,c and filed under the janet effort (`janet-join-intrinsic-gaps`).
+

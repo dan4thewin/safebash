@@ -216,21 +216,13 @@ fn try_keys_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 }
 
 fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
-    // join @arr → space-separated
-    // join sep @arr → sep-separated
-    let (sep, arr_expr) = if c.args.len() >= 2 {
-        // Strip quotes from separator
-        let sep_raw = match &c.args[0].kind {
-            ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
-            ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
-                ExprKind::Literal(s) => s.clone(),
-                _ => expr_to_string(&c.args[0]),
-            },
-            _ => expr_to_string(&c.args[0]),
-        };
-        (sep_raw, &c.args[1])
+    // DD#75: `join arr` → space-separated; `join arr sep` → sep-separated.
+    // Array first, separator second (least-surprise, collection-first —
+    // consistent with `len`/`keys`).
+    let (arr_expr, sep) = if c.args.len() >= 2 {
+        (&c.args[0], strip_word_quotes(&c.args[1]))
     } else if c.args.len() == 1 {
-        (" ".to_string(), &c.args[0])
+        (&c.args[0], " ".to_string())
     } else {
         panic!("ICE: join requires at least one argument");
     };
@@ -246,6 +238,20 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         var: v,
         operator: "arrjoin".to_string(),
         operand: sep,
+    }
+}
+
+/// Strip a single layer of quotes from a separator word: a bare/single/
+/// double-quoted literal yields its text; anything richer falls back to
+/// `expr_to_string`.
+fn strip_word_quotes(expr: &Expr) -> String {
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
+            ExprKind::Literal(s) => s.clone(),
+            _ => expr_to_string(expr),
+        },
+        _ => expr_to_string(expr),
     }
 }
 

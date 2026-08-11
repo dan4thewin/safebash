@@ -2480,7 +2480,7 @@ echo "$(join @colors)"
 fn sash_join_comma() {
     let src = r#"
 array colors=("red" "green" "blue")
-echo "$(join ',' @colors)"
+echo "$(join @colors ',')"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "red,green,blue\n");
@@ -2490,7 +2490,7 @@ echo "$(join ',' @colors)"
 fn sash_join_multi_char_sep() {
     let src = r#"
 array items=("a" "b" "c")
-echo "$(join ' | ' @items)"
+echo "$(join @items ' | ')"
 "#;
     let (out, _) = run_bash_native(src, &[]);
     assert_eq!(out, "a | b | c\n");

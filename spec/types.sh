@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=71
+plan=75
 echo "1..$plan" >&3
 
 set +e
@@ -360,6 +360,24 @@ run_sash 'map m=([a]=1 [b]=2); printf "%s\n" $(keys m)'
 # 33.18 $(keys m) in scalar-assignment context → SB5025 (array splat in scalar)
 run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.18
+
+# 33.19–33.21 join arr SEP — DD#75: array first, separator second.
+# (janet's join intrinsic only handles the `@a` space-join today: it execs
+# a bare-name `join a` as an external command, and errors on a separator —
+# guard to native,c; the arg-order + native reject are backend-independent.)
+if in_modes native,c; then
+    run_sash 'array a=(x y z); echo $(join a ",")'
+    [[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 33.19
+    run_sash 'array a=(x y z); echo $(join @a ", ")'
+    [[ $rc = 0 && $out = "x, y, z" && -z $err ]]; chk 33.20
+    run_sash 'array a=(x y z); echo $(join a)'
+    [[ $rc = 0 && $out = "x y z" && -z $err ]]; chk 33.21
+else
+    skip_chk 33.19; skip_chk 33.20; skip_chk 33.21
+fi
+# 33.22 join on a NON-array operand is a clean compile error, never a segfault
+run_sash 's=hi; echo $(join s ",")'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 33.22
 
 set -e
 tally
