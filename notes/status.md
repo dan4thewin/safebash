@@ -1,3 +1,30 @@
+## ════════ STATUS (2026-08-11, late) — DD#75 implementation: 3 parts done ════════
+
+Implementing DD#75 in DG's recommended order, **test-first** with spec tests.
+Pushed on `hand-parser`.
+
+**DONE (committed + pushed):**
+1. `keys-splat-context-bypass` **P1** (`6742554`) — `$(keys m)` bypassed the
+   SB5025 splat guard → silent join + garbage bytes (memory-unsafe). Added
+   `is_keys_splat_expr`; SB5025 outside for-in. Also fixed a stray `dp.co6`.
+2. `bug-join-explicit-separator-segfault` **P1** (`2c78be7`) — DG chose
+   `join arr SEP` (array-first); swapped arg order; `check_join_operand` rejects
+   a non-array operand (SB4030) — no more segfault. janet join gaps guarded +
+   filed (`janet-join-intrinsic-gaps`).
+3. `dd75-len-polymorphic` **P2 core** (`039ed7b`) — `len` dispatches on TYPE
+   (collection→count, string→bytes); `${#x}` is Int sugar (`int n=${#a}`→3,
+   `int n=${#s}`→5). Demo works. Partial: arith + undefined-reject deferred.
+
+All three: native 0 failing; c 13 / janet 36 == clean baseline.
+
+**REMAINING DD#75 (larger, P3 language changes — not started):**
+- `dd75-keys-map-only` (P3) — reject `keys` on indexed arrays.
+- `dd75-special-var-sugar` (P3) — `$?`/`$!`/`$$` → sugar; touches DD#24, converter, docs.
+- `dd75-args-model` (P3) — function args → implicit `args` array; invasive.
+- `dd75-retire-bracket-subscripts` (P3) — retire `[@]`/`[*]`; migration.
+- Follow-ons: `intrinsics-lengths-in-arithmetic` (arith len), `bug-subscript-assign-bare-key`.
+
+## ════════ (prior status below) ════════
 ## ════════ STATUS (2026-08-11) — DD#75 drafted; collections/positionals redesign ════════
 
 **DG design session → DD#75 "Named/keyword forms canonical; `$`-sigils sugar;
