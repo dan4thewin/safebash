@@ -1,6 +1,7 @@
 ---
 title: "`len` on a non-array operand: garbage (string) / segfault (undefined) — reject at compile time"
-status: ready
+status: superseded
+superseded_by: dd75-len-polymorphic (DD#75 §2)
 priority: P1
 kind: bug
 depends: []

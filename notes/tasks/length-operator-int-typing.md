@@ -1,6 +1,7 @@
 ---
 title: "Int-type the `${#…}` length operator: `int n=${#s}` and `int n=${#a[@]}`"
-status: ready
+status: superseded
+superseded_by: dd75-len-polymorphic (DD#75 §2)
 priority: P2
 kind: bug
 depends: []

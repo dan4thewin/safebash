@@ -1,3 +1,32 @@
+## ════════ STATUS (2026-08-11) — DD#75 drafted; collections/positionals redesign ════════
+
+**DG design session → DD#75 "Named/keyword forms canonical; `$`-sigils sugar;
+collections uniform"** (`notes/decisions/DD75-…md`, status accepted). Captures a
+project-wide **pivot**: bash-compat → unambiguous/self-consistent/symmetrical/
+transparent. Codifies five rules:
+1. `$?`/`$!`/`$$` → sugar for `$(status)`/`$(getcpid)`/`$(getpid)` (inverts
+   journal-050; keyword canonical). DG confirmed incl. `$?`.
+2. `len` type-polymorphic (array/map→count, string→bytes); `${#x}` Int sugar.
+3. `keys` map-only (indexed → reject).
+4. `@a` sole splat; retire `${a[@]}`/`${a[*]}`/`${#a[@]}`/`${!a[@]}`.
+5. Function args = implicit 1-indexed `args` array; `$1`→`${args[1]}`,
+   `$@`→`@args`, `$#`→`${#args}`, `$*` removed→`$(join args)`.
+
+**Bugs surfaced while designing (filed):**
+- `keys-splat-context-bypass` **P1** — `$(keys m)` in cmd-arg position bypasses
+  the SB5025 guard → silent join + **garbage bytes** (memory-unsafe). Root:
+  `check_argv_splat` hard-coded to `$(argv)`.
+- `bug-join-explicit-separator-segfault` **P1** — `$(join a SEP)` segfaults.
+- `bug-subscript-assign-bare-key` P2 — `a[i]=` bare key accepted, read rejected.
+
+**Task breakdown:** `dd75-special-var-sugar`, `dd75-len-polymorphic` (P2, demo),
+`dd75-keys-map-only`, `dd75-args-model`, `dd75-retire-bracket-subscripts`.
+Superseded: `length-operator-int-typing`, `len-nonarray-operand-reject`.
+
+**Implementation NOT started** — DD lands first. Next: fix the two P1
+memory-safety bugs (independent of the language change), then §2 (len) for the demo.
+
+## ════════ (prior status below) ════════
 ## ════════ STATUS (2026-08-10, late) — dispatch operator parity COMPLETE ════════
 
 **Pushed `ee3a2fa` on `hand-parser`.** Achieved dispatch-boolean parity for compact
