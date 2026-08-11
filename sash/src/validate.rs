@@ -1875,7 +1875,7 @@ fn check_argv_splat_decl(d: &Declaration, diags: &mut Vec<Diagnostic>) {
 fn check_for_header_splat(f: &For, diags: &mut Vec<Diagnostic>) {
     let mut argv_splats = 0;
     for w in &f.words {
-        if is_argv_splat_expr(w) {
+        if is_array_splat_source(w) {
             argv_splats += 1;
         } else if is_disposition_splat(w) {
             // DD#69 addendum: the empty-disposition is command-argument-only;
@@ -1965,6 +1965,16 @@ fn argv_splat_self_diag(expr: &Expr) -> Option<Diagnostic> {
                 .to_string(),
         ));
     }
+    if is_keys_splat_expr(expr) {
+        return Some(Diagnostic::error_span(
+            expr.span,
+            "SB5025",
+            "`$(keys m)` is an array splat — it is valid only as the sole source \
+             of a for-in loop (`for k in $(keys m)`); it cannot be joined into a \
+             scalar or passed as a command argument"
+                .to_string(),
+        ));
+    }
     None
 }
 
@@ -2037,6 +2047,20 @@ fn quoted_splat_diag(span: Span) -> Diagnostic {
 /// `$(argv)` / `$(argv N)` — the array-splat command substitution.
 fn is_argv_splat_expr(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "argv"))
+}
+
+/// `$(keys m)` — the map-keys array-splat command substitution. Like
+/// `$(argv)`, it is legal only as a for-in sole source; SB5025 elsewhere
+/// (DD#75 §3 — closes the memory-unsafe silent-join / garbage bypass where
+/// keys slipped past the argv-only context guard).
+fn is_keys_splat_expr(expr: &Expr) -> bool {
+    matches!(&expr.kind, ExprKind::CommandSubstitution(stmts) if cmdsub_command_is(stmts, "keys"))
+}
+
+/// An array-returning command-sub splat legal as a for-in source:
+/// `$(argv …)` or `$(keys m)`.
+fn is_array_splat_source(expr: &Expr) -> bool {
+    is_argv_splat_expr(expr) || is_keys_splat_expr(expr)
 }
 
 /// DD#69 §3: `echo` join-and-prints its arguments, so a named-array splat

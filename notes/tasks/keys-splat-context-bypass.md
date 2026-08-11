@@ -1,6 +1,6 @@
 ---
 title: "P1 memory-safety: $(keys m) bypasses the SB5025 array-splat context guard (silent join + garbage bytes)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []

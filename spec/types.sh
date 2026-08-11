@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=69
+plan=71
 echo "1..$plan" >&3
 
 set +e
@@ -352,6 +352,14 @@ run_sash 'array a=(one two three); echo $(join @a)'
 # 33.16 the reject also fires for a mixed splat (`echo x @a y`)
 run_sash 'array a=(one two); echo x @a y'
 [[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.16
+
+# 33.17 $(keys m) is an array splat: in command-arg position it is SB5025
+# (the DD#60/#75 context rule, same as $(argv)) — not a silent space-join.
+run_sash 'map m=([a]=1 [b]=2); printf "%s\n" $(keys m)'
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.17
+# 33.18 $(keys m) in scalar-assignment context → SB5025 (array splat in scalar)
+run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.18
 
 set -e
 tally

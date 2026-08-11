@@ -152,10 +152,10 @@ run_sash 'x=a; [[ $x==a { echo yes } || { echo no } ]]'
 # I5 dispatch form with compact operator, multiple patterns
 run_sash '[[ a==a b c { echo a } || { echo no } ]]'
 [[ $rc = 0 && $out = "a" && -z $err ]]; chk dp.co5
-# I6 dispatch compact with negation
-run_sash 'x=b; if [[ $x==a { echo yes } || { echo no } ]]; then echo outer; fi'
-[[ $rc = 0 && $out = "no
-outer" && -z $err ]]; chk dp.co6
+# I6 dispatch compact as a statement inside an if body (dispatch is a
+# statement, not a boolean condition — SB4028 guards the condition slot)
+run_sash 'x=b; if [[ -n $x ]]; then [[ $x==a { echo yes } || { echo no } ]]; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk dp.co6
 # I7 dispatch compact `=~` with variable
 run_sash 'x=abc; [[ $x=~b { echo yes } || { echo no } ]]'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk dp.co7
