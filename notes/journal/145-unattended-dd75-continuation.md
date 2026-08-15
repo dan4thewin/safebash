@@ -48,3 +48,22 @@ gap appended to janet-join-intrinsic-gaps.
 
 Note: the For-arm addition means for-in headers are now type-checked in
 general (previously only the body was) — a latent coverage gap closed.
+
+## Task 3 — intrinsics-lengths-in-arithmetic (PARTIAL: gate 1 done)
+
+DG demo case `$(( (len a) + 1 ))` now works. `funccall_to_ssa` intercepts an
+int-returning intrinsic (`is_arith_int_intrinsic` → `len`), reconstructs a
+Command from the sexpr args (`reconstruct_intrinsic_command`), and reuses
+`try_native_intrinsic` → the arrlen/strlen ParamExpansion, instead of the
+user-int-func path (`inline_int_func`) returning 0. `(len a)`→count,
+`(len s)`→bytes, `(len m)`→entries; nested + user int-fns still work.
+
+Test-first: arithmetic.sh 58.10–58.13, green in native/c/**janet** (janet
+handles `(len a)` in arith natively — no guard needed). native 0 failing;
+c 13 / janet 36 == baseline. (2 codegen_tests fail pre-existing declare-rot.)
+
+Deferred (filed `arith-braced-length`, P2): `$(( ${#a} + 1 ))` still 0 — a
+PARSE-level gap (arith lexer reads `${#a}` as var `#a`). Fix sketch: lexer
+rewrites `${#a}` into the `(len a)` FuncCall shape so the transform side
+(just added) needs no new arm. Also deferred: string-intrinsic-in-arith
+reject.

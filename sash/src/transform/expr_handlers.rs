@@ -438,11 +438,57 @@ fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaVa
 }
 
 fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
+    // DD#58/#75: an int-returning intrinsic (e.g. `len`) called as an arith
+    // sexpr `(len a)` must EVALUATE the intrinsic — not flow through the
+    // user-int-func path (`inline_int_func`), which finds no user body and
+    // returns 0. Reconstruct a Command from the sexpr args and reuse the
+    // normal intrinsic builder. Only int-returning intrinsics are intercepted;
+    // a string intrinsic stays an IntFuncCall (handled elsewhere).
+    if is_arith_int_intrinsic(name) {
+        if let Some(cmd) = reconstruct_intrinsic_command(name, args) {
+            if let Some(v) = try_native_intrinsic(name, &cmd, state) {
+                return v;
+            }
+        }
+    }
     let ssa_args: Vec<SsaValue> = args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
     SsaValue::IntFuncCall {
         name: name.to_string(),
         args: ssa_args,
     }
+}
+
+/// Int-returning intrinsics that evaluate as an arith sexpr operand. `len`
+/// (element/entry count or byte length) is the one in `try_native_intrinsic`;
+/// the string intrinsics (join/keys/toupper/…) are not int and are excluded.
+fn is_arith_int_intrinsic(name: &str) -> bool {
+    name == "len"
+}
+
+/// Rebuild a `Command` for an int intrinsic from its arith sexpr args, so the
+/// normal intrinsic builder can consume it. Only simple name/number operands
+/// are supported (`len a`, `len $a`); a complex operand returns `None` (the
+/// caller falls back to the IntFuncCall path).
+fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Command> {
+    let mut cmd_args = Vec::with_capacity(args.len());
+    for a in args {
+        let lit = match a {
+            ArithExpr::Var(n) | ArithExpr::DollarVar(n) => n.clone(),
+            ArithExpr::Literal(n) => n.to_string(),
+            _ => return None,
+        };
+        cmd_args.push(Expr {
+            kind: ExprKind::Literal(lit),
+            span: Span::new(0, 0),
+        });
+    }
+    Some(Command {
+        name: Expr {
+            kind: ExprKind::Literal(name.to_string()),
+            span: Span::new(0, 0),
+        },
+        args: cmd_args,
+    })
 }
 
 /// Convert IR arithmetic op to SSA arithmetic op.

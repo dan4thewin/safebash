@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=55
+plan=59
 echo "1..$plan" >&3
 
 set +e
@@ -273,6 +273,21 @@ if in_modes native,c; then
 else
     skip_chk 26.8; skip_chk 26.9; skip_chk 26.10
 fi
+
+# --- DD#58/#75: int-returning intrinsics evaluate in $(( )) sexpr calls ---
+# DG demo: `$(( (len a) + 1 ))` must yield count+1 (was len→0 → 1).
+# 58.10 (len a) in arith yields the element count
+run_sash 'array a=(x y z); int n=$(( (len a) + 1 )); echo $n'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.10
+# 58.11 bare (len a) in arith (no +1)
+run_sash 'array a=(a b c d); echo $(( (len a) ))'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.11
+# 58.12 (len s) on a string in arith → byte length
+run_sash 's=hello; int n=$(( (len s) * 2 )); echo $n'
+[[ $rc = 0 && $out = "10" && -z $err ]]; chk 58.12
+# 58.13 (len m) on a map in arith → entry count
+run_sash 'map m=([a]=1 [b]=2 [c]=3); echo $(( (len m) ))'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 58.13
 
 set -e
 tally

@@ -1,20 +1,46 @@
 ---
-title: "Intrinsics and lengths in arithmetic: `$(( (len a) + 1 ))`, `$(( ${#a[@]} + 1 ))`"
-status: ready
+title: "Intrinsics and lengths in arithmetic: `$(( (len a) + 1 ))`, `$(( ${#a} + 1 ))`"
+status: partial
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "`int n=$(( (len a) + 1 ))` yields count+1 (currently silently 0 → 1) — the DD#58 arith sexpr `(len a)` must evaluate the intrinsic, not inline_int_func's no-body→0 path"
-  - "`$(( ${#a[@]} + 1 ))` / `$(( ${#s} + 1 ))` yield length+1 (currently 0 inside arith)"
-  - "int-returning intrinsics in arith: len, argc, epochseconds, dtoi, signum work; string intrinsics (toupper/join/basename/…) → a clean compile error in arith"
-  - "`echo $(( <funccall> ))` works (currently rejects — arith result in a string/echo context)"
-  - "0 native spec regressions; specs across native/c/janet"
+  - "[done] `int n=$(( (len a) + 1 ))` yields count+1 — the DD#58 arith sexpr `(len a)` evaluates the intrinsic (len array/map→count, string→bytes)"
+  - "[deferred → arith-braced-length] `$(( ${#a} + 1 ))` / `$(( ${#s} + 1 ))` yield length+1 (still 0 — parse-level: the arith lexer reads `${#a}` as a var named `#a`)"
+  - "[deferred] string intrinsics (toupper/join/basename/…) in arith → a clean compile error"
+  - "[was already ok] `echo $(( <funccall> ))` compiles (arith-in-arg)"
+  - "[done] 0 native/c/janet spec regressions"
 ---
 
 # Intrinsics / lengths don't evaluate inside arithmetic
 
-## Discovery
+## Resolution status (2026-08-14, unattended — partial)
+
+**Gate 1 done (the DG demo case):** `(len a)` as a `$(( ))` sexpr now
+evaluates. `funccall_to_ssa` (`transform/expr_handlers.rs`) intercepts an
+int-returning intrinsic (`is_arith_int_intrinsic` — `len` today),
+reconstructs a `Command` from the sexpr args
+(`reconstruct_intrinsic_command`) and reuses `try_native_intrinsic` →
+the `arrlen`/`strlen` `ParamExpansion`, instead of the user-int-func path
+(`inline_int_func`) that returned 0. `(len a)`→count, `(len s)`→bytes,
+`(len m)`→entries; nested `(len a)+(len b)` and user `-> int` fns still
+work. Specs `spec/arithmetic.sh` 58.10–58.13, green in native/c/janet.
+
+**Deferred (own task `arith-braced-length`):** `$(( ${#a} + 1 ))` and
+`$(( ${#s} + 1 ))` still read 0 — a **parse-level** gap: the arith lexer
+`scan_arith_braced_var` (`parse/arith.rs`) reads `${#a}` as a variable
+named `#a`. Fixing needs a length-aware arith token → `ArithExpr` →
+`arith_to_ssa` producing the `arrlen`/`strlen` `ParamExpansion` (dispatch
+on `state.collections`, like `try_len_intrinsic`). Multi-layer; deferred
+from the unattended pass.
+
+**Deferred:** a string intrinsic (`toupper`/`join`/…) in an arith sexpr
+should be a clean compile error (today it flows to `IntFuncCall`→0). Add
+to `is_arith_int_intrinsic`'s siblings — a reject arm for known
+string intrinsics.
+
+## Original notes
+
 
 DG (2026-08-04), after choosing Option C for `$(int_func)` capture:
 "definitely want `$(( (len a) + 1 ))` to work." Part 2 of that work (Part 1 —
