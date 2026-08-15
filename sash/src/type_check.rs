@@ -327,6 +327,13 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
 }
 
 fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    // DD#75 §4: a subscript index is a numeric literal or a `$`-sigilled
+    // value; a bare word is a string key (map-only). Enforce on the write
+    // path as on the read path (check_subscript_key_kind), so `a[i]=…` on an
+    // indexed array is SB4030 just like the read `${a[i]}`.
+    if let Some(idx) = &a.index {
+        check_subscript_key_kind(&a.name, idx, span, env, errors);
+    }
     let rtype = expr_type(&a.value, env);
     let ltype = env.var_type(&a.name);
     // Bare assignment: variable gets the RHS type on first use.

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=81
+plan=83
 echo "1..$plan" >&3
 
 set +e
@@ -123,6 +123,14 @@ run_sash 'array a=(x y z); i=1; a[$i]=ZZ; echo ${a[1]}'
 # 33.8 dynamic key assignment m[$k]=v (write, map)
 run_sash 'map m=([a]=1); k=b; m[$k]=2; echo ${m[b]}'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 33.8
+
+# 33.11 bare string-key ASSIGNMENT on an indexed array → compile error
+# (subscript-sigil invariant, DD#75 §4: enforce on write as on read 33.3)
+run_sash 'array a=(x y z); a[i]=Q; echo ${a[0]}'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 33.11
+# 33.12 literal + sigilled index assignments still work (not over-rejected)
+run_sash 'array a=(x y z); i=1; a[$i]=P; a[2]=Q; echo ${a[$i]}${a[2]}'
+[[ $rc = 0 && $out = "PQ" && -z $err ]]; chk 33.12
 
 # 33.9 flat map literal map m=(a 1 b 2) → reject; require [k]=v form
 run_sash 'map m=(a 1 b 2); echo ${m[a]}'
