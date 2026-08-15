@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=41
+plan=43
 echo "1..$plan" >&3
 
 set +e
@@ -18,6 +18,23 @@ echo $x'
 run_sash 'fn greet { echo hello; }
 greet'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 17.2
+
+# 17.3 inline `$(f)` stdout capture in ARGUMENT position (was an ICE panic;
+# string-func-capture-in-arg-ice, DG: lift-and-print). Prints greet's stdout,
+# same as the two-step `s=$(greet); echo $s`. (native only — c/janet don't
+# implement CaptureStart/End: c emits them as TODO and runs the fn straight to
+# stdout, janet execs the fn name. Same pre-existing capture gap as 17.1.)
+if in_modes native; then
+    run_sash 'fn greet { echo hi; }
+echo $(greet)'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 17.3
+    # 17.4 inline capture concatenated with a literal argument
+    run_sash 'fn greet { echo world; }
+echo "hello-$(greet)"'
+    [[ $rc = 0 && $out = "hello-world" && -z $err ]]; chk 17.4
+else
+    skip_chk 17.3; skip_chk 17.4
+fi
 
 # 18.1 local fn visible only within block
 run_sash 'fn outer {

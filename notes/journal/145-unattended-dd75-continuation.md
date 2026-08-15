@@ -102,3 +102,22 @@ Remaining DD#75 backlog = the 3 invasive language changes
 hard reject). These are larger/migration-bearing — better as focused
 efforts. string-func-capture-in-arg-ice is decision-gated (works vs reject)
 — left for DG.
+
+## Task 4 — string-func-capture-in-arg-ice (DONE, DG: lift-and-print)
+
+`echo $(greet)` ICE'd (`lower_func_call_value` non-constant panic). DG chose
+lift-and-print (code unreleased → no migration risk; convert Qs as follow-ups).
+
+Investigation: the two-step `s=$(f)` works via `try_capture_inline`
+(CaptureStart/End inline-capture), which arg-position lacked. First attempt (lift
+`FuncCall` → `Assign{tmp,FuncCall}`) only fixed const-foldable fns — runtime fns
+(getpid) still ICE'd. Correct fix: generalized `try_capture_inline` into a shared
+`capture_func_into(target,fname,args,…)`; the `lift_int_func_calls` FuncCall arm
+captures into a `__strcap_<f>` temp. Now runtime capture works too
+(getpid→live pid). Args are dropped upstream by `func_call_capture` for string
+`$(f)` (pre-existing), so none threaded in arg position.
+
+Test-first: functions.sh 17.3/17.4 (native; c/janet guarded — they don't
+implement CaptureStart/End: c → TODO+straight-to-stdout, janet → execs fn name;
+filed cjanet-function-stdout-capture). native 0 failing; c 13 / janet 36 ==
+baseline.

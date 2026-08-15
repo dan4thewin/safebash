@@ -21,6 +21,23 @@ pub(super) fn lift_int_func_calls(
                 .collect();
             inline_int_func(&name, &lifted_args, ssa, state, block)
         }
+        SsaValue::FuncCall(name) => {
+            // Option A (string-func-capture-in-arg-ice): a non-int function's
+            // `$(f)` stdout capture in argument position. Reuse the assignment
+            // path's capture-inline machinery (CaptureStart/End) to inline the
+            // body and capture its stdout into a temp, then use the temp — so
+            // it works for runtime output too, not just const-foldable stdout.
+            // (Args are dropped upstream by `func_call_capture` for a string
+            // `$(f)`, so none are threaded here; matches the pre-existing shape.)
+            let temp = format!("__strcap_{name}");
+            match super::stmt_handlers::capture_func_into(&temp, &name, &[], state, ssa, *block) {
+                Some(new_block) => {
+                    *block = new_block;
+                    SsaValue::Var(state.lookup(&temp))
+                }
+                None => SsaValue::FuncCall(name),
+            }
+        }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lift_int_func_calls(*left, ssa, state, block);
             let r = lift_int_func_calls(*right, ssa, state, block);

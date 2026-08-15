@@ -1046,6 +1046,24 @@ fn try_capture_inline(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> Option<BlockId> {
+    let func_args = extract_func_args(&a.value);
+    capture_func_into(&a.name, fname, &func_args, state, ssa, block)
+}
+
+/// Inline the body of function `fname` (with `func_args` bound to its
+/// positionals) between `CaptureStart` / `CaptureEnd`, storing the captured
+/// stdout into the variable `target_name`. Returns the restore block, or
+/// `None` when no body is registered. Shared by the assignment path
+/// (`s=$(f)`) and the argument-position capture lift
+/// (`echo $(f)` — string-func-capture-in-arg-ice).
+pub(super) fn capture_func_into(
+    target_name: &str,
+    fname: &str,
+    func_args: &[Expr],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
     let body = state.function_bodies.get(fname).cloned()?;
     let locals = collect_local_vars(&body);
 
@@ -1053,8 +1071,7 @@ fn try_capture_inline(
     let (saved, saved_argc) = save_positionals(state);
     let saved_locals = save_locals(fname, &locals, state, ssa, block);
 
-    let func_args = extract_func_args(&a.value);
-    setup_func_args(&func_args, state, ssa, block);
+    setup_func_args(func_args, state, ssa, block);
 
     let call_block = ssa.new_block(&format!("cap_{}", fname));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -1065,7 +1082,7 @@ fn try_capture_inline(
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
-    let target = state.define(&a.name);
+    let target = state.define(target_name);
     ssa.block_mut(restore_block)
         .insts
         .push(SsaInst::CaptureEnd { target });

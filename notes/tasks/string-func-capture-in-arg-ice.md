@@ -1,6 +1,6 @@
 ---
 title: "ICE: capturing a string function's stdout as a command argument (`echo $(greet)`)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -10,9 +10,27 @@ gates:
   - "0 native spec regressions; specs across native/c/janet"
 ---
 
-# `echo $(string_func)` ICEs (non-constant elidable function call)
+## Resolution (2026-08-14, unattended — DG: lift-and-print)
 
-## Discovery
+Inline `$(f)` stdout capture in argument position now works (native), for
+runtime output too — not just const-foldable. Generalized the assignment
+path's capture machinery into a shared `capture_func_into(target, fname,
+args, …)` (`transform/stmt_handlers.rs`) that inlines the body between
+`CaptureStart`/`CaptureEnd` and stores stdout into `target`. `handle_plain_assign`
+(the `s=$(f)` path) now calls it; the `lift_int_func_calls` `FuncCall` arm
+(`transform/functions.rs`, reached from `emit_external_command`'s
+`lift_int_func_args`) captures into a `__strcap_<f>` temp and returns the temp
+var — removing the `lower_func_call_value` non-constant ICE.
+
+Verified native: `echo $(greet)`→hi, `echo "hello-$(greet)"`→hello-world,
+runtime `echo $(now-with-getpid)` captures the live value, multi-echo fns,
+two-step still works. Test-first: `spec/functions.sh` 17.3/17.4 (native;
+guarded c/janet).
+
+**c/janet deferred**: they don't implement `CaptureStart`/`CaptureEnd` (c emits
+`/* TODO inst */` and runs the fn straight to stdout; janet execs the fn name).
+Pre-existing (cf. janet:17.1). Filed `cjanet-function-stdout-capture`.
+
 
 Found 2026-08-04 while implementing Option C (int-func `$()` capture). This
 is a **pre-existing**, separate gap (unrelated to int functions): capturing a
