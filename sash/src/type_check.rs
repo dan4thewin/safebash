@@ -238,6 +238,7 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
         StmtKind::Command(c) => {
             check_subscript_types(&c.name, env, errors);
             check_join_operand(c, stmt.span, env, errors);
+            check_keys_operand(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
             }
@@ -247,6 +248,32 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
         }
         _ => {}
     }
+}
+
+/// DD#75 §3: `keys` is map-only. An indexed array's keys are trivially
+/// `0..len-1` and a scalar has none, so `keys <non-map>` is a compile error
+/// (was blank/null output for an indexed array). Only maps carry string keys.
+fn check_keys_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if expr_to_name(&c.name) != "keys" {
+        return;
+    }
+    let Some(arg) = c.args.first() else {
+        return;
+    };
+    let name = join_operand_name(arg);
+    if name.is_empty() || env.assoc_arrays.contains(&name) {
+        return;
+    }
+    let what = if env.collections.contains(&name) {
+        "an indexed array — its keys are 0..len-1; iterate with \
+         `for (( i=0; i < $(len a); i++ ))` or values with `@a`"
+    } else {
+        "not a map — only maps have keys"
+    };
+    errors.push(TypeError {
+        message: format!("`keys` needs a map — `{name}` is {what}"),
+        span,
+    });
 }
 
 /// DD#75: `join`'s array operand (the first argument — `join arr [sep]`)
@@ -307,6 +334,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
         StmtKind::Declaration(d) => check_declaration(d, stmt.span, env, errors),
         StmtKind::Command(c) => check_command(c, stmt.span, env, errors),
         StmtKind::If(if_stmt) => check_if(if_stmt, env, errors),
+        StmtKind::For(f) => check_for(f, env, errors),
         // Default: descend into every nested statement body via
         // child_bodies(). Covers For, While, Function, Case (no
         // per-arm pre-work) and the wrapping StmtKinds Pipeline,
@@ -415,6 +443,7 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
 
     // DD#33: check subscript key types in command args
     check_join_operand(c, span, env, errors);
+    check_keys_operand(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
     }
@@ -535,6 +564,18 @@ fn check_exit_arg(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeE
         ),
         span,
     });
+}
+
+fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    // The for-in header words are expressions, not a child body — visit them so
+    // a `$(keys …)` / `$(join …)` splat source (or a bad subscript) in the
+    // header is type-checked (DD#75 §3), then descend into the loop body.
+    for w in &f.words {
+        check_subscript_types(w, env, errors);
+    }
+    for s in &f.body {
+        check_stmt(s, env, errors);
+    }
 }
 
 fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {

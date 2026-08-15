@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=83
+plan=86
 echo "1..$plan" >&3
 
 set +e
@@ -407,6 +407,24 @@ run_sash 'array a=(1 2 3); int n=${#a}; echo $n'
 # 75.6 ${#a} in a string context still renders the count
 run_sash 'array a=(x y z w); echo ${#a}'
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk 75.6
+
+# DD#75 §3 — `keys` is map-only (an indexed array's keys are trivially
+# 0..len-1; a scalar has none). Only maps have non-trivial string keys.
+# 75.7 keys on a map → the string keys (still works)
+# (janet lacks the keys intrinsic — it execs `keys m` as an external command,
+# same class as the join gap; pre-existing, cf. janet:33.10. Guard to native,c.)
+if in_modes native,c; then
+    run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k"; done'
+    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.7
+else
+    skip_chk 75.7
+fi
+# 75.8 keys on an indexed array → compile error (was blank/null output)
+run_sash 'array a=(x y z); for k in $(keys a); do echo "$k"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.8
+# 75.9 keys on a scalar → compile error
+run_sash 's=hi; for k in $(keys s); do echo "$k"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.9
 
 set -e
 tally

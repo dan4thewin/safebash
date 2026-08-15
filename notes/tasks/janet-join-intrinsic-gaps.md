@@ -26,3 +26,11 @@ works). Two gaps:
 
 Guarded `spec/types.sh` 33.19–33.21 to `native,c` meanwhile. The arg-order and
 the native non-array reject (SB4030) are backend-independent and already land.
+
+## Addendum (2026-08-14): keys intrinsic also missing in janet
+
+Same class: janet execs `$(keys m)` as an external command (`("keys" "m"):
+No such file or directory`) instead of emitting the map-keys intrinsic.
+Pre-existing (cf. `janet:33.10`). Surfaced again by DD#75 §3 spec 75.7
+(guarded to native,c). Gate: janet `for k in $(keys m)` iterates the map's
+string keys. Fold into the janet collection-intrinsics work.
