@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=78
+plan=84
 echo "1..$plan" >&3
 
 set +e
@@ -395,6 +395,31 @@ if in_modes native,c; then
 else
     skip_chk sx.9; skip_chk sx.10; skip_chk sx.11
 fi
+
+# Category B — a STRING producer in a sexpr is a type error (SB4030), not silent
+# 0: it sits in int-producer position; capture it first with $(). Compile-time →
+# all backends. sx.14 also closes the getenv validator-bypass ($(( (getenv X) ))
+# silently compiled to 0, sidestepping the word form's SB5020 taint reject).
+# sx.12 toupper (string) in a sexpr → reject
+run_sash 's=hi; echo $(( (toupper s) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.12
+# sx.13 join (string) in a sexpr → reject
+run_sash 'array a=(x y); echo $(( (join a) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.13
+# sx.14 getenv (tainted string) in a sexpr → reject (was a validator bypass)
+run_sash 'echo $(( (getenv HOME) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.14
+# sx.15 keys (splat) in a sexpr → reject
+run_sash 'map m=([a]=1); echo $(( (keys m) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.15
+# sx.16 a user string function in a sexpr → reject (also stops side-effect run)
+run_sash 'fn g { echo hi; }; echo $(( (g) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.16
+
+# Q2 — dtoi/itod rejected in a sexpr (capture via $(): `int n=$(dtoi 2 "3.14")`).
+# sx.17 itod (string result) in a sexpr → reject
+run_sash 'echo $(( (itod 2 5) ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.17
 
 set -e
 tally

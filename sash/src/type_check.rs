@@ -134,6 +134,93 @@ fn is_int_returning_intrinsic(name: &str) -> bool {
     )
 }
 
+/// DD#58/Option C: reject a string producer used in an arithmetic sexpr. The
+/// sexpr `(f …)` position expects an INT producer (an int intrinsic or a user
+/// `-> int` function); a string producer there is a type error — it belongs in
+/// a `$()` capture. Walks every `$(( ))` expr and bare `(( ))` test in the
+/// statement (and its nested bodies).
+fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    walk_all_exprs(stmt, &mut |e| {
+        if let ExprKind::Arithmetic(a) = &e.kind {
+            check_arith_sexpr(a, e.span, env, errors);
+        }
+    });
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        check_arith_sexpr(a, stmt.span, env, errors);
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_sexpr_string_producers(s, env, errors);
+        }
+    }
+}
+
+/// Walk an `ArithExpr` tree; for every sexpr `FuncCall` whose callee produces a
+/// string (or is dtoi/itod — Q2), emit a type error.
+fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    walk_arith_funccalls(a, &mut |name| {
+        if is_sexpr_string_producer(name, env) {
+            errors.push(TypeError {
+                message: format!(
+                    "`{name}` can't be called in an arithmetic sexpr — it yields a \
+                     string, not an int. Capture it first with `$()`: `s=$({name} …)`, \
+                     then use `s` (or an `int` of it) in `$(( … ))`."
+                ),
+                span,
+            });
+        }
+    });
+}
+
+/// Invoke `f(name)` for each `FuncCall` name in an `ArithExpr` tree.
+fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match a {
+        ArithExpr::FuncCall { name, args } => {
+            f(name);
+            for arg in args {
+                walk_arith_funccalls(arg, f);
+            }
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_funccalls(left, f);
+            walk_arith_funccalls(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } => walk_arith_funccalls(operand, f),
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_funccalls(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_funccalls(cond, f);
+            walk_arith_funccalls(true_val, f);
+            walk_arith_funccalls(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_funccalls(e, f);
+            }
+        }
+        ArithExpr::Paren(inner) => walk_arith_funccalls(inner, f),
+        // Leaves (Literal, Var, DollarVar, Pre/PostIncDec) hold no FuncCall.
+        _ => {}
+    }
+}
+
+/// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic
+/// (or dtoi/itod — Q2: capture via `$()`), or a user string/void function. Int
+/// intrinsics (`len`, `getpid`, `argc`, …), user `-> int` functions, and a bare
+/// variable `(x)` (arithmetic grouping) are all valid and return `false`.
+fn is_sexpr_string_producer(name: &str, env: &TypeEnv) -> bool {
+    const STRING_INTRINSICS: &[&str] = &[
+        "toupper", "tolower", "join", "keys", "basename", "dirname", "getcwd", "getenv", "arg",
+        "sub", "gsub", "match", "itod", "dtoi",
+    ];
+    STRING_INTRINSICS.contains(&name) || matches!(env.funcs.get(name), Some(VarType::String))
+}
+
 /// `${var:-default}` / `${var-default}` preserve the variable's type;
 /// all other strip ops (`#`, `%`, `/`, etc.) produce strings.
 fn parameter_expansion_type(pe: &ParameterExpansion, env: &TypeEnv) -> VarType {
@@ -173,6 +260,15 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     // Second pass: check statements
     for stmt in &program.statements {
         check_stmt(stmt, &mut env, &mut errors);
+    }
+
+    // Third pass (DD#58/Option C): a string producer used in an arithmetic
+    // sexpr `(f …)` is a type error — it belongs in a `$()` capture, not
+    // `$(( ))`. Covers the string intrinsics + dtoi/itod (Q2) + user string
+    // functions; closes the getenv/arg validator-bypass (they silently compiled
+    // to 0 in a sexpr, sidestepping SB5020). bug-arith-sexpr-intrinsics-zero.
+    for stmt in &program.statements {
+        check_sexpr_string_producers(stmt, &env, &mut errors);
     }
 
     errors

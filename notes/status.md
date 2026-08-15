@@ -1,3 +1,17 @@
+## ════════ STATUS (2026-08-15) — DD#58/Option C sexpr int intrinsics DONE ════════
+
+bug-arith-sexpr-intrinsics-zero complete (both parts, pushed on hand-parser):
+- **Part 1 (9f85526)** — category A int intrinsics compute in a sexpr (were
+  silent 0); `$(( (x) ))` grouping bug (→0) fixed; Q3 `random` int-typed.
+- **Part 2** — category B + Q2: a string producer in a sexpr → SB4030 type
+  error (type_check third pass). Closes the getenv/arg validator-bypass +
+  user-string-fn side-effect run. dtoi/itod rejected in a sexpr.
+
+Governed by Option C (`$()` return-type-polymorphic; int producers work in both
+`$(f)` and `$(( (f) ))`). specs arithmetic.sh sx.1–17 (plan 62→84). native
+898/0-fail; c 13 / janet 36 == baseline; 0 regressions; Rust suites == HEAD.
+Deferred/filed: getcpid-in-sexpr, c/janet signum intrinsic.
+
 ## ════════ STATUS (2026-08-15) — DD#58/Option C sexpr int intrinsics (part 1) ════════
 
 Implementing bug-arith-sexpr-intrinsics-zero (Option C: `$()` return-type-

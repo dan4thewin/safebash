@@ -325,3 +325,33 @@ clippy clean.
 covers the getenv/arg validator-bypass) + Q2 (dtoi/itod rejected in a sexpr).
 Needs a type_check arith-walk (type_check treats `$(( ))` as Int without
 descending). getcpid-in-sexpr (`$!` slot) also deferred.
+
+## DD#58/Option C — sexpr int intrinsics (part 2: category B + Q2), 2026-08-15
+
+Completed bug-arith-sexpr-intrinsics-zero. Part 2 rejects a string producer used
+in an arithmetic sexpr.
+
+**Category B + Q2 — type_check third pass.** type_check treated `$(( ))` as Int
+without descending; added `check_sexpr_string_producers` — walks every `$(( ))`
+expr (`walk_all_exprs`) + bare `(( ))` (`ArithTest`) and its nested bodies,
+recurses the `ArithExpr` tree (`walk_arith_funccalls`), and for each sexpr
+`FuncCall` whose callee is a string producer emits a type error (SB4030, via
+lib.rs). `is_sexpr_string_producer` = the string intrinsics {toupper, tolower,
+join, keys, basename, dirname, getcwd, getenv, arg, sub, gsub, match, itod,
+dtoi} ∪ user functions with `VarType::String` return. Int intrinsics, user
+`-> int` fns, and bare-variable grouping `(x)` are NOT rejected.
+
+Closes two silent-wrong footguns: the getenv/arg **validator-bypass**
+(`$(( (getenv HOME) ))` silently compiled to 0, sidestepping SB5020) and the
+user-string-function **side-effect execution** (`$(( (g) ))` ran g's body then
+yielded 0). Q2: dtoi/itod rejected in a sexpr → capture via `$()`.
+
+Test-first: spec arithmetic.sh sx.12–17 (plan 78→84), all modes (compile-time
+→ backend-independent), asserting SB4030. native 898 / 0 fail; c 13 / janet 36
+== baseline; 0 regressions. codegen 179/77, e2e 89/41, oracle 47/16, brush
+24/28, taint 18/24 == HEAD (stash-compared type_check — 0 Rust regressions).
+clippy clean.
+
+DD#58/Option C sexpr surface complete: int intrinsics compute (part 1), string
+producers reject (part 2). Deferred: getcpid-in-sexpr (`$!` slot) + the
+c/janet signum intrinsic (both filed). Task done.
