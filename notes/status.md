@@ -1,3 +1,23 @@
+## ════════ STATUS (2026-08-14 unattended, cont.) — dd75-retire-bracket DONE ════════
+
+Retired the `[@]`/`[*]` bracket-subscript collection forms (DD#75 §4). `@a` is
+the sole splat; `${#a}`/`$(len a)` length; `$(keys m)` keys (maps only).
+**Parse-level reject (SB4038)** — `${a[@]}` and `@a` share the `arrvals` repr,
+so they can only be distinguished at parse. Tagged 5 bracket sites in
+`parse/expr.rs` (`*_retired` ops); `parser.rs` `retired_bracket_operator_diag`
+emits SB4038 with the canonical replacement per form. Canonical `@a` untouched.
+
+specs types.sh 75.10–16 (plan 86→93) + ws.q4/q5 flipped to SB4038; Rust
+migrated to canonical forms (brush/c/codegen/e2e, all pass). native 0 failing;
+c 13 / janet 36 == baseline (0 regressions). Converter half filed as
+`converter-retire-bracket-splat`.
+
+**Remaining DD#75 (2 invasive P3, not started):**
+- dd75-args-model — function args → implicit `args` array; `$1`→`${args[1]}`,
+  `$@`→`@args`, `$#`→`${#args}`, `$*` removed. Most invasive.
+- dd75-special-var-sugar — `$?`/`$!`/`$$` → sugar for `$(status)`/`$(getcpid)`/
+  `$(getpid)`; mostly converter/docs/taint framing (compiler already accepts).
+
 ## ════════ STATUS (2026-08-14 unattended, cont.) — DD#75: 5 tasks landed ════════
 
 Continued the unattended DD#75 run (test-first, pushed on hand-parser):

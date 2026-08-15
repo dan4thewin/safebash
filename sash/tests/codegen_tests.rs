@@ -2328,13 +2328,14 @@ if [[ ! "$x" == "world" ]]; then echo "not world"; fi
 }
 #[test]
 fn for_array_iteration() {
-    let src = r#"arr=(alpha beta gamma)
-for x in "${arr[@]}"; do
+    // DD#75 §4: `@arr` is the sole splat (`"${arr[@]}"` is retired). sash-native
+    // form, so no bash-parity comparison (`@arr` is not bash).
+    let src = r#"array arr=(alpha beta gamma)
+for x in @arr; do
   echo "$x"
 done
 "#;
     let (out, _) = run_bash_native(src, &[]);
-    assert_eq!(out, bash_output(src, &[]));
     assert_eq!(out, "alpha\nbeta\ngamma\n");
 }
 #[test]

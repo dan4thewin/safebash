@@ -728,7 +728,8 @@ fn pos_array_basic() {
 
 #[test]
 fn pos_array_length() {
-    let script = "#!/bin/bash\narr=(a b c d e)\necho ${#arr[@]}";
+    // DD#75 §4: `${#arr}` is the length (retired `${#arr[@]}`).
+    let script = "#!/bin/bash\narray arr=(a b c d e)\necho ${#arr}";
     assert_eq!(compile_and_run("arr_len", script), "5\n");
 }
 

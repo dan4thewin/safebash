@@ -1,6 +1,6 @@
 ---
 title: "DD#75 §4 — retire the [@]/[*] bracket-subscript collection forms; @a is the sole splat"
-status: ready
+status: done
 priority: P3
 kind: task
 depends: []
@@ -49,3 +49,13 @@ This retires DD#60's "parser convenience" that accepted `${a[@]}` on input:
 one-true-spelling over paste-from-bash (the converter handles bash input, §6).
 
 See DD#75 §4.
+
+## DONE (2026-08-14)
+
+Parse-level SB4038 reject. Tagged the 5 bracket parse sites in
+`parse/expr.rs` with `*_retired` operators; `parse/parser.rs`
+`retired_bracket_operator_diag` emits SB4038 with the canonical replacement.
+Canonical `@a` untouched. specs types.sh 75.10–16 + ws.q4/q5 flip; Rust
+migrated (brush/c/codegen/e2e). native 0 fail; c 13 / janet 36 == baseline.
+Converter half split to `converter-retire-bracket-splat` (DG convert-as-
+follow-up rule). Journal 145.

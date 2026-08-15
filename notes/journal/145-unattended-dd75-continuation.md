@@ -143,3 +143,48 @@ migration risk; convert Qs as follow-ups). Remaining, now scoped:
 
 Paused before the parser-level retire change to avoid a rushed cross-cutting
 edit at session end; scoped it for a clean pickup.
+
+## dd75-retire-bracket-subscripts DONE (2026-08-14 cont.)
+
+Retired the `[@]`/`[*]` bracket-subscript collection forms (DD#75 §4). `@a`
+is the sole splat; `${#a}`/`$(len a)` the length; `$(keys m)` the keys.
+
+**Parse-level reject (SB4038).** `${a[@]}` and canonical `@a` both lower to
+`ParameterExpansion{arrvals}` — identical downstream (that is *why* they were
+aliases), so the only place to distinguish them is the parser. Tagged the 5
+bracket parse sites in `parse/expr.rs` with `*_retired` operators
+(`arrvals_retired` / `arrlen_retired` / `arrkeys_retired`); the canonical
+`@a` arm (expr.rs `@`-word) is untouched and still yields plain `arrvals`.
+`parse/parser.rs` `rejected_param_operator_diag` now calls a new
+`retired_bracket_operator_diag` that emits SB4038 with the canonical
+replacement spelled out per form. `compile_to_object` already fails on
+parse-error diagnostics, so the reject fires on the validation-bypass path too
+(no ICE).
+
+Sites tagged: non-brace `$a[@]` (try_subscript_arm), `subscript_expr`, braced
+`${a[@]}` (try_subscript) → `arrvals_retired`; `${#a[@]}` (try_strlen_or_arrlen)
+→ `arrlen_retired`; `${!a[@]}` (try_indirection_or_arrkeys) → `arrkeys_retired`.
+`[*]` is covered at every site (the `@`/`*` and `[@]`/`[*]` checks were already
+symmetric).
+
+**Verified gates** (all behavioral): `${a[@]}`/`$a[@]`/`${a[*]}`/`$a[*]` →
+SB4038 → `@a`/`$(join a)`; `${#a[@]}` → `${#a}`/`$(len a)`; `${!a[@]}` →
+`$(keys m)`. Unaffected: `@a` splat, `${#a}` length, `${a[$i]}`/`${a[1]}`
+element read, `a[$i]=` element assign, `@{a:-W}`/`@{a:?W}` disposition, `*` as
+glob + arithmetic multiply.
+
+**Tests.** spec types.sh 75.10–75.16 (plan 86→93): each retired form rejects,
+`@a` splat + `${a[$i]}` element access still work — all 3 modes (parse-level →
+backend-independent). wordsplit.sh ws.q4/q5 flipped (were "input-convenience
+accepted" → now SB4038, asserting the code). types.sh 30.11 uses canonical
+`${#a}`. Rust migrated to canonical forms: brush `brush_rejected_nonexistent_array_loop`
+(SB4020→SB4038), c_tests `c_array_length`/`c_array_join_all`/`c_array_for_iter`,
+codegen `for_array_iteration` (→`@arr`, dropped bash-parity — `@arr` isn't
+bash), e2e `pos_array_length`. All pass.
+
+native 0 failing; c 13 / janet 36 == baseline (0 regressions, latest-run diff).
+clippy clean.
+
+Filed the converter half as a follow-up: `converter-retire-bracket-splat`
+(rewrite the retired bash spellings to canonical, DD#75 §6 — split per DG's
+convert-as-follow-up rule).

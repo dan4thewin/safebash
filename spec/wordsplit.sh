@@ -131,13 +131,13 @@ run_sash 'array a=(x y); for x in "$a[@]"; do echo "$x"; done'
 run_sash 'for x in "$(argv)"; do echo "$x"; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk ws.q3
 
-# ws.q4 bare dollar splat $a[@] accepted (input convenience; canonical is @a)
+# ws.q4 bare dollar splat $a[@] → retired (DD#75 §4 — use @a); SB4038
 run_sash 'array a=(x y); for x in $a[@]; do echo "$x"; done'
-[[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk ws.q4
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk ws.q4
 
-# ws.q5 bare brace splat ${a[@]} accepted (input convenience; canonical is @a)
+# ws.q5 bare brace splat ${a[@]} → retired (DD#75 §4 — use @a); SB4038
 run_sash 'array a=(x y); for x in ${a[@]}; do echo "$x"; done'
-[[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk ws.q5
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk ws.q5
 
 # 64.1 DD#64: backslash is a literal byte in "..." — no \\ collapse
 run_sash 'echo "a\\b"'

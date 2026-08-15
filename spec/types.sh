@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=86
+plan=93
 echo "1..$plan" >&3
 
 set +e
@@ -285,8 +285,8 @@ run_sash 'array a=(one two three); unset a[1]; echo ${a[0]} ${a[2]}'
 run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 30.10
 
-# 30.11 unset arr clears collection
-run_sash 'array a=(one two three); unset a; echo ${#a[@]}'
+# 30.11 unset arr clears collection (canonical length ${#a}; DD#75 §4 retired ${#a[@]})
+run_sash 'array a=(one two three); unset a; echo ${#a}'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.11
 
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
@@ -425,6 +425,32 @@ run_sash 'array a=(x y z); for k in $(keys a); do echo "$k"; done'
 # 75.9 keys on a scalar → compile error
 run_sash 's=hi; for k in $(keys s); do echo "$k"; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 75.9
+
+# DD#75 §4 — retire the [@]/[*] bracket-subscript collection forms; `@a` is
+# the sole splat. Each retired form → compile error; the canonical spelling
+# works. (These are parse-level rejects: ${a[@]} shares the arrvals repr with
+# @a, so they are distinguished only at parse.)
+# 75.10 braced splat ${a[@]} → reject (use @a)
+run_sash 'array a=(x y z); for w in ${a[@]}; do echo "$w"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.10
+# 75.11 braced star ${a[*]} → reject
+run_sash 'array a=(x y z); for w in ${a[*]}; do echo "$w"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.11
+# 75.12 non-brace $a[@] → reject
+run_sash 'array a=(x y z); for w in $a[@]; do echo "$w"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.12
+# 75.13 length ${#a[@]} → reject (use ${#a})
+run_sash 'array a=(x y z); int n=${#a[@]}; echo $n'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.13
+# 75.14 keys ${!a[@]} → reject (use $(keys m))
+run_sash 'array a=(x y z); for k in ${!a[@]}; do echo "$k"; done'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 75.14
+# 75.15 canonical @a splat still works (the replacement)
+run_sash 'array a=(x y z); for w in @a; do echo "$w"; done'
+[[ $rc = 0 && $out = $'x\ny\nz' && -z $err ]]; chk 75.15
+# 75.16 indexed element access ${a[$i]} / ${a[1]} unaffected
+run_sash 'array a=(x y z); i=2; echo ${a[$i]}${a[1]}'
+[[ $rc = 0 && $out = "zy" && -z $err ]]; chk 75.16
 
 set -e
 tally

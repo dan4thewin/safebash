@@ -338,7 +338,7 @@ fn try_subscript_arm(scanner: &mut Scanner, name: &str, span: Span, parts: &mut 
     let rest = w[close + 1..].to_string();
     scanner.next();
     if idx == "@" || idx == "*" {
-        parts.push(Expr::param(name, Some("arrvals"), None, span));
+        parts.push(Expr::param(name, Some("arrvals_retired"), None, span));
     } else {
         parts.push(Expr {
             kind: ExprKind::Subscript {
@@ -470,7 +470,7 @@ fn try_emit_array_subscript_in_string(
 /// subscript whose index is parsed by `subscript_index_expr`.
 fn subscript_expr(name: &str, idx: &str, span: Span) -> Expr {
     if idx == "@" || idx == "*" {
-        Expr::param(name.to_string(), Some("arrvals"), None, span)
+        Expr::param(name.to_string(), Some("arrvals_retired"), None, span)
     } else {
         Expr {
             kind: ExprKind::Subscript {
@@ -633,8 +633,10 @@ fn try_strlen_or_arrlen(content: &str, bytes: &[u8], span: Span) -> Option<Expr>
     }
     let rest = &content[1..];
     if rest.contains("[@]") || rest.contains("[*]") {
+        // DD#75 §4: the `${#a[@]}` / `${#a[*]}` bracket-length form is retired
+        // (use `${#a}` / `$(len a)`); tag it for the parse-level reject.
         let name = rest.split('[').next().unwrap_or(rest);
-        return Some(Expr::param(name, Some("arrlen"), None, span));
+        return Some(Expr::param(name, Some("arrlen_retired"), None, span));
     }
     Some(Expr::param(rest, Some("strlen"), None, span))
 }
@@ -646,8 +648,10 @@ fn try_indirection_or_arrkeys(content: &str, bytes: &[u8], span: Span) -> Option
     }
     let rest = &content[1..];
     if rest.contains("[@]") || rest.contains("[*]") {
+        // DD#75 §4: the `${!a[@]}` / `${!a[*]}` bracket-keys form is retired
+        // (use `$(keys m)`, maps only); tag it for the parse-level reject.
         let name = rest.split('[').next().unwrap_or(rest);
-        return Some(Expr::param(name, Some("arrkeys"), None, span));
+        return Some(Expr::param(name, Some("arrkeys_retired"), None, span));
     }
     Some(Expr::param(rest, Some("!"), None, span))
 }
@@ -675,12 +679,7 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     let after_bracket = &content[name_end + close + 1..];
 
     if idx == "@" || idx == "*" {
-        if !after_bracket.is_empty() {
-            if let Some(op_result) = parse_subscript_operator(name, after_bracket, span) {
-                return Some(op_result);
-            }
-        }
-        return Some(Expr::param(name, Some("arrvals"), None, span));
+        return Some(splat_subscript_expr(name, after_bracket, span));
     }
 
     Some(Expr {
@@ -690,6 +689,18 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
         },
         span,
     })
+}
+
+/// The `${a[@]}` / `${a[*]}` splat branch. A trailing operator (e.g.
+/// `${a[@]/x/y}`) parses via `parse_subscript_operator`; otherwise the bare
+/// splat is the DD#75 §4 retired form (`arrvals_retired`), rejected downstream.
+fn splat_subscript_expr(name: &str, after_bracket: &str, span: Span) -> Expr {
+    if !after_bracket.is_empty() {
+        if let Some(op_result) = parse_subscript_operator(name, after_bracket, span) {
+            return op_result;
+        }
+    }
+    Expr::param(name, Some("arrvals_retired"), None, span)
 }
 
 /// `${var:s/regex/replacement/flags}` — DD#63 substitution sugar. Desugars

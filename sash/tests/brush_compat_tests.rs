@@ -334,10 +334,12 @@ fn brush_rejected_high_positional() {
 
 #[test]
 fn brush_rejected_nonexistent_array_loop() {
+    // DD#75 §4: the `${arr[@]}` bracket splat is retired (use `@arr`), so this
+    // bash construct is now rejected at parse with SB4038 (was SB4020).
     assert_rejected(
         "rej_nonexist_arr",
         "for key in ${NONEXISTENT[@]}; do echo $key; done",
-        "SB4020",
+        "SB4038",
     );
 }
 

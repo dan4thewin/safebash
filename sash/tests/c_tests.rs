@@ -575,17 +575,19 @@ fn c_array_subscript() {
 
 #[test]
 fn c_array_length() {
+    // DD#75 §4/§2: `${#arr}` is the length (retired `${#arr[@]}`).
     assert_c_matches_cranelift(
         "arr_len",
-        "#!/bin/bash\narray arr=(foo bar baz)\necho \"${#arr[@]}\"\n",
+        "#!/bin/bash\narray arr=(foo bar baz)\necho \"${#arr}\"\n",
     );
 }
 
 #[test]
 fn c_array_join_all() {
+    // DD#75 §4: `${arr[@]}` splat retired — join via `$(join arr)`.
     assert_c_matches_cranelift(
         "arr_all",
-        "#!/bin/bash\narray arr=(x y z)\necho \"${arr[@]}\"\n",
+        "#!/bin/bash\narray arr=(x y z)\necho \"$(join arr)\"\n",
     );
 }
 
@@ -599,9 +601,10 @@ fn c_array_assign_element() {
 
 #[test]
 fn c_array_for_iter() {
+    // DD#75 §4: `@arr` is the sole splat (`"${arr[@]}"` retired).
     assert_c_matches_cranelift(
         "arr_for",
-        "#!/bin/bash\narray arr=(a b c)\nfor x in \"${arr[@]}\"; do\n    echo \"$x\"\ndone\n",
+        "#!/bin/bash\narray arr=(a b c)\nfor x in @arr; do\n    echo \"$x\"\ndone\n",
     );
 }
 

@@ -2430,6 +2430,11 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             ),
         ));
     }
+    // DD#75 §4: the `[@]`/`[*]` bracket-subscript collection forms are retired
+    // — `@a` is the sole splat. Reject each with its canonical replacement.
+    if let Some(d) = retired_bracket_operator_diag(pe, op, span) {
+        return Some(d);
+    }
     // DD#65: the pruned `${var:OP}` family — every `split_operator` op EXCEPT
     // `:-` (assign-default/alt/error, prefix/suffix strip, glob replace, case).
     // Rejects uniformly; migration to the builtins is sash-convert's job (see
@@ -2448,6 +2453,35 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
         ));
     }
     None
+}
+
+/// DD#75 §4: reject a retired `[@]`/`[*]` bracket-subscript collection form,
+/// pointing at its canonical replacement. `@a` is the sole splat; length is
+/// `${#a}` / `$(len a)`; keys are `$(keys m)` (maps only). Returns `None` for
+/// any non-retired operator.
+fn retired_bracket_operator_diag(
+    pe: &ParameterExpansion,
+    op: &str,
+    span: Span,
+) -> Option<Diagnostic> {
+    let name = &pe.name;
+    let msg = match op {
+        "arrvals_retired" => format!(
+            "the `[@]`/`[*]` array splat (`${{{name}[@]}}` / `${name}[@]`) is \
+             retired — use `@{name}` for the splat, or `$(join {name})` for a \
+             joined string"
+        ),
+        "arrlen_retired" => format!(
+            "the `[@]`/`[*]` length form `${{#{name}[@]}}` is retired — use \
+             `${{#{name}}}` (or `$(len {name})`)"
+        ),
+        "arrkeys_retired" => format!(
+            "the `[@]`/`[*]` keys form `${{!{name}[@]}}` is retired — use \
+             `$(keys {name})` (maps only; an indexed array's keys are 0..len-1)"
+        ),
+        _ => return None,
+    };
+    Some(parse_error(span, "SB4038", msg))
 }
 
 /// Map an internal dropped-operator string to the form the user wrote, for
