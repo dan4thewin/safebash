@@ -1,3 +1,24 @@
+## ════════ STATUS (2026-08-14 unattended, cont.) — DD#75: 5 tasks landed ════════
+
+Continued the unattended DD#75 run (test-first, pushed on hand-parser):
+- ab184c0 bug-subscript-assign-bare-key (P2)
+- dc9f8df dd75-keys-map-only (P3) — + added the missing For-arm to type_check
+- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 (P2, DEMO):
+  `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` evaluate (sexpr + ATok::LenOf)
+- 84c28ce string-func-capture-in-arg-ice (P2) — DG: lift-and-print; shared
+  capture_func_into; `echo $(greet)` works incl. runtime capture (no ICE)
+
+All native 0 failing; c 13 / janet 36 == baseline. Backend gaps filed:
+janet-join-intrinsic-gaps (join/keys/len-in-arith), cjanet-function-stdout-capture.
+
+DG unblocked the invasive DD#75 tasks (unreleased → no migration risk; convert
+Qs as follow-ups). Remaining, scoped in their task files:
+- dd75-retire-bracket-subscripts — PARSE-level reject (${a[@]} shares the arrvals
+  repr with @a) + flips passing wordsplit/codegen/brush tests.
+- dd75-args-model — implicit `args` array (most invasive).
+- dd75-special-var-sugar — mostly converter/docs.
+
+## ════════ (prior status below) ════════
 ## ════════ STATUS (2026-08-14 unattended) — DD#75 continuation: 3 more tasks ════════
 
 Unattended session (SOP: ready backlog, dependency order, test-first, skip

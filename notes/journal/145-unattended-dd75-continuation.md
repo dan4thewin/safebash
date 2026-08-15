@@ -121,3 +121,25 @@ Test-first: functions.sh 17.3/17.4 (native; c/janet guarded — they don't
 implement CaptureStart/End: c → TODO+straight-to-stdout, janet → execs fn name;
 filed cjanet-function-stdout-capture). native 0 failing; c 13 / janet 36 ==
 baseline.
+
+## Session close (2026-08-14 unattended)
+
+5 tasks landed (test-first, pushed on hand-parser):
+- ab184c0 bug-subscript-assign-bare-key (P2)
+- dc9f8df dd75-keys-map-only (P3)
+- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 (P2, demo)
+- 84c28ce string-func-capture-in-arg-ice (P2, DG: lift-and-print)
+
+All native 0 failing; c 13 / janet 36 == baseline. Filed janet/c backend gaps
+(join/keys/len-in-arith, function-stdout-capture).
+
+DG mid-session unblocked the invasive DD#75 tasks (code unreleased → no
+migration risk; convert Qs as follow-ups). Remaining, now scoped:
+- dd75-retire-bracket-subscripts — PARSE-level reject (${a[@]} and @a share the
+  arrvals representation; distinguish only at parse) + flips passing wordsplit/
+  codegen/brush tests. Scoping written into the task file.
+- dd75-args-model — implicit `args` array; most invasive.
+- dd75-special-var-sugar — mostly converter/docs (compiler already accepts both).
+
+Paused before the parser-level retire change to avoid a rushed cross-cutting
+edit at session end; scoped it for a clean pickup.
