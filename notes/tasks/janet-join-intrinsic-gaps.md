@@ -34,3 +34,12 @@ No such file or directory`) instead of emitting the map-keys intrinsic.
 Pre-existing (cf. `janet:33.10`). Surfaced again by DD#75 §3 spec 75.7
 (guarded to native,c). Gate: janet `for k in $(keys m)` iterates the map's
 string keys. Fold into the janet collection-intrinsics work.
+
+## Addendum (2026-08-14): `len` in arith-operand position missing in janet
+
+`emit_janet` lowers a `len`/`arrlen`/`strlen` arith operand to `(len …)`, but
+janet's builtin is `length` — so `$(( (len a) + 1 ))` and `$(( ${#a} + 1 ))`
+emit an undefined `len` symbol (janet compile error). native/c fine. Guarded
+`spec/arithmetic.sh` 58.10–58.16 to native,c. Gate: janet evaluates the len
+intrinsic (array/map count, string byte length) as an arith operand — emit
+`(length …)` or a table-len helper. Same collection-intrinsic class as join/keys.

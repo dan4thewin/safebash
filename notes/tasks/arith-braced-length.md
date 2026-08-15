@@ -1,6 +1,6 @@
 ---
 title: "Arith `${#a}` / `${#s}` read as 0 — parse-level length in $(( ))"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -11,11 +11,24 @@ gates:
   - "0 native/c/janet spec regressions; specs in arithmetic.sh"
 ---
 
-# `${#a}` / `${#s}` don't evaluate inside `$(( ))`
+## Resolution (2026-08-14, unattended)
 
-Split from `intrinsics-lengths-in-arithmetic` (2026-08-14). The sexpr form
-`$(( (len a) + 1 ))` was fixed there (gate 1); this is the **braced-length**
-form, which is a distinct **parse-level** gap.
+Done. Added `ATok::LenOf(name)`: the arith lexer `scan_arith_braced_var`
+(`parse/arith.rs`) detects `${#name}` (a `#` prefix + identifier) and emits
+`LenOf`; the parser's `parse_prefix_atom` lowers it to
+`ArithExpr::FuncCall { name: "len", args: [Var(name)] }` — the same shape the
+`(len a)` sexpr takes — so the transform's int-intrinsic path (just added)
+evaluates it (arrlen for a collection, strlen for a scalar). No new transform
+arm. `${#a}`→count, `${#s}`→bytes, `${#m}`→entries. `${#}`/`$#` (empty name)
+fall through to the ordinary var scan (argc), unaffected; `${x}` braced var
+unaffected.
+
+Specs `spec/arithmetic.sh` 58.14–58.16 (native,c; janet guarded — same janet
+`len`-in-arith gap as 58.10–13, `janet-join-intrinsic-gaps`). native 0
+failing; c 13 / janet 36 == baseline.
+
+## Original notes
+
 
 ## Root cause
 

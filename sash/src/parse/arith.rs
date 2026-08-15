@@ -345,6 +345,10 @@ enum ATok {
     BadLit(String),
     Var(String),
     DollarVar(String),
+    /// `${#name}` braced-length inside `$(( ))` (DD#75 §2): the length of
+    /// `name` — array/map element count or string byte length. Carries the
+    /// inner name; the parser lowers it to the `len` intrinsic sexpr shape.
+    LenOf(String),
     // Operators (ordered by length for tokenization)
     PlusPlus,
     MinusMinus,
@@ -540,11 +544,24 @@ fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usiz
     while j < bytes.len() && bytes[j] != b'}' {
         j += 1;
     }
-    let name = input[start..j].to_string();
+    let body = &input[start..j];
     if j < bytes.len() {
         j += 1; // skip '}'
     }
-    (ATok::DollarVar(name), j)
+    (braced_body_token(body), j)
+}
+
+/// Classify a `${…}` body inside `$(( ))`. DD#75 §2: a `${#name}` body (a
+/// `#` prefix followed by an identifier) is the braced-length form and yields
+/// a `LenOf` token; a bare `${#}` empty name, or any other body, yields an
+/// ordinary `DollarVar`.
+fn braced_body_token(body: &str) -> ATok {
+    if let Some(name) = body.strip_prefix('#') {
+        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
+            return ATok::LenOf(name.to_string());
+        }
+    }
+    ATok::DollarVar(body.to_string())
 }
 
 /// Scan a bare `$name` (alphanumeric/`_`, including positional digits).
@@ -782,6 +799,16 @@ impl ArithParser {
             Some(ATok::DollarVar(name)) => {
                 self.advance();
                 Ok(ArithExpr::DollarVar(name))
+            }
+            Some(ATok::LenOf(name)) => {
+                // DD#75 §2: `${#name}` → the `len` intrinsic sexpr shape, so the
+                // transform's int-intrinsic path evaluates it (arrlen for a
+                // collection, strlen for a scalar) instead of reading var `#name`.
+                self.advance();
+                Ok(ArithExpr::FuncCall {
+                    name: "len".to_string(),
+                    args: vec![ArithExpr::Var(name)],
+                })
             }
             Some(ATok::LParen) => self.parse_lparen_form(),
             Some(ATok::BadNum(s)) => {

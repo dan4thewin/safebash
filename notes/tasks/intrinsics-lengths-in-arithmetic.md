@@ -6,10 +6,10 @@ kind: bug
 depends: []
 gates:
   - "[done] `int n=$(( (len a) + 1 ))` yields count+1 — the DD#58 arith sexpr `(len a)` evaluates the intrinsic (len array/map→count, string→bytes)"
-  - "[deferred → arith-braced-length] `$(( ${#a} + 1 ))` / `$(( ${#s} + 1 ))` yield length+1 (still 0 — parse-level: the arith lexer reads `${#a}` as a var named `#a`)"
+  - "[done] `$(( ${#a} + 1 ))` / `$(( ${#s} + 1 ))` yield length+1 (arith-braced-length: ATok::LenOf → the len FuncCall shape)"
   - "[deferred] string intrinsics (toupper/join/basename/…) in arith → a clean compile error"
   - "[was already ok] `echo $(( <funccall> ))` compiles (arith-in-arg)"
-  - "[done] 0 native/c/janet spec regressions"
+  - "[done] 0 native/c spec regressions (janet len-in-arith guarded — janet-join-intrinsic-gaps)"
 ---
 
 # Intrinsics / lengths don't evaluate inside arithmetic

@@ -67,3 +67,20 @@ PARSE-level gap (arith lexer reads `${#a}` as var `#a`). Fix sketch: lexer
 rewrites `${#a}` into the `(len a)` FuncCall shape so the transform side
 (just added) needs no new arm. Also deferred: string-intrinsic-in-arith
 reject.
+
+## Task 3 gate 2 — arith-braced-length (DONE) + janet correction
+
+`${#a}` in `$(( ))` now evaluates. Added `ATok::LenOf`: arith lexer
+`scan_arith_braced_var` emits it for `${#name}`; parser lowers to
+`FuncCall{len,[Var(name)]}` — the same shape `(len a)` takes — so the
+gate-1 transform path handles it with no new arm. `${#a}`→count,
+`${#s}`→bytes, `${#m}`→entries; `${x}`/`$#` unaffected.
+
+**Correction to gate 1:** my a80d94d note "green in janet" for 58.10–13 was
+WRONG — janet emits an undefined `(len …)` symbol (its builtin is `length`),
+so `len` in arith-operand position fails in janet. I misread a stale spec.db
+row. Fixed here: guarded 58.10–16 to native,c and filed the janet gap
+(`janet-join-intrinsic-gaps` addendum). Verified: `bash arithmetic.sh` PASSES
+in native/c/janet (janet skips the 7); full sweep native 0 failing, c 13 /
+janet 36 == baseline. Lesson: trust `bash <spec>.sh` per-mode over the
+aggregated spec.db row when a test is freshly (re)guarded.
