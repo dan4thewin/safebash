@@ -84,3 +84,21 @@ row. Fixed here: guarded 58.10–16 to native,c and filed the janet gap
 in native/c/janet (janet skips the 7); full sweep native 0 failing, c 13 /
 janet 36 == baseline. Lesson: trust `bash <spec>.sh` per-mode over the
 aggregated spec.db row when a test is freshly (re)guarded.
+
+## Session summary (2026-08-14 unattended)
+
+Landed (test-first, all pushed on hand-parser):
+- ab184c0 bug-subscript-assign-bare-key (P2) — `a[i]=` bare key reject.
+- dc9f8df dd75-keys-map-only (P3) — keys map-only + For-arm type-check.
+- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 —
+  `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` evaluate (DG demo).
+
+All: native 0 failing; c 13 / janet 36 == baseline. Filed janet gaps
+(join/keys/len-in-arith) under janet-join-intrinsic-gaps.
+
+Remaining DD#75 backlog = the 3 invasive language changes
+(dd75-special-var-sugar, dd75-args-model, dd75-retire-bracket-subscripts)
++ deferred small bits (string-intrinsic-in-arith reject, undefined-len
+hard reject). These are larger/migration-bearing — better as focused
+efforts. string-func-capture-in-arg-ice is decision-gated (works vs reject)
+— left for DG.

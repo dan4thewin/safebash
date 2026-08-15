@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-14 unattended) — DD#75 continuation: 3 more tasks ════════
+
+Unattended session (SOP: ready backlog, dependency order, test-first, skip
+decision-gated). Landed on hand-parser:
+- ab184c0 bug-subscript-assign-bare-key (P2) — indexed `a[i]=` bare-key reject.
+- dc9f8df dd75-keys-map-only (P3) — keys map-only; added the missing For-arm
+  to type_check (for-in headers now type-checked).
+- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic (gates 1+2) — DG demo:
+  `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` now evaluate (arith sexpr + braced
+  `${#x}` via ATok::LenOf → the len FuncCall shape). Filed sub-task
+  arith-braced-length (done). string-intrinsic-in-arith reject deferred.
+
+All: native 0 failing; c 13 / janet 36 == baseline. janet len/keys/join-in-arith
+gaps filed (janet-join-intrinsic-gaps).
+
+**Remaining DD#75 (3 invasive P3 language changes — not started):**
+dd75-special-var-sugar ($?/$!/$$ → sugar; converter+docs+taint framing),
+dd75-args-model (implicit `args` array; invasive), dd75-retire-bracket-subscripts
+(retire [@]/[*]; migration). Better as focused efforts. string-func-capture-in-arg-ice
+is decision-gated (works vs reject) — for DG.
+
+## ════════ (prior status below) ════════
 ## ════════ STATUS (2026-08-11, late) — DD#75 implementation: 3 parts done ════════
 
 Implementing DD#75 in DG's recommended order, **test-first** with spec tests.
