@@ -123,24 +123,37 @@ does not use it.
 - **`type_check.rs:116` doc bug.** Comment mis-describes `signum`/`dtoi` as
   "numeric conversions"; `signum` is the DD#56 signal-number reader.
 
-# Design questions for DG (decision authority — present, don't pre-decide)
+# Resolved decisions (2026-08-15, DG) — governed by Option C
 
-1. **Category B disposition.** Confirm string/collection intrinsics in `$(( ))`
-   should be a type error (SB4030-style "not int-typed"), not silently dropped.
-   (Strongly implied by the existing `int n=$(toupper s)` → SB4030, but the
-   sexpr surface is a distinct path.)
-2. **dtoi/itod in sexpr (C).** Allowed (needs the arith tokenizer to accept a
-   string arg inside `(dtoi N "s")`) or cleanly rejected? itod returns a string,
-   so likely category B regardless.
-3. **`random` int-typing.** Make `random` int-returning-capturable (add to
-   `is_int_returning_intrinsic`) so `int n=$(random)` works, aligning it with the
-   other int intrinsics? Or is it deliberately string-only?
-4. **Fix mechanism.** (a) Give the int intrinsics real `BuiltinCmd` variants and
-   `try_native_intrinsic` arms that emit the value node codegen already lowers;
-   vs (b) route the sexpr `FuncCall` for a known int-intrinsic name to the
-   word-form command-substitution lowering (reuse `value_handlers`), keeping them
-   `BuiltinCmd::Other`. (a) is more uniform but larger; (b) is smaller but keeps
-   two dispatch styles.
+**Governing model: Option C** (`0a6d690`; DD#58/DD#17 amended in place). `$(...)`
+is return-type-polymorphic — it captures the callee's declared result (int
+`return` for `-> int` fns / int intrinsics, stdout string for string fns). An
+**int producer** (user `-> int` fn OR int intrinsic) works in **both** `$(f)`
+capture and the `$(( (f) … ))` sexpr. DG's principle (turn 226): "len shouldn't
+be different from any other integer intrinsic" — so every int intrinsic must
+work in both surfaces exactly like `len` and `get_port` already do. This fix
+**completes that uniformity** for the sexpr surface; it does **not** retire or
+restrict `$()` (an earlier "full-symmetry / retire the word form" idea was
+raised and **rejected** — it contradicted Option C).
+
+1. **Q1 — string producer in a sexpr → type error.** `(toupper s)` etc. sit in
+   int-producer position; a string function there is a compile error pointing at
+   capturing it first (`s2=$(toupper s)`). Not silent 0, not capture+atoi. The
+   string function still works normally via `$()`. (This is DD#30 string-in-arith,
+   not a `$()` restriction.) Covers the getenv/arg validator-bypass sub-case too.
+2. **Q2 — dtoi/itod rejected in a sexpr.** Use `$()`: `int n=$(dtoi 2 "3.14")`
+   already works under Option C. Do NOT complicate the arith tokenizer for a
+   quoted string inside `(dtoi …)`. (itod returns a string → Q1 anyway.)
+3. **Q3 — `random` int-typed everywhere.** Add `random` to
+   `is_int_returning_intrinsic` so `int n=$(random)` captures the int (Option C
+   requires it) and `$(( (random) ))` computes.
+4. **Q4 — int intrinsics compute directly as i64 in a sexpr.** Extract the
+   i64-producing step out of codegen `value_handlers` (each int-intrinsic arm
+   computes an i64 then `emit_int_to_str`s it) into a shared helper; the sexpr
+   path lowers to the direct i64 (no string round-trip), the word form keeps
+   wrapping the same i64 with itoa for stdout capture. One source of truth; an
+   int intrinsic yields an int, not a string. (DG: "why would an int-type
+   intrinsic return a string?")
 
 # History
 
@@ -151,3 +164,10 @@ specials). This task is the *keyword/sexpr* surface — a different mechanism
 (int-intrinsic dispatch in the transform), and the broader of the two. Found
 2026-08-14 while assessing DD#75 §1. `bug-janet-special-var-arith` tracks the
 janet side of `$$` in arith and the janet getpid-exec / arith-status gaps.
+
+Decisions taken 2026-08-15. During that discussion the AI briefly
+mis-recommended retiring `$()` for int producers — it was reading the **stale**
+DD#58/DD#17 "type error" wording, unaware Option C (`0a6d690`, THIS session) had
+already superseded it and was never written into the DDs. Fixed as part of this
+work: DD#58 + DD#17 amended in place with Option C banners; the done task
+`dd58-sexpr-int-functions.md` point 2 noted superseded.

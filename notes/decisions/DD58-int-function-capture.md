@@ -1,6 +1,21 @@
 title: DD#58 — Integer Function Capture Syntax
 status: implemented
 
+> **Amendment — Option C (2026-08-15, commit `0a6d690`).** The original
+> rule below — "`$(f)` for a `-> int` function is a type error" — was
+> **superseded**. `$(...)` is now **return-type-polymorphic**: it captures
+> the callee's declared result — the integer `return` value for a `-> int`
+> function, or captured stdout (a string) for a string/void function. So
+> `int n=$(f)`, `echo $(f)`, and `"port=$(f)"` all work. Int producers work
+> in **both** the `$(f)` capture **and** the `$(( (f) … ))` sexpr, and this
+> applies **uniformly** to user `-> int` functions and to int intrinsics
+> (`len`, `argc`, `getpid`, `getppid`, `getcpid`, `epochseconds`, `random`,
+> `signum`, `status`). The inline text below is corrected accordingly.
+> Rationale: this-session decision, journal 052/145 (DG: "len shouldn't be
+> different from any other integer intrinsic"). A string producer used
+> inside `$(( ))` — the sexpr expects an int producer — is a type error
+> (capture it first with `$()`); that is DD#30, not a `$()` restriction.
+
 `-> int` functions return an integer via `return N`. Their return
 value is captured in arithmetic context via s-expression call syntax:
 
@@ -13,9 +28,13 @@ value is captured in arithmetic context via s-expression call syntax:
     if (( (add x y) > 10 )); then     # boolean context
     int z=$(( (add (mul 2 3) 4) ))    # nested calls
 
-`$(f)` for a `-> int` function is a type error — `$(...)` captures
-stdout, but `-> int` functions produce an integer return value, not
-stdout output.
+`$(f)` for a `-> int` function captures its **return value** — see the
+Option C amendment at the top (commit `0a6d690`, supersedes the original
+"type error" stance). `$(...)` is return-type-polymorphic: it yields the
+callee's declared result — the integer `return` for a `-> int` function,
+or captured stdout (a string) for a string/void function. The
+`$(( (f) … ))` sexpr stays available for using an int producer inside an
+arithmetic expression; both surfaces work for every int producer.
 
 Int→string conversion follows DD#30: `echo "$x"` at output.
 
@@ -43,8 +62,12 @@ This eliminates ambiguity inside `(( ))` where `f` could be either.
 - `(( ))` is the arithmetic statement form for reassignment and
   boolean tests. It is NOT a declaration form — `int x` is.
 - `$(( ))` is the arithmetic expression form that produces a value.
-- DD#17 is narrowed: `$(func)` is capture-call for string functions
-  only. `-> int` functions use `$(( ))` or `(( ))`.
+- DD#17/Option C: `$(func)` is a capture-call whose result **type is the
+  callee's return type** — a string for string functions, the integer
+  `return` for `-> int` functions. A `-> int` function may ALSO be used
+  in `$(( ))` / `(( ))` (arithmetic composition). (DD#58 originally
+  narrowed this to "string functions only"; Option C, `0a6d690`, widened
+  it back — see the amendment at the top.)
 
 ## Non-void enforcement (DD#55 gates 55.13, 55.16)
 
