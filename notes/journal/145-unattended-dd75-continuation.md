@@ -261,3 +261,27 @@ The invasive one — function args → implicit 1-indexed `args` array; `$1`→
 `${args[1]}`, `$@`→`@args`, `$#`→`${#args}`, `$*`→`$(join args)`, `$*` removed.
 Most invasive; a focused effort (parser + transform positional handling +
 type_check). Left for a dedicated pass.
+
+## §5 args-model SCOPED (not implemented) + session close (2026-08-14)
+
+Investigated the current positional model (explore agent) and wrote an
+implementation map + approach fork into notes/tasks/dd75-args-model.md.
+Key finding: positionals are scalar SSA vars ("1".."9","#"), not an array — so
+§5 (make them sugar for a real 1-indexed `args` array) is a genuinely invasive
+cross-cutting change with a real approach fork (real `args` table vs surface
+sugar over scalar vars). Parked before a rushed invasive edit, per the same
+judgment the prior session used before the retire-bracket parser change. DG's
+nod on approach (a) vs (b) wanted before coding.
+
+### This continuation delivered (all pushed, hand-parser, 0 native regressions):
+- bef23d9 — dd75-retire-bracket-subscripts (§4): [@]/[*] bracket forms → SB4038
+  at parse; @a is the sole splat.
+- 598d228 — bug fix: `$$`/`$?` silent-0 as a compound-arith operand (found while
+  assessing §1; native lower_value_as_int now computes the computed specials).
+- 1890135 — dd75-special-var-sugar (§1): equivalence pinned, SB5012 reframed to
+  canonical, DD#75/DD#24 docs.
+
+DD#75 status: §1 done, §2 (len) done, §3 (keys) done, §4 (retire bracket) done,
+§5 (args-model) scoped/parked. Filed follow-ups: converter-retire-bracket-splat,
+converter-special-var-sugar, bug-arith-keyword-pid-intrinsic-zero,
+bug-janet-special-var-arith.

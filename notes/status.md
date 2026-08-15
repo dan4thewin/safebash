@@ -10,7 +10,12 @@ native 881 / 0 fail; c 13 / janet 36 == baseline; 0 regressions.
 
 **Only DD#75 §5 (args-model) remains** — the invasive one (function args →
 implicit 1-indexed `args` array; `$1`→`${args[1]}`, `$@`→`@args`, `$#`→`${#args}`,
-`$*` removed). A dedicated focused pass (parser + transform + type_check).
+`$*` removed). Now **scoped** in its task file (current model = scalar SSA vars
+"1".."9"/"#", not an array; files: parse/transform/validate/type_check/codegen).
+Has an implementation-approach fork needing DG's nod before coding: (a) a real
+`args` table (true DD#75 uniformity, larger/riskier) vs (b) surface sugar over
+the existing scalar vars (smaller, only partial). Parked before a rushed
+invasive edit (same call as the retire-bracket pause).
 
 ## ════════ STATUS (2026-08-14 unattended, cont.) — bug fix: special-var arith silent-0 ════════
 
