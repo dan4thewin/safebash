@@ -568,6 +568,7 @@ fn handle_regular_assign(
             ctx.literals,
             ctx.func_constants,
             ctx.externs,
+            Some(ctx.exit_status_var),
         );
         builder.def_var(*sv.as_int(), int_val);
     } else {
@@ -1258,6 +1259,7 @@ pub(super) fn handle_subscript_assign(
             literals,
             func_constants,
             externs,
+            Some(exit_status_var),
         );
         let idx_slot =
             builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));

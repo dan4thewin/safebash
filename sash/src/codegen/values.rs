@@ -169,6 +169,7 @@ pub(super) fn lower_value(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let rhs = builder.ins().iconst(I64, *operand);
             let result =
@@ -184,6 +185,7 @@ pub(super) fn lower_value(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let r = lower_value_as_int(
                 right,
@@ -193,6 +195,7 @@ pub(super) fn lower_value(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let result = emit_arith_op(*op, l, r, builder, module, externs, None);
             emit_int_to_str(builder, module, externs, result)
@@ -585,6 +588,7 @@ fn lower_subscript_value(
             literals,
             func_constants,
             externs,
+            exit_status_var,
         );
         let (idx_slot, kp) = alloc_out_slot(builder);
         builder.ins().stack_store(idx_int, idx_slot, 0);
@@ -714,6 +718,7 @@ fn lower_ternary_value(
         literals,
         func_constants,
         externs,
+        exit_status_var,
     );
     let zero = builder.ins().iconst(I64, 0);
     let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
@@ -784,6 +789,7 @@ fn lower_indexed_array_value(
 }
 
 /// Emit Cranelift instructions for an ArithOp on two i64 values.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn lower_value_as_int(
     value: &SsaValue,
     builder: &mut FunctionBuilder,
@@ -792,6 +798,7 @@ pub(super) fn lower_value_as_int(
     literals: &HashMap<String, cranelift_module::DataId>,
     func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
@@ -799,24 +806,7 @@ pub(super) fn lower_value_as_int(
             builder.ins().iconst(I64, n)
         }
         SsaValue::Var(vref) => {
-            let key = vref.display();
-            let sv = match vars.get(&key) {
-                Some(v) => v,
-                None => {
-                    // Undefined variable → 0 in int context
-                    return builder.ins().iconst(I64, 0);
-                }
-            };
-            if sv.is_int() {
-                builder.use_var(*sv.as_int())
-            } else {
-                // String var in int context: atoi
-                let ptr = builder.use_var(sv.str_ptr());
-                let len = builder.use_var(sv.str_len());
-                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-                let call = builder.ins().call(atoi_ref, &[ptr, len]);
-                builder.inst_results(call)[0]
-            }
+            lower_var_as_int(vref, builder, module, vars, externs, exit_status_var)
         }
         SsaValue::ArithExpr { var, op, operand } => {
             let var_val = lower_value_as_int(
@@ -827,6 +817,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let rhs = builder.ins().iconst(I64, *operand);
             emit_arith_op(*op, var_val, rhs, builder, module, externs, None)
@@ -840,6 +831,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let r = lower_value_as_int(
                 right,
@@ -849,6 +841,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             emit_arith_op(*op, l, r, builder, module, externs, None)
         }
@@ -865,6 +858,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let zero = builder.ins().iconst(I64, 0);
             let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
@@ -876,6 +870,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             let f = lower_value_as_int(
                 false_val,
@@ -885,6 +880,7 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
+                exit_status_var,
             );
             builder.ins().select(is_true, t, f)
         }
@@ -910,13 +906,84 @@ pub(super) fn lower_value_as_int(
                 literals,
                 func_constants,
                 externs,
-                None,
+                exit_status_var,
             );
             let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
             let call = builder.ins().call(atoi_ref, &[ptr, len]);
             builder.inst_results(call)[0]
         }
     }
+}
+
+/// A `SsaValue::Var` read in int context: a computed special ($$/$?) computes
+/// its value; a materialized slot reads its int (or atoi's its string); an
+/// unknown key is 0.
+fn lower_var_as_int(
+    vref: &VarRef,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let key = vref.display();
+    // Computed specials ($$ → getpid, $? → the exit-status var) have no
+    // materialized slot — mirror the string path (lower_var_value) so a special
+    // read as an int OPERAND computes its value instead of the undefined-var 0.
+    // ($# is a real slot, so it falls through below.)
+    if let Some(v) = special_var_as_int(&key, builder, module, externs, exit_status_var) {
+        return v;
+    }
+    let Some(sv) = vars.get(&key) else {
+        // Undefined variable → 0 in int context
+        return builder.ins().iconst(I64, 0);
+    };
+    if sv.is_int() {
+        builder.use_var(*sv.as_int())
+    } else {
+        // String var in int context: atoi
+        let ptr = builder.use_var(sv.str_ptr());
+        let len = builder.use_var(sv.str_len());
+        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+        let call = builder.ins().call(atoi_ref, &[ptr, len]);
+        builder.inst_results(call)[0]
+    }
+}
+
+/// The computed special vars that have no materialized slot: `$$` → getpid,
+/// `$?` → the exit-status var. Mirrors the string path (`lower_var_value`) so a
+/// special var read as an int operand computes its value rather than the
+/// undefined-var 0. Returns `None` for an ordinary variable (`$#` included — it
+/// is a real slot handled by the normal path). DD#24/DD#31: these are clean
+/// arithmetic operands. (`$!` / getcpid is a materialized slot, not here.)
+fn special_var_as_int(
+    key: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<cranelift_codegen::ir::Value> {
+    match strip_ssa_version(key) {
+        "$" => {
+            let getpid_ref = module.declare_func_in_func(externs.getpid, builder.func);
+            let call = builder.ins().call(getpid_ref, &[]);
+            Some(builder.inst_results(call)[0])
+        }
+        "?" => exit_status_var.map(|esv| builder.use_var(esv)),
+        _ => None,
+    }
+}
+
+/// Strip a trailing `_<digits>` SSA version suffix from a variable key, yielding
+/// the base name (`$_3` → `$`, `count_7` → `count`). Matches the base-extraction
+/// in the string path (`lower_var_value`).
+fn strip_ssa_version(key: &str) -> &str {
+    if let Some(idx) = key.rfind('_') {
+        if key[idx + 1..].chars().all(|c| c.is_ascii_digit()) {
+            return &key[..idx];
+        }
+    }
+    key
 }
 
 /// If `name` is a positional ($1, $2, ...) or special var ($#, $@, $0),

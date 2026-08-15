@@ -1092,6 +1092,7 @@ impl SsaInst {
                 literals,
                 func_constants,
                 externs,
+                Some(exit_status_var),
             );
             let zero = builder.ins().iconst(I64, 0);
             let is_zero = builder.ins().icmp(IntCC::Equal, int_val, zero);

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=62
+plan=67
 echo "1..$plan" >&3
 
 set +e
@@ -306,6 +306,32 @@ if in_modes native,c; then
 else
     skip_chk 58.10; skip_chk 58.11; skip_chk 58.12; skip_chk 58.13
     skip_chk 58.14; skip_chk 58.15; skip_chk 58.16
+fi
+
+# DD#24/DD#31 — the clean special vars ($$ pid, $? status, $# argc) are valid
+# `$(( ))` operands, including inside a *compound* expression (not just
+# standalone). Native regression: `$$`/`$?` read 0 as a compound-arith operand
+# because the int-lowering path missed the getpid / exit-status specials that
+# the string path already handles ($# worked — it is a materialized slot). c
+# handles all three; janet lacks `$$` in arith (filed janet-special-var-arith).
+if in_modes native,c; then
+    # 31.20 $$ (pid) as a comparison operand — a pid is always positive
+    run_sash 'echo $(( $$ > 0 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 31.20
+    # 31.21 $$ inside a compound arithmetic operand (pid*2 is positive)
+    run_sash 'echo $(( $$ * 2 > 0 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 31.21
+    # 31.22 $? (=1 after arith-false) as a compound operand → 1 + 7 = 8
+    run_sash '(( 0 )); echo $(( $? + 7 ))'
+    [[ $rc = 0 && $out = "8" && -z $err ]]; chk 31.22
+    # 31.23 $? (=0 after arith-true) as a compound operand → 0 + 7 = 7
+    run_sash '(( 1 )); echo $(( $? + 7 ))'
+    [[ $rc = 0 && $out = "7" && -z $err ]]; chk 31.23
+    # 31.24 $# (arg count) as a compound operand (already worked — pin it)
+    run_sash 'f() { echo $(( $# * 2 )); }; f a b c'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.24
+else
+    skip_chk 31.20; skip_chk 31.21; skip_chk 31.22; skip_chk 31.23; skip_chk 31.24
 fi
 
 set -e

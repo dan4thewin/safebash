@@ -188,3 +188,50 @@ clippy clean.
 Filed the converter half as a follow-up: `converter-retire-bracket-splat`
 (rewrite the retired bash spellings to canonical, DD#75 §6 — split per DG's
 convert-as-follow-up rule).
+
+## BUG FIX: computed special vars ($$, $?) silent-0 as arithmetic operands (2026-08-14)
+
+While assessing dd75-special-var-sugar (§1) I found a stop-everything bug:
+`$$` and `$?` evaluate to **0** when used as an operand in a *compound*
+arithmetic expression, while working standalone and as words.
+
+```
+echo $(( $$ ))          → pid   (ok, standalone)
+echo $$                 → pid   (ok, word)
+echo $(( $$ + 0 ))      → 0     (BUG — should be pid)
+echo $(( $$ > 0 ))      → 0     (BUG — should be 1)
+(( 0 )); echo $(( $? + 7 ))  → 7 (BUG — should be 8; $? = 1)
+```
+
+`$#` was unaffected (it is a materialized var slot). Pre-existing (repro at
+HEAD bef23d9). Violates DD#24 (lists `$#`,`$?`,`$$`,`$!` as clean operands) and
+DD#31 (`$(( ))` accepts arithmetic on clean operands).
+
+**Root cause.** The string codegen path (`lower_value`/`lower_var_value`,
+values.rs) special-cases the computed specials with no slot — `$` → `sash_getpid`,
+`?` → the exit-status var. The **int** path (`lower_value_as_int`) had no such
+handling: it looked up a variable literally named `$` / `?`, found none, and
+returned the undefined-var 0. So any special read as an int OPERAND (compound
+arith) silently became 0; only a standalone `$(( $$ ))` survived because its
+*result* is lowered through the string path.
+
+**Fix (native).** `lower_value_as_int` now calls a new `special_var_as_int`
+helper (`$` → getpid, `?` → exit-status var) before the slot lookup, mirroring
+the string path; `strip_ssa_version` extracted for the base-name match. Threaded
+`exit_status_var: Option<Variable>` through `lower_value_as_int` and its 13 call
+sites (all callers already had it in scope). c already emitted `sash_getpid()`
+/ the exit-status temp correctly; janet errors on `$$` in arith (filed).
+
+Test-first: arithmetic.sh 31.20–24 (`in_modes native,c`; janet skips —
+bug-janet-special-var-arith). 31.20/21/22 failed pre-fix (0/0/7), pass post-fix
+(1/1/8); 31.23 ($?=0 case) and 31.24 ($# regression pin) already passed. plan
+62→67. Full sweep: native 0 failing (872→877), c 13 / janet 36 == baseline, 0
+regressions (latest-run diff). codegen_tests 179/77 and e2e 89/41 == HEAD
+baseline (stash-compared: brush_arith_quoted/pos_exit_status fail identically on
+HEAD — SB5006 `**` rot / true-false rot, not mine).
+
+**Filed** (distinct, silent-wrong but separable): bug-arith-keyword-pid-intrinsic-zero
+(`(getpid)`/`(getcpid)`/`(random)` sexpr in arith → 0; only `len` is wired as an
+arith int-intrinsic; also `$(getpid)` command-sub in arith → SB4020) and
+bug-janet-special-var-arith. So DD#75 §1 arith-equivalence (`$$` ≡ `$(getpid)`)
+holds for the sugar now; the keyword/sexpr side is the filed follow-up.

@@ -1,3 +1,17 @@
+## ════════ STATUS (2026-08-14 unattended, cont.) — bug fix: special-var arith silent-0 ════════
+
+Stop-everything bug found while assessing dd75-special-var-sugar (§1): `$$`/`$?`
+evaluate to **0** as an operand in a compound `$(( ))` expression (standalone +
+word contexts were fine; `$#` unaffected — real slot). Pre-existing; violates
+DD#24/DD#31 (both list these as clean arith operands). Root cause: the int
+codegen path (`lower_value_as_int`) lacked the computed-special handling the
+string path has (`$`→getpid, `?`→exit-status). Fix: `special_var_as_int` helper
++ threaded `exit_status_var` through `lower_value_as_int` (native). c already
+correct; janet errors (filed). Test-first arithmetic.sh 31.20–24 (`native,c`;
+plan 62→67). native 0 failing; c 13 / janet 36 == baseline; codegen 179/77 +
+e2e 89/41 == HEAD. Filed bug-arith-keyword-pid-intrinsic-zero (sexpr
+`(getpid)`→0) + bug-janet-special-var-arith.
+
 ## ════════ STATUS (2026-08-14 unattended, cont.) — dd75-retire-bracket DONE ════════
 
 Retired the `[@]`/`[*]` bracket-subscript collection forms (DD#75 §4). `@a` is
