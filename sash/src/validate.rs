@@ -1083,15 +1083,7 @@ fn check_dq_case(c: &crate::ir::Case, state: &mut StatusState, diags: &mut Vec<D
 fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diagnostic>) {
     if stmt_uses_status(stmt) {
         if *state != StatusState::Available {
-            let mut spans = Vec::new();
-            find_dollar_question(stmt, &mut spans);
-            for span in spans {
-                diags.push(Diagnostic::error_span(
-                    span,
-                    "SB5012",
-                    "$? is not available here — no preceding command".to_string(),
-                ));
-            }
+            emit_status_unavailable(stmt, diags);
         }
         *state = StatusState::Undefined;
     }
@@ -1099,6 +1091,22 @@ fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
         *state = StatusState::Undefined;
     } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
         *state = StatusState::Available;
+    }
+}
+
+/// Emit an SB5012 at every `$?` / `$(status)` in `stmt` — the status is
+/// consumed with no preceding command to have set it.
+fn emit_status_unavailable(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let mut spans = Vec::new();
+    find_dollar_question(stmt, &mut spans);
+    for span in spans {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5012",
+            "$(status) is not available here — no preceding command \
+             (the punctuation sugar $? reads the same value)"
+                .to_string(),
+        ));
     }
 }
 

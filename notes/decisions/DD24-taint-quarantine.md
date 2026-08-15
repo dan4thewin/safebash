@@ -29,6 +29,10 @@ Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`,
 `$LINENO` (compile-time constant), variables assigned from clean
 expressions.
 
+(`$?`/`$!`/`$$` are the punctuation **sugar** for the canonical clean
+intrinsics `$(status)`/`$(getcpid)`/`$(getpid)` — DD#75 §1. The clean
+status attaches to the keyword form; the sugar inherits it.)
+
 Function positional params (`$1`..`$9`, `$@`) are clean within
 functions — the compiler sees the caller's arguments and knows
 their taint status. Top-level positionals are program argv (tainted,

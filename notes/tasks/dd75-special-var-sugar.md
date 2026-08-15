@@ -1,6 +1,6 @@
 ---
 title: "DD#75 §1 — special vars are sugar for keyword forms ($? → $(status), $! → $(getcpid), $$ → $(getpid))"
-status: ready
+status: done
 priority: P3
 kind: task
 depends: []
@@ -22,3 +22,17 @@ adds `$$`↔`$(getpid)`. Touch points: sash-convert output, docs (GUIDE/SUBSET),
 diagnostic wording, and the DD#24 taint-source list.
 
 See DD#75 §1.
+
+## DONE (2026-08-14) — compiler core
+
+Both spellings already lowered to one node; this session pinned + reframed:
+- Equivalence `$$`≡`$(getpid)`, `$?`≡`$(status)`, `$!`≡`$(getcpid)` verified all
+  three backends; specs misc.sh spv.1–4.
+- SB5012 diagnostic leads with the canonical `$(status)`.
+- Fixed the surfaced bug: `$$`/`$?` silent-0 as a compound-arith operand
+  (arithmetic.sh 31.20–24; commit 598d228).
+- DD#75 §1 + DD#24 decision docs updated (canonical/sugar framing).
+
+Deferred per DG convert-as-follow-up rule → `converter-special-var-sugar`
+(sash-convert emit keyword forms; GUIDE/SUBSET public prose reframe). Keyword
+pid/random intrinsics as arith operands → `bug-arith-keyword-pid-intrinsic-zero`.

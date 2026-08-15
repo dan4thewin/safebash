@@ -39,3 +39,20 @@ handling the native/c paths have.
 
 Part of the janet backend-parity effort (see janet-join-intrinsic-gaps,
 cjanet-function-stdout-capture). Native is the gate; this is a janet-only gap.
+
+## Also (word context, found 2026-08-14 via misc.sh spv.1-3)
+
+Beyond arithmetic, janet has two word-context runtime gaps for the specials:
+
+- **getpid-class intrinsics are execed as external commands.** `q=$(getpid)`
+  on the janet backend emits `(os/spawn "getpid" ...)` → `error: ("getpid"):
+  No such file or directory`. janet needs getpid/getcpid/getppid/getcwd/
+  epochseconds/random as in-process intrinsics (native/c have them). (spv.4
+  `$(getcpid)` happens to pass only because both it and `$!` are empty.)
+- **`$?`/`$(status)` mis-tracked after arithmetic.** `(( 0 )); echo $?` prints
+  `0` on janet (native/c: `1` — arith-false sets status 1). janet's arith
+  statement doesn't set `__last_exit` from the truthiness of the result.
+
+specs misc.sh spv.1–3 are therefore guarded `in_modes native,c`; widen to all
+modes once janet implements the intrinsics + arith-status. Part of the janet
+backend-parity effort.

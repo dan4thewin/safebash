@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=23
+plan=27
 echo "1..$plan" >&3
 
 set +e
@@ -138,6 +138,29 @@ printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
 EXPAND=$(which sash-expand)
 run_sash "map config; $EXPAND /tmp/sash_test_config.conf | mapfile -m config; bless k v in config [[ \$k =~ ^[A-Z]+\$ && -n \$v ]]; echo \${config[GREETING]}"
 [[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
+
+# --- DD#75 §1: punctuation specials are sugar for the keyword forms ---
+# Both spellings compile to the same node/behaviour: $$ ≡ $(getpid),
+# $? ≡ $(status), $! ≡ $(getcpid). The keyword form is canonical (docs,
+# diagnostics, sash-convert); the punctuation form is accepted input sugar.
+# spv.1-3 are native,c: janet execs the getpid intrinsic and mis-tracks the
+# arith-false status (filed bug-janet-special-var-arith).
+if in_modes native,c; then
+    # spv.1 $$ and $(getpid) are the same value (this process's pid)
+    run_sash 'p=$$; q=$(getpid); [[ $p == $q ]] && echo Y'
+    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.1
+    # spv.2 $? sugar reads the last status (arith-false → 1)
+    run_sash '(( 0 )); echo $?'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.2
+    # spv.3 $(status) keyword reads the same status
+    run_sash '(( 0 )); echo $(status)'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.3
+else
+    skip_chk spv.1; skip_chk spv.2; skip_chk spv.3
+fi
+# spv.4 $! and $(getcpid) are the same value (empty with no background job)
+run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
 
 set -e
 tally

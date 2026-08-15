@@ -235,3 +235,29 @@ HEAD — SB5006 `**` rot / true-false rot, not mine).
 arith int-intrinsic; also `$(getpid)` command-sub in arith → SB4020) and
 bug-janet-special-var-arith. So DD#75 §1 arith-equivalence (`$$` ≡ `$(getpid)`)
 holds for the sugar now; the keyword/sexpr side is the filed follow-up.
+
+## dd75-special-var-sugar (§1) DONE — compiler core (2026-08-14)
+
+Both spellings already lowered to one node and were accepted; this reframes the
+canonical spelling in the compiler surface + pins the equivalence:
+- `$$`≡`$(getpid)`, `$?`≡`$(status)`, `$!`≡`$(getcpid)` verified equal; specs
+  misc.sh spv.1–4. spv.1–3 guarded `native,c` — janet execs the getpid intrinsic
+  and mis-tracks arith-false status (extended bug-janet-special-var-arith).
+- SB5012 diagnostic leads with the canonical form: "$(status) is not available
+  … (the punctuation sugar $? reads the same value)". No spec asserted the old
+  text.
+- DD#75 §1 doc: "Implemented (compiler + specs)" note. DD#24 clean-sources: a
+  note that `$?`/`$!`/`$$` are sugar for the canonical clean intrinsics.
+
+Deferred per DG convert-as-follow-up rule → converter-special-var-sugar
+(sash-convert emit keyword forms + GUIDE/SUBSET public prose). The compiler
+accepts both spellings so nothing is blocked.
+
+native 881 / 0 fail; c 13 / janet 36 == baseline; 0 regressions.
+
+## Remaining DD#75: only §5 (args-model) left
+
+The invasive one — function args → implicit 1-indexed `args` array; `$1`→
+`${args[1]}`, `$@`→`@args`, `$#`→`${#args}`, `$*`→`$(join args)`, `$*` removed.
+Most invasive; a focused effort (parser + transform positional handling +
+type_check). Left for a dedicated pass.

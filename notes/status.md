@@ -1,3 +1,17 @@
+## ════════ STATUS (2026-08-14 unattended, cont.) — DD#75 §1 special-var sugar DONE ════════
+
+DD#75 §1 (special vars are sugar; keyword forms canonical) — compiler core done.
+Both spellings already lowered to one node; pinned the equivalence + reframed
+the surface: `$$`≡`$(getpid)`, `$?`≡`$(status)`, `$!`≡`$(getcpid)` (specs
+misc.sh spv.1–4; spv.1–3 `native,c` — janet execs getpid + mis-tracks arith
+status, filed). SB5012 leads with `$(status)`. DD#75 §1 + DD#24 docs updated.
+Convert + public GUIDE/SUBSET prose → converter-special-var-sugar (DG voice).
+native 881 / 0 fail; c 13 / janet 36 == baseline; 0 regressions.
+
+**Only DD#75 §5 (args-model) remains** — the invasive one (function args →
+implicit 1-indexed `args` array; `$1`→`${args[1]}`, `$@`→`@args`, `$#`→`${#args}`,
+`$*` removed). A dedicated focused pass (parser + transform + type_check).
+
 ## ════════ STATUS (2026-08-14 unattended, cont.) — bug fix: special-var arith silent-0 ════════
 
 Stop-everything bug found while assessing dd75-special-var-sugar (§1): `$$`/`$?`

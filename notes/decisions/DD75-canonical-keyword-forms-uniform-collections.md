@@ -45,6 +45,22 @@ a runtime value, and has no keyword form.
 attaches to `$(status)`/`$(getcpid)`/`$(getpid)`; the sugar inherits it. No
 value changes taint class.
 
+**Implemented (compiler + specs), 2026-08-14.** Both spellings already lower to
+one node and are accepted; this session pinned the equivalence and reframed the
+canonical spelling in the compiler surface:
+- `$$`≡`$(getpid)`, `$?`≡`$(status)`, `$!`≡`$(getcpid)` verified equal in all
+  three backends; specs `misc.sh` spv.1–4 (native/c/janet).
+- Diagnostics lead with the keyword form: SB5012 now reads "$(status) is not
+  available … (the punctuation sugar $? reads the same value)".
+- Fixed a latent bug the reframing surfaced: `$$`/`$?` silently read 0 as a
+  *compound-arith* operand (`$(( $$ + 1 ))`); native `lower_value_as_int` now
+  computes them (specs arithmetic.sh 31.20–24). DD#24/DD#31 clean-operand rule.
+
+Deferred (follow-ups, not blocking): sash-convert emitting the keyword forms on
+output (`converter-special-var-sugar`); the public GUIDE/SUBSET prose reframe
+(DG voice). The keyword pid/random *intrinsics as arith operands* remain a
+separate gap (`bug-arith-keyword-pid-intrinsic-zero`).
+
 ## 2. `len` is type-polymorphic (Go semantics)
 
 `len x` yields an **int**, dispatching on `x`'s type (the transform already
