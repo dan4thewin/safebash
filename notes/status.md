@@ -1,3 +1,23 @@
+## ════════ STATUS (2026-08-15) — DD#58/Option C sexpr int intrinsics (part 1) ════════
+
+Implementing bug-arith-sexpr-intrinsics-zero (Option C: `$()` return-type-
+polymorphic; int producers work in both `$(f)` and `$(( (f) ))`). Part 1 done:
+- **Category A** — int intrinsics compute in a sexpr (were silent 0):
+  `(getpid)`→`$$`, `(status)`→`$?`, `(getppid)/(argc)/(random)/(signum)/
+  (epochseconds)`→ CmdSubst; native direct-i64 via shared `int_intrinsic_i64`,
+  c via atoi fallback. native+c (signum native-only — c/janet TODO stub, filed
+  c-janet-signum-intrinsic).
+- **Grouping bug** — `$(( (x) ))` on a plain variable returned 0; now returns
+  the variable (arith parser defers the `(name)` call/group decision here).
+- **Q3** — `random` int-typed (`int n=$(random)` was wrongly SB4030).
+
+spec arithmetic.sh sx.1–11 (plan 67→78). native 892/0-fail; c 13 / janet 36 ==
+baseline; 0 regressions; codegen 179/77 + e2e 89/41 == HEAD.
+
+**Part 2 (next):** category B (string producer in a sexpr → type error; closes
+the getenv/arg validator-bypass) + Q2 (dtoi/itod rejected). Needs a type_check
+arith-walk. getcpid-in-sexpr deferred.
+
 ## ════════ STATUS (2026-08-14 unattended, cont.) — DD#75 §1 special-var sugar DONE ════════
 
 DD#75 §1 (special vars are sugar; keyword forms canonical) — compiler core done.

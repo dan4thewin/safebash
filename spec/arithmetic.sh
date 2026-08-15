@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=67
+plan=78
 echo "1..$plan" >&3
 
 set +e
@@ -332,6 +332,68 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.24
 else
     skip_chk 31.20; skip_chk 31.21; skip_chk 31.22; skip_chk 31.23; skip_chk 31.24
+fi
+
+# ── DD#58/Option C — sash-native intrinsics in an arithmetic sexpr $(( (f) )) ──
+# An int producer (user `-> int` fn OR int intrinsic) works in BOTH $(f) capture
+# and the $(( (f) )) sexpr. Previously ONLY `len` worked in the sexpr; every
+# other intrinsic silently evaluated to 0. See bug-arith-sexpr-intrinsics-zero.
+
+# Category A — int intrinsics compute (not silent 0). native+c (janet execs
+# the intrinsics / emits invalid sexpr — filed, same gap as len 58.10-16).
+if in_modes native,c; then
+    # sx.1 argc in a sexpr (C argc = 1: program name only, no extra args)
+    run_sash 'echo $(( (argc) ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.1
+    # sx.2 getpid in a sexpr — a pid is positive
+    run_sash 'echo $(( (getpid) > 0 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.2
+    # sx.3 getppid in a sexpr — positive
+    run_sash 'echo $(( (getppid) > 0 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.3
+    # sx.4 epochseconds in a sexpr — unix time is large/positive
+    run_sash 'echo $(( (epochseconds) > 0 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.4
+    # sx.5 status in a sexpr — arith-false sets status 1
+    run_sash '(( 0 )); echo $(( (status) ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.5
+    # sx.6 int intrinsic composes in a larger arith expression
+    run_sash 'echo $(( (argc) + 10 ))'
+    [[ $rc = 0 && $out = "11" && -z $err ]]; chk sx.6
+    # sx.8 random in a sexpr, captured to int — two draws differ (buggy → 0,0)
+    run_sash 'int a=$(( (random) )); int b=$(( (random) )); echo $(( a != b ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.8
+else
+    skip_chk sx.1; skip_chk sx.2; skip_chk sx.3; skip_chk sx.4
+    skip_chk sx.5; skip_chk sx.6; skip_chk sx.8
+fi
+# sx.7 signum — native only: c/janet emit a TODO stub for the signum intrinsic
+# (filed c-janet-signum-intrinsic), so it can't be tested there yet.
+if in_modes native; then
+    # signum with no signal received → 0 (pins it computes in a sexpr)
+    run_sash 'echo $(( (signum) ))'
+    [[ $rc = 0 && $out = "0" && -z $err ]]; chk sx.7
+else
+    skip_chk sx.7
+fi
+
+# Grouping — `(x)` on a plain variable is arithmetic grouping, not a nullary
+# call. The arith parser emits FuncCall for every `(name)` and defers the
+# decision; a name that is neither an intrinsic nor a known function is a
+# variable. Regression: `$(( (x) ))` silently returned 0. native,c (janet
+# sexpr-resolution parity filed).
+if in_modes native,c; then
+    # sx.9 grouped int variable
+    run_sash 'int x=5; echo $(( (x) ))'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk sx.9
+    # sx.10 grouped variable composes with an operator
+    run_sash 'int x=5; echo $(( (x) + 1 ))'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk sx.10
+    # sx.11 Q3: random is int-typed — int n=$(random) captures (was SB4030)
+    run_sash 'int n=$(random); echo ok'
+    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk sx.11
+else
+    skip_chk sx.9; skip_chk sx.10; skip_chk sx.11
 fi
 
 set -e

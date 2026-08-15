@@ -285,3 +285,43 @@ DD#75 status: §1 done, §2 (len) done, §3 (keys) done, §4 (retire bracket) do
 §5 (args-model) scoped/parked. Filed follow-ups: converter-retire-bracket-splat,
 converter-special-var-sugar, bug-arith-keyword-pid-intrinsic-zero,
 bug-janet-special-var-arith.
+
+## DD#58/Option C — sexpr int intrinsics compute (part 1: category A + grouping + Q3), 2026-08-15
+
+Implementing bug-arith-sexpr-intrinsics-zero. Only `len` worked in an arithmetic
+sexpr `$(( (f) ))`; every other int intrinsic silently evaluated to 0. Under
+Option C an int producer (intrinsic OR user `-> int` fn) works in both `$(f)`
+capture and the `$(( (f) )) ` sexpr, and "len shouldn't be different from any
+other integer intrinsic" (DG).
+
+**Category A — int intrinsics compute (native+c).** `funccall_to_ssa`
+(transform) now resolves a nullary int intrinsic instead of falling to the
+empty-int-func 0: `(getpid)`→`$$`, `(status)`→`$?` (reuse the punctuation
+specials both native+c already lower directly), and
+`(getppid)/(argc)/(random)/(signum)/(epochseconds)`→ the word-form `CmdSubst`
+node. native computes the i64 DIRECTLY via a shared `int_intrinsic_i64` helper
+(value_handlers) — no string round-trip (DG: "why would an int intrinsic return
+a string?"); `lower_value_as_int` gained a CmdSubst arm calling it, falling back
+to atoi for names without a direct i64 (epochseconds). c reuses its existing
+emit_cmdsub + atoi fallback (round-trip, correct value). `(signum)` is
+native-only — c/janet emit a TODO stub for the signum intrinsic
+(c-janet-signum-intrinsic filed); it passed c only coincidentally (signum=0).
+
+**Grouping bug fixed (same path).** `$(( (x) ))` on a plain variable silently
+returned 0 — the arith parser emits `FuncCall` for every `(name)` and defers
+the decision; a nullary name that is neither an intrinsic nor a known function
+is a variable → return its value. Regression pinned (sx.9/sx.10).
+
+**Q3 — random int-typed.** Added `random` to `is_int_returning_intrinsic`
+(type_check) so `int n=$(random)` captures the i64 (was wrongly SB4030); fixed
+the doc comment (signum is the DD#56 signal-number reader, not a "numeric
+conversion").
+
+Test-first: spec arithmetic.sh sx.1–sx.11 (plan 67→78). native 892 / 0 fail;
+c 13 / janet 36 == baseline; 0 regressions. codegen 179/77 + e2e 89/41 == HEAD.
+clippy clean.
+
+**Deferred to part 2:** category B (string producer in a sexpr → type error;
+covers the getenv/arg validator-bypass) + Q2 (dtoi/itod rejected in a sexpr).
+Needs a type_check arith-walk (type_check treats `$(( ))` as Int without
+descending). getcpid-in-sexpr (`$!` slot) also deferred.

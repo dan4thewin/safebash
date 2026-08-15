@@ -113,15 +113,17 @@ fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
 
 /// A `$(…)` command substitution is int-typed when its command is one of
 /// the sash-native value functions that yield an integer: `len`/`argc`
-/// (counts), `signum`/`dtoi` (numeric conversions), `epochseconds` (unix
-/// time), `status` (`$?`), and the `getpid`/`getppid`/`getcpid` process ids.
-/// String-valued functions (`toupper`, `join`, `basename`, `itod`, …) are
-/// not listed, so `int n=$(toupper s)` stays a type error (SB4030).
+/// (counts), `random` (i64 draw), `dtoi` (fixed-point decimal→int),
+/// `epochseconds` (unix time), `signum` (DD#56 last-signal number), `status`
+/// (`$?`), and the `getpid`/`getppid`/`getcpid` process ids. String-valued
+/// functions (`toupper`, `join`, `basename`, `itod`, …) are not listed, so
+/// `int n=$(toupper s)` stays a type error (SB4030).
 fn is_int_returning_intrinsic(name: &str) -> bool {
     matches!(
         name,
         "len"
             | "argc"
+            | "random"
             | "signum"
             | "dtoi"
             | "epochseconds"

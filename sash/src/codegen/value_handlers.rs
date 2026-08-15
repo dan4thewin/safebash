@@ -825,6 +825,53 @@ fn try_native_intrinsic(
     }
 }
 
+/// Compute a nullary int intrinsic as a **direct i64** (no string round-trip).
+/// The single source of truth for the sexpr `(getppid)`/`(argc)`/… value:
+/// `lower_value_as_int` (arith/int context) calls this directly, mirroring
+/// what the string arms in `try_native_intrinsic` compute before
+/// `emit_int_to_str`. Returns `None` for a name without a direct i64 (e.g.
+/// `epochseconds`, whose runtime yields a string — the caller falls back to
+/// atoi). `getpid`/`status` are reached via the `$$`/`$?` specials, not here,
+/// but are included so the helper is complete. DD#58/Option C.
+pub(super) fn int_intrinsic_i64(
+    name: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<cranelift_codegen::ir::Value> {
+    let v = match name {
+        "getpid" => {
+            let f = module.declare_func_in_func(externs.getpid, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
+        "getppid" => {
+            let f = module.declare_func_in_func(externs.getppid, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
+        "random" => {
+            let f = module.declare_func_in_func(externs.random, builder.func);
+            let call = builder.ins().call(f, &[]);
+            builder.inst_results(call)[0]
+        }
+        "argc" => {
+            let gv = module.declare_data_in_func(externs.argc, builder.func);
+            let base = builder.ins().global_value(I64, gv);
+            builder.ins().load(I64, MemFlags::new(), base, 0)
+        }
+        "signum" => {
+            let gv = module.declare_data_in_func(externs.signum, builder.func);
+            let base = builder.ins().global_value(I64, gv);
+            builder.ins().load(I64, MemFlags::new(), base, 0)
+        }
+        "status" => return exit_status_var.map(|esv| builder.use_var(esv)),
+        _ => return None,
+    };
+    Some(v)
+}
+
 /// External `$(cmd ...)`: pipe → fork → (child: redirect stdout to
 /// pipe, apply redirects, exec) ‖ (parent: read loop into a 64 KiB
 /// heap buffer, wait, strip trailing newline, propagate DD#55 exit).

@@ -438,23 +438,67 @@ fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaVa
 }
 
 fn funccall_to_ssa(name: &str, args: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
-    // DD#58/#75: an int-returning intrinsic (e.g. `len`) called as an arith
-    // sexpr `(len a)` must EVALUATE the intrinsic — not flow through the
-    // user-int-func path (`inline_int_func`), which finds no user body and
-    // returns 0. Reconstruct a Command from the sexpr args and reuse the
-    // normal intrinsic builder. Only int-returning intrinsics are intercepted;
-    // a string intrinsic stays an IntFuncCall (handled elsewhere).
-    if is_arith_int_intrinsic(name) {
-        if let Some(cmd) = reconstruct_intrinsic_command(name, args) {
-            if let Some(v) = try_native_intrinsic(name, &cmd, state) {
-                return v;
-            }
+    if let Some(v) = try_arith_int_intrinsic(name, args, state) {
+        return v;
+    }
+    if args.is_empty() {
+        if let Some(v) = resolve_nullary_sexpr(name, state) {
+            return v;
         }
     }
     let ssa_args: Vec<SsaValue> = args.iter().map(|a| arith_to_ssa(a, expr, state)).collect();
     SsaValue::IntFuncCall {
         name: name.to_string(),
         args: ssa_args,
+    }
+}
+
+/// DD#58/#75: an int-returning intrinsic with args (e.g. `len`) called as an
+/// arith sexpr `(len a)` must EVALUATE the intrinsic — not flow through the
+/// user-int-func path (`inline_int_func`), which finds no user body and returns
+/// 0. Reconstruct a `Command` from the sexpr args and reuse the normal builder.
+/// Only int-returning intrinsics are intercepted; a string intrinsic stays an
+/// IntFuncCall (handled elsewhere). `None` → not this case.
+fn try_arith_int_intrinsic(
+    name: &str,
+    args: &[ArithExpr],
+    state: &VersionState,
+) -> Option<SsaValue> {
+    if !is_arith_int_intrinsic(name) {
+        return None;
+    }
+    let cmd = reconstruct_intrinsic_command(name, args)?;
+    try_native_intrinsic(name, &cmd, state)
+}
+
+/// Resolve a nullary sexpr atom `(name)`. Returns `None` for a known user
+/// `-> int` function (the caller inlines it via `IntFuncCall`).
+///
+/// DD#58/Option C: a NULLARY int intrinsic — `(getpid)`, `(argc)`, … — must
+/// EVALUATE (it was silently 0 via the empty-int-func path); an int producer
+/// works in both `$(f)` capture and the `$(( (f) ))` sexpr, and intrinsics
+/// must not differ from `len`/user int fns. `getpid`/`status` reuse the
+/// `$$`/`$?` specials (native + c lower them directly); the rest reuse the
+/// word-form `CmdSubst` node (codegen computes the i64: native direct via
+/// `int_intrinsic_i64`, c via its atoi fallback). `getcpid` (`$!`) is excluded
+/// — filed. A string intrinsic here is category B (rejected in type_check);
+/// see bug-arith-sexpr-intrinsics-zero.
+fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
+    match name {
+        "getpid" => Some(SsaValue::Var(state.lookup("$"))),
+        "status" => Some(SsaValue::Var(state.lookup("?"))),
+        "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
+            argv: vec![SsaValue::Literal(name.to_string())],
+            redirects: vec![],
+        }),
+        // `(x)` on a plain variable is arithmetic GROUPING, not a call: the
+        // arith parser emits `FuncCall` for every `(name)` and defers the
+        // decision here (DD#58). A nullary name that is neither an intrinsic
+        // nor a known function is a variable reference — return its value.
+        // (Was silently 0 via the empty-int-func path: `$(( (x) ))` → 0.)
+        _ if !state.known_functions.contains(name) => Some(SsaValue::Var(state.lookup(name))),
+        // A known user `-> int` function → None: the caller emits IntFuncCall.
+        _ => None,
     }
 }
 

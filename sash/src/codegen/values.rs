@@ -896,6 +896,37 @@ pub(super) fn lower_value_as_int(
             let call = builder.ins().call(len_ref, &[table_ptr]);
             builder.inst_results(call)[0]
         }
+        // DD#58/Option C: a sexpr nullary int intrinsic reuses the word-form
+        // `CmdSubst` node (`(getppid)` → `CmdSubst{["getppid"]}`). In int
+        // context, compute the i64 DIRECTLY (no string round-trip) rather than
+        // capture-then-atoi. Names without a direct i64 (`epochseconds`) return
+        // None and fall through to the string+atoi fallback below.
+        SsaValue::CmdSubst { argv, .. } => {
+            if let Some(SsaValue::Literal(name)) = argv.first() {
+                if let Some(v) = crate::codegen::value_handlers::int_intrinsic_i64(
+                    name,
+                    builder,
+                    module,
+                    externs,
+                    exit_status_var,
+                ) {
+                    return v;
+                }
+            }
+            let (ptr, len) = lower_value(
+                value,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call = builder.ins().call(atoi_ref, &[ptr, len]);
+            builder.inst_results(call)[0]
+        }
         _ => {
             // Fallback: lower as string, atoi
             let (ptr, len) = lower_value(
