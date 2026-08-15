@@ -1,6 +1,6 @@
 ---
 title: "bug: pid/random keyword intrinsics as arithmetic operands silently yield 0 (only `len` is wired as an arith int-intrinsic)"
-status: ready
+status: superseded
 priority: P2
 kind: bug
 depends: []
@@ -52,3 +52,12 @@ int and string codegen paths compute the runtime value (the codegen
 command-sub-in-arith question with DG (keep rejected → sexpr-only, or accept).
 `implement-getpid-builtins` is marked done for the *word* context; this is the
 arith-operand gap it did not cover.
+
+## SUPERSEDED (2026-08-14)
+
+Superseded by `bug-arith-sexpr-intrinsics-zero`, which is the comprehensive
+version: this task named only getpid/getcpid/random, but the empirical sweep
+found **every** sash-native intrinsic except `len` is broken in a sexpr — the
+int-returning ones silently yield 0, the string/collection ones silently yield 0
+instead of a type error, plus the `random` int-typing inconsistency, the
+wrong-arity `sash: bug:` abort, and the `signum` doc bug. See that task.
