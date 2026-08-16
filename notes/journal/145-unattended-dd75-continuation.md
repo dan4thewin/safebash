@@ -355,3 +355,25 @@ clippy clean.
 DD#58/Option C sexpr surface complete: int intrinsics compute (part 1), string
 producers reject (part 2). Deferred: getcpid-in-sexpr (`$!` slot) + the
 c/janet signum intrinsic (both filed). Task done.
+
+## arith-subscript reads — BUG 1 fixed (stage 1), 2026-08-16
+
+DG reported two suspected bugs. Investigated:
+- BUG 1 (real): array/map subscripts `${a[i]}`/`${m[k]}` evaluated to 0 in every
+  arith context — the arith parser read `${a[0]}` as a variable literally named
+  "a[0]". FIXED.
+- BUG 2 (not a bug): out-of-range index / missing key → zero-value (empty/0),
+  uniform with maps + unset vars (sparse table-backed, DD#53). DG: keep it.
+
+Design (long conversation, DG): inside `(( ))`, `${…}` is a normal-parse rvalue
+value-import (NEVER an lvalue — preserves the invariant that `${…}` means "the
+value of" everywhere; model A `${m[k]}++` rejected as too surprising). Bare
+`a[i]` (stage 2) will be the int-array arith lvalue+rvalue; bare `m[k]` an error.
+Lvalue is always bare `a[i]` or the statement `name[key]=`; map arith-mutation is
+`m[k]="$(( ${m[k]}+1 ))"` (DD#30 conversion, cell is string-typed).
+
+Stage 1 (this commit): `${a[i]}`/`${m[k]}` reads via `ArithExpr::Expansion(Expr)`
+→ shared `expr_to_value` → SsaValue::Subscript. native+c; janet value-path gap
+filed. specs asx.1-6 (plan 84→90). native 904/0-fail; c 13 / janet 36 == baseline;
+0 regressions; codegen 179/77 + e2e 89/41 == HEAD. Stage 2 (bare `a[i]` lvalue)
+remaining — arith-subscript-values.

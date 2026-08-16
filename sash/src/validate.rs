@@ -1678,6 +1678,7 @@ fn check_positionals_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec
     use crate::ir::ArithExpr::*;
     match a {
         DollarVar(name) => flag_positional(name, span, diags),
+        Expansion(inner) => check_positionals_expr(inner, diags),
         BinOp { left, right, .. } => {
             check_positionals_arith(left, span, diags);
             check_positionals_arith(right, span, diags);

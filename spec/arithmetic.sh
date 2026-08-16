@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=84
+plan=90
 echo "1..$plan" >&3
 
 set +e
@@ -420,6 +420,35 @@ run_sash 'fn g { echo hi; }; echo $(( (g) ))'
 # sx.17 itod (string result) in a sexpr → reject
 run_sash 'echo $(( (itod 2 5) ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.17
+
+# ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
+# BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a
+# normal-parse rvalue value-import into arith; fixes the silent-0. native,c —
+# janet's arith VALUE path doesn't read the embedded subscript (filed
+# janet-arith-subscript-read; its condition path does — see asx.5).
+if in_modes native,c; then
+    # asx.1 ${a[0]} literal index read
+    run_sash 'array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
+    [[ $rc = 0 && $out = "11" && -z $err ]]; chk asx.1
+    # asx.2 ${a[$i]} dynamic index read
+    run_sash 'array a=(10 20 30); i=1; echo $(( ${a[$i]} + 1 ))'
+    [[ $rc = 0 && $out = "21" && -z $err ]]; chk asx.2
+    # asx.3 ${m[k]} map read (string key)
+    run_sash 'map m=([k]=5); echo $(( ${m[k]} + 1 ))'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.3
+    # asx.4 subscript rvalue in a (( )) statement
+    run_sash 'array a=(10 20 30); (( x = ${a[1]} + 5 )); echo $x'
+    [[ $rc = 0 && $out = "25" && -z $err ]]; chk asx.4
+    # asx.6 map arith-mutation via the statement form (${m[k]} read + m[k]= write);
+    # the cell is string-typed so the int result needs DD#30 `"…"` conversion.
+    run_sash 'map m=([k]=5); m[k]="$(( ${m[k]} + 1 ))"; echo ${m[k]}'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.6
+else
+    skip_chk asx.1; skip_chk asx.2; skip_chk asx.3; skip_chk asx.4; skip_chk asx.6
+fi
+# asx.5 subscript rvalue in a condition (janet's condition path handles it)
+run_sash 'array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk asx.5
 
 set -e
 tally

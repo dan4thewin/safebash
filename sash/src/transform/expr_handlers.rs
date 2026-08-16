@@ -288,10 +288,10 @@ pub(super) fn handle_structured_arithmetic(
 
 #[allow(clippy::only_used_in_recursion)]
 fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValue {
+    if let Some(v) = arith_leaf_to_ssa(arith, state) {
+        return v;
+    }
     match arith {
-        ArithExpr::Literal(n) => SsaValue::Expr(n.to_string()),
-        ArithExpr::Var(name) => var_to_ssa(name, state),
-        ArithExpr::DollarVar(name) => SsaValue::Var(state.lookup(name)),
         ArithExpr::BinOp { left, op, right } => binop_to_ssa(left, *op, right, expr, state),
         ArithExpr::UnaryOp { op, operand } => unaryop_to_ssa(*op, operand, expr, state),
         ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
@@ -313,6 +313,22 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
         ArithExpr::Comma(exprs) => comma_to_ssa(exprs, expr, state),
         ArithExpr::FuncCall { name, args } => funccall_to_ssa(name, args, expr, state),
         ArithExpr::Paren(inner) => arith_to_ssa(inner, expr, state),
+        // Value leaves are handled by `arith_leaf_to_ssa` above.
+        _ => unreachable!("arith value leaf not handled by arith_leaf_to_ssa"),
+    }
+}
+
+/// The value-producing leaves of an `ArithExpr`: a literal, a bare/`$`-var, or a
+/// `${…}` normal-expansion import (`${a[i]}`/`${m[k]}` → the cell via the shared
+/// `expr_to_value`). Returns `None` for the operator/mutation/control forms,
+/// which the caller's match handles.
+fn arith_leaf_to_ssa(arith: &ArithExpr, state: &VersionState) -> Option<SsaValue> {
+    match arith {
+        ArithExpr::Literal(n) => Some(SsaValue::Expr(n.to_string())),
+        ArithExpr::Var(name) => Some(var_to_ssa(name, state)),
+        ArithExpr::DollarVar(name) => Some(SsaValue::Var(state.lookup(name))),
+        ArithExpr::Expansion(inner) => Some(expr_to_value(inner, state)),
+        _ => None,
     }
 }
 

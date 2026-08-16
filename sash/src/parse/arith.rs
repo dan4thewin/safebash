@@ -349,6 +349,10 @@ enum ATok {
     /// `name` — array/map element count or string byte length. Carries the
     /// inner name; the parser lowers it to the `len` intrinsic sexpr shape.
     LenOf(String),
+    /// `${name[index]}` inside `$(( ))` — a normal-parse subscript rvalue
+    /// (name, raw index text). The parser builds the ordinary `Subscript` Expr
+    /// (so a map's string key works) and wraps it as `ArithExpr::Expansion`.
+    Subscript(String, String),
     // Operators (ordered by length for tokenization)
     PlusPlus,
     MinusMinus,
@@ -561,7 +565,28 @@ fn braced_body_token(body: &str) -> ATok {
             return ATok::LenOf(name.to_string());
         }
     }
+    if let Some(sub) = try_braced_subscript(body) {
+        return sub;
+    }
     ATok::DollarVar(body.to_string())
+}
+
+/// `${a[i]}` / `${m[k]}` — a normal-parse subscript rvalue. Split `name[index]`;
+/// the parser builds the ordinary `Subscript` Expr, so the array-int-index vs
+/// map-string-key distinction (DD#33) is handled by the normal lowering.
+/// arith-subscript-values.
+fn try_braced_subscript(body: &str) -> Option<ATok> {
+    let open = body.find('[')?;
+    let name = &body[..open];
+    let is_ident = !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_');
+    if !is_ident || !body.ends_with(']') {
+        return None;
+    }
+    let index = &body[open + 1..body.len() - 1];
+    if index.is_empty() {
+        return None;
+    }
+    Some(ATok::Subscript(name.to_string(), index.to_string()))
 }
 
 /// Scan a bare `$name` (alphanumeric/`_`, including positional digits).
@@ -809,6 +834,22 @@ impl ArithParser {
                     name: "len".to_string(),
                     args: vec![ArithExpr::Var(name)],
                 })
+            }
+            Some(ATok::Subscript(name, idx)) => {
+                // `${a[i]}` / `${m[k]}` — build the ordinary `Subscript` Expr
+                // (normal rules: array int index vs map string key handled by
+                // the usual lowering) and import it as an rvalue value.
+                // arith-subscript-values.
+                self.advance();
+                let index = crate::parse::expr::subscript_index_expr(&idx, self.span);
+                let expr = Expr {
+                    kind: ExprKind::Subscript {
+                        name,
+                        index: Box::new(index),
+                    },
+                    span: self.span,
+                };
+                Ok(ArithExpr::Expansion(Box::new(expr)))
             }
             Some(ATok::LParen) => self.parse_lparen_form(),
             Some(ATok::BadNum(s)) => {

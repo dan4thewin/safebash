@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-08-16) — arith-subscript reads (BUG 1) fixed; janet oracle rethink ════════
+
+DG reported 2 suspected bugs in array-values-in-`(( ))`:
+- **BUG 1 (real, FIXED stage 1):** `${a[i]}`/`${m[k]}` evaluated to 0 in arith
+  (parser read `${a[0]}` as a var named "a[0]"). New `ArithExpr::Expansion(Expr)`
+  imports the normal `Subscript` Expr via shared `expr_to_value`. native+c
+  (janet value-path gap filed: janet-arith-subscript-read). specs asx.1-6.
+- **BUG 2 (not a bug):** OOB/missing key → zero-value (sparse table-backed,
+  DD#53); DG: keep it.
+- Design (arith-subscript-values): `${…}` is an rvalue value-import ONLY (never
+  an lvalue — preserves `${…}`="the value of"); **stage 2 remaining**: bare
+  `a[i]` int-array arith lvalue+rvalue (`(( a[i]++ ))`), bare `m[k]` → error.
+
+Also this session: **janet oracle rethink** (janet-rt-primitive-library) — build
+a `sash-rt.janet` primitive library + thin leaf lowering, keep IR control flow.
+
+native 904/0-fail; c 13 / janet 36 == baseline; 0 regressions.
+
 ## ════════ STATUS (2026-08-15) — DD#58/Option C sexpr int intrinsics DONE ════════
 
 bug-arith-sexpr-intrinsics-zero complete (both parts, pushed on hand-parser):

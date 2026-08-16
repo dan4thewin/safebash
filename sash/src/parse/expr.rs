@@ -528,7 +528,7 @@ fn try_split_subscript_arm(
     true
 }
 
-fn subscript_index_expr(idx: &str, span: Span) -> Expr {
+pub(crate) fn subscript_index_expr(idx: &str, span: Span) -> Expr {
     if let Some(var) = dynamic_subscript_var(idx) {
         return Expr {
             kind: ExprKind::SimpleExpansion(var.to_string()),

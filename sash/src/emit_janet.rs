@@ -120,6 +120,7 @@ fn _arith_uses_args(a: &crate::ir::ArithExpr) -> bool {
         } => _arith_uses_args(cond) || _arith_uses_args(true_val) || _arith_uses_args(false_val),
         Comma(exprs) | FuncCall { args: exprs, .. } => exprs.iter().any(_arith_uses_args),
         Paren(inner) => _arith_uses_args(inner),
+        Expansion(inner) => _expr_uses_args(inner),
         Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => false,
     }
 }

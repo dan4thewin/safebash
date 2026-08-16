@@ -673,6 +673,12 @@ pub enum ArithExpr {
     FuncCall { name: String, args: Vec<ArithExpr> },
     /// Parenthesized grouping
     Paren(Box<ArithExpr>),
+    /// A `${…}` normal-expansion rvalue imported into arithmetic — e.g.
+    /// `${a[i]}` / `${m[k]}` (a subscript cell read). The inner `Expr` is
+    /// parsed by NORMAL expansion rules (so a map's string key works) and
+    /// lowered by the ordinary `expr_to_value` path; it is rvalue-only (never
+    /// an assignment target). See notes/tasks/arith-subscript-values.md.
+    Expansion(Box<Expr>),
 }
 
 /// Binary arithmetic operators (IR level).

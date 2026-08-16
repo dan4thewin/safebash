@@ -77,3 +77,23 @@ everywhere, no exceptions (the invariant that made model A — `${…}` as an lv
 
 May warrant a DD (the `${…}`-is-always-rvalue invariant + arith-subscript
 model) — flag to DG.
+
+## Stage 1 DONE (2026-08-16) — `${…}` subscript reads
+
+`${a[i]}` / `${m[k]}` / `${a[$i]}` now read the cell in every arith context
+(fixes BUG 1). New `ArithExpr::Expansion(Box<Expr>)`: the arith parser
+(`braced_body_token` → `ATok::Subscript`) builds the ordinary `Subscript` Expr
+(reusing `subscript_index_expr`) and lowers it via the shared `expr_to_value`
+(→ SsaValue::Subscript → table read; DD#33 key type resolved there). native+c;
+janet's value-arith path reads 0 (filed janet-arith-subscript-read; its
+condition path works). specs asx.1-6 (map mutation via `m[k]="$(( ${m[k]}+1 ))"`
+— the cell is string-typed so the int needs DD#30 `"…"` conversion, verified
+correct/consistent with scalar `s=hi; s=$((6))` → SB4030).
+
+## Stage 2 REMAINING — bare `a[i]` (arith index) + lvalue
+
+Bare `a[i]` in arith (int index, no `${}`) as rvalue AND lvalue
+(`(( a[i]++ ))`, `(( a[i] = … ))`, `(( a[i] += … ))`); bare `m[k]` → error.
+Needs the arith lexer to handle `[`/`]`, an `ArithExpr::Subscript{name,index}`
+(arith int index), and subscript-as-arith-lvalue (read-modify-write, reuse the
+statement subscript-assign write path).
