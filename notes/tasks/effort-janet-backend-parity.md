@@ -4,10 +4,18 @@ status: deferred
 priority: P3
 kind: effort
 depends: []
+strategy: janet-rt-primitive-library
 gates:
   - "the bundled janet-primary tasks below are resumed together as one effort, not surfaced as individual priorities"
   - "each sub-task's own gates are met and its guarded specs un-skipped for janet"
 ---
+
+> **Strategy set 2026-08-16 (DG):** this effort is now organized around
+> `janet-rt-primitive-library` — build a `sash-rt.janet` primitive library
+> (mirror `libsash_rt.a`) and make emit_janet emit thin CALLS into it, keeping
+> the IR-based control flow. The bundled sub-tasks below fold in as per-family
+> slices (getpid-class is the first). See that task for the architecture and
+> rationale (why IR-not-SSA, why a library not a rewrite).
 
 # Janet backend parity — bundled effort
 
