@@ -228,10 +228,12 @@ pub(super) fn lower_value(
             array,
             index,
             is_integer_key,
+            is_integer_value,
         } => lower_subscript_value(
             array,
             index,
             *is_integer_key,
+            *is_integer_value,
             builder,
             module,
             vars,
@@ -275,6 +277,21 @@ pub(super) fn lower_value(
             externs,
             exit_status_var,
         ),
+        // DD#76: an int cell stores as `(val_ptr = null, val_len = the i64)`.
+        SsaValue::IntCell(inner) => {
+            let n = lower_value_as_int(
+                inner,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let null_ptr = builder.ins().iconst(I64, 0);
+            (null_ptr, n)
+        }
     }
 }
 
@@ -570,6 +587,45 @@ fn lower_subscript_value(
     array: &str,
     index: &SsaValue,
     is_integer_key: bool,
+    is_integer_value: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (val_ptr, val_len) = lower_subscript_raw(
+        array,
+        index,
+        is_integer_key,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    // DD#76: an int-cell read in string context renders the i64 (`val_len`) as
+    // a decimal string (`val_ptr` is null for an int cell). A string cell
+    // returns its stored `(ptr, len)` verbatim.
+    if is_integer_value {
+        emit_int_to_str(builder, module, externs, val_len)
+    } else {
+        (val_ptr, val_len)
+    }
+}
+
+/// The raw `sash_table_get` result — `(val_ptr, val_len)` as stored. For a
+/// string cell that's `(ptr, byte_len)`; for an int cell (DD#76) it's
+/// `(null, the i64)`; a missing key is `(null, 0)`.
+#[allow(clippy::too_many_arguments)]
+fn lower_subscript_raw(
+    array: &str,
+    index: &SsaValue,
+    is_integer_key: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -614,6 +670,42 @@ fn lower_subscript_value(
     let val_ptr = builder.inst_results(call)[0];
     let val_len = builder.ins().stack_load(I64, out_slot, 0);
     (val_ptr, val_len)
+}
+
+/// A subscript read in int context: an int cell yields its raw `val_len`; a
+/// string cell atoi's its stored bytes (DD#76).
+#[allow(clippy::too_many_arguments)]
+fn lower_subscript_as_int(
+    array: &str,
+    index: &SsaValue,
+    is_integer_key: bool,
+    is_integer_value: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let (val_ptr, val_len) = lower_subscript_raw(
+        array,
+        index,
+        is_integer_key,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    if is_integer_value {
+        return val_len;
+    }
+    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+    let call = builder.ins().call(atoi_ref, &[val_ptr, val_len]);
+    builder.inst_results(call)[0]
 }
 
 fn lower_argv_index_value(
@@ -927,6 +1019,37 @@ pub(super) fn lower_value_as_int(
             let call = builder.ins().call(atoi_ref, &[ptr, len]);
             builder.inst_results(call)[0]
         }
+        // DD#76: an int-cell subscript read in int context is the i64 directly
+        // (`val_len`), skipping the string round-trip and the null-`val_ptr`
+        // atoi. A string cell atoi's its stored bytes.
+        SsaValue::Subscript {
+            array,
+            index,
+            is_integer_key,
+            is_integer_value,
+        } => lower_subscript_as_int(
+            array,
+            index,
+            *is_integer_key,
+            *is_integer_value,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
+        SsaValue::IntCell(inner) => lower_value_as_int(
+            inner,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         _ => {
             // Fallback: lower as string, atoi
             let (ptr, len) = lower_value(
@@ -1068,6 +1191,9 @@ fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<
         }
         SsaValue::Subscript { index, .. } => {
             scan_value_for_vars(index, refs);
+        }
+        SsaValue::IntCell(inner) => {
+            scan_value_for_vars(inner, refs);
         }
         SsaValue::RegexReplace {
             subject,

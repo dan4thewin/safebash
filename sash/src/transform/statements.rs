@@ -414,6 +414,12 @@ fn lower_one_declaration(
         return block;
     }
     let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
+    // DD#76: an `int array`/`int map` stores each element as an int cell.
+    let val = if d.var_type == crate::ir::VarType::Int && (is_array || is_assoc) {
+        wrap_int_cells(val)
+    } else {
+        val
+    };
     let target = state.define(&a.name);
     ssa.block_mut(block)
         .insts
@@ -475,6 +481,26 @@ fn empty_collection_value(name: &str, is_assoc: bool, state: &mut VersionState) 
         SsaValue::AssocArray(vec![])
     } else {
         SsaValue::IndexedArray(vec![])
+    }
+}
+
+/// DD#76: wrap each element of an int-valued collection literal in an `IntCell`
+/// so the generic table-store path emits the `(null, i64)` int-cell encoding.
+fn wrap_int_cells(val: SsaValue) -> SsaValue {
+    match val {
+        SsaValue::IndexedArray(elems) => SsaValue::IndexedArray(
+            elems
+                .into_iter()
+                .map(|e| SsaValue::IntCell(Box::new(e)))
+                .collect(),
+        ),
+        SsaValue::AssocArray(pairs) => SsaValue::AssocArray(
+            pairs
+                .into_iter()
+                .map(|(k, v)| (k, SsaValue::IntCell(Box::new(v))))
+                .collect(),
+        ),
+        other => other,
     }
 }
 

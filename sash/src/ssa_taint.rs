@@ -286,6 +286,20 @@ fn taint_of_name(taint: &HashMap<String, Taint>, name: &str) -> Taint {
     best.map(|(_, t)| t).unwrap_or(Taint::Clean)
 }
 
+/// `${var:-default}` taint — tainted if the var or the default could be.
+fn default_value_taint(
+    var: &crate::ssa::VarRef,
+    default: &SsaValue,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    if taint_of_var(taint, var) == Taint::Tainted {
+        Taint::Tainted
+    } else {
+        any_tainted([default], taint, user_functions)
+    }
+}
+
 fn value_is_tainted(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -332,15 +346,13 @@ fn value_is_tainted(
         | SsaValue::CaseConvert { .. }
         | SsaValue::Ternary { .. } => any_tainted(value.child_values(), taint, user_functions),
 
+        // DD#76: an int cell's taint is its wrapped value's taint.
+        SsaValue::IntCell(inner) => value_is_tainted(inner, taint, user_functions),
+
         // DD#65: `${var:-default}` yields either the var or the default, so it
-        // is tainted if either could be. (`child_values()` returns only the
-        // default, so the var is checked explicitly here.)
+        // is tainted if either could be.
         SsaValue::DefaultValue { var, default } => {
-            if taint_of_var(taint, var) == Taint::Tainted {
-                Taint::Tainted
-            } else {
-                any_tainted([default.as_ref()], taint, user_functions)
-            }
+            default_value_taint(var, default, taint, user_functions)
         }
 
         // Command substitution: the only variant whose taint

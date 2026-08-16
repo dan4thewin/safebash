@@ -715,7 +715,44 @@ fn parse_declaration(
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume keyword
 
-    let (decl_keyword, var_type, flags) = match keyword {
+    let (decl_keyword, var_type, flags) = declaration_axes(scanner, keyword);
+    let assignments = parse_declaration_assignments(scanner, span)?;
+    Ok(Some(Statement {
+        kind: StmtKind::Declaration(Declaration {
+            keyword: decl_keyword,
+            var_type,
+            flags,
+            assignments,
+        }),
+        span,
+    }))
+}
+
+/// Resolve a declaration's (keyword, type, structure-flags) axes, consuming any
+/// stacked modifier keyword. Handles `const int` and — DD#76 — the top-level
+/// `int array` / `int map` stack (DD#35 order: type then structure; a
+/// `local int array` already stacks via parse_local). const+structure is
+/// intentionally left as a compile error (spec 35.2), so it is not stacked
+/// here.
+fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarType, Vec<String>) {
+    if keyword == "const" && matches!(scanner.peek().token, Tok::Int) {
+        scanner.next();
+        return (DeclKeyword::Readonly, VarType::Int, vec!["-r".to_string()]);
+    }
+    if keyword == "int" {
+        match scanner.peek().token {
+            Tok::Array => {
+                scanner.next();
+                return (DeclKeyword::Declare, VarType::Int, vec!["-a".to_string()]);
+            }
+            Tok::Map => {
+                scanner.next();
+                return (DeclKeyword::Declare, VarType::Int, vec!["-A".to_string()]);
+            }
+            _ => {}
+        }
+    }
+    match keyword {
         "int" => (DeclKeyword::Declare, VarType::Int, vec![]),
         "const" => (
             DeclKeyword::Readonly,
@@ -733,33 +770,7 @@ fn parse_declaration(
             vec!["-A".to_string()],
         ),
         _ => (DeclKeyword::Declare, VarType::String, vec![]),
-    };
-
-    // For "const int x", handle additional type modifiers
-    if keyword == "const" && matches!(scanner.peek().token, Tok::Int) {
-        scanner.next();
-        return Ok(Some(Statement {
-            kind: StmtKind::Declaration(Declaration {
-                keyword: DeclKeyword::Readonly,
-                var_type: VarType::Int,
-                flags: vec!["-r".to_string()],
-                assignments: parse_declaration_assignments(scanner, span)?,
-            }),
-            span,
-        }));
     }
-
-    let assignments = parse_declaration_assignments(scanner, span)?;
-
-    Ok(Some(Statement {
-        kind: StmtKind::Declaration(Declaration {
-            keyword: decl_keyword,
-            var_type,
-            flags,
-            assignments,
-        }),
-        span,
-    }))
 }
 
 fn parse_declaration_assignments(

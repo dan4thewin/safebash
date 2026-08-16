@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=90
+plan=101
 echo "1..$plan" >&3
 
 set +e
@@ -449,6 +449,60 @@ fi
 # asx.5 subscript rvalue in a condition (janet's condition path handles it)
 run_sash 'array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk asx.5
+
+# ── DD#76 int-valued collections (`int array` / `int map`) ──
+# An int collection stores each element as an int cell (val_len double-duty);
+# `${a[i]}` types Int (feeds `int x=${a[i]}` and arithmetic with no atoi),
+# renders as decimal in string context. native,c — janet treats the collection
+# variable as a scalar int (filed janet-int-valued-collections; its is_int model
+# conflates the collection var with its element type). Compile-rejects (ivc.9,
+# ivc.10) are backend-independent and run in every mode.
+if in_modes native,c; then
+    # ivc.1 int array element read in string context → decimal
+    run_sash 'int array a=(10 20 30); echo ${a[0]}'
+    [[ $rc = 0 && $out = "10" && -z $err ]]; chk ivc.1
+    # ivc.2 int array element read in arithmetic (raw i64, no atoi)
+    run_sash 'int array a=(10 20 30); echo $(( ${a[0]} + 5 ))'
+    [[ $rc = 0 && $out = "15" && -z $err ]]; chk ivc.2
+    # ivc.3 int array element assign (arith RHS, no DD#30 quotes)
+    run_sash 'int array a=(10 20 30); a[1]=$(( 99 )); echo ${a[1]}'
+    [[ $rc = 0 && $out = "99" && -z $err ]]; chk ivc.3
+    # ivc.4 int map read (two string keys)
+    run_sash 'int map m=([k]=5 [j]=7); echo ${m[k]}${m[j]}'
+    [[ $rc = 0 && $out = "57" && -z $err ]]; chk ivc.4
+    # ivc.5 int map element read in arithmetic
+    run_sash 'int map m=([k]=5); echo $(( ${m[k]} * 2 ))'
+    [[ $rc = 0 && $out = "10" && -z $err ]]; chk ivc.5
+    # ivc.6 int x=${a[i]} — an int cell feeds an int decl (no SB4030)
+    run_sash 'int array a=(10 20 30); int x=${a[0]}; echo $x'
+    [[ $rc = 0 && $out = "10" && -z $err ]]; chk ivc.6
+    # ivc.7 int map arith-mutation without DD#30 quotes (cell is int)
+    run_sash 'int map m=([k]=1); m[k]=$(( ${m[k]} + 4 )); echo ${m[k]}'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk ivc.7
+    # ivc.11 int-cell arith RHS reads another int cell via ${…}
+    run_sash 'int array a=(10 20 30); a[1]=$(( ${a[0]} * 2 )); echo ${a[1]}'
+    [[ $rc = 0 && $out = "20" && -z $err ]]; chk ivc.11
+else
+    skip_chk ivc.1; skip_chk ivc.2; skip_chk ivc.3; skip_chk ivc.4; skip_chk ivc.5
+    skip_chk ivc.6; skip_chk ivc.7; skip_chk ivc.11
+fi
+# ivc.8 axis stacking: `local int array` inside a function. native only — emit_c
+# leaves the function-local collection var (`a_ptr`) undeclared (filed
+# c-local-int-collection-decl); native handles the save/restore + table slot.
+if in_modes native; then
+    run_sash 'fn f { local int array a=(7 8); echo ${a[1]}; }; f'
+    [[ $rc = 0 && $out = "8" && -z $err ]]; chk ivc.8
+else
+    skip_chk ivc.8
+fi
+# ivc.9 a non-numeric element in an int collection → SB4030 (compile-reject)
+run_sash 'int array a=(hi 2); echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ivc.9
+# ivc.10 bare `a[i]=99` (numeric literal, no `$(( ))`) → SB4030, uniform with
+# the scalar rule (`x=5` reassignment also needs `$(( ))`; only declaration
+# init sugar accepts bare numerics). Use `$(( 99 ))` to store an int cell.
+run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ivc.10
 
 set -e
 tally

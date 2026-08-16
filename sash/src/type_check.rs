@@ -87,6 +87,11 @@ fn expr_type(expr: &Expr, env: &TypeEnv) -> VarType {
         ExprKind::SimpleExpansion(var) => env.var_type(var),
         ExprKind::CommandSubstitution(parts) => command_substitution_type(parts, env),
         ExprKind::ParameterExpansion(pe) => parameter_expansion_type(pe, env),
+        // DD#76: a subscript of an int-valued collection is an Int element
+        // (`${a[i]}` / `${m[k]}` on an `int array`/`int map`). The collection
+        // name carries the element type (int arrays declare name→Int); a
+        // string collection's element stays String.
+        ExprKind::Subscript { name, .. } if env.var_type(name) == VarType::Int => VarType::Int,
         // Literal / DoubleQuoted / SingleQuoted / everything else → String.
         // Bash treats bare numeric literals as strings; only declare-int or
         // $(()) makes a value int.
@@ -481,40 +486,106 @@ fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut 
 }
 
 fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    let is_collection = is_collection_decl(d);
     for a in &d.assignments {
-        let rtype = expr_type(&a.value, env);
-        if d.var_type == VarType::Int && rtype == VarType::String {
-            // String assigned to int variable — need conversion.
-            // Exception: literal numbers in quotes are OK (common pattern).
-            if !is_numeric_literal(&a.value) {
-                errors.push(TypeError {
-                    message: format!(
-                        "cannot assign string value to int variable `{}`{}",
-                        a.name,
-                        conversion_hint(VarType::String, VarType::Int),
-                    ),
-                    span,
-                });
-            }
-        } else if d.var_type == VarType::String && rtype == VarType::Int {
+        check_one_decl_assignment(d, a, is_collection, span, env, errors);
+        env.declare(&a.name, d.var_type);
+    }
+    if is_collection {
+        track_collection_names(d, env);
+    }
+}
+
+fn is_collection_decl(d: &Declaration) -> bool {
+    d.flags.iter().any(|f| f == "-a" || f == "-A")
+}
+
+/// Type-check one assignment of a declaration: an int-collection element
+/// (numeric), or a scalar (int↔string). A string collection's elements are
+/// unconstrained strings.
+fn check_one_decl_assignment(
+    d: &Declaration,
+    a: &crate::ir::Assignment,
+    is_collection: bool,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if !is_collection {
+        check_scalar_assignment(d, a, span, env, errors);
+    } else if d.var_type == VarType::Int {
+        check_int_collection_elements(&a.value, &a.name, span, env, errors);
+    }
+}
+
+/// Register a collection declaration's names (and their assoc-ness) in the env.
+fn track_collection_names(d: &Declaration, env: &mut TypeEnv) {
+    let is_assoc = d.flags.iter().any(|f| f == "-A");
+    for a in &d.assignments {
+        env.collections.insert(a.name.clone());
+        if is_assoc {
+            env.assoc_arrays.insert(a.name.clone());
+        }
+    }
+}
+
+/// Scalar `int x=…` / `string x=…` type check (string↔int mismatch).
+fn check_scalar_assignment(
+    d: &Declaration,
+    a: &crate::ir::Assignment,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let rtype = expr_type(&a.value, env);
+    if d.var_type == VarType::Int && rtype == VarType::String {
+        // String assigned to int variable — need conversion.
+        // Exception: literal numbers in quotes are OK (common pattern).
+        if !is_numeric_literal(&a.value) {
             errors.push(TypeError {
                 message: format!(
-                    "cannot assign int value to string variable `{}`{}",
+                    "cannot assign string value to int variable `{}`{}",
                     a.name,
-                    conversion_hint(VarType::Int, VarType::String),
+                    conversion_hint(VarType::String, VarType::Int),
                 ),
                 span,
             });
         }
-        env.declare(&a.name, d.var_type);
+    } else if d.var_type == VarType::String && rtype == VarType::Int {
+        errors.push(TypeError {
+            message: format!(
+                "cannot assign int value to string variable `{}`{}",
+                a.name,
+                conversion_hint(VarType::Int, VarType::String),
+            ),
+            span,
+        });
     }
-    // Track collections.
-    if d.flags.contains(&"-a".to_string()) || d.flags.contains(&"-A".to_string()) {
-        for a in &d.assignments {
-            env.collections.insert(a.name.clone());
-            if d.flags.contains(&"-A".to_string()) {
-                env.assoc_arrays.insert(a.name.clone());
-            }
+}
+
+/// DD#76: every element of an `int array`/`int map` literal must be an integer
+/// (a numeric literal, an int var, `$(( … ))`, or an int-returning `$(f)`).
+fn check_int_collection_elements(
+    value: &Expr,
+    name: &str,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let elems: Vec<&Expr> = match &value.kind {
+        ExprKind::Array(es) => es.iter().collect(),
+        ExprKind::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
+        _ => return,
+    };
+    for e in elems {
+        if !is_numeric_literal(e) && expr_type(e, env) != VarType::Int {
+            errors.push(TypeError {
+                message: format!(
+                    "non-numeric element in int collection `{}` — an int array/map holds integers",
+                    name,
+                ),
+                span,
+            });
         }
     }
 }

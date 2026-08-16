@@ -569,13 +569,20 @@ pub enum SsaValue {
     Subscript {
         array: String,
         index: Box<SsaValue>,
-        is_integer_key: bool, // true = indexed array (key is raw i64 bytes)
+        is_integer_key: bool,   // true = indexed array (key is raw i64 bytes)
+        is_integer_value: bool, // DD#76: true = int-valued cell (val_len IS the i64)
     },
     /// Positional parameter by index: argv[i+1] (for dynamic for loops)
     ArgvIndex(VarRef),
     /// Indexed array literal: (val0, val1, val2, ...)
     /// Creates a hash table with integer keys "0", "1", "2", ...
     IndexedArray(Vec<SsaValue>),
+    /// DD#76: store the inner value (evaluated as an i64) as an *int cell* —
+    /// `(val_ptr = null, val_len = the i64)`. Wraps each element of an
+    /// `int array`/`int map` literal and the RHS of an `int`-collection
+    /// element assignment, so the generic table-store path (`lower_value`)
+    /// emits the int-cell encoding with no per-site plumbing.
+    IntCell(Box<SsaValue>),
     /// Ternary: cond ? true_val : false_val
     Ternary {
         cond: Box<SsaValue>,

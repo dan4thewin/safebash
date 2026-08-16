@@ -1,3 +1,29 @@
+## ════════ STATUS (2026-08-16, cont.) — DD#76 int-valued collections A+B DONE ════════
+
+DG: fold int-valued collections into the arith-subscript effort. **DD#76**
+(int-valued collections, `val_len` double-duty) recorded; Stages A+B shipped
+native + c.
+
+- **int array a=(10 20 30) / int map m=([k]=5)** now declare (top-level parser
+  stacks `int`+structure; `local int array` already stacked via parse_local).
+- **Storage (encoding b, DG-chosen):** int cell = `{val_ptr:null, val_len:i64}`.
+  Runtime unchanged. Two SSA additions: `SsaValue::IntCell` (write → `(null,i64)`,
+  wraps literal elems + assign RHS) and `is_integer_value` on `Subscript` (read:
+  string ctx → itoa, int ctx → raw val_len).
+- **Slot fix:** a collection var holds a table pointer even for int elements
+  (value-shape keys slot allocation) — native + emit_c.
+- **Consistency:** bare `a[1]=99` → SB4030 (uniform with `x=5`); use
+  `a[1]=$(( 99 ))` (no DD#30 quotes for an int cell). `int x=${a[0]}` works.
+
+specs arithmetic.sh ivc.1-11 (plan 90→101). Full 3-mode sweep: 0 passing→failing,
+0 gone, 23 new passing. native 0-fail. clippy clean. Rust == benched baseline.
+
+**Remaining:** Stage C (bare `a[i]` in `(( ))` — arith lvalue/rvalue, the
+arith-subscript-values stage 2). Backend gaps filed: janet-int-valued-collections
+(janet is_int conflation), c-local-int-collection-decl (function-local table var
+undeclared; ivc.8 native-only). Open DG question: const+collection stacking
+(DD#35 orthogonality).
+
 ## ════════ STATUS (2026-08-16) — arith-subscript reads (BUG 1) fixed; janet oracle rethink ════════
 
 DG reported 2 suspected bugs in array-values-in-`(( ))`:

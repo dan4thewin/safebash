@@ -369,10 +369,25 @@ fn collect_var_types(ssa: &SsaProgram) -> VarTypes {
 /// Collect every var ref reachable from a single SsaInst into
 /// `types`. Walks Assign target+value, Command args, Pipeline
 /// stages, Phi targets+sources.
+/// A collection-valued assignment target holds a table pointer, so it is
+/// declared/assigned as a String var (`_ptr`/`_len`) even for an int-valued
+/// collection (DD#76) — the element type must not type the collection variable
+/// itself as a scalar int. Otherwise the target's declared type stands.
+fn collection_or_declared_type(value: &SsaValue, declared: VarType) -> VarType {
+    if matches!(value, SsaValue::IndexedArray(_) | SsaValue::AssocArray(_)) {
+        VarType::String
+    } else {
+        declared
+    }
+}
+
 fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
     match inst {
         SsaInst::Assign { target, value } => {
-            types.insert((target.name.clone(), target.version), target.var_type);
+            types.insert(
+                (target.name.clone(), target.version),
+                collection_or_declared_type(value, target.var_type),
+            );
             collect_value_vars(value, types);
         }
         SsaInst::Command { args, .. } => {
@@ -380,14 +395,20 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
                 collect_value_vars(a, types);
             }
         }
-        SsaInst::Pipeline { stages, .. } => {
-            for (_, args, _) in stages {
-                for a in args {
-                    collect_value_vars(a, types);
-                }
-            }
-        }
+        SsaInst::Pipeline { stages, .. } => collect_pipeline_var_types(stages, types),
         _ => {}
+    }
+}
+
+/// Walk every pipeline stage's args, recording each referenced var's type.
+fn collect_pipeline_var_types(
+    stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
+    types: &mut VarTypes,
+) {
+    for (_, args, _) in stages {
+        for a in args {
+            collect_value_vars(a, types);
+        }
     }
 }
 
@@ -650,7 +671,9 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
         return;
     }
     let base = c_var_name(&target.name, target.version);
-    match target.var_type {
+    // A collection-valued assignment stores a table pointer in the `_ptr` slot
+    // (String path), even for an int-valued collection (DD#76).
+    match collection_or_declared_type(value, target.var_type) {
         VarType::String => {
             let (ptr, len) = lower_value_as_str(e, value, types);
             writeln!(e.out, "    {0}_ptr = {1};", base, ptr).unwrap();
@@ -763,10 +786,16 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             array,
             index,
             is_integer_key,
-        } => emit_subscript_value(e, array, index, *is_integer_key, types),
+            is_integer_value,
+        } => emit_subscript_value(e, array, index, *is_integer_key, *is_integer_value, types),
         // Phase 5: table iteration helpers (for x in "${arr[@]}").
         SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
         SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
+        // DD#76: an int cell stores as `(val_ptr = null, val_len = the i64)`.
+        SsaValue::IntCell(inner) => {
+            let n = lower_value_as_int(e, inner, types);
+            ("(const char*)0".to_string(), n)
+        }
         _ => {
             writeln!(
                 e.out,
@@ -877,6 +906,8 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             let r = lower_value_as_int(e, right, types);
             emit_arith_op_c(e, *op, &l, &r)
         }
+        // DD#76: an int cell in int context is the inner i64 directly.
+        SsaValue::IntCell(inner) => lower_value_as_int(e, inner, types),
         _ => {
             // Fallback (e.g. ${arr arrlen}, subscripts): lower as a string
             // then sash_atoi. Mirrors codegen's lower_value_as_int fallback.
@@ -2400,6 +2431,7 @@ fn emit_subscript_value(
     array: &str,
     index: &SsaValue,
     is_integer_key: bool,
+    is_integer_value: bool,
     types: &VarTypes,
 ) -> CStr {
     let table_expr = lookup_table_var(array, types);
@@ -2420,7 +2452,13 @@ fn emit_subscript_value(
         kl = kl
     )
     .unwrap();
-    (format!("{}_p", t), format!("{}_l", t))
+    // DD#76: an int cell's value IS `{t}_l` (val_ptr is null); render it as a
+    // decimal string in string context.
+    if is_integer_value {
+        emit_itoa_temp(e, &format!("{}_l", t))
+    } else {
+        (format!("{}_p", t), format!("{}_l", t))
+    }
 }
 
 /// Subscript write: arr[i]=val / map[key]=val. Mirrors

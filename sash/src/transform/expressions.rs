@@ -204,10 +204,12 @@ fn assoc_array_to_value(pairs: &[(String, Expr)], state: &VersionState) -> SsaVa
 
 pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
     let is_integer = !state.assoc_arrays.contains(name);
+    let is_integer_value = state.type_map.get(name).copied() == Some(crate::ir::VarType::Int);
     SsaValue::Subscript {
         array: name.to_string(),
         index: Box::new(expr_to_value(index, state)),
         is_integer_key: is_integer,
+        is_integer_value,
     }
 }
 

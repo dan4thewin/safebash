@@ -1201,20 +1201,47 @@ fn declare_inst_bases(
                 .or_insert_with(|| make_str_slot(builder));
         }
         SsaInst::Command { name, args, .. } if name == "__store_bg_pid" => {
-            if let Some(SsaValue::Var(vr)) = args.first() {
-                base_vars
-                    .entry(vr.name.clone())
-                    .or_insert_with(|| make_str_slot(builder));
-            }
+            declare_bg_pid_base(builder, args, base_vars);
         }
-        SsaInst::Assign { target, .. }
-        | SsaInst::ReadLine { target, .. }
-        | SsaInst::CaptureEnd { target } => {
+        SsaInst::Assign { target, value } => {
+            base_vars
+                .entry(target.name.clone())
+                .or_insert_with(|| assign_target_slot(builder, target, value));
+        }
+        SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } => {
             base_vars
                 .entry(target.name.clone())
                 .or_insert_with(|| slot_for_var_type(builder, &target.var_type));
         }
         _ => {}
+    }
+}
+
+/// The slot for an `Assign` target: a collection-valued assignment holds a
+/// table pointer (a Str slot) even when its elements are int (DD#76); otherwise
+/// the slot follows the target's declared type.
+fn assign_target_slot(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    target: &crate::ssa::VarRef,
+    value: &SsaValue,
+) -> super::types::VarSlot {
+    if matches!(value, SsaValue::IndexedArray(_) | SsaValue::AssocArray(_)) {
+        make_str_slot(builder)
+    } else {
+        slot_for_var_type(builder, &target.var_type)
+    }
+}
+
+/// `__store_bg_pid <var>` — declare the pid target as a Str slot.
+fn declare_bg_pid_base(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    args: &[SsaValue],
+    base_vars: &mut HashMap<String, super::types::VarSlot>,
+) {
+    if let Some(SsaValue::Var(vr)) = args.first() {
+        base_vars
+            .entry(vr.name.clone())
+            .or_insert_with(|| make_str_slot(builder));
     }
 }
 

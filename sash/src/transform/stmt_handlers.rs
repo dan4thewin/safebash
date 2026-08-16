@@ -922,23 +922,47 @@ fn handle_subscript_assign(
     block: BlockId,
 ) -> BlockId {
     let rhs = expr_to_value(&a.value, state);
-    let is_int = !state.assoc_arrays.contains(&a.name);
-    // `a[i] += v` is read-modify-write: a[i] = ${a[i]} ++ v. (Plain
-    // `a[i] = v` discards the current element, which is correct.)
-    let val = if a.op == crate::ir::AssignOp::Append {
-        let current = subscript_to_value(&a.name, idx, state);
-        SsaValue::Concat(vec![current, rhs])
-    } else {
-        rhs
-    };
+    let is_int_key = !state.assoc_arrays.contains(&a.name);
+    let is_int_val = state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
+    let val = build_subscript_rhs(a, idx, rhs, is_int_val, state);
     let idx_val = expr_to_value(idx, state);
     ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
         array: a.name.clone(),
         index: idx_val,
         value: val,
-        is_integer_key: is_int,
+        is_integer_key: is_int_key,
     });
     block
+}
+
+/// Build the stored value for a subscript assignment, honoring DD#76 int cells
+/// and the `+=` read-modify-write. Plain `a[i] = v` discards the current
+/// element (correct); `a[i] += v` reads it back: arithmetic add for an int
+/// cell, string concat otherwise.
+fn build_subscript_rhs(
+    a: &Assignment,
+    idx: &Expr,
+    rhs: SsaValue,
+    is_int_val: bool,
+    state: &VersionState,
+) -> SsaValue {
+    let append = a.op == crate::ir::AssignOp::Append;
+    match (append, is_int_val) {
+        (true, true) => {
+            let current = subscript_to_value(&a.name, idx, state);
+            SsaValue::IntCell(Box::new(SsaValue::ArithBinOp {
+                left: Box::new(current),
+                op: ArithOp::Add,
+                right: Box::new(rhs),
+            }))
+        }
+        (true, false) => {
+            let current = subscript_to_value(&a.name, idx, state);
+            SsaValue::Concat(vec![current, rhs])
+        }
+        (false, true) => SsaValue::IntCell(Box::new(rhs)),
+        (false, false) => rhs,
+    }
 }
 
 /// `var += val` — append form. Dispatches on the value shape:
