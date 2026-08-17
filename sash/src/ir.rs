@@ -215,6 +215,12 @@ impl Statement {
 /// inside DoubleQuoted, Concat, CommandSubstitution, etc.).
 pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     stmt.direct_exprs(&mut |expr| walk_expr_tree(expr, f));
+    // `(( … ))` statement / `if`/`while` condition — its `${…}` expansions live
+    // in an `ArithExpr` tree, not a direct `Expr`, so surface them here (mirrors
+    // the `ExprKind::Arithmetic` arm in walk_expr_tree for `$(( … ))`).
+    if let StmtKind::ArithTest(arith) = &stmt.kind {
+        walk_arith_expansions(arith, f);
+    }
     for body in stmt.child_bodies() {
         for s in body {
             walk_all_exprs(s, f);
@@ -226,33 +232,79 @@ pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
 pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);
     match &expr.kind {
-        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
-            for p in parts {
-                walk_expr_tree(p, f);
-            }
-        }
-        ExprKind::Array(elems) => {
-            for e in elems {
-                walk_expr_tree(e, f);
-            }
-        }
-        ExprKind::AssocArray(pairs) => {
-            for (_, v) in pairs {
-                walk_expr_tree(v, f);
-            }
-        }
-        ExprKind::CommandSubstitution(stmts) => {
-            for s in stmts {
-                walk_all_exprs(s, f);
-            }
-        }
-        ExprKind::ParameterExpansion(pe) => {
-            if let Some(ref operand) = pe.operand {
-                walk_expr_tree(operand, f);
-            }
-        }
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => walk_each(parts, f),
+        ExprKind::Array(elems) => walk_each(elems, f),
+        ExprKind::AssocArray(pairs) => walk_each_pair(pairs, f),
+        ExprKind::CommandSubstitution(stmts) => walk_each_stmt(stmts, f),
+        ExprKind::ParameterExpansion(pe) => walk_opt(pe.operand.as_deref(), f),
         ExprKind::Test(t) => walk_test_exprs(t, f),
         ExprKind::Subscript { index, .. } => walk_expr_tree(index, f),
+        // `$(( … ))` — descend into any `${…}` expansions embedded in the arith
+        // tree (`ArithExpr::Expansion`), so expr-level checks (e.g. the DD#65
+        // pruned-operator SB4034 reject) apply inside arithmetic too. Without
+        // this, `$(( ${s:?…} ))` bypassed the reject and ICE'd in codegen.
+        ExprKind::Arithmetic(arith) => walk_arith_expansions(arith, f),
+        _ => {}
+    }
+}
+
+/// Walk each expr in a slice via `walk_expr_tree`.
+fn walk_each(items: &[Expr], f: &mut impl FnMut(&Expr)) {
+    for it in items {
+        walk_expr_tree(it, f);
+    }
+}
+
+/// Walk the value of each `(key, value)` pair (assoc-array literal).
+fn walk_each_pair(pairs: &[(String, Expr)], f: &mut impl FnMut(&Expr)) {
+    for (_, v) in pairs {
+        walk_expr_tree(v, f);
+    }
+}
+
+/// Walk every expr in each statement of a command substitution.
+fn walk_each_stmt(stmts: &[Statement], f: &mut impl FnMut(&Expr)) {
+    for s in stmts {
+        walk_all_exprs(s, f);
+    }
+}
+
+/// Walk an optional operand expr.
+fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
+    if let Some(e) = operand {
+        walk_expr_tree(e, f);
+    }
+}
+
+/// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to
+/// each imported `Expr` (via `walk_expr_tree`).
+fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+    match arith {
+        ArithExpr::Expansion(inner) => walk_expr_tree(inner, f),
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_expansions(left, f);
+            walk_arith_expansions(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_expansions(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_expansions(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_expansions(cond, f);
+            walk_arith_expansions(true_val, f);
+            walk_arith_expansions(false_val, f);
+        }
+        ArithExpr::Comma(items) | ArithExpr::FuncCall { args: items, .. } => {
+            for it in items {
+                walk_arith_expansions(it, f);
+            }
+        }
         _ => {}
     }
 }

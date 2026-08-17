@@ -86,3 +86,27 @@ example composes: `s=42abc; [[ -i $s ]] || s =~ s/\D//g; echo $s` → `42`.
 Test-first: types.sh 77.1-77.7 (literal, non-numeric, set var, trailing-junk,
 negative+radix, empty, DG validate-or-strip). All pass native+c+janet. Full
 sweep: 0 real passing→failing; native 0-fail. clippy clean.
+
+## Stage A follow-up — close the pruned-operator ICE hole (DONE)
+
+Stage A routed ALL `${…}` bodies through parse_parameter_expansion, which
+surfaced the DD#65-pruned operators (`:?`, `:=`, `:+`, `##`, `%%`, …) inside
+arithmetic. Those normally SB4034-reject in word context via `check_rejected` →
+`walk_all_exprs`, but that walk never descended arithmetic — so an embedded
+`${s:?…}` bypassed the reject and hit the codegen `emit_string_op_expansion`
+ICE ("unsupported parameter expansion operator"). A live regression on the
+pushed branch (only `:-`/subscript/length were tested in Stage A).
+
+Fix (ir.rs): `walk_expr_tree` gained an `ExprKind::Arithmetic` arm and
+`walk_all_exprs` a `StmtKind::ArithTest` arm, both delegating to a new
+`walk_arith_expansions` that descends the `ArithExpr` tree and visits each
+`Expansion(inner)` via `walk_expr_tree`. So expr-level checks (the SB4034
+reject, and any future ones) now apply uniformly inside `$(( ))`, `(( ))`, and
+`if/while (( ))`. Extracted `walk_each`/`walk_each_pair`/`walk_each_stmt`/
+`walk_opt` to keep walk_expr_tree under the complexity gate.
+
+Tests: arithmetic.sh pex.5 (`$(( ${s:?} ))` → SB4034), pex.6 (condition
+position). All 3 modes; valid forms (`${s:-9}`, `${a[i]}`, `${#s}`) still
+compile. Full sweep: 0 real passing→failing; native 0-fail. This is the
+mechanism cleanup; DD#77 Stage C will UN-prune `:?` as an arith disposition
+with strict-int semantics.
