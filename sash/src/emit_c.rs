@@ -108,6 +108,12 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
+    writeln!(out, "extern i64 sash_atoi_or(const char* p, i64 n, i64 d);").unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_atoi_or_abort(const char* p, i64 n, const char* mp, i64 ml);"
+    )
+    .unwrap();
     writeln!(
         out,
         "extern void sash_require_value(i64 sl, const char* mp, i64 ml);"
@@ -881,28 +887,58 @@ fn emit_itoa_temp(e: &mut Emit, int_expr: &str) -> CStr {
 /// String vars go through `sash_atoi`; int vars pass through;
 /// literals parse as i64 if numeric, else `sash_atoi` over the bytes.
 /// ArithExpr / ArithBinOp recurse through `arith_op_c`.
+/// A `Var` in C int context: `$?`/`$$` computed; an int var passes through; a
+/// string var goes through `sash_atoi`.
+fn lower_var_as_int_c(vref: &VarRef) -> String {
+    if vref.name == "?" {
+        return "__exit_status".to_string();
+    }
+    if vref.name == "$" {
+        return "sash_getpid()".to_string();
+    }
+    match vref.var_type {
+        VarType::Int => c_var_name(&vref.name, vref.version),
+        VarType::String => {
+            let base = c_var_name(&vref.name, vref.version);
+            format!("sash_atoi({}_ptr, {}_len)", base, base)
+        }
+    }
+}
+
+/// DD#77 arith `:-`/`:?` dispositions in C int context. `None` for any other
+/// value (handled by `lower_value_as_int`'s main match). Split for the gate.
+fn lower_disposition_as_int_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Option<String> {
+    match value {
+        // DD#76: an int cell in int context is the inner i64 directly.
+        SsaValue::IntCell(inner) => Some(lower_value_as_int(e, inner, types)),
+        SsaValue::DefaultValue { var, default } => {
+            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+            let d = lower_value_as_int(e, default, types);
+            Some(format!("sash_atoi_or({}, {}, {})", s_ptr, s_len, d))
+        }
+        SsaValue::RequireValue { var, message } => {
+            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+            let (m_ptr, m_len) = lower_value_as_str(e, message, types);
+            Some(format!(
+                "sash_atoi_or_abort({}, {}, {}, {})",
+                s_ptr, s_len, m_ptr, m_len
+            ))
+        }
+        _ => None,
+    }
+}
+
 #[allow(clippy::only_used_in_recursion)]
 fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> String {
+    if let Some(s) = lower_disposition_as_int_c(e, value, types) {
+        return s;
+    }
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => s
             .parse::<i64>()
             .map(|n| n.to_string())
             .unwrap_or_else(|_| format!("sash_atoi(\"{}\", {})", c_escape(s), s.len())),
-        SsaValue::Var(vref) => {
-            if vref.name == "?" {
-                return "__exit_status".to_string();
-            }
-            if vref.name == "$" {
-                return "sash_getpid()".to_string();
-            }
-            match vref.var_type {
-                VarType::Int => c_var_name(&vref.name, vref.version),
-                VarType::String => {
-                    let base = c_var_name(&vref.name, vref.version);
-                    format!("sash_atoi({}_ptr, {}_len)", base, base)
-                }
-            }
-        }
+        SsaValue::Var(vref) => lower_var_as_int_c(vref),
         // codegen/values.rs:341+ for ArithExpr: lower_value_as_int(Var(var))
         // then emit_arith_op(op, lhs, iconst(operand)).
         SsaValue::ArithExpr { var, op, operand } => {
@@ -916,8 +952,8 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             let r = lower_value_as_int(e, right, types);
             emit_arith_op_c(e, *op, &l, &r)
         }
-        // DD#76: an int cell in int context is the inner i64 directly.
-        SsaValue::IntCell(inner) => lower_value_as_int(e, inner, types),
+        // DD#76: an int cell handled in lower_disposition_as_int_c.
+        // DD#77 arith disposition (:- / :?) handled in lower_disposition_as_int_c.
         _ => {
             // Fallback (e.g. ${arr arrlen}, subscripts): lower as a string
             // then sash_atoi. Mirrors codegen's lower_value_as_int fallback.

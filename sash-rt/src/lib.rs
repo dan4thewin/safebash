@@ -1008,6 +1008,39 @@ pub unsafe extern "C" fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64 {
     is_int_inner(bytes) as i64
 }
 
+/// DD#77 arith `:-` disposition: `${s:-N}` in arithmetic. The i64 value of `s`
+/// when it is a valid, representable integer; otherwise `default` (the numeric
+/// literal N). Not-a-valid-integer unifies unset/empty/non-numeric/out-of-range.
+#[no_mangle]
+pub unsafe extern "C" fn sash_atoi_or(s_ptr: *const u8, s_len: i64, default: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return default;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    parse_strict_i64(bytes).unwrap_or(default)
+}
+
+/// DD#77 arith `:?` disposition: `${s:?MESSAGE}` in arithmetic. The i64 value of
+/// `s` when it is a valid, representable integer; otherwise abort
+/// (`<prog>: MESSAGE`, exit 1) — the same as a word-context `:?` on unset/empty,
+/// extended to the non-integer case.
+#[no_mangle]
+pub unsafe extern "C" fn sash_atoi_or_abort(
+    s_ptr: *const u8,
+    s_len: i64,
+    msg_ptr: *const u8,
+    msg_len: i64,
+) -> i64 {
+    if s_len > 0 && !s_ptr.is_null() {
+        let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+        if let Some(v) = parse_strict_i64(bytes) {
+            return v;
+        }
+    }
+    sash_require_value(0, msg_ptr, msg_len); // s_len 0 forces the abort
+    0 // unreachable (require_value aborts), keeps the type
+}
+
 /// Format an i64 as a decimal string into a heap-allocated buffer.
 #[no_mangle]
 pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {

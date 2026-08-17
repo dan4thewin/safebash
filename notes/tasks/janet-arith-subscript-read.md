@@ -8,6 +8,7 @@ effort: effort-janet-backend-parity
 gates:
   - "janet `$(( ${a[i]} + 1 ))` / `(( x = ${m[k]} + 1 ))` read the cell (native+c already do); un-guard arithmetic.sh asx.1-4, asx.6 for janet"
   - "janet `$(( ${s:-9} + 1 ))` reads the DefaultValue (native+c do); un-guard arithmetic.sh pex.1-3 for janet (DD#77 A)"
+  - "janet arith `:-`/`:?` disposition (DD#77 C2): `$(( ${s:-N} ))` / `${s:?M}` apply the strict-int trigger (native+c do); un-guard arithmetic.sh dsp.1-5 for janet"
   - "no janet regression"
 ---
 

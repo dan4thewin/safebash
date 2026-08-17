@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=108
+plan=113
 echo "1..$plan" >&3
 
 set +e
@@ -544,12 +544,40 @@ run_sash 's=x; if (( ${s:+1} > 0 )); then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk pex.6
 # pex.7 a runtime string→int overflow traps CLEANLY (`<prog>: arithmetic
 # overflow`, like arithmetic overflow), not a Rust panic (was "sash: panic",
-# rc 99). DD#25/#26. native-only (runtime stderr; janet arith is double-based).
+# rc 99). DD#25/#26. A BARE `$(( s ))` still atoi-traps; a disposition
+# (`${s:-0}`) instead treats out-of-range as not-a-valid-integer (→ default,
+# dsp semantics). native-only (runtime stderr; janet arith is double-based).
 if in_modes native; then
-    run_sash 's=9223372036854775808; echo $(( ${s:-0} + 0 ))'
+    run_sash 's=9223372036854775808; echo $(( s + 0 ))'
     [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk pex.7
 else
     skip_chk pex.7
+fi
+
+# ── DD#77 C2: arith strict-disposition semantics for :- / :? ──
+# In arithmetic the trigger is "not a valid integer" (unset/empty/non-numeric/
+# out-of-range), gated by sash_is_int: `${s:-N}` → is_int(s)?s:N ; `${s:?M}` →
+# is_int(s)?s:abort(M). native,c — janet's arith VALUE path doesn't apply the
+# disposition (janet-arith-subscript-read, extended to :- / :?).
+if in_modes native,c; then
+    # dsp.1 :- default fires on a non-numeric value (was lenient atoi → 0)
+    run_sash 's=hello; echo $(( ${s:-9} + 0 ))'
+    [[ $rc = 0 && $out = "9" && -z $err ]]; chk dsp.1
+    # dsp.2 :- passes a valid int through
+    run_sash 's=5; echo $(( ${s:-9} + 0 ))'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk dsp.2
+    # dsp.3 :? passes a valid int through
+    run_sash 's=5; echo $(( ${s:?bad} + 0 ))'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk dsp.3
+    # dsp.4 :? aborts on a non-numeric value (message native-only)
+    run_sash 's=hello; echo $(( ${s:?not a number} + 0 ))'
+    [[ $rc != 0 && -z $out ]] \
+      && { ! in_modes native || [[ $rerr == *": not a number"* ]]; }; chk dsp.4
+    # dsp.5 the primary conversion idiom: int n=$(( ${s:?M} )) validates + converts
+    run_sash 's=42; int n=$(( ${s:?bad} )); echo $n'
+    [[ $rc = 0 && $out = "42" && -z $err ]]; chk dsp.5
+else
+    skip_chk dsp.1; skip_chk dsp.2; skip_chk dsp.3; skip_chk dsp.4; skip_chk dsp.5
 fi
 
 set -e

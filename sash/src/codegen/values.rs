@@ -906,7 +906,109 @@ fn lower_indexed_array_value(
     (table_ptr, zero)
 }
 
-/// Emit Cranelift instructions for an ArithOp on two i64 values.
+/// DD#77 arith `:-`/`:?` dispositions in int context — `${s:-N}` via
+/// `sash_atoi_or` (is_int(s) ? s : N), `${s:?msg}` via `sash_atoi_or_abort`
+/// (is_int(s) ? s : abort). `None` for any other value (handled by
+/// `lower_value_as_int`'s main match). Split out for the complexity gate.
+#[allow(clippy::too_many_arguments)]
+fn lower_disposition_as_int(
+    value: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<cranelift_codegen::ir::Value> {
+    match value {
+        // DD#76: an int-cell subscript read / int cell in int context.
+        SsaValue::Subscript {
+            array,
+            index,
+            is_integer_key,
+            is_integer_value,
+        } => Some(lower_subscript_as_int(
+            array,
+            index,
+            *is_integer_key,
+            *is_integer_value,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )),
+        SsaValue::IntCell(inner) => Some(lower_value_as_int(
+            inner,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        )),
+        SsaValue::DefaultValue { var, default } => {
+            let (s_ptr, s_len) = lower_value(
+                &SsaValue::Var(var.clone()),
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let d_int = lower_value_as_int(
+                default,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_or = module.declare_func_in_func(externs.atoi_or, builder.func);
+            let call = builder.ins().call(atoi_or, &[s_ptr, s_len, d_int]);
+            Some(builder.inst_results(call)[0])
+        }
+        SsaValue::RequireValue { var, message } => {
+            let (s_ptr, s_len) = lower_value(
+                &SsaValue::Var(var.clone()),
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let (m_ptr, m_len) = lower_value(
+                message,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let atoi_or_abort = module.declare_func_in_func(externs.atoi_or_abort, builder.func);
+            let call = builder
+                .ins()
+                .call(atoi_or_abort, &[s_ptr, s_len, m_ptr, m_len]);
+            Some(builder.inst_results(call)[0])
+        }
+        _ => None,
+    }
+}
+
+/// Emit Cranelift instructions for lowering an `SsaValue` to an i64 in
+/// arithmetic / comparison context.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_value_as_int(
     value: &SsaValue,
@@ -918,6 +1020,20 @@ pub(super) fn lower_value_as_int(
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
+    // DD#77 arith `:-`/`:?` dispositions are handled first (out-of-line) to keep
+    // this dispatcher under the complexity gate.
+    if let Some(v) = lower_disposition_as_int(
+        value,
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    ) {
+        return v;
+    }
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             let n = s.parse::<i64>().unwrap_or(0);
@@ -1048,34 +1164,7 @@ pub(super) fn lower_value_as_int(
         // DD#76: an int-cell subscript read in int context is the i64 directly
         // (`val_len`), skipping the string round-trip and the null-`val_ptr`
         // atoi. A string cell atoi's its stored bytes.
-        SsaValue::Subscript {
-            array,
-            index,
-            is_integer_key,
-            is_integer_value,
-        } => lower_subscript_as_int(
-            array,
-            index,
-            *is_integer_key,
-            *is_integer_value,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        ),
-        SsaValue::IntCell(inner) => lower_value_as_int(
-            inner,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        ),
+        // (Subscript / IntCell handled out-of-line in lower_disposition_as_int.)
         _ => {
             // Fallback: lower as string, atoi
             let (ptr, len) = lower_value(

@@ -347,6 +347,27 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_is_int", Linkage::Import, &is_int_sig)
         .expect("declare sash_is_int");
 
+    // sash_atoi_or(s_ptr, s_len, default) -> i64 — DD#77 arith `${s:-N}`
+    let mut atoi_or_sig = Signature::new(CallConv::SystemV);
+    atoi_or_sig.params.push(AbiParam::new(I64)); // s_ptr
+    atoi_or_sig.params.push(AbiParam::new(I64)); // s_len
+    atoi_or_sig.params.push(AbiParam::new(I64)); // default
+    atoi_or_sig.returns.push(AbiParam::new(I64));
+    let atoi_or_func = module
+        .declare_function("sash_atoi_or", Linkage::Import, &atoi_or_sig)
+        .expect("declare sash_atoi_or");
+
+    // sash_atoi_or_abort(s_ptr, s_len, msg_ptr, msg_len) -> i64 — DD#77 `${s:?M}`
+    let mut atoi_or_abort_sig = Signature::new(CallConv::SystemV);
+    atoi_or_abort_sig.params.push(AbiParam::new(I64)); // s_ptr
+    atoi_or_abort_sig.params.push(AbiParam::new(I64)); // s_len
+    atoi_or_abort_sig.params.push(AbiParam::new(I64)); // msg_ptr
+    atoi_or_abort_sig.params.push(AbiParam::new(I64)); // msg_len
+    atoi_or_abort_sig.returns.push(AbiParam::new(I64));
+    let atoi_or_abort_func = module
+        .declare_function("sash_atoi_or_abort", Linkage::Import, &atoi_or_abort_sig)
+        .expect("declare sash_atoi_or_abort");
+
     // sash_itoa(val, out_len_ptr) -> ptr
     let mut itoa_sig = Signature::new(CallConv::SystemV);
     itoa_sig.params.push(AbiParam::new(I64)); // val
@@ -784,6 +805,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         concat: concat_func,
         atoi: atoi_func,
         is_int: is_int_func,
+        atoi_or: atoi_or_func,
+        atoi_or_abort: atoi_or_abort_func,
         itoa: itoa_func,
         join_args: join_args_func,
         assoc_lookup: assoc_lookup_func,

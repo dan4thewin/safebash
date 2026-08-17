@@ -161,3 +161,28 @@ flipped/removed. arithmetic.sh pex.5 switched from `:?` to the still-pruned
 Intermediate state: arith `$(( ${s:?} ))` has WORD semantics for now (abort on
 empty, atoi otherwise); C2 tightens the arith trigger to strict-int (abort on
 non-integer).
+
+## DD#77 Stage C2 — arith strict-disposition semantics for :- / :? (DONE, native+c)
+
+In arithmetic int-context the `:-`/`:?` trigger is "not a valid integer"
+(unset/empty/non-numeric/out-of-range), gated by the strict is_int:
+`${s:-N}` → is_int(s) ? s : N ; `${s:?M}` → is_int(s) ? s : abort(M).
+
+Runtime helpers (no cranelift blocks needed): `sash_atoi_or(s, default)` =
+`parse_strict_i64(s).unwrap_or(default)`; `sash_atoi_or_abort(s, msg)` =
+value or the `:?` abort. Native + emit_c `lower_value_as_int` gained
+DefaultValue/RequireValue arms calling these (extracted to
+lower_disposition_as_int / _c for the complexity gate; also moved
+Subscript/IntCell/Var arms out to fit).
+
+Fixes the footgun: `s=hello; $(( ${s:-9} + 0 ))` → 9 (was lenient atoi → 0);
+`$(( ${s:?bad} + 0 ))` on a non-int → clean abort. The primary conversion
+idiom `int n=$(( ${s:?M} ))` validates+converts. Out-of-range now routes to
+the default/abort (not the atoi trap) — pex.7 switched to a bare `$(( s ))`
+(the only remaining atoi-trap site until C3's D1).
+
+Tests: arithmetic.sh dsp.1-5 (native,c). janet's arith VALUE path doesn't
+apply the disposition (janet-arith-subscript-read, gate extended). Known
+minor quirk: `echo $(( <lone ${…}> ))` uses string context (not int-forced) —
+`int n=$(( … ))` and operator/condition forms are correct. Full sweep: 0 real
+passing→failing; native 0-fail; clippy clean.
