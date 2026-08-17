@@ -325,9 +325,12 @@ fn value_is_tainted(
         SsaValue::ArgvIndex(_) => Taint::Tainted,
 
         // Var-rooted: taint inherited from the named variable's status.
+        // (`${var:?msg}` yields the var — the message only prints on the abort
+        // path, which exits — so it is var-rooted too.)
         SsaValue::Var(vref)
         | SsaValue::ArithExpr { var: vref, .. }
-        | SsaValue::ParamExpansion { var: vref, .. } => taint_of_var(taint, vref),
+        | SsaValue::ParamExpansion { var: vref, .. }
+        | SsaValue::RequireValue { var: vref, .. } => taint_of_var(taint, vref),
 
         // Any-tainted collections: taint if any subvalue is tainted.
         SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {

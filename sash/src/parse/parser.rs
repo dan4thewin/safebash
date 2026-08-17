@@ -2531,7 +2531,7 @@ fn is_dropped_param_operator(op: &str) -> bool {
     }
     matches!(
         op,
-        ":=" | ":+" | ":?" | "#" | "##" | "%" | "%%" | "glob_replace" | "^" | "^^" | "," | ",,"
+        ":=" | ":+" | "#" | "##" | "%" | "%%" | "glob_replace" | "^" | "^^" | "," | ",,"
     )
 }
 

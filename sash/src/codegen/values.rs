@@ -160,6 +160,32 @@ pub(super) fn lower_value(
                 s_ptr, s_len, d_ptr, d_len, builder, module, externs,
             )
         }
+        SsaValue::RequireValue { var, message } => {
+            let (s_ptr, s_len) = lower_value(
+                &SsaValue::Var(var.clone()),
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            let (m_ptr, m_len) = lower_value(
+                message,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            // Abort (`<prog>: MESSAGE`, exit 1) if unset/empty; else pass through.
+            let req_ref = module.declare_func_in_func(externs.require_value, builder.func);
+            builder.ins().call(req_ref, &[s_len, m_ptr, m_len]);
+            (s_ptr, s_len)
+        }
         SsaValue::ArithExpr { var, op, operand } => {
             let int_val = lower_value_as_int(
                 &SsaValue::Var(var.clone()),

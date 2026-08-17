@@ -535,8 +535,9 @@ run_sash 's=5; if (( ${s:-9} > 3 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk pex.4
 # pex.5 a DD#65-pruned operator embedded in arith must still SB4034-reject (not
 # ICE) — Stage A routed ${…} through the real parser, which surfaced these; the
-# walk must descend arith so the reject fires. All arith positions.
-run_sash 'echo $(( ${s:?bad} ))'
+# walk must descend arith so the reject fires. (`:?` is now DD#77 — un-pruned;
+# `##` stays pruned.) All arith positions.
+run_sash 'echo $(( ${s##x} ))'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk pex.5
 # pex.6 same in a condition position (the (( )) ArithTest walk)
 run_sash 's=x; if (( ${s:+1} > 0 )); then echo y; fi'

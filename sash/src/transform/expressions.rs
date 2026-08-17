@@ -174,6 +174,20 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
             default: Box::new(default),
         };
     }
+    // DD#77: `${var:?MESSAGE}` — abort (`<prog>: MESSAGE`, exit 1) when the
+    // variable is unset/empty; otherwise the value. The `:-`/`:?` abort/default
+    // pair. The message interpolates like the `:-` default.
+    if op == ":?" {
+        let message = pe
+            .operand
+            .as_ref()
+            .map(|e| expr_to_value(e, state))
+            .unwrap_or_else(|| SsaValue::Literal(String::new()));
+        return SsaValue::RequireValue {
+            var,
+            message: Box::new(message),
+        };
+    }
     let operand = pe
         .operand
         .as_ref()

@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=42
+plan=44
 echo "1..$plan" >&3
 
 set +e
@@ -87,13 +87,24 @@ run_sash 'echo "${foo:-$HOME}"'
 # Every split_operator op EXCEPT `:-` was dropped from sash; each rejects with
 # SB4034 pointing at the string builtins. Migration is sash-convert's job. One
 # test per operator string so the reject set can't silently miss one.
-# dr1-3: assign-default / alt / error (:=, :+, :?)
+# dr1-2: assign-default / alt (:=, :+) stay dropped. (:? is now DD#77 —
+# un-pruned as the `:-`/`:?` abort/default pair; tested just below.)
 run_sash 'echo "${foo:=x}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr1
 run_sash 'foo=hi; echo "${foo:+x}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr2
-run_sash 'echo "${foo:?x}"'
-[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr3
+# vm.req1 DD#77 `${var:?MESSAGE}` — set/non-empty yields the value (all modes)
+run_sash 'foo=hi; echo "${foo:?x}"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.req1
+# vm.req2 unset → abort, exit 1, stderr `<prog>: MESSAGE` (message text checked
+# native-only — janet's argv0 is the script path, not the binary).
+run_sash 'echo "${foo:?must be set}"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": must be set"* ]]; }; chk vm.req2
+# vm.req3 empty also aborts (the `:` includes empty, not just unset)
+run_sash 'foo=; echo "${foo:?empty}"'
+[[ $rc != 0 && -z $out ]] \
+  && { ! in_modes native || [[ $rerr == *": empty"* ]]; }; chk vm.req3
 # dr4-5: prefix strip (#, ##) → basename / sub
 run_sash 'x=abc; echo "${x#a}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr4

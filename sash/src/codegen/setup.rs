@@ -130,6 +130,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         )
         .expect("declare sash_splat_disposition");
 
+    // sash_require_value(s_len, msg_ptr, msg_len) — DD#77 `${var:?MESSAGE}`
+    // abort-if-unset/empty (no return; caller keeps the value).
+    let mut require_value_sig = Signature::new(CallConv::SystemV);
+    require_value_sig.params.push(AbiParam::new(I64)); // s_len
+    require_value_sig.params.push(AbiParam::new(I64)); // msg_ptr
+    require_value_sig.params.push(AbiParam::new(I64)); // msg_len
+    let require_value_func = module
+        .declare_function("sash_require_value", Linkage::Import, &require_value_sig)
+        .expect("declare sash_require_value");
+
     // sash_signal_flag(signum) -> i64
     let mut signal_flag_sig = Signature::new(CallConv::SystemV);
     signal_flag_sig.params.push(AbiParam::new(I64)); // signum
@@ -824,6 +834,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argv_get: argv_get_func,
         argv_snapshot: argv_snapshot_func,
         splat_disposition: splat_disposition_func,
+        require_value: require_value_func,
         signal_flag: signal_flag_func,
         dtoi: dtoi_func,
         itod: itod_func,

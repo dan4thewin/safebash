@@ -563,6 +563,13 @@ pub enum SsaValue {
         var: VarRef,
         default: Box<SsaValue>,
     },
+    /// DD#77: `${var:?MESSAGE}` — `var` if set/non-empty, else abort
+    /// (`<prog>: MESSAGE` on stderr, exit 1). The `:-`/`:?` abort/default pair;
+    /// the message interpolates like the `:-` default.
+    RequireValue {
+        var: VarRef,
+        message: Box<SsaValue>,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -640,6 +647,15 @@ impl SsaValue {
             SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => parts.iter().collect(),
             SsaValue::CmdSubst { argv, .. } => argv.iter().collect(),
             SsaValue::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
+            other => other.operand_child_values(),
+        }
+    }
+
+    /// The non-collection owned sub-values (regex/case/default/require operands,
+    /// subscript index, arith operands, ternary). Split from `child_values` to
+    /// keep each dispatcher under the complexity gate.
+    fn operand_child_values(&self) -> Vec<&SsaValue> {
+        match self {
             SsaValue::Subscript { index, .. } => vec![index],
             SsaValue::RegexReplace {
                 subject,
@@ -650,6 +666,7 @@ impl SsaValue {
             SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
             SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::DefaultValue { default, .. } => vec![default],
+            SsaValue::RequireValue { message, .. } => vec![message],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

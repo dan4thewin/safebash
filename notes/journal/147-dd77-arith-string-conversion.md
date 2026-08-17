@@ -136,3 +136,28 @@ Tests: types.sh 77.8 (MAX valid, MAX+1 not; all modes), 77.9 (validated → safe
 convert; native,c), arithmetic.sh pex.7 (convert overflow → clean trap;
 native), sash-rt-tests is_int_strict range cases. Full sweep: 0 real
 passing→failing; native 0-fail. clippy clean.
+
+## DD#77 Stage C1 — un-prune `:?` (word-context abort) (DONE)
+
+`${var:?MESSAGE}` un-pruned everywhere (was SB4034, DD#65) as the `:-`/`:?`
+abort/default pair. Word context: set/non-empty → the value; unset/empty →
+abort `<prog>: MESSAGE` on stderr, exit 1 (mirrors the DD#69 splat `:?` abort).
+
+- parse: dropped `:?` from is_dropped_param_operator.
+- transform: `${s:?msg}` → new `SsaValue::RequireValue{var, message}` (message
+  interpolates, like the `:-` default).
+- runtime: `sash_require_value(s_len, msg_ptr, msg_len)` — abort-if-empty,
+  reusing the splat abort's `<argv0>: WORD` pattern.
+- codegen: native (call sash_require_value, pass through the value), c
+  (extern + emit_require_value_c, arm moved to the aggregate helper for the
+  complexity gate), janet (`emit_pe_require` — `(if (empty? v) (do (eprint
+  argv0 ": " msg) (os/exit 1)) v)`).
+
+Tests: var_modifiers.sh vm.req1 (set → value), req2/req3 (unset/empty → abort,
+message native-only — janet's argv0 is the script path). vm.dr3 (`:?`→SB4034)
+flipped/removed. arithmetic.sh pex.5 switched from `:?` to the still-pruned
+`##`. All 3 modes; 0 real passing→failing; native 0-fail; clippy clean.
+
+Intermediate state: arith `$(( ${s:?} ))` has WORD semantics for now (abort on
+empty, atoi otherwise); C2 tightens the arith trigger to strict-int (abort on
+non-integer).

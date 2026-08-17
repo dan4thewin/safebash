@@ -2114,6 +2114,7 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
     };
     match op {
         ":-" => emit_pe_default(pe, ctx),
+        ":?" => emit_pe_require(pe, ctx),
         "strlen" | "arrlen" => format!("(string (length (or {} \"\")))", var_ref),
         "substring" => emit_pe_substring(&var_ref, &pe_operand_literal(pe)),
         // DD#65: `:s/` sed op keeps the raw `/`//` operator; the dropped
@@ -2146,6 +2147,27 @@ fn emit_pe_default(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
     } else {
         format!("(or (os/getenv \"{}\") {})", pe.name, default)
     }
+}
+
+/// `${var:?MESSAGE}` — abort (`<prog>: MESSAGE` on stderr, exit 1) when var is
+/// unset/empty, else the value. DD#77. Mirrors native/c's `sash_require_value`.
+fn emit_pe_require(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
+    let msg = pe
+        .operand
+        .as_ref()
+        .map(|o| emit_expr_inline(o, ctx))
+        .unwrap_or_else(|| "\"\"".to_string());
+    let var_ref = if ctx.is_declared(&pe.name) {
+        pe.name.clone()
+    } else {
+        format!("(or (os/getenv \"{}\") \"\")", pe.name)
+    };
+    format!(
+        "(let [_v {v}] (if (or (nil? _v) (empty? _v)) \
+(do (eprint (get (dyn :args) 0) \": \" {m}) (os/exit 1)) _v))",
+        v = var_ref,
+        m = msg
+    )
 }
 
 /// `${var:off}` or `${var:off:len}` — substring (negative len trims from end).

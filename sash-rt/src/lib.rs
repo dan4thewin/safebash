@@ -648,6 +648,30 @@ pub unsafe extern "C" fn sash_splat_disposition(
     tbl
 }
 
+/// DD#77: `${var:?MESSAGE}` — abort when the scalar is unset/empty. `s_len <= 0`
+/// (unset reads as empty) writes `<argv0>: MESSAGE\n` to stderr and exits 1
+/// (mirrors the splat `:?` abort); otherwise a no-op. The caller keeps the
+/// original `(s_ptr, s_len)` for the value.
+#[no_mangle]
+pub unsafe extern "C" fn sash_require_value(s_len: i64, msg_ptr: *const u8, msg_len: i64) {
+    if s_len > 0 {
+        return;
+    }
+    let argv = sash_argv;
+    if !argv.is_null() {
+        let a0 = *argv;
+        if !a0.is_null() {
+            sash_write(2, a0, strlen(a0) as i64);
+        }
+    }
+    sash_write(2, b": ".as_ptr(), 2);
+    if !msg_ptr.is_null() && msg_len > 0 {
+        sash_write(2, msg_ptr, msg_len);
+    }
+    sash_write(2, b"\n".as_ptr(), 1);
+    sash_exit(1);
+}
+
 #[cold]
 #[inline(never)]
 fn sash_panic_argv(idx: i64, argc: i64) -> ! {

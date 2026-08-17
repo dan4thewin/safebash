@@ -108,6 +108,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_require_value(i64 sl, const char* mp, i64 ml);"
+    )
+    .unwrap();
     writeln!(out, "extern char* sash_itoa(i64 val, i64* out_len);").unwrap();
     writeln!(
         out,
@@ -766,7 +771,8 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             let (d_ptr, d_len) = lower_value_as_str(e, default, types);
             emit_default_value_expr_c(e, &s_ptr, &s_len, &d_ptr, &d_len)
         }
-        // Phase 5 table/array/argv reads, plus the unhandled fallback.
+        // Phase 5 table/array/argv reads, the DD#77 `${var:?…}` require, plus
+        // the unhandled fallback.
         other => lower_value_as_str_aggregate(e, other, types),
     }
 }
@@ -780,6 +786,9 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         // Phase 5: array / map literals → sash_table_new + per-elem set.
         SsaValue::IndexedArray(elems) => emit_indexed_array(e, elems, types),
         SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
+        // DD#77: `${var:?MESSAGE}` — abort (`<prog>: MESSAGE`, exit 1) if the
+        // var is unset/empty, else the value.
+        SsaValue::RequireValue { var, message } => emit_require_value_c(e, var, message, types),
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
         SsaValue::ArgvIndex(_) => emit_c_argv_value(e, value),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
@@ -1622,6 +1631,20 @@ fn load_var_or_empty_c(var: &VarRef, types: &VarTypes) -> CStr {
         return (format!("{}_ptr", base), format!("{}_len", base));
     }
     ("\"\"".to_string(), "0".to_string())
+}
+
+/// DD#77: `${var:?MESSAGE}` — abort via `sash_require_value` (`<prog>: MESSAGE`,
+/// exit 1) when the var is unset/empty; otherwise the var's `(ptr, len)`.
+fn emit_require_value_c(e: &mut Emit, var: &VarRef, message: &SsaValue, types: &VarTypes) -> CStr {
+    let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+    let (m_ptr, m_len) = lower_value_as_str(e, message, types);
+    writeln!(
+        e.out,
+        "    sash_require_value({}, {}, {});",
+        s_len, m_ptr, m_len
+    )
+    .unwrap();
+    (s_ptr, s_len)
 }
 
 /// DD#65: `${var:-DEFAULT}` where DEFAULT is a full interpolating value already
