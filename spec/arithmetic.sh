@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=101
+plan=105
 echo "1..$plan" >&3
 
 set +e
@@ -507,6 +507,32 @@ if in_modes native,c; then
 else
     skip_chk ivc.10
 fi
+
+# ── DD#77 A: ${var:OP…} routed through the real param-expansion parser ──
+# BUG (bug-arith-param-expansion-operator-zero): `${s:-N}`/`${s:?…}`/etc inside
+# `(( ))`/`$(( ))` swallowed the operator into a bogus var name → silent 0. Now
+# the body goes through parse_parameter_expansion. These assert the fix with
+# stable cases (a valid-int read + an unset default — unchanged by DD#77 C).
+# pex.1 ${s:-N} reads a set valid-int operand (was silently 0)
+# native,c — janet's arith VALUE path doesn't read an embedded ${…} expansion
+# (reads 0); its condition path does (pex.4). Same gap as asx.* subscripts —
+# janet-arith-subscript-read (extended to ${var:OP}).
+if in_modes native,c; then
+    run_sash 's=5; echo $(( ${s:-9} ))'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk pex.1
+    # pex.2 ${s:-N} default fires on unset
+    run_sash 'echo $(( ${s:-9} ))'
+    [[ $rc = 0 && $out = "9" && -z $err ]]; chk pex.2
+    # pex.3 composes with an operator (was 1 via bogus-var 0)
+    run_sash 's=5; echo $(( ${s:-9} + 1 ))'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk pex.3
+else
+    skip_chk pex.1; skip_chk pex.2; skip_chk pex.3
+fi
+# pex.4 in a (( )) condition (was reading 0 → wrong branch); janet's condition
+# path reads the embedded expansion, so this runs in every mode.
+run_sash 's=5; if (( ${s:-9} > 3 )); then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk pex.4
 
 set -e
 tally

@@ -353,6 +353,13 @@ enum ATok {
     /// (name, raw index text). The parser builds the ordinary `Subscript` Expr
     /// (so a map's string key works) and wraps it as `ArithExpr::Expansion`.
     Subscript(String, String),
+    /// `${var:OP…}` inside `$(( ))` — any operator-bearing parameter expansion
+    /// (`:-`, `:?`, `#`, `%`, `:s/`, …). Carries the raw `${…}` body; the
+    /// parser routes it through the real parameter-expansion parser and wraps
+    /// the result as `ArithExpr::Expansion` (DD#77). Before this, such bodies
+    /// fell through to a bogus `DollarVar("var:OP…")` → undefined → silent 0
+    /// (bug-arith-param-expansion-operator-zero).
+    ParamExpansion(String),
     // Operators (ordered by length for tokenization)
     PlusPlus,
     MinusMinus,
@@ -560,15 +567,31 @@ fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usiz
 /// a `LenOf` token; a bare `${#}` empty name, or any other body, yields an
 /// ordinary `DollarVar`.
 fn braced_body_token(body: &str) -> ATok {
-    if let Some(name) = body.strip_prefix('#') {
-        if !name.is_empty() && name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
-            return ATok::LenOf(name.to_string());
-        }
+    if let Some(t) = braced_length_token(body) {
+        return t;
     }
     if let Some(sub) = try_braced_subscript(body) {
         return sub;
     }
-    ATok::DollarVar(body.to_string())
+    // A plain identifier stays a simple var read (the working path).
+    if is_bare_ident(body) {
+        return ATok::DollarVar(body.to_string());
+    }
+    // Anything else carries a parameter-expansion operator (`:-`, `:?`, `#`,
+    // `%`, `:s/`, …) — route it through the real parser (DD#77) rather than the
+    // old bogus `DollarVar(body)` → silent 0.
+    ATok::ParamExpansion(body.to_string())
+}
+
+/// `${#name}` (name a bare identifier) → the arith braced-length `LenOf` token.
+fn braced_length_token(body: &str) -> Option<ATok> {
+    let name = body.strip_prefix('#')?;
+    is_bare_ident(name).then(|| ATok::LenOf(name.to_string()))
+}
+
+/// True for a non-empty run of `[A-Za-z0-9_]` — a bare variable name.
+fn is_bare_ident(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
 }
 
 /// `${a[i]}` / `${m[k]}` — a normal-parse subscript rvalue. Split `name[index]`;
@@ -849,6 +872,13 @@ impl ArithParser {
                     },
                     span: self.span,
                 };
+                Ok(ArithExpr::Expansion(Box::new(expr)))
+            }
+            Some(ATok::ParamExpansion(body)) => {
+                // `${var:OP…}` — parse the body with the real parameter-expansion
+                // parser and import the resulting Expr as an rvalue value (DD#77).
+                self.advance();
+                let expr = crate::parse::expr::parse_parameter_expansion(&body, self.span);
                 Ok(ArithExpr::Expansion(Box::new(expr)))
             }
             Some(ATok::LParen) => self.parse_lparen_form(),

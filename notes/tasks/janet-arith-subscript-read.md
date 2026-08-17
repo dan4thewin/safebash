@@ -1,5 +1,5 @@
 ---
-title: "janet: arith VALUE path doesn't read an embedded `${a[i]}`/`${m[k]}` subscript (reads 0)"
+title: "janet: arith VALUE path doesn't read an embedded `${…}` expansion (reads 0)"
 status: ready
 priority: P3
 kind: bug
@@ -7,20 +7,24 @@ depends: []
 effort: effort-janet-backend-parity
 gates:
   - "janet `$(( ${a[i]} + 1 ))` / `(( x = ${m[k]} + 1 ))` read the cell (native+c already do); un-guard arithmetic.sh asx.1-4, asx.6 for janet"
+  - "janet `$(( ${s:-9} + 1 ))` reads the DefaultValue (native+c do); un-guard arithmetic.sh pex.1-3 for janet (DD#77 A)"
   - "no janet regression"
 ---
 
 ## Symptom
 
-`${a[i]}` / `${m[k]}` imported into arithmetic reads **0** on the janet backend
-in VALUE context, but works in CONDITION context:
+Any `${…}` expansion imported into arithmetic (`ArithExpr::Expansion`) reads
+**0** on the janet backend in VALUE context, but works in CONDITION context.
+Covers subscripts `${a[i]}`/`${m[k]}` AND (DD#77 A) operator-bearing param
+expansions `${s:-N}`/`${s:?…}`:
 
 ```
 $(( ${a[0]} + 1 ))                 janet → 1   (should be 11)
+$(( ${s:-9} + 1 ))  (s=5)          janet → 1   (should be 6)
 if (( ${a[0]} > 5 )); then …       janet → yes (correct — reads 10)
 ```
 
-native + c read both correctly (arithmetic.sh asx.1-6 pass native,c).
+native + c read both correctly (arithmetic.sh asx.1-6, pex.1-4 pass native,c).
 
 ## Context
 

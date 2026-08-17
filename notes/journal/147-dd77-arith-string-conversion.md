@@ -42,3 +42,27 @@ flipped from "bare `a[1]=99` → SB4030" to "→ 99" (point-1 overturns its old
 premise). native+c green; janet green except int-collection cells (30.8,
 ivc.10 → skipped, janet-int-valued-collections). Full sweep: 0 real
 passing→failing; 8 new passing; native 0-fail. clippy clean. DD#30 amended.
+
+## DD#77 Stage A — route arith `${…}` through the real param-expansion parser (DONE)
+
+Fixes bug-arith-param-expansion-operator-zero (P1 silent miscompile):
+`${var:OP…}` in `(( ))`/`$(( ))` swallowed the operator into a bogus var name
+(`${s:-0}` → var `s:-0` → undefined → 0). `braced_body_token` (parse/arith.rs)
+now: `${#name}`→LenOf and `${name[i]}`→Subscript (unchanged), a bare identifier
+`${name}`→DollarVar (the working path), and **anything operator-bearing**→ new
+`ATok::ParamExpansion(body)`. The arith parser routes that through the real
+`parse_parameter_expansion` → `ArithExpr::Expansion` → `expr_to_value`. So
+`${s:-N}`/`${s:?…}`/`${s#…}` are genuine expansions.
+
+This is the bug fix / mechanism only — the DD#77 *disposition semantics* (strict
+validity trigger, bare-string error, numeric-literal default) are Stage C.
+Intermediate state: `${s:-N}` reads s / defaults on unset-empty (correct bash),
+then lenient-atoi in arith (the remaining footgun Stage C closes).
+
+Test-first: arithmetic.sh pex.1-4 (valid-int read, unset default, composes with
+`+`, in a condition) — stable across Stage C (valid-int/unset results don't
+change). native,c; janet's arith VALUE path reads 0 for an embedded `${…}`
+(pre-existing janet-arith-subscript-read, generalized from subscripts to all
+`${…}`; pex.1-3 guarded native,c, pex.4 condition-path works all modes).
+Complexity: extracted `braced_length_token`/`is_bare_ident`. Full sweep: 0 real
+passing→failing; native 0-fail.
