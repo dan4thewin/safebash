@@ -1,3 +1,32 @@
+## ════════ STATUS (2026-08-17, cont.) — DD#77 COMPLETE (Stage C1/C2/C3 shipped) ════════
+
+DD#77 (arith string→int conversion discipline) is **complete**. Stage C shipped
+this session on top of the mechanism + `-i` work below:
+
+- **3028b65** C1 — un-prune `:?` everywhere (word ctx aborts on unset/empty;
+  arith on non-int); `RequireValue` SSA node + `sash_require_value` runtime +
+  3-backend codegen.
+- **028c325** C2 — arith strict-disposition semantics for `:-`/`:?` via
+  `sash_atoi_or`/`sash_atoi_or_abort` (sash_is_int gate); native+c.
+- **(this commit)** C3 — **D1** bare string operand in arith → SB4030 (directs to
+  `${s:-N}`/`${s:?msg}`); **D4** the `:-` default must be a decimal integer
+  literal (was a silent atoi→0 footgun for `${s:-hello}`/`${s:-0xff}`); migrated
+  the DD#72 bare-coercion tests (`nl.s*`, `30.2`, `pex.7`) to dispositions;
+  amended DD#72. type_check-only (front-end, all modes reject).
+
+Out-of-range *input* is now a disposition concern (`${s:?}` abort / `${s:-N}`
+default via `parse_strict_i64`'s range check), NOT a DD#25 arithmetic overflow
+(that's for operations like `INT_MAX+1`, still covered by 25.2–25.12).
+
+Guarded gaps (filed, not blocking): janet arith-value `${…}` disposition
+(`janet-arith-subscript-read`); full DD#72 grammar (`0x`/`0o`/`0b`) as a `:-`
+default (`arith-disposition-hex-octal-default` — D4 currently decimal-only, which
+converts the silent-0 into a clean reject). Full 3-mode sweep: 0 passing→failing,
+0 gone, 11 new passing; native 0-fail; clippy clean.
+
+**NEXT:** back to the DG tier order (notes/status.md lower blocks) — the T4
+c/janet parity / remaining backlog. DD#77 needs nothing further.
+
 ## ════════ STATUS (2026-08-17) — DD#77 arith string→int discipline (mechanism + `-i` done; Stage C next) ════════
 
 Design conversation ratified DD#77 (string→int conversion discipline in arith)

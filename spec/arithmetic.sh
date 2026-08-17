@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=113
+plan=117
 echo "1..$plan" >&3
 
 set +e
@@ -542,16 +542,28 @@ run_sash 'echo $(( ${s##x} ))'
 # pex.6 same in a condition position (the (( )) ArithTest walk)
 run_sash 's=x; if (( ${s:+1} > 0 )); then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk pex.6
-# pex.7 a runtime string→int overflow traps CLEANLY (`<prog>: arithmetic
-# overflow`, like arithmetic overflow), not a Rust panic (was "sash: panic",
-# rc 99). DD#25/#26. A BARE `$(( s ))` still atoi-traps; a disposition
-# (`${s:-0}`) instead treats out-of-range as not-a-valid-integer (→ default,
-# dsp semantics). native-only (runtime stderr; janet arith is double-based).
-if in_modes native; then
-    run_sash 's=9223372036854775808; echo $(( s + 0 ))'
-    [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk pex.7
+# pex.7 DD#77: an out-of-range input string (numeric-looking but exceeds i64)
+# is "not a valid integer", so a `:?` disposition catches it and aborts
+# CLEANLY (`<prog>: msg`), not a Rust panic (was "sash: panic", rc 99). Bare
+# `$(( s ))` is now a compile error (SB4030, D1) — the disposition is the
+# sanctioned string operand. This is the out-of-range companion to dsp.4
+# (non-numeric); it exercises parse_strict_i64's range check. native,c —
+# message native-only (janet arith disposition gap, janet-arith-subscript-read).
+if in_modes native,c; then
+    run_sash 's=9223372036854775808; echo $(( ${s:?not a number} + 0 ))'
+    [[ $rc != 0 && -z $out ]] \
+      && { ! in_modes native || [[ $rerr == *": not a number"* ]]; }; chk pex.7
 else
     skip_chk pex.7
+fi
+# pex.8 DD#77: out-of-range input via `:-N` yields the default (treated as
+# not-a-valid-integer), not an overflow trap — the out-of-range companion to
+# dsp.1 (non-numeric). native,c.
+if in_modes native,c; then
+    run_sash 's=9223372036854775808; echo $(( ${s:-0} + 0 ))'
+    [[ $rc = 0 && $out = "0" && -z $err ]]; chk pex.8
+else
+    skip_chk pex.8
 fi
 
 # ── DD#77 C2: arith strict-disposition semantics for :- / :? ──
@@ -578,6 +590,26 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "42" && -z $err ]]; chk dsp.5
 else
     skip_chk dsp.1; skip_chk dsp.2; skip_chk dsp.3; skip_chk dsp.4; skip_chk dsp.5
+fi
+
+# ── DD#77 D4: the `:-` default in arithmetic must be a decimal integer literal.
+# Otherwise it was silently atoi'd to 0 (`${s:-hello}` → 0). Hex/octal/binary
+# and expression defaults aren't lowered here yet (they'd also silently give 0),
+# so they reject too — see arith-disposition-hex-octal-default. Compile-time
+# (SB4030), mode-independent. ──
+# d4.1 a non-numeric default rejects (was a silent 0)
+run_sash 's=x; echo $(( ${s:-hello} + 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.1
+# d4.2 a hex default rejects (not lowered yet — would be a silent 0)
+run_sash 's=x; echo $(( ${s:-0xff} + 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.2
+# d4.3 a decimal (incl. negative) literal default is accepted. native,c
+# (janet arith disposition gap, janet-arith-subscript-read).
+if in_modes native,c; then
+    run_sash 's=x; echo $(( ${s:--7} + 0 ))'
+    [[ $rc = 0 && $out = "-7" && -z $err ]]; chk d4.3
+else
+    skip_chk d4.3
 fi
 
 set -e

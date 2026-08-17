@@ -1,6 +1,6 @@
 ---
 title: "DD#77 Stage C — disposition discipline (:? un-prune, strict trigger, bare-string error)"
-status: in-progress
+status: done
 priority: P2
 kind: feature
 depends: []

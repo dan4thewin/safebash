@@ -57,6 +57,25 @@ for constants, lenient-decimal for strings. Prefix handling is identical.
   silently recovered an unknown token as `0`. Both now produce a clean
   reject (zero-tolerance: no silent arith miscompiles).
 
+## Amendment (DD#77, 2026-08-17) — a bare string operand no longer coerces
+
+DD#77 (arith string→int discipline) **supersedes the bare-operand path** of
+the runtime coercion above. A *bare* string operand in `$(( ))` — `x=0xff;
+$(( x + 0 ))`, `s=010; $(( s ))` — is now a **compile error** (SB4030, DD#77
+D1), not a silent lenient coercion. The string must carry a disposition:
+`$(( ${x:?msg} + 0 ))` (abort if not a valid integer) or `$(( ${x:-N} + 0 ))`
+(default N).
+
+What survives unchanged: the lenient *success grammar* above still defines
+what a **valid integer** *is* — it is exactly what `parse_strict_i64` accepts
+(0x/0o/0b honored; decimal with leading zeros ignored; out-of-range → invalid).
+The disposition's `is_int` gate and its `sash_atoi_or`/`sash_atoi_or_abort`
+conversion consume that same grammar. So DD#72 still governs *validity*; DD#77
+governs *how a string crosses into int* (never silently). The old
+`arith_literals.sh` bare-`$((x))` coercion tests (`nl.s*`) migrated to
+dispositions accordingly.
+
 ## See also
 - DD#26 — integer overflow traps (Policy A); out-of-range literal → SB4026.
 - DD#25 — arithmetic overflow hardening.
+- DD#77 — arith string→int conversion discipline (supersedes bare coercion).

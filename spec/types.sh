@@ -69,9 +69,15 @@ run_sash 'int x=5; x="hello"'
 run_sash 'x="hello"; int y=$x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 30.1
 
-# 30.2 $(( )) is explicit string-to-int
-run_sash 'x="42"; int y=$(( x )); echo $y'
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk 30.2
+# 30.2 $(( )) is explicit string-to-int — DD#77 D1: the bare string operand
+# now needs a disposition (`${x:?…}` validates + converts). native,c (janet
+# arith-value disposition gap, janet-arith-subscript-read).
+if in_modes native,c; then
+    run_sash 'x="42"; int y=$(( ${x:?nan} )); echo $y'
+    [[ $rc = 0 && $out = "42" && -z $err ]]; chk 30.2
+else
+    skip_chk 30.2
+fi
 
 # 30.3 x=5 is a string
 run_sash 'x=5; echo ${#x}'

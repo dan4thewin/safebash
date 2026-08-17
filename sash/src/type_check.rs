@@ -148,10 +148,14 @@ fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Ve
     walk_all_exprs(stmt, &mut |e| {
         if let ExprKind::Arithmetic(a) = &e.kind {
             check_arith_sexpr(a, e.span, env, errors);
+            check_arith_string_operands(a, e.span, env, errors);
+            check_arith_default_literals(a, errors);
         }
     });
     if let StmtKind::ArithTest(a) = &stmt.kind {
         check_arith_sexpr(a, stmt.span, env, errors);
+        check_arith_string_operands(a, stmt.span, env, errors);
+        check_arith_default_literals(a, errors);
     }
     for body in stmt.child_bodies() {
         for s in body {
@@ -212,6 +216,166 @@ fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str)) {
         // Leaves (Literal, Var, DollarVar, Pre/PostIncDec) hold no FuncCall.
         _ => {}
     }
+}
+
+/// DD#77 D1: invoke `f(name)` for each bare variable *read* (`x` / `$x`) in an
+/// `ArithExpr` tree. Does NOT descend into `Expansion` (a `${…}` disposition or
+/// subscript is not a bare operand) and does NOT visit assignment/inc-dec
+/// targets (those are mutation lvalues, tracked as arith-native ints).
+fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match a {
+        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => f(name),
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_var_reads(left, f);
+            walk_arith_var_reads(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_var_reads(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_var_reads(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_var_reads(cond, f);
+            walk_arith_var_reads(true_val, f);
+            walk_arith_var_reads(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_var_reads(e, f);
+            }
+        }
+        // NOT descended: `FuncCall` args (e.g. `${#s}` = `len(s)` passes the
+        // *name*, not an int operand — flagging it would be a false positive);
+        // `Expansion` (a `${…}` disposition/subscript); `Literal` /
+        // Pre/PostIncDec (no bare read to flag).
+        _ => {}
+    }
+}
+
+/// DD#77 D1: a bare string-typed variable used as an arithmetic operand is a
+/// compile error — the string→int crossing must carry a disposition
+/// (`${s:-N}` default / `${s:?msg}` abort). Only KNOWN-string vars are flagged;
+/// arith-native counters (`for (( i=0; … ))`, `(( x = 5 ))`) and undeclared
+/// names are untyped and pass.
+fn check_arith_string_operands(
+    a: &ArithExpr,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    walk_arith_var_reads(a, &mut |name| {
+        if env.vars.contains_key(name) && env.var_type(name) == VarType::String {
+            errors.push(TypeError {
+                message: format!(
+                    "bare string `{name}` in arithmetic — a string→int conversion must \
+                     carry a disposition: `${{{name}:-N}}` (default N if not an integer) \
+                     or `${{{name}:?msg}}` (abort if not an integer)."
+                ),
+                span,
+            });
+        }
+    });
+}
+
+/// DD#77 D4: invoke `f(inner)` for every `${…}` expansion (`ArithExpr::
+/// Expansion`) in an `ArithExpr` tree. Complements `walk_arith_var_reads`,
+/// which deliberately skips these — here we want them, to validate a `:-`
+/// disposition's default.
+fn walk_arith_expansions(a: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+    match a {
+        ArithExpr::Expansion(inner) => f(inner),
+        ArithExpr::FuncCall { args, .. } => {
+            for arg in args {
+                walk_arith_expansions(arg, f);
+            }
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_expansions(left, f);
+            walk_arith_expansions(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_expansions(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_expansions(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_expansions(cond, f);
+            walk_arith_expansions(true_val, f);
+            walk_arith_expansions(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_expansions(e, f);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// DD#77 D4: in arithmetic, a `${s:-DEFAULT}` disposition's DEFAULT must be a
+/// decimal integer literal. The default is lowered by a plain decimal atoi, so
+/// a non-decimal default (`hello`, `0xff`, `5+3`, an interpolation, or empty)
+/// silently became `0` — reject it instead (SB4030). `:?` carries a message,
+/// not a numeric default, so it is never checked here.
+fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
+    walk_arith_expansions(a, &mut |inner| {
+        let ExprKind::ParameterExpansion(pe) = &inner.kind else {
+            return;
+        };
+        if pe.operator.as_deref() != Some(":-") {
+            return;
+        }
+        if !default_is_decimal_literal(pe.operand.as_deref()) {
+            let name = &pe.name;
+            errors.push(TypeError {
+                message: format!(
+                    "arithmetic default for `{name}` must be a decimal integer literal \
+                     (e.g. `${{{name}:-0}}`) — it is lowered by a decimal conversion, so \
+                     a non-decimal default would silently become 0. Hex/octal/binary \
+                     (`0x`/`0o`/`0b`) defaults are not lowered here yet."
+                ),
+                span: inner.span,
+            });
+        }
+    });
+}
+
+/// The `${var:-DEFAULT}` default word (a `DoubleQuoted`, per DD#65) is a
+/// decimal integer literal iff it is a single literal part matching an optional
+/// `-` then a canonical decimal (`0`, or a non-zero leading digit). Rejects
+/// leading zeros (DD#72), radix prefixes, interpolations, and empty.
+fn default_is_decimal_literal(operand: Option<&Expr>) -> bool {
+    let Some(op) = operand else {
+        return false;
+    };
+    let lit = match &op.kind {
+        ExprKind::Literal(s) => Some(s.as_str()),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
+            ExprKind::Literal(s) => Some(s.as_str()),
+            _ => None,
+        },
+        _ => None,
+    };
+    lit.is_some_and(is_canonical_decimal_literal)
+}
+
+/// Optional leading `-`, then a canonical decimal magnitude (`0` alone, or a
+/// digit run with no leading zero). Matches DD#72's decimal literal shape.
+fn is_canonical_decimal_literal(s: &str) -> bool {
+    let mag = s.strip_prefix('-').unwrap_or(s);
+    !mag.is_empty()
+        && mag.bytes().all(|b| b.is_ascii_digit())
+        && (mag.len() == 1 || mag.as_bytes()[0] != b'0')
 }
 
 /// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic

@@ -130,12 +130,34 @@ grammar (0x/0o/0b, leading zeros) still defines a *valid* integer (now consumed
 by the disposition's `is_int`/atoi), but a bare string operand no longer
 silently coerces; it must carry `:-`/`:?`.
 
+**D4 — the `:-` default must be a *decimal* integer literal (for now).** In
+`$(( ${s:-N} ))` the default `N` is lowered by a plain decimal `sash_atoi` over
+its bytes, so a non-decimal default silently became `0` (`${s:-hello}`,
+`${s:-0xff}`, `${s:-5+3}`, `${s:-}` all → 0). D4 (`check_arith_default_literals`,
+type_check) rejects any default that is not a canonical decimal literal
+(optional `-`, no leading zero) — SB4030. This closes the silent-0 footgun; a
+hex/octal default is now a clear compile error rather than a silent 0. Widening
+the default to the full DD#72 grammar (`0x`/`0o`/`0b`, which also needs the
+lowerer to stop atoi-ing) is a filed follow-up
+(`arith-disposition-hex-octal-default`), not a bug — no silent-wrong value
+remains.
+
+**Out-of-range input is a disposition concern, not an "arithmetic overflow".**
+An input string that is numeric-looking but exceeds i64 (`9223372036854775808`)
+is "not a valid integer" under `parse_strict_i64`'s range check, so `${s:?}`
+aborts (validation) and `${s:-N}` defaults — it is NOT the DD#25 arithmetic-
+overflow trap (that fires on an *operation* like `INT_MAX + 1`). The old
+`arithmetic.sh` pex.7 (bare `$(( s ))` out-of-range → overflow trap) migrated to
+the disposition form (`${s:?}` abort / `${s:-0}` default); genuine operation
+overflow stays covered by 25.2–25.12.
+
 ## Staging
 
-C1 — un-prune `:?` (word + arith), abort node + 3-backend codegen.
-C2 — arith strict-disposition semantics for `:-`/`:?` (sash_is_int gate).
+C1 — un-prune `:?` (word + arith), abort node + 3-backend codegen. **Done.**
+C2 — arith strict-disposition semantics for `:-`/`:?` (sash_is_int gate). **Done.**
 C3 — D1 bare-string-in-arith error + D4 numeric-literal default + DD#72 test
-migration + DD#72 amendment.
+migration + DD#72 amendment. **Done** (native,c; janet arith-disposition gap
+guarded, `janet-arith-subscript-read`). DD#77 complete.
 
 See notes/tasks/dd77-arith-string-conversion.md.
 

@@ -186,3 +186,59 @@ apply the disposition (janet-arith-subscript-read, gate extended). Known
 minor quirk: `echo $(( <lone ${…}> ))` uses string context (not int-forced) —
 `int n=$(( … ))` and operator/condition forms are correct. Full sweep: 0 real
 passing→failing; native 0-fail; clippy clean.
+
+## DD#77 Stage C3 — D1 bare-string error + D4 numeric default (DONE) — DD#77 complete
+
+**D1 — a bare string operand in arith is a compile error (SB4030).** In
+`type_check.rs`, `check_arith_string_operands` walks each arith tree
+(`walk_arith_var_reads`) and flags a bare `Var`/`DollarVar` whose name is a
+KNOWN String var (`env.vars` + `var_type == String`). The walker deliberately
+does NOT descend `FuncCall` args (`${#s}` = `len(s)` passes the *name*, not an
+int operand — a false positive) nor `Expansion` (a `${…}` disposition/subscript
+is not a bare operand). This is what makes D1 feasible without breaking
+arith-native counters: `infer_stmt` never types `(( x = 5 ))` targets or
+`for (( i=0; … ))` counters, so they're untyped → exempt; `s=hello`/`read s`/
+`x="42"` put a String var in env → flagged. Error directs to `${s:-N}`/`${s:?msg}`.
+
+**D4 — the `:-` default must be a decimal integer literal (SB4030).** The
+default `N` in `$(( ${s:-N} ))` is lowered by a plain decimal `sash_atoi` over
+its bytes, so a non-decimal default silently became `0` (`${s:-hello}`,
+`${s:-0xff}`, `${s:-5+3}`, `${s:-010}`, `${s:-}` all → 0 — a real footgun,
+verified). `check_arith_default_literals` walks arith `Expansion` nodes
+(`walk_arith_expansions`, the complement of the D1 walker), and for a `:-`
+disposition requires the default to be a canonical decimal literal (optional
+`-`, no leading zero — `default_is_decimal_literal`/`is_canonical_decimal_literal`,
+DD#72-consistent). `:?` carries a message, not a numeric default, so it is never
+checked. Hex/octal/binary defaults now reject cleanly instead of silent-0;
+widening to the full DD#72 grammar (needs the lowerer to stop atoi-ing) is filed
+as `arith-disposition-hex-octal-default` (a feature, not a bug — no silent-wrong
+value remains).
+
+**Test migration.** D1 broke the bare-operand tests written under the old
+lenient model:
+- `arith_literals.sh` `nl.s1-s10` (DD#72 bare-`$((x))` coercion) → `${x:?nan}`
+  dispositions (native,c).
+- `types.sh` `30.2` (`x="42"; int y=$(( x ))`) → `int y=$(( ${x:?nan} ))`
+  (native,c).
+- `arithmetic.sh` `pex.7` (out-of-range bare `$(( s ))` → atoi overflow trap)
+  → the out-of-range **disposition** semantics: `${s:?}` aborts (out-of-range is
+  "not a valid integer" per `parse_strict_i64`'s range check, NOT a DD#25
+  arithmetic overflow); added `pex.8` for the `:-0` default path. These are the
+  out-of-range companions to dsp.4/dsp.1 (non-numeric) and are what DG's "check
+  out-of-range for test and convert" follow-up asked for. Genuine *operation*
+  overflow stays covered by 25.2–25.12.
+- `arithmetic.sh` `58.14-16` (`${#x}` in arith) — false-positived by an earlier
+  D1 draft; fixed by not descending `FuncCall` args (above). Now pass.
+
+New tests: `arithmetic.sh` d4.1 (non-numeric default → SB4030), d4.2 (hex
+default → SB4030, pins the anti-footgun), d4.3 (`${s:--7}` → -7, native,c);
+pex.7/pex.8 (out-of-range `:?`/`:-`). plan 113→117.
+
+**Docs.** DD#72 amended (bare-operand coercion superseded by DD#77 D1; success
+grammar still defines validity). DD#77 resolved sub-decisions gained D4 +
+out-of-range-is-a-disposition-concern; staging marked complete.
+
+Complexity: new type_check helpers all well under the gate (max
+`walk_arith_expansions` cc=11/cog=5 vs 3×mean 13.5/7.44). Full 3-mode sweep:
+**0 passing→failing, 0 gone, 11 new passing** (d4.1-3, pex.7/8 across modes);
+native 0-fail (latest-run-per-test); clippy clean. **DD#77 is complete.**
