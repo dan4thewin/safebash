@@ -498,11 +498,15 @@ fi
 # ivc.9 a non-numeric element in an int collection → SB4030 (compile-reject)
 run_sash 'int array a=(hi 2); echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ivc.9
-# ivc.10 bare `a[i]=99` (numeric literal, no `$(( ))`) → SB4030, uniform with
-# the scalar rule (`x=5` reassignment also needs `$(( ))`; only declaration
-# init sugar accepts bare numerics). Use `$(( 99 ))` to store an int cell.
-run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
-[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ivc.10
+# ivc.10 bare `a[i]=99` (numeric literal) on an int collection stores the int
+# cell — DD#77/DD#30-refine: a bare numeric literal to a known-int LHS aligns
+# with `int x=5` (see types.sh 30.5/30.8). native,c (janet int-collection gap).
+if in_modes native,c; then
+    run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
+    [[ $rc = 0 && $out = "99" && -z $err ]]; chk ivc.10
+else
+    skip_chk ivc.10
+fi
 
 set -e
 tally

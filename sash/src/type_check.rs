@@ -467,20 +467,28 @@ fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut 
     }
     let rtype = expr_type(&a.value, env);
     let ltype = env.var_type(&a.name);
-    // Bare assignment: variable gets the RHS type on first use.
-    // But if already declared with a type, check compatibility.
-    if env.vars.contains_key(&a.name) && ltype != rtype {
-        errors.push(TypeError {
-            message: format!(
-                "cannot assign {} value to {} variable `{}`{}",
-                type_name(rtype),
-                type_name(ltype),
-                a.name,
-                conversion_hint(rtype, ltype),
-            ),
-            span,
-        });
-    } else {
+    let known = env.vars.contains_key(&a.name);
+    // Bare assignment: a new variable gets the RHS type on first use.
+    // An already-typed variable must match — except (DD#30 refinement) an
+    // already-int LHS accepts a bare numeric literal (`int x=0; x=5` aligns
+    // with `int x=5`; `int array a=(…); a[i]=99` matches int-init), mirroring
+    // the declaration-init `is_numeric_literal` exception. The variable keeps
+    // its declared int type (no re-declare).
+    if known && ltype != rtype {
+        let int_literal_ok = ltype == VarType::Int && is_numeric_literal(&a.value);
+        if !int_literal_ok {
+            errors.push(TypeError {
+                message: format!(
+                    "cannot assign {} value to {} variable `{}`{}",
+                    type_name(rtype),
+                    type_name(ltype),
+                    a.name,
+                    conversion_hint(rtype, ltype),
+                ),
+                span,
+            });
+        }
+    } else if !known {
         env.declare(&a.name, rtype);
     }
 }
@@ -833,11 +841,21 @@ pub fn infer_types(program: &Program) -> HashMap<String, VarType> {
     env.vars
 }
 
+/// DD#30 refinement: a bare numeric literal assigned to an already-int variable
+/// keeps the int type (mirrors the error pass in check_assignment); otherwise
+/// it would be re-typed String and mis-slotted in codegen.
+fn infer_assignment_type(a: &crate::ir::Assignment, env: &TypeEnv) -> VarType {
+    if env.var_type(&a.name) == VarType::Int && is_numeric_literal(&a.value) {
+        VarType::Int
+    } else {
+        expr_type(&a.value, env)
+    }
+}
+
 fn infer_stmt(stmt: &Statement, env: &mut TypeEnv) {
     match &stmt.kind {
         StmtKind::Assignment(a) => {
-            let t = expr_type(&a.value, env);
-            env.declare(&a.name, t);
+            env.declare(&a.name, infer_assignment_type(a, env));
         }
         StmtKind::Declaration(d) => infer_declaration_types(d, env),
         // Default: walk all child bodies. Covers For, While, Function

@@ -272,16 +272,34 @@ fn emit_assignment(out: &mut String, ctx: &mut EmitCtx, a: &Assignment, depth: u
     // An int-typed target keeps arithmetic numeric so later `(( ))` reads and
     // comparisons work (string-wrapping would make `(( i += 1 ))` set i to a
     // string and break the next comparison). String targets stay strings.
-    let val = if ctx.is_int(&a.name) {
+    if ctx.is_declared(&a.name) {
+        let val = scalar_assign_value(ctx, a, a.op == AssignOp::Append);
+        writeln!(out, "(set {} {})", a.name, val).unwrap();
+    } else {
+        // `+=` on an unset var is `=` in bash (append to empty) — bind fresh.
+        let val = scalar_assign_value(ctx, a, false);
+        ctx.declare(&a.name);
+        writeln!(out, "(var {} {})", a.name, val).unwrap();
+    }
+}
+
+/// The janet value expression for a scalar assignment. `x = v` overwrites;
+/// `x += v` (accumulate) adds arithmetically for an int target and concatenates
+/// for a string target — mirroring the shared transform's `append_scalar`.
+fn scalar_assign_value(ctx: &EmitCtx, a: &Assignment, accumulate: bool) -> String {
+    let is_int = ctx.is_int(&a.name);
+    let v = if is_int {
         emit_expr_as_int(&a.value, ctx)
     } else {
         emit_expr_inline(&a.value, ctx)
     };
-    if ctx.is_declared(&a.name) {
-        writeln!(out, "(set {} {})", a.name, val).unwrap();
+    if !accumulate {
+        return v;
+    }
+    if is_int {
+        format!("(+ {} {})", a.name, v)
     } else {
-        ctx.declare(&a.name);
-        writeln!(out, "(var {} {})", a.name, val).unwrap();
+        format!("(string {} {})", a.name, v)
     }
 }
 

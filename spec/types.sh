@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=93
+plan=100
 echo "1..$plan" >&3
 
 set +e
@@ -80,6 +80,36 @@ run_sash 'x=5; echo ${#x}'
 # 30.4 int x=5 required for integer
 run_sash 'int x=5; echo $(( x + 1 ))'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 30.4
+
+# 30.5 DD#30-refine: reassigning a bare numeric literal to an already-int var
+# is accepted (aligns `x=5` with `int x=5` once x is known int).
+run_sash 'int x=0; x=5; echo $x'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 30.5
+# 30.6 negative literal to known-int
+run_sash 'int x=0; x=-3; echo $x'
+[[ $rc = 0 && $out = "-3" && -z $err ]]; chk 30.6
+# 30.7 += bare literal to known-int (arith add)
+run_sash 'int x=4; x+=3; echo $x'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 30.7
+# 30.8 DD#76 int-collection cell accepts a bare numeric literal (like init).
+# native,c — janet treats the int-collection var as a scalar int
+# (janet-int-valued-collections).
+if in_modes native,c; then
+    run_sash 'int array a=(1 2); a[1]=99; echo ${a[1]}'
+    [[ $rc = 0 && $out = "99" && -z $err ]]; chk 30.8
+else
+    skip_chk 30.8
+fi
+# 30.9 boundary: a bare arith EXPRESSION (not a literal) still needs $(( ))
+run_sash 'int x=0; x=5+1'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 30.9
+# 30.10 a NEW (untyped) var stays a string — `y=5` is not int (DD#30 unchanged)
+run_sash 'y=5; int z=$y'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 30.10
+# 30.11 scalar string `+=` accumulates (was a janet silent-miscompile: it
+# dropped the += and emitted a plain set → "cd"; now "abcd" in all modes)
+run_sash 's=ab; s+=cd; echo $s'
+[[ $rc = 0 && $out = "abcd" && -z $err ]]; chk 30.11
 
 # 33.1 indexed array integer keys
 run_sash 'array a=(one two three); echo ${a[1]}'
