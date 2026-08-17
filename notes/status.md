@@ -1,3 +1,31 @@
+## ════════ STATUS (2026-08-17) — DD#77 arith string→int discipline (mechanism + `-i` done; Stage C next) ════════
+
+Design conversation ratified DD#77 (string→int conversion discipline in arith)
++ DD#30 point-1 refinement. Shipped this session (all pushed hand-parser, 0 real
+regressions, native 0-fail):
+
+- **61a251e** point-1 — bare numeric literal to a known-int LHS (`int x=0; x=5`,
+  `a[1]=99`); DD#30 amended. Fixed a pre-existing janet scalar-`+=` silent
+  miscompile inline.
+- **87cbd2b** DD#77 A — route arith `${…}` through the real param parser; fixes
+  the P1 silent-0 bug (`${s:-0}` → bogus var → 0).
+- **489d994** DD#77 B — `sash_is_int` + `[[ -i EXPR ]]` test, 3 backends.
+- **a020ade** fix — Stage A opened a pruned-operator ICE hole (`:?`/`:=`/`##`… in
+  arith bypassed SB4034 → ICE); walk now descends arith, rejects cleanly.
+- **91dd253** DG follow-up — `-i` range-checked (valid AND representable);
+  runtime atoi overflow now a clean `sash_arith_overflow` trap (was rc-99 panic).
+
+DD#77 recorded (+ resolved sub-decisions: `:?` un-prune everywhere mirroring
+`:-`; D1 as approved, DD#72 bare-coercion superseded; `-i` range-checked).
+
+**NEXT — DD#77 Stage C (unblocked, large):**
+- C1: un-prune `:?` (word ctx aborts on unset/empty; arith on non-int) — abort
+  node + 3-backend codegen.
+- C2: arith strict-disposition semantics for `:-`/`:?` (sash_is_int gate).
+- C3: D1 bare-string-in-arith → error + D4 numeric-literal default + migrate
+  DD#72 `arith_literals.sh` bare-coercion to dispositions + amend DD#72.
+See notes/tasks/dd77-arith-string-conversion.md.
+
 ## ════════ STATUS (2026-08-16, cont.) — DD#76 int-valued collections A+B DONE ════════
 
 DG: fold int-valued collections into the arith-subscript effort. **DD#76**
