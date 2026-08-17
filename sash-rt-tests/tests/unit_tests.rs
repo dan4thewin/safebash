@@ -5,6 +5,7 @@
 #[link(name = "sash_rt_test")]
 extern "C" {
     fn sash_atoi(s_ptr: *const u8, s_len: i64) -> i64;
+    fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64;
     fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8;
     fn sash_strip_suffix(
         s: *const u8,
@@ -60,6 +61,32 @@ unsafe fn read_slice<'a>(ptr: *const u8, len: i64) -> &'a [u8] {
 fn atoi_zero() {
     unsafe {
         assert_eq!(sash_atoi(b"0".as_ptr(), 1), 0);
+    }
+}
+
+#[test]
+fn is_int_strict() {
+    unsafe {
+        let t = |s: &[u8]| sash_is_int(s.as_ptr(), s.len() as i64);
+        // valid: decimal, sign, leading zeros, radix prefixes
+        assert_eq!(t(b"0"), 1);
+        assert_eq!(t(b"42"), 1);
+        assert_eq!(t(b"-7"), 1);
+        assert_eq!(t(b"+9"), 1);
+        assert_eq!(t(b"010"), 1); // decimal leading zeros (not octal)
+        assert_eq!(t(b"0xff"), 1);
+        assert_eq!(t(b"0o17"), 1);
+        assert_eq!(t(b"0b1010"), 1);
+        // invalid: empty, non-numeric, trailing junk, sign-only, bad prefix digits
+        assert_eq!(t(b""), 0);
+        assert_eq!(t(b"hello"), 0);
+        assert_eq!(t(b"42abc"), 0); // strict: no partial parse
+        assert_eq!(t(b"-"), 0);
+        assert_eq!(t(b"0x"), 0); // prefix, no digits
+        assert_eq!(t(b"0o8"), 0); // 8 invalid for octal
+        assert_eq!(t(b"0b2"), 0);
+        assert_eq!(t(b" 42"), 0); // no leading whitespace
+        assert_eq!(t(b"42 "), 0); // no trailing whitespace
     }
 }
 

@@ -328,6 +328,15 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_atoi", Linkage::Import, &atoi_sig)
         .expect("declare sash_atoi");
 
+    // sash_is_int(s_ptr, s_len) -> i64 (1 = strict integer, 0 = not) — DD#77
+    let mut is_int_sig = Signature::new(CallConv::SystemV);
+    is_int_sig.params.push(AbiParam::new(I64)); // s_ptr
+    is_int_sig.params.push(AbiParam::new(I64)); // s_len
+    is_int_sig.returns.push(AbiParam::new(I64)); // 0/1
+    let is_int_func = module
+        .declare_function("sash_is_int", Linkage::Import, &is_int_sig)
+        .expect("declare sash_is_int");
+
     // sash_itoa(val, out_len_ptr) -> ptr
     let mut itoa_sig = Signature::new(CallConv::SystemV);
     itoa_sig.params.push(AbiParam::new(I64)); // val
@@ -764,6 +773,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         alloc: alloc_func,
         concat: concat_func,
         atoi: atoi_func,
+        is_int: is_int_func,
         itoa: itoa_func,
         join_args: join_args_func,
         assoc_lookup: assoc_lookup_func,

@@ -107,6 +107,7 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
+    writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
     writeln!(out, "extern char* sash_itoa(i64 val, i64* out_len);").unwrap();
     writeln!(
         out,
@@ -1449,10 +1450,12 @@ fn test_rhs_as_str(e: &mut Emit, right: &SsaTestRhs, types: &VarTypes) -> CStr {
 /// Lower a unary test. Implements -n / -z (and implicit-? bare word);
 /// file tests (-f, -d, -e, …) are not yet implemented in the C backend.
 fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes) -> String {
-    let (_ptr, len) = lower_value_as_str(e, operand, types);
+    let (ptr, len) = lower_value_as_str(e, operand, types);
     match op {
         "-n" | "?" => format!("(({}) > 0 ? 1 : 0)", len),
         "-z" => format!("(({}) == 0 ? 1 : 0)", len),
+        // DD#77: `-i` — strict integer-validity of the operand's value.
+        "-i" => format!("sash_is_int({}, {})", ptr, len),
         _ => {
             writeln!(e.out, "    /* TODO test unary op: {} */", op).unwrap();
             "0".to_string()

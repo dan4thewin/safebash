@@ -49,6 +49,18 @@ b (if neg (slice s 1) s) r (cond (string/has-prefix? \"0o\" b) (scan-number (str
 n (or r 0)] (if neg (- n) n))))"
     )
     .unwrap();
+    // DD#77: `_isint` — strict integer-validity predicate for `[[ -i s ]]`
+    // (matches the runtime sash_is_int grammar: sign + decimal digits, or a
+    // 0x/0o/0b prefix with valid digits, whole string, no trailing junk).
+    writeln!(
+        out,
+        "(defn _isint [v] (not (nil? (peg/match ~(* (? (set \"+-\")) (+ \
+(* \"0\" (set \"xX\") (some (range \"09\" \"af\" \"AF\"))) \
+(* \"0\" (set \"oO\") (some (range \"07\"))) \
+(* \"0\" (set \"bB\") (some (set \"01\"))) \
+(some (range \"09\"))) -1) (string v)))))"
+    )
+    .unwrap();
     for stmt in &program.statements {
         emit_stmt(&mut out, &mut ctx, stmt, 0);
     }
@@ -1710,6 +1722,8 @@ fn emit_unary_test(op: &str, operand: &Expr, ctx: &EmitCtx) -> String {
         "-e" => format!("(not (nil? (os/stat {} :mode)))", val),
         "-n" => format!("(not (or (nil? {0}) (empty? {0})))", val),
         "-z" => format!("(or (nil? {0}) (empty? {0}))", val),
+        // DD#77: `-i` — strict integer-validity of the operand's value.
+        "-i" => format!("(_isint {})", val),
         _ => format!("(truthy? {} {})", op, val),
     }
 }

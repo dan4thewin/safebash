@@ -76,6 +76,7 @@ pub(super) struct ExternFuncs {
     pub(super) alloc: cranelift_module::FuncId,
     pub(super) concat: cranelift_module::FuncId,
     pub(super) atoi: cranelift_module::FuncId,
+    pub(super) is_int: cranelift_module::FuncId,
     pub(super) itoa: cranelift_module::FuncId,
     pub(super) join_args: cranelift_module::FuncId,
     pub(super) assoc_lookup: cranelift_module::FuncId,

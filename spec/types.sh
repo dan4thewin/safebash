@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=100
+plan=107
 echo "1..$plan" >&3
 
 set +e
@@ -481,6 +481,32 @@ run_sash 'array a=(x y z); for w in @a; do echo "$w"; done'
 # 75.16 indexed element access ${a[$i]} / ${a[1]} unaffected
 run_sash 'array a=(x y z); i=2; echo ${a[$i]}${a[1]}'
 [[ $rc = 0 && $out = "zy" && -z $err ]]; chk 75.16
+
+# ── DD#77 `[[ -i EXPR ]]` — strict integer-validity test ──
+# True iff the operand's value is a complete integer (sign + decimal digits, or
+# a 0x/0o/0b prefix with valid digits; empty/unset → false). Lets an author
+# validate/branch before converting. All backends (sash_is_int / janet _isint).
+# 77.1 literal integer → true
+run_sash 'if [[ -i 42 ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.1
+# 77.2 non-numeric → false
+run_sash 'if [[ -i abc ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.2
+# 77.3 a set numeric string var → true
+run_sash 's=42; if [[ -i $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.3
+# 77.4 partial-numeric (trailing junk) → false (strict, no partial parse)
+run_sash 's=42abc; if [[ -i $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.4
+# 77.5 negative and radix-prefixed → true
+run_sash 's=-7; if [[ -i $s ]] && [[ -i 0xff ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.5
+# 77.6 empty → false
+run_sash 's=; if [[ -i $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.6
+# 77.7 DG's example: validate-or-sanitize, then use (composes with =~ s///g)
+run_sash 's=42abc; [[ -i $s ]] || s =~ s/\D//g; echo $s'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 77.7
 
 set -e
 tally

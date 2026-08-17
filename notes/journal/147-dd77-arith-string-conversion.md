@@ -66,3 +66,23 @@ change). native,c; janet's arith VALUE path reads 0 for an embedded `${…}`
 `${…}`; pex.1-3 guarded native,c, pex.4 condition-path works all modes).
 Complexity: extracted `braced_length_token`/`is_bare_ident`. Full sweep: 0 real
 passing→failing; native 0-fail.
+
+## DD#77 Stage B — sash_is_int + `[[ -i EXPR ]]` (DONE)
+
+Runtime `is_int_inner` (inner.rs) / `sash_is_int` (lib.rs): strict
+integer-validity — the whole string must be an optional sign then decimal
+digits, or a `0x`/`0o`/`0b` prefix with valid digits; empty/trailing-junk
+(`42abc`) → false. Format-only (an overflowing but well-formed literal is
+"valid"; DD#26 traps at conversion). Reuses `radix_prefix`. Unit test
+(unit_tests.rs is_int_strict) + standalone-validated (the rt-test harness has
+pre-existing link rot: `sash_streq`/`sash_arith_eval` absent from the lib —
+unrelated).
+
+`[[ -i EXPR ]]`: new unary test (bash has no `-i`, no collision). Wired in all
+three backends — native (`lower_test_unary` → sash_is_int), c (emit_c extern +
+call), janet (`_isint` preamble PEG matching the same grammar). DG's exact
+example composes: `s=42abc; [[ -i $s ]] || s =~ s/\D//g; echo $s` → `42`.
+
+Test-first: types.sh 77.1-77.7 (literal, non-numeric, set var, trailing-junk,
+negative+radix, empty, DG validate-or-strip). All pass native+c+janet. Full
+sweep: 0 real passing→failing; native 0-fail. clippy clean.

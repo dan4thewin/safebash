@@ -965,6 +965,18 @@ pub unsafe extern "C" fn sash_atoi(s_ptr: *const u8, s_len: i64) -> i64 {
     atoi_inner(bytes)
 }
 
+/// DD#77: strict integer-validity test — 1 if the string is a complete integer
+/// literal (`[[ -i s ]]` and the arith conversion disposition), else 0. Empty
+/// → 0 (false). Format-only (see `is_int_inner`).
+#[no_mangle]
+pub unsafe extern "C" fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    is_int_inner(bytes) as i64
+}
+
 /// Format an i64 as a decimal string into a heap-allocated buffer.
 #[no_mangle]
 pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {

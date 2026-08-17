@@ -1487,6 +1487,7 @@ fn is_unary_test_op(op: &str) -> bool {
             | "-h"
             | "-n"
             | "-z"
+            | "-i"
             | "-b"
             | "-c"
             | "-p"

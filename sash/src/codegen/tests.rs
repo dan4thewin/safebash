@@ -220,6 +220,12 @@ fn lower_test_unary(
         // Implicit -n (bare word in [[ ]]) shares the -n path.
         "-n" | "?" => emit_len_cmp(builder, len, IntCC::SignedGreaterThan),
         "-z" => emit_len_cmp(builder, len, IntCC::Equal),
+        // DD#77: `-i` — true iff the operand's value is a strict integer.
+        "-i" => {
+            let is_int_ref = module.declare_func_in_func(externs.is_int, builder.func);
+            let call = builder.ins().call(is_int_ref, &[ptr, len]);
+            builder.inst_results(call)[0]
+        }
         "-t" => emit_isatty_test(builder, module, externs, ptr, len),
         other => match file_test_op_code(other) {
             Some(code) => emit_file_test(builder, module, externs, ptr, len, code),

@@ -54,6 +54,32 @@ fn radix_prefix(bytes: &[u8]) -> Option<(u32, usize)> {
     None
 }
 
+/// DD#77: strict integer-validity test — true iff the **entire** byte slice is a
+/// complete integer: an optional `+`/`-` sign, then either a `0x`/`0o`/`0b`
+/// prefix with ≥1 valid digit, or ≥1 decimal digit — and nothing else. Unlike
+/// `atoi_inner` (lenient: leading-space skip, partial parse) this rejects
+/// surrounding whitespace and trailing junk (`"42abc"` → false) and the empty
+/// string. Format-only: an in-range check is not done here (an overflowing but
+/// well-formed literal is "valid"; DD#26 traps at conversion time).
+pub fn is_int_inner(bytes: &[u8]) -> bool {
+    if bytes.is_empty() {
+        return false;
+    }
+    let mut i = 0;
+    if bytes[0] == b'-' || bytes[0] == b'+' {
+        i += 1;
+    }
+    let rest = &bytes[i..];
+    if rest.is_empty() {
+        return false; // sign with no digits
+    }
+    if let Some((radix, skip)) = radix_prefix(rest) {
+        let digits = &rest[skip..];
+        return !digits.is_empty() && digits.iter().all(|&b| (b as char).to_digit(radix).is_some());
+    }
+    rest.iter().all(|b| b.is_ascii_digit())
+}
+
 /// Parse leading decimal digits; stops at the first non-digit. Leading zeros
 /// are ordinary decimal digits (no octal).
 fn parse_decimal_magnitude(bytes: &[u8]) -> i64 {
