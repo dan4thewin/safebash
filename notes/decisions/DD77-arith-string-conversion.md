@@ -57,7 +57,11 @@ In `${s:-N}` the default `N` must be a **numeric literal** (statically checked);
 ## `[[ -i EXPR ]]` — integer-validity test
 
 `[[ -i $s ]]` is true iff `$s`'s value is a valid strict integer (same grammar
-as D3). Empty/unset → false. A sash-specific unary test (bash has no `-i`).
+as D3) **and it fits i64** (range-checked, DG 2026-08-17). Empty/unset → false;
+a well-formed but out-of-range value (`> i64::MAX` / `< i64::MIN`) → false. So
+`[[ -i $s ]]` means "valid AND representable" — a validated value is guaranteed
+to convert without an overflow trap. A sash-specific unary test (bash has no
+`-i`).
 
 It lets an author validate and branch instead of (or before) converting:
 
@@ -70,6 +74,12 @@ There is **no** flow-sensitive narrowing — after `[[ -i $s ]]` the compiler st
 sees `s` as a string, so using it in arith still requires a disposition
 (`${s:?}` / `${s:-N}`). `-i` and the disposition are complementary, not
 substitutes: branch-beforehand vs handle-inline.
+
+**Out-of-range conversion.** If an out-of-range value reaches a conversion
+anyway (unvalidated), the runtime `sash_atoi` traps cleanly via
+`sash_arith_overflow` (`<prog>: arithmetic overflow`, exit 2) — the same trap as
+arithmetic overflow (DD#25/#26), not a Rust panic. (Range-checking `-i` and the
+clean atoi trap were added together, 2026-08-17.)
 
 ## What does NOT change
 
@@ -101,4 +111,31 @@ backends get the same or a filed per-backend guard.
   (`:+`, `#`, `%`, `:s/`) in an arith operand position → compile error
   (a string-producing op still needs a disposition to become int).
 
-See notes/tasks/dd77-arith-string-conversion.md for staging.
+## Resolved sub-decisions (2026-08-17, DG)
+
+**`:?` un-prune scope — everywhere, mirroring `:-`.** `:?` was entirely
+SB4034-pruned (DD#65). DD#77 un-prunes it in BOTH contexts, as the abort/default
+pair with `:-`:
+- **word context** `${s:?msg}` — abort on unset/empty (bash semantics), like a
+  first-class expansion (not just an arith disposition).
+- **arith context** `${s:?msg}` — abort on *not-a-valid-integer* (unset, empty,
+  or non-numeric), per D2.
+
+**D1 vs DD#72 — D1 as approved; DD#72's bare-coercion is superseded.** DD#72's
+"lenient runtime string→int coercion" for a *bare* `$(( x ))` operand (its
+`arith_literals.sh` block: `x=0xff`, `x=010`, `x=08`, …) conflicts with D1
+(bare string in arith → compile error). D1 wins: those tests migrate to a
+disposition (`$(( ${x:?} + 0 ))`), and DD#72 is amended — the lenient *success*
+grammar (0x/0o/0b, leading zeros) still defines a *valid* integer (now consumed
+by the disposition's `is_int`/atoi), but a bare string operand no longer
+silently coerces; it must carry `:-`/`:?`.
+
+## Staging
+
+C1 — un-prune `:?` (word + arith), abort node + 3-backend codegen.
+C2 — arith strict-disposition semantics for `:-`/`:?` (sash_is_int gate).
+C3 — D1 bare-string-in-arith error + D4 numeric-literal default + DD#72 test
+migration + DD#72 amendment.
+
+See notes/tasks/dd77-arith-string-conversion.md.
+

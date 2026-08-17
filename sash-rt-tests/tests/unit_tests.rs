@@ -87,6 +87,12 @@ fn is_int_strict() {
         assert_eq!(t(b"0b2"), 0);
         assert_eq!(t(b" 42"), 0); // no leading whitespace
         assert_eq!(t(b"42 "), 0); // no trailing whitespace
+        // range-checked (DD#77): a well-formed but out-of-range value is false
+        assert_eq!(t(b"9223372036854775807"), 1); // i64::MAX
+        assert_eq!(t(b"9223372036854775808"), 0); // MAX + 1 → out of range
+        assert_eq!(t(b"-9223372036854775808"), 1); // i64::MIN (asymmetry)
+        assert_eq!(t(b"-9223372036854775809"), 0); // MIN - 1 → out of range
+        assert_eq!(t(b"99999999999999999999999999"), 0); // wildly out of range
     }
 }
 

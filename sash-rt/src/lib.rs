@@ -962,7 +962,14 @@ pub unsafe extern "C" fn sash_atoi(s_ptr: *const u8, s_len: i64) -> i64 {
         return 0;
     }
     let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
-    atoi_inner(bytes)
+    // DD#25/#26: a runtime string→int overflow traps cleanly
+    // (`<prog>: arithmetic overflow`, like arithmetic overflow), NOT a Rust
+    // panic ("sash: panic", rc 99). DD#77: `-i`/is_int already range-checks, so
+    // a validated `[[ -i $s ]]` value never reaches this trap.
+    match atoi_checked(bytes) {
+        Some(v) => v,
+        None => sash_arith_overflow(),
+    }
 }
 
 /// DD#77: strict integer-validity test — 1 if the string is a complete integer

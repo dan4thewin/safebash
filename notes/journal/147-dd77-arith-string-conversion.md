@@ -110,3 +110,29 @@ position). All 3 modes; valid forms (`${s:-9}`, `${a[i]}`, `${#s}`) still
 compile. Full sweep: 0 real passing→failing; native 0-fail. This is the
 mechanism cleanup; DD#77 Stage C will UN-prune `:?` as an arith disposition
 with strict-int semantics.
+
+## Follow-up (DG) — out-of-range for `-i` (test) and conversion (convert)
+
+DG: "check out-of-range inputs for both test and convert." Two issues found:
+
+1. **`-i` was format-only** — `[[ -i 9223372036854775808 ]]` (i64::MAX+1) → yes,
+   but that value can't convert. DG: range-check `-i`. `is_int_inner` now uses
+   `parse_strict_i64` (strict grammar + u64 magnitude + i128 range-check,
+   honoring the i64::MIN asymmetry) — false for out-of-range. So `[[ -i $s ]]`
+   means "valid AND representable"; a validated value never overflow-traps on
+   conversion. All 3 backends: native/c via sash_is_int; janet `_isint` =
+   `_fmtint` (PEG format, all prefixes) AND `int/s64` range-check (decimal/hex),
+   with a format-only fallback for `0o`/`0b` (int/s64 can't parse those — a
+   negligible untested edge).
+
+2. **Convert overflow panicked** — `s=<overflow>; $(( ${s:-0}+0 ))` → `sash:
+   panic`, rc 99 (atoi_inner `.expect`), vs arithmetic overflow's clean
+   `<prog>: arithmetic overflow`, rc 2. Pre-existing bug. `sash_atoi` now uses
+   `atoi_checked` (None on overflow) and routes to `sash_arith_overflow` — the
+   same clean DD#25/#26 trap. atoi_inner delegates to atoi_checked (keeps its
+   panic contract for the pure-fn overflow_tests).
+
+Tests: types.sh 77.8 (MAX valid, MAX+1 not; all modes), 77.9 (validated → safe
+convert; native,c), arithmetic.sh pex.7 (convert overflow → clean trap;
+native), sash-rt-tests is_int_strict range cases. Full sweep: 0 real
+passing→failing; native 0-fail. clippy clean.

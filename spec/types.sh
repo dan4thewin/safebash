@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=107
+plan=109
 echo "1..$plan" >&3
 
 set +e
@@ -507,6 +507,18 @@ run_sash 's=; if [[ -i $s ]]; then echo yes; else echo no; fi'
 # 77.7 DG's example: validate-or-sanitize, then use (composes with =~ s///g)
 run_sash 's=42abc; [[ -i $s ]] || s =~ s/\D//g; echo $s'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 77.7
+# 77.8 range-checked: i64::MAX is valid, MAX+1 is not (DD#77, DG). All backends.
+run_sash 'if [[ -i 9223372036854775807 ]] && ! [[ -i 9223372036854775808 ]]; then echo ok; else echo no; fi'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 77.8
+# 77.9 a validated value converts safely; `-i` guarantees no overflow trap.
+# native,c — janet's arith VALUE path misreads an embedded ${…}
+# (janet-arith-subscript-read).
+if in_modes native,c; then
+    run_sash 's=100; [[ -i $s ]] && echo $(( ${s:-0} * 2 ))'
+    [[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
+else
+    skip_chk 77.9
+fi
 
 set -e
 tally

@@ -12,8 +12,17 @@
 /// Parse a string to i64 for arithmetic coercion of runtime data (DD#72).
 /// Honors `0x`/`0o`/`0b` prefixes; otherwise decimal with leading zeros
 /// ignored (NO C-octal — `"010"` is 10, not 8). Returns 0 for empty/non-
-/// numeric input. Panics on overflow (DD#26: integer overflow traps).
+/// numeric input. Panics on overflow (DD#26: integer overflow traps) — the
+/// runtime extern `sash_atoi` uses `atoi_checked` instead, routing overflow to
+/// the clean `sash_arith_overflow` trap; this panicking form is kept for the
+/// pure-function tests.
 pub fn atoi_inner(bytes: &[u8]) -> i64 {
+    atoi_checked(bytes).expect("sash: integer overflow in atoi")
+}
+
+/// Lenient string→int like `atoi_inner`, but returns None on i64 overflow
+/// instead of panicking, so the runtime can route to a clean DD#25 trap.
+pub fn atoi_checked(bytes: &[u8]) -> Option<i64> {
     let mut i = 0;
     while i < bytes.len() && bytes[i] == b' ' {
         i += 1;
@@ -26,16 +35,14 @@ pub fn atoi_inner(bytes: &[u8]) -> i64 {
         i += 1;
     }
     let magnitude = if let Some((radix, skip)) = radix_prefix(&bytes[i..]) {
-        parse_radix_magnitude(&bytes[i + skip..], radix)
+        parse_radix_magnitude_checked(&bytes[i + skip..], radix)?
     } else {
-        parse_decimal_magnitude(&bytes[i..])
+        parse_decimal_magnitude_checked(&bytes[i..])?
     };
     if negative {
-        magnitude
-            .checked_neg()
-            .expect("sash: integer overflow in atoi (negation)")
+        magnitude.checked_neg()
     } else {
-        magnitude
+        Some(magnitude)
     }
 }
 
@@ -59,57 +66,79 @@ fn radix_prefix(bytes: &[u8]) -> Option<(u32, usize)> {
 /// prefix with ≥1 valid digit, or ≥1 decimal digit — and nothing else. Unlike
 /// `atoi_inner` (lenient: leading-space skip, partial parse) this rejects
 /// surrounding whitespace and trailing junk (`"42abc"` → false) and the empty
-/// string. Format-only: an in-range check is not done here (an overflowing but
-/// well-formed literal is "valid"; DD#26 traps at conversion time).
+/// string. Range-checked (DD#77, DG 2026-08-17): a well-formed but out-of-range
+/// value (`> i64::MAX` / `< i64::MIN`) is **false**, so `[[ -i $s ]]` means
+/// "valid AND representable" — the conversion `$(( ${s:?} ))` cannot overflow.
 pub fn is_int_inner(bytes: &[u8]) -> bool {
+    parse_strict_i64(bytes).is_some()
+}
+
+/// Strict, range-checked parse of a complete integer: optional `+`/`-` sign,
+/// then a `0x`/`0o`/`0b` prefix with ≥1 valid digit or ≥1 decimal digit, whole
+/// slice, no surrounding whitespace or trailing junk. Returns the i64 value, or
+/// None on a format error OR a value that does not fit i64 (honoring the
+/// i64::MIN asymmetry). Shared by `is_int_inner` (`-i` / the DD#77 arith
+/// disposition validity gate).
+pub fn parse_strict_i64(bytes: &[u8]) -> Option<i64> {
     if bytes.is_empty() {
-        return false;
+        return None;
     }
-    let mut i = 0;
-    if bytes[0] == b'-' || bytes[0] == b'+' {
-        i += 1;
-    }
-    let rest = &bytes[i..];
+    let (neg, rest) = match bytes[0] {
+        b'-' => (true, &bytes[1..]),
+        b'+' => (false, &bytes[1..]),
+        _ => (false, bytes),
+    };
     if rest.is_empty() {
-        return false; // sign with no digits
+        return None; // sign with no digits
     }
-    if let Some((radix, skip)) = radix_prefix(rest) {
-        let digits = &rest[skip..];
-        return !digits.is_empty() && digits.iter().all(|&b| (b as char).to_digit(radix).is_some());
+    let (radix, digits) = match radix_prefix(rest) {
+        Some((r, skip)) => (r, &rest[skip..]),
+        None => (10, rest),
+    };
+    if digits.is_empty() {
+        return None; // prefix with no digits
     }
-    rest.iter().all(|b| b.is_ascii_digit())
+    let mut mag: u64 = 0;
+    for &b in digits {
+        let d = (b as char).to_digit(radix)?; // invalid digit → None
+        mag = mag.checked_mul(radix as u64)?.checked_add(d as u64)?;
+    }
+    // Range-check into i64 via i128 (u64 magnitude always fits i128), honoring
+    // the MIN asymmetry: -(i64::MAX + 1) == i64::MIN is valid.
+    let val: i128 = if neg { -(mag as i128) } else { mag as i128 };
+    if val >= i64::MIN as i128 && val <= i64::MAX as i128 {
+        Some(val as i64)
+    } else {
+        None
+    }
 }
 
 /// Parse leading decimal digits; stops at the first non-digit. Leading zeros
 /// are ordinary decimal digits (no octal).
-fn parse_decimal_magnitude(bytes: &[u8]) -> i64 {
+/// Parse leading decimal digits; stops at the first non-digit. Leading zeros
+/// are ordinary decimal digits (no octal). None on i64 overflow.
+fn parse_decimal_magnitude_checked(bytes: &[u8]) -> Option<i64> {
     let mut result: i64 = 0;
-    let mut i = 0;
-    while i < bytes.len() && bytes[i].is_ascii_digit() {
-        result = result
-            .checked_mul(10)
-            .and_then(|r| r.checked_add((bytes[i] - b'0') as i64))
-            .expect("sash: integer overflow in atoi");
-        i += 1;
+    for &b in bytes {
+        if !b.is_ascii_digit() {
+            break;
+        }
+        result = result.checked_mul(10)?.checked_add((b - b'0') as i64)?;
     }
-    result
+    Some(result)
 }
 
 /// Parse leading digits in `radix` (2/8/16); stops at the first invalid digit.
-fn parse_radix_magnitude(bytes: &[u8], radix: u32) -> i64 {
+/// None on i64 overflow.
+fn parse_radix_magnitude_checked(bytes: &[u8], radix: u32) -> Option<i64> {
     let mut result: i64 = 0;
-    let mut i = 0;
-    while i < bytes.len() {
-        let Some(d) = (bytes[i] as char).to_digit(radix) else {
+    for &b in bytes {
+        let Some(d) = (b as char).to_digit(radix) else {
             break;
         };
-        result = result
-            .checked_mul(radix as i64)
-            .and_then(|r| r.checked_add(d as i64))
-            .expect("sash: integer overflow in atoi");
-        i += 1;
+        result = result.checked_mul(radix as i64)?.checked_add(d as i64)?;
     }
-    result
+    Some(result)
 }
 
 /// Format i64 as decimal into a provided buffer. Returns the slice used.

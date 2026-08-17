@@ -54,11 +54,23 @@ n (or r 0)] (if neg (- n) n))))"
     // 0x/0o/0b prefix with valid digits, whole string, no trailing junk).
     writeln!(
         out,
-        "(defn _isint [v] (not (nil? (peg/match ~(* (? (set \"+-\")) (+ \
+        "(defn _fmtint [s] (not (nil? (peg/match ~(* (? (set \"+-\")) (+ \
 (* \"0\" (set \"xX\") (some (range \"09\" \"af\" \"AF\"))) \
 (* \"0\" (set \"oO\") (some (range \"07\"))) \
 (* \"0\" (set \"bB\") (some (set \"01\"))) \
-(some (range \"09\"))) -1) (string v)))))"
+(some (range \"09\"))) -1) s))))"
+    )
+    .unwrap();
+    // DD#77 (DG 2026-08-17): `-i`/is_int is range-checked — a well-formed but
+    // out-of-range value is false. `_fmtint` validates the strict format (all
+    // prefixes); the i64 range is checked via `int/s64` for decimal/hex, with a
+    // format-only fallback for `0o`/`0b` (which `int/s64` doesn't parse — an
+    // out-of-range octal/binary literal is a negligible, untested edge).
+    writeln!(
+        out,
+        "(defn _isint [v] (def s (string v)) (and (_fmtint s) \
+(or (try (do (int/s64 s) true) ([e] false)) \
+(not (nil? (peg/match ~(* (? (set \"+-\")) \"0\" (set \"oObB\")) s))))))"
     )
     .unwrap();
     for stmt in &program.statements {

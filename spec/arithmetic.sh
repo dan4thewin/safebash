@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=107
+plan=108
 echo "1..$plan" >&3
 
 set +e
@@ -541,6 +541,15 @@ run_sash 'echo $(( ${s:?bad} ))'
 # pex.6 same in a condition position (the (( )) ArithTest walk)
 run_sash 's=x; if (( ${s:+1} > 0 )); then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk pex.6
+# pex.7 a runtime string→int overflow traps CLEANLY (`<prog>: arithmetic
+# overflow`, like arithmetic overflow), not a Rust panic (was "sash: panic",
+# rc 99). DD#25/#26. native-only (runtime stderr; janet arith is double-based).
+if in_modes native; then
+    run_sash 's=9223372036854775808; echo $(( ${s:-0} + 0 ))'
+    [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk pex.7
+else
+    skip_chk pex.7
+fi
 
 set -e
 tally
