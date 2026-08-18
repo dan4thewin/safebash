@@ -2504,7 +2504,16 @@ fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
 fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
-        ExprKind::ParameterExpansion(pe) => tainted.contains(pe.name.as_str()),
+        ExprKind::ParameterExpansion(pe) => {
+            // DD#78: a `:-` default is part of the expansion's value, so a
+            // tainted read inside it taints the result too (correct
+            // propagation — without this, `z=${x:-$tainted}` left `z` clean).
+            tainted.contains(pe.name.as_str())
+                || pe
+                    .operand
+                    .as_deref()
+                    .is_some_and(|o| expr_uses_tainted(o, tainted))
+        }
         ExprKind::Subscript { name, .. } => tainted.contains(name.as_str()),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
             parts.iter().any(|p| expr_uses_tainted(p, tainted))
@@ -2524,13 +2533,9 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
             format!("tainted variable ${} used without bless", var),
             diags,
         ),
-        ExprKind::ParameterExpansion(pe) => push_taint_use(
-            tainted,
-            &pe.name,
-            expr.span,
-            format!("tainted variable ${{{} ...}} used without bless", pe.name),
-            diags,
-        ),
+        ExprKind::ParameterExpansion(pe) => {
+            check_param_expansion_taint(pe, expr.span, tainted, diags)
+        }
         ExprKind::Subscript { name, .. } => push_taint_use(
             tainted,
             name,
@@ -2566,6 +2571,30 @@ fn push_taint_use(
 ) {
     if tainted.contains(name) {
         diags.push(Diagnostic::error_span(span, "SB5020", msg));
+    }
+}
+
+/// Taint-check a parameter expansion: the var itself, plus (DD#78) a `:-`
+/// default's operand, which is a read position — a tainted read there is a use
+/// without bless, like `echo $tainted`. (`:?` and the pattern operators carry a
+/// *literal* operand, DD#65, which is clean by construction.)
+fn check_param_expansion_taint(
+    pe: &ParameterExpansion,
+    span: Span,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    push_taint_use(
+        tainted,
+        &pe.name,
+        span,
+        format!("tainted variable ${{{} ...}} used without bless", pe.name),
+        diags,
+    );
+    if pe.operator.as_deref() == Some(":-") {
+        if let Some(operand) = &pe.operand {
+            check_expr_taint(operand, tainted, diags);
+        }
     }
 }
 
@@ -2910,4 +2939,67 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
                 .to_string(),
         ));
     }
+}
+
+/// DD#78: a disposition default is evaluated **eagerly** (`emit_default_value`
+/// selects between both arms), so it must be side-effect-free. `$(random)` is
+/// *clean* (a compiler intrinsic) but **stateful** — it advances the PRNG
+/// whether or not the fallback is taken. Reject it in a `:-` default (SB5035).
+/// Tainted / forking defaults are already caught as read-position uses by
+/// `check_taint`; `random` is the only clean-but-stateful intrinsic, so it
+/// needs this dedicated structural check.
+pub fn check_disposition_side_effects(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| flag_random_default(e, &mut diags));
+    }
+    diags
+}
+
+fn flag_random_default(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::ParameterExpansion(pe) = &e.kind else {
+        return;
+    };
+    if pe.operator.as_deref() != Some(":-") {
+        return;
+    }
+    let Some(operand) = &pe.operand else {
+        return;
+    };
+    if expr_invokes_random(operand) {
+        diags.push(Diagnostic::error_span(
+            e.span,
+            "SB5035",
+            "a disposition default must be side-effect-free — `$(random)` \
+             advances the PRNG and the default is evaluated eagerly; capture \
+             it into a variable first and use the clean value"
+                .to_string(),
+        ));
+    }
+}
+
+/// Does `expr` contain a `$(random)` command substitution?
+fn expr_invokes_random(expr: &Expr) -> bool {
+    let mut found = false;
+    crate::ir::walk_expr_tree(expr, &mut |e| {
+        if cmdsub_head_is(e, "random") {
+            found = true;
+        }
+    });
+    found
+}
+
+/// True if `e` is a `$(NAME …)` command substitution whose head literal is `name`.
+fn cmdsub_head_is(e: &Expr, name: &str) -> bool {
+    let ExprKind::CommandSubstitution(stmts) = &e.kind else {
+        return false;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return false;
+    };
+    expr_literal_str(&c.name) == name
 }

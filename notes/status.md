@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-17, cont.²) — DD#78 disposition-default discipline + DD#60 arg-default ════════
+
+DG proposed `$(arg N)` take an optional default instead of aborting on OOB.
+Design ratified **DD#78** (disposition defaults must be clean + non-`random`)
+and a **DD#60 addendum** (`$(arg N DEFAULT)`). DD#78 turned out to close a real
+pre-existing taint hole: a `:-` default's operand was never taint-checked, so
+`echo ${x:-$(getenv)}` / `echo ${x:-$y}` compiled, and `z=${x:-$(getenv)}` left
+`z` clean (full escape).
+
+- **Stage 1 DONE (uncommitted → committing):** DD#78 for `:-`. `expr_uses_tainted`
+  + `check_expr_taint` recurse into the `:-` operand (propagate + reject);
+  `check_disposition_side_effects` rejects `$(random)` defaults (SB5035).
+  Clean-when-read semantics (use rejects; store propagates → no escape). spec
+  taint.sh dd78.1-7, plan 68→75, 3-mode sweep 0-regression +21.
+- **Stage 2 NEXT:** `$(arg N DEFAULT)` — runtime `sash_argv_get_or`, 3-backend
+  lowering, arg-count 1|2, negative still rejected, tainted result, default
+  reuses the DD#78 clean/non-random check.
+
+Noted (pre-existing, not mine): `mk test` (cargo suites) is heavily rotted
+(removed heredocs/case, old SB codes) — tracked in `audit-rust-test-suites`.
+My change adds 0 new failures; spec sweep is the live gate.
+
 ## ════════ STATUS (2026-08-17, cont.) — DD#77 COMPLETE (Stage C1/C2/C3 shipped) ════════
 
 DD#77 (arith string→int conversion discipline) is **complete**. Stage C shipped

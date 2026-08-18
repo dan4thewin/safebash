@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=68
+plan=75
 echo "1..$plan" >&3
 
 set +e
@@ -387,6 +387,32 @@ echo $x'
 else
     skip_chk 24.20
 fi
+
+# ── DD#78 disposition-default discipline: a `:-` default is a read position,
+# so a tainted value may not sneak through it, and it must be side-effect-free.
+# Closes a taint hole (tainted defaults were silently accepted). ──
+# dd78.1 tainted var in a :- default (direct use) → SB5020
+run_sash 'y=$(getenv HOME); echo ${x:-$y}'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.1
+# dd78.2 tainted source ($(getenv)) in a :- default → SB5020
+run_sash 'echo ${x:-$(getenv HOME)}'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.2
+# dd78.3 tainted source ($(arg N)) in a :- default → SB5020
+run_sash 'echo ${x:-$(arg 1)}'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.3
+# dd78.4 a clean intrinsic default is accepted ($(getcwd))
+run_sash 'x=hi; echo ${x:-$(getcwd)}'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk dd78.4
+# dd78.5 a literal default is accepted (x unset → the default)
+run_sash 'echo ${x:-plain}'
+[[ $rc = 0 && $out = "plain" && -z $err ]]; chk dd78.5
+# dd78.6 $(random) default is a side-effect under eager eval → SB5035
+run_sash 'echo ${x:-$(random)}'
+[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk dd78.6
+# dd78.7 a tainted default cannot sneak through a store either: the taint
+# propagates to the target, so a later read is rejected (no silent escape).
+run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
+[[ $rc != 0 && -z $out && -n $err ]]; chk dd78.7
 
 set -e
 tally
