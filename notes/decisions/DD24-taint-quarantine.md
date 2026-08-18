@@ -65,6 +65,20 @@ as a read and is rejected:
 No propagation — taint is a property of a definition, not a flow.
 Per-definition classification with use-site rejection.
 
+### Enforcement note (2026-08-18) — the `b=$a` read was a hole
+
+The `b=$a` case above was **not** enforced for scalar assignment until
+2026-08-18: `taint_assignment` uniquely *propagated* taint (`b=$a` compiled
+and marked `b` tainted, caught only at a later sink) instead of rejecting the
+read, silently implementing the Perl-style flow model this DD explicitly
+rejects. Every other read site (`arr=($a)` SB5021, `(( a ))` SB4030, `f $a`
+SB5020, `m=([k]=$a)` SB5021) rejected correctly; scalar assignment was the lone
+offender. Now `b=$a` (and `b="$a"`, `b=${a}`, `b=${x:-$a}`, `b+=$a`) is a
+rejected read (SB5020) directing to bless-at-source. Assignment *from a source*
+(`b=$(getenv X)`) is unchanged — that is the sanctioned way to obtain external
+data. This also closed a related DD#78 hole (`b=${x:-$(getenv)}`, a source in a
+`:-` default at a store site). See journal 149.
+
 ## Bless (DD#43)
 
 Assign first, validate second:

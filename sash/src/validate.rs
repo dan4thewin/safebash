@@ -2279,14 +2279,63 @@ fn taint_assignment(a: &Assignment, tainted: &mut HashSet<String>, diags: &mut V
         reject_tainted_into_array(&a.value, &a.name, tainted, diags);
         return;
     }
-    // Scalar (or string `+=`) assignment: normal taint propagation.
-    if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
+    // Scalar (or string `+=`) assignment.
+    // DD#24 (journal 036 "No propagation"): there is NO taint flow inside the
+    // program. Reading a stored tainted variable in the RHS is a rejected read
+    // (`x=$1` is a compile error), uniform with every other read site. The
+    // sanctioned way to obtain external data is assignment *from a source*
+    // (`z=$(getenv X)`), which taints the target instead of being rejected.
+    if is_taint_source(&a.value) {
         tainted.insert(a.name.clone());
     }
-    // DD#78/DD#60: the `$(arg N DEFAULT)` default is a read position. In a store
-    // RHS the cmdsub's args aren't otherwise use-checked (the source assignment
-    // is allowed), so a tainted default would slip through — check it here.
+    reject_scalar_rhs_read(&a.value, tainted, diags);
+    // DD#60/DD#78: an `$(arg N DEFAULT)` default (a read position) anywhere in
+    // the RHS is checked for a tainted read — the surrounding source assignment
+    // is allowed, so this walk finds the nested default the value walk skips.
     check_arg_default_taint(&a.value, tainted, diags);
+}
+
+/// DD#24: reject every read of a stored tainted variable in a scalar assignment
+/// RHS (`z=$y`, `z="$y"`, `z=${y}`, `z=${x:-$y}`) — no propagation. A *source*
+/// command substitution in value position (`z=$(getenv X)`, `z="$(getenv X)b"`)
+/// is the sanctioned assignment-from-source and is NOT rejected here; a source
+/// or tainted read in a `:-` *default* (a read position, DD#78) is.
+fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(var) => push_taint_use(
+            tainted,
+            var,
+            expr.span,
+            format!(
+                "tainted variable ${var} can't be copied — DD#24 has no taint \
+                 propagation; `bless {var} [[ … ]]` at the source, then read it"
+            ),
+            diags,
+        ),
+        // `${y}` / `${x:-$y}` — the name read, plus (DD#78) the `:-` default as a
+        // read position (rejects a tainted var or a tainted source there).
+        ExprKind::ParameterExpansion(pe) => {
+            check_param_expansion_taint(pe, expr.span, tainted, diags)
+        }
+        ExprKind::Subscript { name, .. } => push_taint_use(
+            tainted,
+            name,
+            expr.span,
+            format!(
+                "tainted array ${{{name}[…]}} can't be copied — DD#24 has no \
+                 taint propagation; bless it first"
+            ),
+            diags,
+        ),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            for p in parts {
+                reject_scalar_rhs_read(p, tainted, diags);
+            }
+        }
+        // A command substitution in value position is assignment-from-source
+        // (allowed) — its `$(arg N DEFAULT)` default is checked separately.
+        _ => {}
+    }
 }
 
 /// DD#61: an array/assoc-array literal RHS rejects tainted elements (external

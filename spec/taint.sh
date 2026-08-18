@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=75
+plan=85
 echo "1..$plan" >&3
 
 set +e
@@ -409,10 +409,46 @@ run_sash 'echo ${x:-plain}'
 # dd78.6 $(random) default is a side-effect under eager eval → SB5035
 run_sash 'echo ${x:-$(random)}'
 [[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk dd78.6
-# dd78.7 a tainted default cannot sneak through a store either: the taint
-# propagates to the target, so a later read is rejected (no silent escape).
+# dd78.7 a tainted default cannot sneak through a store either — DD#24 (no
+# propagation): the `:-` default is a read, so the assignment itself rejects.
 run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
-[[ $rc != 0 && -z $out && -n $err ]]; chk dd78.7
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd78.7
+
+# ── DD#24 no propagation (journal 036 `x=$1` is a compile error): reading a
+# stored tainted variable in a scalar assignment RHS is a rejected read, uniform
+# with every other read site. Assignment *from a source* is the only way in;
+# bless at the source, not on a copy. Regression: scalar assignment used to
+# silently PROPAGATE taint (caught only at a later sink). ──
+# np.1 z=$y (y tainted) is a rejected read, not a silent propagate
+run_sash 'y=$(getenv HOME); z=$y'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.1
+# np.2 quoted copy is equally a read
+run_sash 'y=$(getenv HOME); z="$y"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.2
+# np.3 a tainted read buried in a concat is rejected
+run_sash 'y=$(getenv HOME); z="pre${y}post"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.3
+# np.4 string `+=` append of a tainted read is rejected
+run_sash 'y=$(getenv HOME); s=clean; s+=$y'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.4
+# np.5 bless at the SOURCE, then the copy is a clean read (the DD#24 idiom).
+# native,c — janet fakes runtime getenv (janet-getpid-class-intrinsics).
+if in_modes native,c; then
+    run_sash 'y=$(getenv HOME); bless y [[ -n $y ]]; z=$y; echo "$z"'
+    [[ $rc = 0 && -z $err ]]; chk np.5
+else
+    skip_chk np.5
+fi
+# np.6 assignment straight from a source is allowed (taints the target). native,c.
+if in_modes native,c; then
+    run_sash 'z=$(getenv HOME); bless z [[ -n $z ]]; echo "$z"'
+    [[ $rc = 0 && -z $err ]]; chk np.6
+else
+    skip_chk np.6
+fi
+# np.7 a clean copy chain is unaffected
+run_sash 'a=5; b=$a; c=$b; echo $c'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk np.7
 
 set -e
 tally

@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-08-18) — DD#24 taint bug fixed: scalar assignment no longer propagates ════════
+
+DG, reviewing the DD#78 summary, caught that I'd called `z=$y` a legal "source
+assignment" — it's a **read** of `$y`. Investigation confirmed a pre-existing
+bug: `taint_assignment` uniquely *propagated* taint (`z=$y` compiled, taint
+caught only at a later sink) instead of rejecting the read, contradicting DD#24
+§Quarantine ("No propagation", `b=$a` rejected) + journal 036 (`x=$1 # compile
+error`). Every other read site rejected; scalar assignment was the lone
+offender. It was the root cause of the DD#78 sink-hole class.
+
+**Fixed (this commit):** scalar assignment now rejects a tainted read in the RHS
+(SB5020) — `z=$y`, `z="$y"`, `z=${y}`, `z=${x:-$y}`, `z+=$y` — while still
+allowing assignment *from a source* (`z=$(getenv X)`). Behavior change:
+bless-at-source, not on a copy. Also closed a residual DD#78 hole
+(`z=${x:-$(getenv)}`). spec/taint.sh np.1-7; plan corrected 75→85; 3-mode sweep
+0 passing→failing, 0 failing→passing (nothing relied on propagation). Journal
+149; DD#24 enforcement note.
+
 ## ════════ STATUS (2026-08-17, cont.²) — DD#78 disposition-default discipline + DD#60 arg-default ════════
 
 DG proposed `$(arg N)` take an optional default instead of aborting on OOB.
