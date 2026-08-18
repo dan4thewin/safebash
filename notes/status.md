@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-18, cont.) — arith subscripts model B Stage 2 + B2 (DD#79) ════════
+
+DG: `(( a[i]++ ))` — shouldn't this work? It's the ratified-but-unbuilt **Stage
+2** of arith-subscript-values (model B). Implemented + a design seam DG
+resolved. **DD#79** records both parts.
+
+- **Stage 2**: bare `a[i]` in arith now reads + mutates (`$(( a[i]+1 ))`,
+  `(( a[i]++ ))`, `(( a[i] op= v ))`, `(( a[i] = v ))`). `BareSubscript` lexer
+  token → `ArithExpr::Subscript`/`SubscriptAssign`; lvalue reuses the statement
+  subscript-assign write path; rvalue → `SsaValue::Subscript` (arith int key).
+- **Bare `m[k]` → SB4030** (was a silent-wrong bug: int-key miss on a
+  string-keyed map).
+- **B2** (DG): SB5031 extended into arithmetic — a bare name *read* assigned
+  nowhere is a typo (`$(( y+1 ))`, an undeclared index). Anything you assign
+  (`(( f++ ))`, `for (( i=0;… ))`) is in scope. Function names exempt (DD#58).
+
+native+c; janet arith-value subscript is the pre-existing filed gap
+(`janet-arith-subscript-read`); `janet-undeclared-arith-counter` filed. spec
+arithmetic.sh bsx.1-7, b2a.1-3; plan 117→127. 3-mode sweep 0 regressions, +24.
+Follow-ups filed: `arith-bare-subscript-followups` (`$a[i]` form, nested index,
+string-array-cell DD#77 question). DG's line works with `int i=0`.
+
 ## ════════ STATUS (2026-08-18) — DD#24 taint bug fixed: scalar assignment no longer propagates ════════
 
 DG, reviewing the DD#78 summary, caught that I'd called `z=$y` a legal "source

@@ -731,6 +731,23 @@ pub enum ArithExpr {
     /// lowered by the ordinary `expr_to_value` path; it is rvalue-only (never
     /// an assignment target). See notes/tasks/arith-subscript-values.md.
     Expansion(Box<Expr>),
+    /// DD arith-subscript model B (Stage 2): a **bare** int-array cell in
+    /// arithmetic — `a[i]`, `a[i+1]`, `a[0]`, `a[$i]`. The index is a full
+    /// arithmetic expression (int-valued). Rvalue read here; the lvalue forms
+    /// (`a[i]++`, `a[i]=…`, `a[i] op= …`) are `SubscriptAssign`. A bare `m[k]`
+    /// on an associative array is a type error (string key not expressible
+    /// under arith rules — use `${m[k]}` to read).
+    Subscript { name: String, index: Box<ArithExpr> },
+    /// DD arith-subscript model B (Stage 2): a bare int-array cell as an
+    /// assignment target — `a[i] = v` (`op` None), `a[i] op= v` (`op` Some),
+    /// and `a[i]++`/`a[i]--` (lowered to `op = Add/Sub`, `value = 1`). `index`
+    /// and `value` are arithmetic expressions.
+    SubscriptAssign {
+        name: String,
+        index: Box<ArithExpr>,
+        op: Option<IrArithOp>,
+        value: Box<ArithExpr>,
+    },
 }
 
 /// Binary arithmetic operators (IR level).

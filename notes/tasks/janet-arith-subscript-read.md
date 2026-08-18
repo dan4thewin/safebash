@@ -10,6 +10,7 @@ gates:
   - "janet `$(( ${s:-9} + 1 ))` reads the DefaultValue (native+c do); un-guard arithmetic.sh pex.1-3 for janet (DD#77 A)"
   - "janet arith `:-`/`:?` disposition (DD#77 C2): `$(( ${s:-N} ))` / `${s:?M}` apply the strict-int trigger (native+c do); un-guard arithmetic.sh dsp.1-5 for janet"
   - "no janet regression"
+  - "janet bare `a[i]` reads + lvalue (`$(( a[i]+1 ))`, `(( a[i]++ ))`, DD#79 Stage 2): the arith VALUE path reads the cell (native+c do); un-guard arithmetic.sh bsx.1-5 for janet"
 ---
 
 ## Symptom

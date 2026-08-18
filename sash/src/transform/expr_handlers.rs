@@ -313,8 +313,30 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
         ArithExpr::Comma(exprs) => comma_to_ssa(exprs, expr, state),
         ArithExpr::FuncCall { name, args } => funccall_to_ssa(name, args, expr, state),
         ArithExpr::Paren(inner) => arith_to_ssa(inner, expr, state),
+        // arith-subscript model B (Stage 2): a bare int-array cell read. The
+        // index is a full arith expr → lowered to an int; the read uses it as
+        // the integer key (lower_subscript_raw's is_integer_key path calls
+        // lower_value_as_int on the index).
+        ArithExpr::Subscript { name, index } => subscript_read_to_ssa(name, index, expr, state),
         // Value leaves are handled by `arith_leaf_to_ssa` above.
         _ => unreachable!("arith value leaf not handled by arith_leaf_to_ssa"),
+    }
+}
+
+/// arith-subscript model B: lower a bare `a[i]` cell read to `SsaValue::
+/// Subscript`. The index is the arith-int value; `is_integer_key`/`_value`
+/// follow the array's declaration (a map is rejected earlier by type_check).
+fn subscript_read_to_ssa(
+    name: &str,
+    index: &ArithExpr,
+    expr: &Expr,
+    state: &VersionState,
+) -> SsaValue {
+    SsaValue::Subscript {
+        array: name.to_string(),
+        index: Box::new(arith_to_ssa(index, expr, state)),
+        is_integer_key: !state.assoc_arrays.contains(name),
+        is_integer_value: state.type_map.get(name).copied() == Some(crate::ir::VarType::Int),
     }
 }
 

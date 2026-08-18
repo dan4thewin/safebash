@@ -134,8 +134,19 @@ fn _arith_uses_args(a: &crate::ir::ArithExpr) -> bool {
     use crate::ir::ArithExpr::*;
     match a {
         DollarVar(name) => is_positional_arg_name(name),
+        Expansion(inner) => _expr_uses_args(inner),
+        Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => false,
+        other => _arith_compound_uses_args(other),
+    }
+}
+
+/// The operator/compound `ArithExpr` forms for `_arith_uses_args` (split out to
+/// keep the dispatcher small).
+fn _arith_compound_uses_args(a: &crate::ir::ArithExpr) -> bool {
+    use crate::ir::ArithExpr::*;
+    match a {
         BinOp { left, right, .. } => _arith_uses_args(left) || _arith_uses_args(right),
-        UnaryOp { operand, .. } => _arith_uses_args(operand),
+        UnaryOp { operand, .. } | Paren(operand) => _arith_uses_args(operand),
         Assign { value, .. } | CompoundAssign { value, .. } => _arith_uses_args(value),
         Ternary {
             cond,
@@ -143,9 +154,9 @@ fn _arith_uses_args(a: &crate::ir::ArithExpr) -> bool {
             false_val,
         } => _arith_uses_args(cond) || _arith_uses_args(true_val) || _arith_uses_args(false_val),
         Comma(exprs) | FuncCall { args: exprs, .. } => exprs.iter().any(_arith_uses_args),
-        Paren(inner) => _arith_uses_args(inner),
-        Expansion(inner) => _expr_uses_args(inner),
-        Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => false,
+        Subscript { index, .. } => _arith_uses_args(index),
+        SubscriptAssign { index, value, .. } => _arith_uses_args(index) || _arith_uses_args(value),
+        _ => false,
     }
 }
 

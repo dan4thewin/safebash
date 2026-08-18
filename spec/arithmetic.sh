@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=117
+plan=127
 echo "1..$plan" >&3
 
 set +e
@@ -449,6 +449,57 @@ fi
 # asx.5 subscript rvalue in a condition (janet's condition path handles it)
 run_sash 'array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk asx.5
+
+# ── arith-subscript model B Stage 2: BARE `a[i]` (int-array cell, rvalue +
+# lvalue). native,c — janet's arith VALUE path doesn't read the embedded
+# subscript (janet-arith-subscript-read). ──
+if in_modes native,c; then
+    # bsx.1 bare a[i] read, literal index
+    run_sash 'int array a=(7 13 21); int x=$(( a[1] + 1 )); echo $x'
+    [[ $rc = 0 && $out = "14" && -z $err ]]; chk bsx.1
+    # bsx.2 bare a[i] read, index is a full arith expr
+    run_sash 'int array a=(7 13 21); int i=1; int x=$(( a[i+1] )); echo $x'
+    [[ $rc = 0 && $out = "21" && -z $err ]]; chk bsx.2
+    # bsx.3 bare a[i]++ lvalue (the DG line, with a declared index)
+    run_sash 'int array a=(7 13 21); int i=0; (( a[i]++ )); echo $a[$i]'
+    [[ $rc = 0 && $out = "8" && -z $err ]]; chk bsx.3
+    # bsx.4 bare a[i] += lvalue
+    run_sash 'int array a=(7 13 21); (( a[2] += 5 )); echo $a[2]'
+    [[ $rc = 0 && $out = "26" && -z $err ]]; chk bsx.4
+    # bsx.5 bare a[i] = lvalue
+    run_sash 'int array a=(7 13 21); (( a[0] = 99 )); echo $a[0]'
+    [[ $rc = 0 && $out = "99" && -z $err ]]; chk bsx.5
+else
+    skip_chk bsx.1; skip_chk bsx.2; skip_chk bsx.3; skip_chk bsx.4; skip_chk bsx.5
+fi
+# bsx.6 bare `m[k]` on a MAP in arith → compile error (string key not
+# expressible under arith rules; use `${m[k]}` / `m[k]=`). Literal index so the
+# error is the map rejection (SB4030), not a B2 undeclared-index one.
+# Mode-independent.
+run_sash 'int map m=([k]=5); int x=$(( m[0] + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk bsx.6
+# bsx.7 bare `m[0]++` mutation on a map → compile error
+run_sash 'int map m=([k]=5); (( m[0]++ ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk bsx.7
+
+# ── B2 (SB5031 extended into arithmetic): a bare name *read* in arith that is
+# assigned nowhere is a typo — the same rule as `$x` outside arith. Anything you
+# assign (`(( f++ ))`, `for (( i=0;… ))`) is fine. Mode-independent (compile). ──
+# b2a.1 undeclared rvalue operand → SB5031
+run_sash 'echo $(( y + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk b2a.1
+# b2a.2 undeclared subscript index → SB5031 (`i` assigned nowhere)
+run_sash 'int array a=(7 13 21); (( a[i]++ ))'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk b2a.2
+# b2a.3 a name assigned by the arith itself (`(( f++ )`) is in scope → no
+# SB5031. native,c — janet doesn't auto-declare an undeclared arith counter
+# (janet-undeclared-arith-counter); the sash compile is correct in all modes.
+if in_modes native,c; then
+    run_sash '(( f++ )); echo $f'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk b2a.3
+else
+    skip_chk b2a.3
+fi
 
 # ── DD#76 int-valued collections (`int array` / `int map`) ──
 # An int collection stores each element as an int cell (val_len double-duty);

@@ -231,7 +231,8 @@ pub fn classify_arith_expr(expr: &ArithExpr) -> ArithKind {
         ArithExpr::Assign { .. }
         | ArithExpr::CompoundAssign { .. }
         | ArithExpr::PreIncDec { .. }
-        | ArithExpr::PostIncDec { .. } => ArithKind::Mutation,
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::SubscriptAssign { .. } => ArithKind::Mutation,
         ArithExpr::Comma(exprs) => {
             // If any part is a mutation, the whole thing is
             if exprs
@@ -353,6 +354,10 @@ enum ATok {
     /// (name, raw index text). The parser builds the ordinary `Subscript` Expr
     /// (so a map's string key works) and wraps it as `ArithExpr::Expansion`.
     Subscript(String, String),
+    /// arith-subscript model B (Stage 2): a **bare** `name[index]` in `$(( ))`
+    /// (no `${}`) — an int-array cell, rvalue+lvalue. Carries the name and the
+    /// raw index text (a full arith expression, re-parsed by the arith parser).
+    BareSubscript(String, String),
     /// `${var:OP…}` inside `$(( ))` — any operator-bearing parameter expansion
     /// (`:-`, `:?`, `#`, `%`, `:s/`, …). Carries the raw `${…}` body; the
     /// parser routes it through the real parameter-expansion parser and wraps
@@ -628,7 +633,32 @@ fn scan_arith_ident(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
     while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
         j += 1;
     }
-    (ATok::Var(input[start..j].to_string()), j)
+    let name = input[start..j].to_string();
+    if j < bytes.len() && bytes[j] == b'[' {
+        if let Some(end) = scan_balanced_brackets(bytes, j) {
+            let index = input[j + 1..end - 1].to_string();
+            return (ATok::BareSubscript(name, index), end);
+        }
+    }
+    (ATok::Var(name), j)
+}
+
+/// From the `[` at `open`, return the byte index just past the matching `]` for
+/// the balanced `[ … ]` run (handles nesting like `a[b[0]]`). `None` if
+/// unbalanced or empty (`a[]`).
+fn scan_balanced_brackets(bytes: &[u8], open: usize) -> Option<usize> {
+    let mut depth = 0usize;
+    for (k, &b) in bytes.iter().enumerate().skip(open) {
+        match b {
+            b'[' => depth += 1,
+            b']' => depth -= 1,
+            _ => continue,
+        }
+        if depth == 0 {
+            return (k > open + 1).then_some(k + 1);
+        }
+    }
+    None
 }
 
 /// Match a three-byte arithmetic operator: `<<=` or `>>=`.
@@ -779,21 +809,34 @@ impl ArithParser {
             ATok::MinusMinus => false,
             _ => return None,
         };
-        let ArithExpr::Var(name) = lhs else {
-            return None;
-        };
-        let name = name.clone();
-        self.advance();
-        Some(ArithExpr::PostIncDec { var: name, inc })
+        match lhs {
+            ArithExpr::Var(name) => {
+                let name = name.clone();
+                self.advance();
+                Some(ArithExpr::PostIncDec { var: name, inc })
+            }
+            // arith-subscript model B (Stage 2): `a[i]++` / `a[i]--` → a
+            // subscript assign of `a[i] ± 1`.
+            ArithExpr::Subscript { name, index } => {
+                let (name, index) = (name.clone(), index.clone());
+                self.advance();
+                let op = if inc { IrArithOp::Add } else { IrArithOp::Sub };
+                Some(ArithExpr::SubscriptAssign {
+                    name,
+                    index,
+                    op: Some(op),
+                    value: Box::new(ArithExpr::Literal(1)),
+                })
+            }
+            _ => None,
+        }
     }
 
     /// Handle assignment operators (`=`, `+=`, `-=`, ...). Returns the new
     /// LHS if an assignment was consumed; `None` if the next token isn't an
-    /// assignment operator or LHS isn't a Var.
+    /// assignment operator or LHS isn't an assignable (scalar var or bare
+    /// subscript).
     fn try_assignment(&mut self, lhs: &ArithExpr) -> Result<Option<ArithExpr>, Diagnostic> {
-        let ArithExpr::Var(name) = lhs else {
-            return Ok(None);
-        };
         let Some(tok) = self.peek() else {
             return Ok(None);
         };
@@ -801,21 +844,37 @@ impl ArithParser {
             Some(op) => op,
             None => return Ok(None),
         };
-        let name = name.clone();
-        self.advance();
-        let rhs = self.parse_expr(1)?; // right-associative
-        let new_lhs = match assign_op {
-            None => ArithExpr::Assign {
-                var: name,
-                value: Box::new(rhs),
-            },
-            Some(op) => ArithExpr::CompoundAssign {
-                var: name,
-                op,
-                value: Box::new(rhs),
-            },
-        };
-        Ok(Some(new_lhs))
+        match lhs {
+            ArithExpr::Var(name) => {
+                let name = name.clone();
+                self.advance();
+                let rhs = self.parse_expr(1)?; // right-associative
+                Ok(Some(match assign_op {
+                    None => ArithExpr::Assign {
+                        var: name,
+                        value: Box::new(rhs),
+                    },
+                    Some(op) => ArithExpr::CompoundAssign {
+                        var: name,
+                        op,
+                        value: Box::new(rhs),
+                    },
+                }))
+            }
+            // arith-subscript model B (Stage 2): `a[i] = …` / `a[i] op= …`.
+            ArithExpr::Subscript { name, index } => {
+                let (name, index) = (name.clone(), index.clone());
+                self.advance();
+                let rhs = self.parse_expr(1)?;
+                Ok(Some(ArithExpr::SubscriptAssign {
+                    name,
+                    index,
+                    op: assign_op,
+                    value: Box::new(rhs),
+                }))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Parse prefix expressions and atoms.
@@ -831,10 +890,65 @@ impl ArithParser {
         }
     }
 
+    /// The braced/subscript atom forms — `${#name}` length, `${a[i]}`/`${m[k]}`
+    /// value-import, bare `a[i]` (model B), and `${var:OP…}` (DD#77). Returns
+    /// `None` if `tok` is not one of these (the caller handles the rest). Split
+    /// out of `parse_prefix_atom` to keep the dispatcher small.
+    fn parse_expansion_atom(&mut self, tok: &ATok) -> Option<Result<ArithExpr, Diagnostic>> {
+        match tok {
+            ATok::LenOf(name) => {
+                // DD#75 §2: `${#name}` → the `len` intrinsic sexpr shape.
+                self.advance();
+                Some(Ok(ArithExpr::FuncCall {
+                    name: "len".to_string(),
+                    args: vec![ArithExpr::Var(name.clone())],
+                }))
+            }
+            ATok::Subscript(name, idx) => {
+                // `${a[i]}` / `${m[k]}` — a normal-parse `Subscript` Expr imported
+                // as an rvalue value (arith-subscript-values).
+                self.advance();
+                let index = crate::parse::expr::subscript_index_expr(idx, self.span);
+                let expr = Expr {
+                    kind: ExprKind::Subscript {
+                        name: name.clone(),
+                        index: Box::new(index),
+                    },
+                    span: self.span,
+                };
+                Some(Ok(ArithExpr::Expansion(Box::new(expr))))
+            }
+            ATok::BareSubscript(name, idx) => {
+                // Model B (Stage 2): bare `a[i]` — the index is a full arith
+                // expression, re-parsed here.
+                self.advance();
+                Some(
+                    parse_arith_str(idx, self.span).map(|index| ArithExpr::Subscript {
+                        name: name.clone(),
+                        index: Box::new(index),
+                    }),
+                )
+            }
+            ATok::ParamExpansion(body) => {
+                // `${var:OP…}` — parse the body with the real parameter-expansion
+                // parser and import the result as an rvalue value (DD#77).
+                self.advance();
+                let expr = crate::parse::expr::parse_parameter_expansion(body, self.span);
+                Some(Ok(ArithExpr::Expansion(Box::new(expr))))
+            }
+            _ => None,
+        }
+    }
+
     /// Atoms and operands: literals, variables, parenthesised forms. An
     /// out-of-range `BadNum` is rejected here (SB4026); the `-i64::MIN`
     /// case is folded earlier by the unary-neg peephole in `parse_unary`.
     fn parse_prefix_atom(&mut self) -> Result<ArithExpr, Diagnostic> {
+        if let Some(tok) = self.peek().cloned() {
+            if let Some(result) = self.parse_expansion_atom(&tok) {
+                return result;
+            }
+        }
         match self.peek().cloned() {
             Some(ATok::Num(n)) => {
                 self.advance();
@@ -847,39 +961,6 @@ impl ArithParser {
             Some(ATok::DollarVar(name)) => {
                 self.advance();
                 Ok(ArithExpr::DollarVar(name))
-            }
-            Some(ATok::LenOf(name)) => {
-                // DD#75 §2: `${#name}` → the `len` intrinsic sexpr shape, so the
-                // transform's int-intrinsic path evaluates it (arrlen for a
-                // collection, strlen for a scalar) instead of reading var `#name`.
-                self.advance();
-                Ok(ArithExpr::FuncCall {
-                    name: "len".to_string(),
-                    args: vec![ArithExpr::Var(name)],
-                })
-            }
-            Some(ATok::Subscript(name, idx)) => {
-                // `${a[i]}` / `${m[k]}` — build the ordinary `Subscript` Expr
-                // (normal rules: array int index vs map string key handled by
-                // the usual lowering) and import it as an rvalue value.
-                // arith-subscript-values.
-                self.advance();
-                let index = crate::parse::expr::subscript_index_expr(&idx, self.span);
-                let expr = Expr {
-                    kind: ExprKind::Subscript {
-                        name,
-                        index: Box::new(index),
-                    },
-                    span: self.span,
-                };
-                Ok(ArithExpr::Expansion(Box::new(expr)))
-            }
-            Some(ATok::ParamExpansion(body)) => {
-                // `${var:OP…}` — parse the body with the real parameter-expansion
-                // parser and import the resulting Expr as an rvalue value (DD#77).
-                self.advance();
-                let expr = crate::parse::expr::parse_parameter_expansion(&body, self.span);
-                Ok(ArithExpr::Expansion(Box::new(expr)))
             }
             Some(ATok::LParen) => self.parse_lparen_form(),
             Some(ATok::BadNum(s)) => {
@@ -1078,6 +1159,44 @@ fn lower_arith_mutation_structured(expr: &ArithExpr, span: Span) -> Statement {
                     op: AssignOp::Set,
                     value: Expr {
                         kind: ExprKind::Arithmetic(Box::new(full_expr)),
+                        span,
+                    },
+                }),
+                span,
+            }
+        }
+        // arith-subscript model B (Stage 2): `a[i] = v`, `a[i] op= v`,
+        // `a[i]++`/`--`. Reuse the statement subscript-assign write path — the
+        // index and the computed RHS are arithmetic exprs; the read side (for
+        // `op=`/`++`) is the bare `a[i]` cell read (`ArithExpr::Subscript`).
+        ArithExpr::SubscriptAssign {
+            name,
+            index,
+            op,
+            value,
+        } => {
+            let rhs = match op {
+                None => (**value).clone(),
+                Some(o) => ArithExpr::BinOp {
+                    left: Box::new(ArithExpr::Subscript {
+                        name: name.clone(),
+                        index: index.clone(),
+                    }),
+                    op: *o,
+                    right: value.clone(),
+                },
+            };
+            let index_expr = Expr {
+                kind: ExprKind::Arithmetic(index.clone()),
+                span,
+            };
+            Statement {
+                kind: StmtKind::Assignment(Assignment {
+                    name: name.clone(),
+                    index: Some(index_expr),
+                    op: AssignOp::Set,
+                    value: Expr {
+                        kind: ExprKind::Arithmetic(Box::new(rhs)),
                         span,
                     },
                 }),

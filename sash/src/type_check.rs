@@ -150,17 +150,110 @@ fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Ve
             check_arith_sexpr(a, e.span, env, errors);
             check_arith_string_operands(a, e.span, env, errors);
             check_arith_default_literals(a, errors);
+            check_arith_bare_map_subscript(a, e.span, env, errors);
         }
     });
     if let StmtKind::ArithTest(a) = &stmt.kind {
         check_arith_sexpr(a, stmt.span, env, errors);
         check_arith_string_operands(a, stmt.span, env, errors);
         check_arith_default_literals(a, errors);
+        check_arith_bare_map_subscript(a, stmt.span, env, errors);
+    }
+    // arith-subscript model B: `(( m[k] = … ))` lowers to an assignment with an
+    // *arithmetic* index; a map target there is the bare-`m[k]` write form.
+    if let StmtKind::Assignment(a) = &stmt.kind {
+        check_arith_indexed_map_assign(a, stmt.span, env, errors);
     }
     for body in stmt.child_bodies() {
         for s in body {
             check_sexpr_string_producers(s, env, errors);
         }
+    }
+}
+
+/// Reject `(( m[k] = … ))` on a map: its lowered assignment carries an
+/// `Arithmetic` index (vs the statement `m[k]=…`, whose index is a normal
+/// word) — the bare-subscript write form, invalid for a string-keyed map.
+fn check_arith_indexed_map_assign(
+    a: &Assignment,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let Some(idx) = &a.index else { return };
+    if matches!(idx.kind, ExprKind::Arithmetic(_)) && env.assoc_arrays.contains(&a.name) {
+        errors.push(bare_map_subscript_error(&a.name, span));
+    }
+}
+
+/// arith-subscript model B: a **bare** `m[k]` on an associative array in
+/// arithmetic is a type error — a map's string key is not expressible under
+/// arith rules (the index is evaluated as an int, missing the string key). Use
+/// `${m[k]}` to read and `m[k]=…` (statement form) to write.
+fn check_arith_bare_map_subscript(
+    a: &ArithExpr,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    for_each_arith_subscript(a, &mut |name| {
+        if env.assoc_arrays.contains(name) {
+            errors.push(bare_map_subscript_error(name, span));
+        }
+    });
+}
+
+fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
+    TypeError {
+        message: format!(
+            "bare `{name}[…]` in arithmetic — `{name}` is a map, and a string key \
+             isn't expressible under arithmetic rules. Read with `${{{name}[k]}}` \
+             (imports the value) and write with `{name}[k]=…` (statement form)."
+        ),
+        span,
+    }
+}
+
+/// Invoke `f(name)` for every bare subscript (`ArithExpr::Subscript` /
+/// `SubscriptAssign`) name in an arith tree, descending into every sub-expr.
+fn for_each_arith_subscript(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match a {
+        ArithExpr::Subscript { name, index } => {
+            f(name);
+            for_each_arith_subscript(index, f);
+        }
+        ArithExpr::SubscriptAssign {
+            name, index, value, ..
+        } => {
+            f(name);
+            for_each_arith_subscript(index, f);
+            for_each_arith_subscript(value, f);
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            for_each_arith_subscript(left, f);
+            for_each_arith_subscript(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            for_each_arith_subscript(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            for_each_arith_subscript(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            for_each_arith_subscript(cond, f);
+            for_each_arith_subscript(true_val, f);
+            for_each_arith_subscript(false_val, f);
+        }
+        ArithExpr::Comma(exprs) | ArithExpr::FuncCall { args: exprs, .. } => {
+            for e in exprs {
+                for_each_arith_subscript(e, f);
+            }
+        }
+        _ => {}
     }
 }
 

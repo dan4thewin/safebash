@@ -1,6 +1,6 @@
 ---
 title: "array subscripts in arithmetic — bare `a[i]` (int-index lvalue+rvalue), `${…}` as rvalue value-import; DG design"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -97,3 +97,28 @@ Bare `a[i]` in arith (int index, no `${}`) as rvalue AND lvalue
 Needs the arith lexer to handle `[`/`]`, an `ArithExpr::Subscript{name,index}`
 (arith int index), and subscript-as-arith-lvalue (read-modify-write, reuse the
 statement subscript-assign write path).
+
+## Stage 2 DONE (2026-08-18) — bare `a[i]` reads + lvalue; B2; DD#79
+
+Bare `a[i]` in arith now works as rvalue and lvalue. A `BareSubscript(name,
+idx)` arith-lexer token captures a balanced `[…]` run (`scan_balanced_brackets`)
+and the parser re-parses the raw index as a nested arith expr →
+`ArithExpr::Subscript{name, index}` (rvalue) / `SubscriptAssign{name, index, op,
+value}` (lvalue). The lvalue lowers (`lower_arith_mutation_structured`) to the
+existing statement subscript-assign write path (`Assignment{index:
+Some(Arithmetic(idx))}`) — `a[i]++`/`a[i] op= v`/`a[i] = v`. The rvalue lowers to
+`SsaValue::Subscript` (int key via `lower_value_as_int` on the arith index).
+
+Bare `m[k]` on a map → type error (SB4030): `type_check` walks arith trees for
+`Subscript`/`SubscriptAssign` on an assoc array (read form) and flags a lowered
+assignment whose `index` is `Arithmetic(...)` on a map (write form).
+
+**B2 (DG, 2026-08-18):** SB5031 extended into arithmetic — a bare name *read*
+assigned nowhere is a typo (`$(( y+1 ))`, an undeclared index `i` in `a[i]`).
+Anything assigned (`(( f++ ))`, `for (( i=0;… ))`) is in scope. Function names
+exempt (DD#58 nullary calls). Recorded as **DD#79** (both parts).
+
+native+c; janet gaps filed (`janet-arith-subscript-read` extended with bsx.1-5;
+`janet-undeclared-arith-counter`). Follow-ups: `arith-bare-subscript-followups`
+($a[i] form, nested index, string-array-cell DD#77 question). spec
+arithmetic.sh bsx.1-7, b2a.1-3; plan 117→127. Full 3-mode sweep 0 regressions.

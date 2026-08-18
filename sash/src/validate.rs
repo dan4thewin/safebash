@@ -1702,6 +1702,11 @@ fn check_positionals_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec
             }
         }
         Paren(inner) => check_positionals_arith(inner, span, diags),
+        Subscript { index, .. } => check_positionals_arith(index, span, diags),
+        SubscriptAssign { index, value, .. } => {
+            check_positionals_arith(index, span, diags);
+            check_positionals_arith(value, span, diags);
+        }
         Literal(_) | Var(_) | PostIncDec { .. } | PreIncDec { .. } => {}
     }
 }
@@ -2845,6 +2850,13 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     if let Some(ref end) = program.end_block {
         collect_scope_names(end, &mut globals);
     }
+    // DD#58: a bare name in arithmetic may be a nullary int-function call
+    // (`$((f))`), so a defined function name is a valid reference — collect
+    // them so the B2 arith-read check doesn't flag them as undeclared.
+    collect_functions(&program.statements, &mut globals);
+    if let Some(ref end) = program.end_block {
+        collect_functions(end, &mut globals);
+    }
     check_reads_in_scope(&program.statements, &globals, &mut diags);
     if let Some(ref end) = program.end_block {
         check_reads_in_scope(end, &globals, &mut diags);
@@ -2925,7 +2937,63 @@ fn check_expr_reads(expr: &Expr, known: &HashSet<String>, diags: &mut Vec<Diagno
         }
         ExprKind::AssocArray(pairs) => check_assoc_values(pairs, known, diags),
         ExprKind::Test(t) => check_test_reads(t, known, diags),
+        // B2 (DD arith-subscript / SB5031-consistency): a bare name *read* in
+        // arithmetic that is assigned nowhere is a typo, exactly like `$x`
+        // outside arith. `(( i++ ))` / `(( x = … ))` lower to an assignment
+        // (their name is collected as in-scope), so anything you assign is fine;
+        // a pure read (`$(( y + 1 ))`, the index `i` in `a[i]`) is not.
+        ExprKind::Arithmetic(a) => check_arith_reads(a, expr.span, known, diags),
         _ => {}
+    }
+}
+
+fn check_arith_reads(
+    a: &crate::ir::ArithExpr,
+    span: Span,
+    known: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    use crate::ir::ArithExpr::*;
+    match a {
+        Var(name) | DollarVar(name) => flag_if_unknown(name, span, known, diags),
+        // A bare int-array cell read: the array name is read, and the index is
+        // a read position too.
+        Subscript { name, index } => {
+            flag_if_unknown(name, span, known, diags);
+            check_arith_reads(index, span, known, diags);
+        }
+        BinOp { left, right, .. } => {
+            check_arith_reads(left, span, known, diags);
+            check_arith_reads(right, span, known, diags);
+        }
+        UnaryOp { operand, .. } | Paren(operand) => check_arith_reads(operand, span, known, diags),
+        Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            check_arith_reads(cond, span, known, diags);
+            check_arith_reads(true_val, span, known, diags);
+            check_arith_reads(false_val, span, known, diags);
+        }
+        Comma(exprs) | FuncCall { args: exprs, .. } => {
+            for e in exprs {
+                check_arith_reads(e, span, known, diags);
+            }
+        }
+        Assign { value, .. } | CompoundAssign { value, .. } => {
+            check_arith_reads(value, span, known, diags)
+        }
+        SubscriptAssign {
+            name, index, value, ..
+        } => {
+            flag_if_unknown(name, span, known, diags);
+            check_arith_reads(index, span, known, diags);
+            check_arith_reads(value, span, known, diags);
+        }
+        // `${…}` import — normal-parse rvalue, checked by the ordinary path.
+        Expansion(inner) => check_expr_reads(inner, known, diags),
+        Literal(_) | PostIncDec { .. } | PreIncDec { .. } => {}
     }
 }
 

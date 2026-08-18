@@ -110,6 +110,21 @@ compile error. `(( x > 0 ))` as bare statement is a compile error.
 - `[[ $x -gt 5 ]]` → `(( x > 5 ))` (numeric comparisons belong in `(( ))`)
 
 `[[ ]]` is string/file/boolean only. `(( ))` is arithmetic only.
+
+**Array cells in arithmetic (DD#79 model B).** Inside `(( ))`, a **bare**
+int-array cell `a[i]` is a first-class operand — rvalue *and* lvalue:
+`$(( a[i] + 1 ))`, `(( a[i]++ ))`, `(( a[i] += 5 ))`, `(( a[i] = e ))` (index
+`i` is a full arith expression). A `${a[i]}` / `${m[k]}` imports a *value* (never
+a location — a map's string key works there). A bare `m[k]` on a **map** in
+arithmetic is a compile error (SB4030 — a string key isn't expressible under
+arith rules; read with `${m[k]}`, write with the statement `m[k]=…`).
+
+**Undeclared reads are strict (DD#79 B2).** A bare name *read* in `(( ))` that is
+assigned nowhere is a typo error (SB5031), the same rule as `$x` outside
+arithmetic — `$(( y + 1 ))` with an undeclared `y`, or an undeclared index `i`
+in `a[i]`, is rejected. Anything you *assign* is in scope: `(( f++ ))`,
+`for (( i=0; i<n; i++ ))`, and `int i=1; $(( i+1 ))` are all fine (declare a
+pure index with `int i=0`).
 No operator set overlap.
 
 ### Declarations
