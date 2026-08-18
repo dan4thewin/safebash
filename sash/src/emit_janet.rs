@@ -2022,6 +2022,15 @@ fn cmdsub_data_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
              (do (eprint (get (dyn :args) 0) \": arg: index out of range\") (os/exit 1))))"
         ));
     }
+    // `$(arg N DEFAULT)` (DD#60 addendum) — argv[N], or DEFAULT if out of range.
+    if name == "arg" && c.args.len() == 2 {
+        let idx = emit_expr_as_int(&c.args[0], ctx);
+        let def = emit_expr_inline(&c.args[1], ctx);
+        return Some(format!(
+            "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
+             (get (dyn :args) _ai) {def}))"
+        ));
+    }
     cmdsub_join_intrinsic(name, c, ctx)
 }
 

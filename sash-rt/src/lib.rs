@@ -582,6 +582,30 @@ pub extern "C" fn sash_argv_get(idx: i64, out_len: *mut i64) -> *const u8 {
     ptr
 }
 
+/// DD#60 addendum: `$(arg N DEFAULT)` — like `sash_argv_get`, but an
+/// out-of-range index returns the (already-evaluated) default `(d_ptr, d_len)`
+/// instead of aborting. Any invalid index (negative or `>= argc`) falls back to
+/// the default. The default is constrained at compile time (DD#78: clean,
+/// side-effect-free), so evaluating it eagerly at the call site is safe.
+#[no_mangle]
+pub extern "C" fn sash_argv_get_or(
+    idx: i64,
+    d_ptr: *const u8,
+    d_len: i64,
+    out_len: *mut i64,
+) -> *const u8 {
+    let argc = unsafe { sash_argc };
+    if idx < 0 || idx >= argc {
+        unsafe { *out_len = d_len };
+        return d_ptr;
+    }
+    let argv = unsafe { sash_argv };
+    let ptr = unsafe { *argv.add(idx as usize) };
+    let len = unsafe { strlen(ptr) };
+    unsafe { *out_len = len as i64 };
+    ptr
+}
+
 // ═══════════════════════════════════════════════════════════════
 // sash_argv_snapshot — DD#60: array a=$(argv N)
 // ═══════════════════════════════════════════════════════════════

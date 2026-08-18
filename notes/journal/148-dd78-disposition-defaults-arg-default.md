@@ -81,3 +81,51 @@ change adds zero new failures to any suite. Tracked: `audit-rust-test-suites`
 Runtime `sash_argv_get_or`, 3-backend lowering, arg-count 1|2, negative index
 still rejected, result stays tainted, default constrained by DD#78 (reuse the
 clean/non-random check on arg's 2nd arg).
+
+## Stage 2 — DD#60 `$(arg N DEFAULT)` (DONE)
+
+The feature: `$(arg N)` still aborts on OOB (unchanged); `$(arg N DEFAULT)`
+returns `DEFAULT` when `N` is out of range. Eager (mirrors `:-`), result stays
+tainted (arg is a source), blessed downstream.
+
+- **Runtime** (`sash-rt`): `sash_argv_get_or(idx, d_ptr, d_len, &out_len)` —
+  argv[idx] in range, else the (already-evaluated) default. Any invalid index
+  (negative or `>= argc`) → default.
+- **3 backends**: native (`value_handlers.rs`, new `externs.argv_get_or` +
+  `argv_get_or` sig in setup/types), c (`emit_c`, `sash_argv_get_or` extern),
+  janet (`(if (and (>= _ai 0) (< _ai len)) (get args _ai) DEFAULT)`).
+- **Validation**:
+  - Arity (`check_disposition_defaults`/`flag_arg_builtin`): `arg` takes 1 or 2
+    args → **SB5036** otherwise (was silently ignoring extra args — `arg 1 2 3`
+    used `2` as the default and dropped `3`).
+  - DD#78 clean default: a tainted default is rejected — **SB5020**. arg lives
+    almost only in a store RHS (`dir=$(arg …)`, a source assignment), whose
+    cmdsub args aren't otherwise use-checked, so `taint_assignment` now calls
+    `check_arg_default_taint` (a read-position check on the default).
+  - DD#78 non-random: `$(random)` default → **SB5035** (shared with `:-`).
+
+**Parse limitation (pre-existing, general — noted).** A *bare* nested command
+substitution as a command arg fails to parse (`$(arg 1 $(getcwd))` → SB4014;
+`p=$(dirname $(getcwd))` fails the same way). The **quoted** form works:
+`$(arg 1 "$(getcwd)")`. So an intrinsic default must be quoted. Not arg-specific.
+
+**janet gap (pre-existing).** janet exec's `$(getcwd)` (and the getpid-class) as
+fake external commands rather than intrinsics, so `$(arg 9 "$(getcwd)")` fails on
+janet — guarded av.d4 native,c; tracked in `janet-getpid-class-intrinsics`.
+
+Tests: `spec/argv.sh` av.d1-d7 (present→argv; absent/high-OOB→default; quoted
+intrinsic default native,c; tainted default→SB5020; arity→SB5036;
+random→SB5035). plan 37→44. Full 3-mode sweep: **0 passing→failing, +20
+passing**, native 0-fail. clippy clean; complexity gate green.
+
+DD#60 addendum + DD#78 scope-for-arg recorded; SUBSET.md documents `$(arg N
+DEFAULT)` + SB5035/SB5036. **DD#60 arg-default + DD#78 complete.**
+
+## Deferred (filed)
+
+- Negative-index compile rejection (DD#60 says `$(arg -1)` should be a
+  compile error; today it isn't enforced — `x=$(arg -1)` compiles, and only the
+  downstream unblessed-read taint check catches the spec case av.t7). Runtime
+  still aborts on a bare negative. `arg-negative-index-compile-reject`.
+- Bare nested `$(…)` as a command arg (general parser limit) —
+  `bare-nested-cmdsub-arg`.

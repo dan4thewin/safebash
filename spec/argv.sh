@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=37
+plan=44
 echo "1..$plan" >&3
 
 set +e
@@ -40,6 +40,41 @@ run_sash 'x=$(arg 5); bless x [[ -n $x ]]; echo "$x"' one two
 # av.t7 negative index is a compile-time error
 run_sash 'x=$(arg -1); echo "$x"'
 [[ $rc != 0 && -z $out && -n $err ]]; chk av.t7
+
+# ── DD#60 addendum: $(arg N DEFAULT) opt-in default ──────────────
+
+# av.d1 $(arg N DEFAULT) returns argv[N] when in range
+run_sash 'x=$(arg 1 fallback); bless x [[ -n $x ]]; echo "$x"' hello
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk av.d1
+
+# av.d2 $(arg N DEFAULT) returns the default when N is out of range
+run_sash 'x=$(arg 1 fallback); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk av.d2
+
+# av.d3 the default fires for a high OOB index too (no abort, unlike bare arg)
+run_sash 'x=$(arg 5 mydef); bless x [[ -n $x ]]; echo "$x"' one two
+[[ $rc = 0 && $out = "mydef" && -z $err ]]; chk av.d3
+
+# av.d4 a clean intrinsic default (quoted) is accepted and used on OOB. native,c
+# (janet exec's $(getcwd) as a fake external command — janet-getpid-class-intrinsics).
+if in_modes native,c; then
+    run_sash 'x=$(arg 9 "$(getcwd)"); bless x [[ -n $x ]]; echo "$x"'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
+else
+    skip_chk av.d4
+fi
+
+# av.d5 DD#78: a tainted default is rejected (a read must not sneak through)
+run_sash 'y=$(getenv HOME); x=$(arg 1 $y); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.d5
+
+# av.d6 arity: more than an index + default is a compile error
+run_sash 'x=$(arg 1 2 3); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5036* ]]; chk av.d6
+
+# av.d7 DD#78: a $(random) default is a side effect under eager eval → reject
+run_sash 'x=$(arg 1 "$(random)"); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk av.d7
 
 # ── Slice / splat semantics ──────────────────────────────────────
 

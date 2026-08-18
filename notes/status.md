@@ -2,23 +2,24 @@
 
 DG proposed `$(arg N)` take an optional default instead of aborting on OOB.
 Design ratified **DD#78** (disposition defaults must be clean + non-`random`)
-and a **DD#60 addendum** (`$(arg N DEFAULT)`). DD#78 turned out to close a real
-pre-existing taint hole: a `:-` default's operand was never taint-checked, so
-`echo ${x:-$(getenv)}` / `echo ${x:-$y}` compiled, and `z=${x:-$(getenv)}` left
-`z` clean (full escape).
+and a **DD#60 addendum** (`$(arg N DEFAULT)`). **Both complete + pushed.**
 
-- **Stage 1 DONE (uncommitted → committing):** DD#78 for `:-`. `expr_uses_tainted`
-  + `check_expr_taint` recurse into the `:-` operand (propagate + reject);
-  `check_disposition_side_effects` rejects `$(random)` defaults (SB5035).
-  Clean-when-read semantics (use rejects; store propagates → no escape). spec
-  taint.sh dd78.1-7, plan 68→75, 3-mode sweep 0-regression +21.
-- **Stage 2 NEXT:** `$(arg N DEFAULT)` — runtime `sash_argv_get_or`, 3-backend
-  lowering, arg-count 1|2, negative still rejected, tainted result, default
-  reuses the DD#78 clean/non-random check.
+- **DD#78 Stage 1 (8e522e9):** closed a real taint hole — a `:-` default's
+  operand was never taint-checked (`echo ${x:-$(getenv)}` / `${x:-$y}` compiled;
+  `z=${x:-$(getenv)}` left z clean). Both taint primitives now recurse into the
+  `:-` operand; `check_disposition_defaults` rejects `$(random)` defaults
+  (SB5035). Clean-when-read (use rejects; store propagates). taint.sh dd78.1-7.
+- **DD#60 arg-default (this commit):** `$(arg N DEFAULT)` returns the default on
+  OOB (bare `arg N` still aborts). Runtime `sash_argv_get_or`, 3-backend
+  lowering, arity SB5036, DD#78 clean/non-random default (SB5020/SB5035),
+  tainted result. argv.sh av.d1-d7, plan 37→44. 3-mode sweep 0-regression +20.
 
-Noted (pre-existing, not mine): `mk test` (cargo suites) is heavily rotted
-(removed heredocs/case, old SB codes) — tracked in `audit-rust-test-suites`.
-My change adds 0 new failures; spec sweep is the live gate.
+Deferred (filed): `arg-negative-index-compile-reject` (DD#60 negative-index not
+enforced), `bare-nested-cmdsub-arg` (general parse limit — quote the nested sub),
+`janet-getpid-class-intrinsics` (av.d4 janet guard). Pre-existing `mk test` rot:
+`audit-rust-test-suites`.
+
+**NEXT:** back to the DG tier backlog. DD#60/DD#78 need nothing further.
 
 ## ════════ STATUS (2026-08-17, cont.) — DD#77 COMPLETE (Stage C1/C2/C3 shipped) ════════
 

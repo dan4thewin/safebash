@@ -236,6 +236,8 @@ use `$(basename …)`.
 | SB5026 | `"${a[@]}"` / `"$(argv)"` (quoted splat) | quotes yield one string (DD#22) — use the bare `@a` / `$(argv)` |
 | SB5027 | for-in mixing `$(argv)` with other words | a tainted argv splat must be the sole for-in source (DD#60) |
 | SB5028 | `[[ -v x ]]` | removed (DD#62) — an unset/empty variable is the empty string; use `[[ -n $x ]]` |
+| SB5035 | `$(random)` in a `:-`/`arg` default | a disposition default is eager + must be side-effect-free (DD#78) — capture it first |
+| SB5036 | `$(arg)` / `$(arg N D …)` wrong arity | `arg` takes an index and an optional default: `$(arg N)` or `$(arg N DEFAULT)` (DD#60) |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |
 | SB4015 | `${var@...}` transforms | Use `${var^^}` / `${var,,}` instead |
 | — | `[ ]` single bracket | Coerced to `[[ ]]` |
@@ -259,7 +261,10 @@ only legal operation on a tainted value is to validate it.
 A variable is tainted iff its defining instruction is one of:
 
 - `x=$(getenv VAR)` — environment variable read
-- `x=$(arg N)` — single program positional param (DD#60)
+- `x=$(arg N)` — single program positional param (DD#60); `x=$(arg N DEFAULT)`
+  returns `DEFAULT` instead of aborting when `N` is out of range (DD#60
+  addendum). The result is tainted either way; `DEFAULT` must be a clean,
+  side-effect-free value (DD#78).
 - `array a=$(argv)` / `array a=$(argv N)` — whole/sliced argv snapshot (DD#60)
 - `read x [...]` from any inherited or opened fd, or any pipe
 - `mapfile -t x` / `readarray` from any inherited or opened fd, or any pipe

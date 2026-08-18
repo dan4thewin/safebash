@@ -107,6 +107,18 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_argv_get", Linkage::Import, &argv_get_sig)
         .expect("declare sash_argv_get");
 
+    // sash_argv_get_or(idx, d_ptr, d_len, &out_len) -> ptr  (DD#60 addendum:
+    // returns the default (d_ptr,d_len) when idx is out of range)
+    let mut argv_get_or_sig = Signature::new(CallConv::SystemV);
+    argv_get_or_sig.params.push(AbiParam::new(I64)); // idx
+    argv_get_or_sig.params.push(AbiParam::new(I64)); // default ptr
+    argv_get_or_sig.params.push(AbiParam::new(I64)); // default len
+    argv_get_or_sig.params.push(AbiParam::new(I64)); // &out_len
+    argv_get_or_sig.returns.push(AbiParam::new(I64)); // str ptr
+    let argv_get_or_func = module
+        .declare_function("sash_argv_get_or", Linkage::Import, &argv_get_or_sig)
+        .expect("declare sash_argv_get_or");
+
     // sash_argv_snapshot(start) -> *mut SashTable  (DD#60 array a=$(argv N))
     let mut argv_snapshot_sig = Signature::new(CallConv::SystemV);
     argv_snapshot_sig.params.push(AbiParam::new(I64)); // start
@@ -855,6 +867,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         argc: argc_data,
         argv: argv_data,
         argv_get: argv_get_func,
+        argv_get_or: argv_get_or_func,
         argv_snapshot: argv_snapshot_func,
         splat_disposition: splat_disposition_func,
         require_value: require_value_func,

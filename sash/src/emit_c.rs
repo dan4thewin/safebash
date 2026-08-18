@@ -197,6 +197,11 @@ fn emit_prologue(out: &mut String) {
     // DD#60: program-argument access.
     writeln!(out, "extern i64 sash_argc;").unwrap();
     writeln!(out, "extern char* sash_argv_get(i64 idx, i64* out_len);").unwrap();
+    writeln!(
+        out,
+        "extern char* sash_argv_get_or(i64 idx, const char* dp, i64 dl, i64* out_len);"
+    )
+    .unwrap();
     writeln!(out, "extern void* sash_argv_snapshot(i64 start);").unwrap();
     writeln!(
         out,
@@ -1966,6 +1971,24 @@ fn try_native_intrinsic_c(
         "argc" => {
             // DD#60: $(argc) is C argc (program argv length).
             Some(emit_itoa_temp(e, "sash_argc"))
+        }
+        "arg" if argv.len() >= 3 => {
+            // DD#60 addendum: $(arg N DEFAULT) — argv[N], or the default if OOB.
+            let (ip, il) = lower_value_as_str(e, &argv[1], types);
+            let (dp, dl) = lower_value_as_str(e, &argv[2], types);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_i = sash_atoi({ip}, {il}); i64 {t}_l; \
+                 const char* {t}_p = sash_argv_get_or({t}_i, {dp}, {dl}, &{t}_l);",
+                t = t,
+                ip = ip,
+                il = il,
+                dp = dp,
+                dl = dl
+            )
+            .unwrap();
+            Some((format!("{}_p", t), format!("{}_l", t)))
         }
         "arg" if argv.len() >= 2 => {
             // DD#60: $(arg N) — scalar program argument, 0-based.

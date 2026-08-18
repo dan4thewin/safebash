@@ -636,6 +636,58 @@ pub(super) fn handle_cmdsub(
     )
 }
 
+/// DD#60: `$(arg N)` (abort on OOB) and the addendum `$(arg N DEFAULT)` (default
+/// on OOB). The default, when present, is DD#78-constrained (clean,
+/// side-effect-free), so evaluating it eagerly here is safe.
+#[allow(clippy::too_many_arguments)]
+fn lower_arg_intrinsic(
+    argv_values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    func_constants: &HashMap<String, String>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
+    let (idx_ptr, idx_len) = lower_value(
+        &argv_values[1],
+        builder,
+        module,
+        vars,
+        literals,
+        func_constants,
+        externs,
+        exit_status_var,
+    );
+    let idx = atoi_call(builder, module, externs, idx_ptr, idx_len);
+    let out_len_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
+    let call = if let Some(default) = argv_values.get(2) {
+        let (def_ptr, def_len) = lower_value(
+            default,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        );
+        let argv_get_or_ref = module.declare_func_in_func(externs.argv_get_or, builder.func);
+        builder
+            .ins()
+            .call(argv_get_or_ref, &[idx, def_ptr, def_len, out_len_addr])
+    } else {
+        let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
+        builder.ins().call(argv_get_ref, &[idx, out_len_addr])
+    };
+    let str_ptr = builder.inst_results(call)[0];
+    let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
+    Some((str_ptr, str_len))
+}
+
 /// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
 /// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`,
 /// `$(dtoi N "s")`, `$(itod N V)`. Returns `Some((ptr, len))` when
@@ -730,32 +782,16 @@ fn try_native_intrinsic(
             let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
             Some(emit_int_to_str(builder, module, externs, signum_val))
         }
-        "arg" if argv_values.len() >= 2 => {
-            // DD#60: $(arg N) — scalar program argument, 0-based.
-            let (idx_ptr, idx_len) = lower_value(
-                &argv_values[1],
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            let idx = atoi_call(builder, module, externs, idx_ptr, idx_len);
-
-            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-            let argv_get_ref = module.declare_func_in_func(externs.argv_get, builder.func);
-            let call = builder.ins().call(argv_get_ref, &[idx, out_len_addr]);
-            let str_ptr = builder.inst_results(call)[0];
-            let str_len = builder.ins().stack_load(I64, out_len_slot, 0);
-            Some((str_ptr, str_len))
-        }
+        "arg" if argv_values.len() >= 2 => lower_arg_intrinsic(
+            argv_values,
+            builder,
+            module,
+            vars,
+            literals,
+            func_constants,
+            externs,
+            exit_status_var,
+        ),
         "dtoi" if argv_values.len() >= 3 => {
             let (digits_ptr, digits_len) = lower_value(
                 &argv_values[1],

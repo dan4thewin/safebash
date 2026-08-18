@@ -2271,20 +2271,8 @@ fn splat_array_name(w: &Expr) -> Option<&str> {
 /// Scalar assignment from a tainted source follows the normal flow:
 /// the scalar becomes tainted.
 fn taint_assignment(a: &Assignment, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    match &a.value.kind {
-        ExprKind::Array(elems) => {
-            for e in elems {
-                reject_tainted_into_array(e, &a.name, tainted, diags);
-            }
-            return;
-        }
-        ExprKind::AssocArray(pairs) => {
-            for (_k, v) in pairs {
-                reject_tainted_into_array(v, &a.name, tainted, diags);
-            }
-            return;
-        }
-        _ => {}
+    if taint_array_literal_assignment(a, tainted, diags) {
+        return;
     }
     // `a[i]=value` — subscript assignment into an array slot.
     if a.index.is_some() {
@@ -2295,6 +2283,60 @@ fn taint_assignment(a: &Assignment, tainted: &mut HashSet<String>, diags: &mut V
     if is_taint_source(&a.value) || expr_uses_tainted(&a.value, tainted) {
         tainted.insert(a.name.clone());
     }
+    // DD#78/DD#60: the `$(arg N DEFAULT)` default is a read position. In a store
+    // RHS the cmdsub's args aren't otherwise use-checked (the source assignment
+    // is allowed), so a tainted default would slip through — check it here.
+    check_arg_default_taint(&a.value, tainted, diags);
+}
+
+/// DD#61: an array/assoc-array literal RHS rejects tainted elements (external
+/// data enters arrays only via read/mapfile). Returns true if `a`'s RHS was such
+/// a literal (and was handled).
+fn taint_array_literal_assignment(
+    a: &Assignment,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) -> bool {
+    match &a.value.kind {
+        ExprKind::Array(elems) => {
+            for e in elems {
+                reject_tainted_into_array(e, &a.name, tainted, diags);
+            }
+            true
+        }
+        ExprKind::AssocArray(pairs) => {
+            for (_k, v) in pairs {
+                reject_tainted_into_array(v, &a.name, tainted, diags);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// DD#78/DD#60: check the `$(arg N DEFAULT)` default (a read position) for a
+/// tainted read — SB5020, like `echo $tainted`. Walks nested cmdsubs.
+fn check_arg_default_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_expr_tree(expr, &mut |e| {
+        if let Some(default) = arg_default(e) {
+            check_expr_taint(default, tainted, diags);
+        }
+    });
+}
+
+/// The DEFAULT operand of a `$(arg N DEFAULT)` command substitution, if `e` is
+/// one with two args.
+fn arg_default(e: &Expr) -> Option<&Expr> {
+    let ExprKind::CommandSubstitution(stmts) = &e.kind else {
+        return None;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return None;
+    };
+    if expr_literal_str(&c.name) != "arg" {
+        return None;
+    }
+    c.args.get(1)
 }
 
 /// DD#61: reject a tainted value being placed into an array element.
@@ -2944,18 +2986,22 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
 /// DD#78: a disposition default is evaluated **eagerly** (`emit_default_value`
 /// selects between both arms), so it must be side-effect-free. `$(random)` is
 /// *clean* (a compiler intrinsic) but **stateful** — it advances the PRNG
-/// whether or not the fallback is taken. Reject it in a `:-` default (SB5035).
-/// Tainted / forking defaults are already caught as read-position uses by
-/// `check_taint`; `random` is the only clean-but-stateful intrinsic, so it
-/// needs this dedicated structural check.
-pub fn check_disposition_side_effects(program: &Program) -> Vec<Diagnostic> {
+/// whether or not the fallback is taken. Reject it in a `:-` default or an
+/// `$(arg N DEFAULT)` default (SB5035). Also enforce `arg`'s arity here (index +
+/// optional default). Tainted / forking defaults are caught as read-position
+/// uses by `check_taint`; `random` is the only clean-but-stateful intrinsic, so
+/// it needs this dedicated structural check.
+pub fn check_disposition_defaults(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
         .statements
         .iter()
         .chain(program.end_block.iter().flatten())
     {
-        crate::ir::walk_all_exprs(stmt, &mut |e| flag_random_default(e, &mut diags));
+        crate::ir::walk_all_exprs(stmt, &mut |e| {
+            flag_random_default(e, &mut diags);
+            flag_arg_builtin(e, &mut diags);
+        });
     }
     diags
 }
@@ -2971,15 +3017,50 @@ fn flag_random_default(e: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     };
     if expr_invokes_random(operand) {
+        diags.push(random_default_diag(e.span));
+    }
+}
+
+/// DD#60 addendum: `$(arg …)` takes an index and an optional default
+/// (`$(arg N)` or `$(arg N DEFAULT)`) — reject other arities. The default, if
+/// present, is DD#78-constrained: reject a `$(random)` default (side effect
+/// under eager eval; a tainted default is caught by `check_taint`).
+fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::CommandSubstitution(stmts) = &e.kind else {
+        return;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return;
+    };
+    if expr_literal_str(&c.name) != "arg" {
+        return;
+    }
+    if c.args.is_empty() || c.args.len() > 2 {
         diags.push(Diagnostic::error_span(
             e.span,
-            "SB5035",
-            "a disposition default must be side-effect-free — `$(random)` \
-             advances the PRNG and the default is evaluated eagerly; capture \
-             it into a variable first and use the clean value"
+            "SB5036",
+            "`arg` takes an index and an optional default — `$(arg N)` or \
+             `$(arg N DEFAULT)`"
                 .to_string(),
         ));
+        return;
     }
+    if let Some(default) = c.args.get(1) {
+        if expr_invokes_random(default) {
+            diags.push(random_default_diag(default.span));
+        }
+    }
+}
+
+fn random_default_diag(span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5035",
+        "a disposition default must be side-effect-free — `$(random)` advances \
+         the PRNG and the default is evaluated eagerly; capture it into a \
+         variable first and use the clean value"
+            .to_string(),
+    )
 }
 
 /// Does `expr` contain a `$(random)` command substitution?

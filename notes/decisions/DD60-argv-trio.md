@@ -2,6 +2,35 @@ title: DD#60 — argv / arg / argc builtins (C semantics)
 status: implemented
 supersedes: DD42
 
+## Addendum 2026-08-17 — `$(arg N DEFAULT)` optional default
+
+`$(arg N)` out-of-range **aborts** (below). This addendum adds an *opt-in*
+fallback: `$(arg N DEFAULT)` returns `argv[N]` if `N` is in range, else the
+value of `DEFAULT`. The abort form is unchanged — a bare `$(arg N)` still
+aborts, so a *forgotten* argument is still caught; the default is only for a
+*genuinely optional* argument.
+
+    dir=$(arg 1 .)         # argv[1], or "." if not supplied
+    bless dir [[ ! $dir =~ \s ]]
+
+This is the disposition `:?` (strict, abort) vs `:-` (default) split applied to
+argv — the same idiom as DD#69 `@{a:?}`/`@{a:-}` and DD#77 `${s:?}`/`${s:-}`.
+`arg` is a builtin in `$(…)` position, so it cannot wear the `${…:-}` syntax;
+the default is a **positional** second argument (`arg` takes exactly one index,
+so a second token is unambiguous).
+
+- **Eager**: `DEFAULT` is evaluated whether or not the fallback is taken
+  (mirrors `emit_default_value`'s `select`; DD#78). Safe because —
+- **`DEFAULT` is constrained by DD#78**: a clean, non-`random` (side-effect-free)
+  value. `$(arg 1 $(getenv HOME))` / `$(arg 1 $(date))` are rejected — capture
+  into a variable and `bless` first.
+- **Taint unchanged**: `$(arg N D)` is still a tainted source (the result may be
+  `argv[N]`), so it is blessed downstream as before; the default's cleanliness
+  is a DD#78 read-position rule, not a change to `arg`'s taint.
+- **Negative index** stays a compile error (below), default or not.
+
+## Original decision
+
 Program-argument access in sash-native. Supersedes DD#42's `$(argv N)`
 scalar shape with a three-builtin surface that follows C `argc`/`argv`
 semantics and composes with the DD#24 taint model and DD#61 array rules.
