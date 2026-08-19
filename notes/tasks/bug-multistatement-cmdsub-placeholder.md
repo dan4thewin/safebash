@@ -4,13 +4,64 @@ status: ready
 priority: P2
 kind: bug
 depends: []
+decision: "DG 2026-08-19 — IMPLEMENT (both multi-statement and pipeline bodies): run the full body in the forked child, capture stdout. Not reject."
 gates:
-  - "`echo $(x=1; echo $x)` must either execute (print `1`) or be rejected at compile time — never silently print the literal string `$(...)`"
-  - "`x=$(a | b)` (pipeline body — same code path) likewise executes or is rejected, never the placeholder; its stages then appear in `--manifest`"
-  - "decision needed (DG): implement multi-statement `$(…)` execution, or reject it at validation with a clear diagnostic"
+  - "`echo $(x=1; echo $x)` must execute (print `1`) — never the literal `$(...)`"
+  - "`x=$(a | b)` (pipeline body — same code path) executes; its stages appear in `--manifest`"
+  - "the `expr_to_string` `$(...)` / `$(( ... ))` debug arms are unreachable from codegen (assert/restructure)"
 ---
 
-# Multi-statement `$(…)` silently produces the placeholder `$(...)`
+# Multi-statement / pipeline `$(…)` — DG: IMPLEMENT
+
+## Decision (DG, 2026-08-19)
+
+**Implement** — run the full body (multi-statement *and* pipeline) in the
+forked child and capture its stdout, bash-faithful. Not reject. (`x=$(foo |
+grep bar)` is bread-and-butter shell; rejecting would cripple usability, and
+implementing unblocks `--manifest`.)
+
+## Implementation plan (scoped 2026-08-19)
+
+The single-command path is `handle_command_substitution` →
+`SsaValue::CmdSubst { argv, redirects }` → `emit_cmdsub_exec` (fork, pipe,
+exec one argv, parent reads the pipe into a string). The gap for a
+multi-statement/pipeline body is a value that **captures a pipeline/block's
+stdout to a string**. The pieces exist:
+
+- `transform/control_flow.rs::build_pipeline_stages_from_cmdsubst` already
+  turns a cmdsub body's statements into pipeline `stages` (reusable; used by
+  `for x in $(cmd)` → `cmd | while read`).
+- `SsaInst::Pipeline { stages, capture_read_fd }` runs stages and exposes a
+  read fd; `emit_cmdsub_exec` (codegen, 192 lines) already does fork + pipe +
+  parent-read-to-string for the single-argv case.
+- `__compound_<entry>` forked stages (`stmt_handlers.rs::push_command_stage`)
+  run an arbitrary lowered block in a forked child — the vehicle for a
+  multi-*statement* (non-pipeline) body.
+
+**Approach:** add an SSA value that carries pipeline `stages` (or a
+`__compound_` block entry for a non-pipeline multi-statement body) and
+captures the tail stdout to a string — e.g. `SsaValue::PipelineCapture {
+stages }`, or generalize `CmdSubst` to hold either an `argv` or `stages`.
+Then:
+
+1. `handle_command_substitution`: when `single_command_subst` is `None`,
+   classify the body — a single `Pipeline` → build stages; a multi-statement
+   list → hoist into a `__compound_` block — and emit the capture value
+   instead of the `SsaValue::Expr(expr_to_string(expr))` placeholder.
+2. Codegen native (`emit_cmdsub_exec` sibling), `emit_c`, `emit_janet`:
+   fork, pipe, run the stages/block in the child, parent reads to a string.
+   Much of the native fork/pipe/read is reusable from `emit_cmdsub_exec`.
+3. Make `expr_to_string`'s `$(...)`/`$(( ... ))` arms unreachable from
+   codegen (assert), and audit every `SsaValue::Expr(expr_to_string(...))`
+   fallback for other shapes that leak literal text.
+4. Un-guard / strengthen `spec/undeclared.sh ud.16` (currently native-only,
+   asserts only no-SB5031) to assert the runtime output.
+
+**Size:** feature-sized, comparable to `c-janet-compound-pipeline-stage`;
+real codegen risk across 3 backends. Warrants a focused session, not an
+end-of-session add-on.
+
+## Original bug report
 
 ## Symptom
 
