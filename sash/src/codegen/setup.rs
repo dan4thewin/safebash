@@ -1265,7 +1265,7 @@ fn declare_inst_bases(
                 .entry(target.name.clone())
                 .or_insert_with(|| assign_target_slot(builder, target, value));
         }
-        SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target } => {
+        SsaInst::ReadLine { target, .. } | SsaInst::CaptureEnd { target, .. } => {
             base_vars
                 .entry(target.name.clone())
                 .or_insert_with(|| slot_for_var_type(builder, &target.var_type));
@@ -1337,7 +1337,7 @@ fn map_inst_versioned(
         }
         SsaInst::Assign { target, .. }
         | SsaInst::ReadLine { target, .. }
-        | SsaInst::CaptureEnd { target } => {
+        | SsaInst::CaptureEnd { target, .. } => {
             vars.entry(target.display())
                 .or_insert_with(|| base_vars[&target.name]);
         }

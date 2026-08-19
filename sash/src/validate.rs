@@ -2574,11 +2574,28 @@ fn is_taint_source(expr: &Expr) -> bool {
 /// `arg` or an external (absolute-path) command. Unknown PATH-resolved
 /// names can't be classified here (might be a user function), so default
 /// clean.
-fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
-        return false;
-    };
-    let name = expr_literal_str(&c.name);
+/// Whether a `$(…)` body is a taint source (used for assignment/array/word
+/// contexts — `is_taint_source`). Scans EVERY statement / pipeline stage, so a
+/// multi-statement / pipeline body (`$(a | b)`, `$(x=1; cat f)`) is correctly
+/// flagged — not just `stmts.first()`. `pub(crate)` so the transform computes a
+/// matching taint flag for the captured temp (else the SSA-taint backstop ICEs).
+pub(crate) fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
+    stmts.iter().any(stmt_runs_taint_source)
+}
+
+fn stmt_runs_taint_source(stmt: &Statement) -> bool {
+    if let StmtKind::Command(c) = &stmt.kind {
+        if command_name_is_taint_source(&c.name) {
+            return true;
+        }
+    }
+    stmt.child_bodies()
+        .iter()
+        .any(|body| body.iter().any(stmt_runs_taint_source))
+}
+
+fn command_name_is_taint_source(name_expr: &Expr) -> bool {
+    let name = expr_literal_str(name_expr);
     name == "getenv" || name == "argv" || name == "arg" || name.starts_with('/')
 }
 
@@ -2589,11 +2606,14 @@ fn cmdsub_is_taint_source(stmts: &[Statement]) -> bool {
 /// external `$(/abs …)`. `$(argv …)` is deliberately excluded: it is an
 /// array splat governed by the splat-context check (SB5025), not a scalar.
 fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+    // A lone `$(argv …)` is an array splat (SB5025 elsewhere), not a scalar
+    // source — don't double-diagnose it. Any other body is a scalar source iff
+    // it runs an external / getenv / arg / argv anywhere (recursive scan, so a
+    // multi-statement / pipeline body is covered — was `stmts.first()` only).
+    if cmdsub_command_is(stmts, "argv") {
         return false;
-    };
-    let name = expr_literal_str(&c.name);
-    name == "getenv" || name == "arg" || name.starts_with('/')
+    }
+    cmdsub_is_taint_source(stmts)
 }
 
 /// Check if an expression uses any tainted variable.

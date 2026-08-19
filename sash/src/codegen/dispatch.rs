@@ -104,7 +104,7 @@ impl SsaInst {
                 builder.def_var(capture_saved_var, saved);
                 builder.def_var(capture_pipe_var, pipe_rd);
             }
-            SsaInst::CaptureEnd { target } => {
+            SsaInst::CaptureEnd { target, .. } => {
                 return self.emit_capture_end(target, builder, module, ctx);
             }
             SsaInst::Test(test_expr) => {

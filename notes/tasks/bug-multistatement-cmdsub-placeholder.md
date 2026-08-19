@@ -1,10 +1,11 @@
 ---
 title: "bug: multi-statement command substitution silently emits the literal placeholder $(...)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
 decision: "DG 2026-08-19 — IMPLEMENT (both multi-statement and pipeline bodies): run the full body in the forked child, capture stdout. Not reject."
+resolved: "2026-08-19 — implemented native (c/janet capture is a pre-existing gap). Closed a coupled taint hole ($(-cmd) + first-stmt-only scan). Journal 154."
 gates:
   - "`echo $(x=1; echo $x)` must execute (print `1`) — never the literal `$(...)`"
   - "`x=$(a | b)` (pipeline body — same code path) executes; its stages appear in `--manifest`"

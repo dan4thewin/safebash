@@ -302,8 +302,10 @@ pub enum SsaInst {
     ArgvFill { array: String, start: i64 },
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
-    /// End capturing, assign captured output to target
-    CaptureEnd { target: VarRef },
+    /// End capturing, assign captured output to target. `tainted` marks a
+    /// capture of *external* output (a multi-statement/pipeline `$(…)` body) —
+    /// its target is tainted, unlike a `$(user_fn)` capture (clean by DD#24).
+    CaptureEnd { target: VarRef, tainted: bool },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
@@ -506,6 +508,16 @@ pub enum SsaValue {
     /// Carries the command name and arguments as expressions.
     CmdSubst {
         argv: Vec<SsaValue>,
+        redirects: Vec<crate::ir::Redirect>,
+    },
+    /// A **multi-statement / pipeline** command substitution body
+    /// (`$(x=1; echo $x)`, `$(a | b)`). A transform-only intermediate: it is
+    /// lifted out of value position into a `capture_body_into` temp by
+    /// `lift_int_func_calls` (exactly like `IntFuncCall`), so it must never
+    /// reach codegen (ICE if it does). The body captures external output, so
+    /// the lifted temp is tainted.
+    CmdSubstBody {
+        body: Vec<crate::ir::Statement>,
         redirects: Vec<crate::ir::Redirect>,
     },
     /// Concatenation of multiple values (from double-quoted strings

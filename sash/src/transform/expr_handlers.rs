@@ -6,6 +6,21 @@ use crate::ssa::*;
 
 pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> SsaValue {
     let Some((stmt, name_opt, c)) = single_command_subst(expr) else {
+        // Multi-statement / pipeline body (`$(x=1; echo $x)`, `$(a | b)`):
+        // carry the body as a `CmdSubstBody` to be lifted into a capture temp
+        // by `lift_int_func_calls` (like `IntFuncCall`). Was a silent `$(...)`
+        // placeholder at runtime.
+        if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
+            let body: Vec<Statement> = stmts
+                .iter()
+                .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
+                .cloned()
+                .collect();
+            return SsaValue::CmdSubstBody {
+                body,
+                redirects: vec![],
+            };
+        }
         return SsaValue::Expr(expr_to_string(expr));
     };
     if let Some(name) = name_opt {

@@ -1109,10 +1109,103 @@ pub(super) fn capture_func_into(
     let target = state.define(target_name);
     ssa.block_mut(restore_block)
         .insts
-        .push(SsaInst::CaptureEnd { target });
+        .push(SsaInst::CaptureEnd {
+            target,
+            tainted: false,
+        });
 
     restore_positionals(&saved, saved_argc, &saved_locals, state, ssa, restore_block);
     Some(restore_block)
+}
+
+/// Capture a **multi-statement / pipeline** `$(…)` body's stdout into
+/// `target_name`. Mirrors `capture_func_into` but for a raw statement list
+/// (no positional/func-arg setup — a cmdsub inherits the caller's positionals).
+/// `CaptureEnd` is marked `tainted` (external output). Returns the block to
+/// continue lowering from. Variable-assignment isolation (subshell semantics)
+/// is handled by save/restore of the vars the body assigns.
+pub(super) fn capture_body_into(
+    target_name: &str,
+    body: &[Statement],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> BlockId {
+    ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
+
+    // Subshell isolation: snapshot every var the body assigns, restore after.
+    let assigned = collect_assigned_vars(body);
+    let saved_vars = save_locals("bodycap", &assigned, state, ssa, block);
+
+    let call_block = ssa.new_block("cap_body");
+    ssa.block_mut(block).terminator = Terminator::Goto(call_block);
+    let restore_block = ssa.new_block("capbody_ret");
+
+    let saved_return_target = state.return_target;
+    state.return_target = Some(restore_block);
+    let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.return_target = saved_return_target;
+    ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
+
+    let target = state.define(target_name);
+    ssa.block_mut(restore_block)
+        .insts
+        .push(SsaInst::CaptureEnd {
+            target,
+            // Match the CST decision exactly (else the SSA-taint backstop ICEs): the
+            // capture is tainted iff the body runs an external / getenv / arg / argv.
+            tainted: crate::validate::cmdsub_is_taint_source(body),
+        });
+
+    restore_locals(&saved_vars, state, ssa, restore_block);
+    restore_block
+}
+
+/// Collect every variable a statement sequence assigns (plain `x=…`,
+/// `int x=…`/`local x=…` declarations) — recursively through nested bodies.
+/// Used to snapshot+restore for cmdsub subshell isolation.
+fn collect_assigned_vars(stmts: &[Statement]) -> Vec<String> {
+    let mut vars = Vec::new();
+    collect_assigned_into(stmts, &mut vars);
+    vars
+}
+
+fn collect_assigned_into(stmts: &[Statement], vars: &mut Vec<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Assignment(a) => push_unique(vars, &a.name),
+            StmtKind::Declaration(d) => d
+                .assignments
+                .iter()
+                .for_each(|a| push_unique(vars, &a.name)),
+            _ => {}
+        }
+        stmt.child_bodies()
+            .iter()
+            .for_each(|b| collect_assigned_into(b, vars));
+    }
+}
+
+fn push_unique(vars: &mut Vec<String>, name: &str) {
+    if !vars.iter().any(|v| v == name) {
+        vars.push(name.to_string());
+    }
+}
+
+/// Restore saved vars (from `save_locals`) to their pre-capture versions.
+fn restore_locals(
+    saved: &[(String, VarRef)],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) {
+    for (name, save_ref) in saved {
+        let target = state.define(name);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target,
+            value: SsaValue::Var(save_ref.clone()),
+        });
+    }
 }
 
 /// Snapshot the current `$1..$9` and `$#` versions so they can be

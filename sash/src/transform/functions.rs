@@ -38,6 +38,14 @@ pub(super) fn lift_int_func_calls(
                 None => SsaValue::FuncCall(name),
             }
         }
+        SsaValue::CmdSubstBody { body, .. } => {
+            // A multi-statement/pipeline `$(…)` body: capture its stdout into a
+            // temp (fresh name from the block count), then use the temp. The
+            // capture is tainted (external output).
+            let temp = format!("__bodycap_{}", ssa.blocks.len());
+            *block = super::stmt_handlers::capture_body_into(&temp, &body, state, ssa, *block);
+            SsaValue::Var(state.lookup(&temp))
+        }
         SsaValue::ArithBinOp { left, op, right } => {
             let l = lift_int_func_calls(*left, ssa, state, block);
             let r = lift_int_func_calls(*right, ssa, state, block);

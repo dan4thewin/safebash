@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=21
+plan=27
 echo "1..$plan" >&3
 
 set +e
@@ -31,6 +31,41 @@ if in_modes native; then
 else
     skip_chk 14.2c
 fi
+
+# 14.3 multi-statement / pipeline command substitution (DG 2026-08-19: implement
+#      — run the body, capture stdout). Capture-into-var is native-only (the C
+#      CaptureStart/End capture and the Janet cmdsub are gaps, like $(f)); the
+#      taint rejects are compile-time (all modes).
+# 14.3a a clean multi-statement body captures its full stdout
+if in_modes native; then
+    run_sash 'x=$(echo a; echo b); echo "[$x]"'
+    [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
+else
+    skip_chk 14.3a
+fi
+# 14.3b subshell isolation — an assignment inside the body does NOT leak
+if in_modes native; then
+    run_sash 'x=outer; y=$(x=inner; echo $x); echo "y=$y x=$x"'
+    [[ $rc = 0 && $out = "y=inner x=outer" && -z $err ]]; chk 14.3b
+else
+    skip_chk 14.3b
+fi
+# 14.3c a pipeline body with an external stage captures TAINTED output — using
+#       it without a bless is SB5020 (compile-time, all modes). Closes the
+#       silent `$(...)` placeholder bug.
+run_sash 'echo $(echo hi | tr h H)'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3c
+# 14.3d blessed, the pipeline capture is usable (native)
+if in_modes native; then
+    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
+    [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk 14.3d
+else
+    skip_chk 14.3d
+fi
+# 14.3e the `$(- cmd)` suppression wrapper no longer hides an external from the
+#       taint scan (a closed hole) — its capture is tainted, needs bless
+run_sash 'x=$(- /bin/echo hi); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3e
 
 # 67.4 flat backtick `cmd` is sugar for $(cmd) (DD#67)
 run_sash 'x=`echo hi`; echo $x'

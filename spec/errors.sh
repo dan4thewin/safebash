@@ -100,8 +100,11 @@ run_sash 'x=$(/bin/false)'
 [[ $rc != 0 && -z $err ]] \
   && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.8
 
-# 55.9 x=$(- cmd) captures output, discards exit
-run_sash 'x=$(- /bin/echo hello); echo $x'
+# 55.9 x=$(- cmd) captures output (discards exit). The output is external →
+# tainted, so it must be blessed before use. (Was a pre-existing taint hole:
+# the `-` suppression wrapper hid the external from the first-stmt-only taint
+# scan — closed 2026-08-19 by the multi-statement-cmdsub taint fix.)
+run_sash 'x=$(- /bin/echo hello); bless x [[ -n $x ]]; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 55.9
 
 # 55.10 pipefail always on

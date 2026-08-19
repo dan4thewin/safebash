@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=85
+plan=89
 echo "1..$plan" >&3
 
 set +e
@@ -449,6 +449,31 @@ fi
 # np.7 a clean copy chain is unaffected
 run_sash 'a=5; b=$a; c=$b; echo $c'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk np.7
+
+# ── Multi-statement / pipeline command substitution taint (DG 2026-08-19). The
+# whole body is scanned for externals — a pipeline/multi-stmt body that runs an
+# external captures TAINTED output (was a hole: only stmts.first() was checked,
+# so `$(a | b)` / `$(x=1; cat f)` bypassed the scan). Compile-time, all modes. ──
+# mcs.1 pipeline body with an external stage → tainted use rejected
+run_sash 'x=$(cat /etc/hostname | tr a b); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk mcs.1
+# mcs.2 multi-statement body running an external → tainted
+run_sash 'echo $(y=1; cat /etc/hostname)'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk mcs.2
+# mcs.3 a purely-clean body (builtins only) is NOT tainted — capture is usable
+if in_modes native; then
+    run_sash 'x=$(echo a; echo b); echo "[$x]"'
+    [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk mcs.3
+else
+    skip_chk mcs.3
+fi
+# mcs.4 blessing the tainted pipeline capture makes it usable (native)
+if in_modes native; then
+    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
+    [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
+else
+    skip_chk mcs.4
+fi
 
 set -e
 tally

@@ -150,12 +150,18 @@ fn classify_inst_def(
                 taint.insert(var_key(tg), t);
             }
         }
-        SsaInst::CaptureEnd { target } => {
-            // Optimistic: assume capture is of a user-defined function
-            // (clean by DD#24). The CST pass is the authority — if a
-            // CaptureEnd truly captures external output it should already
-            // have been rejected upstream.
-            taint.insert(var_key(target), Taint::Clean);
+        SsaInst::CaptureEnd { target, tainted } => {
+            // A `$(user_fn)` capture is optimistically Clean (DD#24); a
+            // multi-statement/pipeline `$(…)` body captures external output
+            // and is Tainted. The upstream CST taint pass
+            // (`cmdsub_is_taint_source`) is the authoritative gate; this keeps
+            // the SSA taint view correct (defense-in-depth).
+            let t = if *tainted {
+                Taint::Tainted
+            } else {
+                Taint::Clean
+            };
+            taint.insert(var_key(target), t);
         }
 
         // Instructions that don't define a VarRef
@@ -319,8 +325,9 @@ fn value_is_tainted(
         | SsaValue::TableKey { array, .. }
         | SsaValue::ArraySplat { array, .. } => taint_of_name(taint, array),
 
-        // Always-tainted: program argv is external input by construction.
-        SsaValue::ArgvIndex(_) => Taint::Tainted,
+        // Always-tainted: program argv is external input by construction; a
+        // multi-statement/pipeline `$(…)` body captures external output.
+        SsaValue::ArgvIndex(_) | SsaValue::CmdSubstBody { .. } => Taint::Tainted,
 
         // Var-rooted: taint inherited from the named variable's status.
         SsaValue::Var(vref)

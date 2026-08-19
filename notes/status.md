@@ -1,25 +1,19 @@
-## ════════ STATUS (2026-08-19, cont.) — 3 DG decisions tackled (C=LINENO, B=compound-cond, A=cmdsub pending) ════════
+## ════════ STATUS (2026-08-19, cont.) — all 3 DG decisions DONE (A/B/C) ════════
 
-DG: "let's tackle the decisions." Resolved 4 open decision tasks (one was
-already decided). Progress:
+DG: "let's tackle the decisions." All three implemented + pushed:
 
-- **C — $LINENO: REJECT, no magic vars** (committed fe986b6). Dropped the
-  parse special-case + typo-check carve-out; `$LINENO`/`${LINENO}` now reject
-  as undefined vars (SB5031). No REJECTED_VARS entry (DG: "shouldn't need
-  special handling"). Preprocessor guidance in SUBSET.md. Filed a decoupled
-  pre-existing bug: braced `${RANDOM}`/`${HOME}` bypass SB5017/5018
-  (bug-braced-rejected-var-bypass, P2).
-- **B — compound-condition catch** (this commit). `if a && b`/`a || b`
-  operands are caught (was: right operand aborted). `if a; b` = `a; if b`
-  (a aborts). if-body final command aborts. Coupled `||` $?-reset fix.
-  native+c; janet AST-condition gap noted (cf-backend-gaps). DD#55 addendum,
-  journal 153. spec brace.sh bc.a6b-a9/e1/e2 + errors.sh cc.1-4, +14, 0 regr.
-- **A — multi-statement/pipeline `$(…)`: IMPLEMENT** (DG decided; NOT yet
-  built). Run the full body/pipeline in the forked child, capture stdout;
-  bundle both multi-statement and pipeline bodies. Next up.
-
-converter-positional-use-needs-bless was already decided (option 1, DG
-2026-07-08) — it's T6 convert *implementation*, not a decision.
+- **A — multi-statement/pipeline `$(…)`: IMPLEMENTED** (this commit). `$(x=1;
+  echo $x)` / `$(a | b)` were a silent `$(...)` placeholder; now capture
+  correctly. New `SsaValue::CmdSubstBody` lifted via `lift_int_func_calls` →
+  `capture_body_into` (reuses `CaptureStart/End` — no new codegen); subshell
+  isolation via save/restore of assigned vars. **Closed a taint hole**: the
+  taint-source scans inspected only `stmts.first()`, so pipeline/multi-stmt
+  external output (and `$(- external)`) flowed as clean, bypassing bless —
+  now recursive over all stmts/stages + a matching `CaptureEnd{tainted}` flag.
+  native (c/janet capture is a pre-existing gap); taint rejects all modes.
+  spec commands.sh 14.3*, taint.sh mcs.*, errors.sh 55.9. +17, 0 regr. Jrnl 154.
+- **B — compound-condition catch** (fff66b4): see below.
+- **C — $LINENO reject** (fe986b6): see below.
 
 
 

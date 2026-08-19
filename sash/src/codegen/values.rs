@@ -57,6 +57,9 @@ pub(super) fn lower_value(
                 name
             );
         }
+        SsaValue::CmdSubstBody { .. } => {
+            panic!("ICE: CmdSubstBody should have been lifted during transform");
+        }
         SsaValue::ArraySplat { array, .. } => {
             panic!(
                 "ICE: ArraySplat (@{}) must be expanded by the argv builder, \
