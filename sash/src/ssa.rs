@@ -556,18 +556,21 @@ pub enum SsaValue {
         subject: Box<SsaValue>,
         upper: bool,
     },
-    /// DD#65: `${var:-DEFAULT}` — `var` if set/non-empty, else the DEFAULT.
+    /// DD#65: `${var:-DEFAULT}` — `source` if set/non-empty, else the DEFAULT.
     /// The default is a full interpolating value (unlike the literal-only
     /// `ParamExpansion` operand), so `${foo:-$bar}` interpolates `bar`.
+    /// `source` is a plain `Var` for a scalar `${s:-…}`, or a `Subscript` for
+    /// an array/map cell `${a[i]:-…}` (DG: a cell behaves like a variable).
     DefaultValue {
-        var: VarRef,
+        source: Box<SsaValue>,
         default: Box<SsaValue>,
     },
-    /// DD#77: `${var:?MESSAGE}` — `var` if set/non-empty, else abort
+    /// DD#77: `${var:?MESSAGE}` — `source` if set/non-empty, else abort
     /// (`<prog>: MESSAGE` on stderr, exit 1). The `:-`/`:?` abort/default pair;
-    /// the message interpolates like the `:-` default.
+    /// the message interpolates like the `:-` default. `source` is a `Var`
+    /// (scalar) or `Subscript` (cell), as for `DefaultValue`.
     RequireValue {
-        var: VarRef,
+        source: Box<SsaValue>,
         message: Box<SsaValue>,
     },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
@@ -665,8 +668,8 @@ impl SsaValue {
             } => vec![subject, pattern, replacement],
             SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
             SsaValue::CaseConvert { subject, .. } => vec![subject],
-            SsaValue::DefaultValue { default, .. } => vec![default],
-            SsaValue::RequireValue { message, .. } => vec![message],
+            SsaValue::DefaultValue { source, default } => vec![source, default],
+            SsaValue::RequireValue { source, message } => vec![source, message],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

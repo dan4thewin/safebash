@@ -1,3 +1,29 @@
+## ════════ STATUS (2026-08-19) — string-array/map cell dispositions (DD#77 cells) ════════
+
+DG: "re: string-array cell; I would expect the same behavior as from a string
+variable." Then "implement it properly." A cell `${a[i]:OP}` now behaves exactly
+like a scalar `${s:OP}`, word + arith.
+
+- **`${a[i]:-N}` / `${a[i]:?msg}` work** (array/map, literal or `$i` index) —
+  DD#77 disposition on the cell's value. Closed a **silent-miscompile bug**:
+  `try_subscript` dropped the operator after `]`, so `${a[i]:-N}` silently atoi'd
+  and `${a[i]:?msg}` never aborted.
+- **Bare string cell `$(( a[i] ))` → SB4030** (D1 extends to cells); bare string
+  index `a[s]` too. Int cells (DD#76) unaffected.
+- Operator parity: `#`/`/`/`@X` → SB4034/SB4015; substring/sed on a cell →
+  explicit **SB4039** (staged, follow-up — never a silent drop). DD#78 default
+  discipline (taint SB5020 / non-random SB5035) rides for free.
+- Representation: `ParameterExpansion.index` + SSA disposition nodes generalized
+  `var: VarRef` → `source: Box<SsaValue>` (Var | Subscript). janet word-context
+  works; janet **arith** cell disposition = pre-existing `janet-arith-subscript-
+  read` gap.
+
+native+c full parity. spec arithmetic.sh scx.1-16 (plan 133→143). 3-mode sweep
+**0 regressions, +42 passing**. fmt+clippy clean; complexity gate clear.
+Follow-ups: `arith-bare-subscript-followups` gate 4 (substring/sed cell parity);
+`janet-arith-subscript-read` (widen scx.12-14). DD#77 "Implemented — string-
+array/map cells"; journal 151. **NOT committed at write time; commit + push next.**
+
 ## ════════ STATUS (2026-08-18, cont.) — arith subscripts model B Stage 2 + B2 (DD#79) ════════
 
 DG: `(( a[i]++ ))` — shouldn't this work? It's the ratified-but-unbuilt **Stage

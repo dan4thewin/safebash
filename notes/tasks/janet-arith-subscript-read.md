@@ -46,3 +46,12 @@ backend-parity effort; fold into `janet-rt-primitive-library` (a faithful
 
 spec arithmetic.sh asx.1-4, asx.6 are guarded `in_modes native,c`; asx.5
 (condition) runs all modes. Widen once janet's value-arith reads the subscript.
+
+### Extended (2026-08-19): cell dispositions in arith
+
+`$(( ${a[i]:-0} + 1 ))` / `$(( ${a[i]:?msg} ))` (DD#77 string-array-cell
+disposition) also read 0 on janet's arith VALUE path — same gap. Word-context
+`${a[i]:-N}`/`${a[i]:?msg}` work on janet (emit_pe_default/emit_pe_require read
+the cell via `emit_expr_subscript`). spec arithmetic.sh scx.12-14 are guarded
+`in_modes native,c`; scx.7-11 (word) run all modes. Widen scx.12-14 once
+janet's value-arith reads the subscript.

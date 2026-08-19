@@ -2431,6 +2431,18 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             ),
         ));
     }
+    if op == "cell_string_op" {
+        return Some(parse_error(
+            span,
+            "SB4039",
+            format!(
+                "substring / `:s/…` on an array cell (`${{{}[…]:…}}`) isn't \
+                 supported yet — copy the cell into a scalar first, then apply \
+                 the operator",
+                pe.name
+            ),
+        ));
+    }
     if op.starts_with('@') && op.len() == 2 {
         return Some(parse_error(
             span,

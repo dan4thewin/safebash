@@ -777,8 +777,8 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             emit_case_conversion_c(e, if *upper { "^^" } else { ",," }, &s_ptr, &s_len)
         }
         // DD#65: ${var:-DEFAULT} — var if set, else the interpolated default.
-        SsaValue::DefaultValue { var, default } => {
-            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+        SsaValue::DefaultValue { source, default } => {
+            let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let (d_ptr, d_len) = lower_value_as_str(e, default, types);
             emit_default_value_expr_c(e, &s_ptr, &s_len, &d_ptr, &d_len)
         }
@@ -799,7 +799,9 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         SsaValue::AssocArray(pairs) => emit_assoc_array(e, pairs, types),
         // DD#77: `${var:?MESSAGE}` — abort (`<prog>: MESSAGE`, exit 1) if the
         // var is unset/empty, else the value.
-        SsaValue::RequireValue { var, message } => emit_require_value_c(e, var, message, types),
+        SsaValue::RequireValue { source, message } => {
+            emit_require_value_c(e, source, message, types)
+        }
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
         SsaValue::ArgvIndex(_) => emit_c_argv_value(e, value),
         // Phase 5: subscript read: ${arr[i]} or ${map[k]}.
@@ -916,13 +918,13 @@ fn lower_disposition_as_int_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) 
     match value {
         // DD#76: an int cell in int context is the inner i64 directly.
         SsaValue::IntCell(inner) => Some(lower_value_as_int(e, inner, types)),
-        SsaValue::DefaultValue { var, default } => {
-            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+        SsaValue::DefaultValue { source, default } => {
+            let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let d = lower_value_as_int(e, default, types);
             Some(format!("sash_atoi_or({}, {}, {})", s_ptr, s_len, d))
         }
-        SsaValue::RequireValue { var, message } => {
-            let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+        SsaValue::RequireValue { source, message } => {
+            let (s_ptr, s_len) = disposition_source_c(e, source, types);
             let (m_ptr, m_len) = lower_value_as_str(e, message, types);
             Some(format!(
                 "sash_atoi_or_abort({}, {}, {}, {})",
@@ -1676,8 +1678,13 @@ fn load_var_or_empty_c(var: &VarRef, types: &VarTypes) -> CStr {
 
 /// DD#77: `${var:?MESSAGE}` — abort via `sash_require_value` (`<prog>: MESSAGE`,
 /// exit 1) when the var is unset/empty; otherwise the var's `(ptr, len)`.
-fn emit_require_value_c(e: &mut Emit, var: &VarRef, message: &SsaValue, types: &VarTypes) -> CStr {
-    let (s_ptr, s_len) = load_var_or_empty_c(var, types);
+fn emit_require_value_c(
+    e: &mut Emit,
+    source: &SsaValue,
+    message: &SsaValue,
+    types: &VarTypes,
+) -> CStr {
+    let (s_ptr, s_len) = disposition_source_c(e, source, types);
     let (m_ptr, m_len) = lower_value_as_str(e, message, types);
     writeln!(
         e.out,
@@ -1686,6 +1693,16 @@ fn emit_require_value_c(e: &mut Emit, var: &VarRef, message: &SsaValue, types: &
     )
     .unwrap();
     (s_ptr, s_len)
+}
+
+/// The `(ptr, len)` C strings for a `${…:OP}` disposition subject: a plain var
+/// (with the unset→empty fallback) for `${s:OP}`, or the general value lowering
+/// for a cell read `${a[i]:OP}` (DG: a cell behaves like a string variable).
+fn disposition_source_c(e: &mut Emit, source: &SsaValue, types: &VarTypes) -> CStr {
+    match source {
+        SsaValue::Var(v) => load_var_or_empty_c(v, types),
+        other => lower_value_as_str(e, other, types),
+    }
 }
 
 /// DD#65: `${var:-DEFAULT}` where DEFAULT is a full interpolating value already

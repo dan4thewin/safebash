@@ -53,6 +53,7 @@ impl Expr {
                 name: name.into(),
                 operator: operator.map(|s| s.to_string()),
                 operand,
+                index: None,
             }),
             span,
         }
@@ -655,6 +656,11 @@ pub struct ParameterExpansion {
     pub name: String,
     pub operator: Option<String>, // :-, :=, :+, %, %%, #, ##, etc.
     pub operand: Option<Box<Expr>>,
+    /// `${a[i]:OP}` — an array/map cell subject. `None` for a plain scalar
+    /// `${name:OP}`; `Some(index)` when the disposition applies to a cell
+    /// (DG: a string cell behaves like a string variable). Only the `:-`/`:?`
+    /// dispositions carry a cell subject; other operators reject upstream.
+    pub index: Option<Box<Expr>>,
 }
 
 /// Test expression inside [[ ]] conditionals.

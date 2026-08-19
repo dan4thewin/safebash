@@ -157,9 +157,11 @@ fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
 }
 
 fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
-    let var = state.lookup(&pe.name);
+    // The disposition subject is a plain var for a scalar `${s:OP}`, or the cell
+    // read for `${a[i]:OP}` (DG: a cell behaves like a string variable).
+    let source = pe_source_value(pe, state);
     let Some(op) = pe.operator.as_ref() else {
-        return SsaValue::Var(var);
+        return source;
     };
     // DD#65: `${var:-DEFAULT}` — the default is a full interpolating value
     // (a `"…"` body), so carry it as an `SsaValue`, not a stringified operand.
@@ -170,7 +172,7 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
             .map(|e| expr_to_value(e, state))
             .unwrap_or_else(|| SsaValue::Literal(String::new()));
         return SsaValue::DefaultValue {
-            var,
+            source: Box::new(source),
             default: Box::new(default),
         };
     }
@@ -184,10 +186,14 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
             .map(|e| expr_to_value(e, state))
             .unwrap_or_else(|| SsaValue::Literal(String::new()));
         return SsaValue::RequireValue {
-            var,
+            source: Box::new(source),
             message: Box::new(message),
         };
     }
+    // Remaining operators (strlen/arrlen/substring + the pruned/rejected
+    // families) are scalar-only; they never carry a cell index (a cell op that
+    // is not `:-`/`:?` rejects at validation before reaching codegen).
+    let var = state.lookup(&pe.name);
     let operand = pe
         .operand
         .as_ref()
@@ -205,6 +211,15 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
         var,
         operator,
         operand,
+    }
+}
+
+/// The subject of a `${…:OP}` disposition: a scalar var read, or the cell read
+/// when the expansion carries an array/map index (`${a[i]:OP}`).
+fn pe_source_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
+    match &pe.index {
+        Some(index) => subscript_to_value(&pe.name, index, state),
+        None => SsaValue::Var(state.lookup(&pe.name)),
     }
 }
 

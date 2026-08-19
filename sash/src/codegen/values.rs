@@ -135,9 +135,9 @@ pub(super) fn lower_value(
                 op, s_ptr, s_len, builder, module, externs,
             )
         }
-        SsaValue::DefaultValue { var, default } => {
+        SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = lower_value(
-                &SsaValue::Var(var.clone()),
+                source,
                 builder,
                 module,
                 vars,
@@ -160,9 +160,9 @@ pub(super) fn lower_value(
                 s_ptr, s_len, d_ptr, d_len, builder, module, externs,
             )
         }
-        SsaValue::RequireValue { var, message } => {
+        SsaValue::RequireValue { source, message } => {
             let (s_ptr, s_len) = lower_value(
-                &SsaValue::Var(var.clone()),
+                source,
                 builder,
                 module,
                 vars,
@@ -951,9 +951,9 @@ fn lower_disposition_as_int(
             externs,
             exit_status_var,
         )),
-        SsaValue::DefaultValue { var, default } => {
+        SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = lower_value(
-                &SsaValue::Var(var.clone()),
+                source,
                 builder,
                 module,
                 vars,
@@ -976,9 +976,9 @@ fn lower_disposition_as_int(
             let call = builder.ins().call(atoi_or, &[s_ptr, s_len, d_int]);
             Some(builder.inst_results(call)[0])
         }
-        SsaValue::RequireValue { var, message } => {
+        SsaValue::RequireValue { source, message } => {
             let (s_ptr, s_len) = lower_value(
-                &SsaValue::Var(var.clone()),
+                source,
                 builder,
                 module,
                 vars,
@@ -1273,10 +1273,8 @@ pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::H
         SsaValue::ArithExpr { var, .. } if var.version == 0 => {
             maybe_insert_positional(&var.name, refs)
         }
-        SsaValue::DefaultValue { var, default } => {
-            if var.version == 0 {
-                maybe_insert_positional(&var.name, refs);
-            }
+        SsaValue::DefaultValue { source, default } => {
+            scan_value_for_vars(source, refs);
             scan_value_for_vars(default, refs);
         }
         other => scan_composite_children(other, refs),

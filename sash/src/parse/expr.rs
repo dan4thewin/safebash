@@ -275,6 +275,7 @@ fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
             name: name.to_string(),
             operator: Some(op.to_string()),
             operand,
+            index: None,
         }),
         span,
     })
@@ -682,13 +683,62 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
         return Some(splat_subscript_expr(name, after_bracket, span));
     }
 
-    Some(Expr {
-        kind: ExprKind::Subscript {
-            name: name.to_string(),
-            index: Box::new(subscript_index_expr(idx, span)),
-        },
-        span,
-    })
+    let index = Box::new(subscript_index_expr(idx, span));
+
+    if after_bracket.is_empty() {
+        return Some(Expr {
+            kind: ExprKind::Subscript {
+                name: name.to_string(),
+                index,
+            },
+            span,
+        });
+    }
+
+    // `${a[i]OP}` — a trailing operator applies to the *cell* value. DG: a
+    // string cell behaves like a string variable, so route the operator through
+    // the same scalar parsers and attach the index. Only the `:-`/`:?`
+    // dispositions carry a cell subject to codegen; the pruned families
+    // (`#`/`%`/`/`/`@X`) reject on their operator string exactly as for a scalar;
+    // the string-producing ops (substring `:o:l`, sed `:s/`) are not yet wired
+    // for a cell and reject explicitly (SB4030) rather than silently drop.
+    Some(subscript_operator_expr(name, index, after_bracket, span))
+}
+
+/// Build the `${a[i]OP}` expansion. `:-`/`:?` attach the cell index to the
+/// scalar `ParameterExpansion` (so codegen reads the cell, not a plain var); a
+/// `:`-led string op (substring/sed) that has no cell lowering yet is flagged
+/// `cell_string_op` (rejected SB4030); every other operator parses exactly as
+/// the scalar form so `#`/`%`/`/`/`@X` reject identically.
+fn subscript_operator_expr(name: &str, index: Box<Expr>, after: &str, span: Span) -> Expr {
+    if after.starts_with(":-") || after.starts_with(":?") {
+        let mut expr = parse_standard_operator(after, name, span)
+            .unwrap_or_else(|| Expr::param(name, None, None, span));
+        attach_cell_index(&mut expr, index);
+        return expr;
+    }
+    if after.starts_with(':') {
+        // substring (`:o:l`) or sed (`:s/…/`) on a cell — no cell lowering yet.
+        let mut expr = Expr::param(name, Some("cell_string_op"), None, span);
+        attach_cell_index(&mut expr, index);
+        return expr;
+    }
+    // `#`/`##`/`%`/`%%`/`/`-family/`@X`: parse as the scalar operator so the
+    // same reject fires; the index rides along but the operator rejects first.
+    let mut expr = try_at_transform(after, name, span)
+        .or_else(|| parse_standard_operator(after, name, span))
+        .unwrap_or_else(|| Expr::param(name, None, None, span));
+    attach_cell_index(&mut expr, index);
+    expr
+}
+
+/// Attach a cell subscript to a freshly-parsed `${name OP}` expansion, turning
+/// it into `${name[index] OP}`. A non-`ParameterExpansion` (never produced by
+/// the callers here) is left unchanged.
+fn attach_cell_index(expr: &mut Expr, index: Box<Expr>) {
+    if let ExprKind::ParameterExpansion(pe) = &mut expr.kind {
+        pe.index = Some(index);
+    }
 }
 
 /// The `${a[@]}` / `${a[*]}` splat branch. A trailing operator (e.g.
@@ -723,6 +773,7 @@ fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
                 kind: ExprKind::Literal(rest.to_string()),
                 span,
             })),
+            index: None,
         }),
         span,
     })
@@ -798,6 +849,7 @@ fn try_substring_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
                 kind: ExprKind::Literal(cleaned),
                 span,
             })),
+            index: None,
         }),
         span,
     })
@@ -842,6 +894,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
                         span,
                     })
                 }),
+                index: None,
             }),
             span,
         });
@@ -862,6 +915,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
             name: name.to_string(),
             operator: Some(op_str),
             operand,
+            index: None,
         }),
         span,
     })
@@ -908,6 +962,7 @@ fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr>
             name: name.to_string(),
             operator: Some(format!("arrvals_{}", op_str)),
             operand,
+            index: None,
         }),
         span,
     })

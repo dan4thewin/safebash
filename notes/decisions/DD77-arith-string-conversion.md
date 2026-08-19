@@ -161,3 +161,35 @@ guarded, `janet-arith-subscript-read`). DD#77 complete.
 
 See notes/tasks/dd77-arith-string-conversion.md.
 
+
+## Implemented — string-array/map cells (2026-08-19, DG)
+
+DD#77's D1 rule already covers "a string-collection element" — this session
+makes the cell disposition real. **DG: "re: string-array cell; I would expect
+the same behavior as from a string variable."** So a cell `${a[i]:OP}` behaves
+exactly like a scalar `${s:OP}`, in both word and arith contexts.
+
+- **Disposition on a cell now works.** `${a[i]:-N}` / `${a[i]:?msg}` (array or
+  map, literal or dynamic index) apply the DD#77 semantics to the *cell's*
+  value: arith strict-int (`13`→13, `hi`→default/abort), word unset/empty. This
+  closes a **silent-miscompile bug** — `parse/expr.rs::try_subscript` dropped
+  the operator after `]`, so `${a[i]:-N}` silently read the raw cell (atoi) and
+  `${a[i]:?msg}` never aborted.
+- **Bare string cell → SB4030.** `$(( a[i] ))` / `$(( ${a[i]} ))` on a *string*
+  array (and a bare string scalar used as an int index `a[s]`) is the same
+  string→int crossing as a bare scalar string → D1 error, needing a
+  disposition. Int-array cells (DD#76) read the raw i64, unaffected.
+- **Operator parity.** The pruned families reject identically to a scalar:
+  `${a[i]#x}`/`${a[i]/x/y}` → SB4034, `${a[i]@U}` → SB4015. Substring
+  (`${a[i]:o:l}`) and sed (`${a[i]:s/…/}`) have no cell-source lowering yet —
+  they reject **explicitly** with **SB4039** (never a silent drop) and are a
+  filed follow-up (`arith-bare-subscript-followups`).
+- **DD#78 default discipline rides for free.** A cell disposition's default is
+  still taint-checked (`${a[9]:-$(getenv X)}` → SB5020) and non-`random`
+  (`${a[9]:-$(random)}` → SB5035).
+
+Representation: `ir::ParameterExpansion` gained an optional `index`; the SSA
+disposition nodes generalized from `var: VarRef` to `source: Box<SsaValue>`
+(a `Var` for a scalar, a `Subscript` for a cell). native + c reach full parity;
+janet word-context works, janet **arith**-context cell disposition is the
+pre-existing `janet-arith-subscript-read` gap. Journal 151.

@@ -2162,6 +2162,15 @@ fn emit_pe_default(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
         .as_ref()
         .map(|o| emit_expr_inline(o, ctx))
         .unwrap_or_else(|| "\"\"".to_string());
+    // `${a[i]:-DEF}` — the subject is the cell read (nil when out of range /
+    // absent key), so coerce with `(or … "")` before the emptiness test.
+    if let Some(index) = &pe.index {
+        let cell = emit_expr_subscript(&pe.name, index, ctx);
+        return format!(
+            "(let [_c (or {} \"\")] (if (= (length _c) 0) {} _c))",
+            cell, default
+        );
+    }
     if ctx.is_declared(&pe.name) {
         format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
     } else {
@@ -2177,7 +2186,11 @@ fn emit_pe_require(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
         .as_ref()
         .map(|o| emit_expr_inline(o, ctx))
         .unwrap_or_else(|| "\"\"".to_string());
-    let var_ref = if ctx.is_declared(&pe.name) {
+    // `${a[i]:?msg}` — the subject is the cell read (nil handled by the
+    // `(nil? _v)` guard below).
+    let var_ref = if let Some(index) = &pe.index {
+        emit_expr_subscript(&pe.name, index, ctx)
+    } else if ctx.is_declared(&pe.name) {
         pe.name.clone()
     } else {
         format!("(or (os/getenv \"{}\") \"\")", pe.name)

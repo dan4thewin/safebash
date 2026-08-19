@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=127
+plan=143
 echo "1..$plan" >&3
 
 set +e
@@ -500,6 +500,74 @@ if in_modes native,c; then
 else
     skip_chk b2a.3
 fi
+
+# ── DD#77 D1 for string-array cells: a bare string cell / string index in arith
+# is the same string→int crossing as a bare string scalar → SB4030, needing a
+# disposition (`${a[i]:-N}` / `${a[i]:?msg}`). int-array cells (int) are fine.
+# The reject checks are compile-time (mode-independent); the disposition escape
+# hatch runs, so it's native,c (janet arith-value subscript gap). ──
+# scx.1 bare string-array cell operand → SB4030
+run_sash 'array a=(hi 13 21); int x=$(( a[0] + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk scx.1
+# scx.2 read-modify of a string cell (`a[0]++` reads it) → SB4030
+run_sash 'array a=(7 13 21); (( a[0]++ ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk scx.2
+# scx.3 a bare STRING scalar used as an int index → SB4030 (same crossing)
+run_sash 'int array a=(7 13 21); s=hi; int x=$(( a[s] ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk scx.3
+if in_modes native,c; then
+    # scx.4 escape hatch — extract the cell to a scalar, then dispose: default
+    # fires for a non-numeric cell
+    run_sash 'array a=(hi 13 21); v=$a[0]; int x=$(( ${v:-99} )); echo $x'
+    [[ $rc = 0 && $out = "99" && -z $err ]]; chk scx.4
+    # scx.5 extract-to-scalar: a numeric cell passes through
+    run_sash 'array a=(hi 13 21); v=$a[1]; int x=$(( ${v:-99} )); echo $x'
+    [[ $rc = 0 && $out = "13" && -z $err ]]; chk scx.5
+    # scx.6 extract-to-scalar with `:?` aborts on a non-numeric cell
+    run_sash 'array a=(hi 13 21); v=$a[0]; int x=$(( ${v:?nan} )); echo $x'
+    [[ $rc != 0 && -z $out ]]; chk scx.6
+else
+    skip_chk scx.4; skip_chk scx.5; skip_chk scx.6
+fi
+# ── Direct-form cell dispositions (DG: a string cell behaves like a string
+# variable). scx.7-11 WORD context, all modes; scx.12-14 ARITH context, the
+# DD#77 strict-int gate applies to the cell string (native,c — janet arith-value
+# subscript gap); scx.15-16 operator parity. ──
+# scx.7 `:-` returns the cell when set
+run_sash 'array a=(hi 13 21); echo ${a[0]:-DEF}'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk scx.7
+# scx.8 `:-` defaults on an out-of-range cell
+run_sash 'array a=(hi 13 21); echo ${a[9]:-DEF}'
+[[ $rc = 0 && $out = "DEF" && -z $err ]]; chk scx.8
+# scx.9 `:?` aborts on an out-of-range cell (runtime abort → rc≠0, no stdout)
+run_sash 'array a=(hi 13 21); echo ${a[9]:?boom}'
+[[ $rc != 0 && -z $out ]]; chk scx.9
+# scx.10 map cell `:-` hit
+run_sash 'map m=([k]=v); echo ${m[k]:-DEF}'
+[[ $rc = 0 && $out = "v" && -z $err ]]; chk scx.10
+# scx.11 map cell `:-` miss → default
+run_sash 'map m=([k]=v); echo ${m[x]:-DEF}'
+[[ $rc = 0 && $out = "DEF" && -z $err ]]; chk scx.11
+if in_modes native,c; then
+    # scx.12 arith: a numeric cell string passes the strict-int gate
+    run_sash 'array a=(hi 13 21); echo $(( ${a[1]:-0} + 1 ))'
+    [[ $rc = 0 && $out = "14" && -z $err ]]; chk scx.12
+    # scx.13 arith: a non-numeric cell string takes the `:-` default (0)
+    run_sash 'array a=(hi 13 21); echo $(( ${a[0]:-0} + 1 ))'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk scx.13
+    # scx.14 arith: a non-numeric cell string with `:?` aborts (strict-int)
+    run_sash 'array a=(hi 13 21); echo $(( ${a[0]:?nan} + 1 ))'
+    [[ $rc != 0 && -z $out ]]; chk scx.14
+else
+    skip_chk scx.12; skip_chk scx.13; skip_chk scx.14
+fi
+# scx.15 a pruned modifier on a cell rejects exactly like a scalar (SB4034)
+run_sash 'array a=(hi 13 21); echo ${a[0]#h}'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk scx.15
+# scx.16 substring/sed on a cell is not yet wired → explicit SB4039, never a
+# silent drop
+run_sash 'array a=(hi 13 21); echo ${a[0]:1:2}'
+[[ $rc != 0 && -z $out && $err == *SB4039* ]]; chk scx.16
 
 # ── DD#76 int-valued collections (`int array` / `int map`) ──
 # An int collection stores each element as an int cell (val_len double-duty);

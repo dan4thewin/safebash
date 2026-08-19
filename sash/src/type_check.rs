@@ -186,10 +186,11 @@ fn check_arith_indexed_map_assign(
     }
 }
 
-/// arith-subscript model B: a **bare** `m[k]` on an associative array in
-/// arithmetic is a type error — a map's string key is not expressible under
-/// arith rules (the index is evaluated as an int, missing the string key). Use
-/// `${m[k]}` to read and `m[k]=…` (statement form) to write.
+/// arith-subscript model B / DD#77: a **bare** subscript cell in arithmetic.
+/// A map cell (`m[k]`) is rejected — a string key isn't expressible under arith
+/// rules. A **string-array** cell (`a[i]` where `a`'s elements are strings) is
+/// rejected like a bare string scalar (DD#77 D1): the string→int crossing must
+/// carry a disposition. An **int-array** cell reads its raw i64 and is fine.
 fn check_arith_bare_map_subscript(
     a: &ArithExpr,
     span: Span,
@@ -199,8 +200,26 @@ fn check_arith_bare_map_subscript(
     for_each_arith_subscript(a, &mut |name| {
         if env.assoc_arrays.contains(name) {
             errors.push(bare_map_subscript_error(name, span));
+        } else if env.is_collection(name) && env.var_type(name) == VarType::String {
+            errors.push(bare_string_cell_error(name, span));
         }
     });
+}
+
+/// DD#77 D1 for a string-array cell: the same discipline as a bare string
+/// scalar — the cell value is a string, so its use as an arithmetic operand
+/// must carry a disposition. The `${a[i]}` read + `:-`/`:?` disposition already
+/// works, so this directs there.
+fn bare_string_cell_error(name: &str, span: Span) -> TypeError {
+    TypeError {
+        message: format!(
+            "bare string cell `{name}[…]` in arithmetic — `{name}` holds strings, so \
+             (like a bare string variable, DD#77) the string→int conversion must carry \
+             a disposition: `${{{name}[i]:-N}}` (default N if not an integer) or \
+             `${{{name}[i]:?msg}}` (abort if not an integer)."
+        ),
+        span,
+    }
 }
 
 fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
@@ -341,6 +360,16 @@ fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
             for e in exprs {
                 walk_arith_var_reads(e, f);
             }
+        }
+        // Descend into a bare subscript's *index* (and a subscript-assign's
+        // index/value): the index is itself an arithmetic operand, so a bare
+        // string used there (`a[s]`) is the same string→int crossing (DD#77 D1).
+        // The array *name* is handled by the bare-subscript cell check, not
+        // here.
+        ArithExpr::Subscript { index, .. } => walk_arith_var_reads(index, f),
+        ArithExpr::SubscriptAssign { index, value, .. } => {
+            walk_arith_var_reads(index, f);
+            walk_arith_var_reads(value, f);
         }
         // NOT descended: `FuncCall` args (e.g. `${#s}` = `len(s)` passes the
         // *name*, not an int operand — flagging it would be a false positive);

@@ -64,6 +64,7 @@ pub(super) fn lower_for_array(
             name: array_name.to_string(),
             operator: Some("arrlen".to_string()),
             operand: None,
+            index: None,
         }),
         span: Span::default(),
     };

@@ -82,5 +82,6 @@ name, and every subscript index / operand are checked against the in-scope set
 - DD#58 — arithmetic sexpr / nullary int-function calls.
 - DD#76 — int-valued collections (the int cell read/write raw i64).
 - DD#77 — arith string→int discipline (a bare scalar string in arith needs a
-  disposition; the string-array-cell analogue is a filed follow-up).
+  disposition; the string-array-cell analogue is now implemented — bare string
+  cell → SB4030, `${a[i]:-N}`/`${a[i]:?msg}` disposition parity with a scalar).
 - notes/tasks/arith-subscript-values.md — the two-stage implementation tracker.

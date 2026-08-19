@@ -287,17 +287,15 @@ fn taint_of_name(taint: &HashMap<String, Taint>, name: &str) -> Taint {
 }
 
 /// `${var:-default}` taint — tainted if the var or the default could be.
+/// `${…:-default}` yields either the source (a scalar var or a cell read) or
+/// the default, so it is tainted if either could be.
 fn default_value_taint(
-    var: &crate::ssa::VarRef,
+    source: &SsaValue,
     default: &SsaValue,
     taint: &HashMap<String, Taint>,
     user_functions: &std::collections::HashSet<String>,
 ) -> Taint {
-    if taint_of_var(taint, var) == Taint::Tainted {
-        Taint::Tainted
-    } else {
-        any_tainted([default], taint, user_functions)
-    }
+    any_tainted([source, default], taint, user_functions)
 }
 
 fn value_is_tainted(
@@ -325,12 +323,9 @@ fn value_is_tainted(
         SsaValue::ArgvIndex(_) => Taint::Tainted,
 
         // Var-rooted: taint inherited from the named variable's status.
-        // (`${var:?msg}` yields the var — the message only prints on the abort
-        // path, which exits — so it is var-rooted too.)
         SsaValue::Var(vref)
         | SsaValue::ArithExpr { var: vref, .. }
-        | SsaValue::ParamExpansion { var: vref, .. }
-        | SsaValue::RequireValue { var: vref, .. } => taint_of_var(taint, vref),
+        | SsaValue::ParamExpansion { var: vref, .. } => taint_of_var(taint, vref),
 
         // Any-tainted collections: taint if any subvalue is tainted.
         SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
@@ -349,13 +344,17 @@ fn value_is_tainted(
         | SsaValue::CaseConvert { .. }
         | SsaValue::Ternary { .. } => any_tainted(value.child_values(), taint, user_functions),
 
-        // DD#76: an int cell's taint is its wrapped value's taint.
-        SsaValue::IntCell(inner) => value_is_tainted(inner, taint, user_functions),
-
+        // Wrapped-value taint: an int cell's taint is its wrapped value's
+        // (DD#76), and `${…:?msg}` yields the source (the message only prints on
+        // the abort path, which exits), so its taint is exactly the source's —
+        // the source being a plain var (scalar) or a cell read (`${a[i]:?…}`).
+        SsaValue::IntCell(inner) | SsaValue::RequireValue { source: inner, .. } => {
+            value_is_tainted(inner, taint, user_functions)
+        }
         // DD#65: `${var:-default}` yields either the var or the default, so it
         // is tainted if either could be.
-        SsaValue::DefaultValue { var, default } => {
-            default_value_taint(var, default, taint, user_functions)
+        SsaValue::DefaultValue { source, default } => {
+            default_value_taint(source, default, taint, user_functions)
         }
 
         // Command substitution: the only variant whose taint
