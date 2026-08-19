@@ -54,7 +54,7 @@ Sources of taint (must ALL be tracked):
 Clean values (must NOT be taintable from outside):
 - String literals in source
 - Arithmetic on clean operands
-- Compiler-managed: `$?`, `$$`, `$#`, `$!`, `$LINENO`
+- Compiler-managed: `$?`, `$$`, `$#`, `$!`
 
 ### Phase 3: Lowering (faithful translation)
 

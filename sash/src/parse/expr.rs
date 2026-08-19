@@ -289,33 +289,27 @@ fn is_identifier(s: &str) -> bool {
 }
 
 /// `Tok::Dollar(name)` arm — checks for `$arr[i]` subscript syntax
-/// (DD#41), `$LINENO` compile-time line number (DD#24), or falls back
-/// to a simple variable expansion. Consumes the `$name` token (and
-/// the `[i]rest` word when subscript is recognised), and pushes one or
-/// two parts onto `parts`.
+/// (DD#41), then falls back to a simple variable expansion. Consumes
+/// the `$name` token (and the `[i]rest` word when subscript is
+/// recognised), and pushes one or two parts onto `parts`. `$LINENO`
+/// gets no special handling — it flows through as an ordinary
+/// expansion, so an unassigned `$LINENO` is rejected as an undefined
+/// variable like any other (no magic vars).
 fn parse_dollar_arm(
     scanner: &mut Scanner,
     name: String,
     span: Span,
-    start: usize,
+    _start: usize,
     parts: &mut Vec<Expr>,
 ) {
     scanner.next();
     if try_subscript_arm(scanner, &name, span, parts) {
         return;
     }
-    if name == "LINENO" {
-        let (line, _) = scanner.line_col(start);
-        parts.push(Expr {
-            kind: ExprKind::Literal(line.to_string()),
-            span,
-        });
-    } else {
-        parts.push(Expr {
-            kind: ExprKind::SimpleExpansion(name),
-            span,
-        });
-    }
+    parts.push(Expr {
+        kind: ExprKind::SimpleExpansion(name),
+        span,
+    });
 }
 
 /// Probe for `$arr[i]` / `$arr[@]` / `$arr[*]` subscript form. The

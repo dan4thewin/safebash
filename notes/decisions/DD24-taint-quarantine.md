@@ -26,8 +26,10 @@ use or the function itself fails to compile.
 ## Clean sources
 
 Literals, arithmetic from clean operands, `$#`, `$?`, `$$`, `$!`,
-`$LINENO` (compile-time constant), variables assigned from clean
-expressions.
+variables assigned from clean expressions.
+
+(`$LINENO` was removed from this list — DG 2026-08-19 rejected it as a
+magic var; it no longer exists in sash, so it is never a taint source.)
 
 (`$?`/`$!`/`$$` are the punctuation **sugar** for the canonical clean
 intrinsics `$(status)`/`$(getcpid)`/`$(getpid)` — DD#75 §1. The clean

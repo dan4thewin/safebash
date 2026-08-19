@@ -2835,8 +2835,7 @@ fn is_plain_identifier(name: &str) -> bool {
 /// Names handled by other rules (their own diagnostics) — skip so the typo
 /// check never double-diagnoses.
 fn handled_elsewhere(name: &str) -> bool {
-    ENV_VARS.contains(&name) || REJECTED_VARS.iter().any(|(n, _)| *n == name) || name == "LINENO"
-    // compiler-managed (parse lowers it to a literal)
+    ENV_VARS.contains(&name) || REJECTED_VARS.iter().any(|(n, _)| *n == name)
 }
 
 /// DD#62 Model B: reject a scalar read of a name introduced nowhere in

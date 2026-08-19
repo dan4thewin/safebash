@@ -1,10 +1,32 @@
 ---
 title: "DECIDE: endorse or reject $LINENO (un-endorsed bash carryover)"
-status: needs-decision
+status: done
 priority: P3
 kind: decision
 depends: []
 ---
+
+# $LINENO — RESOLVED (DG, 2026-08-19): reject, no special handling
+
+**DG: "reject — no magic vars; document how to do it with a preprocessor.
+$LINENO shouldn't need special handling."**
+
+Implemented: dropped the `parse_dollar_arm` special-case that lowered
+`$LINENO` to a literal line number, and removed the `handled_elsewhere`
+carve-out that exempted it from the DD#62 typo check. `$LINENO` now flows
+through as an ordinary variable reference, so an unassigned `$LINENO`
+(and the braced `${LINENO}`) is rejected as an **undefined variable**
+(SB5031) — no dedicated `REJECTED_VARS` entry, no bespoke error, no magic.
+
+Line numbers, if needed, come from a source preprocessor (e.g. `awk`/
+`sed`/`m4`) that substitutes them before compilation. Documented in
+`docs/SUBSET.md` (Rejected Constructs) + `docs/REVIEW.md`; DD#24's
+clean-sources list dropped `$LINENO`. spec `undeclared.sh` ud.17/ud.18.
+Journal 152.
+
+---
+
+# (original decision brief)
 
 # $LINENO — endorse deliberately, or reject as a bash incursion?
 

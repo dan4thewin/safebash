@@ -251,6 +251,7 @@ use `$(basename …)`.
 | SB5026 | `"${a[@]}"` / `"$(argv)"` (quoted splat) | quotes yield one string (DD#22) — use the bare `@a` / `$(argv)` |
 | SB5027 | for-in mixing `$(argv)` with other words | a tainted argv splat must be the sole for-in source (DD#60) |
 | SB5028 | `[[ -v x ]]` | removed (DD#62) — an unset/empty variable is the empty string; use `[[ -n $x ]]` |
+| SB5031 / SB5017 | bash magic vars (`$LINENO`, `$RANDOM`, `$SECONDS`, `$BASH_VERSION`, …) | not part of sash — no magic/ambient vars. `$LINENO` in particular gets no special handling (it reads as an undefined variable); for line numbers, substitute them with a source preprocessor (e.g. `awk`/`sed`/`m4`) before compiling |
 | SB5035 | `$(random)` in a `:-`/`arg` default | a disposition default is eager + must be side-effect-free (DD#78) — capture it first |
 | SB5036 | `$(arg)` / `$(arg N D …)` wrong arity | `arg` takes an index and an optional default: `$(arg N)` or `$(arg N DEFAULT)` (DD#60) |
 | — | `${!var}` indirect expansion | Opaque variable name at compile time |

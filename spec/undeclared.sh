@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup undeclared
-plan=14
+plan=18
 echo "1..$plan" >&3
 
 set +e
@@ -101,6 +101,14 @@ if in_modes native; then
 else
     skip_chk ud.16
 fi
+
+# ud.17 `$LINENO` gets no special handling (DG: no magic vars) — an unassigned
+#       magic var is rejected as an undefined variable, like any other name
+run_sash 'echo $LINENO'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.17
+# ud.18 the braced form `${LINENO}` is rejected the same way
+run_sash 'echo ${LINENO}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.18
 
 set -e
 tally
