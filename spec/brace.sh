@@ -11,7 +11,7 @@ setup brace
 # identically; see cf-backend-gaps-brace-surfaced. (Same native-only pattern
 # as convert.sh.)
 [[ ${SASH_MODE:-native} != native ]] && exit 0
-plan=25
+plan=27
 echo "1..$plan" >&3
 
 set +e
@@ -36,18 +36,25 @@ run_sash 'x=3; if [[ $x == 1 ]] { echo a } else if [[ $x == 3 ]] { echo c } else
 # A6 compound condition
 run_sash 'if true && true { echo y }'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk bc.a6a
-# bc.a6b DEFERRED (compound-condition-abort-catch.md): `&&` RHS `false` aborts
-# instead of the condition catching (should print n). Externalizing true/false
-# unmasked a pre-existing DD#55 bug; reproduces with /bin/false. Skip pending DG.
+# bc.a6b `&&` RHS `false` → the compound condition CATCHES (DD#55; DG 2026-08-19)
+# → the else branch prints n (the `&&` aggregate is the condition, its operands
+# are caught, not aborted).
 run_sash 'if true && false { echo y } else { echo n }'
-skip_chk bc.a6b
+[[ $rc = 0 && $out = "n" && -z $err ]]; chk bc.a6b
 
-# A7 list condition (status = last command)
-# bc.a7 DEFERRED (compound-condition-abort-catch.md): non-final list command
-# `false` aborts instead of the condition catching (should print y). DG must
-# decide whether `if a; b` catches `a` like `if a && b` does. Skip pending DG.
+# A7 list condition
+# bc.a7 `if a; b` is `a; if b` (DG 2026-08-19): the non-final `false` is a bare
+# command whose status is discarded → it ABORTS (never reaches `if true`).
 run_sash 'if false; true { echo y } else { echo n }'
-skip_chk bc.a7
+[[ $rc != 0 && -z $out ]]; chk bc.a7
+
+# bc.a8 `||` condition: both sides fail → condition false → else (the right
+# operand's failure is caught, not aborted — DD#55; the fix that unmasked the
+# `||` $?-reset). bc.a9 right side succeeds → then.
+run_sash 'if false || false { echo y } else { echo n }'
+[[ $rc = 0 && $out = "n" && -z $err ]]; chk bc.a8
+run_sash 'if false || true { echo y } else { echo n }'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk bc.a9
 
 # ── B. while / until / for ───────────────────────────────────────────
 # B1 while
@@ -98,14 +105,14 @@ run_sash 'echo a{'
 [[ $rc != 0 && -n $err ]]; chk bc.d5
 
 # ── E. semantics unchanged (parser-only) ─────────────────────────────
-# E1/E2 DEFERRED (compound-condition-abort-catch.md): a failing FINAL command
-# in an if/else BODY now aborts (external false; was a non-aborting builtin).
-# DG must decide: abort (DD#55 bare-uncaught) or propagate body rc like bash?
-# The old rc-0 expectation was a builtin artifact. Skip pending DG.
+# E1/E2 a failing FINAL command in an if/else BODY ABORTS — its status is
+# discarded (DD#55 bare-command-uncaught; DG 2026-08-19), exactly like a
+# top-level `false`. The old rc-0 expectation was a non-aborting-builtin
+# artifact of the pre-externalization true/false.
 run_sash 'if true { false }'
-skip_chk bc.e1
+[[ $rc != 0 && -z $out ]]; chk bc.e1
 run_sash 'if false { true } else { false }'
-skip_chk bc.e2
+[[ $rc != 0 && -z $out ]]; chk bc.e2
 # E3 redirect inside a brace body (statements in the body parse normally)
 run_sash 'if true { echo y > /dev/null }'
 [[ $rc = 0 && -z $out && -z $err ]]; chk bc.e3

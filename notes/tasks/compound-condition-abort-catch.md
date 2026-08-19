@@ -1,9 +1,10 @@
 ---
 title: "Compound if/while conditions abort on a non-terminal command's failure (should catch) — plus if-body failing-command disposition"
-status: pending
+status: done
 priority: P2
 kind: bug
 depends: []
+resolved: "DG 2026-08-19 — &&/|| condition operands caught; `if a; b` = `a; if b` (a aborts); if-body final command aborts. See DD#55 addendum + journal 153."
 gates:
   - "DECISION (DG): does `if a; b` (a LIST condition) catch `a`'s failure like `if a && b` does, or does `a`'s discarded status abort like a bare command? `&&`/`||` are clearly logical (whole aggregate is the condition → catch both sides); a `;` list is ambiguous under DD#55 (only `b`'s status is the condition; `a`'s is discarded)."
   - "DECISION (DG): a failing FINAL command in an if/else BODY (`if true { false }`) — abort (DD#55 bare-command-uncaught, sash diverges from bash) or propagate the body status as the if's result (bash rc 1, no abort)? Old specs bc.e1/bc.e2 expected rc 0, which was a builtin artifact."

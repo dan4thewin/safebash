@@ -36,3 +36,13 @@ Bring the c/janet backends to native parity on these constructs (janet
 `continue` is the highest-value: needs a real continue, e.g. a per-body
 `(prompt :continue …)`/`(label)` or a rewrite of the `(each)` loop).
 Then drop brace.sh's `native`-only guard and let it run in all modes.
+
+### janet compound-condition catch (2026-08-19)
+
+`if a && b` / `if a || b` in **janet** don't catch correctly: `if true &&
+false` → `y` (should be `n`), `if false || false` → `y` (should be `n`).
+janet emits conditions from the AST, so it bypasses the SSA
+`lower_list_stmt` caught-position fix (DD#55 addendum 2026-08-19) that
+fixed native+c. spec errors.sh cc.1-4 are guarded `native,c`; widen to
+janet once janet's `&&`/`||` condition evaluation matches. Reproduces with
+`/bin/true`/`/bin/false`.

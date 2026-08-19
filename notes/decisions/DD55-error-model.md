@@ -170,3 +170,35 @@ Bash `set -e` has known blind spots:
 sash has none of these. Checks are inserted per-operation by the
 compiler. Condition position is recognized syntactically. `local`
 doesn't swallow. Arithmetic doesn't produce exit codes.
+
+## Compound-condition catch + list/body abort (2026-08-19, DG)
+
+Externalizing `true`/`false` unmasked a pre-existing bug and two design
+questions; DG resolved them:
+
+- **`&&`/`||` operands in a condition are CAUGHT.** `if a && b` / `while
+  a || b` treat the whole `&&`/`||` aggregate as the condition — every
+  operand's failure is caught, never aborted. Previously only the operand
+  whose block terminated the condition's `Branch` was unchecked (the left of
+  each `&&`/`||`, via the short-circuit block); the **right** operand sat in a
+  `Goto`-terminated block and aborted. Fix: in `transform/statements.rs::
+  lower_list_stmt`, when the List is in a *caught* position (`in_condition >
+  0` — a condition, or the left of an enclosing `&&`/`||`), uncheck the right
+  operand's terminal command too.
+
+- **`if a; b` is `a; if b`** (DG). A `;` list's non-final member is a **bare
+  command** whose status is discarded → it **aborts** (bare-command-uncaught).
+  Only `&&`/`||` operands (logical parts of one boolean) are caught; a `;`
+  sequence is not. So `if a; b` runs `a` (aborts on failure), then `if b`.
+
+- **A failing FINAL command in an if/else BODY aborts** (DG). Its status is
+  discarded, exactly like a top-level `false` — bare-command-uncaught. The old
+  `bc.e1`/`bc.e2` rc-0 expectation was a non-aborting-builtin artifact.
+
+Coupled fix: the `||` arm reset `$?=0` after the right side ("the list
+succeeded") — correct for a top-level guard (`a || fallback`), but wrong in a
+condition, where `if false || false` must take the else. The reset is now
+skipped in a caught position (the aggregate's real status is the condition
+value). native+c; janet emits conditions from the AST (pre-existing
+control-flow gap, `cf-backend-gaps-brace-surfaced` — brace.sh is native-only).
+spec brace.sh bc.a6b/a7/a8/a9/e1/e2, errors.sh cc.1-4. Journal 153.

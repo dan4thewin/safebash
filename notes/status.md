@@ -1,4 +1,27 @@
-## ════════ STATUS (2026-08-19) — string-array/map cell dispositions (DD#77 cells) ════════
+## ════════ STATUS (2026-08-19, cont.) — 3 DG decisions tackled (C=LINENO, B=compound-cond, A=cmdsub pending) ════════
+
+DG: "let's tackle the decisions." Resolved 4 open decision tasks (one was
+already decided). Progress:
+
+- **C — $LINENO: REJECT, no magic vars** (committed fe986b6). Dropped the
+  parse special-case + typo-check carve-out; `$LINENO`/`${LINENO}` now reject
+  as undefined vars (SB5031). No REJECTED_VARS entry (DG: "shouldn't need
+  special handling"). Preprocessor guidance in SUBSET.md. Filed a decoupled
+  pre-existing bug: braced `${RANDOM}`/`${HOME}` bypass SB5017/5018
+  (bug-braced-rejected-var-bypass, P2).
+- **B — compound-condition catch** (this commit). `if a && b`/`a || b`
+  operands are caught (was: right operand aborted). `if a; b` = `a; if b`
+  (a aborts). if-body final command aborts. Coupled `||` $?-reset fix.
+  native+c; janet AST-condition gap noted (cf-backend-gaps). DD#55 addendum,
+  journal 153. spec brace.sh bc.a6b-a9/e1/e2 + errors.sh cc.1-4, +14, 0 regr.
+- **A — multi-statement/pipeline `$(…)`: IMPLEMENT** (DG decided; NOT yet
+  built). Run the full body/pipeline in the forked child, capture stdout;
+  bundle both multi-statement and pipeline bodies. Next up.
+
+converter-positional-use-needs-bless was already decided (option 1, DG
+2026-07-08) — it's T6 convert *implementation*, not a decision.
+
+
 
 DG: "re: string-array cell; I would expect the same behavior as from a string
 variable." Then "implement it properly." A cell `${a[i]:OP}` now behaves exactly

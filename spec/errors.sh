@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=64
+plan=79
 echo "1..$plan" >&3
 
 set +e
@@ -450,6 +450,27 @@ run_sash 'x=/usr/bin/echo; $x hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.1
 run_sash 'const x=/usr/bin/echo; $x hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.2
+
+# ── Compound-condition catch (DD#55; DG 2026-08-19). `&&`/`||` operands in a
+# condition are caught (not aborted); a `;` list's non-final member and an
+# if-body's final command are bare → they abort. native,c (janet emits
+# conditions from the AST — pre-existing control-flow gap, brace.sh native-only).
+if in_modes native,c; then
+    # cc.1 `&&` RHS failure is caught → else branch
+    run_sash 'if /bin/true && /bin/false; then echo Y; else echo N; fi'
+    [[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.1
+    # cc.2 `||` both sides fail → condition false → else (the `||` $?-reset fix)
+    run_sash 'if /bin/false || /bin/false; then echo Y; else echo N; fi'
+    [[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.2
+    # cc.3 `if a; b` is `a; if b` — the non-final `a` aborts (bare, discarded)
+    run_sash 'if /bin/false; /bin/true; then echo Y; else echo N; fi'
+    [[ $rc != 0 && -z $out ]]; chk cc.3
+    # cc.4 a failing if-body final command aborts (bare-command-uncaught)
+    run_sash 'if /bin/true; then /bin/false; fi'
+    [[ $rc != 0 && -z $out ]]; chk cc.4
+else
+    skip_chk cc.1; skip_chk cc.2; skip_chk cc.3; skip_chk cc.4
+fi
 
 set -e
 tally

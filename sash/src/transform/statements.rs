@@ -520,6 +520,14 @@ fn lower_list_stmt(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
+    // DD#55: in a *caught* position — an `if`/`while` condition, or the left
+    // operand of an enclosing `&&`/`||` (both bump `in_condition`) — the whole
+    // aggregate's status is consumed, so the RIGHT operand's failure is caught,
+    // not aborted. The LEFT operand is always a guard: its block ends in the
+    // short-circuit `Branch`, so `mark_unchecked_in_conditions` already unchecks
+    // it. At top level the rightmost operand's status is discarded → it stays
+    // checked and aborts (bare-command-uncaught).
+    let caught = state.in_condition > 0;
     match l.op {
         ListOp::And => {
             // left && right: run left, skip right if left failed
@@ -534,6 +542,9 @@ fn lower_list_stmt(
                 false_block: merge_block,
             };
             let right_end = lower_one(&l.right, ssa, state, right_block);
+            if caught {
+                super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
+            }
             ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
             merge_block
         }
@@ -550,14 +561,23 @@ fn lower_list_stmt(
                 false_block: right_block, // failure → run right
             };
             let right_end = lower_one(&l.right, ssa, state, right_block);
-            // DD#55: if the right side completes, the || list succeeded;
-            // reset exit status to 0 so the program doesn't exit with
-            // the left side's failure status.
-            let zero_ref = state.define("?");
-            ssa.block_mut(right_end).insts.push(SsaInst::Assign {
-                target: zero_ref,
-                value: SsaValue::Literal("0".to_string()),
-            });
+            if caught {
+                super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
+            }
+            // DD#55: at top level, `a || b` is a guard — if the right side
+            // completes, the list "succeeded", so reset the exit status to 0 so
+            // the program doesn't exit with the left side's failure status. In a
+            // *caught* position (a condition, or the left of an enclosing
+            // `&&`/`||`) the aggregate's real status is the condition value —
+            // resetting it would make `if false || false` wrongly take the
+            // then-branch, so keep the right side's true status.
+            if !caught {
+                let zero_ref = state.define("?");
+                ssa.block_mut(right_end).insts.push(SsaInst::Assign {
+                    target: zero_ref,
+                    value: SsaValue::Literal("0".to_string()),
+                });
+            }
             ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
             merge_block
         }
