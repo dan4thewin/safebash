@@ -29,6 +29,43 @@ examples of what this rule prevents — six addenda where DG had
 to correct the AI for narrowing options or justifying deferrals
 before DG saw the choice.
 
+### When to ask vs. proceed (decision tree)
+
+DG flagged both failure modes: **under-asking** (deciding a
+genuine fork unilaterally, narrowing options — the postmortem
+above) and **over-asking** (re-confirming what a source of truth
+already settles; too much hand-holding). The operative test:
+**ask only when a decision is BOTH underdetermined AND
+consequential/irreversible.** Otherwise decide and report. Walk
+it in order:
+
+0. **No genuine decision** (routine implementation, one clear
+   path) → proceed.
+1. **Settled by a source of truth** — user input, a stated
+   principle, a DD, a documented convention, or an established
+   codebase pattern → apply it. Apply a stated principle to
+   **all** its consequences; do not narrow or reinterpret it
+   into a smaller decision so you can defer the rest. ("A string
+   cell behaves like a string variable" settles every operator
+   and both contexts — not just the case that was asked about.)
+2. **It's a bug** → fixing is mandatory (see Bug policy); never
+   ask *whether* to fix. You may still ask about a fix *approach*
+   that is itself a consequential fork (step 4).
+3. **A fork exists but is reversible / low-consequence** (an
+   internal representation, a staging order, a test layout) →
+   decide, proceed, and **report** the choice + rationale so DG
+   can veto.
+4. **A fork exists that is consequential OR hard to reverse**
+   (design, architecture, behavior or language surface, an
+   irreversible cleanup) → **ask**: one batched message with
+   options + tradeoffs + a recommendation. Do not drip sequential
+   questions.
+
+**Always ask (overrides the above):** before changing something
+that might be deliberate (check `notes/decisions/` first), or
+before any destructive/irreversible operation (history rewrite,
+mass delete, force-push).
+
 ## First thing every session
 
 Read `notes/status.md`. It tells you the current priority and
@@ -38,10 +75,13 @@ Read `notes/decisions/` before changing any behavior that might
 be deliberate. These are the authoritative source for what's
 intentional vs. what's a gap.
 
-If the task involves a non-trivial decision (design choice,
-architecture pivot, behavior change, irreversible cleanup),
-list options + tradeoffs and ask DG before acting. Defaulting
-to "I'll just implement option A" violates Decision authority.
+If the task involves a non-trivial decision, apply the decision
+tree under **Decision authority**: a fork that is consequential
+*and* underdetermined (design choice, architecture pivot,
+behavior change, irreversible cleanup) → list options + tradeoffs
+and ask DG before acting; a reversible / low-consequence one →
+decide and report. Defaulting to "I'll just implement option A"
+on a consequential fork violates Decision authority.
 
 ## Current state
 
