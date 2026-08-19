@@ -61,6 +61,59 @@ Then:
 real codegen risk across 3 backends. Warrants a focused session, not an
 end-of-session add-on.
 
+## ⚠ SECURITY: taint hole trap (found 2026-08-19)
+
+A multi-statement/pipeline cmdsub captures **external** output → the result
+is **tainted**. But two mechanisms currently assume clean:
+
+- `validate.rs::cmdsub_is_taint_source` inspects only `stmts.first()`'s
+  command name (`getenv`/`argv`/`arg`/`/abs`). For `$(a | b)` the first stmt
+  is a `Pipeline` (not a `Command`) → returns `false`; for `$(x=1; cat f)`
+  the first is an assignment → `false`. So the whole body is treated as a
+  **clean** taint source.
+- `ssa_taint.rs` `CaptureEnd` optimistically marks the target **Clean**
+  ("assume a user function; the CST pass is the authority").
+
+A naive capture reusing `CaptureStart/End` would let `$(external | cat)`
+flow as **clean**, bypassing `bless` — a **validator bypass** (the #1 audit
+priority). The implementation MUST:
+
+1. Extend `cmdsub_is_taint_source` to scan **every** statement / pipeline
+   stage for an external command (`/abs`) or `getenv`/`argv`/`arg` — not just
+   `stmts.first()`.
+2. Mark the SSA capture target **tainted** for a body-capture (a `tainted`
+   flag on `CaptureEnd`, or a distinct inst), defense-in-depth vs the
+   optimistic clean.
+3. Add adversarial taint specs: `$(cat /etc/x | tr a b)` used unblessed →
+   SB5020; a pure-clean body stays clean; blessed use compiles.
+
+## Other correctness note: subshell isolation
+
+`$(x=1; echo $x)` runs in a subshell in bash — `x` does not leak. The
+`CaptureStart/End` mechanism runs the body **inline** (redirect stdout, no
+fork), so a bare assignment would leak to the parent. `capture_func_into`
+save/restores `local`s + positionals; a raw body needs save/restore of every
+var it assigns (or a real fork) for subshell isolation. The captured *value*
+is correct either way; only the side effect leaks.
+
+## Reusable machinery (de-risked 2026-08-19)
+
+- `functions.rs::lift_int_func_calls` — the hoisting pass (threads `block:
+  &mut BlockId`), called at every arg + assignment-RHS site. Add a
+  `CmdSubstBody` arm → `capture_body_into` → `Var(temp)`. Gives value-position
+  coverage for free (value codegen has no `cl_blocks`; a statement-level
+  capture inst does).
+- `stmt_handlers.rs::capture_func_into` — the `CaptureStart` → lower-body →
+  `CaptureEnd{target}` structure to mirror as `capture_body_into` (raw stmt
+  list; no func-arg setup).
+- `build_function_pipeline_stage` / `build_pipeline_stages_from_cmdsubst` —
+  body→stages / body→compound-block precedent.
+- `SsaInst::CaptureStart`/`CaptureEnd` codegen already exists — **no new
+  codegen** for the inline-capture path.
+- New transform-intermediate `SsaValue::CmdSubstBody(Vec<Statement>)` (ICE if
+  it reaches codegen, like `IntFuncCall`); `handle_command_substitution`
+  returns it for a non-single-command body.
+
 ## Original bug report
 
 ## Symptom
