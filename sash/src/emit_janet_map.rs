@@ -117,8 +117,33 @@ fn render_stmt(stmt: &Statement, depth: usize) -> String {
                 render_stmt_inline(inner, Ctx::Cond)
             )
         }
-        other => format!("{}(sash/TODO {:?})", ind, std::mem::discriminant(other)),
+        other => format!("{}(sash/TODO {})", ind, stmt_kind_name(other)),
     }
+}
+
+/// Human-readable name for an as-yet-unmapped statement kind, so a `sash/TODO`
+/// placeholder names the construct (`stmt:arith-test`) rather than dumping an
+/// opaque enum discriminant. Pure dispatcher.
+fn stmt_kind_name(k: &StmtKind) -> String {
+    let name = match k {
+        StmtKind::Assignment(_) => "assignment",
+        StmtKind::Declaration(_) => "declaration",
+        StmtKind::Command(_) => "command",
+        StmtKind::Pipeline(_) => "pipeline",
+        StmtKind::If(_) => "if",
+        StmtKind::While(_) => "while",
+        StmtKind::For(_) => "for",
+        StmtKind::Case(_) => "case",
+        StmtKind::Function(_) => "function",
+        StmtKind::Redirected(_) => "redirected",
+        StmtKind::List(_) => "list",
+        StmtKind::Group(_) => "group",
+        StmtKind::Comment(_) => "comment",
+        StmtKind::Suppressed(_) => "suppressed",
+        StmtKind::ArithTest(_) => "arith-test",
+        StmtKind::ReturnProducer(_) => "return-producer",
+    };
+    format!("stmt:{}", name)
 }
 
 /// Render a statement inline (no leading indent) in the given context.
@@ -126,7 +151,7 @@ fn render_stmt_inline(stmt: &Statement, ctx: Ctx) -> String {
     match &stmt.kind {
         StmtKind::Command(c) => render_cmd(c, ctx),
         StmtKind::Assignment(a) => format!("(set {} {})", sanitize(&a.name), render_expr(&a.value)),
-        _ => format!("(sash/TODO {:?})", std::mem::discriminant(&stmt.kind)),
+        _ => format!("(sash/TODO {})", stmt_kind_name(&stmt.kind)),
     }
 }
 
@@ -268,15 +293,12 @@ fn render_test_cmd(args: &[Expr]) -> String {
 }
 
 fn binary_test_form(op: &str) -> Option<&'static str> {
+    // sash `[[ ]]` is string/file tests only — numeric comparison lives in
+    // `(( ))` (ArithTest), never here (the front-end rejects `-eq` etc. with
+    // SB5019). So this maps string operators only, by design.
     Some(match op {
         "=" | "==" => "sash/=",
         "!=" => "sash/not=",
-        "-eq" => "sash/-eq",
-        "-ne" => "sash/-ne",
-        "-lt" => "sash/-lt",
-        "-le" => "sash/-le",
-        "-gt" => "sash/-gt",
-        "-ge" => "sash/-ge",
         _ => return None,
     })
 }
@@ -328,8 +350,27 @@ fn render_expr(e: &Expr) -> String {
         ExprKind::Concat(parts) => render_concat(parts),
         ExprKind::CommandSubstitution(stmts) => render_capture(stmts),
         ExprKind::Test(t) => render_test(t),
-        other => format!("(sash/TODO {:?})", std::mem::discriminant(other)),
+        other => format!("(sash/TODO {})", expr_kind_name(other)),
     }
+}
+
+/// Human-readable name for an as-yet-unmapped expression kind. Pure dispatcher.
+fn expr_kind_name(k: &ExprKind) -> String {
+    let name = match k {
+        ExprKind::Literal(_) => "literal",
+        ExprKind::DoubleQuoted(_) => "double-quoted",
+        ExprKind::SingleQuoted(_) => "single-quoted",
+        ExprKind::SimpleExpansion(_) => "simple-expansion",
+        ExprKind::ParameterExpansion(_) => "parameter-expansion",
+        ExprKind::Subscript { .. } => "subscript",
+        ExprKind::CommandSubstitution(_) => "command-substitution",
+        ExprKind::Arithmetic(_) => "arithmetic",
+        ExprKind::Concat(_) => "concat",
+        ExprKind::Array(_) => "array",
+        ExprKind::AssocArray(_) => "assoc-array",
+        ExprKind::Test(_) => "test",
+    };
+    format!("expr:{}", name)
 }
 
 fn render_var_read(name: &str) -> String {

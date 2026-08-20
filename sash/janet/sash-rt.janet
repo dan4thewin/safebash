@@ -10,10 +10,6 @@
 
 (var *status* 0)   # $?  — last command's exit status
 
-# integer coercion (leading int; 0x/0o/0b; sign) — the sash arith rule.
-(defn sash/-num [v]
-  (if (number? v) v (or (scan-number (string v)) 0)))
-
 # $name — variable read. Special vars map to their runtime slot; a plain var
 # nil-coalesces to "" (unset / not-yet-assigned reads as empty).
 (defmacro $ [name]
@@ -84,11 +80,3 @@
 
 # until — the negated while
 (defmacro sash/until [cond body] ~(while (not ,cond) ,body))
-
-# numeric [[ ]] comparisons ( -eq -ne -lt -le -gt -ge )
-(defn sash/-eq [a b] (verdict (= (sash/-num a) (sash/-num b))))
-(defn sash/-ne [a b] (verdict (not= (sash/-num a) (sash/-num b))))
-(defn sash/-lt [a b] (verdict (< (sash/-num a) (sash/-num b))))
-(defn sash/-le [a b] (verdict (<= (sash/-num a) (sash/-num b))))
-(defn sash/-gt [a b] (verdict (> (sash/-num a) (sash/-num b))))
-(defn sash/-ge [a b] (verdict (>= (sash/-num a) (sash/-num b))))
