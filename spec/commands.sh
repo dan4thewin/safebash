@@ -25,7 +25,7 @@ run_sash 'x=$(printf hi); echo "$x"'
 # 14.2c blessed, the external capture is usable. native only: the C cmdsub
 #        exec is a Phase-4 TODO and the Janet os/spawn capture pipe is racy
 #        (janet-pipeline-eagain-flaky).
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=$(printf hi); bless x [[ -n $x ]]; echo "$x"'
     [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
 else
@@ -37,14 +37,14 @@ fi
 #      CaptureStart/End capture and the Janet cmdsub are gaps, like $(f)); the
 #      taint rejects are compile-time (all modes).
 # 14.3a a clean multi-statement body captures its full stdout
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=$(echo a; echo b); echo "[$x]"'
     [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
 else
     skip_chk 14.3a
 fi
 # 14.3b subshell isolation — an assignment inside the body does NOT leak
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=outer; y=$(x=inner; echo $x); echo "y=$y x=$x"'
     [[ $rc = 0 && $out = "y=inner x=outer" && -z $err ]]; chk 14.3b
 else
@@ -56,7 +56,7 @@ fi
 run_sash 'echo $(echo hi | tr h H)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3c
 # 14.3d blessed, the pipeline capture is usable (native)
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
     [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk 14.3d
 else
