@@ -400,7 +400,7 @@ run_sash "echo '~' \"~\" a~b"
 # 24.20 a failed bless names the variable and shows its value (native only —
 #       the c/janet harnesses discard runtime stderr). Regression for the
 #       terse `bless: validation failed`.
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=$(getenv HOME)
 bless x [[ $x =~ ^NEVER$ ]]
 echo $x'

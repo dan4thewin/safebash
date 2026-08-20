@@ -461,10 +461,10 @@ fi
 
 # (A) dynamic (interpolated) bad regex → runtime regcomp abort with the
 # `regexp error: …` diagnostic (compile-time validation only covers a
-# static pattern). native-only: the c/janet spec harnesses discard runtime
-# stderr, so the `rerr` diagnostic can only be asserted natively.
+# static pattern). native+c: c emits the runtime diagnostic and the harness
+# now captures its stderr into $rerr. janet deferred.
 # e.a70.regcomp
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'p="[bad"
 if match hello "$p"; then echo y; else echo n; fi'
     [[ $rc != 0 && $rerr == *"regexp error"* ]]; chk e.a70.regcomp

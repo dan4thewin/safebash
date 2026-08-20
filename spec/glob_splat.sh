@@ -38,7 +38,7 @@ run_sash 'array a=(x y); /bin/echo @{a:?oops}'
 #      native-only: the c/janet spec harnesses discard runtime stderr, so
 #      the abort diagnostic (rerr) can only be asserted natively. Assert the
 #      message SUFFIX (after the program's own argv[0]).
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'array a=(); /bin/echo @{a:?no args!}'
     [[ $rc = 1 && -z $out && $rerr == *"no args!" ]]; chk gs.6
 else

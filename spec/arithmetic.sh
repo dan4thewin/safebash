@@ -180,8 +180,9 @@ else
     skip_chk 25.9; skip_chk 25.10; skip_chk 25.11; skip_chk 25.12
 fi
 
-# 25.8 native-only: overflow prints `<argv0>: arithmetic overflow` to stderr
-if in_modes native; then
+# 25.8 native+c: overflow prints `<argv0>: arithmetic overflow` to stderr,
+# which the harness now captures as $rerr. janet deferred.
+if in_modes native,c; then
     run_sash 'fn mul { int a=$(($1)); int b=$(($2)); (( c = a * b )); echo $c; }
 mul 3037000500 3037000500'
     [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk 25.8
