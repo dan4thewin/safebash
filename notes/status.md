@@ -1,4 +1,20 @@
-## ════════ STATUS (2026-08-19, cont.) — all 3 DG decisions DONE (A/B/C) ════════
+## ════════ STATUS (2026-08-19, cont.) — P2 sweep started (braced-var bypass fixed) ════════
+
+P1s: all done/superseded (the lone `fixed` one — arith `${var:OP}` silent-0 —
+normalized to done; native/c gate resolved, only the janet arith-value residual
+remains, tracked as janet-arith-subscript-read P3).
+
+Working P2 bugs (bugs-first tier order):
+- **bug-braced-rejected-var-bypass DONE**: `${RANDOM}`/`${HOME}`/`${HOME:-x}`/
+  `${#HOME}` were silently compiling to empty (validate_expr only checked
+  `$name`). Now `validate_expr` validates `${name…}` (any operator/index) via
+  `validate_var_name` → SB5017/SB5018; normal `${x}`/`${x:-9}`/`${a[i]:-N}`
+  stay clean. spec var_modifiers.sh bvb.1-5; +15, 0 regr. Journal 152.
+
+Remaining P2 bugs (next): bug-mapfile-undeclared-len-ice (ICE),
+bang-precedence-and-suppress; then c/janet parity + partials.
+
+
 
 DG: "let's tackle the decisions." All three implemented + pushed:
 

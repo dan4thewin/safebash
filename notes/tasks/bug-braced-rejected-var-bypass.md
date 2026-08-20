@@ -1,9 +1,10 @@
 ---
 title: "bug: braced ${RANDOM}/${BASH_VERSION}/env-var forms bypass SB5017/SB5018 (silent empty)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
+resolved: "2026-08-19 — validate_expr now validates ${name…} (any operator/index) like $name via validate_var_name (which only flags rejected/env/positional names, so normal ${x}/${x:-9}/${a[i]:-N} stay clean). Covers bare + operator + length forms. spec var_modifiers.sh bvb.1-5."
 gates:
   - "`echo ${RANDOM}` rejects (SB5017) exactly like `echo $RANDOM` — never silently compiles to empty"
   - "`echo ${HOME}` rejects (SB5018) exactly like `echo $HOME`"

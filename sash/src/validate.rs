@@ -526,6 +526,15 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
         ExprKind::SimpleExpansion(var) => {
             validate_var_name(var, expr.span, diags);
         }
+        // A braced parameter expansion `${name…}` references `name` just like
+        // `$name` — validate the name identically (any operator/index) so a
+        // braced rejected / env var (`${RANDOM}` → SB5017, `${HOME}` /
+        // `${HOME:-x}` → SB5018) is not a silent bypass. `validate_var_name`
+        // only flags names in the rejected/env/positional lists, so a normal
+        // `${x}` / `${x:-9}` / `${a[i]:-N}` stays clean.
+        ExprKind::ParameterExpansion(pe) => {
+            validate_var_name(&pe.name, expr.span, diags);
+        }
         ExprKind::Literal(s) => {
             // SB5006: ** globstar is always rejected (even quoted, it's never valid)
             if s.contains("**") {

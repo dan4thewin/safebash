@@ -51,3 +51,13 @@ carry — but DG's "shouldn't need special handling" was a mid-course
 correction that the tree's step 1 covers: apply the *principle* ("no magic
 vars"), not a literal reading that would re-magic it via a bespoke reject.
 The generic path is the faithful application.
+
+## Update 2026-08-19: braced-rejected-var bypass fixed
+
+`bug-braced-rejected-var-bypass` (filed above) is now fixed:
+`validate_expr` validates `${name…}` (any operator/index) via
+`validate_var_name`, identical to `$name`. Since `validate_var_name` only
+flags names in the rejected/env/positional lists, a normal `${x}` / `${x:-9}`
+/ `${a[i]:-N}` stays clean, while `${RANDOM}` → SB5017 and `${HOME}` /
+`${HOME:-x}` / `${#HOME}` → SB5018. spec var_modifiers.sh bvb.1-5; 3-mode
+sweep 0 regressions, +15.

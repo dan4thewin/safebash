@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=44
+plan=49
 echo "1..$plan" >&3
 
 set +e
@@ -82,6 +82,26 @@ run_sash 'echo "${foo:-'\''a}b'\''}"'
 # env var is rejected (SB5018) exactly as elsewhere — must use $(getenv HOME)
 run_sash 'echo "${foo:-$HOME}"'
 [[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk vm.dv11
+
+# ── Braced rejected/env vars reject like the unbraced form (was a silent
+# bypass: `${RANDOM}`/`${HOME}` compiled to empty — validate_expr only checked
+# `$name`, not `${name…}`). Compile-time, all modes. ──
+# bvb.1 braced rejected var → SB5017
+run_sash 'echo ${RANDOM}'
+[[ $rc != 0 && -z $out && $err == *SB5017* ]]; chk bvb.1
+# bvb.2 braced env var → SB5018 (use $(getenv HOME))
+run_sash 'echo ${HOME}'
+[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk bvb.2
+# bvb.3 an operator form referencing an env var still rejects (the name is a
+#       reference regardless of the modifier)
+run_sash 'echo ${HOME:-x}'
+[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk bvb.3
+# bvb.4 the length form `${#HOME}` rejects too
+run_sash 'echo ${#HOME}'
+[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk bvb.4
+# bvb.5 a normal braced read / disposition stays clean (no false positive)
+run_sash 'x=5; echo "${x} ${x:-9}"'
+[[ $rc = 0 && $out = "5 5" && -z $err ]]; chk bvb.5
 
 # ── dropped ${var:OP} operators reject uniformly (DD#65, SB4034) ─────
 # Every split_operator op EXCEPT `:-` was dropped from sash; each rejects with

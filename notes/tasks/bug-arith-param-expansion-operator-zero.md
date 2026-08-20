@@ -1,10 +1,11 @@
 ---
 title: "BUG: ${var:OP…} inside (( ))/$(( )) silently compiles to 0"
-status: fixed
+status: done
 priority: P1
 kind: bug
 depends: []
 fixed_by: "DD#77 Stage A (arith ${…} routed through parse_parameter_expansion)"
+resolved: "2026-08-19 — done for the native/c gate (verified: no silent-0; $(( ${s:-9} )) → 5, pruned ops reject SB4034). The only residual is janet's arith VALUE path reading 0 for ${…}, tracked as janet-arith-subscript-read (P3, oracle backend — not the gate)."
 gates:
   - "`s=5; echo $(( ${s:-9} ))` yields 5 (not 0/empty) — or the form is a clean reject, never silent-0"
   - "no `${var:OP…}` param-expansion in any arith context silently miscompiles"
