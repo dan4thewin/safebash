@@ -1,3 +1,36 @@
+## ════════ STATUS (2026-08-20, cont.) — c PARITY SWEEP COMPLETE (janet deferred) ════════
+
+DG: "tackle all the c parity work, and wait on janet" → then approved all
+remaining (descriptive-abort incl. harness change, bgpid, ivc.8).
+
+**RESULT: the c backend has ZERO failing tests and ZERO actionable skips.**
+Started at 13 failing + 63 native-guarded; now 0 failing, 7 skipped — and all
+7 are genuinely NOT c gaps: janet tests (15.1/15.2, `run_sash_janet`),
+native-ELF-only (32.1/32.2, `.sash_source`/`--extract`), and mode-independent
+CLI flags (57.46a-c). ~13 commits `16c5078`..`867e93a`, all 0 regressions.
+
+Batches (journal 158-166):
+- bless-fail abort, signum, DD#56 signals/END (+9)
+- external `$(cmd)` capture + DD#55 abort (+3); `sash_capture_status` runtime
+- bless-all + mapfile-from-file + RedirectPush/Pop + array append (+19)
+- function/multi-statement `$()` capture (CaptureStart/End) (+4)
+- un-guarded ~28 already-working / newly-working tests
+- **cd** (was a no-op — real bug) + fixed `bug-emit-c-splat-vla-jump` (P2)
+- **ivc.8** `local int array` (declare_vars "String wins" + table-slot override)
+- **descriptive-abort** FULLY: cd + echo-write(2) + redirect-open(2) aborts +
+  a harness change (`_run_sash_c` captures `$rerr`) → un-guarded 55.20-30 +
+  24.20/25.8/gs.6/e.a70.regcomp
+- **bgpid** `&`/`$!`/`wait` (SubshellStart/StoreBgPid/Wait, incl. no-arg wait)
+
+New emit_c machinery: sash_capture_status/sash_chdir/sash_emsg/sash_alloc/
+sash_trap/sash_signal_flag/sash_capture_start-end externs; `Emit.{
+has_exiting_signals, cur_block, redirect_stack, in_condition}`; sub-dispatchers
+`emit_read_inst/emit_bless_inst/emit_capture_inst/emit_builtin_extra/
+emit_bg_builtin_c` (complexity gate).
+
+**Remaining is janet parity (deferred by DG) + the c/janet parity tier tasks
+that are janet-only.** The c half of every c-janet-* task is done.
+
 ## ════════ STATUS (2026-08-20, cont.) — c PARITY SWEEP (janet deferred) ════════
 
 DG: "tackle all the c parity work, and wait on janet." Started at **13 failing

@@ -186,6 +186,13 @@ preprocessor and global `ARITH_MAP` are gone.)
 Build system uses Plan 9 `mk` (not `make`). Top-level `mkfile` has
 `build`, `test`, and `clean` targets.
 
+**`sash-rt` is a SEPARATE cargo workspace.** Build the runtime with
+`(cd sash-rt && cargo build --release)` — `cargo build -p sash-rt` from the
+repo root fails ("package ID `sash-rt` did not match any packages"). Its
+output is `sash-rt/target/release/libsash_rt.a`; the c/native backends link
+it via `SASH_RT_LIB`. Rebuild it after touching `sash-rt/src` before an
+`--emit-c` link, or gcc reports undefined references to new runtime symbols.
+
 ### Spec tests
 
 Spec tests live in `spec/*.sh`. Run with `cd spec && bash run.sh`.
