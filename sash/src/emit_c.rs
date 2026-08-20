@@ -1559,9 +1559,66 @@ fn emit_builtin_extra(
         // DD#56 signal builtin: signal N IGN/DFL/EXIT → sash_trap;
         // signal N FLAG → sash_signal_flag.
         BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => emit_signal_builtin_c(e, kind, args),
+        // `cmd &` background / `$!` / `wait` handled in a sub-dispatcher.
+        _ => return emit_bg_builtin_c(e, kind, args, types),
+    }
+    true
+}
+
+/// Background-job builtins split out of `emit_builtin_extra` (complexity gate):
+/// `cmd &` (SubshellStart fork), `$!` (StoreBgPid), and `wait`. Returns true
+/// when it handled `kind`.
+fn emit_bg_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue], types: &VarTypes) -> bool {
+    match kind {
+        // Fork; the pid lands in __test_result so the Branch dispatches child
+        // (0) vs parent (pid). Mirrors native emit_subshell_start.
+        BuiltinCmd::SubshellStart => {
+            writeln!(e.out, "    __test_result = sash_fork();").unwrap();
+        }
+        // `$!` — store the last background pid (the fork result still in
+        // __test_result) into its var, as a string.
+        BuiltinCmd::StoreBgPid => {
+            if let Some(SsaValue::Var(vr)) = args.first() {
+                let base = c_var_name(&vr.name, vr.version);
+                let (p, l) = emit_itoa_temp(e, "__test_result");
+                writeln!(
+                    e.out,
+                    "    {base}_ptr = {p}; {base}_len = {l};",
+                    base = base
+                )
+                .unwrap();
+            }
+        }
+        // `wait [PID]` — reap a background child, adopting its exit status.
+        // No-arg `wait` waits for `$!`. Mirrors native emit_wait.
+        BuiltinCmd::Wait => emit_wait_c(e, args, types),
         _ => return false,
     }
     true
+}
+
+/// `wait [PID]`: reap a child by pid (or, with no arg, `$!`), adopting its
+/// exit status; a no-arg wait with no `$!` var is a bare success.
+fn emit_wait_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+    let pid_expr = if let Some(arg) = args.first() {
+        let (p, l) = lower_value_as_str(e, arg, types);
+        Some(format!("sash_atoi({}, {})", p, l))
+    } else if types.keys().any(|(n, _)| n == "!") {
+        let base = c_var_name("!", 0);
+        Some(format!("sash_atoi({base}_ptr, {base}_len)", base = base))
+    } else {
+        None
+    };
+    match pid_expr {
+        Some(pid) => writeln!(
+            e.out,
+            "    __exit_status = sash_wait({pid}); \
+             __test_result = (__exit_status == 0) ? 1 : 0;",
+            pid = pid
+        )
+        .unwrap(),
+        None => writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap(),
+    }
 }
 
 /// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
