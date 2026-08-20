@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=89
+plan=91
 echo "1..$plan" >&3
 
 set +e
@@ -358,9 +358,18 @@ for k in $(keys m); do echo "$k=${m[$k]}"; done'
 bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc != 0 && -z $out ]]; chk 60.31
+
+    # ad.1 mapfile into an UNDECLARED array (no prior `array a=()`) auto-declares
+    #      it (mirrors argv, DG 2026-07-08). `$(len a)` was a codegen ICE
+    #      (`undefined array: a`); now it is the count.
+    run_sash 'mapfile -t a < d60a.txt; echo $(len a)'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
+    # ad.2 same for `read -a` into an undeclared array
+    run_sash 'read -a a < d60a.txt; echo $(len a)'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
-              60.21 60.22 60.23 60.25 60.29 60.31 60.36; do
+              60.21 60.22 60.23 60.25 60.29 60.31 60.36 ad.1 ad.2; do
         skip_chk "$id"
     done
 fi

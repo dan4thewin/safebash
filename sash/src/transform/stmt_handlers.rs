@@ -428,7 +428,7 @@ fn try_fill_array(
     block: BlockId,
 ) -> Option<BlockId> {
     match kind {
-        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, block),
+        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, state, block),
         BuiltinCmd::Argv => try_handle_argv(c, ssa, state, block),
         _ => None,
     }
@@ -453,43 +453,57 @@ fn try_handle_argv(
         _ => return None,
     };
     // Auto-declare (DG 2026-07-08): if `a` isn't already an array, create
-    // the versioned slot the same way `array a=()` does (an empty
-    // IndexedArray assign creates `a_0`), so the fill and later
+    // the versioned slot the same way `array a=()` does, so the fill and later
     // len/iteration/element reads agree with no prior `array a=()`.
-    if !state.collections.contains(&array) {
-        state.collections.insert(array.clone());
-        let target = state.define(&array);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target,
-            value: SsaValue::IndexedArray(vec![]),
-        });
-    }
+    autodeclare_bulk_target(&array, false, ssa, state, block);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::ArgvFill { array, start });
     Some(block)
 }
 
-fn try_handle_mapfile(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Option<BlockId> {
-    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    let mut map_mode = false;
-    let mut separator = '=';
-    let mut i = 0;
-    while i < args.len() {
-        if args[i] == "-m" {
-            map_mode = true;
-        } else if args[i].starts_with("-f") {
-            if args[i].len() > 2 {
-                separator = args[i].chars().nth(2).unwrap_or('=');
-            } else if i + 1 < args.len() {
-                separator = args[i + 1].chars().next().unwrap_or('=');
-                i += 1;
-            }
-        }
-        i += 1;
+/// Auto-declare a bulk-read target array (mirrors argv, DG 2026-07-08): if
+/// `name` isn't already a collection, emit the empty-array/-map Assign that
+/// creates the versioned `name_0` slot — so the fill (argv/mapfile/read -a) and
+/// any later `len`/iteration/element read resolve without a prior `array
+/// name=()`. Without this the codegen `find_array_slot` panics (ICE). `as_map`
+/// creates an associative array (`mapfile -m`).
+pub(super) fn autodeclare_bulk_target(
+    name: &str,
+    as_map: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    if state.collections.contains(name) {
+        return;
     }
+    state.collections.insert(name.to_string());
+    let value = if as_map {
+        state.assoc_arrays.insert(name.to_string());
+        SsaValue::AssocArray(vec![])
+    } else {
+        SsaValue::IndexedArray(vec![])
+    };
+    let target = state.define(name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value });
+}
+
+fn try_handle_mapfile(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
+    let (map_mode, separator) = parse_mapfile_flags(&args);
     let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
     let arr_name = var_names.first()?;
+    // Auto-declare the target so `find_array_slot` resolves it with no prior
+    // `array a=()` / `map a=()` (else a codegen ICE). `-m` → an assoc array.
+    autodeclare_bulk_target(arr_name, map_mode, ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::Mapfile {
         array: arr_name.to_string(),
         fd: 0,
@@ -497,6 +511,22 @@ fn try_handle_mapfile(c: &Command, ssa: &mut SsaProgram, block: BlockId) -> Opti
         separator,
     });
     Some(block)
+}
+
+/// Parse `mapfile` flags: `-m` (map mode) and `-f<c>` / `-f <c>` (the map
+/// key/value separator, default `=`).
+fn parse_mapfile_flags(args: &[String]) -> (bool, char) {
+    let map_mode = args.iter().any(|a| a == "-m");
+    (map_mode, mapfile_separator(args).unwrap_or('='))
+}
+
+/// The `-f<c>` (inline) or `-f <c>` (next arg) map separator, if present.
+fn mapfile_separator(args: &[String]) -> Option<char> {
+    let pos = args.iter().position(|a| a.starts_with("-f"))?;
+    args[pos]
+        .strip_prefix("-f")
+        .and_then(|rest| rest.chars().next())
+        .or_else(|| args.get(pos + 1).and_then(|next| next.chars().next()))
 }
 
 /// Handle StmtKind::Pipeline — multi-command pipe chains.

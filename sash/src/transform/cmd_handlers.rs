@@ -114,6 +114,9 @@ fn emit_read_inst(
     block: BlockId,
 ) {
     if let Some(arr) = &flags.array_name {
+        // Auto-declare (mirrors argv/mapfile) so a later len/element read on an
+        // undeclared `read -a a` target resolves instead of an ICE.
+        super::stmt_handlers::autodeclare_bulk_target(arr, false, ssa, state, block);
         ssa.block_mut(block).insts.push(SsaInst::ReadArray {
             array: arr.clone(),
             fd: 0,

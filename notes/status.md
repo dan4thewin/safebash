@@ -14,6 +14,13 @@ Working P2 bugs (bugs-first tier order):
 Remaining P2 bugs (next): bug-mapfile-undeclared-len-ice (ICE),
 bang-precedence-and-suppress; then c/janet parity + partials.
 
+- **bug-mapfile-undeclared-len-ice DONE**: `mapfile -t a < f; echo $(len a)`
+  with no prior `array a=()` panicked (ICE: undefined array). Fixed by a shared
+  `autodeclare_bulk_target` (mirrors argv/DD#60) wired into argv/mapfile/read;
+  auto-declared target behaves identically to a declared one (len works,
+  element reads correctly tainted). native (c/janet mapfile gaps); taint.sh
+  ad.1/ad.2; +2, 0 regr. Journal 155.
+
 
 
 DG: "let's tackle the decisions." All three implemented + pushed:

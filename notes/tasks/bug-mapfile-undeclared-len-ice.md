@@ -1,9 +1,10 @@
 ---
 title: "bug: mapfile / read -a into an UNDECLARED array ICEs on len/element-read (undefined array a)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
+resolved: "2026-08-19 — auto-declare the target (mirrors argv, DD#60): a shared autodeclare_bulk_target emits the empty-array/-map Assign that creates the versioned slot before the fill, for mapfile/read -a/argv. `mapfile a; echo $(len a)` no longer ICEs. spec taint.sh ad.1/ad.2."
 gates:
   - "`mapfile -t a < f; echo $(len a)` (no prior `array a=()`) must NOT ICE — either auto-declare fully (like `argv [N] a` now does) or reject at compile time"
   - "same for `read -a a` and a subsequent `$a[0]` / `@a` read"
