@@ -134,9 +134,11 @@ _run_sash_c() {
             # gcc rejecting our emitted C is a compiler bug. Surface it.
             rc=126 out="" err="gcc failed: $(<gcc.err)"
         else
-            out=$(./test_bin "$@" 2>/dev/null)
+            out=$(./test_bin "$@" 2>rerr.raw)
             rc=$?
             err=""
+            rerr=$(<rerr.raw)
+            rm -f rerr.raw
         fi
         rm -f ./test_bin gcc.err
     else

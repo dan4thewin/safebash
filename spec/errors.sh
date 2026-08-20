@@ -237,10 +237,11 @@ run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 # the implicit `exec N>file` that runs FIRST, so `-` (which binds to the
 # command) does NOT suppress it; and a failed open must never silently
 # misroute output to the original fd.
-# NATIVE-ONLY for now: the C and janet oracles don't yet implement the
-# DD#55 (A)-channel abort at all (bare `/bin/false` doesn't abort there);
-# bringing them to parity is a separate task. See notes/tasks/.
-if in_modes native; then
+# native+c: c now implements the DD#55 cd + echo-write(2) syscall aborts
+# with descriptive diagnostics (2026-08-20), and the harness captures c's
+# runtime stderr into $rerr. Redirect open(2)-failure abort is still c-TODO
+# (nested guard below). janet deferred.
+if in_modes native,c; then
     # Abort cases emit a descriptive diagnostic to stderr (captured as
     # $rerr), prefixed with the program name (argv[0], here ./test_bin):
     #   <argv0>: cd: <path>: <reason>
@@ -290,7 +291,10 @@ echo after'
     # and `-` both abort (the `-` binds to the command's write verdict,
     # not the prior open); an enclosing condition (if/||) catches it via
     # the failed final-command result.
-
+    # NESTED native-only: redirect open(2)-failure abort is not yet
+    # implemented in c (needs the skip-body + in_condition mechanism, which
+    # `checked` alone can't express — `- echo > /bad` must still abort).
+    if in_modes native; then
     # 55.24 bare redirect open failure aborts — no misroute + diagnostic
     run_sash 'echo hi > /nonexistent_dir_55/f
 echo after'
@@ -312,6 +316,9 @@ echo after'
     # 55.30 open failure is catchable with || too (symmetry with if), no diag
     run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
     [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.30
+    else
+        skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.30
+    fi
 else
     skip_chk 55.20; skip_chk 55.21; skip_chk 55.22; skip_chk 55.23
     skip_chk 55.27; skip_chk 55.28; skip_chk 55.29

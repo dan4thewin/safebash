@@ -1595,14 +1595,7 @@ fn emit_command(
     };
 
     match kind {
-        BuiltinCmd::Echo => {
-            emit_echo(e, args, types);
-            // &&/|| chains branch on the status: a successful echo must leave
-            // status 0 (else a following `&& cmd` sees a stale nonzero and is
-            // skipped). Write-failure/EPIPE abort is handled separately (DD#55).
-            writeln!(e.out, "    __exit_status = 0;").unwrap();
-            writeln!(e.out, "    __test_result = 1;").unwrap();
-        }
+        BuiltinCmd::Echo => emit_echo(e, args, checked, types),
         BuiltinCmd::Exit => emit_exit(e, args, types),
         BuiltinCmd::Noop => {
             writeln!(e.out, "    __exit_status = 0;").unwrap();
@@ -1866,32 +1859,65 @@ fn emit_splat_disposition_c(
 /// Between args: write a single space via sash_write(1, " ", 1).
 /// After args: write a single newline via sash_write(1, "\\n", 1).
 /// With `-n` flag (first arg): suppress trailing newline.
-fn emit_echo(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+/// Emit the write(2)s for one echo argument (a Concat writes each part), OR-ing
+/// any failure into `{t}_wf`. Split out to keep emit_echo under the gate.
+fn emit_echo_write_arg(e: &mut Emit, t: &str, arg: &SsaValue, types: &VarTypes) {
+    let parts: Vec<&SsaValue> = match arg {
+        SsaValue::Concat(ps) => ps.iter().collect(),
+        other => vec![other],
+    };
+    for part in parts {
+        let (ptr, len) = lower_value_as_str(e, part, types);
+        writeln!(
+            e.out,
+            "    {t}_wf |= (sash_write(1, {ptr}, {len}) < 0);",
+            t = t
+        )
+        .unwrap();
+    }
+}
+
+fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     let (print_args, suppress_newline) = match args.first() {
         Some(SsaValue::Literal(flag)) if flag == "-n" => (&args[1..], true),
         _ => (args, false),
     };
 
+    // DD#55: accumulate write(2) failures (EPIPE / ENOSPC). A bare echo whose
+    // write fails aborts with `<argv0>: echo: write error: <reason>`; caught /
+    // suppressed echo just sets a nonzero status.
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_wf = 0;", t = t).unwrap();
     for (i, arg) in print_args.iter().enumerate() {
         if i > 0 {
-            writeln!(e.out, "    sash_write(1, \" \", 1);").unwrap();
+            writeln!(e.out, "    {t}_wf |= (sash_write(1, \" \", 1) < 0);", t = t).unwrap();
         }
-        // Concat values write each part sequentially (no spaces).
-        if let SsaValue::Concat(parts) = arg {
-            for part in parts {
-                let (ptr, len) = lower_value_as_str(e, part, types);
-                writeln!(e.out, "    sash_write(1, {}, {});", ptr, len).unwrap();
-            }
-        } else {
-            let (ptr, len) = lower_value_as_str(e, arg, types);
-            writeln!(e.out, "    sash_write(1, {}, {});", ptr, len).unwrap();
-        }
+        emit_echo_write_arg(e, &t, arg, types);
     }
 
     if !suppress_newline {
-        writeln!(e.out, "    sash_write(1, \"\\n\", 1);").unwrap();
+        writeln!(
+            e.out,
+            "    {t}_wf |= (sash_write(1, \"\\n\", 1) < 0);",
+            t = t
+        )
+        .unwrap();
     }
-    writeln!(e.out, "    __exit_status = 0;").unwrap();
+    writeln!(
+        e.out,
+        "    __exit_status = {t}_wf ? 1 : 0; __test_result = {t}_wf ? 0 : 1;",
+        t = t
+    )
+    .unwrap();
+    if checked {
+        writeln!(
+            e.out,
+            "    if ({t}_wf) {{ sash_emsg(\"echo\", 4, \"write error\", 11); goto {abort}; }}",
+            t = t,
+            abort = abort_target(e)
+        )
+        .unwrap();
+    }
 }
 
 /// Exit: mirrors codegen's exit lowering. `exit N` becomes
@@ -2950,7 +2976,7 @@ fn emit_pipeline_stage(
     let kind = BuiltinCmd::from_name(name);
     match kind {
         BuiltinCmd::Echo => {
-            emit_echo(e, args, types);
+            emit_echo(e, args, false, types);
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
         BuiltinCmd::Noop => {
