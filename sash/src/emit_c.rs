@@ -241,6 +241,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern const char* sash_capture_status(const char* const* argv, const char* const* envp, i64* out_len, i64* out_status);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern const char* const* sash_envp;  /* set by sash-rt _start */"
     )
     .unwrap();
@@ -2105,11 +2110,35 @@ fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
         if let Some(result) = try_native_intrinsic_c(e, name, argv, types) {
             return result;
         }
-        writeln!(e.out, "    /* TODO cmdsub exec: {} (Phase 4) */", name).unwrap();
-    } else {
-        writeln!(e.out, "    /* TODO cmdsub: non-literal cmd (Phase 4) */").unwrap();
+        return emit_cmdsub_exec_c(e, name, &argv[1..], types);
     }
+    writeln!(e.out, "    /* TODO cmdsub: non-literal cmd (Phase 4) */").unwrap();
     ("\"\"".to_string(), "0".to_string())
+}
+
+/// External `$(cmd args…)` capture: build argv, fork/exec and capture stdout
+/// via `sash_capture_status`, set `$?`, and abort on nonzero — mirrors native
+/// `emit_cmdsub_exec` (value_handlers.rs:915), which aborts unconditionally on
+/// a failed cmdsub. The captured (ptr, len) is returned (trailing newline
+/// already stripped by the runtime).
+fn emit_cmdsub_exec_c(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) -> CStr {
+    let argv = emit_argv(e, name, args, types, "    ");
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_l; i64 {t}_st; const char* {t}_p = sash_capture_status((const char* const*){argv}, sash_envp, &{t}_l, &{t}_st);",
+        t = t,
+        argv = argv
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    __exit_status = {t}_st; __test_result = ({t}_st == 0) ? 1 : 0;",
+        t = t
+    )
+    .unwrap();
+    writeln!(e.out, "    if ({t}_st != 0) sash_exit({t}_st);", t = t).unwrap();
+    (format!("{}_p", t), format!("{}_l", t))
 }
 
 /// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs:736).

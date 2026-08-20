@@ -6,7 +6,7 @@ kind: bug
 depends: []
 gates:
   - "pipefail-on-non-last aborts in c and janet (21.3 `/bin/false | echo ok`, 55.10 `/bin/false | /bin/true`), WITHOUT breaking per-segment `-` suppression (21.2 `- /bin/false | echo ok`, 55.11 `- /bin/false | /bin/true`)"
-  - "c cmdsub abort: `x=$(/bin/false)` aborts, `x=$(- cmd)` does not (55.7, 55.8, 55.9)"
+  - "[DONE c 2026-08-20] c cmdsub abort: `x=$(/bin/false)` aborts, `x=$(- cmd)` does not (55.7, 55.8, 55.9). Implemented external `$(...)` capture in emit_c (sash_capture_status runtime helper + emit_cmdsub_exec_c), abort-on-nonzero mirroring native."
   - "cd / echo-write(EPIPE/ENOSPC) / redirect-open failures abort with the native descriptive message in c (55.20-29 un-guarded to native,c)"
   - "janet pipeline abort (bare failing pipeline aborts)"
   - "[RESOLVED, DG 2026-07-04] janet abort diagnostics use janet's OWN argv[0] (`(dyn :args) 0`) — that's faithful (`<argv0>: <reason>`); janet is a script, not a `test_bin`. The message-exact specs must NOT hardcode `test_bin`: assert the message SUFFIX (the `: <detail>` after the program name, which is backend-independent) or derive the expected progname per mode. Then un-guard 55.20-29 to all three modes."

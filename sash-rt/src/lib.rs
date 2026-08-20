@@ -807,6 +807,69 @@ pub extern "C" fn sash_capture(
     }
 }
 
+/// Like `sash_capture`, but also writes the child's exit status through
+/// `out_status`. The C backend uses this for external `$(cmd)`: it needs the
+/// captured stdout AND the status to apply the DD#55 abort-on-nonzero
+/// (`x=$(/bin/false)` must abort). Mirrors native's inline cmdsub fork/pipe.
+#[no_mangle]
+pub extern "C" fn sash_capture_status(
+    argv: *const *const u8,
+    envp: *const *const u8,
+    out_len: *mut i64,
+    out_status: *mut i64,
+) -> *const u8 {
+    unsafe {
+        *out_status = 0;
+        let mut pipe_fds = [0i64; 2];
+        if sash_pipe(pipe_fds.as_mut_ptr()) < 0 {
+            *out_len = 0;
+            return core::ptr::null();
+        }
+        let pipe_r = pipe_fds[0];
+        let pipe_w = pipe_fds[1];
+
+        let pid = sash_fork();
+        if pid == 0 {
+            sash_close(pipe_r);
+            sash_dup2(pipe_w, 1);
+            sash_close(pipe_w);
+            sash_exec(argv, envp);
+            sash_exit(127);
+        }
+        if pid < 0 {
+            *out_len = 0;
+            return core::ptr::null();
+        }
+        sash_close(pipe_w);
+
+        let mut result = [0u8; 65536];
+        let mut total = 0usize;
+        loop {
+            let n = sash_read(
+                pipe_r,
+                result.as_mut_ptr().add(total),
+                (result.len() - total) as i64,
+            );
+            if n <= 0 {
+                break;
+            }
+            total += n as usize;
+        }
+        sash_close(pipe_r);
+        *out_status = sash_wait(pid);
+
+        if total > 0 && result[total - 1] == b'\n' {
+            total -= 1;
+        }
+
+        let buf = sash_alloc(total + 1);
+        core::ptr::copy_nonoverlapping(result.as_ptr(), buf, total);
+        *buf.add(total) = 0;
+        *out_len = total as i64;
+        buf as *const u8
+    }
+}
+
 // Simple bump allocator — must stay unsafe (DD#34)
 // ── Heap — mmap'd region managed by heap_4 ────────────────────────────
 // heap4.c provides sash_malloc/sash_free/sash_realloc (first-fit + coalesce).
