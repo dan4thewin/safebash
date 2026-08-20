@@ -102,6 +102,14 @@ fn emit_prologue(out: &mut String) {
         "typedef struct {{ const char* ptr; i64 len; }} sash_pair;"
     )
     .unwrap();
+    // Two-i64 return of sash_capture_start (saved stdout fd, pipe read fd).
+    writeln!(out, "typedef struct {{ i64 a; i64 b; }} sash_ii;").unwrap();
+    writeln!(out, "extern sash_ii sash_capture_start(void);").unwrap();
+    writeln!(
+        out,
+        "extern sash_pair sash_capture_end(i64 saved, i64 pipe_r);"
+    )
+    .unwrap();
     writeln!(out).unwrap();
     writeln!(out, "/* sash-rt C ABI (Phase 4) */").unwrap();
     writeln!(
@@ -375,6 +383,10 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     // an explicit `exit N` in END overrides it via emit_exit).
     writeln!(e.out, "    i64 __end_status = 0;").unwrap();
     writeln!(e.out, "    (void)__end_status;").unwrap();
+    // Function/multi-statement stdout capture ($(f), $(a; b)): the saved
+    // stdout fd + pipe read fd between CaptureStart and CaptureEnd.
+    writeln!(e.out, "    i64 __cap_saved = 0; i64 __cap_pipe = -1;").unwrap();
+    writeln!(e.out, "    (void)__cap_saved; (void)__cap_pipe;").unwrap();
     // DD#20 lastpipe: a capturing pipeline stashes its final stage's
     // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
     writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
@@ -456,6 +468,10 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
         }
         SsaInst::Pipeline { stages, .. } => collect_pipeline_var_types(stages, types),
         SsaInst::ArrayAppend { value, .. } => collect_value_vars(value, types),
+        // The capture target holds the captured stdout (its declared type).
+        SsaInst::CaptureEnd { target, .. } => {
+            types.insert((target.name.clone(), target.version), target.var_type);
+        }
         // DD#61 bless-all: the loop binders are set inside the emitted loop, so
         // they need C slot declarations (as String ptr/len). c_var_name
         // collapses their unique versions onto the binder name.
@@ -697,6 +713,58 @@ fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarT
     .unwrap();
 }
 
+/// Capture family sub-dispatcher for `emit_inst` (CaptureStart / CaptureEnd).
+/// A function/multi-statement `$(…)` capture: CaptureStart redirects stdout to
+/// a pipe (saving the state in __cap_saved/__cap_pipe), the body runs, and
+/// CaptureEnd restores stdout, reads the pipe, and stores it into the target.
+/// Mirrors native emit_capture_end (dispatch.rs:1249). No nesting (single
+/// capture-state pair), matching native's single capture_saved/pipe vars.
+fn emit_capture_inst(e: &mut Emit, inst: &SsaInst) -> bool {
+    match inst {
+        SsaInst::CaptureStart => {
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    sash_ii {t} = sash_capture_start(); __cap_saved = {t}.a; __cap_pipe = {t}.b;",
+                t = t
+            )
+            .unwrap();
+        }
+        SsaInst::CaptureEnd { target, .. } => {
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    sash_pair {t} = sash_capture_end(__cap_saved, __cap_pipe);",
+                t = t
+            )
+            .unwrap();
+            let base = c_var_name(&target.name, target.version);
+            match target.var_type {
+                VarType::Int => {
+                    writeln!(
+                        e.out,
+                        "    {base} = sash_atoi({t}.ptr, {t}.len);",
+                        base = base,
+                        t = t
+                    )
+                    .unwrap();
+                }
+                VarType::String => {
+                    writeln!(
+                        e.out,
+                        "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
+                        base = base,
+                        t = t
+                    )
+                    .unwrap();
+                }
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Bless family sub-dispatcher for `emit_inst` (Bless / BlessAll / BlessRetag).
 /// Returns true when it handled `inst`.
 fn emit_bless_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
@@ -872,7 +940,10 @@ fn emit_bless_check(
 fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
     // I/O-read and bless families handled in sub-dispatchers to keep this
     // dispatcher lean (complexity gate).
-    if emit_read_inst(e, inst, types) || emit_bless_inst(e, inst, types) {
+    if emit_read_inst(e, inst, types)
+        || emit_bless_inst(e, inst, types)
+        || emit_capture_inst(e, inst)
+    {
         return;
     }
     match inst {

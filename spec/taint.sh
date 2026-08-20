@@ -482,14 +482,14 @@ run_sash 'x=$(cat /etc/hostname | tr a b); echo $x'
 run_sash 'echo $(y=1; cat /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk mcs.2
 # mcs.3 a purely-clean body (builtins only) is NOT tainted — capture is usable
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'x=$(echo a; echo b); echo "[$x]"'
     [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk mcs.3
 else
     skip_chk mcs.3
 fi
-# mcs.4 blessing the tainted pipeline capture makes it usable (native)
-if in_modes native; then
+# mcs.4 blessing the tainted pipeline capture makes it usable (native+c)
+if in_modes native,c; then
     run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
     [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
 else
