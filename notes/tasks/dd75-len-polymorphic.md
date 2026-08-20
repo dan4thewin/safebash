@@ -1,9 +1,10 @@
 ---
 title: "DD#75 §2 — len is type-polymorphic (array/map → count, string → bytes); ${#x} is Int sugar for $(len x)"
-status: partial
+status: done
 priority: P2
 kind: task
 depends: []
+resolved: "2026-08-20 — core done: len type-dispatch (array/map→count, string→bytes, no `len <string>` garbage) + ${#x} Int-typed sugar. Arithmetic (`$(( (len a)+1 ))`) done under intrinsics-lengths-in-arithmetic. The undefined-`len` hard reject is SAFE as-is (no garbage/segfault) and split into `len-undefined-reject` (needs loop-var/param scope tracking to avoid false positives — confirmed check_for doesn't register the loop var)."
 gates:
   - "[done] len <array|map> → count; len <string> → byte length; dispatch on TYPE (state.collections), not the `$` sigil (fixes the `len <string>` garbage)"
   - "[done] ${#x} is Int-typed sugar: int n=${#s} and int n=${#a} compile (was SB4030); ${#a} on an array yields the count (was 0)"

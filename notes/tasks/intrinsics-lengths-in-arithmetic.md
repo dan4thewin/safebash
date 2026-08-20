@@ -1,9 +1,10 @@
 ---
 title: "Intrinsics and lengths in arithmetic: `$(( (len a) + 1 ))`, `$(( ${#a} + 1 ))`"
-status: partial
+status: done
 priority: P2
 kind: bug
 depends: []
+resolved: "2026-08-20 — all gates verified: `(len a)` sexpr evaluates, `$(( ${#a} + 1 ))`/`$(( ${#s} + 1 ))` yield length+1, and a string intrinsic in an arith sexpr (`(toupper s)`) is a clean compile error (SB4030). native+c (janet len-in-arith guarded, janet-join-intrinsic-gaps)."
 gates:
   - "[done] `int n=$(( (len a) + 1 ))` yields count+1 — the DD#58 arith sexpr `(len a)` evaluates the intrinsic (len array/map→count, string→bytes)"
   - "[done] `$(( ${#a} + 1 ))` / `$(( ${#s} + 1 ))` yield length+1 (arith-braced-length: ATok::LenOf → the len FuncCall shape)"

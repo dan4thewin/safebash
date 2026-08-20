@@ -1,9 +1,10 @@
 ---
 title: "DD#76 — int-valued collections (int array / int map) + bare a[i] arith lvalue"
-status: in-progress
+status: done
 priority: P2
 kind: feature
 depends: []
+resolved: "2026-08-20 — Stage C (bare a[i] in arith, rvalue + lvalue) shipped via DD#79 this session (commit 38bb25c): (( a[i]++ ))/(( a[i] += e ))/(( a[i] = e )) on an int array work; bare m[k] in arith → error. Stages A/B (decl + codegen store/read) done earlier. Backend gaps are separate filed tasks (janet-int-valued-collections, c-local-int-collection-decl)."
 gates:
   - "`int array a=(10 20 30)` / `int map m=([k]=5)` declare; non-numeric element → type error"
   - "int cell stored as {val_ptr:null, val_len:i64} (DD#76); string collections unchanged"

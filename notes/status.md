@@ -1,4 +1,28 @@
-## ════════ STATUS (2026-08-19, cont.) — P2 sweep started (braced-var bypass fixed) ════════
+## ════════ STATUS (2026-08-20) — finishing partials ════════
+
+DG: "finish partials." Also fixed a bless-all bug DG surfaced.
+
+- **bug-mapfile-undeclared-len-ice — front-end completion** (bc8940f): the
+  transform auto-declare made `$(len a)` work but the FRONT-END didn't register
+  an auto-declared mapfile/read array as a collection, so `bless e in a` /
+  `${a[0]}` gave SB4030 ("scalar") — while `argv` and explicit `array a=()`
+  worked. `type_check::check_command` now registers mapfile/readarray/read -a
+  targets (match-dispatched, cog 15→2). Taint gate preserved. taint.sh ad.3/ad.4.
+- **intrinsics-lengths-in-arithmetic → DONE**: all gates verified — `(len a)`
+  sexpr evaluates, `$(( ${#a}+1 ))` works, a string intrinsic in arith
+  (`(toupper s)`) is a clean SB4030. No code needed (already shipped).
+- **int-valued-collections (DD#76) → DONE**: Stage C (bare `a[i]` arith
+  rvalue+lvalue) shipped via DD#79 this session; A/B earlier. Backend gaps
+  (janet-int-valued-collections, c-local-int-collection-decl) filed separately.
+- **dd75-len-polymorphic → DONE (core)**: len type-dispatch + `${#x}` Int sugar
+  done. The undefined-`len` hard reject is SAFE as-is (0, no garbage) and split
+  to `len-undefined-reject` (P3) — confirmed `check_for` doesn't register the
+  loop var, so a naive reject would false-positive on `len <loopvar>`.
+
+Remaining partials: c-janet-dd55-abort-channel (P2, c/janet backend),
+dd67-bash-sugar-sweep (P3), tilde-vs-dd53 (P3).
+
+
 
 P1s: all done/superseded (the lone `fixed` one — arith `${var:OP}` silent-0 —
 normalized to done; native/c gate resolved, only the janet arith-value residual
