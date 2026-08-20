@@ -885,23 +885,17 @@ fn check_int_collection_elements(
 }
 
 fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    let cmd_name = expr_to_name(&c.name);
-    if cmd_name == "unset" {
-        check_unset_args(c, span, env, errors);
-    }
-    if cmd_name == "exit" {
-        check_exit_arg(c, span, env, errors);
-    }
-    if cmd_name == "bless" {
-        check_bless_form(c, span, env, errors);
-    }
-    if cmd_name == "argv" {
-        // DD#60: `argv [N] a` fills (and auto-declares) the trailing array
-        // as an indexed collection — register it so a later bless / len /
-        // iteration sees an array, not a scalar.
-        if let Some(arr) = c.args.last() {
-            env.collections.insert(expr_to_name(arr));
-        }
+    // DD#60/DD#61: argv/mapfile/read auto-declare their target collection —
+    // register it so a later bless-all / len / element read sees a collection,
+    // not a scalar (the front-end analogue of the transform's auto-declare).
+    match expr_to_name(&c.name).as_str() {
+        "unset" => check_unset_args(c, span, env, errors),
+        "exit" => check_exit_arg(c, span, env, errors),
+        "bless" => check_bless_form(c, span, env, errors),
+        "argv" => register_argv_target(c, env),
+        "mapfile" | "readarray" => register_bulk_read_target(c, env),
+        "read" => register_read_array_target(c, env),
+        _ => {}
     }
 
     // DD#33: check subscript key types in command args
@@ -909,6 +903,39 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     check_keys_operand(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
+    }
+}
+
+/// DD#60: `argv [N] a` fills (and auto-declares) the trailing array.
+fn register_argv_target(c: &Command, env: &mut TypeEnv) {
+    if let Some(arr) = c.args.last() {
+        env.collections.insert(expr_to_name(arr));
+    }
+}
+
+/// `read -a a` fills (auto-declares) an indexed array target.
+fn register_read_array_target(c: &Command, env: &mut TypeEnv) {
+    let args: Vec<String> = c.args.iter().map(expr_to_name).collect();
+    if let Some(pos) = args.iter().position(|a| a == "-a") {
+        if let Some(name) = args.get(pos + 1) {
+            env.collections.insert(name.clone());
+        }
+    }
+}
+
+/// Register a `mapfile`/`readarray` target as a collection (indexed array, or
+/// an assoc array for `-m`) — the type-check analogue of the transform's
+/// `autodeclare_bulk_target`. Without this, an auto-declared bulk-read array
+/// (no prior `array a=()`) is seen as a scalar by bless-all / len / element
+/// reads (SB4030), while `argv` — which does register — works.
+fn register_bulk_read_target(c: &Command, env: &mut TypeEnv) {
+    let args: Vec<String> = c.args.iter().map(expr_to_name).collect();
+    let Some(name) = args.iter().find(|a| !a.starts_with('-')) else {
+        return;
+    };
+    env.collections.insert(name.clone());
+    if args.iter().any(|a| a == "-m") {
+        env.assoc_arrays.insert(name.clone());
     }
 }
 

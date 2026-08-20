@@ -34,3 +34,20 @@ spec taint.sh ad.1 (`mapfile -t a` undeclared → `$(len a)`=2) + ad.2
 lacks mapfile — both pre-existing gaps). 3-mode sweep 0 regressions, +2.
 `parse_mapfile_flags` extracted from `try_handle_mapfile` (the flag-loop) to
 clear the complexity gate on the touched function.
+
+## Follow-up 2026-08-20: front-end collection registration
+
+The transform auto-declare fixed the codegen ICE and `$(len a)`, but an
+auto-declared mapfile/read array was still seen as a **scalar** by the
+front-end — `bless e in a` / `${a[0]}` / `@a` on it gave SB4030 ("'a' is a
+scalar"), while `argv` (which registers in `type_check`) and an explicit
+`array a=()` both worked. Surfaced by DG asking "do we have bless-all for
+arrays?" and testing it on an auto-declared array.
+
+Fix: `type_check::check_command` now registers `mapfile`/`readarray`/`read -a`
+targets as collections (`register_bulk_read_target`/`register_read_array_target`,
+`-m` → assoc), mirroring the argv arm. The taint gate is preserved — an
+unblessed element read still rejects (SB5020). Refactored `check_command`'s
+`if cmd_name ==` chain to a `match` dispatcher (cog 15→2) to clear the
+grandfather-on-modify gate. spec taint.sh ad.3 (bless-all works) + ad.4
+(unblessed still SB5020). 0 regressions.

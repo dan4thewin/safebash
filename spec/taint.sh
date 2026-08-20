@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=91
+plan=93
 echo "1..$plan" >&3
 
 set +e
@@ -205,6 +205,12 @@ run_sash 'array a=(); mapfile -t a < d60a.txt; echo ${a[0]}'
 run_sash 'array a=(); read -a a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.14
 
+# ad.4 an AUTO-declared mapfile array (no prior `array a=()`) is still tainted —
+#      an element read without bless rejects (the front-end auto-declare
+#      registers the collection but must NOT clear the taint).
+run_sash 'mapfile -t a < d60a.txt; echo ${a[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ad.4
+
 # 60.32 tainted array iterated without bless-all → reject (negative for 60.25)
 run_sash 'array a=(); mapfile -t a < d60b.txt; for x in @a; do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
@@ -367,9 +373,14 @@ echo ${m[NAME]}'
     # ad.2 same for `read -a` into an undeclared array
     run_sash 'read -a a < d60a.txt; echo $(len a)'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
+    # ad.3 bless-all + element read on an AUTO-declared mapfile array (the
+    #      front-end must register the target as a collection, else `bless e in
+    #      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
+    run_sash 'mapfile -t a < d60a.txt; bless e in a [[ -n $e ]]; echo ${a[0]}'
+    [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
-              60.21 60.22 60.23 60.25 60.29 60.31 60.36 ad.1 ad.2; do
+              60.21 60.22 60.23 60.25 60.29 60.31 60.36 ad.1 ad.2 ad.3; do
         skip_chk "$id"
     done
 fi
