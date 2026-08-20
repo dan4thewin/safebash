@@ -1,3 +1,34 @@
+## ════════ STATUS (2026-08-20, later) — janet STRUCTURAL MAP: Stage 1 SHIPPED ════════
+
+DG re-aimed janet: "as near as possible to a 1-to-1 map of how the compiler
+interprets the sash source … side-by-side … 'oh, I see that didn't parse the
+way I expected'." Structural legibility (the parse shape) over semantic/
+idiomatic legibility. Build in **stages**; get an early read after stage 1.
+
+**Stage 1 shipped `2e6ad81` (pushed).** New `--janet-map` backend, additive
+(old `--janet` untouched):
+- `sash/src/emit_janet_map.rs` — structural emitter: Program → `sash/*` map.
+- `sash/janet/sash-rt.janet` — primitive library, prepended as preamble.
+- `--janet-map` flag in lib.rs; runs the real front-end (validation-gated).
+- DD#15 amended; task `janet-structural-map` (S1 done, S2–S6 outlined); j.167.
+
+Design (DD#15 amendment, DG-ratified): sash-hugging vocabulary; semantics in
+sash-rt.janet; control flow via THIN macros (`sash/if` ≈ janet `if`) so emit
+keeps supplying structure (IR-stage oracle independence preserved); `bless`
+present+functional (`sash/bless-checked` aborts / `sash/bless` branches) but
+NO taint flag; purely structural (no taint/type annotations); position-based
+reads VISIBLE (`sash/run` bare-checked vs `sash/ok?` condition vs `sash/dash`
+for `- cmd`); `($ x)` reads nil-coalesce to "".
+
+Stage 1 surface: assign, echo/`:`, external (run vs ok?), if/else/elif,
+while/until, `[[ ]]` string+numeric tests, `$()` single-external capture,
+bless, `- cmd`, `$?`. **Awaiting DG's early read + experimentation before S2.**
+
+Next stages (staged, per DG's read): S2 functions/return/positionals; S3
+pipelines/`&`/`$!`/redirects; S4 `${…}` modifiers/arith/arrays/splats; S5
+abort-channel/signals/case/multi-stmt-capture/regex; S6 oracle re-green +
+retire old emit_janet, point `--janet` at the new one.
+
 ## ════════ STATUS (2026-08-20, cont.) — c PARITY SWEEP COMPLETE (janet deferred) ════════
 
 DG: "tackle all the c parity work, and wait on janet" → then approved all
