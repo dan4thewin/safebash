@@ -1,3 +1,47 @@
+## ════════ STATUS (2026-08-20, cont.) — c PARITY SWEEP (janet deferred) ════════
+
+DG: "tackle all the c parity work, and wait on janet." Started at **13 failing
++ 63 native-guarded** c tests; now **2 failing + ~23 skipped**, most of the
+skipped being not-c-gaps. 7 batches, all 0 regressions, all pushed on
+`hand-parser`:
+
+- **158** `16c5078` bless-fail abort, signum, DD#56 signals/END (+9:
+  24.12, sx.7, 56.4-56.11). Signal runtime prims already in sash-rt.
+- **159** `2d9230e` external `$(cmd)` capture + DD#55 abort (+3: 55.7/8/9).
+  New `sash_capture_status` runtime helper.
+- **160** `6fea877` bless-all + mapfile-from-file + array append (+19:
+  60.9-60.36, ad.1-3). RedirectPush/Pop stack, BlessAll loop (shadowing,
+  if-form, map), BlessRetag, ArrayAppend.
+- **161** `95602ec` un-guard 12 already-working (e.b70.tbare/tdash, 63.2e/f,
+  63.cap6/7, bng.1-6, ud.16, e.a70.silent).
+- **162** `dd1215c` function/multi-statement stdout capture (+4: 17.3/4,
+  mcs.3/4). CaptureStart/End via sash_capture_start/end.
+- **163(6)** `eb4c63c` un-guard 14.2c/14.3a/b/d (cmdsub, work via 159/162).
+- **163(7)** `6b9019c` implement `cd` (was a no-op — real bug); fix
+  `bug-emit-c-splat-vla-jump` P2 (heap-alloc splat argv, not a stack VLA, so
+  cd's abort goto can cross it). 0 un-guarded but 2 real fixes.
+
+**Still failing (2):** 38.5, 55.19 — `$!` background pid (`&` →
+`__subshell`/`__store_bg_pid`, TODO in c). → bgpid task.
+
+**Remaining skipped — NOT c gaps (leave native-only):** 15.1/15.2 (janet
+tests, `run_sash_janet`), 32.1/32.2 (native-ELF `.sash_source`/`--extract`),
+57.46a-c (mode-independent CLI flags), 24.20/25.8/gs.6/e.a70.regcomp (assert
+`$rerr`, which the c harness discards).
+
+**Remaining c gaps needing work (3 areas):**
+1. **descriptive-abort** (55.20-30, ~11 tests) — cd done; still need echo
+   write(2)-error abort (emit_echo ignores sash_write results, 2 call sites) +
+   redirect open(2)-error abort + a harness change so `_run_sash_c` captures
+   runtime stderr into `$rerr` (currently `2>/dev/null`). `test_bin:` is a
+   substring of c's `./test_bin:` so messages would match once captured. The
+   harness change touches ALL c tests → needs a full-sweep re-verify.
+2. **bgpid** (38.5, 55.19) — `&` background / subshell exec unimplemented in c
+   (`__subshell`/`__store_bg_pid` TODO). A new exec model.
+3. **ivc.8** — `local int array` function-local: the SSA restore mistypes the
+   int-collection as an int scalar (`sash_atoi`) instead of the table slot;
+   declare_vars "Int wins" picks the wrong slot. A transform/type fix.
+
 ## ════════ STATUS (2026-08-20, cont.) — P3 partials finished (tilde, dd67) ════════
 
 DG: "finish the p3 partials." Both closed.
