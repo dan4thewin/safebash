@@ -1,6 +1,6 @@
 ---
 title: "emit_c: function-local int collection (`local int array`) leaves the table var undeclared"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []

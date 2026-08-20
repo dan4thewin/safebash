@@ -549,17 +549,21 @@ fn collect_value_vars(value: &SsaValue, types: &mut VarTypes) {
 /// `VarSlot` model where each bash variable maps to one
 /// Cranelift `Variable`: string vars are two C variables
 /// (`_ptr` plus `_len`), int vars are one. If a name appears at
-/// multiple versions with different declared types we take the
-/// most-Int-like (Int over String) since Int vars get reused as
-/// Int across the function.
+/// multiple versions with different declared types we take String
+/// (the table/ptr slot), since only an int-valued collection is
+/// mixed and it must be stored as a table.
 fn declare_vars(out: &mut String, types: &VarTypes) {
-    // Collapse versions: name → most-int-like type seen.
+    // Collapse versions: name → slot type. STRING (table/ptr) wins: an
+    // int-valued collection (`int array`) has Int-typed save/restore versions
+    // (the local save is a plain Var assign) but is stored as a table, so it
+    // needs the `_ptr`/`_len` slots. A plain int scalar is Int at every
+    // version and a plain string var String at every version — only
+    // int-collections are mixed, and they need the String slot.
     let mut by_name: HashMap<String, VarType> = HashMap::new();
     for ((name, _ver), vt) in types {
         let entry = by_name.entry(name.clone()).or_insert(*vt);
-        // Int wins if any version is Int.
-        if *vt == VarType::Int {
-            *entry = VarType::Int;
+        if *vt == VarType::String {
+            *entry = VarType::String;
         }
     }
     let mut sorted: Vec<_> = by_name.iter().collect();
@@ -785,7 +789,7 @@ fn emit_bless_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         // this Bless inst, so this is always the hard-abort form.)
         SsaInst::Bless { source, test, .. } => {
             let val = lower_test_expr(e, test, types);
-            let (vp, vl) = emit_var_value(e, source);
+            let (vp, vl) = emit_var_value(e, source, types);
             writeln!(
                 e.out,
                 "    if (!({val})) sash_bless_fail(\"{nm}\", {nl}, {vp}, {vl});",
@@ -1037,8 +1041,15 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
     }
     let base = c_var_name(&target.name, target.version);
     // A collection-valued assignment stores a table pointer in the `_ptr` slot
-    // (String path), even for an int-valued collection (DD#76).
-    match collection_or_declared_type(value, target.var_type) {
+    // (String path), even for an int-valued collection (DD#76). For a plain
+    // `Var` assign into an int-collection (its function-local save/restore),
+    // the value alone looks Int, so also route to the String path when the
+    // target name is declared as a table slot (see declare_vars "String wins").
+    let mut slot_ty = collection_or_declared_type(value, target.var_type);
+    if slot_ty == VarType::Int && name_is_table_slot(&target.name, types) {
+        slot_ty = VarType::String;
+    }
+    match slot_ty {
         VarType::String => {
             let (ptr, len) = lower_value_as_str(e, value, types);
             writeln!(e.out, "    {0}_ptr = {1};", base, ptr).unwrap();
@@ -1049,6 +1060,16 @@ fn emit_assign(e: &mut Emit, target: &VarRef, value: &SsaValue, types: &VarTypes
             writeln!(e.out, "    {} = {};", base, int_expr).unwrap();
         }
     }
+}
+
+/// True if any recorded version of `name` is a String (table/ptr) slot — so
+/// declare_vars declares its `_ptr`/`_len`. Used to route an int-collection's
+/// plain-`Var` save/restore assigns to the String path (they'd otherwise look
+/// Int and write an undeclared scalar).
+fn name_is_table_slot(name: &str, types: &VarTypes) -> bool {
+    types
+        .iter()
+        .any(|((n, _), vt)| n == name && *vt == VarType::String)
 }
 
 /// Lower an `SsaValue` to a `(ptr, len)` C expression pair.
@@ -1087,7 +1108,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
-        SsaValue::Var(vref) => emit_var_value(e, vref),
+        SsaValue::Var(vref) => emit_var_value(e, vref, types),
         SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
@@ -1181,7 +1202,7 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
 
 /// Lower an `SsaValue::Var` to a (ptr, len) pair. `$?`/`$$` route through
 /// `sash_itoa` on the live int value (codegen/values.rs:514-525).
-fn emit_var_value(e: &mut Emit, vref: &VarRef) -> CStr {
+fn emit_var_value(e: &mut Emit, vref: &VarRef, types: &VarTypes) -> CStr {
     if vref.name == "?" {
         return emit_itoa_temp(e, "__exit_status");
     }
@@ -1190,13 +1211,14 @@ fn emit_var_value(e: &mut Emit, vref: &VarRef) -> CStr {
         writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
         return emit_itoa_temp(e, &format!("{}_pid", t));
     }
-    match vref.var_type {
-        VarType::String => {
-            let base = c_var_name(&vref.name, vref.version);
-            (format!("{}_ptr", base), format!("{}_len", base))
-        }
-        VarType::Int => emit_itoa_temp(e, &c_var_name(&vref.name, vref.version)),
+    let base = c_var_name(&vref.name, vref.version);
+    // An int-valued collection has var_type Int but is stored as a table, so
+    // read its `_ptr`/`_len` slots (declared by declare_vars "String wins"),
+    // not `sash_itoa(scalar)`. Matters for its local save/restore Var reads.
+    if vref.var_type == VarType::String || name_is_table_slot(&vref.name, types) {
+        return (format!("{}_ptr", base), format!("{}_len", base));
     }
+    emit_itoa_temp(e, &base)
 }
 
 /// DD#60: `ArgvIndex` (argv[idx], 0-based — the loop guard keeps idx in
