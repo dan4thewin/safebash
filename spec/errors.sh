@@ -291,10 +291,10 @@ echo after'
     # and `-` both abort (the `-` binds to the command's write verdict,
     # not the prior open); an enclosing condition (if/||) catches it via
     # the failed final-command result.
-    # NESTED native-only: redirect open(2)-failure abort is not yet
-    # implemented in c (needs the skip-body + in_condition mechanism, which
-    # `checked` alone can't express — `- echo > /bad` must still abort).
-    if in_modes native; then
+    # NESTED native+c: redirect open(2)-failure abort is now implemented in c
+    # (emit_redirects_guarded + emit_command skip-body + in_condition, so
+    # `- echo > /bad` still aborts while `if`/`||` catch). janet deferred.
+    if in_modes native,c; then
     # 55.24 bare redirect open failure aborts — no misroute + diagnostic
     run_sash 'echo hi > /nonexistent_dir_55/f
 echo after'

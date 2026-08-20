@@ -50,6 +50,11 @@ struct Emit {
     /// The block currently being emitted — lets the signal check-point skip
     /// itself once we're at/after the END block (avoids a re-jump loop).
     cur_block: BlockId,
+    /// True while emitting the final command of a block that terminates in a
+    /// Branch/Loop (its status IS the condition). A redirect open(2) failure
+    /// there is caught by the if/while, so it must not abort. Mirrors native
+    /// `ctx.in_condition`.
+    in_condition: bool,
     /// DD#61/compound redirects: the saved-fd stack for RedirectPush/Pop
     /// (a `mapfile -t a < file` wraps the read inst in a push/pop pair).
     redirect_stack: Vec<Vec<SavedFdC>>,
@@ -63,6 +68,7 @@ impl Emit {
             end_block: None,
             has_exiting_signals: false,
             cur_block: 0,
+            in_condition: false,
             redirect_stack: Vec::new(),
         }
     }
@@ -641,9 +647,18 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     if is_catching_construct_exit(&block.label) {
         writeln!(e.out, "    __exit_status = 0;").unwrap();
     }
-    for inst in &block.insts {
+    // The final command of a Branch/Loop-terminated block is the condition —
+    // a redirect open(2) failure there is caught, not aborted (in_condition).
+    let cond_block = matches!(
+        block.terminator,
+        Terminator::Branch { .. } | Terminator::Loop { .. }
+    );
+    let last = block.insts.len().saturating_sub(1);
+    for (i, inst) in block.insts.iter().enumerate() {
+        e.in_condition = cond_block && i == last;
         emit_inst(e, inst, types);
     }
+    e.in_condition = false;
     emit_terminator(&mut e.out, &block.terminator);
 }
 
@@ -1643,14 +1658,75 @@ fn emit_command(
         return;
     }
 
-    // Phase 4: redirects wrap the command. emit_redirects → lower_exec
-    // → emit_restore (codegen/inst_handlers.rs:585+).
-    let saved = if redirects.is_empty() {
-        Vec::new()
+    // Phase 4: redirects wrap the command. On an open(2) failure the body is
+    // skipped (no misroute) and the abort is context-governed (DD#55).
+    let (saved, failure) = if redirects.is_empty() {
+        (Vec::new(), None)
     } else {
-        emit_redirects(e, redirects, types)
+        emit_redirects_guarded(e, redirects, types)
     };
 
+    let Some(rf) = failure else {
+        emit_command_body(e, name, kind, args, checked, types);
+        if !saved.is_empty() {
+            emit_restore(e, &saved);
+        }
+        return;
+    };
+    emit_redirect_guarded_body(e, name, kind, args, checked, types, &saved, &rf);
+}
+
+/// Emit a command whose redirect setup can fail (an open redirect). On
+/// failure: status 1, restore fds, and — unless in an if/|| condition (where
+/// the failed status is caught) — write the `<argv0>: <path>: <reason>`
+/// diagnostic and abort. On success: run the body normally. Mirrors native
+/// emit_redirect_guarded_body (inst_handlers.rs:724).
+#[allow(clippy::too_many_arguments)]
+fn emit_redirect_guarded_body(
+    e: &mut Emit,
+    name: &str,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+    saved: &[SavedFdC],
+    rf: &RedirectFailC,
+) {
+    let (failed, path_ptr, path_len) = rf;
+    let in_condition = e.in_condition;
+    writeln!(e.out, "    if ({failed}) {{", failed = failed).unwrap();
+    writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
+    if !in_condition {
+        writeln!(
+            e.out,
+            "        sash_emsg({p}, {l}, 0, 0);",
+            p = path_ptr,
+            l = path_len
+        )
+        .unwrap();
+    }
+    emit_restore(e, saved);
+    if !in_condition {
+        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+    }
+    writeln!(e.out, "    }} else {{").unwrap();
+    emit_command_body(e, name, kind, args, checked, types);
+    if !saved.is_empty() {
+        emit_restore(e, saved);
+    }
+    writeln!(e.out, "    }}").unwrap();
+}
+
+/// The `BuiltinCmd` body dispatch, split out of `emit_command` so the
+/// redirect-open guard can run it in either arm.
+fn emit_command_body(
+    e: &mut Emit,
+    name: &str,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+) {
     match kind {
         BuiltinCmd::Echo => emit_echo(e, args, checked, types),
         BuiltinCmd::Exit => emit_exit(e, args, types),
@@ -1675,10 +1751,6 @@ fn emit_command(
                 writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
             }
         }
-    }
-
-    if !saved.is_empty() {
-        emit_restore(e, &saved);
     }
 }
 
@@ -2730,7 +2802,20 @@ fn emit_redirects(
     redirects: &[crate::ir::Redirect],
     types: &VarTypes,
 ) -> Vec<SavedFdC> {
+    emit_redirects_guarded(e, redirects, types).0
+}
+
+/// Like `emit_redirects`, but also returns the first open(2)-failure guard
+/// (OR-folded across multiple open redirects) so the caller can apply the
+/// DD#55 setup-failure semantics (skip body, fail status, context abort).
+/// Mirrors native emit_redirects_guarded (codegen/redirects.rs).
+fn emit_redirects_guarded(
+    e: &mut Emit,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) -> (Vec<SavedFdC>, Option<RedirectFailC>) {
     let mut saved = Vec::with_capacity(redirects.len());
+    let mut fail: Option<RedirectFailC> = None;
     for r in redirects {
         let fd = r.fd.unwrap_or(default_fd_for_op(&r.op)) as i64;
         let t = e.fresh();
@@ -2739,9 +2824,19 @@ fn emit_redirects(
             saved_var: format!("{}_saved", t),
             original_fd: fd,
         });
-        emit_one_redirect(e, r, fd, types);
+        if let Some((f, pp, pl)) = emit_one_redirect(e, r, fd, types) {
+            fail = Some(match fail {
+                None => (f, pp, pl),
+                Some((prev_f, prev_pp, prev_pl)) => {
+                    let ot = e.fresh();
+                    writeln!(e.out, "    i64 {ot} = {prev_f} | {f};", ot = ot).unwrap();
+                    // Keep the first failing-candidate path for the message.
+                    (ot, prev_pp, prev_pl)
+                }
+            });
+        }
     }
-    saved
+    (saved, fail)
 }
 
 /// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
@@ -2770,11 +2865,15 @@ fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
 
 /// Dispatch on RedirectOp shape. Mirrors emit_one_redirect
 /// (codegen/redirects.rs:69).
-fn emit_one_redirect(e: &mut Emit, r: &crate::ir::Redirect, fd: i64, types: &VarTypes) {
+fn emit_one_redirect(
+    e: &mut Emit,
+    r: &crate::ir::Redirect,
+    fd: i64,
+    types: &VarTypes,
+) -> Option<RedirectFailC> {
     use crate::ir::RedirectOp;
     if let Some(flags) = open_flags_for_op(&r.op) {
-        emit_open_redirect(e, fd, &r.target, flags, types);
-        return;
+        return emit_open_redirect(e, fd, &r.target, flags, types);
     }
     match r.op {
         RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
@@ -2783,43 +2882,53 @@ fn emit_one_redirect(e: &mut Emit, r: &crate::ir::Redirect, fd: i64, types: &Var
             writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
         }
     }
+    None
 }
 
 /// `> file` / `>> file` / `< file`. Mirrors emit_open_redirect
 /// (codegen/redirects.rs:128). Literal path → sash_redirect (which
 /// internally does the open+dup2+close); dynamic path → sash_redirect_s
 /// with computed (ptr, len).
+/// A redirect `open(2)` failure surfaced to the command handler: the C
+/// expression that is nonzero on failure, plus the target path (for the
+/// `<argv0>: <path>: <reason>` diagnostic). Mirrors native RedirectFailure.
+type RedirectFailC = (String, String, String);
+
 fn emit_open_redirect(
     e: &mut Emit,
     fd: i64,
     target: &crate::ir::Expr,
     flags: i64,
     types: &VarTypes,
-) {
+) -> Option<RedirectFailC> {
+    let t = e.fresh();
     if let crate::ir::ExprKind::Literal(s) = &target.kind {
         // Static path — emit a NUL-terminated string literal and
         // call sash_redirect.
+        let path = format!("\"{}\"", c_escape(s));
         writeln!(
             e.out,
-            "    sash_redirect({fd}, \"{path}\", {flags});",
+            "    i64 {t}_rf = (sash_redirect({fd}, {path}, {flags}) < 0);",
+            t = t,
             fd = fd,
-            path = c_escape(s),
+            path = path,
             flags = flags
         )
         .unwrap();
-        return;
+        return Some((format!("{}_rf", t), path, format!("{}", s.len())));
     }
     // Dynamic path — lower via ir_expr_as_str, call sash_redirect_s.
     let (ptr, len) = ir_expr_as_str(e, target, types);
     writeln!(
         e.out,
-        "    sash_redirect_s({fd}, {p}, {l}, {flags});",
-        fd = fd,
+        "    i64 {t}_rf = (sash_redirect_s({fd}, {p}, {l}, {flags}) < 0);",
+        t = t,
         p = ptr,
         l = len,
         flags = flags
     )
     .unwrap();
+    Some((format!("{}_rf", t), ptr, len))
 }
 
 /// `>&N` — dup2(target_fd, fd). Mirrors emit_dup_output
