@@ -189,7 +189,16 @@ Build system uses Plan 9 `mk` (not `make`). Top-level `mkfile` has
 ### Spec tests
 
 Spec tests live in `spec/*.sh`. Run with `cd spec && bash run.sh`.
-Results accumulate in `spec.db` (SQLite, repo root). Query with:
+Results accumulate in `spec.db` (SQLite, repo root).
+
+**`chk` ids are a flat GLOBAL namespace across every spec file.** `chk N`
+records `$SASH_MODE:N`, so the same `N` in two files (e.g. `53.1` in both
+`convert.sh` and `taint.sh`) is one test_id — whichever file runs later
+(alphabetical) overwrites the other, silently if both pass. Before adding
+tests, `grep -rn "chk <prefix>\." spec/*.sh` to pick a collision-free block
+(each file tends to own a DD-numbered range, e.g. convert.sh = `57.x`).
+
+Query with:
 
 ```sql
 -- Current status
