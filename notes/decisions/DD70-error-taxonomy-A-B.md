@@ -179,3 +179,26 @@ consumer), and the `! X` result is what must be consumed. This makes
 
 DG (2026-07-24): "a bare command is not a boolean context … `! /bin/false;
 echo done` seems worse than useless." Reuses SB4018/SB4019 — no new codes.
+
+## Addendum (2026-08-19, DG): `!` binds a single unit; no pipeline operand
+
+The line above ("`! pipeline` … channel-(B) result for **any** operand") is
+**superseded**. DG refined `!` for **reviewability** (sash must be easier to
+review than bash — see DD#55):
+
+- **`!` negates a single reviewer-atomic unit** — one command, `[[ … ]]`, or
+  `(( … ))`. It binds only that unit, so `! X && Y` is `(!X) && Y` (bash-
+  consistent), not `!(X && Y)`. (Previously `! X && Y` was wrongly SB4018,
+  because `!` greedily wrapped the whole `X && Y`.)
+- **`!` on a multi-stage pipeline is rejected — SB4040.** A reviewer can't tell
+  how far `!` reaches in `! a | b`. Escape hatch: wrap the pipeline in a
+  predicate function and negate that — `f() { if a | b; then return 0; fi;
+  return 1 }` then `if ! f; then …`. (This mirrors SB4023 for `pipeline &&/||`;
+  a pipeline may be a whole `if`/`while` condition but never inline with
+  `!`/`&&`/`||`.)
+
+The rest of the positional template still holds: bare `! X` → SB4018, `- ! X`
+→ SB4019 (now emitted at parse time, so it reaches all backends, not just
+native), consumed positions negate the aggregate. Implemented in
+`parse/parser.rs::parse_negated` (single-unit parse + SB4040) and
+`parse_suppressed` (`- !` → SB4019). spec errors.sh bng.1-6. Journal 156.

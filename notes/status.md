@@ -20,6 +20,13 @@ bang-precedence-and-suppress; then c/janet parity + partials.
   auto-declared target behaves identically to a declared one (len works,
   element reads correctly tainted). native (c/janet mapfile gaps); taint.sh
   ad.1/ad.2; +2, 0 regr. Journal 155.
+- **bang-precedence-and-suppress DONE** (DG reviewability call): `!` binds a
+  single reviewer-atomic unit, so `! X && Y` = `(!X) && Y` (was wrongly SB4018);
+  `!` on a pipeline → **new SB4040** (escape hatch: wrap in a predicate fn);
+  `- ! X` → SB4019 at parse time (all modes). Design principle recorded in DD#55
+  (reframed "ambiguous" → **sash must be easier to review than bash**) + DD#70
+  addendum. spec errors.sh bng.1-6; 0 regr. Journal 156. (c/janet `!` runtime
+  parity still separate.)
 
 
 

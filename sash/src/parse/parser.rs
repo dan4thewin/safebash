@@ -961,32 +961,53 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume '!'
+    skip_terminators(scanner);
 
-    if let Some(stmt) = parse_statement(scanner)? {
-        // DD#66: `! [[ dispatch ]]` — the dispatch is statement-only.
-        if stmt_is_dispatch(&stmt) {
-            return Err(dispatch_stmt_only_error(span));
-        }
-        // Wrap in a negated pipeline
-        match stmt.kind {
-            StmtKind::Pipeline(mut p) => {
-                p.negated = true;
-                Ok(Some(Statement {
-                    kind: StmtKind::Pipeline(p),
-                    span,
-                }))
-            }
-            _ => Ok(Some(Statement {
-                kind: StmtKind::Pipeline(Pipeline {
-                    commands: vec![stmt],
-                    negated: true,
-                }),
-                span,
-            })),
-        }
-    } else {
-        Ok(None)
+    // `!` negates a single reviewer-atomic unit — one command, `[[ ]]`, or
+    // `(( ))` — NOT a multi-stage pipeline (a reviewer shouldn't have to know
+    // how far `!` reaches; sash is easier to review than bash). Parse just the
+    // unit via `dispatch_statement` (which does NOT fold `|`/`&&`); the caller's
+    // `maybe_wrap_redirects` then folds any trailing `&&`/`||`, so `! X && Y`
+    // reassociates to `(!X) && Y` (bash-consistent) instead of `!(X && Y)`.
+    let start = scanner.peek().span.start;
+    let tok = scanner.peek().token.clone();
+    let unit_span = span_from(scanner, start);
+    let Some(stmt) = dispatch_statement(scanner, tok, unit_span)? else {
+        return Ok(None);
+    };
+    // DD#66: `! [[ dispatch ]]` — the dispatch is statement-only.
+    if stmt_is_dispatch(&stmt) {
+        return Err(dispatch_stmt_only_error(span));
     }
+    // Reviewability (SB4040): `!` on a pipeline (`! a | b`) is rejected — a
+    // trailing `|`, or an already-folded multi-stage pipeline. Escape hatch:
+    // wrap the pipeline in a function and negate the function.
+    let pipeline_operand = matches!(scanner.peek().token, Tok::Pipe)
+        || matches!(&stmt.kind, StmtKind::Pipeline(p) if p.commands.len() > 1);
+    if pipeline_operand {
+        return Err(negate_pipeline_error(span));
+    }
+    // Wrap the single unit in a negated 1-command pipeline.
+    Ok(Some(Statement {
+        kind: StmtKind::Pipeline(Pipeline {
+            commands: vec![stmt],
+            negated: true,
+        }),
+        span,
+    }))
+}
+
+/// SB4040: `!` cannot negate a multi-stage pipeline (reviewability — a reviewer
+/// can't see how far `!` reaches). Direct to the function escape hatch.
+fn negate_pipeline_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4040",
+        "`!` cannot negate a pipeline — a reviewer can't tell how far `!` \
+         reaches. Wrap the pipeline in a predicate function and negate that: \
+         `f() { if a | b; then return 0; fi; return 1 }` then `if ! f; then …`"
+            .to_string(),
+    )
 }
 
 // ── suppressed command (- cmd) ───────────────────────────────
@@ -997,6 +1018,18 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
 
     // Peek ahead: if what follows looks like a command, treat - as suppression
     let next = scanner.peek_n(1);
+    // DD#70: `- !` suppresses a boolean → SB4019 directly (else it falls through
+    // to `parse_simple_or_assignment` and reports the garbage SB4014). `-`
+    // cannot suppress `!`.
+    if matches!(next.token, Tok::Bang) {
+        return Err(parse_error(
+            span,
+            "SB4019",
+            "`-` cannot suppress `!` — it is a boolean that must be consumed \
+             (if/||) or discarded with `|| :`"
+                .to_string(),
+        ));
+    }
     if next.token.is_word_like()
         || matches!(
             next.token,

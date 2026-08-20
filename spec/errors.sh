@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=79
+plan=85
 echo "1..$plan" >&3
 
 set +e
@@ -401,6 +401,34 @@ run_sash '[[ a = a ]] && echo hit'
 # e.b70.tor a `[[ … ]] || action` consumes it (runs on false)
 run_sash '[[ a = b ]] || echo miss'
 [[ $rc = 0 && $out = "miss" && -z $err ]]; chk e.b70.tor
+
+# ── `!` precedence + pipeline + suppress (DG 2026-08-19). `!` binds its
+# immediate unit (bash-consistent `(!X) && Y`); it cannot negate a pipeline
+# (reviewability, SB4040); `- !` is SB4019. Runtime negation is native-only
+# (c/janet `!` backend gap); the parse-time rejects are all modes. ──
+# bng.1 `! X && Y` reassociates to `(!X) && Y` (was wrongly SB4018)
+if in_modes native; then
+    run_sash 'if ! /bin/false && /bin/true; then echo Y; else echo N; fi'
+    [[ $rc = 0 && $out = "Y" && -z $rerr ]]; chk bng.1
+    # bng.2 `! X && action` runs the action when !X is true
+    run_sash '! /bin/false && /bin/echo ran'
+    [[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.2
+    # bng.3 `! X || action` runs the action when !X is false
+    run_sash '! /bin/true || /bin/echo ran'
+    [[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.3
+    # bng.6 escape hatch: a pipeline wrapped in a predicate function negates
+    run_sash 'f() { if /bin/false | /bin/cat; then return 0; fi; return 1 }
+if ! f; then echo neg; fi'
+    [[ $rc = 0 && $out = "neg" && -z $rerr ]]; chk bng.6
+else
+    skip_chk bng.1; skip_chk bng.2; skip_chk bng.3; skip_chk bng.6
+fi
+# bng.4 `!` on a pipeline is rejected — reviewer can't see `!`'s scope (SB4040)
+run_sash 'if ! /bin/true | /bin/cat; then echo x; fi'
+[[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.4
+# bng.5 `- !` cannot suppress a boolean → SB4019 (was the garbage SB4014)
+run_sash '- ! /bin/false'
+[[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.5
 
 # e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
 # native-only: the c/janet backends don't yet compile a `-> int` function

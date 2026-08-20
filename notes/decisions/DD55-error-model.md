@@ -101,22 +101,33 @@ context silently ignored its **first** segment (an undocumented
 `i == 0 && !checked` skip that conflated leading-`-` suppression with
 condition context), and where a non-first `-` dropped the stage entirely.
 
-### `&&` / `||` do not take a pipeline operand
+### `&&` / `||` / `!` do not take a pipeline operand
 
-A pipeline may not be the **left** operand of `&&` / `||`
-(`cmd1 | cmd2 && cmd3` is rejected, **SB4023** — the same rule that
-rejects `&&`/`||` postfix on a compound). It reads ambiguously (what does
-`&&` test?); use an explicit condition instead:
+A pipeline may be an **entire** condition (`if a | b; then …`, `while a | b`),
+but it may **never** be combined inline with `&&`, `||`, or `!`:
+
+- `a | b && c` / `a | b || c` — **SB4023**.
+- `! a | b` — **SB4040** (DG 2026-08-19).
+
+The reason is **reviewability, not semantics**. bash's precedence resolves all
+of these unambiguously (`|` binds tighter than `!` and `&&`/`||`), so the exit
+status is well-defined. But **sash is meant to be easier to review than bash**:
+a non-expert reviewer shouldn't have to know operator-vs-pipe precedence to see
+what `&&` tests or how far `!` reaches. So sash rejects the inline forms and
+requires the explicit shape:
 
 ```
-if cmd1 | cmd2; then cmd3; fi        # instead of  cmd1 | cmd2 && cmd3
-if cmd1 | cmd2; then :; else cmd3; fi # instead of  cmd1 | cmd2 || cmd3
+if a | b; then c; fi                  # instead of  a | b && c
+if a | b; then :; else c; fi          # instead of  a | b || c
+f() { if a | b; then return 0; fi; return 1 }   # instead of  ! a | b
+if ! f; then …                        #   (wrap the pipeline in a predicate fn)
 ```
 
 A pipeline as the **consequent** (`cmd && a | b`), a trailing redirect
-(`a | b > f`), a background pipeline (`a | b &`), and `! a | b` all remain
-legal — only the ambiguous postfix `pipeline && …` / `pipeline || …` is
-rejected.
+(`a | b > f`), and a background pipeline (`a | b &`) remain legal — only the
+inline `pipeline &&/||/!` combinations are rejected. `!` on a single unit (one
+command, `[[ ]]`, `(( ))`) is fine, and binds only that unit — `! X && Y` is
+`(!X) && Y` (DD#70).
 
 ## Background processes (`cmd &`)
 

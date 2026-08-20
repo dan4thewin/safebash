@@ -1,9 +1,10 @@
 ---
 title: "`!` precedence vs `&&`/`||` left-operand + `- ! X` → SB4019"
-status: pending
+status: done
 priority: P2
 kind: bug
 depends: []
+resolved: "2026-08-19 (DG) — reframed via reviewability: `!` binds a single reviewer-atomic unit, so `! X && Y` = `(!X) && Y`; `!` on a pipeline → new SB4040 (escape hatch: wrap in a predicate fn); `- ! X` → SB4019 at parse time. parse_negated single-unit parse; parse_suppressed direct reject. DD#55/DD#70 addenda, spec errors.sh bng.1-6. c/janet `!` runtime parity still separate."
 gates:
   - "`! X && Y` parses as `(!X) && Y` (bash semantics), not `!(X && Y)` — currently rejected SB4018"
   - "`! X || Y` parses as `(!X) || Y`, not `!(X || Y)`"
