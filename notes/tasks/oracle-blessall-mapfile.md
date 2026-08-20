@@ -1,6 +1,6 @@
 ---
 title: C/Janet oracle support for bless-all + mapfile
-status: pending
+status: partial
 priority: P2
 kind: feature
 depends: []

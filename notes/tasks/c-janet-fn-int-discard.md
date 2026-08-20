@@ -1,6 +1,6 @@
 ---
 title: "c/janet parity: a `-> int` function used in `|| :` (discard) fails to compile/run"
-status: ready
+status: partial
 priority: P3
 kind: bug
 depends: []

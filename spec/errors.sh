@@ -431,9 +431,9 @@ run_sash '- ! /bin/false'
 [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.5
 
 # e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
-# native-only: the c/janet backends don't yet compile a `-> int` function
-# used in `|| :` position (see c-janet-fn-int-discard).
-if in_modes native; then
+# native+c: janet doesn't yet compile a `-> int` function used in `|| :`
+# position (see c-janet-fn-int-discard). janet deferred.
+if in_modes native,c; then
     run_sash 'fn f -> int { return 3 }
 f || :
 echo done'

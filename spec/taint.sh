@@ -270,10 +270,11 @@ bless k v in m [[ $k =~ ^[A-Z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.30
 
-# --- Native-only: clean-construction + bless-all runtime semantics.
-#     The janet/c oracles elide bless enforcement and lack mapfile, so
-#     these runtime checks are meaningful only under native codegen. ---
-if in_modes native; then
+# --- native+c: clean-construction + bless-all runtime semantics.
+#     The c oracle now implements mapfile + RedirectPush/Pop + BlessAll
+#     (2026-08-20). janet still elides bless enforcement / lacks mapfile, so
+#     it stays skipped (janet deferred). ---
+if in_modes native,c; then
     printf 'alpha\nbeta\n' > d60a.txt
     printf 'alpha\nbeta\ngamma\n' > d60b.txt
     printf 'alpha\n123\ngamma\n' > d60c.txt

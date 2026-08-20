@@ -50,6 +50,9 @@ struct Emit {
     /// The block currently being emitted — lets the signal check-point skip
     /// itself once we're at/after the END block (avoids a re-jump loop).
     cur_block: BlockId,
+    /// DD#61/compound redirects: the saved-fd stack for RedirectPush/Pop
+    /// (a `mapfile -t a < file` wraps the read inst in a push/pop pair).
+    redirect_stack: Vec<Vec<SavedFdC>>,
 }
 
 impl Emit {
@@ -60,6 +63,7 @@ impl Emit {
             end_block: None,
             has_exiting_signals: false,
             cur_block: 0,
+            redirect_stack: Vec::new(),
         }
     }
     fn fresh(&mut self) -> String {
@@ -451,6 +455,15 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
             }
         }
         SsaInst::Pipeline { stages, .. } => collect_pipeline_var_types(stages, types),
+        SsaInst::ArrayAppend { value, .. } => collect_value_vars(value, types),
+        // DD#61 bless-all: the loop binders are set inside the emitted loop, so
+        // they need C slot declarations (as String ptr/len). c_var_name
+        // collapses their unique versions onto the binder name.
+        SsaInst::BlessAll { binders, .. } => {
+            for b in binders {
+                types.insert((b.name.clone(), b.version), VarType::String);
+            }
+        }
         _ => {}
     }
 }
@@ -654,15 +667,212 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
         // read -a ARR — split one line into an array by delimiter.
         SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
+        // a+=( … ) — append at the next integer index (len). Mirrors native
+        // emit_array_append (dispatch.rs:69).
+        SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
         _ => return false,
     }
     true
 }
 
+/// `a+=( v )` — set v at integer key `sash_table_len(a)` (the next index).
+fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarTypes) {
+    let table_expr = lookup_table_var(array, types);
+    let (vp, vl) = lower_value_as_str(e, value, types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    SashTable* {t}_tbl = (SashTable*){table}; i64 {t}_k = sash_table_len({t}_tbl);",
+        t = t,
+        table = table_expr
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {vp}, {vl});",
+        t = t,
+        vp = vp,
+        vl = vl
+    )
+    .unwrap();
+}
+
+/// Bless family sub-dispatcher for `emit_inst` (Bless / BlessAll / BlessRetag).
+/// Returns true when it handled `inst`.
+fn emit_bless_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
+    match inst {
+        // `bless x [[ test ]]` (unconditional): evaluate the gate on the
+        // source value; on failure print the diagnostic + exit(1) (mirrors
+        // native emit_bless, dispatch.rs:520). The source→target SSA-version
+        // copy is a no-op in c — c_var_name collapses versions to one slot.
+        // (The `if bless` catchable form lowers to Test + BlessRetag, not
+        // this Bless inst, so this is always the hard-abort form.)
+        SsaInst::Bless { source, test, .. } => {
+            let val = lower_test_expr(e, test, types);
+            let (vp, vl) = emit_var_value(e, source);
+            writeln!(
+                e.out,
+                "    if (!({val})) sash_bless_fail(\"{nm}\", {nl}, {vp}, {vl});",
+                val = val,
+                nm = c_escape(&source.name),
+                nl = source.name.len(),
+                vp = vp,
+                vl = vl
+            )
+            .unwrap();
+        }
+        // DD#61 `bless x in a [[ p ]]` / `bless k v in m [[ p ]]`.
+        SsaInst::BlessAll {
+            source,
+            binders,
+            test,
+            is_map,
+            if_form,
+        } => emit_bless_all_c(e, source, binders, test, *is_map, *if_form, types),
+        // DD#61: retag a clean array/map after a successful `if bless…in`.
+        // No runtime work in c (versions collapse to one slot).
+        SsaInst::BlessRetag { .. } => {}
+        _ => return false,
+    }
+    true
+}
+
+/// DD#61 bless-all: iterate the collection, bind the loop binder(s) from each
+/// cell, and evaluate the predicate. Non-if-form aborts (sash_bless_fail) on
+/// the first failing cell; if-form ANDs the results into __test_result.
+/// Mirrors native emit_bless_all (dispatch.rs:663). Binder slots are saved and
+/// restored around the loop so an outer same-named var is untouched (DD#61
+/// shadowing) — c_var_name collapses the binder's unique version onto its name.
+fn emit_bless_all_c(
+    e: &mut Emit,
+    source: &VarRef,
+    binders: &[VarRef],
+    test: &SsaTest,
+    is_map: bool,
+    if_form: bool,
+    types: &VarTypes,
+) {
+    let src = c_var_name(&source.name, source.version);
+    let names: Vec<String> = binders
+        .iter()
+        .map(|b| c_var_name(&b.name, b.version))
+        .collect();
+    let t = e.fresh();
+    writeln!(e.out, "    {{").unwrap();
+    writeln!(
+        e.out,
+        "    SashTable* {t}_tbl = (SashTable*){src}_ptr; i64 {t}_n = sash_table_len({t}_tbl);",
+        t = t,
+        src = src
+    )
+    .unwrap();
+    emit_bless_binder_slots(e, &names, &t, true);
+    if if_form {
+        writeln!(e.out, "    i64 {t}_all = 1;", t = t).unwrap();
+    }
+    writeln!(
+        e.out,
+        "    for (i64 {t}_i = 0; {t}_i < {t}_n; {t}_i++) {{",
+        t = t
+    )
+    .unwrap();
+    emit_bless_bind(e, is_map, &names, &t);
+    let val = lower_test_expr(e, test, types);
+    emit_bless_check(e, if_form, &val, source, &names, &t);
+    writeln!(e.out, "    }}").unwrap();
+    emit_bless_binder_slots(e, &names, &t, false);
+    if if_form {
+        writeln!(
+            e.out,
+            "    __test_result = {t}_all; __exit_status = {t}_all ? 0 : 1;",
+            t = t
+        )
+        .unwrap();
+    }
+    writeln!(e.out, "    }}").unwrap();
+}
+
+/// Save (save=true) or restore (save=false) the bless-all binder `_ptr`/`_len`
+/// slots around the loop, so an outer same-named var is untouched.
+fn emit_bless_binder_slots(e: &mut Emit, names: &[String], t: &str, save: bool) {
+    for nm in names {
+        if save {
+            writeln!(
+                e.out,
+                "    const char* {t}_sv_{nm}_p = {nm}_ptr; i64 {t}_sv_{nm}_l = {nm}_len;",
+                t = t,
+                nm = nm
+            )
+            .unwrap();
+        } else {
+            writeln!(
+                e.out,
+                "    {nm}_ptr = {t}_sv_{nm}_p; {nm}_len = {t}_sv_{nm}_l;",
+                t = t,
+                nm = nm
+            )
+            .unwrap();
+        }
+    }
+}
+
+/// Bind the loop binder(s) from cell `t_i`: array → the value; map → key+value.
+fn emit_bless_bind(e: &mut Emit, is_map: bool, names: &[String], t: &str) {
+    if is_map {
+        writeln!(
+            e.out,
+            "        {k}_ptr = sash_table_key({t}_tbl, {t}_i, &{k}_len); \
+             {v}_ptr = sash_table_value({t}_tbl, {t}_i, &{v}_len);",
+            k = names[0],
+            v = names[1],
+            t = t
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            e.out,
+            "        {x}_ptr = sash_table_value({t}_tbl, {t}_i, &{x}_len);",
+            x = names[0],
+            t = t
+        )
+        .unwrap();
+    }
+}
+
+/// Per-cell predicate check: if-form ANDs into `t_all`; else aborts on failure.
+fn emit_bless_check(
+    e: &mut Emit,
+    if_form: bool,
+    val: &str,
+    source: &VarRef,
+    names: &[String],
+    t: &str,
+) {
+    if if_form {
+        writeln!(
+            e.out,
+            "        {t}_all = {t}_all && ({val});",
+            t = t,
+            val = val
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            e.out,
+            "        if (!({val})) sash_bless_fail(\"{nm}\", {nl}, {x}_ptr, {x}_len);",
+            val = val,
+            nm = c_escape(&source.name),
+            nl = source.name.len(),
+            x = names.last().unwrap()
+        )
+        .unwrap();
+    }
+}
+
 fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
-    // I/O-read family (read / mapfile) handled in a sub-dispatcher to keep
-    // this dispatcher lean (complexity gate).
-    if emit_read_inst(e, inst, types) {
+    // I/O-read and bless families handled in sub-dispatchers to keep this
+    // dispatcher lean (complexity gate).
+    if emit_read_inst(e, inst, types) || emit_bless_inst(e, inst, types) {
         return;
     }
     match inst {
@@ -697,26 +907,6 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::Test(test_expr) => {
             let val = lower_test_expr(e, test_expr, types);
             writeln!(e.out, "    __test_result = {};", val).unwrap();
-        }
-        // `bless x [[ test ]]` (unconditional): evaluate the gate on the
-        // source value; on failure print the diagnostic + exit(1) (mirrors
-        // native emit_bless, dispatch.rs:520). The source→target SSA-version
-        // copy is a no-op in c — c_var_name collapses versions to one slot.
-        // (The `if bless` catchable form lowers to Test + BlessRetag, not
-        // this Bless inst, so this is always the hard-abort form.)
-        SsaInst::Bless { source, test, .. } => {
-            let val = lower_test_expr(e, test, types);
-            let (vp, vl) = emit_var_value(e, source);
-            writeln!(
-                e.out,
-                "    if (!({val})) sash_bless_fail(\"{nm}\", {nl}, {vp}, {vl});",
-                val = val,
-                nm = c_escape(&source.name),
-                nl = source.name.len(),
-                vp = vp,
-                vl = vl
-            )
-            .unwrap();
         }
         // DD#63: `match S P ARR` out-array form → sash_regex_match_into.
         SsaInst::MatchInto {
@@ -1187,6 +1377,31 @@ fn emit_signal_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
     writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
 }
 
+/// Compound-command redirect commands. `RedirectPush` applies the redirects
+/// and pushes the saved-fd list onto `Emit.redirect_stack`; `RedirectPop`
+/// restores. Returns true if it handled the kind. Kept out of `emit_command`
+/// (complexity gate) and called before the per-command auto-save.
+fn emit_compound_redirect(
+    e: &mut Emit,
+    kind: &BuiltinCmd,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) -> bool {
+    match kind {
+        BuiltinCmd::RedirectPush => {
+            let saved = emit_redirects(e, redirects, types);
+            e.redirect_stack.push(saved);
+        }
+        BuiltinCmd::RedirectPop => {
+            if let Some(saved) = e.redirect_stack.pop() {
+                emit_restore(e, &saved);
+            }
+        }
+        _ => return false,
+    }
+    true
+}
+
 /// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
 /// false, noop. Phase 4 adds external command exec via the `Other`
 /// arm. Phase 6 adds LetExit (the post-arith-test status setter).
@@ -1201,6 +1416,14 @@ fn emit_command(
     checked: bool,
     types: &VarTypes,
 ) {
+    // Compound-command redirects (`mapfile -t a < file`, group redirects):
+    // RedirectPush saves+applies onto a persistent stack; RedirectPop restores.
+    // Handled before the per-command auto-save/restore below, which would
+    // otherwise undo the redirect immediately.
+    if emit_compound_redirect(e, kind, redirects, types) {
+        return;
+    }
+
     // Phase 4: redirects wrap the command. emit_redirects → lower_exec
     // → emit_restore (codegen/inst_handlers.rs:585+).
     let saved = if redirects.is_empty() {
