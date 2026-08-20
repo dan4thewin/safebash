@@ -43,6 +43,13 @@ struct Emit {
     /// abort routes THROUGH this block (so an `END { exit N }` / cleanup
     /// still runs) rather than exiting directly. None → jump to `__exit`.
     end_block: Option<BlockId>,
+    /// DD#56: true when the program arms at least one `signal N EXIT` trap.
+    /// Gates the post-external signal check-point (a FLAG-only program must
+    /// NOT early-exit on a fired signal).
+    has_exiting_signals: bool,
+    /// The block currently being emitted — lets the signal check-point skip
+    /// itself once we're at/after the END block (avoids a re-jump loop).
+    cur_block: BlockId,
 }
 
 impl Emit {
@@ -51,6 +58,8 @@ impl Emit {
             out: String::new(),
             next_temp: 0,
             end_block: None,
+            has_exiting_signals: false,
+            cur_block: 0,
         }
     }
     fn fresh(&mut self) -> String {
@@ -279,6 +288,18 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_table_len(SashTable* t);").unwrap();
     writeln!(
         out,
+        "extern void sash_bless_fail(const char* np, i64 nl, const char* vp, i64 vl) __attribute__((noreturn));"
+    )
+    .unwrap();
+    // DD#56: the last-received signal number global (set by the runtime
+    // signal handler). `$(signum)` / the `(signum)` arith sexpr read it.
+    writeln!(out, "extern i64 sash_signum;").unwrap();
+    // DD#56 signal builtin: `signal N IGN/DFL/EXIT` → sash_trap(sig, handler);
+    // `signal N FLAG` → sash_signal_flag(sig).
+    writeln!(out, "extern i64 sash_trap(i64 signum, i64 handler);").unwrap();
+    writeln!(out, "extern i64 sash_signal_flag(i64 signum);").unwrap();
+    writeln!(
+        out,
         "extern i64 sash_regex_match_into(const char* sp, i64 sl, const char* pp, i64 pl, SashTable* t);"
     )
     .unwrap();
@@ -334,11 +355,17 @@ fn emit_prologue(out: &mut String) {
 fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     let types = collect_var_types(ssa);
     e.end_block = ssa.end_block;
+    e.has_exiting_signals = !ssa.exiting_signals.is_empty();
     writeln!(e.out, "int main(int argc, char** argv) {{").unwrap();
     writeln!(e.out, "    (void)argc; (void)argv;").unwrap();
     writeln!(e.out, "    i64 __exit_status = 0;").unwrap();
     writeln!(e.out, "    i64 __test_result = 0;").unwrap();
     writeln!(e.out, "    (void)__test_result;").unwrap();
+    // DD#56: the triggering status captured on entry to the END block, used
+    // as the final exit status (so `END { echo }; /bin/false` exits nonzero;
+    // an explicit `exit N` in END overrides it via emit_exit).
+    writeln!(e.out, "    i64 __end_status = 0;").unwrap();
+    writeln!(e.out, "    (void)__end_status;").unwrap();
     // DD#20 lastpipe: a capturing pipeline stashes its final stage's
     // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
     writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
@@ -358,7 +385,13 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
 
     writeln!(e.out).unwrap();
     writeln!(e.out, "__exit:").unwrap();
-    writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
+    // DD#56: with an END block, the final status is the one captured on END
+    // entry (or an explicit `exit N` in END), not the END body's last command.
+    if e.end_block.is_some() {
+        writeln!(e.out, "    sash_exit(__end_status);").unwrap();
+    } else {
+        writeln!(e.out, "    sash_exit(__exit_status);").unwrap();
+    }
     writeln!(e.out, "    return 0;  /* unreachable */").unwrap();
     writeln!(e.out, "}}").unwrap();
 }
@@ -547,9 +580,15 @@ fn c_var_name(name: &str, _version: u32) -> String {
 }
 
 fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
+    e.cur_block = id;
     writeln!(e.out).unwrap();
     writeln!(e.out, "_blk_{}: /* {} */", id, block.label).unwrap();
     writeln!(e.out, "    ;").unwrap();
+    // DD#56: capture the triggering status on entry to the END block, before
+    // its body runs (a cleanup `echo` must not clobber the final status).
+    if block.label == "__end__" {
+        writeln!(e.out, "    __end_status = __exit_status;").unwrap();
+    }
     // Caught/uncaught $? model: mirror codegen/entry.rs — at the
     // start of a catching construct's exit block, reset __exit_status
     // to 0 so caught statuses do not leak to program exit.
@@ -578,32 +617,11 @@ fn is_catching_construct_exit(label: &str) -> bool {
     )
 }
 
-fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
+/// I/O-read family (read / mapfile / read -a) sub-dispatcher for `emit_inst`.
+/// Returns true when it handled `inst`. Kept separate so the main SsaInst
+/// dispatcher stays under the complexity gate.
+fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
     match inst {
-        SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
-        SsaInst::Command {
-            name,
-            kind,
-            args,
-            redirects,
-            checked,
-        } => emit_command(e, name, kind, args, redirects, *checked, types),
-        // Phase 4: SsaInst::Pipeline → fork chain with pipes.
-        // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
-        SsaInst::Pipeline {
-            stages,
-            checked,
-            capture_read_fd,
-            suppressed,
-        } => emit_pipeline(e, stages, *checked, *capture_read_fd, suppressed, types),
-        // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
-        // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
-        SsaInst::SubscriptAssign {
-            array,
-            index,
-            value,
-            is_integer_key,
-        } => emit_subscript_assign(e, array, index, value, *is_integer_key, types),
         // Phase 5: SsaInst::ReadLine → sash_read_line/sash_read_delim.
         // Single-target read (read VAR). fd=-1 is the lastpipe sentinel
         // (read from the captured pipe fd). __read_eof tracks EOF.
@@ -631,6 +649,42 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
         // read -a ARR — split one line into an array by delimiter.
         SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
+        _ => return false,
+    }
+    true
+}
+
+fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
+    // I/O-read family (read / mapfile) handled in a sub-dispatcher to keep
+    // this dispatcher lean (complexity gate).
+    if emit_read_inst(e, inst, types) {
+        return;
+    }
+    match inst {
+        SsaInst::Assign { target, value } => emit_assign(e, target, value, types),
+        SsaInst::Command {
+            name,
+            kind,
+            args,
+            redirects,
+            checked,
+        } => emit_command(e, name, kind, args, redirects, *checked, types),
+        // Phase 4: SsaInst::Pipeline → fork chain with pipes.
+        // Mirrors handle_pipeline (codegen/inst_handlers.rs:24).
+        SsaInst::Pipeline {
+            stages,
+            checked,
+            capture_read_fd,
+            suppressed,
+        } => emit_pipeline(e, stages, *checked, *capture_read_fd, suppressed, types),
+        // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
+        // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
+        SsaInst::SubscriptAssign {
+            array,
+            index,
+            value,
+            is_integer_key,
+        } => emit_subscript_assign(e, array, index, value, *is_integer_key, types),
         // SsaInst::Test stores its result into __test_result. Codegen
         // (dispatch.rs:108-118): result = lower_test_expr(...);
         // builder.def_var(test_result_var, result). Branch terminator
@@ -638,6 +692,26 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
         SsaInst::Test(test_expr) => {
             let val = lower_test_expr(e, test_expr, types);
             writeln!(e.out, "    __test_result = {};", val).unwrap();
+        }
+        // `bless x [[ test ]]` (unconditional): evaluate the gate on the
+        // source value; on failure print the diagnostic + exit(1) (mirrors
+        // native emit_bless, dispatch.rs:520). The source→target SSA-version
+        // copy is a no-op in c — c_var_name collapses versions to one slot.
+        // (The `if bless` catchable form lowers to Test + BlessRetag, not
+        // this Bless inst, so this is always the hard-abort form.)
+        SsaInst::Bless { source, test, .. } => {
+            let val = lower_test_expr(e, test, types);
+            let (vp, vl) = emit_var_value(e, source);
+            writeln!(
+                e.out,
+                "    if (!({val})) sash_bless_fail(\"{nm}\", {nl}, {vp}, {vl});",
+                val = val,
+                nm = c_escape(&source.name),
+                nl = source.name.len(),
+                vp = vp,
+                vl = vl
+            )
+            .unwrap();
         }
         // DD#63: `match S P ARR` out-array form → sash_regex_match_into.
         SsaInst::MatchInto {
@@ -1088,6 +1162,26 @@ fn c_escape(s: &str) -> String {
     out
 }
 
+/// DD#56 signal builtin emission. `__trap_signal [sig, handler]` →
+/// `sash_trap(sig, handler)`; `__signal_flag [sig]` → `sash_signal_flag(sig)`.
+/// Kept out of `emit_command` (complexity gate); the builtin always succeeds.
+fn emit_signal_builtin_c(e: &mut Emit, kind: &BuiltinCmd, args: &[SsaValue]) {
+    let sig = match args.first() {
+        Some(SsaValue::Literal(s)) => s.parse::<i64>().unwrap_or(0),
+        _ => 0,
+    };
+    if matches!(kind, BuiltinCmd::SignalFlag) {
+        writeln!(e.out, "    sash_signal_flag({});", sig).unwrap();
+    } else {
+        let handler = match args.get(1) {
+            Some(SsaValue::Literal(h)) => h.parse::<i64>().unwrap_or(0),
+            _ => 0,
+        };
+        writeln!(e.out, "    sash_trap({}, {});", sig, handler).unwrap();
+    }
+    writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
+}
+
 /// Dispatch on `BuiltinCmd`. Phase 1 implements echo, exit, true,
 /// false, noop. Phase 4 adds external command exec via the `Other`
 /// arm. Phase 6 adds LetExit (the post-arith-test status setter).
@@ -1139,6 +1233,10 @@ fn emit_command(
         // DD#63: `match S P` boolean command → sash_regex_match (1 matched
         // / 0 not); set test_result + $? (matched ? 0 : 1).
         BuiltinCmd::Match => emit_match_c(e, args, types),
+        // DD#56 signal builtin: `signal N IGN/DFL/EXIT` → sash_trap;
+        // `signal N FLAG` → sash_signal_flag (mirrors native
+        // emit_trap_signal / emit_signal_flag, dispatch.rs:310/330).
+        BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => emit_signal_builtin_c(e, kind, args),
         _ => {
             writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
         }
@@ -1191,6 +1289,30 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
         )
         .unwrap();
     }
+    emit_signal_exit_check(e);
+}
+
+/// DD#56: after an external command, if the program arms a `signal N EXIT`
+/// trap and a trap'd signal has fired (sash_signum != 0), jump to the END
+/// block with status 128+signum. Mirrors native `emit_signal_exit_check`
+/// (inst_handlers.rs:642). No-op unless EXIT-armed, an END block exists, and
+/// we are before it (a check inside END would re-jump forever).
+fn emit_signal_exit_check(e: &mut Emit) {
+    if !e.has_exiting_signals {
+        return;
+    }
+    let Some(eb) = e.end_block else {
+        return;
+    };
+    if e.cur_block >= eb {
+        return;
+    }
+    writeln!(
+        e.out,
+        "    if (sash_signum != 0) {{ __exit_status = 128 + sash_signum; goto _blk_{}; }}",
+        eb
+    )
+    .unwrap();
 }
 
 /// DD#56: where a DD#55 (A) abort jumps — the END-cleanup block if present
@@ -1388,6 +1510,9 @@ fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
         let int_expr = lower_value_as_int(e, arg, types);
         writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
     }
+    // DD#56: `exit N` inside END overrides the triggering status; keep
+    // __end_status in sync (the final exit reads it when an END block exists).
+    writeln!(e.out, "    __end_status = __exit_status;").unwrap();
     writeln!(e.out, "    goto __exit;").unwrap();
 }
 
@@ -1927,6 +2052,50 @@ fn emit_case_conversion_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str) -> C
 // Command substitution: $(cmd args...)
 // ═══════════════════════════════════════════════════════════════
 
+/// No-argument "process info" intrinsics ($(epochseconds), $(signum),
+/// $(getpid), $(getppid), $(random), $(getcwd), $(argc)). Split out of
+/// `try_native_intrinsic_c` to keep that dispatcher under the complexity
+/// gate. Returns Some when `name` is one of them.
+fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
+    match name {
+        "epochseconds" => {
+            let t = e.fresh();
+            writeln!(e.out, "    sash_pair {t} = sash_epochseconds();", t = t).unwrap();
+            Some((format!("{}.ptr", t), format!("{}.len", t)))
+        }
+        // DD#56: `$(signum)` → the last-received signal number global.
+        "signum" => Some(emit_itoa_temp(e, "sash_signum")),
+        "getpid" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        "getppid" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
+        }
+        "random" => {
+            let t = e.fresh();
+            writeln!(e.out, "    i64 {t}_r = sash_random();", t = t).unwrap();
+            Some(emit_itoa_temp(e, &format!("{}_r", t)))
+        }
+        "getcwd" => {
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_l; const char* {t}_p = sash_getcwd(&{t}_l);",
+                t = t
+            )
+            .unwrap();
+            Some((format!("{}_p", t), format!("{}_l", t)))
+        }
+        // DD#60: $(argc) is C argc (program argv length).
+        "argc" => Some(emit_itoa_temp(e, "sash_argc")),
+        _ => None,
+    }
+}
+
 /// Mirrors `handle_cmdsub` from codegen/value_handlers.rs:691.
 /// Tries native intrinsics first (getenv, epochseconds, etc.); on
 /// non-intrinsic name, falls through to a TODO that defers to
@@ -1954,41 +2123,10 @@ fn try_native_intrinsic_c(
     argv: &[SsaValue],
     types: &VarTypes,
 ) -> Option<CStr> {
+    if let Some(r) = try_process_intrinsic_c(e, name) {
+        return Some(r);
+    }
     match name {
-        "epochseconds" => {
-            let t = e.fresh();
-            writeln!(e.out, "    sash_pair {t} = sash_epochseconds();", t = t).unwrap();
-            Some((format!("{}.ptr", t), format!("{}.len", t)))
-        }
-        "getpid" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_pid = sash_getpid();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
-        }
-        "getppid" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_pid = sash_getppid();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_pid", t)))
-        }
-        "random" => {
-            let t = e.fresh();
-            writeln!(e.out, "    i64 {t}_r = sash_random();", t = t).unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_r", t)))
-        }
-        "getcwd" => {
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_l; const char* {t}_p = sash_getcwd(&{t}_l);",
-                t = t
-            )
-            .unwrap();
-            Some((format!("{}_p", t), format!("{}_l", t)))
-        }
-        "argc" => {
-            // DD#60: $(argc) is C argc (program argv length).
-            Some(emit_itoa_temp(e, "sash_argc"))
-        }
         "arg" if argv.len() >= 3 => {
             // DD#60 addendum: $(arg N DEFAULT) — argv[N], or the default if OOB.
             let (ip, il) = lower_value_as_str(e, &argv[1], types);

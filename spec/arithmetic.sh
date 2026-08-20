@@ -367,9 +367,9 @@ else
     skip_chk sx.1; skip_chk sx.2; skip_chk sx.3; skip_chk sx.4
     skip_chk sx.5; skip_chk sx.6; skip_chk sx.8
 fi
-# sx.7 signum — native only: c/janet emit a TODO stub for the signum intrinsic
-# (filed c-janet-signum-intrinsic), so it can't be tested there yet.
-if in_modes native; then
+# sx.7 signum — native+c: both read the sash_signum global. janet still
+# emits a TODO stub for the signum intrinsic (janet deferred).
+if in_modes native,c; then
     # signum with no signal received → 0 (pins it computes in a sexpr)
     run_sash 'echo $(( (signum) ))'
     [[ $rc = 0 && $out = "0" && -z $err ]]; chk sx.7

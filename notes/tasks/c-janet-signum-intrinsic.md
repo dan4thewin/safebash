@@ -1,14 +1,21 @@
 ---
 title: "c/janet backends don't implement the `signum` value intrinsic (emit a TODO stub)"
-status: ready
+status: partial
 priority: P3
 kind: bug
 depends: []
 gates:
-  - "`$(signum)` / `$(( (signum) ))` computes the DD#56 last-signal number on the c and janet backends (native already does)"
-  - "spec arithmetic.sh sx.7 widens from `native` to all modes"
+  - "[DONE c] `$(signum)` / `$(( (signum) ))` computes the DD#56 last-signal number on the c backend (reads the sash_signum global)"
+  - "[c] spec arithmetic.sh sx.7 widened native -> native,c (janet still stubbed; deferred)"
+  - "[PENDING janet] janet backend still execs/omits the intrinsic"
   - "no regression"
 ---
+
+> **c DONE (2026-08-20):** `try_native_intrinsic_c` gained a `signum` arm
+> that reads the `extern i64 sash_signum;` global (via `sash_itoa`). Both the
+> `$(signum)` cmdsub form and the `(signum)` arith sexpr route through it.
+> sx.7 widened to `native,c`. janet deferred (DG: wait on janet).
+
 
 ## Symptom
 
