@@ -95,7 +95,7 @@ run_sash 'echo $(echo $cs_typo)'
 #       the validator must NOT flag the read of `csx`. Asserts only that
 #       validation is clean (no SB5031); the multi-statement cmdsub runtime
 #       path is a separate known gap (bug-multistatement-cmdsub-placeholder).
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'echo $(csx=1; echo $csx)'
     [[ $rc = 0 && $err != *SB5031* ]]; chk ud.16
 else

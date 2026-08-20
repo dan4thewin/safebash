@@ -379,7 +379,7 @@ run_sash 'false || x=set; echo done'
 
 # e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
 # e.b70.tdash `-` on a `[[ … ]]` (a must-consume boolean) → SB4019
-if in_modes native; then
+if in_modes native,c; then
     run_sash '[[ a = a ]]'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
 
@@ -407,7 +407,7 @@ run_sash '[[ a = b ]] || echo miss'
 # (reviewability, SB4040); `- !` is SB4019. Runtime negation is native-only
 # (c/janet `!` backend gap); the parse-time rejects are all modes. ──
 # bng.1 `! X && Y` reassociates to `(!X) && Y` (was wrongly SB4018)
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'if ! /bin/false && /bin/true; then echo Y; else echo N; fi'
     [[ $rc = 0 && $out = "Y" && -z $rerr ]]; chk bng.1
     # bng.2 `! X && action` runs the action when !X is true
@@ -445,7 +445,7 @@ fi
 # (A) abort channel: a CAUGHT failure prints NOTHING to stderr (the
 # `<argv0>: …` diagnostic is only for an *uncaught* abort).
 # e.a70.silent `if /bin/false` → else branch, no runtime diagnostic
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'if /bin/false; then echo y; else echo n; fi'
     [[ $rc = 0 && $out = "n" && -z $rerr ]]; chk e.a70.silent
 else

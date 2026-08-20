@@ -84,10 +84,9 @@ echo done'
 
 # 63.2e bare `match S P` is a must-consume compile error (DD#70 SB4018)
 # 63.2f `- match S P` — `-` on a (B) construct is a compile error (SB4019)
-# Native-only: transform diagnostics (the SB40xx must-consume family,
-# incl. the existing SB4016) are not yet surfaced on the --emit-c /
-# --janet paths. See c-janet-dd55-abort-channel / diagnostic parity.
-if in_modes native; then
+# native+c: the SB40xx must-consume diagnostics are transform-time (before
+# codegen), so they surface on --emit-c too. janet deferred.
+if in_modes native,c; then
     run_sash 'match abc abc'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
 
@@ -138,7 +137,7 @@ if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
 # 63.cap6 bare 3-arg `match S P ARR` is a must-consume compile error (SB4018)
 # 63.cap7 `- match S P ARR` — `-` on a (B) construct is SB4019
 # Native-only (transform diagnostics not surfaced on --emit-c/--janet).
-if in_modes native; then
+if in_modes native,c; then
     run_sash 'array g=()
 match abc abc g'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
