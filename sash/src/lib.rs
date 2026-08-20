@@ -1,6 +1,7 @@
 // Modules used by tests (oracle_tests.rs) — must be pub
 pub mod emit_c;
 pub mod emit_janet;
+pub mod emit_janet_map;
 pub mod ir;
 pub mod oracle;
 pub mod parse;
@@ -197,7 +198,10 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
 
 /// True if any flag selects an alternative (non-native) output backend.
 fn flags_request_alt_output(flags: &[&str]) -> bool {
-    flags.contains(&"--janet") || flags.contains(&"--emit-c") || flags.contains(&"--manifest")
+    flags.contains(&"--janet")
+        || flags.contains(&"--janet-map")
+        || flags.contains(&"--emit-c")
+        || flags.contains(&"--manifest")
 }
 
 /// Run the AST→SSA transform purely for its compile-error diagnostics
@@ -220,6 +224,16 @@ fn enforce_transform_diags(input: &str, program: &crate::ir::Program) {
 /// fired (caller should return); `false` if none matched (caller
 /// proceeds to native codegen).
 fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
+    if flags.contains(&"--janet-map") {
+        // Structural janet map (DD#15 amended) — the sash-rt.janet primitive
+        // library is prepended so the emitted file is self-contained.
+        print!(
+            "{}\n{}",
+            include_str!("../janet/sash-rt.janet"),
+            emit_janet_map::emit_janet_map(program)
+        );
+        return true;
+    }
     if flags.contains(&"--janet") {
         print!("{}", emit_janet::emit_janet(program));
         return true;
