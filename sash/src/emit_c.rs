@@ -256,6 +256,14 @@ fn emit_prologue(out: &mut String) {
         "extern const char* sash_capture_status(const char* const* argv, const char* const* envp, i64* out_len, i64* out_status);"
     )
     .unwrap();
+    // cd: chdir + DD#55 errno-diagnostic abort.
+    writeln!(out, "extern i64 sash_chdir(const char* p, i64 l);").unwrap();
+    writeln!(out, "extern void* sash_alloc(i64 n);").unwrap();
+    writeln!(
+        out,
+        "extern void sash_emsg(const char* s1p, i64 s1l, const char* s2p, i64 s2l);"
+    )
+    .unwrap();
     writeln!(
         out,
         "extern const char* const* sash_envp;  /* set by sash-rt _start */"
@@ -1428,6 +1436,43 @@ fn c_escape(s: &str) -> String {
     out
 }
 
+/// `cd` → chdir, set $?/test_result, and (when unchecked) abort on failure
+/// with the DD#55 errno diagnostic. A no-arg `cd` succeeds silently (no $HOME
+/// magic under DD#53). Mirrors native handle_cd.
+fn emit_cd_c(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
+    let Some(arg) = args.first() else {
+        writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
+        return;
+    };
+    let (ptr, len) = lower_value_as_str(e, arg, types);
+    let t = e.fresh();
+    writeln!(
+        e.out,
+        "    i64 {t}_r = sash_chdir({ptr}, {len});",
+        t = t,
+        ptr = ptr,
+        len = len
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    __exit_status = ({t}_r < 0) ? 1 : 0; __test_result = ({t}_r < 0) ? 0 : 1;",
+        t = t
+    )
+    .unwrap();
+    if checked {
+        writeln!(
+            e.out,
+            "    if ({t}_r < 0) {{ sash_emsg(\"cd\", 2, {ptr}, {len}); goto {abort}; }}",
+            t = t,
+            ptr = ptr,
+            len = len,
+            abort = abort_target(e)
+        )
+        .unwrap();
+    }
+}
+
 /// DD#56 signal builtin emission. `__trap_signal [sig, handler]` →
 /// `sash_trap(sig, handler)`; `__signal_flag [sig]` → `sash_signal_flag(sig)`.
 /// Kept out of `emit_command` (complexity gate); the builtin always succeeds.
@@ -1468,6 +1513,30 @@ fn emit_compound_redirect(
                 emit_restore(e, &saved);
             }
         }
+        _ => return false,
+    }
+    true
+}
+
+/// Less-common builtins split out of `emit_command` (complexity gate): `match`,
+/// `cd`, and the DD#56 signal builtins. Returns true if it handled `kind`.
+fn emit_builtin_extra(
+    e: &mut Emit,
+    _name: &str,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+) -> bool {
+    match kind {
+        // DD#63: `match S P` boolean command → sash_regex_match (matched ? 0:1).
+        BuiltinCmd::Match => emit_match_c(e, args, types),
+        // DD#53/DD#55: `cd` chdirs and, when unchecked, aborts on failure with
+        // an errno diagnostic. Mirrors native handle_cd (inst_handlers.rs:874).
+        BuiltinCmd::Cd => emit_cd_c(e, args, checked, types),
+        // DD#56 signal builtin: signal N IGN/DFL/EXIT → sash_trap;
+        // signal N FLAG → sash_signal_flag.
+        BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => emit_signal_builtin_c(e, kind, args),
         _ => return false,
     }
     true
@@ -1529,15 +1598,10 @@ fn emit_command(
         // first arg as int; if zero → status=1, test_result=0; else
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
-        // DD#63: `match S P` boolean command → sash_regex_match (1 matched
-        // / 0 not); set test_result + $? (matched ? 0 : 1).
-        BuiltinCmd::Match => emit_match_c(e, args, types),
-        // DD#56 signal builtin: `signal N IGN/DFL/EXIT` → sash_trap;
-        // `signal N FLAG` → sash_signal_flag (mirrors native
-        // emit_trap_signal / emit_signal_flag, dispatch.rs:310/330).
-        BuiltinCmd::TrapSignal | BuiltinCmd::SignalFlag => emit_signal_builtin_c(e, kind, args),
         _ => {
-            writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
+            if !emit_builtin_extra(e, name, kind, args, checked, types) {
+                writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
+            }
         }
     }
 
@@ -1689,7 +1753,15 @@ fn emit_argv_splat(
         .collect::<Vec<_>>()
         .join(" + ");
     writeln!(e.out, "{ind}i64 {t}_n = {total};").unwrap();
-    writeln!(e.out, "{ind}const char* {argv}[{t}_n + 1];").unwrap();
+    // Heap-allocate (not a stack VLA): a VLA's scope can't be safely jumped
+    // into, so a preceding statement's DD#55 abort `goto` (e.g. after `cd`)
+    // would fail to compile. Fixes bug-emit-c-splat-vla-jump. The bump
+    // allocator has no free; a splat argv is small and short-lived.
+    writeln!(
+        e.out,
+        "{ind}const char** {argv} = (const char**)sash_alloc(({t}_n + 1) * 8);"
+    )
+    .unwrap();
     writeln!(e.out, "{ind}i64 {t}_w = 0;").unwrap();
     writeln!(e.out, "{ind}{argv}[{t}_w++] = \"{}\";", c_escape(name)).unwrap();
 

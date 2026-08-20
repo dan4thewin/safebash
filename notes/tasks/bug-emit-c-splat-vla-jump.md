@@ -1,6 +1,6 @@
 ---
-title: "BUG (emit_c) — external `@{a:?}` splat after a preceding statement emits non-compiling C (jump into VLA scope)"
-status: ready
+title: "BUG (emit_c) — external `@`{a:?} splat after a preceding statement emits non-compiling C (jump into VLA scope)"
+status: done
 priority: P2
 kind: bug
 depends: []
