@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=61
+plan=70
 echo "1..$plan" >&3
 
 set +e
@@ -379,6 +379,54 @@ run_convert '#!/bin/bash
 x=hello
 unset x'
 [[ $rc = 0 && $out == *'x=""'* && -z $err ]]; chk 30.7
+
+
+# --- DD#53 tilde expansion (~, ~/path) — converter side (compiler side: taint.sh 53.x) ---
+
+# 57.47 bare ~ → hoisted $(getenv HOME) + bless, use $home
+run_convert '#!/bin/bash
+echo ~'
+[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'bless home'* && $out == *'echo $home'* && -z $err ]]; chk 57.47
+
+# 57.48 ~/path → $home/path
+run_convert '#!/bin/bash
+echo ~/foo'
+[[ $rc = 0 && $out == *'echo $home/foo'* && $out == *'home=$(getenv HOME)'* && -z $err ]]; chk 57.48
+
+# 57.49 tilde in assignment value → $home/p
+run_convert '#!/bin/bash
+x=~/p'
+[[ $rc = 0 && $out == *'x=$home/p'* && $out == *'home=$(getenv HOME)'* && -z $err ]]; chk 57.49
+
+# 57.50 ~/$x concatenation composes as $home/$x
+run_convert '#!/bin/bash
+echo ~/$x'
+[[ $rc = 0 && $out == *'echo $home/$x'* && -z $err ]]; chk 57.50
+
+# 57.51 quoted ~ is a literal — untouched, no getenv hoist
+run_convert "#!/bin/bash
+echo '~'"
+[[ $rc = 0 && $out == *"echo '~'"* && $out != *'getenv HOME'* && -z $err ]]; chk 57.51
+
+# 57.52 embedded tilde (a~b) is a literal — untouched
+run_convert '#!/bin/bash
+echo a~b'
+[[ $rc = 0 && $out == *'echo a~b'* && $out != *'getenv HOME'* && -z $err ]]; chk 57.52
+
+# 57.53 ~user not mechanically resolvable → MANUAL, untouched
+run_convert '#!/bin/bash
+echo ~root'
+[[ $rc = 0 && $out == *'# MANUAL:'*'tilde'* && $out == *'echo ~root'* && -z $err ]]; chk 57.53
+
+# 57.54 multi-tilde word (~/a:~/b) → MANUAL, no partial rewrite
+run_convert '#!/bin/bash
+PATH=~/bin:~/lib'
+[[ $rc = 0 && $out == *'# MANUAL:'*'tilde'* && $out == *'PATH=~/bin:~/lib'* && $out != *'$home'* && -z $err ]]; chk 57.54
+
+# 57.55 tilde in command position → MANUAL, untouched
+run_convert '#!/bin/bash
+~/bin/prog foo'
+[[ $rc = 0 && $out == *'# MANUAL:'*'command position'* && $out == *'~/bin/prog foo'* && -z $err ]]; chk 57.55
 
 
 set -e

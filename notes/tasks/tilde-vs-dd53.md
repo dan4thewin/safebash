@@ -1,6 +1,6 @@
 ---
 title: Tilde expansion produces SB5018-rejected $HOME
-status: partial
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -13,17 +13,25 @@ gates:
 
 # Tilde expansion produces SB5018-rejected $HOME
 
-> **Compiler half DONE (2026-07-07, autopilot).** `parse_word_arm` now
-> rejects an unquoted leading `~` / `~/path` with a focused **SB4036**
-> ("unquoted leading `~` is not expanded — use $(getenv HOME) …") instead
-> of lowering to `HOME` and hitting the misleading `$HOME` SB5018. Quoted
-> (`'~'`/`"~"`) and mid-word (`a~b`) tildes are untouched. spec/taint.sh
-> tilde.1/2/3 (all modes). 0 regressions.
+> **DONE (2026-08-10).** Both halves shipped.
 >
-> **Converter half PENDING (Tier 6):** sash-convert should rewrite bash
-> `~`/`~/path` → `$(getenv HOME)` (+ bless) so a converted script compiles.
-> That is the convert-tier work (convert is secondary to compiler work per
-> the DG ordering).
+> **Compiler half (2026-07-07):** `parse_word_arm` rejects an unquoted
+> leading `~` / `~/path` with a focused **SB4036** ("unquoted leading `~`
+> is not expanded — use $(getenv HOME) …") instead of lowering to `HOME`
+> and hitting the misleading `$HOME` SB5018. Quoted (`'~'`/`"~"`) and
+> mid-word (`a~b`) tildes are untouched. spec/taint.sh 53.1-53.10.
+>
+> **Converter half (2026-08-10):** `sash-convert` now rewrites bash
+> `~`/`~/path` → hoisted `home=$(getenv HOME); bless home [[ … ]]` +
+> `$home`/`$home/path` (mirrors the `$HOME` env-var hoist). Forms it can't
+> mechanically resolve are left with a MANUAL note so the SB4036 compile
+> error forces review: `~user` (needs a passwd lookup), multi-tilde words
+> (`~/bin:~/lib` — no partial rewrite), and command-position tildes
+> (`~/bin/prog` — DD#23 rejects a dynamic command path). `~/$x` composes
+> correctly (`concatenation(word "~/", $x)` → `$home/$x`). `convert_tilde_word`
+> in `sash-convert/src/convert.rs`; spec/convert.sh 57.47-57.55 (+ end-to-end
+> convert→compile→run verified byte-identical to bash); Rust
+> `sash-convert/tests/convert_tests.rs` tilde_* (4).
 
 ## Decision (DG, 2026-06-21): split compiler vs converter
 

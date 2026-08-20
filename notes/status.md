@@ -1,3 +1,30 @@
+## ════════ STATUS (2026-08-20, cont.) — P3 partials finished (tilde, dd67) ════════
+
+DG: "finish the p3 partials." Both closed.
+
+- **tilde-vs-dd53 → DONE**: the converter half is now implemented. `sash-convert`
+  rewrites bash `~`/`~/path` → hoisted `home=$(getenv HOME); bless home [[ … ]]`
+  + `$home`/`$home/path` (mirrors the `$HOME` env-var hoist). Unresolvable forms
+  get a MANUAL note so the compiler's SB4036 forces review: `~user` (needs a
+  passwd lookup), multi-tilde words `~/bin:~/lib` (no partial rewrite — would
+  drop the 2nd `~`), command-position `~/bin/prog` (DD#23 rejects a dynamic
+  command path). `~/$x` composes via the CST `concatenation(word "~/", $x)` →
+  `$home/$x`. `convert_tilde_word` in `sash-convert/src/convert.rs`. Verified
+  end-to-end: convert→compile→run is byte-identical to bash for `echo ~`,
+  `echo ~/foo`, `x=~/p`. spec/convert.sh 57.47-57.55 (9 new, native-only; the
+  compiler half is taint.sh 53.x). Rust convert_tests.rs tilde_* (4). NOTE:
+  first drafted as 53.x → **collided** with taint.sh's 53.x (test_ids are global
+  in spec.db, `native:53.1` shared); renumbered into convert.sh's DD#57 namespace
+  (global max was 57.46).
+- **dd67-bash-sugar-sweep → DONE (compiler scope)**: §1/§2/§4B + the keep/drop
+  table were already done. §3 (sash-convert canonicalize mode) was blocked on
+  dd68's brace forms; **dd68 is now done**, so §3 is unblocked but distinct
+  Tier-6 converter work — **split out** to `sash-convert-canonicalize-mode`
+  (status ready) rather than left lingering. dd67 itself is done.
+
+Native sweep: 0 regressions, +9 (57.47-57.55). Change is isolated to
+sash-convert + a spec file; the compiler is untouched.
+
 ## ════════ STATUS (2026-08-20) — finishing partials ════════
 
 DG: "finish partials." Also fixed a bless-all bug DG surfaced.

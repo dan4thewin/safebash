@@ -154,6 +154,9 @@ fn walk_node(
                     .into(),
             ));
         }
+        "word" => {
+            convert_tilde_word(node, source, patches, prefix_lines);
+        }
         _ => {}
     }
 
@@ -631,6 +634,69 @@ fn strip_dollar(s: &str) -> &str {
 }
 
 // ── Expansion conversions ─────────────────────────────────────
+
+/// DD#53: bash tilde expansion. `~` and `~/path` expand to `$HOME`, which the
+/// sash compiler rejects (SB4036, expr.rs). Rewrite the safe home forms to a
+/// hoisted `$(getenv HOME)` + bless — mirroring the `$HOME` env-var conversion
+/// — and leave the forms we cannot mechanically resolve unchanged with a
+/// MANUAL note, so the SB4036 compile error forces a human to review them:
+///   - `~user` / `~user/…`  (needs a passwd lookup sash does not do; the
+///     compiler treats it as a literal, so behaviour silently differs)
+///   - multi-tilde words like `~/bin:~/lib` (a partial rewrite of only the
+///     leading `~` would silently drop the second one)
+///   - a tilde in command-name position (`~/bin/prog`), which would become a
+///     dynamic command path that DD#23 rejects.
+///
+/// `~/$x` parses as `concatenation(word "~/", simple_expansion)`, so the `~/`
+/// arrives here as its own word: rewriting it to `$home/` and letting the
+/// recursion handle `$x` composes correctly.
+fn convert_tilde_word(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let w = node_text(node, source);
+    if !w.starts_with('~') {
+        return;
+    }
+    let line = node.start_position().row;
+
+    if node.parent().is_some_and(|p| p.kind() == "command_name") {
+        prefix_lines.push((
+            line,
+            "# MANUAL: tilde in command position — use an explicit path".into(),
+        ));
+        return;
+    }
+
+    // Only the home forms `~` and `~/…` are mechanically resolvable, and only
+    // when the tail holds no further tilde (`~/bin:~/lib` and friends must not
+    // be partially rewritten).
+    let resolvable = w == "~" || (w.starts_with("~/") && !w[2..].contains('~'));
+    if !resolvable {
+        prefix_lines.push((
+            line,
+            "# MANUAL: tilde form (~user / multi-tilde) not mechanically \
+             resolvable — rewrite to an explicit $(getenv …) + bless"
+                .into(),
+        ));
+        return;
+    }
+
+    // Mirror the $HOME env-var hoist: home=$(getenv HOME); bless home [[ … ]].
+    let env = known_externals::lookup_env_var("HOME").expect("HOME is a known env var");
+    patches.push(Patch {
+        start: node.start_byte(),
+        end: node.end_byte(),
+        replacement: format!("$home{}", &w[1..]),
+        prefix_line: Some(format!(
+            "home=$(getenv HOME); bless home [[ $home =~ {} ]]",
+            env.pattern
+        )),
+        original: None,
+    });
+}
 
 fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
     // DD#46/DD#60: positionals are function-local. Inside a function body

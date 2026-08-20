@@ -192,3 +192,53 @@ fn manual_case_removed() {
         out
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// DD#53 TILDE EXPANSION
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn tilde_bare_home() {
+    // `~` → hoisted $(getenv HOME) + bless, referenced as $home.
+    let out = convert("tilde_bare", "#!/bin/bash\necho ~\n");
+    assert!(
+        out.contains("home=$(getenv HOME)")
+            && out.contains("bless home")
+            && out.contains("echo $home"),
+        "expected ~ → $home hoist, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn tilde_home_path() {
+    // `~/foo` → `$home/foo` (leading ~ rewritten, tail preserved).
+    let out = convert("tilde_path", "#!/bin/bash\necho ~/foo\n");
+    assert!(
+        out.contains("echo $home/foo") && out.contains("home=$(getenv HOME)"),
+        "expected ~/foo → $home/foo, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn tilde_user_is_manual() {
+    // `~user` needs a passwd lookup sash does not do — flag it, leave it.
+    let out = convert("tilde_user", "#!/bin/bash\necho ~root\n");
+    assert!(
+        out.contains("# MANUAL:") && out.contains("tilde") && out.contains("echo ~root"),
+        "expected ~root MANUAL annotation, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn tilde_quoted_is_literal() {
+    // A quoted tilde is a literal — untouched, no getenv hoist.
+    let out = convert("tilde_quoted", "#!/bin/bash\necho '~'\n");
+    assert!(
+        out.contains("echo '~'") && !out.contains("getenv HOME"),
+        "expected quoted '~' untouched, got:\n{}",
+        out
+    );
+}

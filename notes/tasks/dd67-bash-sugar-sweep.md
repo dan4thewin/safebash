@@ -1,6 +1,6 @@
 ---
 title: "DD#67 sweep: re-add name() func sugar, the convert switch, review rejected bash forms"
-status: partial
+status: done
 priority: P3
 kind: feature
 depends: [DD67-native-syntax-sugar-policy]
@@ -9,16 +9,20 @@ gates:
   - "[DONE def5c40] flat backticks `cmd` accepted as 1-to-1 sugar for $(cmd); nested backticks rejected (SB5020)"
   - "[DONE c3875d1] single-bracket `[` is an ordinary literal char (no longer starts a test)"
   - "[DONE 2026-06-21] keep/drop table ratified by DG"
-  - "[PENDING -> with dd68] sash-convert canonicalize mode: rewrites sugar -> native-only. The then/fi -> { } part REQUIRES dd68's brace forms, so this lands with dd68-brace-control-flow (name()/function -> fn and backticks -> $() included there)."
+  - "[SPLIT OUT -> sash-convert-canonicalize-mode] §3 sash-convert canonicalize mode; dd68 brace forms now exist, so it is unblocked Tier-6 convert work tracked in its own task"
 ---
 
-# STATUS 2026-07-04: compiler sugar DONE; canonicalize mode coupled to dd68
+# DONE 2026-08-10: compiler sugar complete; §3 split to its own Tier-6 task
 
 §1 (name()/function), §2 (flat + nested backticks), §4B ([ literal) are
-implemented + spec-covered (functions.sh:120, commands.sh:31/35). §3 (the
-sash-convert canonicalize / native-only mode) converts `then…fi`/`do…done`
--> `{ }`, which cannot exist until dd68 adds the brace forms — so it is
-built jointly with `dd68-brace-control-flow`. §4 keep/drop table ratified.
+implemented + spec-covered (functions.sh:120, commands.sh:31/35). §4
+keep/drop table ratified. That is the whole DD#67 *compiler* scope — this
+task is DONE.
+
+§3 (the sash-convert canonicalize / native-only mode) was blocked on dd68's
+brace forms. **dd68-brace-control-flow is now DONE**, so §3 is unblocked but
+remains distinct Tier-6 *converter* work — split out to its own task,
+`sash-convert-canonicalize-mode`, rather than left lingering here.
 
 ---
 
