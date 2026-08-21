@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=115
+plan=117
 echo "1..$plan" >&3
 
 set +e
@@ -306,6 +306,19 @@ echo "port=$(f)"'
 run_sash 'fn add -> int { return $(( $1 + $2 )); }
 int n=$(add 3 4); echo $n'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 58.13
+
+# 58.14 a sexpr call arg that is itself a PARENTHESISED arith expression
+# `(dbl (2 + 1))` computes dbl(3)=6. Regression guard for
+# bug-arith-sexpr-nested-cmdsub-arg: the `$(( ))` content collector must count
+# individual parens, so the `))` of `(2 + 1))` are two single closes, not the
+# arith terminator (which truncated the content and yielded a silent 0).
+run_sash 'fn dbl -> int { return $(( $1 * 2 )); }
+int x=$(( (dbl (2 + 1)) )); echo $x'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 58.14
+# 58.15 the same nested-paren sexpr arg works in a `(( ))` condition
+run_sash 'fn dbl -> int { return $(( $1 * 2 )); }
+if (( (dbl (2 + 1)) == 6 )); then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.15
 
 # --- DD#30 unset semantics ---
 

@@ -1,6 +1,6 @@
 ---
 title: "bug: an arith-sexpr call arg that is a nested $(( )) silently lowers to 0"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []

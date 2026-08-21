@@ -1243,7 +1243,15 @@ pub fn collect_arith_content_raw(scanner: &mut Scanner) -> Result<String, Diagno
 /// Respects nesting of (( )) and ( ).
 fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
     let mut content = String::new();
-    let mut depth = 1i32;
+    // Depth is a count of INDIVIDUAL open parens still needing a close, starting
+    // at 2 for the already-consumed `((` / `$((`. Each `(` is +1 and each `)` is
+    // −1 (the `((`/`))` tokens are +2/−2 shortcuts for an adjacent pair). The
+    // content ends when depth returns to 0. Counting individual parens — rather
+    // than treating `((`/`))` as indivisible ±1 units — is what lets a mix of
+    // single and double parens balance, e.g. `$(( (dbl (2)) ))` (a sexpr call
+    // with a parenthesised arg), whose trailing `))` are two single closes, not
+    // the arith terminator (bug-arith-sexpr-nested-cmdsub-arg).
+    let mut depth = 2i32;
 
     // Scan the body in arithmetic mode so `<<` lexes as left-shift, not a
     // heredoc (bug-arith-left-shift-heredoc). Set before the first peek so
@@ -1273,6 +1281,7 @@ fn step_arith_collect(
         Tok::DblParen => step_open_paren(scanner, content, depth, "(("),
         Tok::DollarDblParen => step_open_paren(scanner, content, depth, "$(("),
         Tok::LParen => {
+            *depth += 1;
             content.push('(');
             scanner.next();
             false
@@ -1284,9 +1293,9 @@ fn step_arith_collect(
 
 /// `))` token — already-paired; decrement depth and (when depth hits 0) terminate.
 fn step_dbl_paren_close(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
-    *depth -= 1;
+    *depth -= 2;
     scanner.next();
-    if *depth == 0 {
+    if *depth <= 0 {
         return true;
     }
     content.push_str("))");
@@ -1300,7 +1309,7 @@ fn step_open_paren(
     depth: &mut i32,
     text: &str,
 ) -> bool {
-    *depth += 1;
+    *depth += 2;
     content.push_str(text);
     scanner.next();
     false
@@ -1308,17 +1317,16 @@ fn step_open_paren(
 
 /// `)` token — if followed by another `)`, treat as `))`; otherwise single `)`.
 fn step_rparen(scanner: &mut Scanner, content: &mut String, depth: &mut i32) -> bool {
+    // A single `)` closes one open paren. If that returns depth to 0 it is the
+    // arith terminator (consume, don't emit); otherwise it is content. Adjacent
+    // `))` lexes as one `DblParenClose` token, so a bare `RParen` here is a lone
+    // close.
     scanner.next();
-    if !matches!(scanner.peek().token, Tok::RParen) {
-        content.push(')');
-        return false;
-    }
     *depth -= 1;
-    scanner.next();
-    if *depth == 0 {
+    if *depth <= 0 {
         return true;
     }
-    content.push_str("))");
+    content.push(')');
     false
 }
 
