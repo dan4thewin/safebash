@@ -362,6 +362,11 @@ fn handle_return_stmt(
 ) -> BlockId {
     let exit_val = if let Some(arg) = c.args.first() {
         let val = expr_to_value(arg, state);
+        // DD#27/§5: `return $(( (F …) ))` where F is the enclosing function is a
+        // self tail-call — lower to a loop back-edge instead of inlining.
+        if let Some(after) = try_int_tail_call(&val, ssa, state, block) {
+            return after;
+        }
         lift_int_func_calls(val, ssa, state, block)
     } else {
         SsaValue::Literal("0".to_string())
@@ -377,6 +382,28 @@ fn handle_return_stmt(
         ssa.block_mut(*block).terminator = Terminator::Return;
     }
     ssa.new_block("after_return")
+}
+
+/// DD#27/§5: if `val` is a self tail-call to the enclosing function
+/// (`return $(( (F …) ))`), emit the loop back-edge and return the trailing
+/// block. `None` when it is not a tail self-call (the caller lifts normally).
+fn try_int_tail_call(
+    val: &SsaValue,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Option<BlockId> {
+    let SsaValue::IntFuncCall { name, args } = val else {
+        return None;
+    };
+    let (tf, header, aname) = state.tail_loop.clone()?;
+    if *name != tf {
+        return None;
+    }
+    let lifted = lift_int_func_args(args.clone(), ssa, state, block);
+    Some(super::functions::emit_tail_call(
+        header, &aname, lifted, ssa, state, *block,
+    ))
 }
 
 /// `mapfile -t arr` / `readarray -t arr` → Mapfile instruction.
@@ -861,6 +888,16 @@ fn build_function_pipeline_stage(
     let saved_return = state.return_target;
     let saved_args = super::functions::save_caller_args(state);
 
+    // DD#27/§5: reject recursion into a function already being inlined.
+    if state.inlining.iter().any(|n| n == &resolved) {
+        state
+            .diagnostics
+            .push(super::functions::recursion_diagnostic(&resolved));
+        super::functions::restore_caller_args(saved_args, state);
+        return None;
+    }
+    state.inlining.push(resolved.clone());
+
     let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
     let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
     check_callee_arity(name, &body, arg_values.len(), state);
@@ -876,6 +913,7 @@ fn build_function_pipeline_stage(
     state.return_target = saved_return;
     state.restore(&saved);
     super::functions::restore_caller_args(saved_args, state);
+    state.inlining.pop();
 
     ssa.compound_pipeline_blocks.push(entry);
     Some(entry)
