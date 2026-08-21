@@ -59,3 +59,15 @@ Independent of the args model.
 `shift` now resolves as an unknown external → SB5011. A dedicated "shift is
 removed — use `for x in @args` (or a future array slice)" message would be
 friendlier. Nice-to-have.
+
+## Progress (2026-08-21)
+
+- **`$(len/join/keys args)` resolved** — `resolve_args_name` applied at the three
+  intrinsic lowering sites (`transform/expr_handlers.rs`), and `type_check`
+  `check_function` registers `args` as a collection for the function-body scope.
+  `$(len args)` = arg count, `$(join args SEP)` joins, `$(keys args)` correctly
+  rejects (indexed). Fixed a silent-0 (`$(len args)` was 0). Specs types.sh
+  75.23/75.24. native,c (janet's `_args` model doesn't expose `args`).
+- **top-level `args` reject** — `@args`/`${args[i]}`/`${#args}` outside a function
+  → SB5024 (function-local, like `$1`), via `flag_args_toplevel` in
+  `validate.rs::check_positionals`. Specs 75.25/75.26.

@@ -717,6 +717,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
         StmtKind::Command(c) => check_command(c, stmt.span, env, errors),
         StmtKind::If(if_stmt) => check_if(if_stmt, env, errors),
         StmtKind::For(f) => check_for(f, env, errors),
+        StmtKind::Function(f) => check_function(f, env, errors),
         // Default: descend into every nested statement body via
         // child_bodies(). Covers For, While, Function, Case (no
         // per-arm pre-work) and the wrapping StmtKinds Pipeline,
@@ -1058,6 +1059,21 @@ fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     }
     for s in &f.body {
         check_stmt(s, env, errors);
+    }
+}
+
+/// DD#75 §5: inside a function body the implicit `args` array is a live
+/// collection (so `len`/`join args`, `@args`, `${args[i]}` type-check as an
+/// indexed array). Register it for the body, then restore — a nested/sibling
+/// scope or top level must not see it (top-level `args` is a separate reject).
+fn check_function(f: &Function, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    let had_args = env.collections.contains("args");
+    env.collections.insert("args".to_string());
+    for s in &f.body {
+        check_stmt(s, env, errors);
+    }
+    if !had_args {
+        env.collections.remove("args");
     }
 }
 

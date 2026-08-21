@@ -1665,13 +1665,17 @@ fn check_positionals_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         ExprKind::SimpleExpansion(name) => flag_positional(name, expr.span, diags),
         ExprKind::ParameterExpansion(pe) => {
             flag_positional(&pe.name, expr.span, diags);
+            flag_args_toplevel(&pe.name, expr.span, diags);
             check_positionals_opt(pe.operand.as_deref(), diags);
         }
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
             check_positionals_seq(parts, diags)
         }
         ExprKind::AssocArray(pairs) => check_positionals_seq(pairs.iter().map(|(_, v)| v), diags),
-        ExprKind::Subscript { index, .. } => check_positionals_expr(index, diags),
+        ExprKind::Subscript { name, index } => {
+            flag_args_toplevel(name, expr.span, diags);
+            check_positionals_expr(index, diags);
+        }
         ExprKind::Test(t) => check_positionals_test(t, diags),
         ExprKind::Arithmetic(a) => check_positionals_arith(a, expr.span, diags),
         ExprKind::CommandSubstitution(stmts) => check_positionals_stmt_seq(stmts, diags),
@@ -1778,6 +1782,21 @@ fn flag_positional(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
         return;
     };
     diags.push(Diagnostic::error_span(span, "SB5024", directive));
+}
+
+/// DD#75 §5: the implicit `args` array (and its cells/splat) is function-local,
+/// exactly like `$1`/`$@`/`$#`. A top-level `@args` / `${args[i]}` / `${#args}`
+/// reference is rejected — the process command line is `$(argv)`/`$(arg N)`.
+fn flag_args_toplevel(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name == "args" {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5024",
+            "`args` is the function-local argument array — it does not exist at \
+             top level; use $(argv) / $(arg N) / $(argc) for the process command line"
+                .to_string(),
+        ));
+    }
 }
 
 // ── DD#60 splat context (SB5025), DD#22 quoted splat (SB5026),

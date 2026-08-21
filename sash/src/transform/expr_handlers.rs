@@ -212,6 +212,8 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
             s.strip_prefix('$').unwrap_or(&s).to_string()
         }
     };
+    // DD#75 §5: a user-written `args` names the implicit per-function array.
+    let name = super::expressions::resolve_args_name(&name, state);
     let v = state.lookup(&name);
     let operator = if state.collections.contains(&name) {
         "arrlen"
@@ -228,6 +230,7 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
 fn try_keys_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     let arg = c.args.first()?;
     let arg_str = expr_to_string(arg);
+    let arg_str = super::expressions::resolve_args_name(&arg_str, state);
     let v = state.lookup(&arg_str);
     Some(SsaValue::ParamExpansion {
         var: v,
@@ -254,6 +257,7 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         }
         _ => expr_to_string(arr_expr),
     };
+    let arr_name = super::expressions::resolve_args_name(&arr_name, state);
     let v = state.lookup(&arr_name);
     SsaValue::ParamExpansion {
         var: v,

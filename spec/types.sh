@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=117
+plan=121
 echo "1..$plan" >&3
 
 set +e
@@ -544,6 +544,31 @@ f a b c d e f g h i j k'
 else
     skip_chk 75.22
 fi
+# 75.23 `$(len args)` is the arg count (= $#), reading the implicit array — the
+# intrinsic must resolve `args`. native,c (janet's `_args` model doesn't expose
+# the `args` name; see janet-arith-subscript-read / the 75.20-22 guards).
+if in_modes native,c; then
+    run_sash 'fn f { echo $(len args); }
+f a b c'
+    [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
+else
+    skip_chk 75.23
+fi
+# 75.24 `$(join args SEP)` joins the implicit array. native,c
+if in_modes native,c; then
+    run_sash 'fn f { echo $(join args ,); }
+f a b c'
+    [[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk 75.24
+else
+    skip_chk 75.24
+fi
+# 75.25 `args` is function-local — a top-level `${args[0]}` reference is
+# rejected (SB5024), like `$1`. Compile-time, mode-independent.
+run_sash 'echo ${args[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk 75.25
+# 75.26 top-level `@args` splat is rejected the same way
+run_sash 'for x in @args; do echo "$x"; done'
+[[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk 75.26
 
 # ── DD#77 `[[ -i EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
