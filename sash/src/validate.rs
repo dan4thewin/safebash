@@ -1211,7 +1211,6 @@ const BUILTINS: &[&str] = &[
     "argv",
     "argc",
     "arg",
-    "shift",
     // Variables
     "unset",
     // Test

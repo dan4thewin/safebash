@@ -362,8 +362,16 @@ fn subscript_read_to_ssa(
 fn arith_leaf_to_ssa(arith: &ArithExpr, state: &VersionState) -> Option<SsaValue> {
     match arith {
         ArithExpr::Literal(n) => Some(SsaValue::Expr(n.to_string())),
-        ArithExpr::Var(name) => Some(var_to_ssa(name, state)),
-        ArithExpr::DollarVar(name) => Some(SsaValue::Var(state.lookup(name))),
+        // DD#75 §5: `$1`/`$#` in arithmetic mean the same `args` reads as
+        // outside `$(( ))` — route positionals through the shared helper first.
+        ArithExpr::Var(name) => Some(
+            super::expressions::positional_to_value(name, state)
+                .unwrap_or_else(|| var_to_ssa(name, state)),
+        ),
+        ArithExpr::DollarVar(name) => Some(
+            super::expressions::positional_to_value(name, state)
+                .unwrap_or_else(|| SsaValue::Var(state.lookup(name))),
+        ),
         ArithExpr::Expansion(inner) => Some(expr_to_value(inner, state)),
         _ => None,
     }

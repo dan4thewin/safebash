@@ -1128,9 +1128,6 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
         // `:` no-op — succeeds silently (the canonical `|| :` discard).
         BuiltinCmd::Noop => emit_janet_const_bool(out, true),
         BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
-        BuiltinCmd::Shift => {
-            writeln!(out, "(set _args (array/slice _args 1))").unwrap();
-        }
         BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
         BuiltinCmd::Match => emit_janet_match(out, ctx, c),
         BuiltinCmd::Break | BuiltinCmd::Continue => {
@@ -1166,11 +1163,7 @@ fn janet_cmd_defaults_success(kind: &BuiltinCmd, cmd_name: &str) -> bool {
     }
     matches!(
         kind,
-        BuiltinCmd::Echo
-            | BuiltinCmd::Read
-            | BuiltinCmd::Unset
-            | BuiltinCmd::Shift
-            | BuiltinCmd::Bless
+        BuiltinCmd::Echo | BuiltinCmd::Read | BuiltinCmd::Unset | BuiltinCmd::Bless
     )
 }
 

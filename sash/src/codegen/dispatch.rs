@@ -226,9 +226,6 @@ impl SsaInst {
                 return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
             }
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
-            BuiltinCmd::Shift => {
-                return super::inst_handlers::handle_shift(args, builder, module, ctx)
-            }
             BuiltinCmd::CommandBuiltin => {
                 return self.emit_command_builtin(name, args, redirects, builder, module, ctx);
             }

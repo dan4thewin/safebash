@@ -118,7 +118,7 @@ meaning anywhere.
 **Subscript-index invariant (pre-existing, restated):** a subscript index is a
 numeric literal (`a[1]`) or a **`$`-sigilled** value (`a[$i]`, `a[${b[$j]}]`).
 A **bare word** `a[i]` is the *string key* `"i"` — valid only on a map; SB4030
-on an indexed array. The `$1..$n → ${args[1]}..${args[n]}` sugar (§5) uses
+on an indexed array. The `$1..$n → ${args[0]}..${args[n-1]}` sugar (§5) uses
 literal indices; a computed positional is `${args[$i]}`.
 
 This retires the DD#60 "parser convenience" that accepted `${a[@]}` on input:
@@ -134,27 +134,71 @@ intrinsic call:
 
 | Sugar | Canonical | Operator |
 |-------|-----------|----------|
-| `$1`..`$n` | `${args[1]}`..`${args[n]}` | subscript |
+| `$1`..`$n` | `${args[0]}`..`${args[n-1]}` | subscript |
 | `$@`       | `@args`                    | splat |
 | `$#`       | `${#args}`                 | length (= `$(len args)`) |
 | `$*`       | *(removed)* → `$(join args)` | — |
 
-- **`args` is 1-indexed** (`args[1]..args[n]`, keys `1..n` in the DD#33 table;
-  index `0` unused). This is a deliberate consequence of DG's choice that
-  `$1 ≡ ${args[1]}` **and** `$# ≡ ${#args}` both hold: with the positionals at
-  `1..n`, `${#args} = n = $#`. Positionals are 1-indexed by universal
-  convention, so this reads naturally even though named arrays are 0-indexed.
+- **`args` is 0-indexed** (`args[0]..args[n-1]`, keys `0..n-1` in the DD#33
+  table; `args[0]` is the first argument). **Amended 2026-08-20 (DG): 0-indexed,
+  not 1-indexed.** The original §5 chose 1-indexed to make `$1 ≡ ${args[1]}` a
+  literal digit match, but sash's named arrays are 0-indexed, so a 1-indexed
+  `args` would be the *only* inconsistent array in the language (off-by-one for
+  `${args[$i]}` computed indexing, iteration, `keys args`). Prior art confirms
+  the rule "args-indexing matches the language's general array indexing": the
+  1-indexed-args languages (fish, zsh, Lua) are 1-indexed *everywhere*, while
+  every 0-indexed-array language keeps args 0-indexed — Elvish (a 0-indexed list
+  literally named `args`, `$args[0]` = first arg), Oil/YSH (`ARGV[0]`), Python,
+  Ruby, Perl, Go, Node, Tcl. So `$1 ≡ ${args[0]}`; the `$1..$n` → `${args[0..]}`
+  sugar absorbs the off-by-one at desugar time. `$# ≡ ${#args} = n` is unchanged
+  (length is base-independent).
 - **No bare `$args`.** `args` is only reached via `@args`, `${args[$i]}`,
   `${#args}`, `$(join args)` — the named-array surface. `args` is a reserved
   name inside function bodies.
 - **`$0` is not part of `args`.** Inside a function `$0` is still the program
-  name (`$(arg 0)`, DD#60), unrelated to the function's own arguments.
+  name (`$(arg 0)`, DD#60), unrelated to the function's own arguments. (This
+  matches Perl/Ruby, where the program name is separate from the args array —
+  `args[0]` is the first *user* argument, not the program name.)
 - `$*` is gone; there is no implicit positional join.
 
 This resolves the `@` double-duty (splat operator in `@a` vs. special-name in
 `$@`): `@` is now always the splat operator, and `$@` is sugar for `@args`.
 It also makes function args uniform with named arrays and with DD#60's
 program-arg model (`argv`/`arg`/`argc`).
+
+### Implemented (2026-08-21) — core
+
+The **core** args model shipped native + c (0 spec regressions, all 3 modes):
+`$1..$9` → `${args[0]}..${args[8]}`, `$@` (via pre-expansion) and `$#` →
+`${#args}`, resolved through the current function's `args` array. Both the
+expression path (`simple_expansion_to_value`) and the arithmetic path
+(`arith_leaf_to_ssa`) route positionals through a shared
+`expressions::positional_to_value`, so `$1`/`$#` mean the same inside and
+outside `$(( ))`. User-written `${args[i]}`, `@args`, `${#args}`, and
+`for x in @args` all work (native + c; janet keeps its own `_args` model).
+Specs: `types.sh` 75.17–75.22.
+
+**Unique-name model (the key mechanism).** Because `args` is a compiler-managed
+abstraction (DG, 2026-08-21), each function inline mints a **fresh unique array
+name** (`__args0`, `__args1`, …) materialized once from the call args
+(`setup_callee_args`). Nested/recursive calls therefore never collide — the
+callee's `__args1` is a different array from the caller's `__args0` — so there is
+**no SSA save/restore** (only the current *name* is saved/restored, a cheap
+string). This fixed a **pre-existing bug**: at HEAD (and any name-reused scheme)
+a function reading a positional *after calling another function* got the
+callee's value (arrays are name-slotted in codegen, not SSA-versioned). A
+user-written `args` is remapped to the current unique name via
+`expressions::resolve_args_name` at each array-name resolution site (subscript,
+splat, `${#…}`, `for`-in).
+
+**`shift` dropped** (see §5 amendment note and `research-array-slice`): it was a
+degenerate slice. Removed the opcode, handler, codegen, and spec 48.2.
+
+**Deferred** (see `dd75-args-model-polish`): `$(len/join/keys args)` (intrinsic
+recognition still gates on `collections.contains("args")`); `$*` removal (still
+pre-expands); `$@`→`@args` splat for >9 args (pre-expansion caps the tail —
+pre-existing); a recursion guard (recursive inlining overflows the compiler —
+pre-existing); a friendlier `shift`-removed diagnostic.
 
 ## 6. Migration (sash-convert)
 

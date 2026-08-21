@@ -1,8 +1,6 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::cmd_handlers::{
-    expand_dollar_at_in_body, resolve_function_name, setup_callee_positionals,
-};
+use super::cmd_handlers::{check_callee_arity, expand_dollar_at_in_body, resolve_function_name};
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
@@ -69,7 +67,6 @@ fn try_builtin(
     match kind {
         BuiltinCmd::Bless => Some(handle_bless_stmt(name, c, ssa, state, *block)),
         BuiltinCmd::Test => try_test_arg_capture(c, ssa, state, *block),
-        BuiltinCmd::Shift => Some(handle_shift_stmt(c, ssa, state, *block)),
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
@@ -313,40 +310,6 @@ fn push_bless_all(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::BlessRetag { target, source });
-}
-
-fn handle_shift_stmt(
-    c: &Command,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    let n = c
-        .args
-        .first()
-        .map(|a| expr_to_string(a).parse::<usize>().unwrap_or(1))
-        .unwrap_or(1);
-    // $1 ← $(1+n), $2 ← $(2+n), ..., $9 ← $(9+n) or ""
-    for i in 1..=9usize {
-        let src_idx = i + n;
-        let val = if src_idx <= 9 {
-            SsaValue::Var(state.lookup(&src_idx.to_string()))
-        } else {
-            SsaValue::Literal(String::new())
-        };
-        let target = state.define(&i.to_string());
-        ssa.block_mut(block)
-            .insts
-            .push(SsaInst::Assign { target, value: val });
-    }
-    // Decrement $#
-    let _argc_ref = state.lookup("#");
-    let new_argc = state.define("#");
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: new_argc,
-        value: SsaValue::Literal("__shift__".to_string()), // placeholder
-    });
-    block
 }
 
 fn handle_break_stmt(
@@ -896,9 +859,12 @@ fn build_function_pipeline_stage(
 
     let saved = state.snapshot();
     let saved_return = state.return_target;
+    let saved_args = super::functions::save_caller_args(state);
 
     let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
-    setup_callee_positionals(name, &body, c, ssa, state, entry);
+    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    check_callee_arity(name, &body, arg_values.len(), state);
+    super::functions::setup_callee_args(&arg_values, ssa, state, entry);
 
     // `return` inside the body jumps to ret_block, which ends the forked child.
     let ret_block = ssa.new_block(&format!("pipe_fn_ret_{}_{}", name, idx));
@@ -909,6 +875,7 @@ fn build_function_pipeline_stage(
 
     state.return_target = saved_return;
     state.restore(&saved);
+    super::functions::restore_caller_args(saved_args, state);
 
     ssa.compound_pipeline_blocks.push(entry);
     Some(entry)

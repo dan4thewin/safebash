@@ -102,7 +102,6 @@ pub enum BuiltinCmd {
     Exec,
     Cd,
     Wait,
-    Shift,
     /// `command` builtin (bypass function lookup).
     CommandBuiltin,
     /// `bless VAR [[ ... ]]` — recognized at IR level, becomes
@@ -172,7 +171,6 @@ impl BuiltinCmd {
             "exec" => Self::Exec,
             "cd" => Self::Cd,
             "wait" => Self::Wait,
-            "shift" => Self::Shift,
             "command" => Self::CommandBuiltin,
             "bless" => Self::Bless,
             "read" => Self::Read,
@@ -921,6 +919,13 @@ pub struct VersionState {
     pub exiting_signals: std::collections::HashSet<i64>,
     /// Diagnostics collected during SSA transformation.
     pub diagnostics: Vec<String>,
+    /// DD#75 §5: the unique array name backing the current function's `args`
+    /// (e.g. `__args3`). Because `args` is compiler-managed, each inline gets a
+    /// fresh name — nested/recursive calls never collide, so no SSA save/restore
+    /// is needed (the callee's array is a different name). Empty at top level.
+    pub current_args_name: String,
+    /// Monotonic counter minting the unique `args` array names above.
+    pub args_counter: u32,
     /// `--manifest` collection: every command name resolved to a real
     /// executable path (contains `/`) at the resolution funnel. Interior-
     /// mutable so the immutable expression-evaluation path (`expr_to_value`
@@ -952,6 +957,8 @@ impl VersionState {
             exit_trap: None,
             exiting_signals: std::collections::HashSet::new(),
             diagnostics: Vec::new(),
+            current_args_name: String::new(),
+            args_counter: 0,
             external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }

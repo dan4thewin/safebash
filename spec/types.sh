@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=109
+plan=115
 echo "1..$plan" >&3
 
 set +e
@@ -487,6 +487,50 @@ run_sash 'array a=(x y z); for w in @a; do echo "$w"; done'
 # 75.16 indexed element access ${a[$i]} / ${a[1]} unaffected
 run_sash 'array a=(x y z); i=2; echo ${a[$i]}${a[1]}'
 [[ $rc = 0 && $out = "zy" && -z $err ]]; chk 75.16
+
+# DD#75 §5 — positional parameters are the implicit 0-indexed `args` array
+# ($1..$9 ≡ ${args[0]}..${args[8]}; $# ≡ ${#args}; $@ ≡ @args). Amended
+# 2026-08-21: 0-indexed (was 1-indexed) + `shift` dropped. Each inline gets a
+# uniquely-named args array, so nested/recursive calls never clobber positionals.
+# 75.17 $1 is the first argument
+run_sash 'fn f { echo $1; }
+f hello'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 75.17
+# 75.18 $# is the argument count (= ${#args})
+run_sash 'fn f { echo $#; }
+f a b c'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.18
+# 75.19 a nested function call does NOT clobber the caller's positionals
+run_sash 'fn g { echo $1; }
+fn f { g Z; echo $1; }
+f A'
+[[ $rc = 0 && $out = $'Z\nA' && -z $err ]]; chk 75.19
+# 75.20 user-written ${args[i]} reads the same array (native,c — janet uses its
+# own _args model and does not expose the `args` name)
+if in_modes native,c; then
+    run_sash 'fn f { echo ${args[0]} ${args[2]}; }
+f a b c'
+    [[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
+else
+    skip_chk 75.20
+fi
+# 75.21 @args splat iterates every argument (native,c)
+if in_modes native,c; then
+    run_sash 'fn f { for x in @args; do echo "$x"; done; }
+f a b'
+    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.21
+else
+    skip_chk 75.21
+fi
+# 75.22 more than 9 args are reachable via ${args[N]} (the old scalar model
+# capped at $9) (native,c)
+if in_modes native,c; then
+    run_sash 'fn f { echo ${args[10]}; }
+f a b c d e f g h i j k'
+    [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
+else
+    skip_chk 75.22
+fi
 
 # ── DD#77 `[[ -i EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or

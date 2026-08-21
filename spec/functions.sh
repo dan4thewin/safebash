@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=43
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -140,10 +140,9 @@ run_sash 'fn f { echo $2; }
 f one'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 48.1
 
-# 48.2 compiler tracks cumulative shift count
-run_sash 'fn f { shift; echo $1; }
-f a b'
-[[ $rc = 0 && $out = "b" && -z $err ]]; chk 48.2
+# 48.2 removed (DD#75 §5, 2026-08-21): `shift` is dropped — it was a toy slice.
+# Iteration uses `for x in @args`; a future array-slice op (post-beta research)
+# subsumes the skip-N-keep-rest use.
 
 # 67.1 bash `name() { }` function sugar ≡ fn name { } (DD#67)
 run_sash 'greet() { echo hi; }

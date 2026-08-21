@@ -35,14 +35,14 @@ pub(super) fn arg_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     if let ExprKind::ParameterExpansion(pe) = &expr.kind {
         if let Some(disposition) = splat_disposition(pe, state) {
             return SsaValue::ArraySplat {
-                array: pe.name.clone(),
+                array: resolve_args_name(&pe.name, state),
                 disposition: Some(disposition),
             };
         }
     }
     match command_arg_splat(&expr.kind) {
         Some(array) => SsaValue::ArraySplat {
-            array,
+            array: resolve_args_name(&array, state),
             disposition: None,
         },
         None => expr_to_value(expr, state),
@@ -153,7 +153,58 @@ fn simple_expansion_to_value(var: &str, state: &VersionState) -> SsaValue {
             redirects: vec![],
         };
     }
+    if let Some(v) = positional_to_value(var, state) {
+        return v;
+    }
     SsaValue::Var(state.lookup(var))
+}
+
+/// DD#75 §5: a positional read (`$1..$9` → `${args[0]}..${args[8]}`, `$#` →
+/// `${#args}`) resolved against the current function's uniquely-named `args`
+/// array. Returns None for any non-positional name (an ordinary variable read).
+/// Used by both the expression path and the arithmetic path so `$1`/`$#` mean
+/// the same thing inside and outside `$(( ))`.
+pub(super) fn positional_to_value(var: &str, state: &VersionState) -> Option<SsaValue> {
+    if let Some(idx) = positional_arg_index(var) {
+        return Some(SsaValue::Subscript {
+            array: state.current_args_name.clone(),
+            index: Box::new(SsaValue::Literal(idx.to_string())),
+            is_integer_key: true,
+            is_integer_value: false,
+        });
+    }
+    if var == "#" {
+        return Some(SsaValue::ParamExpansion {
+            var: state.lookup(&state.current_args_name),
+            operator: "arrlen".to_string(),
+            operand: String::new(),
+        });
+    }
+    None
+}
+
+/// DD#75 §5: a user-written `args` (in `@args`, `${args[$i]}`, `${#args}`,
+/// `$(len args)`, …) names the *current* function's uniquely-named positional
+/// array. Any other name passes through unchanged. Outside a function
+/// (`current_args_name` empty) `args` is left as-is (the validator rejects a
+/// top-level positional/`args` use).
+pub(super) fn resolve_args_name(name: &str, state: &VersionState) -> String {
+    if name == "args" && !state.current_args_name.is_empty() {
+        state.current_args_name.clone()
+    } else {
+        name.to_string()
+    }
+}
+
+/// A single-digit positional name `"1".."9"` → its 0-based `args` index (n-1).
+/// `$0` (the program name) is not a positional and is handled elsewhere.
+fn positional_arg_index(var: &str) -> Option<usize> {
+    let b = var.as_bytes();
+    if b.len() == 1 && (b'1'..=b'9').contains(&b[0]) {
+        Some((b[0] - b'1') as usize)
+    } else {
+        None
+    }
 }
 
 fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
@@ -193,7 +244,8 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     // Remaining operators (strlen/arrlen/substring + the pruned/rejected
     // families) are scalar-only; they never carry a cell index (a cell op that
     // is not `:-`/`:?` rejects at validation before reaching codegen).
-    let var = state.lookup(&pe.name);
+    let resolved = resolve_args_name(&pe.name, state);
+    let var = state.lookup(&resolved);
     let operand = pe
         .operand
         .as_ref()
@@ -202,7 +254,7 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     // DD#75 §2: `${#x}` is the length of x dispatched on type — for a
     // collection it is the element/entry count (`arrlen`), not the byte length
     // of a scalar slot (`strlen`, which would read 0). `${#s}` stays strlen.
-    let operator = if op == "strlen" && state.collections.contains(&pe.name) {
+    let operator = if op == "strlen" && state.collections.contains(&resolved) {
         "arrlen".to_string()
     } else {
         op.clone()
@@ -232,10 +284,11 @@ fn assoc_array_to_value(pairs: &[(String, Expr)], state: &VersionState) -> SsaVa
 }
 
 pub(super) fn subscript_to_value(name: &str, index: &Expr, state: &VersionState) -> SsaValue {
-    let is_integer = !state.assoc_arrays.contains(name);
-    let is_integer_value = state.type_map.get(name).copied() == Some(crate::ir::VarType::Int);
+    let resolved = resolve_args_name(name, state);
+    let is_integer = !state.assoc_arrays.contains(&resolved);
+    let is_integer_value = state.type_map.get(&resolved).copied() == Some(crate::ir::VarType::Int);
     SsaValue::Subscript {
-        array: name.to_string(),
+        array: resolved,
         index: Box::new(expr_to_value(index, state)),
         is_integer_key: is_integer,
         is_integer_value,

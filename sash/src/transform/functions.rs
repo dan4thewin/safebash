@@ -6,6 +6,42 @@ use crate::ssa::*;
 use super::helpers::scan_expr_positionals_stmt;
 use super::statements::lower_stmts;
 
+/// DD#75 §5: bind the callee's implicit `args` array (0-indexed) from the
+/// call's argument values, and mark `args` a collection for the inlined scope
+/// so subscript/splat/length ops use the indexed-array path. `$1..$9`/`$@`/`$#`
+/// desugar to reads of this array (see `simple_expansion_to_value`).
+/// DD#75 §5: materialize the callee's implicit `args` array (0-indexed,
+/// read-only) under a FRESH unique name, so nested/recursive calls never
+/// collide — no save/restore of the array itself is needed. Records the name
+/// as the current positional scope; `$1..$9`/`$@`/`$#` (and a user-written
+/// `args`) resolve against it (see `positional_to_value`/`resolve_args_name`).
+pub(super) fn setup_callee_args(
+    arg_values: &[SsaValue],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    let name = format!("__args{}", state.args_counter);
+    state.args_counter += 1;
+    let v = state.define(&name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: v,
+        value: SsaValue::IndexedArray(arg_values.to_vec()),
+    });
+    state.collections.insert(name.clone());
+    state.current_args_name = name;
+}
+
+/// Save the *name* of the current positional scope (a cheap string — the array
+/// itself is uniquely named, so nothing in SSA needs saving/restoring).
+pub(super) fn save_caller_args(state: &mut VersionState) -> String {
+    std::mem::take(&mut state.current_args_name)
+}
+
+pub(super) fn restore_caller_args(saved: String, state: &mut VersionState) {
+    state.current_args_name = saved;
+}
+
 pub(super) fn lift_int_func_calls(
     val: SsaValue,
     ssa: &mut SsaProgram,
@@ -114,11 +150,9 @@ pub(super) fn inline_int_func(
 
     let locals = collect_local_vars(&body);
 
-    // Save positional params
-    let saved: Vec<(String, VarRef)> = (1..=9)
-        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
-        .collect();
-    let saved_argc = state.lookup("#");
+    // DD#75 §5: positionals are backed by the `args` array (below), not scalar
+    // "1".."9"/"#" vars — save/restore just `args`.
+    let saved_args = save_caller_args(state);
 
     // Save local vars
     let saved_locals: Vec<(String, VarRef)> = locals
@@ -129,30 +163,8 @@ pub(super) fn inline_int_func(
         })
         .collect();
 
-    // Set argc
-    let argc_val = SsaValue::Literal(args.len().to_string());
-    let argc_var = state.define("#");
-    ssa.block_mut(*block).insts.push(SsaInst::Assign {
-        target: argc_var,
-        value: argc_val,
-    });
-
-    // Set positional params from args
-    for (i, arg) in args.iter().enumerate() {
-        let param_var = state.define(&(i + 1).to_string());
-        ssa.block_mut(*block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: arg.clone(),
-        });
-    }
-    // Clear unbound positionals
-    for i in (args.len() + 1)..=9 {
-        let param_var = state.define(&i.to_string());
-        ssa.block_mut(*block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: SsaValue::Literal(String::new()),
-        });
-    }
+    // DD#75 §5: materialize the implicit `args` array (0-indexed).
+    setup_callee_args(args, ssa, state, *block);
 
     // Save exit status
     let saved_status = state.lookup("?");
@@ -176,19 +188,7 @@ pub(super) fn inline_int_func(
         value: SsaValue::Var(result_ref),
     });
 
-    // Restore positional params
-    for (pname, saved_ref) in &saved {
-        let rv = state.define(pname);
-        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-            target: rv,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
-    let argc_restore = state.define("#");
-    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-        target: argc_restore,
-        value: SsaValue::Var(saved_argc),
-    });
+    restore_caller_args(saved_args, state);
 
     // Restore locals
     for (lname, saved_ref) in &saved_locals {

@@ -505,9 +505,15 @@ fn inline_function_call(
     // DD#18: save local function scope before inlining
     let saved_local_fn_scope = state.local_fn_scope.clone();
 
-    let (saved, saved_argc) = save_caller_positionals(state);
+    // Lower the call arguments ONCE in the caller's scope (before `args` is
+    // redefined), so a side-effecting `$( … )` arg is not executed twice and
+    // args reading the caller's positionals see the caller's values.
+    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+
+    check_callee_arity(name, body, arg_values.len(), state);
+    let saved_args = super::functions::save_caller_args(state);
     let saved_locals = save_caller_locals(name, &locals, ssa, state, block);
-    setup_callee_positionals(name, body, c, ssa, state, block);
+    super::functions::setup_callee_args(&arg_values, ssa, state, block);
 
     // Inline the function body
     let call_block = ssa.new_block(&format!("call_{}", name));
@@ -546,20 +552,13 @@ fn inline_function_call(
     // Normal fall-through also goes to restore block
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
-    restore_caller_state(&saved, saved_argc, &saved_locals, ssa, state, restore_block);
+    restore_caller_state(&saved_locals, ssa, state, restore_block);
+    super::functions::restore_caller_args(saved_args, state);
 
     // DD#18: restore local function scope
     state.local_fn_scope = saved_local_fn_scope;
 
     restore_block
-}
-
-fn save_caller_positionals(state: &mut VersionState) -> (Vec<(String, VarRef)>, VarRef) {
-    let saved: Vec<(String, VarRef)> = (1..=9)
-        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
-        .collect();
-    let saved_argc = state.lookup("#");
-    (saved, saved_argc)
 }
 
 /// Snapshot the caller's versions of each local variable into
@@ -587,32 +586,16 @@ fn save_caller_locals(
         .collect()
 }
 
-/// Assign $1..$N from call args, clear $N+1..$9 (DD#46), and emit a
-/// diagnostic if the callee reads $K where K > argc.
-pub(super) fn setup_callee_positionals(
+/// DD#46/#48: emit a diagnostic if the callee reads `$K` (accounting for
+/// `shift`) where K exceeds the number of arguments actually passed. The
+/// positional values themselves live in the `args` array (setup_callee_args).
+pub(super) fn check_callee_arity(
     name: &str,
     body: &[Statement],
-    c: &Command,
-    ssa: &mut SsaProgram,
+    call_argc: usize,
     state: &mut VersionState,
-    block: BlockId,
 ) {
-    let argc_val = SsaValue::Literal(c.args.len().to_string());
-    let argc_var = state.define("#");
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: argc_var,
-        value: argc_val,
-    });
-    for (i, arg) in c.args.iter().enumerate() {
-        let val = expr_to_value(arg, state);
-        let param_var = state.define(&(i + 1).to_string());
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: val,
-        });
-    }
     let max_positional = collect_max_positional(body);
-    let call_argc = c.args.len();
     if max_positional > call_argc {
         state.diagnostics.push(format!(
             "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
@@ -622,35 +605,14 @@ pub(super) fn setup_callee_positionals(
             if call_argc == 1 { "" } else { "s" }
         ));
     }
-    for i in (c.args.len() + 1)..=9 {
-        let param_var = state.define(&i.to_string());
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: SsaValue::Literal(String::new()),
-        });
-    }
 }
 
 fn restore_caller_state(
-    saved: &[(String, VarRef)],
-    saved_argc: VarRef,
     saved_locals: &[(String, VarRef)],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     restore_block: BlockId,
 ) {
-    for (param_name, saved_ref) in saved {
-        let restore_var = state.define(param_name);
-        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-            target: restore_var,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
-    let restore_argc = state.define("#");
-    ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-        target: restore_argc,
-        value: SsaValue::Var(saved_argc),
-    });
     for (local_name, saved_ref) in saved_locals {
         let restore_var = state.define(local_name);
         ssa.block_mut(restore_block).insts.push(SsaInst::Assign {

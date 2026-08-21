@@ -403,6 +403,7 @@ fn try_dispatch_array(
         return None;
     }
     let (name, use_keys) = detect_array_iter(&f.words[0].kind)?;
+    let name = super::expressions::resolve_args_name(&name, state);
     Some(lower_for_array(f, &name, use_keys, ssa, state, block))
 }
 

@@ -12,8 +12,8 @@ use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects_guarded, emit_restore, ir_expr_to_ssa_value};
-use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx};
-use super::values::{atoi_call, emit_strlen, lower_value, lower_value_as_int};
+use super::types::{find_array_slot, ExternFuncs, InstCtx};
+use super::values::{atoi_call, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
 /// Handle SsaInst::Pipeline — fork/exec multiple stages connected by pipes.
@@ -931,115 +931,6 @@ pub(super) fn handle_cd(
         checked,
         Some(msg),
     );
-    false
-}
-
-/// Handle `shift` builtin.
-pub(super) fn handle_shift(
-    args: &[SsaValue],
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    ctx: &mut InstCtx,
-) -> bool {
-    let vars = &mut *ctx.vars;
-    let literals = ctx.literals;
-    let externs = ctx.externs;
-
-    // shift N: sash_argc -= N; sash_argv += N*8
-    let shift_n = if let Some(SsaValue::Literal(s)) = args.first() {
-        s.parse::<i64>().unwrap_or(1)
-    } else {
-        1
-    };
-    let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-    let argc_addr = builder.ins().global_value(I64, argc_gv);
-    let old_argc = builder.ins().load(I64, MemFlags::trusted(), argc_addr, 0);
-    let n_val = builder.ins().iconst(I64, shift_n);
-    let new_argc = builder.ins().isub(old_argc, n_val);
-    builder
-        .ins()
-        .store(MemFlags::trusted(), new_argc, argc_addr, 0);
-
-    let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-    let argv_addr = builder.ins().global_value(I64, argv_gv);
-    let old_argv = builder.ins().load(I64, MemFlags::trusted(), argv_addr, 0);
-    let offset = builder.ins().iconst(I64, shift_n * 8);
-    let new_argv = builder.ins().iadd(old_argv, offset);
-    builder
-        .ins()
-        .store(MemFlags::trusted(), new_argv, argv_addr, 0);
-
-    // Reload all positional params from updated argv/argc
-    let fresh_argv = builder.ins().load(I64, MemFlags::trusted(), argv_addr, 0);
-    let fresh_argc = builder.ins().load(I64, MemFlags::trusted(), argc_addr, 0);
-    for (key, sv) in vars.iter() {
-        // key is like "1_0", "2_0", "#_0" — extract base name
-        let base = key.split('_').next().unwrap_or("");
-        if let Ok(idx) = base.parse::<i64>() {
-            // Guard: only reload if idx < fresh_argc (arg still exists)
-            let idx_val = builder.ins().iconst(I64, idx);
-            let in_bounds = builder
-                .ins()
-                .icmp(IntCC::SignedLessThan, idx_val, fresh_argc);
-
-            let reload_block = builder.create_block();
-            let skip_block = builder.create_block();
-            let merge_block = builder.create_block();
-
-            builder
-                .ins()
-                .brif(in_bounds, reload_block, &[], skip_block, &[]);
-
-            builder.switch_to_block(reload_block);
-            builder.seal_block(reload_block);
-            let offset = builder.ins().imul_imm(idx_val, 8);
-            let arg_ptr_addr = builder.ins().iadd(fresh_argv, offset);
-            let arg_ptr = builder
-                .ins()
-                .load(I64, MemFlags::trusted(), arg_ptr_addr, 0);
-            let len = emit_strlen(builder, module, externs.strlen, arg_ptr);
-            builder.def_var(sv.str_ptr(), arg_ptr);
-            builder.def_var(sv.str_len(), len);
-            builder.ins().jump(merge_block, &[]);
-
-            builder.switch_to_block(skip_block);
-            builder.seal_block(skip_block);
-            let null_ptr = builder.ins().iconst(I64, 0);
-            let zero_len = builder.ins().iconst(I64, 0);
-            builder.def_var(sv.str_ptr(), null_ptr);
-            builder.def_var(sv.str_len(), zero_len);
-            builder.ins().jump(merge_block, &[]);
-
-            builder.switch_to_block(merge_block);
-            builder.seal_block(merge_block);
-        } else if base == "#" {
-            let one = builder.ins().iconst(I64, 1);
-            let count = builder.ins().isub(fresh_argc, one);
-            let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, count);
-            builder.def_var(sv.str_ptr(), str_ptr);
-            builder.def_var(sv.str_len(), str_len);
-        } else if base == "@" {
-            let space_id = literals.get(" ").expect("space not interned");
-            let space_gv = module.declare_data_in_func(*space_id, builder.func);
-            let space_ptr = builder.ins().global_value(I64, space_gv);
-            let space_len = builder.ins().iconst(I64, 1);
-            let out_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-            let join_ref = module.declare_func_in_func(externs.join_args, builder.func);
-            let call = builder.ins().call(
-                join_ref,
-                &[fresh_argv, fresh_argc, space_ptr, space_len, out_addr],
-            );
-            let str_ptr = builder.inst_results(call)[0];
-            let str_len = builder.ins().stack_load(I64, out_slot, 0);
-            builder.def_var(sv.str_ptr(), str_ptr);
-            builder.def_var(sv.str_len(), str_len);
-        }
-    }
     false
 }
 

@@ -1,6 +1,6 @@
 ---
 title: "DD#75 §5 — function args become the implicit `args` array (Model B); $1/$@/$# are operator sugar; $* removed"
-status: ready
+status: done
 priority: P3
 kind: task
 depends: []
