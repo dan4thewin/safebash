@@ -324,40 +324,20 @@ impl Scanner {
         use super::logos_tokens::{to_tok, LogosTok};
         use logos::Logos;
 
-        // DD#72: inside `$(( ))` (`arith_depth > 0`), `#` is NOT a comment —
-        // emit it as a single-char word so the arith re-lexer sees (and
-        // rejects) `base#digits` instead of the scanner truncating at the `#`.
-        if self.arith_depth > 0 && self.source[self.pos] == b'#' {
-            self.pos += 1;
-            return SpannedToken {
-                token: Tok::Word("#".to_string()),
-                span: LexSpan {
-                    start,
-                    end: self.pos,
-                },
-            };
+        if let Some(tok) = self.arith_hash_word(start) {
+            return tok;
         }
-        // Logos defaults to &str source; we hold bytes. The slice is
-        // ASCII for every structural-byte dispatch (newline, `#`, `;`,
-        // `|`, `&`, `(`, `)`, `{`, `}`, `>`) but comments may contain
-        // UTF-8 — we accept that by using lossy decoding here. The
-        // matched byte length is what counts; the comment payload is
-        // re-read from the original byte slice below.
-        let bytes_slice = &self.source[self.pos..];
-        let str_slice = match std::str::from_utf8(bytes_slice) {
-            Ok(s) => s,
-            Err(e) => {
-                // Truncate at the first invalid byte so logos sees a
-                // valid prefix. The remainder will be handled by the
-                // next dispatch (likely scan_word).
-                std::str::from_utf8(&bytes_slice[..e.valid_up_to()])
-                    .expect("checked prefix is valid UTF-8")
-            }
-        };
+        let str_slice = logos_input(&self.source[self.pos..]);
         let mut lex = LogosTok::lexer(str_slice);
         match lex.next() {
             Some(Ok(lt)) => {
+                // Read the match length now — this is the last use of `lex`, so
+                // its borrow of `self.source` is released before the `&mut self`
+                // calls below.
                 let len = lex.span().end;
+                if let Some(tok) = self.split_dbl_paren_close(&lt, start) {
+                    return tok;
+                }
                 let end = self.pos + len;
                 let token = if matches!(lt, LogosTok::Comment) {
                     let text = String::from_utf8_lossy(&self.source[self.pos..end]).to_string();
@@ -377,6 +357,49 @@ impl Scanner {
                 self.scan_word(start)
             }
         }
+    }
+
+    /// DD#72: inside `$(( ))` (`arith_depth > 0`), `#` is NOT a comment — emit
+    /// it as a single-char word so the arith re-lexer sees (and rejects)
+    /// `base#digits` instead of the scanner truncating at the `#`. `None` when
+    /// not in arith mode or the byte is not `#`.
+    fn arith_hash_word(&mut self, start: usize) -> Option<SpannedToken> {
+        if self.arith_depth > 0 && self.source[self.pos] == b'#' {
+            self.pos += 1;
+            return Some(SpannedToken {
+                token: Tok::Word("#".to_string()),
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
+            });
+        }
+        None
+    }
+
+    /// `))` lexes as one `DblParenClose`, but that token is only meaningful
+    /// inside arithmetic (`(( ))` / `$(( ))`). Outside arith mode, a `))` is two
+    /// separate `)` — e.g. two adjacent command-substitution closes in
+    /// `$(f $(g))` (bug-bare-nested-cmdsub-arg). Split it: emit a single
+    /// `RParen`, consuming one byte, so the second `)` re-lexes next call
+    /// (`)))` splits into three closes). `None` leaves the token as-is.
+    fn split_dbl_paren_close(
+        &mut self,
+        lt: &super::logos_tokens::LogosTok,
+        start: usize,
+    ) -> Option<SpannedToken> {
+        use super::logos_tokens::LogosTok;
+        if matches!(lt, LogosTok::DblParenClose) && self.arith_depth == 0 {
+            self.pos = start + 1;
+            return Some(SpannedToken {
+                token: Tok::RParen,
+                span: LexSpan {
+                    start,
+                    end: start + 1,
+                },
+            });
+        }
+        None
     }
 
     /// Scan `<<<` (HereString) / `<<` (heredoc sentinel, rejected) /
@@ -1246,6 +1269,20 @@ impl Scanner {
             }
         }
         None
+    }
+}
+
+/// Decode `bytes` to `&str` for the `logos` DFA (which needs `&str`, while the
+/// scanner holds bytes). The dispatched structural byte is ASCII, but a trailing
+/// comment may contain UTF-8; on invalid UTF-8 we hand logos the valid prefix
+/// (enough to match the leading operator) and the remainder is re-dispatched
+/// (likely `scan_word`). The matched byte length is what the caller uses.
+fn logos_input(bytes: &[u8]) -> &str {
+    match std::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => {
+            std::str::from_utf8(&bytes[..e.valid_up_to()]).expect("checked prefix is valid UTF-8")
+        }
     }
 }
 

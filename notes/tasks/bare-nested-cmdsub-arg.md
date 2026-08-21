@@ -1,6 +1,6 @@
 ---
 title: "bare nested $(…) as a command argument fails to parse (SB4014)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []

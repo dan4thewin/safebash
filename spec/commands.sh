@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=27
+plan=29
 echo "1..$plan" >&3
 
 set +e
@@ -148,6 +148,16 @@ run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done | /usr/bin/wc 
 # 14.6 if...fi > file → rejected (SB4021)
 run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 14.6
+
+# 14.7 a BARE (unquoted) nested command substitution as a command argument.
+# `$(f $(g))` — the two adjacent `))` are two cmdsub closes, not the arith
+# `))` terminator (bug-bare-nested-cmdsub-arg). Regression guard for the lexer
+# split of DblParenClose outside arith mode.
+run_sash 'x=$(/bin/echo $(/bin/echo hi)); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.7
+# 14.8 triple-nested bare cmdsub (`)))` splits into three closes)
+run_sash 'x=$(/bin/echo $(/bin/echo $(/bin/echo deep))); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc = 0 && $out = "deep" && -z $err ]]; chk 14.8
 
 set -e
 tally
