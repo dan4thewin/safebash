@@ -1,6 +1,6 @@
 ---
 title: "len <undefined> → compile error (DD#75 §2), safely (needs loop-var/param tracking)"
-status: ready
+status: done
 priority: P3
 kind: task
 depends: []
@@ -48,3 +48,14 @@ done`). Read-single-var targets and function params likely have the same gap.
 `dd75-len-polymorphic` core done 2026-08-11; this remainder confirmed-deferred
 2026-08-20 while finishing the arith partials (the loop-var tracking gap makes
 a naive reject unsafe). Low value (safe→nicer error), real regression risk.
+
+## Done (2026-08-21)
+
+Implemented as a dedicated `validate.rs::check_len_operands` pass (SB5039), NOT
+the type_check route the task originally sketched. Key realization (DG): the
+loop-var gap is only in *type_check*'s env — `validate.rs`'s SB5031 machinery
+(`collect_scope_names`) already tracks `for` variables, declarations, and
+`read`/`mapfile` targets, so reusing it makes `for e in @a; do $(len e); done`
+correct for free. Added `argv [N] ARR` as a target to `collect_scope_names`
+(the last-arg array) so `argv 1 a; $(len a)` isn't a false positive. `args` is
+valid inside a function, SB5024 at top level. Specs types.sh 75.27-75.30.

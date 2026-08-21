@@ -2847,14 +2847,22 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 }
 
 /// `read x`, `read -a a`, `mapfile -t a`, `readarray a` introduce their
-/// non-flag literal argument names.
+/// non-flag literal argument names. DD#60 `argv [N] ARR` snapshots the argv
+/// (slice) into the array named by its LAST argument.
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
-    if !matches!(name, "read" | "mapfile" | "readarray") {
-        return;
-    }
-    for arg in &c.args {
-        insert_read_target_arg(arg, set);
+    match name {
+        "read" | "mapfile" | "readarray" => {
+            for arg in &c.args {
+                insert_read_target_arg(arg, set);
+            }
+        }
+        "argv" => {
+            if let Some(ExprKind::Literal(s)) = c.args.last().map(|a| &a.kind) {
+                set.insert(s.clone());
+            }
+        }
+        _ => {}
     }
 }
 
@@ -2908,6 +2916,118 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
         check_reads_in_scope(end, &globals, &mut diags);
     }
     diags
+}
+
+// ── SB5039: reject `len <undefined>` (DD#75 §2) ──────────────────────
+//
+// `len <name>` dispatches on the operand's type; a name introduced nowhere
+// reads a non-existent slot and silently yields 0. Reject it as a typo. The
+// valid operand names are the scope introductions (`collect_scope_names`:
+// declarations incl. `array`/`map`, assignments, `for` variables, `read`/
+// `mapfile` targets) plus the implicit `args` array inside a function body.
+// This reuses the SB5031 scope machinery, so a loop variable (`for e in @a; do
+// $(len e); done`) is correctly accepted — the gap that made a type_check-side
+// reject unsafe. Only a bare-identifier operand is checked; a subscript cell
+// (`len a[0]`), a `$`-expansion, or a `$(…)` operand resolve elsewhere.
+
+/// DD#75 §2: reject `len <name>` whose name is introduced nowhere in scope.
+pub fn check_len_operands(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    let mut globals = HashSet::new();
+    collect_scope_names(&program.statements, &mut globals);
+    if let Some(ref end) = program.end_block {
+        collect_scope_names(end, &mut globals);
+    }
+    check_len_in_scope(&program.statements, &globals, false, &mut diags);
+    if let Some(ref end) = program.end_block {
+        check_len_in_scope(end, &globals, false, &mut diags);
+    }
+    diags
+}
+
+fn check_len_in_scope(
+    stmts: &[Statement],
+    known: &HashSet<String>,
+    in_function: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        if let StmtKind::Function(f) = &stmt.kind {
+            // A new scope: the function's own introductions + enclosing names.
+            let mut fn_known = known.clone();
+            collect_scope_names(&f.body, &mut fn_known);
+            check_len_in_scope(&f.body, &fn_known, true, diags);
+            continue;
+        }
+        stmt.direct_exprs(&mut |e| {
+            crate::ir::walk_expr_tree(e, &mut |sub| {
+                flag_len_cmdsub(sub, known, in_function, diags);
+            });
+        });
+        for body in stmt.child_bodies() {
+            check_len_in_scope(body, known, in_function, diags);
+        }
+    }
+}
+
+/// If `expr` is a `$(len NAME)` command substitution, check its operand.
+fn flag_len_cmdsub(
+    expr: &Expr,
+    known: &HashSet<String>,
+    in_function: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return;
+    };
+    if expr_literal_str(&c.name) != "len" {
+        return;
+    }
+    let Some(name) = len_operand_name(c) else {
+        return; // subscript cell / expansion / cmdsub operand — resolved elsewhere
+    };
+    // `args` is the implicit array: valid inside a function; a top-level
+    // `$(len args)` is the function-local reject (SB5024) — check_positionals
+    // only sees the `@args`/`${args…}` expansion forms, not this bare operand.
+    if name == "args" {
+        if !in_function {
+            flag_args_toplevel("args", expr.span, diags);
+        }
+        return;
+    }
+    if known.contains(&name) || handled_elsewhere(&name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        expr.span,
+        "SB5039",
+        format!(
+            "`len {name}` — `{name}` is introduced nowhere (not a variable, array, \
+             map, loop variable, or `args`); this reads as 0. Declare it, or fix the typo"
+        ),
+    ));
+}
+
+/// The bare-identifier operand of `len`: a plain word (`len a`) or a splat
+/// (`len @a`). `None` for a subscript cell, a `$`-expansion, a `$(…)`, or a
+/// non-identifier — those are not name-membership-checkable here.
+fn len_operand_name(c: &Command) -> Option<String> {
+    let arg = c.args.first()?;
+    let name = match &arg.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            pe.name.clone()
+        }
+        ExprKind::Literal(s) => s.clone(),
+        _ => return None,
+    };
+    if is_plain_identifier(&name) {
+        Some(name)
+    } else {
+        None
+    }
 }
 
 fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {

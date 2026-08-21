@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=121
+plan=125
 echo "1..$plan" >&3
 
 set +e
@@ -569,6 +569,20 @@ run_sash 'echo ${args[0]}'
 # 75.26 top-level `@args` splat is rejected the same way
 run_sash 'for x in @args; do echo "$x"; done'
 [[ $rc != 0 && -z $out && $err == *SB5024* ]]; chk 75.26
+# 75.27 DD#75 §2: `len <undefined>` is a compile error (SB5039), not a silent 0
+run_sash 'echo $(len nope)'
+[[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.27
+# 75.28 no false positive: `len` of a declared scalar and array both compile
+run_sash 's=hi; array a=(1 2 3); echo "$(len s) $(len a)"'
+[[ $rc = 0 && $out = "2 3" && -z $err ]]; chk 75.28
+# 75.29 a loop variable is a valid len operand (the type_check-side gap this
+# avoids: SB5031's scope machinery already tracks `for` variables)
+run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
+[[ $rc = 0 && $out = $'2\n3' && -z $err ]]; chk 75.29
+# 75.30 `len <typo>` inside a function is also rejected
+run_sash 'fn f { echo $(len bogus); }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.30
 
 # ── DD#77 `[[ -i EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
