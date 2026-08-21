@@ -1,3 +1,32 @@
+## ════════ STATUS (2026-08-20, later still) — janet STRUCTURAL MAP: Stage 2 SHIPPED ════════
+
+**Stage 2 shipped `48bd47d` (pushed)** — the function surface + typed bindings.
+Verified byte-identical to native on 7 programs (functions, positionals, `$@`
+splice, return, function-in-condition, elif-in-function, negative int).
+
+- `int n=5` → `(set n 5)` (janet **number**); untyped `x=5` → `(set x "5")`
+  (**string**). Type shows through the *value representation*, not an
+  annotation (DG). `int h=0xff` is front-end-rejected (SB4030) — prefixed ints
+  arrive via `$((…))` (S4).
+- `f(){…}` → `(sash/defn …)`; a user-function CALL renders distinct from an
+  external: `(f args…)` / `(sash/succeeded (f …))` in a condition, vs
+  `sash/run`/`sash/ok?`. `Env.fns` collected up front. Bare nonzero-return does
+  NOT abort (matches native).
+- positionals `$N`/`$#`/`$@` → `sash/arg`/`argc`/`args` (function-local; SB5024
+  bars them at top level). `return N` → `(sash/return N)`.
+- `(sash/TODO …)` is now a preamble macro: a partial program compiles and runs
+  up to the first unmapped construct, then aborts naming it (`expr:arithmetic`
+  etc.) — graceful degradation for DG's experimentation.
+
+**Fix folded in first (`6da6522`):** removed the numeric `[[ ]]` forms
+(`sash/-eq…-ge`) — a bashism; sash `[[ ]]` is string/file only, numeric compare
+is `(( ))` (S4). Readable TODO labels (`stmt:*`/`expr:*`).
+
+Known S2 gap: flat scope (local-shadowing unmodelled, same as existing
+emit_janet) — proper per-scope var/set deferred to S3/S5.
+
+Next: **S3 pipelines / `&` / `$!` / redirects** (+ consider real local scope).
+
 ## ════════ STATUS (2026-08-20, later) — janet STRUCTURAL MAP: Stage 1 SHIPPED ════════
 
 DG re-aimed janet: "as near as possible to a 1-to-1 map of how the compiler
