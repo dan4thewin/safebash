@@ -500,6 +500,17 @@ fn inline_function_call(
     expand_dollar_at_in_body(&mut owned_body, c.args.len());
     let body = owned_body.as_slice();
 
+    // DD#27/§5: reject a call to a function already being inlined (recursion) —
+    // unbounded inlining would overflow the compiler. Tail self-calls are
+    // handled before reaching here. Emit the diagnostic and skip the inline.
+    if state.inlining.iter().any(|n| n == name) {
+        state
+            .diagnostics
+            .push(super::functions::recursion_diagnostic(name));
+        return block;
+    }
+    state.inlining.push(name.to_string());
+
     let locals = collect_local_vars(body);
 
     // DD#18: save local function scope before inlining
@@ -539,7 +550,12 @@ fn inline_function_call(
     let restore_block = ssa.new_block(&format!("ret_{}", name));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
+    // DD#27/§5: a self tail-call (`return F …`) in the body loops to call_block.
+    let args_name = state.current_args_name.clone();
+    let saved_tail = state.tail_loop.take();
+    state.tail_loop = Some((name.to_string(), call_block, args_name));
     let exit_block = lower_stmts(body, ssa, state, call_block);
+    state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
 
     // Pop function-level redirects before leaving
@@ -558,6 +574,7 @@ fn inline_function_call(
     // DD#18: restore local function scope
     state.local_fn_scope = saved_local_fn_scope;
 
+    state.inlining.pop();
     restore_block
 }
 

@@ -4,7 +4,7 @@
 //! SECURITY: This is where commands become SsaInst::Command with resolved names.
 
 use super::control_flow::{flatten_elif, lower_case, lower_for, lower_if, lower_while};
-use super::expressions::expr_to_value;
+use super::expressions::{expr_to_string, expr_to_value};
 use super::functions::{collect_returns, lift_int_func_calls};
 use crate::ir::*;
 use crate::ssa::*;
@@ -65,6 +65,11 @@ fn lower_return_producer(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    // DD#27/§5: `return F …` where F is the enclosing function is a self
+    // tail-call — lower to a loop back-edge instead of inlining F again.
+    if let Some(after) = try_producer_tail_call(inner, ssa, state, block) {
+        return after;
+    }
     // The producer is consumed by the return (like a condition): bump
     // in_condition so a `[[ … ]]`/`(( … ))` producer isn't flagged
     // must-consume (SB4018), and uncheck its command so it doesn't abort.
@@ -80,6 +85,28 @@ fn lower_return_producer(
         ssa.block_mut(block).terminator = Terminator::Return;
     }
     ssa.new_block("after_return_producer")
+}
+
+/// DD#27/§5: if `inner` is a self tail-call to the enclosing function
+/// (`return F …`), emit the loop back-edge and return the trailing block.
+/// `None` when it is not a tail self-call.
+fn try_producer_tail_call(
+    inner: &Statement,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    let StmtKind::Command(c) = &inner.kind else {
+        return None;
+    };
+    let (tf, header, aname) = state.tail_loop.clone()?;
+    if super::cmd_handlers::resolve_function_name(&expr_to_string(&c.name), state) != tf {
+        return None;
+    }
+    let new_args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    Some(super::functions::emit_tail_call(
+        header, &aname, new_args, ssa, state, block,
+    ))
 }
 
 /// `while`/`until`. For `until`, desugar to `while ! cond` by lowering as

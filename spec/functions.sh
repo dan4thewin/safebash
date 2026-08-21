@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=42
+plan=47
 echo "1..$plan" >&3
 
 set +e
@@ -143,6 +143,46 @@ f one'
 # 48.2 removed (DD#75 §5, 2026-08-21): `shift` is dropped — it was a toy slice.
 # Iteration uses `for x in @args`; a future array-slice op (post-beta research)
 # subsumes the skip-N-keep-rest use.
+
+# DD#27 — functions are inlined (no runtime call stack), so recursion can't be
+# inlined: it is rejected (SB5037), EXCEPT a direct self tail-call (`return F …`)
+# which lowers to a loop. Added 2026-08-21.
+# 27.1 non-tail self-recursion → compile error
+run_sash 'fn f { echo hi; f; }
+f'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 27.1
+# 27.2 mutual recursion → compile error
+run_sash 'fn a { b; }
+fn b { a; }
+a'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 27.2
+# 27.3 int tail recursion (accumulator) lowers to a loop and runs
+run_sash 'fn fact -> int {
+  int n=$(($1)); int acc=$(($2))
+  if (( n <= 1 )); then return $(( acc )); fi
+  int n1=$(( n - 1 )); int a1=$(( n * acc ))
+  return $(( (fact n1 a1) ))
+}
+int r=$(( (fact 5 1) )); echo "$r"'
+[[ $rc = 0 && $out = "120" && -z $err ]]; chk 27.3
+# 27.4 void tail recursion (`return F $x`) loops, running the body each iteration
+run_sash 'fn f {
+  if (( $1 <= 0 )); then echo done; return 0; fi
+  echo "T$1"
+  int m=$(( $1 - 1 ))
+  return f $m
+}
+f 3'
+[[ $rc = 0 && $out = $'T3\nT2\nT1\ndone' && -z $err ]]; chk 27.4
+# 27.5 a tail self-call is the ONLY allowed recursion — a non-tail call in the
+# same function (before the tail return) still rejects
+run_sash 'fn f -> int {
+  if (( $1 <= 0 )); then return 0; fi
+  int junk=$(( (f 0) ))
+  return $(( (f 0) ))
+}
+int x=$(( (f 2) )); echo $x'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 27.5
 
 # 67.1 bash `name() { }` function sugar ≡ fn name { } (DD#67)
 run_sash 'greet() { echo hi; }

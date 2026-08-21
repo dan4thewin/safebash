@@ -42,7 +42,17 @@ pub fn ir_to_ssa_typed(
     mark_unchecked_in_conditions(&mut ssa);
     mark_unchecked_in_end_blocks(&mut ssa);
 
-    let diags = state.diagnostics.clone();
+    // Exact-dedup diagnostics, preserving first-seen order. A function body is
+    // lowered both as a standalone template (lower_function_stmt) and at each
+    // inline site, so a body-level diagnostic (e.g. the SB5037 recursion
+    // reject) is naturally produced more than once for the same cause.
+    let mut seen = std::collections::HashSet::new();
+    let diags: Vec<String> = state
+        .diagnostics
+        .iter()
+        .filter(|d| seen.insert((*d).clone()))
+        .cloned()
+        .collect();
     (ssa, diags)
 }
 

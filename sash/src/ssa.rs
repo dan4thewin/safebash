@@ -926,6 +926,17 @@ pub struct VersionState {
     pub current_args_name: String,
     /// Monotonic counter minting the unique `args` array names above.
     pub args_counter: u32,
+    /// DD#27/§5: the stack of function names currently being inlined on the
+    /// active path (push on inline-enter, pop on inline-exit). A call to a name
+    /// already on the stack is a recursive edge — rejected (SB5033) unless it is
+    /// a direct self tail-call (a `return F …`), which lowers to a loop.
+    pub inlining: Vec<String>,
+    /// DD#27/§5: when inlining a function, the target for a self tail-call
+    /// (`return F …`): (function name, loop-header block, its `args` array
+    /// name). A `return <call to F>` rebinds `args` and branches to the header
+    /// instead of inlining again — turning tail recursion into a loop. `None`
+    /// outside a function body.
+    pub tail_loop: Option<(String, usize, String)>,
     /// `--manifest` collection: every command name resolved to a real
     /// executable path (contains `/`) at the resolution funnel. Interior-
     /// mutable so the immutable expression-evaluation path (`expr_to_value`
@@ -959,6 +970,8 @@ impl VersionState {
             diagnostics: Vec::new(),
             current_args_name: String::new(),
             args_counter: 0,
+            inlining: Vec::new(),
+            tail_loop: None,
             external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),
         }
     }

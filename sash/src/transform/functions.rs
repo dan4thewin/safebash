@@ -136,6 +136,42 @@ pub(super) fn lift_int_func_args(
 
 /// Inline a -> int function call, returning an SsaValue::Var pointing
 /// to the temp variable holding the return value.
+/// DD#27/§5: diagnostic for a rejected recursive call. Functions are inlined
+/// (no runtime call stack), so a call cycle can't be inlined — it is rejected,
+/// except a direct self tail-call (`return F …`), which lowers to a loop.
+pub(super) fn recursion_diagnostic(name: &str) -> String {
+    format!(
+        "1:1: error [SB5037] recursive call to '{name}' is not supported — \
+         sash inlines functions, so only a direct self tail-call (`return {name} …`) \
+         is allowed (it lowers to a loop); rewrite other recursion as a loop"
+    )
+}
+
+/// DD#27/§5: emit a self tail-call as a loop back-edge. Rebinds the current
+/// function's `args` array to `new_args` (evaluated in the caller-of-the-tail
+/// scope, i.e. reading the current iteration's values) and branches to the
+/// loop header. Returns a fresh (dead) block for any trailing lowering. Shared
+/// by the two `return`-lowering sites (int `$(( (F …) ))` and producer
+/// `return F …`).
+pub(super) fn emit_tail_call(
+    header: usize,
+    args_name: &str,
+    new_args: Vec<SsaValue>,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let av = state.define(args_name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: av,
+        value: SsaValue::IndexedArray(new_args),
+    });
+    ssa.block_mut(block).terminator = Terminator::Goto(header);
+    ssa.new_block("after_tail_call")
+}
+
+/// Inline a -> int function call, returning an SsaValue::Var pointing
+/// to the temp variable holding the return value.
 pub(super) fn inline_int_func(
     name: &str,
     args: &[SsaValue],
@@ -147,6 +183,14 @@ pub(super) fn inline_int_func(
         Some(b) => b,
         None => return SsaValue::Expr("0".to_string()),
     };
+
+    // DD#27/§5: a call to a function already being inlined is recursion. Reject
+    // (no crash from unbounded inlining) — tail self-calls are handled earlier.
+    if state.inlining.iter().any(|n| n == name) {
+        state.diagnostics.push(recursion_diagnostic(name));
+        return SsaValue::Literal("0".to_string());
+    }
+    state.inlining.push(name.to_string());
 
     let locals = collect_local_vars(&body);
 
@@ -175,7 +219,12 @@ pub(super) fn inline_int_func(
     let restore_block = ssa.new_block(&format!("intret_{}", name));
     let saved_return_target = state.return_target;
     state.return_target = Some(restore_block);
+    // DD#27/§5: a self tail-call in the body loops back to call_block.
+    let args_name = state.current_args_name.clone();
+    let saved_tail = state.tail_loop.take();
+    state.tail_loop = Some((name.to_string(), call_block, args_name));
     let exit_block = lower_stmts(&body, ssa, state, call_block);
+    state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
@@ -207,6 +256,7 @@ pub(super) fn inline_int_func(
     });
 
     *block = restore_block;
+    state.inlining.pop();
     SsaValue::Var(temp_var)
 }
 
