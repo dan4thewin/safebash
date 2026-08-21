@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-21, later²) — FIX: nested-paren sexpr arg (arith collector) ════════
+
+**Pushed `ca79d0f`.** Fixed the P2 bug found during tail-recursion work: a DD#58
+arith sexpr call with a **parenthesised arg** — `(dbl (2 + 1))` — silently gave
+0 (and `(dbl (2))` was an SB4020 parse error).
+
+Root cause: the `$(( ))`/`(( ))` content collector tracked paren depth
+asymmetrically — `((`/`$((`/`))` counted as ±1 units, but a single `(` pushed
+text WITHOUT incrementing depth. So `(dbl (2))`'s two single `(` never raised
+depth, and the trailing `))` (one `DblParenClose` token) closed the content
+early, truncating `(dbl (2))` → `(dbl (2`.
+
+Fix: count **individual** parens — depth starts at 2 (the consumed `((`/`$((`),
+each `(` is +1 / `)` is −1, `((`/`))` are +2/−2 shortcuts. DG's steer: inside
+`(( ))` you're already in arithmetic, so the natural form is a plain
+parenthetical `(dbl (2 + 1))`, not a redundant nested `$(( ))` — and that plain
+form was exactly what didn't parse.
+
+Verified 6 = dbl(3) on native+c+janet; 0 spec regressions all 3 modes. Specs
+types.sh 58.14/58.15. (This also clears the accumulator-ergonomics caveat noted
+for tail recursion — a nested arith arg now works directly.)
+
 ## ════════ STATUS (2026-08-21, later) — RECURSION: reject non-tail, tail→loop ════════
 
 **Pushed `94dac99`.** Recursion crashed the compiler (unbounded inlining → stack
