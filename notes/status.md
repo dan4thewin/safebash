@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-08-21, backlog sweep cont.) — 3rd fix: arith 0x/0o/0b disposition defaults ════════
+
+**Pushed `2e5916f`.** `arith-disposition-hex-octal-default`: the arith `:-`
+default now accepts DD#72 `0x`/`0o`/`0b` literals (was decimal-only, SB4030).
+New shared `parse::parse_dd72_literal`; type_check D4 widened; native/c convert
+to decimal at SSA level (`canonicalize_arith_default`, arith-scoped so string
+`${s:-0xff}` keeps "0xff"); janet got its missing `ArithExpr::Expansion` arm
+(emits `(_num …)`, was an empty operand → advances `janet-arith-subscript-read`).
+Specs d4.2/d4.4-d4.7b. 0 regressions all 3 modes.
+
+**Backlog sweep so far (all 0-regression, pushed):** arg-negative-index (SB5038)
+`960c9dd`; bare-nested-cmdsub (lexer `))` split) `caa4a35`; arith-disposition
+`2e5916f`. Remaining native: `len-undefined-reject` (needs loop-var/param
+tracking), `const-fold-command-name` (feature), `arith-bare-subscript-followups`,
++ args-model polish (`$(len/join/keys args)`, `$*`→`$(join args)`) + the doc task
+(`docs-tail-recursion-args-model`). janet residuals tracked in
+`janet-arith-subscript-read`.
+
 ## ════════ STATUS (2026-08-21, backlog sweep) — native backlog: 2 parser/validator bugs fixed ════════
 
 Working the native backlog (DG: "keep after the backlog"). Two bugs fixed, each
