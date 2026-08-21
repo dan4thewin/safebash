@@ -10,6 +10,14 @@
 
 (var *status* 0)   # $?  — last command's exit status
 
+# Any sash construct not yet mapped by the current stage renders as a
+# `(sash/TODO …)` form. Defined here so a partial program still COMPILES under
+# janet; if control actually reaches one it aborts with a clear message naming
+# the construct — so nothing is ever silently wrong.
+(defmacro sash/TODO [& what]
+  (def desc (string/join (map |(string $) what) " "))
+  ~(error (string "sash/TODO — not yet mapped by this stage: " ,desc)))
+
 # $name — variable read. Special vars map to their runtime slot; a plain var
 # nil-coalesces to "" (unset / not-yet-assigned reads as empty).
 (defmacro $ [name]
@@ -80,3 +88,34 @@
 
 # until — the negated while
 (defmacro sash/until [cond body] ~(while (not ,cond) ,body))
+
+# ── user functions (Stage 2) ───────────────────────────────────────────────
+# A sash function is variadic — bash positional args ($1..$N / $@ / $#). A
+# CALL renders as a direct `(name args…)`; this macro binds the call's args as
+# the positional context and wraps the body in a `sash-ret` label so `return`
+# unwinds it. Structure is still supplied by emit; this is just the frame.
+(defmacro sash/defn [name & body]
+  ~(defn ,name [& sash-argv]
+     (with-dyns [:sash-argv sash-argv]
+       (label sash-ret ,;body))))
+
+# positional parameters — valid only inside a function body (the front-end
+# rejects $1/$@/$# at top level, SB5024; top-level scripts use $(arg N)/$(argc)).
+(defn sash/arg [n] (or (get (dyn :sash-argv) (- n 1)) ""))   # $1 $2 …
+(defn sash/argc [] (length (dyn :sash-argv)))                # $#
+(defn sash/args [] (dyn :sash-argv))                         # $@ (spliced at use)
+
+# exit-code coercion — a return code / $? is numeric (leading int, else 0).
+# NOT a [[ ]] numeric-compare (that is a bashism sash rejects); this is only
+# the status channel.
+(defn sash/-code [v] (if (number? v) v (or (scan-number (string v)) 0)))
+
+# return N — set $? and unwind the enclosing function. Bare `return` re-returns
+# the current $?. The unwound value is $? so an `-> int` value function (S4)
+# yields it.
+(defmacro sash/return [n] ~(do (set *status* (sash/-code ,n)) (return sash-ret *status*)))
+
+# a user-function CALL used as a condition: run it, then branch on its $?.
+# Distinct from the external `sash/ok?` so the reader sees it is a sash
+# function, not a spawned program.
+(defmacro sash/succeeded [call] ~(do ,call (zero? *status*)))

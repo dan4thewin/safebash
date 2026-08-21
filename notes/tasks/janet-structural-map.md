@@ -38,12 +38,42 @@ as arithmetic (`sash/arith`), never as a `[[ ]]` test form.** Same rule bars
 the pruned `${x%%…}`/`${x:OP}` bashisms — model only what the front-end
 accepts (DD#65).
 
+## Stage 2 — DONE (2026-08-20)
+
+Function surface + typed bindings. Verified as a correct oracle: 7 programs
+(functions, positionals, `$@` splice, return, function-in-condition, elif-in-
+function, negative int) render maps whose `janet` output is **byte-identical to
+native**.
+
+- **Typed declarations**: `int n=5` → `(set n 5)` — a janet **number**; untyped
+  `x=5` → `(set x "5")` — a **string**. The type shows through the *value
+  representation*, not an annotation (DG, 2026-08-20). `render_decl_value` +
+  `parse_int_literal` (decimal/±/0x/0o/0b). Note: `int h=0xff` is rejected by
+  the front-end (SB4030); prefixed ints arrive via `$((0xff))` (S4).
+- **Functions**: `f(){…}` → `(sash/defn f body…)` (a `with-dyns` positional
+  frame + `sash-ret` label; structure still supplied by emit).
+- **User-function calls are distinct from externals**: a call to a defined
+  function → direct `(f args…)` (bare) / `(sash/succeeded (f args…))`
+  (condition); an external stays `sash/run`/`sash/ok?`. `Env.fns` collected up
+  front. A bare nonzero-return call does NOT abort (matches native).
+- **Positionals** (function-local; SB5024 bars them at top level): `$N` →
+  `(sash/arg N)`, `$#` → `(sash/argc)`, `$@`/`$*` → `;(sash/args)` splice in
+  arg position / `(sash/args)` elsewhere.
+- **return**: `return N` → `(sash/return N)` (numeric via `sash/-code`); bare
+  `return` → `(sash/return ($ ?))`.
+- **`(sash/TODO …)` now compiles**: defined as a preamble macro that names the
+  unmapped construct and aborts at runtime if reached — a partial program runs
+  up to the first gap instead of failing janet compilation.
+
+**Known S2 gap (flat scope):** declarations/assignments — including inside
+functions — pre-declare one flat top-level `(var … nil)`; `local`-shadowing is
+not modelled (the existing `emit_janet` has the same flat model). Proper per-
+scope `(var)`/`(set)` deferred (candidate S3/S5).
+
 ## Next stages (rough, refine per DG's read)
 
-- **S2 functions + return** (`sash/fn`, `sash/return`, predicate returns),
-  positional args (`$1`/`$@`/`$#`/argv trio), local scope.
 - **S3 pipelines** (`sash/pipeline` structure kept in emit), `&` background /
-  `$!` / `wait`, redirects (`sash/redirect`).
+  `$!` / `wait`, redirects (`sash/redirect`). Consider proper local scope here.
 - **S4 the value surface**: `${…}` parameter modifiers, arithmetic `$(( ))`
   and `(( ))` (`sash/arith` — this is where numeric compare `-eq…-ge` lives,
   NOT `[[ ]]`), arrays/maps + subscripts, splats `@a`, glob.
