@@ -22,5 +22,5 @@ mod logos_tokens;
 mod parser;
 mod tests;
 
-pub use arith::{classify_arith_expr, parse_arith_str, ArithKind};
+pub use arith::{classify_arith_expr, parse_arith_str, parse_dd72_literal, ArithKind};
 pub use parser::parse;

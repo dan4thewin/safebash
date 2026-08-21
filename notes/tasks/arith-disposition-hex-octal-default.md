@@ -1,6 +1,6 @@
 ---
 title: "arith `${s:-N}` disposition default: support DD#72 0x/0o/0b prefixes"
-status: ready
+status: done
 priority: P3
 kind: feature
 depends: []

@@ -372,9 +372,32 @@ fn arith_leaf_to_ssa(arith: &ArithExpr, state: &VersionState) -> Option<SsaValue
             super::expressions::positional_to_value(name, state)
                 .unwrap_or_else(|| SsaValue::Var(state.lookup(name))),
         ),
-        ArithExpr::Expansion(inner) => Some(expr_to_value(inner, state)),
+        ArithExpr::Expansion(inner) => {
+            Some(canonicalize_arith_default(expr_to_value(inner, state)))
+        }
         _ => None,
     }
+}
+
+/// DD#72: in arith context, a `${s:-LITERAL}` default is used as an int operand.
+/// The default is lowered by a decimal conversion at runtime, so rewrite a
+/// non-decimal DD#72 literal default (`0xff`, `0o17`, `0b101`) to its decimal
+/// form here — the type-check D4 pass accepts exactly these literals. Leaves a
+/// non-literal default untouched (a plain decimal is already correct; a
+/// non-literal was rejected by D4). Arith-scoped, so a *string*-context
+/// `${s:-0xff}` keeps its literal "0xff" (that path never calls this).
+fn canonicalize_arith_default(v: SsaValue) -> SsaValue {
+    let SsaValue::DefaultValue { source, default } = v else {
+        return v;
+    };
+    let default = match *default {
+        SsaValue::Literal(ref s) => match crate::parse::parse_dd72_literal(s) {
+            Some(n) => Box::new(SsaValue::Literal(n.to_string())),
+            None => default,
+        },
+        _ => default,
+    };
+    SsaValue::DefaultValue { source, default }
 }
 
 /// In arithmetic context, a bare name is either a known int-typed

@@ -457,14 +457,14 @@ fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
         if pe.operator.as_deref() != Some(":-") {
             return;
         }
-        if !default_is_decimal_literal(pe.operand.as_deref()) {
+        if !default_is_arith_literal(pe.operand.as_deref()) {
             let name = &pe.name;
             errors.push(TypeError {
                 message: format!(
-                    "arithmetic default for `{name}` must be a decimal integer literal \
-                     (e.g. `${{{name}:-0}}`) — it is lowered by a decimal conversion, so \
-                     a non-decimal default would silently become 0. Hex/octal/binary \
-                     (`0x`/`0o`/`0b`) defaults are not lowered here yet."
+                    "arithmetic default for `{name}` must be an integer literal \
+                     (decimal or `0x`/`0o`/`0b`, e.g. `${{{name}:-0}}` / `${{{name}:-0xff}}`) — \
+                     it is lowered as an arithmetic constant, so a non-literal default \
+                     (an interpolation, `base#digits`, or leading-zero octal) is not allowed."
                 ),
                 span: inner.span,
             });
@@ -476,7 +476,7 @@ fn check_arith_default_literals(a: &ArithExpr, errors: &mut Vec<TypeError>) {
 /// decimal integer literal iff it is a single literal part matching an optional
 /// `-` then a canonical decimal (`0`, or a non-zero leading digit). Rejects
 /// leading zeros (DD#72), radix prefixes, interpolations, and empty.
-fn default_is_decimal_literal(operand: Option<&Expr>) -> bool {
+fn default_is_arith_literal(operand: Option<&Expr>) -> bool {
     let Some(op) = operand else {
         return false;
     };
@@ -488,16 +488,9 @@ fn default_is_decimal_literal(operand: Option<&Expr>) -> bool {
         },
         _ => None,
     };
-    lit.is_some_and(is_canonical_decimal_literal)
-}
-
-/// Optional leading `-`, then a canonical decimal magnitude (`0` alone, or a
-/// digit run with no leading zero). Matches DD#72's decimal literal shape.
-fn is_canonical_decimal_literal(s: &str) -> bool {
-    let mag = s.strip_prefix('-').unwrap_or(s);
-    !mag.is_empty()
-        && mag.bytes().all(|b| b.is_ascii_digit())
-        && (mag.len() == 1 || mag.as_bytes()[0] != b'0')
+    // DD#72: accept the full arith literal grammar (decimal + 0x/0o/0b), shared
+    // with the lowerer via `parse_dd72_literal`, not just decimal.
+    lit.and_then(crate::parse::parse_dd72_literal).is_some()
 }
 
 /// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic

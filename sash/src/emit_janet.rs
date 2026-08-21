@@ -2368,6 +2368,12 @@ fn arith_expr_to_janet(expr: &crate::ir::ArithExpr, ctx: &EmitCtx) -> String {
         }
         ArithExpr::FuncCall { name, args } => arith_funccall_to_janet(name, args, ctx),
         ArithExpr::Paren(inner) => arith_expr_to_janet(inner, ctx),
+        // A `${…}` embedded as an arith operand (e.g. `${s:-0xff}`): coerce to an
+        // int via `_num`, which handles decimal + `0x`/`0o`/`0b` (matching the
+        // native/c lowering). Arith-scoped, so a string-context `${s:-0xff}`
+        // keeps its literal spelling. Without this arm the operand emitted empty
+        // (bug surfaced by arith-disposition-hex-octal-default).
+        ArithExpr::Expansion(inner) => format!("(_num {})", emit_expr_inline(inner, ctx)),
         _ => arith_op_expr_to_janet(expr, ctx),
     }
 }

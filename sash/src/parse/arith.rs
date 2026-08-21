@@ -458,6 +458,63 @@ fn match_arith_operator(bytes: &[u8], i: usize) -> Option<(ATok, usize)> {
     match_arith_op1(bytes[i]).map(|t| (t, i + 1))
 }
 
+/// Parse a COMPLETE DD#72 integer-literal string to its value. The shared
+/// authority for the arith literal grammar used outside the tokenizer — the
+/// type-check D4 `${s:-N}` arith-default validation and the arith `:-` default
+/// lowering both call this so "what is a valid arith literal" is defined once.
+///
+/// Grammar (must match the whole trimmed string): optional leading `-`, then a
+/// decimal integer (no leading zero except `0`) or a `0x`/`0o`/`0b`-prefixed
+/// radix literal. Rejects (returns `None`) leading-zero octal (`010`), bash
+/// `base#digits`, empty digit spans, interpolations, and anything non-literal.
+pub fn parse_dd72_literal(s: &str) -> Option<i64> {
+    let s = s.trim();
+    let (neg, body) = match s.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, s),
+    };
+    let mag = parse_dd72_unsigned(body)?;
+    Some(if neg { mag.wrapping_neg() } else { mag })
+}
+
+fn parse_dd72_unsigned(body: &str) -> Option<i64> {
+    let bytes = body.as_bytes();
+    if let Some(radix) = radix_prefix(bytes) {
+        let digits = &body[2..];
+        if digits.is_empty() || !digits.bytes().all(|b| (b as char).is_digit(radix)) {
+            return None;
+        }
+        return u64::from_str_radix(digits, radix).ok().map(|v| v as i64);
+    }
+    parse_dd72_decimal(body)
+}
+
+/// A plain DD#72 decimal magnitude: non-empty ASCII digits, no leading zero
+/// except a lone `0` (leading-zero octal is rejected). `None` otherwise.
+fn parse_dd72_decimal(body: &str) -> Option<i64> {
+    let bytes = body.as_bytes();
+    if body.is_empty() || !bytes.iter().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if body.len() > 1 && bytes[0] == b'0' {
+        return None;
+    }
+    body.parse::<i64>().ok()
+}
+
+/// The radix for a `0x`/`0o`/`0b` prefix (case-insensitive), or `None`.
+fn radix_prefix(bytes: &[u8]) -> Option<u32> {
+    if bytes.len() >= 2 && bytes[0] == b'0' {
+        return match bytes[1] {
+            b'x' | b'X' => Some(16),
+            b'o' | b'O' => Some(8),
+            b'b' | b'B' => Some(2),
+            _ => None,
+        };
+    }
+    None
+}
+
 /// Scan a number literal at `bytes[i..]` (DD#72). Accepts decimal and the
 /// modern prefixes `0x`/`0o`/`0b`. A leading-zero integer (`010`) or a bash
 /// arbitrary-base literal (`16#ff`) is a malformed literal (`BadLit` → SB4035).

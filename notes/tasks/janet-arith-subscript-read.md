@@ -55,3 +55,15 @@ disposition) also read 0 on janet's arith VALUE path — same gap. Word-context
 the cell via `emit_expr_subscript`). spec arithmetic.sh scx.12-14 are guarded
 `in_modes native,c`; scx.7-11 (word) run all modes. Widen scx.12-14 once
 janet's value-arith reads the subscript.
+
+## Progress (2026-08-21, arith-disposition-hex-octal-default)
+
+Added the missing `ArithExpr::Expansion` arm to `emit_janet.rs`
+`arith_expr_to_janet`: a `${…}` embedded as an arith operand now emits
+`(_num <inline>)` instead of an empty string (which produced `(+  0)` → 0).
+This is the structural half of the second gate — janet now *reads* the embedded
+expansion and coerces it (decimal + `0x`/`0o`/`0b` via `_num`). What remains is
+janet's `:-` disposition *value* semantics diverging from native on a set-but-
+non-int subject (`s=x`): native uses the default, janet uses `_num(s)`=0. So the
+d4.3–d4.6 value assertions stay guarded to native,c. Un-guarding pex.1-3 / dsp.*
+needs that semantic aligned.

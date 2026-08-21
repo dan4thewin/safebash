@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=143
+plan=148
 echo "1..$plan" >&3
 
 set +e
@@ -712,25 +712,53 @@ else
     skip_chk dsp.1; skip_chk dsp.2; skip_chk dsp.3; skip_chk dsp.4; skip_chk dsp.5
 fi
 
-# ── DD#77 D4: the `:-` default in arithmetic must be a decimal integer literal.
-# Otherwise it was silently atoi'd to 0 (`${s:-hello}` → 0). Hex/octal/binary
-# and expression defaults aren't lowered here yet (they'd also silently give 0),
-# so they reject too — see arith-disposition-hex-octal-default. Compile-time
-# (SB4030), mode-independent. ──
+# ── DD#77 D4 / arith-disposition-hex-octal-default: the `:-` default in
+# arithmetic must be a DD#72 INTEGER LITERAL (decimal or `0x`/`0o`/`0b`).
+# A non-literal (interpolation, `base#digits`, leading-zero octal) still rejects
+# at compile time (SB4030, mode-independent) — it would silently atoi to 0. The
+# literal is lowered as its integer value (native/c convert at the SSA level;
+# janet coerces via `_num`). ──
 # d4.1 a non-numeric default rejects (was a silent 0)
 run_sash 's=x; echo $(( ${s:-hello} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.1
-# d4.2 a hex default rejects (not lowered yet — would be a silent 0)
+# d4.2 a hex default is now ACCEPTED (was rejected) — compiles in every mode
 run_sash 's=x; echo $(( ${s:-0xff} + 0 ))'
-[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.2
-# d4.3 a decimal (incl. negative) literal default is accepted. native,c
-# (janet arith disposition gap, janet-arith-subscript-read).
+[[ $rc = 0 && -z $err ]]; chk d4.2
+# d4.3 a decimal (incl. negative) literal default is accepted + lowered. native,c
+# (janet's `:-` disposition value semantics differ — janet-arith-subscript-read).
 if in_modes native,c; then
     run_sash 's=x; echo $(( ${s:--7} + 0 ))'
     [[ $rc = 0 && $out = "-7" && -z $err ]]; chk d4.3
 else
     skip_chk d4.3
 fi
+# d4.4 hex default lowers to its value (255). native,c (janet disposition gap)
+if in_modes native,c; then
+    run_sash 's=x; echo $(( ${s:-0xff} + 0 ))'
+    [[ $rc = 0 && $out = "255" && -z $err ]]; chk d4.4
+else
+    skip_chk d4.4
+fi
+# d4.5 octal default lowers to its value (0o17 = 15). native,c
+if in_modes native,c; then
+    run_sash 's=x; echo $(( ${s:-0o17} + 0 ))'
+    [[ $rc = 0 && $out = "15" && -z $err ]]; chk d4.5
+else
+    skip_chk d4.5
+fi
+# d4.6 binary default lowers to its value (0b101 = 5). native,c
+if in_modes native,c; then
+    run_sash 's=x; echo $(( ${s:-0b101} + 0 ))'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk d4.6
+else
+    skip_chk d4.6
+fi
+# d4.7 leading-zero octal (`010`) and `base#digits` are NOT DD#72 literals → reject
+run_sash 's=x; echo $(( ${s:-010} + 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7
+run_sash 's=x; echo $(( ${s:-16#ff} + 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7b
+
 
 set -e
 tally
