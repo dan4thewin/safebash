@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=44
+plan=45
 echo "1..$plan" >&3
 
 set +e
@@ -37,9 +37,13 @@ run_sash 'x=$(arg 2); bless x [[ -n $x ]]; echo "$x"' alpha beta
 run_sash 'x=$(arg 5); bless x [[ -n $x ]]; echo "$x"' one two
 [[ $rc != 0 && -z $out ]]; chk av.t6
 
-# av.t7 negative index is a compile-time error
-run_sash 'x=$(arg -1); echo "$x"'
-[[ $rc != 0 && -z $out && -n $err ]]; chk av.t7
+# av.t7 negative index is a compile-time error (DD#60, SB5038) — blessed so the
+# ONLY error is the negative index, not a downstream unblessed-read taint check
+run_sash 'x=$(arg -1); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t7
+# av.t7b the DEFAULT form `$(arg -N D)` also rejects the negative literal
+run_sash 'x=$(arg -1 fallback); bless x [[ -n $x ]]; echo "$x"'
+[[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t7b
 
 # ── DD#60 addendum: $(arg N DEFAULT) opt-in default ──────────────
 

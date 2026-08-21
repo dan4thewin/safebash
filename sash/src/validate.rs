@@ -3179,14 +3179,8 @@ fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
     if expr_literal_str(&c.name) != "arg" {
         return;
     }
-    if c.args.is_empty() || c.args.len() > 2 {
-        diags.push(Diagnostic::error_span(
-            e.span,
-            "SB5036",
-            "`arg` takes an index and an optional default — `$(arg N)` or \
-             `$(arg N DEFAULT)`"
-                .to_string(),
-        ));
+    if let Some(d) = arg_index_diag(e, c) {
+        diags.push(d);
         return;
     }
     if let Some(default) = c.args.get(1) {
@@ -3194,6 +3188,42 @@ fn flag_arg_builtin(e: &Expr, diags: &mut Vec<Diagnostic>) {
             diags.push(random_default_diag(default.span));
         }
     }
+}
+
+/// Arity / index diagnostics for `$(arg …)`: wrong argument count (SB5036) or a
+/// statically-negative literal index (SB5038, DD#60). `None` when the index is
+/// acceptable.
+fn arg_index_diag(e: &Expr, c: &Command) -> Option<Diagnostic> {
+    if c.args.is_empty() || c.args.len() > 2 {
+        return Some(Diagnostic::error_span(
+            e.span,
+            "SB5036",
+            "`arg` takes an index and an optional default — `$(arg N)` or \
+             `$(arg N DEFAULT)`"
+                .to_string(),
+        ));
+    }
+    // DD#60: negative indices are rejected at compile time — no negative
+    // indexing in v1. A negative *literal* index (`$(arg -1)`, `$(arg -1 D)`)
+    // is a typo guard caught here; a dynamic negative index stays a runtime
+    // concern (`sash_argv_get` aborts).
+    if c.args.first().is_some_and(is_negative_int_literal) {
+        return Some(Diagnostic::error_span(
+            c.args[0].span,
+            "SB5038",
+            "`arg` index must not be negative — DD#60 rejects negative \
+             indexing (no counting from the end in v1)"
+                .to_string(),
+        ));
+    }
+    None
+}
+
+/// A statically-negative integer literal (`-1`, `-42`) — the index form DD#60
+/// rejects at compile time. `-` followed by ASCII digits, nothing else.
+fn is_negative_int_literal(e: &Expr) -> bool {
+    let s = expr_literal_str(e);
+    matches!(s.strip_prefix('-'), Some(rest) if !rest.is_empty() && rest.bytes().all(|b| b.is_ascii_digit()))
 }
 
 fn random_default_diag(span: Span) -> Diagnostic {

@@ -1,6 +1,6 @@
 ---
 title: "$(arg -N) negative index is not a compile error (DD#60 says it should be)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
