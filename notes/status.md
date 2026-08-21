@@ -1,3 +1,36 @@
+## ════════ STATUS (2026-08-21, later) — RECURSION: reject non-tail, tail→loop ════════
+
+**Pushed `94dac99`.** Recursion crashed the compiler (unbounded inlining → stack
+overflow). Now, per DD#27 (amended):
+
+- **Non-tail + all mutual recursion → SB5037** (clean reject, no crash). An
+  inline-stack (`VersionState.inlining`) at all three inline sites catches a
+  call to a function already being inlined.
+- **Direct self tail-recursion → a LOOP.** DG's cut: "support tail recursion,
+  reject the rest." A self-call that is a `return` producer is tail by
+  definition (nothing runs after a return) — so no tail-position analysis. The
+  first inline makes the body entry the loop header; `return F newargs` rebinds
+  F's implicit `args` array (DD#75 §5) and branches back (`emit_tail_call`).
+  Loop-carried args needs **no manual phi** — all SSA versions of a name share
+  one Cranelift Variable (auto-merge at the join, `codegen/setup.rs`).
+  - Mechanism (not a max-depth counter — DG's steer): an inline stack is
+    precise (catches direct + mutual, no arbitrary limit, identifies the edge).
+  - `return F …` is the only tail form (required for `-> int`/predicate per
+    DD#74, uniform for void too). Accumulator style: bind locals then
+    `return $(( (go n1 a1) ))`.
+  - native+c via the SSA loop; janet keeps its own recursive emit (same
+    results). All 3 modes reject non-tail/mutual. Specs `functions.sh` 27.1–27.5.
+
+Also: transform diagnostics are now exact-deduped (a body is lowered as a
+template AND at each inline site, so a body-level diag repeated).
+
+**Found + filed a pre-existing bug** (`bug-arith-sexpr-nested-cmdsub-arg`, P2): a
+nested `$(( ))` arg *directly* to an arith-sexpr call (`(dbl $(( 2+1 )))`)
+silently lowers to 0. Independent of the args model / tail recursion (a plain
+`(dbl 3)` and a bound-local arg both work). Accumulator style sidesteps it.
+
+0 spec regressions across native/c/janet.
+
 ## ════════ STATUS (2026-08-21) — DD#75 §5 args model SHIPPED (0-indexed); `shift` dropped ════════
 
 **Pushed `f505e2d`.** Function positionals (`$1..$9`/`$@`/`$#`) are now backed
