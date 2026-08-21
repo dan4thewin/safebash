@@ -1,3 +1,28 @@
+## ════════ STATUS (2026-08-21, backlog sweep) — native backlog: 2 parser/validator bugs fixed ════════
+
+Working the native backlog (DG: "keep after the backlog"). Two bugs fixed, each
+0-regression across native/c/janet:
+
+- **`arg-negative-index-compile-reject`** (`960c9dd`): `$(arg -1)` compiled
+  (only aborting at runtime) despite DD#60's compile-time guarantee. Now
+  `arg_index_diag` rejects a negative integer literal index with **SB5038**
+  (both `$(arg -N)` and `$(arg -N DEFAULT)`). Specs argv.sh av.t7 (strengthened
+  to assert SB5038) + av.t7b.
+- **`bare-nested-cmdsub-arg`** (`caa4a35`): a bare nested `$(f $(g))` was a parse
+  error (SB4014). Root cause: logos lexes `))` as one `DblParenClose`, but that
+  token is arith-only; in `$(f $(g))` the `))` are two cmdsub closes.
+  `split_dbl_paren_close` splits `DblParenClose`→`RParen` when `arith_depth==0`.
+  Specs commands.sh 14.7/14.8.
+
+Process note: a complexity-probe `git commit -F /tmp/j.txt` accidentally landed a
+junk `x` commit when the gate passed; squashed it out (soft-reset, not pushed)
+and restored `notes/misses.md` (never stage it). Don't probe the gate with a real
+`git commit` — the FAIL output already names the function on a real attempt.
+
+Remaining native backlog: `len-undefined-reject`, `const-fold-command-name`,
+`arith-bare-subscript-followups`, `arith-disposition-hex-octal-default`, + the
+args-model polish (`$(len/join/keys args)`, `$*`→`$(join args)`) and the doc task.
+
 ## ════════ STATUS (2026-08-21, later²) — FIX: nested-paren sexpr arg (arith collector) ════════
 
 **Pushed `ca79d0f`.** Fixed the P2 bug found during tail-recursion work: a DD#58
