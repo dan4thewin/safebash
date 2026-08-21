@@ -53,17 +53,29 @@ native**.
 - **Functions**: `f(){…}` → `(sash/defn f body…)` (a `with-dyns` positional
   frame + `sash-ret` label; structure still supplied by emit).
 - **User-function calls are distinct from externals**: a call to a defined
-  function → direct `(f args…)` (bare) / `(sash/succeeded (f args…))`
-  (condition); an external stays `sash/run`/`sash/ok?`. `Env.fns` collected up
-  front. A bare nonzero-return call does NOT abort (matches native).
-- **Positionals** (function-local; SB5024 bars them at top level): `$N` →
-  `(sash/arg N)`, `$#` → `(sash/argc)`, `$@`/`$*` → `;(sash/args)` splice in
-  arg position / `(sash/args)` elsewhere.
+  function → direct `(f args…)` (bare) / `(sash/true? (f args…))` (condition —
+  the trailing `?` marks the boolean; DG renamed from `succeeded`); an external
+  stays `sash/run`/`sash/ok?`. `Env.fns` collected up front. A bare nonzero-
+  return call does NOT abort (matches native).
+- **Function parameters vs process argv are kept distinct** (DG, 2026-08-20):
+  `$1` is a function's own argument (sugar for `$args[1]`), NEVER an argv
+  element. Function params → the `param` family: `$N` → `(sash/param N)`,
+  `$#` → `(sash/nparams)`, `$@`/`$*` → `;(sash/params)` splice (function-local;
+  SB5024 bars them at top level). The process command line → the argv family:
+  `$(arg N)` → `(sash/arg N)` (0-based, tainted), `$(arg N DEFAULT)` →
+  `(sash/arg N DEFAULT)`, `$(argc)` → `(sash/argc)`, `$(argv)` → `(sash/argv)`.
+  (Before, `$(arg N)`/`$(argc)` mis-mapped as external `sash/capture`.)
 - **return**: `return N` → `(sash/return N)` (numeric via `sash/-code`); bare
   `return` → `(sash/return ($ ?))`.
 - **`(sash/TODO …)` now compiles**: defined as a preamble macro that names the
   unmapped construct and aborts at runtime if reached — a partial program runs
   up to the first gap instead of failing janet compilation.
+
+**Known gap — other `$(…)` value-function intrinsics** (`len`, `toupper`,
+`tolower`, `getenv`, `getpid`, `random`, `signum`, `epochseconds`, `basename`,
+`dirname`, `getcwd`, `join`, `keys`, …) still route through `sash/capture`
+(mis-shown as an external spawn). Only the argv trio (`arg`/`argc`/`argv`) is
+mapped so far — the rest are the S4 value surface.
 
 **Known S2 gap (flat scope):** declarations/assignments — including inside
 functions — pre-declare one flat top-level `(var … nil)`; `local`-shadowing is

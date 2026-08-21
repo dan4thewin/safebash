@@ -8,9 +8,11 @@
 //! STAGE 1: assignments, echo, `:`, external commands, if/while, `[[ ]]` string
 //! tests, `$(…)` single-external capture, bless.
 //! STAGE 2: typed declarations (`int n=5` → number), user functions
-//! (`sash/defn`), user-function calls (distinct from externals), `return`,
-//! positional params (`$1`/`$#`/`$@`). Anything not yet handled renders as a
-//! visible `(sash/TODO …)` (a preamble macro) so nothing is silently wrong.
+//! (`sash/defn`), user-function calls (distinct from externals, `sash/true?`
+//! in a condition), `return`, function parameters (`$1`→`(sash/param 1)`,
+//! `$#`/`$@`) kept distinct from the process argv trio (`$(arg N)`/`$(argc)`/
+//! `$(argv)`). Anything not yet handled renders as a visible `(sash/TODO …)`
+//! (a preamble macro) so nothing is silently wrong.
 
 use crate::ir::*;
 use std::collections::BTreeSet;
@@ -318,7 +320,7 @@ fn render_named_cmd(n: &str, args: &[Expr], ctx: Ctx, env: &Env) -> String {
 fn render_user_call(name: &str, args: &[Expr], ctx: Ctx) -> String {
     let call = format!("({}{})", name, render_args(args));
     if ctx == Ctx::Cond {
-        format!("(sash/succeeded {})", call)
+        format!("(sash/true? {})", call)
     } else {
         call
     }
@@ -379,12 +381,12 @@ fn render_args(args: &[Expr]) -> String {
     s
 }
 
-/// A single command argument. `$@`/`$*` splice the positional array in place
-/// (`;(sash/args)`); everything else renders as an ordinary value.
+/// A single command argument. `$@`/`$*` splice the function's parameter array
+/// in place (`;(sash/params)`); everything else renders as an ordinary value.
 fn render_arg(a: &Expr) -> String {
     if let ExprKind::SimpleExpansion(name) = &a.kind {
         if name == "@" || name == "*" {
-            return ";(sash/args)".to_string();
+            return ";(sash/params)".to_string();
         }
     }
     render_expr(a)
@@ -571,15 +573,19 @@ fn render_var_read(name: &str) -> String {
     }
 }
 
-/// Positional parameters — function-local (the front-end bars them at top
-/// level, SB5024): `$#` → (sash/argc); `$@`/`$*` → (sash/args); `$N` →
-/// (sash/arg N); `$0` (the name) is not yet mapped. None for an ordinary var.
+/// Positional parameters — a function's OWN arguments (`$1` is sugar for
+/// `$args[1]`), NEVER the process argv (which is `$(arg N)` — see
+/// `render_argv_intrinsic`). Function-local: the front-end bars them at top
+/// level (SB5024). `$#` → (sash/nparams); `$@`/`$*` → (sash/params); `$N` →
+/// (sash/param N); `$0` (the name) is not yet mapped. None for an ordinary var.
 fn positional_read(name: &str) -> Option<String> {
     Some(match name {
-        "#" => "(sash/argc)".to_string(),
-        "@" | "*" => "(sash/args)".to_string(),
+        "#" => "(sash/nparams)".to_string(),
+        "@" | "*" => "(sash/params)".to_string(),
         "0" => "(sash/TODO arg0-name)".to_string(),
-        n if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => format!("(sash/arg {})", n),
+        n if !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()) => {
+            format!("(sash/param {})", n)
+        }
         _ => return None,
     })
 }
@@ -603,7 +609,7 @@ fn render_concat(parts: &[Expr]) -> String {
 }
 
 fn render_capture(stmts: &[Statement]) -> String {
-    // Stage 1: a single external command → piped capture.
+    // Stage 1/2: a single command → intrinsic form or piped external capture.
     let todo = || "(sash/TODO capture-nonexternal)".to_string();
     let [one] = stmts else { return todo() };
     let StmtKind::Command(c) = &one.kind else {
@@ -612,10 +618,37 @@ fn render_capture(stmts: &[Statement]) -> String {
     let Some(name) = expr_literal(&c.name) else {
         return todo();
     };
+    // The process argv trio — `$(arg N)` / `$(argc)` / `$(argv)` — is the
+    // script's command line (tainted), NOT a spawned program and NOT the
+    // function parameters ($1/$@/$#). Map to the argv family, not sash/capture.
+    if let Some(form) = render_argv_intrinsic(&name, &c.args) {
+        return form;
+    }
     if matches!(name.as_str(), "echo" | ":" | "[[") {
         return todo();
     }
     format!("(sash/capture {:?}{})", name, render_args(&c.args))
+}
+
+/// The argv intrinsics: `$(argc)` → (sash/argc); `$(argv)` → (sash/argv);
+/// `$(arg N)` / `$(arg N DEFAULT)` → (sash/arg N [DEFAULT]) — index is numeric,
+/// 0-based (index 0 is the program name). None for any other command.
+fn render_argv_intrinsic(name: &str, args: &[Expr]) -> Option<String> {
+    match name {
+        "argc" => Some("(sash/argc)".to_string()),
+        "argv" => Some("(sash/argv)".to_string()),
+        "arg" => {
+            let idx = args
+                .first()
+                .map(render_code_arg)
+                .unwrap_or_else(|| "0".to_string());
+            match args.get(1) {
+                Some(d) => Some(format!("(sash/arg {} {})", idx, render_expr(d))),
+                None => Some(format!("(sash/arg {})", idx)),
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Render a Rust string as a janet string literal.

@@ -99,11 +99,27 @@
      (with-dyns [:sash-argv sash-argv]
        (label sash-ret ,;body))))
 
-# positional parameters — valid only inside a function body (the front-end
-# rejects $1/$@/$# at top level, SB5024; top-level scripts use $(arg N)/$(argc)).
-(defn sash/arg [n] (or (get (dyn :sash-argv) (- n 1)) ""))   # $1 $2 …
-(defn sash/argc [] (length (dyn :sash-argv)))                # $#
-(defn sash/args [] (dyn :sash-argv))                         # $@ (spliced at use)
+# ── function parameters ($1..$N / $@ / $#) ─────────────────────────────────
+# A function's OWN arguments — never the process argv. `$1` is sugar for
+# `$args[1]` (1-based), so these read the call frame bound by `sash/defn`. The
+# front-end bars $1/$@/$# at top level (SB5024); a top-level script reaches the
+# process command line through the `arg`/`argc`/`argv` family below instead.
+(defn sash/param [n] (or (get (dyn :sash-argv) (- n 1)) ""))  # $1 $2 … (1-based)
+(defn sash/nparams [] (length (dyn :sash-argv)))              # $#
+(defn sash/params [] (dyn :sash-argv))                        # $@ (spliced at use)
+
+# ── process argv ($(arg N) / $(argc) / $(argv)) ────────────────────────────
+# The script's command line — TAINTED input (needs `bless`), and a DIFFERENT
+# thing from the function parameters above. Indices are 0-based; index 0 is the
+# program name, so $(arg 1) is the first user argument.
+(defn sash/argc [] (length (dyn :args)))   # C argc (program slot + user args)
+(defn sash/argv [] (dyn :args))            # the whole argv (splat context)
+(defn sash/arg [n & default]               # $(arg N [DEFAULT]) — argv[N]
+  (if (and (>= n 0) (< n (length (dyn :args))))
+    (get (dyn :args) n)
+    (if (empty? default)
+      (do (eprint (get (dyn :args) 0) ": arg: index out of range") (os/exit 1))
+      (first default))))
 
 # exit-code coercion — a return code / $? is numeric (leading int, else 0).
 # NOT a [[ ]] numeric-compare (that is a bashism sash rejects); this is only
@@ -115,7 +131,7 @@
 # yields it.
 (defmacro sash/return [n] ~(do (set *status* (sash/-code ,n)) (return sash-ret *status*)))
 
-# a user-function CALL used as a condition: run it, then branch on its $?.
-# Distinct from the external `sash/ok?` so the reader sees it is a sash
-# function, not a spawned program.
-(defmacro sash/succeeded [call] ~(do ,call (zero? *status*)))
+# a user-function CALL used as a condition: run it, then read its $? as a
+# boolean — the trailing `?` marks the boolean result. Distinct from the
+# external `sash/ok?` so the reader sees a sash function, not a spawned program.
+(defmacro sash/true? [call] ~(do ,call (zero? *status*)))
