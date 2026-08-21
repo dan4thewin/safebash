@@ -1,3 +1,27 @@
+## ════════ STATUS (2026-08-21, backlog sweep cont².) — args-in-len + len-undefined ════════
+
+Combined effort from the `len-undefined` discussion (DG approved). Three parts,
+all 0-regression across native/c/janet:
+
+- **`9ce861e` args in len/join/keys + top-level reject** — `$(len args)`/
+  `$(join args)`/`$(keys args)` now resolve the implicit array (was a silent 0);
+  `resolve_args_name` at the intrinsic sites + type_check `check_function`
+  registers `args` as a function-scope collection. Top-level `@args`/`${args[i]}`
+  → SB5024 (function-local). Specs 75.23-75.26.
+- **`1fcc94a` `len <undefined>` → SB5039** — a dedicated `validate.rs`
+  `check_len_operands` pass, NOT the type_check route the task sketched. Key
+  insight (DG): the loop-var gap is only in *type_check*'s env; validate's SB5031
+  `collect_scope_names` already tracks `for` vars / decls / read targets, so
+  `for e in @a; do $(len e); done` is accepted for free. Also taught
+  collect_scope_names about `argv [N] ARR` targets. Specs 75.27-75.30.
+
+Backlog sweep total this session: arg-negative-index (SB5038); bare-nested-cmdsub
+(lexer `))` split); arith-disposition 0x/0o/0b; args-in-len + len-undefined.
+`const-fold-command-name` discarded (DG: "gpp territory"). Remaining native:
+`arith-bare-subscript-followups`, `eliminate-ice-arms-via-types`,
+`audit-string-keyed-builtin-dispatch`, cleanups (retire regex_replace, strip
+runtime), + the doc task.
+
 ## ════════ STATUS (2026-08-21, backlog sweep cont.) — 3rd fix: arith 0x/0o/0b disposition defaults ════════
 
 **Pushed `2e5916f`.** `arith-disposition-hex-octal-default`: the arith `:-`
