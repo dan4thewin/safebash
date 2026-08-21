@@ -1,3 +1,40 @@
+## ════════ STATUS (2026-08-21) — DD#75 §5 args model SHIPPED (0-indexed); `shift` dropped ════════
+
+**Pushed `f505e2d`.** Function positionals (`$1..$9`/`$@`/`$#`) are now backed
+by a real **0-indexed** `args` array, not scalar `"1".."9"/"#"` vars. DG's key
+insight: `args` is a compiler-managed abstraction, so each inline mints a
+**fresh unique array name** (`__args0`, `__args1`, …) materialized once from the
+call args — nested/recursive calls never collide, so **no SSA save/restore**
+(only the current name, a cheap string).
+
+**Fixed a pre-existing bug:** a function reading a positional *after calling
+another function* got the callee's value (`fn f { g Z; echo $1; }` → `Z`).
+Reproduced identically at HEAD (arrays are name-slotted in codegen, not
+SSA-versioned). Now correct in native+c+janet.
+
+- `$1..$9` → `${args[0]}..${args[8]}` (0-indexed — DG, amended DD#75 §5 from
+  1-indexed after checking prior art: matches sash's own arrays + Elvish/Oil/
+  Python/Ruby/…; the 1-indexed-args langs, fish/zsh/Lua, are 1-indexed
+  *everywhere*).
+- `$#` → `${#args}`; expression + arithmetic share `positional_to_value`.
+- user `${args[i]}`, `@args`, `${#args}`, `for x in @args` work (native+c;
+  janet keeps its `_args` model). `resolve_args_name` maps `args`→`__argsN`.
+- `>9` args reachable via `${args[N]}` (old scalar model capped at `$9`).
+- **`shift` dropped** — a degenerate slice (DG). A general array **slice** is a
+  post-beta research topic (`research-array-slice`, incl. value-vs-view +
+  **copy-on-write**).
+
+0 spec regressions native/c/janet (1037 native). Specs `types.sh` 75.17–75.22.
+**Deferred polish** (`dd75-args-model-polish`): `$(len/join/keys args)` (intrinsic
+recognition still gates on `collections.contains("args")`); `$*` removal;
+`$@`→`@args` splat for >9; recursion guard (recursive inlining overflows the
+compiler — pre-existing); friendlier `shift`-removed diagnostic.
+
+Native backlog remaining (DG: "any/all remaining native implementation work"):
+`bare-nested-cmdsub-arg`, `arg-negative-index-compile-reject`,
+`len-undefined-reject`, `const-fold-command-name`, `arith-bare-subscript-
+followups`, `arith-disposition-hex-octal-default`, + the args-model polish.
+
 ## ════════ STATUS (2026-08-20, later still) — janet STRUCTURAL MAP: Stage 2 SHIPPED ════════
 
 **Stage 2 shipped `48bd47d` (pushed)** — the function surface + typed bindings.
