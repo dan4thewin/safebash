@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-21, cont.) — arith-bare-subscript-followups DONE (all 4 edges) ════════
+
+**Pushed on `hand-parser`.** Task `arith-bare-subscript-followups` complete.
+
+- **Edge 1** (`$(( $a[i] ))`): DG chose the diagnostic route. A read-the-cell fix
+  silently mis-read variable indices (`$a[$i]` rebuilt as `"$a[ $i ]"` via the
+  arith token→string→re-lex path → read a[0]); reverted. `arith_bad_literal_error`
+  now special-cases a stray `[`/`]` → "use `a[i]` or `${a[i]}`". Specs dsx.1-2.
+- **Edge 2** (`$(( a[a[0]] ))`): the core word lexer broke words on doubled `]]`
+  (for `[[ ]]`), corrupting a bare nested cell read (ends in `]]`).
+  `scan_word_chars` now tracks subscript depth: `]]` closes two subscripts at
+  depth>0, delimits `[[ ]]` only at depth 0. Specs nsx.1-3.
+- **Edge 4** (substring/sed on a cell): parity with scalars. Sed desugars to
+  `$(sub|gsub "${a[i]}" …)` (3 backends free); substring lowers via a new
+  source-carrying `SsaValue::Substring` (native/c/janet). Specs scx.16-22.
+- Filed `bug-braced-nested-subscript-index` (pre-existing, separate path:
+  `${a[a[0]]}` returns the inner cell).
+
+Commits `f31d2c9` (edges 1+2), edge 4 (this). 0 regressions native/c/janet;
+journals 169, 170. Remaining native backlog: `eliminate-ice-arms-via-types`,
+`audit-string-keyed-builtin-dispatch`, doc task.
+
 ## ════════ STATUS (2026-08-21, cleanup) — retire legacy sed/regex_replace machinery ════════
 
 **Committed on `hand-parser`.** Task `retire-legacy-sed-regex-replace-machinery`

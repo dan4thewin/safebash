@@ -438,7 +438,7 @@ pub(crate) fn emit_default_value(
 
 /// ${var:offset} / ${var:offset:length} — substring extraction.
 /// Operand is "offset" or "offset:length".
-fn emit_substring(
+pub(crate) fn emit_substring(
     operand: &str,
     s_ptr: cranelift_codegen::ir::Value,
     s_len: cranelift_codegen::ir::Value,

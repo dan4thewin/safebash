@@ -355,7 +355,9 @@ fn value_is_tainted(
         // (DD#76), and `${…:?msg}` yields the source (the message only prints on
         // the abort path, which exits), so its taint is exactly the source's —
         // the source being a plain var (scalar) or a cell read (`${a[i]:?…}`).
-        SsaValue::IntCell(inner) | SsaValue::RequireValue { source: inner, .. } => {
+        SsaValue::IntCell(inner)
+        | SsaValue::RequireValue { source: inner, .. }
+        | SsaValue::Substring { source: inner, .. } => {
             value_is_tainted(inner, taint, user_functions)
         }
         // DD#65: `${var:-default}` yields either the var or the default, so it

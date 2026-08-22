@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=153
+plan=159
 echo "1..$plan" >&3
 
 set +e
@@ -596,10 +596,33 @@ fi
 # scx.15 a pruned modifier on a cell rejects exactly like a scalar (SB4034)
 run_sash 'array a=(hi 13 21); echo ${a[0]#h}'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk scx.15
-# scx.16 substring/sed on a cell is not yet wired → explicit SB4039, never a
-# silent drop
-run_sash 'array a=(hi 13 21); echo ${a[0]:1:2}'
-[[ $rc != 0 && -z $out && $err == *SB4039* ]]; chk scx.16
+if in_modes native,c; then
+    # scx.16 substring on a cell now lowers (edge 4) — a cell behaves like a
+    # string variable; ${a[0]:1} of "hi" → "i" (SsaValue::Substring reads the cell)
+    run_sash 'array a=(hi 13 21); echo ${a[0]:1}'
+    [[ $rc = 0 && $out = "i" && -z $err ]]; chk scx.16
+    # scx.17 substring off:len on a MAP cell: ${m[k]:1:3} of "hello" → "ell"
+    run_sash 'map m=([k]=hello); echo ${m[k]:1:3}'
+    [[ $rc = 0 && $out = "ell" && -z $err ]]; chk scx.17
+    # scx.18 sed on a cell: ${a[0]:s/h/H/} of "hi" → "Hi" (desugars to
+    # $(sub "${a[0]}" h H))
+    run_sash 'array a=(hi 13 21); echo ${a[0]:s/h/H/}'
+    [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk scx.18
+    # scx.19 gsub on a cell: ${a[0]:s/l/L/g} of "hello" → "heLLo"
+    run_sash 'array a=(hello 13 21); echo ${a[0]:s/l/L/g}'
+    [[ $rc = 0 && $out = "heLLo" && -z $err ]]; chk scx.19
+    # scx.20 sed on a MAP cell
+    run_sash 'map m=([k]=hello); echo ${m[k]:s/l/L/g}'
+    [[ $rc = 0 && $out = "heLLo" && -z $err ]]; chk scx.20
+else
+    skip_chk scx.16; skip_chk scx.17; skip_chk scx.18; skip_chk scx.19; skip_chk scx.20
+fi
+# scx.21 malformed sed on a cell → SB4032 (mode-independent, shared with scalar)
+run_sash 'array a=(hi 13 21); echo ${a[0]:s/h}'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk scx.21
+# scx.22 a `:`-op with no cell lowering (`:+`) still rejects explicitly → SB4039
+run_sash 'array a=(hi 13 21); echo ${a[0]:+x}'
+[[ $rc != 0 && -z $out && $err == *SB4039* ]]; chk scx.22
 
 # ── DD#76 int-valued collections (`int array` / `int map`) ──
 # An int collection stores each element as an int cell (val_len double-duty);

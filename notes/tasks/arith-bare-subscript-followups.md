@@ -1,13 +1,13 @@
 ---
 title: "arith bare-subscript follow-ups: $a[i] form, nested index, string-array cell"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
 gates:
   - "DONE (edge 1, DG chose the diagnostic route): `$(( $a[i] ))` rejects with a clear `use a[i] / ${a[i]}` hint instead of `invalid numeric literal '['` (a silent-read fix was reverted — reconstruction can't preserve a `$`-index)"
   - "DONE (edge 2): nested index `$(( a[a[0]] ))` parses (lexer subscript-depth tracking; the `]]` closes two subscripts, not a `[[ ]]` dispatch)"
-  - "substring `${a[i]:o:l}` / sed `${a[i]:s/…/}` on a cell (currently the explicit SB4039 staged-reject) reach scalar parity — needs a cell-source lowering for substring/sed"
+  - "DONE (edge 4): substring `${a[i]:o:l}` and sed `${a[i]:s/…/}` on a cell reach scalar parity — sed desugars to `$(sub|gsub \"${a[i]}\" …)`; substring lowers via a new source-carrying `SsaValue::Substring` (native/c/janet)"
   - "no regression"
 ---
 
@@ -81,17 +81,33 @@ disposition escape hatch `${a[0]:-N}` / `${a[0]:?msg}` works (native,c; janet
 word-context). DG: "same behavior as from a string variable." See DD#77's
 "Implemented — string-array/map cells" section + journal 151.
 
-### 4. substring / sed on a cell → SB4039 (staged)
+### 4. substring / sed on a cell — RESOLVED (2026-08-21)
 
-`${a[i]:o:l}` (substring) and `${a[i]:s/…/}` (sed) work on a scalar string but
-have no cell-source lowering yet, so they reject **explicitly with SB4039**
-(never a silent drop). Full parity needs a cell-string source for the
-`ParamExpansion`-substring path and the `:s/` sed-subject construction. The
-pruned families (`#`/`%`/`/`/`@X`) already reject at scalar parity (SB4034/
-SB4015). janet **arith**-context cell disposition rides the
-`janet-arith-subscript-read` gap.
+`${a[i]:o:l}` (substring) and `${a[i]:s/…/}` (sed) now reach scalar parity —
+"a string cell behaves like a string variable" (DG).
+
+- **Sed** (`${a[i]:s/RE/SUB/[g]}`) desugars at parse to `$(sub|gsub "${a[i]}"
+  RE SUB)` — the cell read as the subject — reusing the scalar `$(sub)`/`$(gsub)`
+  machinery across all three backends. `parse::expr::subscript_operator_expr`
+  builds it via the shared `build_sed_or_malformed` + a new `quoted_cell_expr`
+  (`"${a[i]}"`). A missing `/` delimiter still gives SB4032.
+- **Substring** (`${a[i]:o:l}`) is carried as a `ParamExpansion "substring"`
+  with the cell index attached; the transform (`parameter_expansion_to_value`)
+  turns a substring-with-index into a new source-carrying
+  `SsaValue::Substring { source, spec }` (mirrors `DefaultValue`). Native lowers
+  it (`emit_substring` on the lowered source), emit_c via `disposition_source_c`
+  + `emit_substring_c`, emit_janet reads the cell (`emit_expr_subscript`) as the
+  slice source. The scalar `${s:o:l}` keeps the plain `ParamExpansion` path
+  (untouched).
+- The pruned families (`#`/`%`/`/`/`@X`) still reject at scalar parity
+  (SB4034/SB4015); any other `:`-led op with no cell lowering (`:+`, `:=`) still
+  rejects explicitly (SB4039, `cell_string_op`).
+
+Specs `arithmetic.sh` scx.16-22 (substring/sed native,c — janet substring has a
+pre-existing out-of-range clamping gap and its arith-value subscript gap; the
+malformed/reject checks run all modes). 0 regressions.
 
 ## Provenance
 
 Filed during arith-subscript Stage 2 + B2 (journal 150). None block the shipped
-int-array feature.
+int-array feature. Edges 1/2 journal 169, edge 4 journal 170.

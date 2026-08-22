@@ -163,6 +163,21 @@ pub(super) fn lower_value(
                 s_ptr, s_len, d_ptr, d_len, builder, module, externs,
             )
         }
+        SsaValue::Substring { source, spec } => {
+            let (s_ptr, s_len) = lower_value(
+                source,
+                builder,
+                module,
+                vars,
+                literals,
+                func_constants,
+                externs,
+                exit_status_var,
+            );
+            crate::codegen::value_handlers::emit_substring(
+                spec, s_ptr, s_len, builder, module, externs,
+            )
+        }
         SsaValue::RequireValue { source, message } => {
             let (s_ptr, s_len) = lower_value(
                 source,

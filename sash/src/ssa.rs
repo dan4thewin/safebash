@@ -583,6 +583,14 @@ pub enum SsaValue {
         source: Box<SsaValue>,
         message: Box<SsaValue>,
     },
+    /// `${a[i]:off:len}` — substring of a value `source` (a `Subscript` cell
+    /// read; the scalar `${s:o:l}` uses `ParamExpansion` "substring"). `spec` is
+    /// the `off` / `off:len` operand. Mirrors `DefaultValue`'s source carrying,
+    /// so a cell behaves like a string variable (DG, edge 4).
+    Substring {
+        source: Box<SsaValue>,
+        spec: String,
+    },
     /// Associative array literal: [(k1,v1), (k2,v2), ...]
     AssocArray(Vec<(String, SsaValue)>),
     /// Associative array subscript: ${MAP[$KEY]}
@@ -680,6 +688,7 @@ impl SsaValue {
             SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::DefaultValue { source, default } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
+            SsaValue::Substring { source, .. } => vec![source],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,

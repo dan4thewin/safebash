@@ -691,19 +691,18 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
 
     // `${a[i]OP}` — a trailing operator applies to the *cell* value. DG: a
     // string cell behaves like a string variable, so route the operator through
-    // the same scalar parsers and attach the index. Only the `:-`/`:?`
-    // dispositions carry a cell subject to codegen; the pruned families
-    // (`#`/`%`/`/`/`@X`) reject on their operator string exactly as for a scalar;
-    // the string-producing ops (substring `:o:l`, sed `:s/`) are not yet wired
-    // for a cell and reject explicitly (SB4030) rather than silently drop.
+    // the same scalar parsers and attach the index. The `:-`/`:?` dispositions,
+    // substring (`:o:l`), and sed (`:s/`) all lower for a cell (edge 4); the
+    // pruned families (`#`/`%`/`/`/`@X`) reject on their operator string exactly
+    // as for a scalar, and any other `:`-led op rejects as `cell_string_op`.
     Some(subscript_operator_expr(name, index, after_bracket, span))
 }
 
 /// Build the `${a[i]OP}` expansion. `:-`/`:?` attach the cell index to the
-/// scalar `ParameterExpansion` (so codegen reads the cell, not a plain var); a
-/// `:`-led string op (substring/sed) that has no cell lowering yet is flagged
-/// `cell_string_op` (rejected SB4030); every other operator parses exactly as
-/// the scalar form so `#`/`%`/`/`/`@X` reject identically.
+/// scalar `ParameterExpansion` (so codegen reads the cell); `:s/` desugars to
+/// `$(sub|gsub "${a[i]}" …)`; substring `:o:l` carries the index (the transform
+/// builds a cell-reading `Substring` node); every other operator parses as the
+/// scalar form so `#`/`%`/`/`/`@X` reject identically.
 fn subscript_operator_expr(name: &str, index: Box<Expr>, after: &str, span: Span) -> Expr {
     if after.starts_with(":-") || after.starts_with(":?") {
         let mut expr = parse_standard_operator(after, name, span)
@@ -711,8 +710,23 @@ fn subscript_operator_expr(name: &str, index: Box<Expr>, after: &str, span: Span
         attach_cell_index(&mut expr, index);
         return expr;
     }
+    // Sed on a cell (`${a[i]:s/RE/SUB/}`) desugars to `$(sub|gsub "${a[i]}" RE
+    // SUB)` — the cell read as the subject — reusing the scalar `$(sub)`
+    // machinery (edge 4). A cell behaves like a string variable (DG).
+    if let Some(body) = after.strip_prefix(":s/") {
+        let subject = quoted_cell_expr(name, index, span);
+        return build_sed_or_malformed(body, subject, name, after, span);
+    }
     if after.starts_with(':') {
-        // substring (`:o:l`) or sed (`:s/…/`) on a cell — no cell lowering yet.
+        // substring (`:o:l`) on a cell — carry the cell index; the transform
+        // builds a `Substring` node that reads the cell as the source (edge 4).
+        // A cell behaves like a string variable (DG).
+        if let Some(mut expr) = try_substring_op(after, name, span) {
+            attach_cell_index(&mut expr, index);
+            return expr;
+        }
+        // Any other `:`-led op that isn't substring/sed/`:-`/`:?` has no cell
+        // lowering — reject explicitly (SB4039) rather than silently drop.
         let mut expr = Expr::param(name, Some("cell_string_op"), None, span);
         attach_cell_index(&mut expr, index);
         return expr;
@@ -756,10 +770,18 @@ fn splat_subscript_expr(name: &str, after_bracket: &str, span: Span) -> Expr {
 fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let body = rest.strip_prefix(":s/")?;
     let subject = quoted_var_expr(name, span);
+    Some(build_sed_or_malformed(body, subject, name, rest, span))
+}
+
+/// Build `$(sub|gsub SUBJECT RE SUB)` from a `:s/RE/SUB/` payload with the given
+/// interpolating `subject` (a scalar `"$var"` or a cell `"${a[i]}"`), or the
+/// `s_malformed` sentinel (→ SB4032) when a `/` delimiter is missing. Shared by
+/// the scalar and cell sed forms.
+fn build_sed_or_malformed(body: &str, subject: Expr, name: &str, rest: &str, span: Span) -> Expr {
     if let Some(expr) = build_sed_sub(body, subject, span) {
-        return Some(expr);
+        return expr;
     }
-    Some(Expr {
+    Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
             operator: Some("s_malformed".to_string()),
@@ -770,7 +792,22 @@ fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
             index: None,
         }),
         span,
-    })
+    }
+}
+
+/// `"${a[i]}"` as a single interpolating argument — the cell read as a sed
+/// subject, mirroring `quoted_var_expr` for a scalar variable.
+fn quoted_cell_expr(name: &str, index: Box<Expr>, span: Span) -> Expr {
+    Expr {
+        kind: ExprKind::DoubleQuoted(vec![Expr {
+            kind: ExprKind::Subscript {
+                name: name.to_string(),
+                index,
+            },
+            span,
+        }]),
+        span,
+    }
 }
 
 /// `"$var"` as a single interpolating argument (the substitution subject).

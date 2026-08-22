@@ -214,43 +214,14 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     let Some(op) = pe.operator.as_ref() else {
         return source;
     };
-    // DD#65: `${var:-DEFAULT}` — the default is a full interpolating value
-    // (a `"…"` body), so carry it as an `SsaValue`, not a stringified operand.
-    if op == ":-" {
-        let default = pe
-            .operand
-            .as_ref()
-            .map(|e| expr_to_value(e, state))
-            .unwrap_or_else(|| SsaValue::Literal(String::new()));
-        return SsaValue::DefaultValue {
-            source: Box::new(source),
-            default: Box::new(default),
-        };
+    // `:-`/`:?` (default/require) and substring-on-a-cell carry the subject as a
+    // value; the remaining operators lower to a plain `ParamExpansion`.
+    if let Some(v) = source_carrying_value(pe, op, source, state) {
+        return v;
     }
-    // DD#77: `${var:?MESSAGE}` — abort (`<prog>: MESSAGE`, exit 1) when the
-    // variable is unset/empty; otherwise the value. The `:-`/`:?` abort/default
-    // pair. The message interpolates like the `:-` default.
-    if op == ":?" {
-        let message = pe
-            .operand
-            .as_ref()
-            .map(|e| expr_to_value(e, state))
-            .unwrap_or_else(|| SsaValue::Literal(String::new()));
-        return SsaValue::RequireValue {
-            source: Box::new(source),
-            message: Box::new(message),
-        };
-    }
-    // Remaining operators (strlen/arrlen/substring + the pruned/rejected
-    // families) are scalar-only; they never carry a cell index (a cell op that
-    // is not `:-`/`:?` rejects at validation before reaching codegen).
     let resolved = resolve_args_name(&pe.name, state);
     let var = state.lookup(&resolved);
-    let operand = pe
-        .operand
-        .as_ref()
-        .map(|e| expr_to_string(e))
-        .unwrap_or_default();
+    let operand = pe_operand_string(pe);
     // DD#75 §2: `${#x}` is the length of x dispatched on type — for a
     // collection it is the element/entry count (`arrlen`), not the byte length
     // of a scalar slot (`strlen`, which would read 0). `${#s}` stays strlen.
@@ -264,6 +235,50 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
         operator,
         operand,
     }
+}
+
+/// The `${var:OP}` forms whose subject is a value (scalar var read or cell
+/// read): `:-` (DD#65 default), `:?` (DD#77 require), and substring on a cell
+/// (`${a[i]:o:l}`, edge 4). `source` is the already-computed subject. Returns
+/// `None` for the scalar operators that lower to a plain `ParamExpansion`.
+fn source_carrying_value(
+    pe: &ParameterExpansion,
+    op: &str,
+    source: SsaValue,
+    state: &VersionState,
+) -> Option<SsaValue> {
+    match op {
+        ":-" => Some(SsaValue::DefaultValue {
+            source: Box::new(source),
+            default: Box::new(pe_operand_value(pe, state)),
+        }),
+        ":?" => Some(SsaValue::RequireValue {
+            source: Box::new(source),
+            message: Box::new(pe_operand_value(pe, state)),
+        }),
+        // The scalar `${s:o:l}` (no index) keeps the `ParamExpansion` path.
+        "substring" if pe.index.is_some() => Some(SsaValue::Substring {
+            source: Box::new(source),
+            spec: pe_operand_string(pe),
+        }),
+        _ => None,
+    }
+}
+
+/// The `${var:OP}` operand as a full interpolating value (the `:-`/`:?` body).
+fn pe_operand_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
+    pe.operand
+        .as_ref()
+        .map(|e| expr_to_value(e, state))
+        .unwrap_or_else(|| SsaValue::Literal(String::new()))
+}
+
+/// The `${var:OP}` operand stringified (substring `off:len`, glob operand, …).
+fn pe_operand_string(pe: &ParameterExpansion) -> String {
+    pe.operand
+        .as_ref()
+        .map(|e| expr_to_string(e))
+        .unwrap_or_default()
 }
 
 /// The subject of a `${…:OP}` disposition: a scalar var read, or the cell read

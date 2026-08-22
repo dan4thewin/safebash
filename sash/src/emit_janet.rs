@@ -2129,7 +2129,15 @@ fn emit_param_expansion_inline(pe: &ParameterExpansion, ctx: &EmitCtx) -> String
         ":-" => emit_pe_default(pe, ctx),
         ":?" => emit_pe_require(pe, ctx),
         "strlen" | "arrlen" => format!("(string (length (or {} \"\")))", var_ref),
-        "substring" => emit_pe_substring(&var_ref, &pe_operand_literal(pe)),
+        // `${a[i]:o:l}` substrings the cell read; the scalar `${s:o:l}` uses the
+        // plain var_ref. Edge 4.
+        "substring" => {
+            let src = match &pe.index {
+                Some(idx) => emit_expr_subscript(&pe.name, idx, ctx),
+                None => var_ref.clone(),
+            };
+            emit_pe_substring(&src, &pe_operand_literal(pe))
+        }
         // DD#65: `:s/` sed op keeps the raw `/`//` operator; the dropped
         // `/`-family glob-replace was remapped to `glob_replace` (rejected
         // at parse, SB4034). All other `${var:OP}` ops are dropped.

@@ -1156,8 +1156,8 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             let (d_ptr, d_len) = lower_value_as_str(e, default, types);
             emit_default_value_expr_c(e, &s_ptr, &s_len, &d_ptr, &d_len)
         }
-        // Phase 5 table/array/argv reads, the DD#77 `${var:?…}` require, plus
-        // the unhandled fallback.
+        // Phase 5 table/array/argv reads, the DD#77 `${var:?…}` require, the
+        // edge-4 cell substring, plus the unhandled fallback.
         other => lower_value_as_str_aggregate(e, other, types),
     }
 }
@@ -1175,6 +1175,12 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         // var is unset/empty, else the value.
         SsaValue::RequireValue { source, message } => {
             emit_require_value_c(e, source, message, types)
+        }
+        // `${a[i]:off:len}` — substring of a cell read (source is a Subscript);
+        // the scalar `${s:o:l}` stays a `ParamExpansion`. Edge 4.
+        SsaValue::Substring { source, spec } => {
+            let (s_ptr, s_len) = disposition_source_c(e, source, types);
+            emit_substring_c(e, &s_ptr, &s_len, spec)
         }
         // DD#60: argv-slice loop var (argv[idx], 0-based) / argv snapshot.
         SsaValue::ArgvIndex(_) => emit_c_argv_value(e, value),
