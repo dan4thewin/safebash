@@ -42,12 +42,6 @@ pub(super) fn handle_command(
         return b;
     }
 
-    // var =~ s/pattern/replacement/flags — regex mutation
-    // (single-arg commands only; not keyed on a builtin name)
-    if let Some(b) = try_regex_substitution(c, &name, state, ssa, block) {
-        return b;
-    }
-
     check_non_void_bare_call(&name, stmt, state);
     super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
 }
@@ -139,51 +133,6 @@ fn try_test_arg_capture(
 /// against the named variable. DD#39 compile-time regex validation.
 /// Single-arg form only. Returns `None` when the arg does not start
 /// with `s/` or the substitution body is malformed.
-fn try_regex_substitution(
-    c: &Command,
-    name: &str,
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) -> Option<BlockId> {
-    if c.args.len() != 1 {
-        return None;
-    }
-    let arg_s = expr_to_string(&c.args[0]);
-    let after_prefix = arg_s.strip_prefix("s/")?;
-    let parts: Vec<&str> = after_prefix.splitn(3, '/').collect();
-    if parts.len() < 2 {
-        return None;
-    }
-    let pattern = parts[0].to_string();
-    let replacement = parts[1].to_string();
-    let flags = if parts.len() > 2 { parts[2] } else { "" };
-
-    // DD#39: compile-time regex validation
-    if !pattern.contains('$') {
-        if let Err(msg) = crate::regex_validate::validate_regex(&pattern) {
-            state.diagnostics.push(format!(
-                "1:1: error [SB5023] invalid regex in substitution: {}",
-                msg
-            ));
-            return Some(block);
-        }
-    }
-
-    let global = if flags.contains('g') { "1" } else { "0" };
-    let var_ref = state.lookup(name);
-    let new_ref = state.define(name);
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: new_ref,
-        value: SsaValue::ParamExpansion {
-            var: var_ref,
-            operator: "regex_replace".to_string(),
-            operand: format!("{}\x00{}\x00{}", pattern, replacement, global),
-        },
-    });
-    Some(block)
-}
-
 /// DD#55/SB4016: a bare call of a non-void (`-> int`) function in
 /// statement position must be handled by `if`/`||` or captured by
 /// `$((…))`. Emits a diagnostic when violated; does not affect

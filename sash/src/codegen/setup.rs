@@ -973,20 +973,6 @@ impl<'a> Interner<'a> {
         if operator == "glob" || operator == "glob_regex" {
             self.intern(".");
         }
-        if operator == "regex_replace" {
-            // operand is "pattern\0replacement\0global"
-            for part in operand.split('\0') {
-                if !part.is_empty() {
-                    self.intern(part);
-                }
-            }
-        }
-        if operator == "/" || operator == "//" || operator == "/#" || operator == "/%" {
-            // operand is "pattern\0replacement"
-            for part in operand.split('\0') {
-                self.intern(part);
-            }
-        }
         // DD#33: per-element operations on arrvals
         if operator.starts_with("arrvals_/") {
             // operand is "regex\0replacement" (null-separated)

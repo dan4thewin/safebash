@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=40
+plan=43
 echo "1..$plan" >&3
 
 set +e
@@ -268,6 +268,27 @@ echo "${x:s/world/earth/}"'
 run_sash 'var=ab
 echo "${var:s/a/b}"'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.g8
+
+# ── H. a command argument that *looks* like sed is NOT a substitution ──
+# Regression pin: the retired `try_regex_substitution` hijacked any command
+# whose first arg matched `s/RE/SUB/[g]` (it desugared from the old `var =~ s/…`
+# encoding). `/bin/echo s/a/b/` printed nothing. The `:s`/`=~` sugars now
+# desugar at parse to `$(sub|gsub …)`, so a bare command arg is just a literal.
+
+# 63.h1 `s/a/b/` as a command arg is a literal word, not a substitution
+run_sash '/bin/echo s/a/b/'
+[[ $rc = 0 && $out = "s/a/b/" && -z $err ]]; chk 63.h1
+
+# 63.h2 the global-flag shape `s/x/y/g` is likewise a literal arg
+run_sash '/bin/echo s/x/y/g'
+[[ $rc = 0 && $out = "s/x/y/g" && -z $err ]]; chk 63.h2
+
+# 63.h3 an UNRESOLVABLE command with a lone `s/…` arg still resolves normally →
+# SB5011 (regression pin: the retired `is_regex_mutation` guard used to exempt
+# any single-`s/`-arg command from DD#23 resolution, so `nosuchcmd s/a/b/`
+# compiled and then hit a runtime `bug: bare command` abort instead).
+run_sash 'nosuchcmd_xyz s/a/b/'
+[[ $rc != 0 && $err == *SB5011* ]]; chk 63.h3
 
 set -e
 tally

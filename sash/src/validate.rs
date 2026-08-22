@@ -1406,9 +1406,6 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         }
         return;
     };
-    if is_regex_mutation(c) {
-        return;
-    }
     // DD#23: a command name must be resolvable at compile time. A variable or
     // other expansion (`$x foo`) is a runtime-chosen command — reject it here
     // rather than letting it reach `sash_exec` at runtime.
@@ -1435,20 +1432,6 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
             name
         ),
     ));
-}
-
-/// Skip pseudo-commands produced by the `var =~ s/pat/rep/` lowering:
-/// modern form is `Command{name=var, args=["s/..."]}` and legacy form
-/// is the two-arg `var =~ ...`. Either way they're not real commands.
-fn is_regex_mutation(c: &Command) -> bool {
-    if c.args.len() == 1 {
-        if let ExprKind::Literal(s) = &c.args[0].kind {
-            if s.starts_with("s/") {
-                return true;
-            }
-        }
-    }
-    c.args.first().is_some_and(|a| expr_literal_str(a) == "=~")
 }
 
 /// DD#63/SB4033: a `sub`/`gsub` replacement may use `\0`–`\9` (backrefs)

@@ -42,9 +42,6 @@ pub(super) fn handle_param_expansion(
             emit_int_to_str(builder, module, externs, arr_len)
         }
         "strlen_elem" => emit_strlen_elem(operand, s_ptr, builder, module, externs),
-        "regex_replace" => {
-            emit_regex_replace_op(operand, s_ptr, s_len, builder, module, literals, externs)
-        }
         op if op == "arrkeys"
             || op == "arrvals"
             || op == "arrjoin"
@@ -52,9 +49,7 @@ pub(super) fn handle_param_expansion(
         {
             emit_array_join_expansion(operator, operand, s_ptr, builder, module, literals, externs)
         }
-        _ => emit_string_op_expansion(
-            operator, operand, s_ptr, s_len, builder, module, literals, externs,
-        ),
+        _ => emit_string_op_expansion(operator, operand, s_ptr, s_len, builder, module, externs),
     }
 }
 
@@ -145,48 +140,6 @@ fn emit_glob_expansion(
     let table_ptr = builder.inst_results(call)[0];
     let zero = builder.ins().iconst(I64, 0);
     (table_ptr, zero)
-}
-
-#[allow(clippy::too_many_arguments)]
-fn emit_regex_replace_op(
-    operand: &str,
-    s_ptr: cranelift_codegen::ir::Value,
-    s_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // operand format: "pattern\0replacement\0global"
-    let parts: Vec<&str> = operand.split('\0').collect();
-    let pattern = parts.first().unwrap_or(&"");
-    let replacement = parts.get(1).unwrap_or(&"");
-    let global_s = parts.get(2).unwrap_or(&"0");
-    let global_i: i64 = if *global_s == "1" { 1 } else { 0 };
-
-    let pat_id = literals
-        .get(*pattern)
-        .unwrap_or_else(|| panic!("ICE: missing literal: {}", pattern));
-    let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
-    let pat_ptr = builder.ins().global_value(I64, pat_gv);
-    let pat_len = builder.ins().iconst(I64, pattern.len() as i64);
-
-    let rep_id = literals
-        .get(*replacement)
-        .unwrap_or_else(|| panic!("ICE: missing literal: {}", replacement));
-    let rep_gv = module.declare_data_in_func(*rep_id, builder.func);
-    let rep_ptr = builder.ins().global_value(I64, rep_gv);
-    let rep_len = builder.ins().iconst(I64, replacement.len() as i64);
-
-    let global_val = builder.ins().iconst(I64, global_i);
-    let replace_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-    let call = builder.ins().call(
-        replace_ref,
-        &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
-    );
-    let result_ptr = builder.inst_results(call)[0];
-    let result_len = builder.inst_results(call)[1];
-    (result_ptr, result_len)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -449,18 +402,15 @@ fn emit_string_op_expansion(
     s_len: cranelift_codegen::ir::Value,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    // DD#65 pruned the `${var:OP}` family: only `substring` (`:off:len`) and
-    // the `:s/` sed op (operator `/`//`) still reach codegen as a
-    // `ParamExpansion`. `:-` lowers to `SsaValue::DefaultValue`; every dropped
-    // op rejects at parse (SB4034), so a dropped op here is an ICE (fail loud).
+    // DD#65 pruned the `${var:OP}` family: only `substring` (`:off:len`) still
+    // reaches codegen as a `ParamExpansion`. `:-` lowers to
+    // `SsaValue::DefaultValue`, and `:s/…/` lowers to `SsaValue::RegexReplace`
+    // (the `$(sub)`/`$(gsub)` path); every dropped op rejects at parse (SB4034),
+    // so a dropped op here is an ICE (fail loud).
     match operator {
         "substring" => emit_substring(operand, s_ptr, s_len, builder, module, externs),
-        "/" | "//" => emit_pattern_replace(
-            operator, operand, s_ptr, s_len, builder, module, literals, externs,
-        ),
         _ => panic!(
             "ICE: unsupported parameter expansion operator: {}",
             operator
@@ -538,58 +488,6 @@ pub(crate) fn emit_case_conversion(
     let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);
     let result_len = builder.inst_results(call)[0];
     (buf_ptr, result_len)
-}
-
-/// ${var/pat/rep} family → regex_replace (DD#37). Operand is
-/// `"pattern\0replacement"`. The `//` operator sets the global
-/// flag; `/#` and `/%` are anchored variants (the runtime
-/// distinguishes them by examining the pattern).
-#[allow(clippy::too_many_arguments)]
-fn emit_pattern_replace(
-    operator: &str,
-    operand: &str,
-    s_ptr: cranelift_codegen::ir::Value,
-    s_len: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let parts: Vec<&str> = operand.splitn(2, '\0').collect();
-    let pattern = parts.first().unwrap_or(&"");
-    let replacement = parts.get(1).unwrap_or(&"");
-
-    let (pat_ptr, pat_len) = intern_literal_value(pattern, literals, module, builder);
-    let (rep_ptr, rep_len) = intern_literal_value(replacement, literals, module, builder);
-
-    let global_flag = if operator == "//" { 1i64 } else { 0i64 };
-    let global_val = builder.ins().iconst(I64, global_flag);
-
-    let func_ref = module.declare_func_in_func(externs.regex_replace, builder.func);
-    let call = builder.ins().call(
-        func_ref,
-        &[s_ptr, s_len, pat_ptr, pat_len, rep_ptr, rep_len, global_val],
-    );
-    let result_ptr = builder.inst_results(call)[0];
-    let result_len = builder.inst_results(call)[1];
-    (result_ptr, result_len)
-}
-
-/// Look up an interned literal and emit `(ptr, len)`. Panics with
-/// an ICE if the literal was not pre-interned by `intern_literals`.
-fn intern_literal_value(
-    s: &str,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    module: &mut ObjectModule,
-    builder: &mut FunctionBuilder,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let id = literals
-        .get(s)
-        .unwrap_or_else(|| panic!("ICE: missing literal: {}", s));
-    let gv = module.declare_data_in_func(*id, builder.func);
-    let ptr = builder.ins().global_value(I64, gv);
-    let len = builder.ins().iconst(I64, s.len() as i64);
-    (ptr, len)
 }
 
 /// Handle SsaValue::CmdSubst — command substitution $(cmd args...).

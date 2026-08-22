@@ -1,3 +1,26 @@
+## ════════ STATUS (2026-08-21, cleanup) — retire legacy sed/regex_replace machinery ════════
+
+**Committed on `hand-parser`.** Task `retire-legacy-sed-regex-replace-machinery`
+done. Removed the unreachable legacy `:s`/`=~` `regex_replace` path
+(`try_regex_substitution` in transform; the `regex_replace` + `/`|`//` codegen
+arms and `emit_pattern_replace`/`emit_regex_replace_op`/`intern_literal_value`;
+the dead `intern_param_expansion` guards). The LIVE `$(sub)`/`$(gsub)`
+(`SsaValue::RegexReplace` → `lower_regex_replace_value` → `sash_regex_replace`)
+path is untouched.
+
+Two bugs fixed in passing (both were masked by the machinery):
+- `try_regex_substitution` hijacked any command whose 1st arg looked like
+  `s/…/…/` → `/bin/echo s/a/b/` printed nothing. Now runs literally.
+- **`is_regex_mutation` SB5011 bypass** (`resolve.rs` + `validate.rs`): since
+  `=~` desugars at parse to an Assignment (not a Command), those guards only
+  ever matched *real* commands, exempting them from DD#23 resolution → an
+  unresolvable single-`s/`-arg command (`nosuchcmd s/a/b/`) compiled then hit a
+  runtime `bug: bare command` abort. Removed both guards+fns → proper SB5011.
+
+Specs regex.sh §H (63.h1–h3, ×3 modes = 9 new passing); 0 regressions native/c/
+janet. Journal 168. Remaining native backlog: `arith-bare-subscript-followups`,
+`eliminate-ice-arms-via-types`, `audit-string-keyed-builtin-dispatch`, doc task.
+
 ## ════════ STATUS (2026-08-21, backlog sweep cont².) — args-in-len + len-undefined ════════
 
 Combined effort from the `len-undefined` discussion (DG approved). Three parts,

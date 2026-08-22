@@ -1,6 +1,6 @@
 ---
 title: "cleanup: retire the now-unreachable legacy `:s`/`=~` regex_replace machinery"
-status: ready
+status: done
 priority: P3
 kind: cleanup
 depends: []
@@ -8,6 +8,37 @@ gates:
   - "no runtime behavior change (the paths below are already unreachable); all specs stay green"
   - "remove the dead transform + codegen + IR encodings once confirmed no producer remains"
 ---
+
+## Done (2026-08-21)
+
+Removed the full legacy sed/`regex_replace` machinery; specs green (0
+regressions native/c/janet), spec/regex.sh §H pins added (63.h1–h3).
+
+- `transform/stmt_handlers.rs::try_regex_substitution` (+ its call) — this was
+  a **latent bug**: it hijacked any command whose first arg matched `s/…/…/`,
+  so `/bin/echo s/a/b/` printed nothing. Removed → the command runs literally.
+- `codegen/value_handlers.rs`: removed the `"regex_replace"` arm, the
+  `"/" | "//" => emit_pattern_replace` arm (match is now just `"substring"` +
+  ICE fallthrough), and `emit_regex_replace_op` / `emit_pattern_replace` /
+  `intern_literal_value`.
+- `codegen/setup.rs::intern_param_expansion`: removed the dead `regex_replace`
+  and `/`|`//`|`/#`|`/%` intern guards (scalar `/`-family remaps to
+  `glob_replace` → SB4034 at parse; `regex_replace` had no producer).
+
+### BUG found while retiring: `is_regex_mutation` SB5011 bypass
+
+`=~` desugars at parse to `var = $(sub|gsub …)` (an **Assignment**, never a
+`Command`), so the `is_regex_mutation` guards in `resolve.rs` and `validate.rs`
+— which detect a `Command` with a lone `s/…` arg — could only ever match a
+**real** command. They exempted it from DD#23 resolution + SB5011, so
+`nosuchcmd_xyz s/a/b/` compiled and hit a runtime `bug: bare command passed to
+sash_exec` abort. Removed both guards + both `is_regex_mutation` fns →
+unresolvable single-`s/`-arg commands now get SB5011 at compile time (spec
+63.h3). Resolvable ones (`head s/a/b/`) resolve normally.
+
+**Kept (live `$(sub)`/`$(gsub)` path):** `sash_regex_replace`,
+`SsaValue::RegexReplace`, `codegen/values.rs::lower_regex_replace_value`, the
+`regex_replace` extern.
 
 # Retire the legacy sed/`regex_replace` machinery
 

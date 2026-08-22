@@ -170,13 +170,6 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
     for arg in &mut c.args {
         resolve_expr(arg, funcs, diags);
     }
-    // A `var =~ s/pat/rep/` regex mutation reuses the Command shape with the
-    // variable as the head; transform recognizes it by the single `s/…/…/`
-    // arg (see `stmt_handlers::try_regex_substitution`). The head is a
-    // variable, not an external — leave it alone.
-    if is_regex_mutation(c) {
-        return;
-    }
     // Then resolve the head itself if it is a plain external literal.
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
@@ -195,20 +188,6 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
             ),
         )),
     }
-}
-
-/// Mirror of `validate::is_regex_mutation`: a single `s/…` argument (modern
-/// form) or a leading `=~` argument (legacy form) marks a `var =~ s/…/…/`
-/// regex mutation, whose head is the target variable, not a command.
-fn is_regex_mutation(c: &Command) -> bool {
-    if c.args.len() == 1 {
-        if let ExprKind::Literal(s) = &c.args[0].kind {
-            if s.starts_with("s/") {
-                return true;
-            }
-        }
-    }
-    matches!(c.args.first().map(|a| &a.kind), Some(ExprKind::Literal(s)) if s == "=~")
 }
 
 fn resolve_expr(e: &mut Expr, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
