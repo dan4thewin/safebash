@@ -59,8 +59,6 @@ pub(super) struct ExternFuncs {
     #[allow(dead_code)]
     pub(super) capture: cranelift_module::FuncId,
     pub(super) strlen: cranelift_module::FuncId,
-    pub(super) strip_suffix: cranelift_module::FuncId,
-    pub(super) strip_prefix: cranelift_module::FuncId,
     pub(super) default_value: cranelift_module::FuncId,
     // Composable process primitives (Design Decision #14)
     pub(super) fork: cranelift_module::FuncId,

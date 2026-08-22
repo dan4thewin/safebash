@@ -1,6 +1,6 @@
 ---
 title: "remove dead sash_strip_prefix/sash_strip_suffix runtime + externs"
-status: ready
+status: done
 priority: P3
 kind: cleanup
 depends: [vet-var-modifiers]

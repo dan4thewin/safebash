@@ -207,24 +207,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("strlen", Linkage::Import, &strlen_sig)
         .expect("declare strlen");
 
-    // sash_strip_suffix(s, s_len, pat, pat_len, longest, &out_len) -> ptr
-    // sash_strip_suffix(s, s_len, pat, pat_len, longest) -> new_len
-    let mut strip_suffix_sig = Signature::new(CallConv::SystemV);
-    strip_suffix_sig.params.push(AbiParam::new(I64)); // s
-    strip_suffix_sig.params.push(AbiParam::new(I64)); // s_len
-    strip_suffix_sig.params.push(AbiParam::new(I64)); // pat
-    strip_suffix_sig.params.push(AbiParam::new(I64)); // pat_len
-    strip_suffix_sig.params.push(AbiParam::new(I64)); // longest
-    strip_suffix_sig.returns.push(AbiParam::new(I64)); // new_len
-    let strip_suffix_func = module
-        .declare_function("sash_strip_suffix", Linkage::Import, &strip_suffix_sig)
-        .expect("declare sash_strip_suffix");
-
-    // sash_strip_prefix — same signature, returns offset
-    let strip_prefix_func = module
-        .declare_function("sash_strip_prefix", Linkage::Import, &strip_suffix_sig)
-        .expect("declare sash_strip_prefix");
-
     // sash_default_value(s_len) -> is_set (0 or 1)
     let mut default_value_sig = Signature::new(CallConv::SystemV);
     default_value_sig.params.push(AbiParam::new(I64)); // s_len
@@ -800,8 +782,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         getenv: getenv_func,
         capture: capture_func,
         strlen: strlen_func,
-        strip_suffix: strip_suffix_func,
-        strip_prefix: strip_prefix_func,
         default_value: default_value_func,
         fork: fork_func,
         exec: exec_func,

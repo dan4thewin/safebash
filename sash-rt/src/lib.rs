@@ -1001,40 +1001,6 @@ pub unsafe extern "C" fn _start() -> ! {
 // String operations — thin unsafe wrappers over safe inners
 // ═══════════════════════════════════════════════════════════════
 
-/// ${var%%pat} / ${var%pat} — returns new length (ptr unchanged)
-#[no_mangle]
-pub extern "C" fn sash_strip_suffix(
-    s: *const u8,
-    s_len: i64,
-    pat: *const u8,
-    pat_len: i64,
-    longest: i64,
-) -> i64 {
-    if s.is_null() || s_len <= 0 {
-        return 0;
-    }
-    let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
-    let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
-    strip_suffix_inner(s_bytes, pat_bytes, longest != 0) as i64
-}
-
-/// ${var##pat} / ${var#pat} — returns offset (bytes to skip from start)
-#[no_mangle]
-pub extern "C" fn sash_strip_prefix(
-    s: *const u8,
-    s_len: i64,
-    pat: *const u8,
-    pat_len: i64,
-    longest: i64,
-) -> i64 {
-    if s.is_null() || s_len <= 0 {
-        return 0;
-    }
-    let s_bytes = unsafe { core::slice::from_raw_parts(s, s_len as usize) };
-    let pat_bytes = unsafe { core::slice::from_raw_parts(pat, pat_len as usize) };
-    strip_prefix_inner(s_bytes, pat_bytes, longest != 0) as i64
-}
-
 /// ${var:-default} — returns 0 if var is empty (use default), 1 if set
 #[no_mangle]
 pub extern "C" fn sash_default_value(s_len: i64) -> i64 {

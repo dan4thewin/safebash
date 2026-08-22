@@ -164,16 +164,6 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     // Phase 3 — parameter expansion
-    writeln!(
-        out,
-        "extern i64 sash_strip_suffix(const char* sp, i64 sl, const char* pp, i64 pl, i64 longest);"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "extern i64 sash_strip_prefix(const char* sp, i64 sl, const char* pp, i64 pl, i64 longest);"
-    )
-    .unwrap();
     writeln!(out, "extern i64 sash_default_value(i64 s_len);").unwrap();
     writeln!(
         out,

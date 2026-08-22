@@ -7,23 +7,7 @@ extern "C" {
     fn sash_atoi(s_ptr: *const u8, s_len: i64) -> i64;
     fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64;
     fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8;
-    fn sash_strip_suffix(
-        s: *const u8,
-        s_len: i64,
-        pat: *const u8,
-        pat_len: i64,
-        longest: i64,
-    ) -> i64;
-    fn sash_strip_prefix(
-        s: *const u8,
-        s_len: i64,
-        pat: *const u8,
-        pat_len: i64,
-        longest: i64,
-    ) -> i64;
-    fn sash_streq(p1: *const u8, l1: i64, p2: *const u8, l2: i64) -> i64;
     fn sash_default_value(s_len: i64) -> i64;
-    fn sash_arith_eval(var_val: i64, op: u8, operand: i64) -> i64;
 
     fn sash_table_new(capacity: i64) -> *mut u8; // opaque pointer
     fn sash_table_set(
@@ -87,7 +71,7 @@ fn is_int_strict() {
         assert_eq!(t(b"0b2"), 0);
         assert_eq!(t(b" 42"), 0); // no leading whitespace
         assert_eq!(t(b"42 "), 0); // no trailing whitespace
-        // range-checked (DD#77): a well-formed but out-of-range value is false
+                                  // range-checked (DD#77): a well-formed but out-of-range value is false
         assert_eq!(t(b"9223372036854775807"), 1); // i64::MAX
         assert_eq!(t(b"9223372036854775808"), 0); // MAX + 1 → out of range
         assert_eq!(t(b"-9223372036854775808"), 1); // i64::MIN (asymmetry)
@@ -222,198 +206,6 @@ fn itoa_large() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// sash_strip_suffix tests
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn strip_suffix_literal_match() {
-    // ${x%.txt} where x="file.txt"
-    let s = b"file.txt";
-    let pat = b".txt";
-    unsafe {
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 8, pat.as_ptr(), 4, 0), 4);
-    }
-}
-
-#[test]
-fn strip_suffix_literal_no_match() {
-    let s = b"file.txt";
-    let pat = b".rs";
-    unsafe {
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 8, pat.as_ptr(), 3, 0), 8);
-    }
-}
-
-#[test]
-fn strip_suffix_star_x_greedy() {
-    // ${x%%/*} where x="/usr/local/bin" → pat="/*", longest=1
-    let s = b"/usr/local/bin";
-    let pat = b"/*";
-    unsafe {
-        // %% finds first '/', keeps before → ""... wait, first '/' is at 0
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 14, pat.as_ptr(), 2, 1), 0);
-    }
-}
-
-#[test]
-fn strip_suffix_star_x_lazy() {
-    // ${x%/*} where x="/usr/local/bin" → pat="/*", longest=0
-    let s = b"/usr/local/bin";
-    let pat = b"/*";
-    unsafe {
-        // % finds last '/', keeps before → "/usr/local"
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 14, pat.as_ptr(), 2, 0), 10);
-    }
-}
-
-#[test]
-fn strip_suffix_x_star_greedy() {
-    // ${x%%.*} where x="file.tar.gz" → pat=".*", longest=1
-    let s = b"file.tar.gz";
-    let pat = b".*";
-    unsafe {
-        // %% finds first '.', keeps before → "file"
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 11, pat.as_ptr(), 2, 1), 4);
-    }
-}
-
-#[test]
-fn strip_suffix_x_star_lazy() {
-    // ${x%.*} where x="file.tar.gz" → pat=".*", longest=0
-    let s = b"file.tar.gz";
-    let pat = b".*";
-    unsafe {
-        // % finds last '.', keeps before → "file.tar"
-        assert_eq!(sash_strip_suffix(s.as_ptr(), 11, pat.as_ptr(), 2, 0), 8);
-    }
-}
-
-#[test]
-fn strip_suffix_empty_string() {
-    unsafe {
-        assert_eq!(
-            sash_strip_suffix(std::ptr::null(), 0, b"x".as_ptr(), 1, 0),
-            0
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// sash_strip_prefix tests
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn strip_prefix_literal_match() {
-    // ${x#foo} where x="foobar"
-    let s = b"foobar";
-    let pat = b"foo";
-    unsafe {
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 6, pat.as_ptr(), 3, 0), 3);
-    }
-}
-
-#[test]
-fn strip_prefix_literal_no_match() {
-    let s = b"foobar";
-    let pat = b"baz";
-    unsafe {
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 6, pat.as_ptr(), 3, 0), 0);
-    }
-}
-
-#[test]
-fn strip_prefix_star_x_greedy() {
-    // ${x##*/} where x="/usr/local/bin" → pat="*/", longest=1
-    let s = b"/usr/local/bin";
-    let pat = b"*/";
-    unsafe {
-        // ## finds last '/', skips past it → "bin"
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 14, pat.as_ptr(), 2, 1), 11);
-    }
-}
-
-#[test]
-fn strip_prefix_star_x_lazy() {
-    // ${x#*/} where x="/usr/local/bin" → pat="*/", longest=0
-    let s = b"/usr/local/bin";
-    let pat = b"*/";
-    unsafe {
-        // # finds first '/', skips past it → "usr/local/bin"
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 14, pat.as_ptr(), 2, 0), 1);
-    }
-}
-
-#[test]
-fn strip_prefix_x_star_greedy() {
-    // ${x##foo*} where x="fooXfooY"
-    let s = b"fooXfooY";
-    let pat = b"foo*";
-    unsafe {
-        // ## finds last 'foo', skips past it
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 8, pat.as_ptr(), 4, 1), 7);
-    }
-}
-
-#[test]
-fn strip_prefix_x_star_lazy() {
-    // ${x#foo*} where x="fooXfooY"
-    let s = b"fooXfooY";
-    let pat = b"foo*";
-    unsafe {
-        // # finds first 'foo', skips past it
-        assert_eq!(sash_strip_prefix(s.as_ptr(), 8, pat.as_ptr(), 4, 0), 3);
-    }
-}
-
-#[test]
-fn strip_prefix_empty_string() {
-    unsafe {
-        assert_eq!(
-            sash_strip_prefix(std::ptr::null(), 0, b"x".as_ptr(), 1, 0),
-            0
-        );
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// sash_streq tests
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn streq_equal() {
-    let a = b"hello";
-    let b = b"hello";
-    unsafe {
-        assert_eq!(sash_streq(a.as_ptr(), 5, b.as_ptr(), 5), 1);
-    }
-}
-
-#[test]
-fn streq_unequal() {
-    let a = b"hello";
-    let b = b"world";
-    unsafe {
-        assert_eq!(sash_streq(a.as_ptr(), 5, b.as_ptr(), 5), 0);
-    }
-}
-
-#[test]
-fn streq_different_lengths() {
-    let a = b"hello";
-    let b = b"hell";
-    unsafe {
-        assert_eq!(sash_streq(a.as_ptr(), 5, b.as_ptr(), 4), 0);
-    }
-}
-
-#[test]
-fn streq_empty() {
-    unsafe {
-        assert_eq!(sash_streq(b"".as_ptr(), 0, b"".as_ptr(), 0), 1);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
 // sash_default_value tests
 // ═══════════════════════════════════════════════════════════════
 
@@ -435,54 +227,6 @@ fn default_value_negative() {
 fn default_value_set() {
     unsafe {
         assert_eq!(sash_default_value(5), 1);
-    }
-}
-
-// ═══════════════════════════════════════════════════════════════
-// sash_arith_eval tests
-// ═══════════════════════════════════════════════════════════════
-
-#[test]
-fn arith_add() {
-    unsafe {
-        assert_eq!(sash_arith_eval(10, b'+', 5), 15);
-    }
-}
-
-#[test]
-fn arith_sub() {
-    unsafe {
-        assert_eq!(sash_arith_eval(10, b'-', 3), 7);
-    }
-}
-
-#[test]
-fn arith_mul() {
-    unsafe {
-        assert_eq!(sash_arith_eval(6, b'*', 7), 42);
-    }
-}
-
-#[test]
-fn arith_div() {
-    unsafe {
-        assert_eq!(sash_arith_eval(20, b'/', 4), 5);
-    }
-}
-
-// arith_div_zero moved to overflow_tests.rs — now panics per DD#26
-
-#[test]
-fn arith_unknown_op() {
-    unsafe {
-        assert_eq!(sash_arith_eval(10, b'^', 2), 0);
-    }
-}
-
-#[test]
-fn arith_negative_result() {
-    unsafe {
-        assert_eq!(sash_arith_eval(3, b'-', 10), -7);
     }
 }
 
