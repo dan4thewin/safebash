@@ -41,6 +41,21 @@ fn arith_range_error(span: Span, literal: &str) -> Diagnostic {
 /// bash arbitrary-base literal `base#digits` (use `0x`/`0o`/`0b`), or an
 /// invalid prefix digit (`0o8`). Distinct from SB4026 (out of range).
 fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
+    // A stray `[` / `]` in arithmetic is a `$a[i]` dollar-subscript attempt,
+    // which isn't a subscript read here (the reconstructed `$(( ))` content
+    // splits `$a` from `[i]`). Point at the two working spellings instead of
+    // the generic numeric-literal message. (arith-bare-subscript-followups
+    // edge 1: `$a[i]` → SB4035 with a clear hint.)
+    if literal == "[" || literal == "]" {
+        return Diagnostic::error_at(
+            span.line,
+            span.col,
+            "SB4035",
+            "`$a[i]` isn't a subscript read in arithmetic — use the bare cell \
+             form `a[i]` or the braced value form `${a[i]}`"
+                .to_string(),
+        );
+    }
     Diagnostic::error_at(
         span.line,
         span.col,

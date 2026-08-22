@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=148
+plan=153
 echo "1..$plan" >&3
 
 set +e
@@ -482,6 +482,37 @@ run_sash 'int map m=([k]=5); int x=$(( m[0] + 1 ))'
 # bsx.7 bare `m[0]++` mutation on a map → compile error
 run_sash 'int map m=([k]=5); (( m[0]++ ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk bsx.7
+
+# ── arith-bare-subscript-followups edge 1: `$a[i]` (dollar, non-brace) isn't a
+# subscript read in arith. The `$(( ))` content is rebuilt token→string→re-lexed
+# and can't preserve a `$`/variable index cleanly (it would silently read a[0]),
+# so it rejects with a clear hint pointing at the bare `a[i]` / braced `${a[i]}`
+# forms. Mode-independent (compile-time). ──
+# dsx.1 literal index → SB4035 carrying the `a[i]`/`${a[i]}` hint
+run_sash 'int array a=(7 13 21); echo $(( $a[1] ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* && $err == *'${a[i]}'* ]]; chk dsx.1
+# dsx.2 variable index rejects too (crucially NOT a silent a[0] read)
+run_sash 'int array a=(7 13 21); int i=1; echo $(( $a[$i] ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk dsx.2
+
+# ── arith-bare-subscript-followups edge 2: a bare nested cell read `a[a[0]]`
+# ends in `]]`; the lexer now tracks subscript depth so that `]]` closes two
+# subscripts rather than breaking as a `[[ ]]` dispatch delimiter. native,c —
+# janet's arith VALUE path doesn't read the embedded subscript
+# (janet-arith-subscript-read). ──
+if in_modes native,c; then
+    # nsx.1 nested rvalue read: a[0]=2 → a[a[0]] = a[2] = 9
+    run_sash 'int array a=(2 0 9); echo $(( a[a[0]] ))'
+    [[ $rc = 0 && $out = "9" && -z $err ]]; chk nsx.1
+    # nsx.2 nested lvalue write: a[0]=1 → a[1] = 5
+    run_sash 'int array a=(1 0 9); (( a[a[0]] = 5 )); echo $a[1]'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk nsx.2
+    # nsx.3 triple nesting: a=(1 2 0 5); a[0]=1 → a[1]=2 → a[2]=0
+    run_sash 'int array a=(1 2 0 5); echo $(( a[a[a[0]]] ))'
+    [[ $rc = 0 && $out = "0" && -z $err ]]; chk nsx.3
+else
+    skip_chk nsx.1; skip_chk nsx.2; skip_chk nsx.3
+fi
 
 # ── B2 (SB5031 extended into arithmetic): a bare name *read* in arith that is
 # assigned nowhere is a typo — the same rule as `$x` outside arith. Anything you

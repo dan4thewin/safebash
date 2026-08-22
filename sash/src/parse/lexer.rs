@@ -1238,6 +1238,11 @@ impl Scanner {
     /// at word start was consumed (caller emits it directly); returns `None`
     /// after a normal break / end-of-input.
     fn scan_word_chars(&mut self, start: usize, word: &mut String) -> Option<SpannedToken> {
+        // Subscript-bracket depth within this word. A doubled `[[`/`]]` delimits
+        // a `[[ … ]]` test/dispatch only at depth 0; inside a subscript (depth >
+        // 0) a `]]` is two subscript closes — e.g. the bare nested cell read
+        // `a[a[0]]` (arith model B) ends in `]]` and must stay one word.
+        let mut depth = 0i32;
         while self.pos < self.source.len() {
             let b = self.source[self.pos];
             match b {
@@ -1257,11 +1262,23 @@ impl Scanner {
                 b'=' => break,
                 // `+=` breaks the word (compound-assign operator).
                 b'+' if self.source.get(self.pos + 1) == Some(&b'=') => break,
-                // A doubled `[[` / `]]` delimits a test/dispatch — break so the
-                // byte dispatcher tokenizes it (`scan_lbracket`/`scan_rbracket`),
-                // making `[[ … ]]` whitespace-optional like `(( … ))`. A single
-                // bracket stays a subscript char (falls to the default arm).
-                b'[' | b']' if self.source.get(self.pos + 1) == Some(&b) => break,
+                // A doubled `[[` / `]]` at subscript-depth 0 delimits a
+                // test/dispatch — break so the byte dispatcher tokenizes it
+                // (`scan_lbracket`/`scan_rbracket`), making `[[ … ]]`
+                // whitespace-optional like `(( … ))`.
+                b'[' | b']' if depth == 0 && self.source.get(self.pos + 1) == Some(&b) => break,
+                // Otherwise a bracket is a subscript char: track depth so a
+                // nested subscript's closing `]]` stays within the word.
+                b'[' => {
+                    depth += 1;
+                    word.push('[');
+                    self.pos += 1;
+                }
+                b']' if depth > 0 => {
+                    depth -= 1;
+                    word.push(']');
+                    self.pos += 1;
+                }
                 _ => {
                     word.push(b as char);
                     self.pos += 1;

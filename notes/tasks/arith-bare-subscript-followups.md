@@ -5,8 +5,8 @@ priority: P3
 kind: bug
 depends: []
 gates:
-  - "`$(( $a[i] ))` (dollar, non-brace) in arith reads the cell (model B table lists it as an rvalue read) — currently SB4035 `invalid numeric literal '['`"
-  - "nested index `$(( a[a[0]] ))` parses (currently SB4035)"
+  - "DONE (edge 1, DG chose the diagnostic route): `$(( $a[i] ))` rejects with a clear `use a[i] / ${a[i]}` hint instead of `invalid numeric literal '['` (a silent-read fix was reverted — reconstruction can't preserve a `$`-index)"
+  - "DONE (edge 2): nested index `$(( a[a[0]] ))` parses (lexer subscript-depth tracking; the `]]` closes two subscripts, not a `[[ ]]` dispatch)"
   - "substring `${a[i]:o:l}` / sed `${a[i]:s/…/}` on a cell (currently the explicit SB4039 staged-reject) reach scalar parity — needs a cell-source lowering for substring/sed"
   - "no regression"
 ---
@@ -53,12 +53,25 @@ undersold it). The task's fallback ("at minimum a clear error") is also
 non-trivial: the `[` is a stray token in the reconstructed string with no
 `$var` context at the point SB4035 fires.
 
-### 2. Nested index `a[a[0]]` → SB4035
+### 2. Nested index `a[a[0]]` → SB4035 — RESOLVED (2026-08-21)
 
-`scan_balanced_brackets` captures the balanced run, and the parser re-parses the
-inner text as arith — but `a[a[0]]` still rejects. Likely the arith-content
-extractor (`collect_arith_content`) or a re-parse edge. Rare; fix when touching
-the arith subscript parser.
+Root cause was **not** the arith re-parse: the core word lexer
+(`lexer.rs::scan_word_chars`) broke a word on any doubled `]]` (added to make
+`[[ … ]]` whitespace-optional). A bare nested cell read `a[a[0]]` **ends in
+`]]`**, so it was split into `Word("a[a[0")` + `DblBracketClose`, dropping the
+close and corrupting the subscript. (The `[[ ]]`-safety note assumed nested
+subscripts always use the `${…}` sigil and end in `}]` — bare model-B subscripts
+violate that.) Fix: track subscript-bracket depth in `scan_word_chars`; a
+doubled `[[`/`]]` delimits a test/dispatch only at depth 0, while inside a
+subscript (depth > 0) `]]` is two subscript closes. `a[a[0]]`, triple-nesting
+`a[a[a[0]]]`, and the lvalue `(( a[a[0]] = 5 ))` all parse now; `[[ ]]` dispatch
+unaffected (0 spec regressions, dispatch.sh green). Specs nsx.1-3.
+
+**Adjacent finding (pre-existing, NOT this fix — different path):** the *braced*
+nested form `${a[a[0]]}` returns the inner cell (`a[0]`) instead of the outer
+lookup — a silent wrong answer. It goes through `scan_brace_expansion` +
+`subscript_index_expr`, independent of `scan_word_chars`, so it predates this
+change. Filed separately (see `notes/tasks/`).
 
 ### 3. string-array cell in arith — RESOLVED (2026-08-19)
 
