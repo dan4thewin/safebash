@@ -23,9 +23,35 @@ Model B's table lists `$a[i]` (non-brace) as an rvalue read "as today". Inside
 `(( ))` it doesn't parse: `scan_arith_dollar` reads `$a` as `DollarVar("a")`,
 then `[` hits `match_arith_op1` → unknown → `BadLit` → SB4035 (a confusing
 `invalid numeric literal '['`). Bare `a[i]` and braced `${a[i]}` both work, so
-there's a path; this is a convenience gap + a poor diagnostic. Fix: extend
-`scan_arith_dollar` to capture `$name[…]` like `scan_arith_ident` does, or at
-minimum give a clear "use `a[i]` or `${a[i]}`" error.
+there's a path; this is a convenience gap + a poor diagnostic.
+
+**Investigated 2026-08-21 — a naive fix is UNSAFE (silent wrong answers).**
+`$(( ))` content is collected by `collect_arith_content` as a *reconstructed
+string* (logos `Tok` stream → `tok_to_text`, with `needs_separator_space`
+inserting spaces between tokens), then re-tokenized by `tokenize_arith`. The
+tried fix — suppress the space before a `[`-Word and capture `$name[…]` in
+`scan_arith_named_var` → the same `ATok::Subscript` as `${a[i]}` — makes the
+*literal* case `$a[1]` work, but the bare-ident lexer only fuses `a[i]` into
+one Word; `$a` stops at `[`, so any `$`-bearing or multi-token index splits:
+`$a[$i]` reconstructs to `"$a[ $i ]"` (spaces **inside** the brackets, because
+`needs_separator_space` fires between `[`, `$i`, `]`). `scan_balanced_brackets`
+then captures `" $i "` and `subscript_index_expr` mis-parses it → **reads a[0]
+silently**. Verified: `$a[i]`, `$a[$i]`, `$a[i+1]` all returned 7 (index 0)
+instead of 13. Reverted — worse than the SB4035 reject.
+
+**A correct fix is lexer-level, not a reconstruction patch.** Extend
+`scan_dollar` (parse/lexer.rs) to fuse `$name[…balanced…]` into a single
+`Tok::Dollar("name[…]")`, mirroring how `scan_word` fuses bare `a[i]`. Then the
+subscript (including any `$i`) survives as one token: arith `tok_to_text` emits
+it contiguously and `tokenize_arith` threads the index exactly like `${a[i]}`.
+**Risk:** word context already parses `$a[i]` via *separate* tokens (spec
+bsx.3 `echo $a[$i]` → 8); fusing at the lexer changes that path too, so
+`expr.rs`'s `$var` handling must split `name[…]` back out. Needs word+arith
+regression coverage. This is a focused lexer/expr change, not a one-liner —
+**surface to DG** (language-surface behavior; the "convenience gap" framing
+undersold it). The task's fallback ("at minimum a clear error") is also
+non-trivial: the `[` is a stray token in the reconstructed string with no
+`$var` context at the point SB4035 fires.
 
 ### 2. Nested index `a[a[0]]` → SB4035
 
