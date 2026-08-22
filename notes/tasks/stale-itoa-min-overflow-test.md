@@ -1,6 +1,6 @@
 ---
 title: "sash-rt-tests overflow_tests: itoa_min_i64_panics is stale (i64::MIN no longer panics)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []

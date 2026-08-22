@@ -77,10 +77,11 @@ fn itoa_neg_max() {
 }
 
 #[test]
-#[should_panic(expected = "integer overflow")]
-fn itoa_min_i64_panics() {
+fn itoa_min_i64() {
+    // i64::MIN formats correctly via unsigned_abs (journal 120) — it does NOT
+    // panic (the old `#[should_panic]` expectation was stale).
     let mut buf = [0u8; 21];
-    itoa_inner(i64::MIN, &mut buf);
+    assert_eq!(itoa_inner(i64::MIN, &mut buf), b"-9223372036854775808");
 }
 
 // ═══════════════════════════════════════════════════════════════
