@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup undeclared
-plan=18
+plan=21
 echo "1..$plan" >&3
 
 set +e
@@ -109,6 +109,17 @@ run_sash 'echo $LINENO'
 # ud.18 the braced form `${LINENO}` is rejected the same way
 run_sash 'echo ${LINENO}'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.18
+
+# ud.19 reading an UNDECLARED array `${z[i]}` is SB5031, not a codegen ICE
+# (`undefined array` panic). The collection name is a read too (DD#80 era fix).
+run_sash 'echo ${z[0]}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.19
+# ud.20 the map-style `${z[k]}` read likewise
+run_sash 'echo ${z[k]}'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.20
+# ud.21 the bare dollar-subscript cell read `$z[0]` likewise
+run_sash 'echo $z[0]'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.21
 
 set -e
 tally

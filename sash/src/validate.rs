@@ -3079,7 +3079,17 @@ fn check_expr_reads(expr: &Expr, known: &HashSet<String>, diags: &mut Vec<Diagno
         ExprKind::ParameterExpansion(pe) => {
             check_param_expansion_reads(pe, expr.span, known, diags)
         }
-        ExprKind::Subscript { index, .. } => check_expr_reads(index, known, diags),
+        ExprKind::Subscript { name, index } => {
+            // The collection name is itself a read — flag an undeclared one so it
+            // reports SB5031 rather than ICE-ing at codegen (`undefined array`).
+            // `args` is function-local: a top-level `${args[i]}` is reported by
+            // SB5024 (skip it here to avoid a double), and inside a function it
+            // is already in scope.
+            if name != "args" {
+                flag_if_unknown(name, expr.span, known, diags);
+            }
+            check_expr_reads(index, known, diags);
+        }
         ExprKind::CommandSubstitution(stmts) => check_cmdsub_reads(stmts, known, diags),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
             check_exprs(parts, known, diags)

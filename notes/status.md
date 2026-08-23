@@ -1,3 +1,14 @@
+## ════════ STATUS (2026-08-23) — undeclared collection read ICE → SB5031 ════════
+
+**Committed on `hand-parser`.** `echo ${z[0]}` (undeclared array/map read)
+panicked at codegen (`ICE: undefined array`) instead of a clean error — found
+during DD#80. `validate::check_expr_reads`'s `Subscript` arm now flags an
+undeclared collection *name* (SB5031), mirroring the arith path (which already
+did); `args` skipped (top-level → SB5024, in-function → in scope). spec
+undeclared.sh ud.19-21 (×3). Filed `arith-args-subscript-codegen` (a masked
+codegen gap: bare `$(( args[0] ))` never resolves `args`→`__argsN`; the SB5031
+false-positive was protective). 0 regressions; native gate 0. Journal 172.
+
 ## ════════ STATUS (2026-08-22) — DD#80 braced subscript key/index discipline ════════
 
 **Committed on `hand-parser`.** DD#80 (companion to DD#79): `${a[K]}` / `${m[K]}`
