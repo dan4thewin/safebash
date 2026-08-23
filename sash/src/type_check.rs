@@ -607,8 +607,9 @@ fn check_subscript_key_kind(
     } else if !is_map && is_string_key(index) {
         errors.push(TypeError {
             message: format!(
-                "string key on indexed array '{}' — use integer indices. Declare as `map` for string keys",
-                name,
+                "string key on indexed array '{name}' — an int-indexed array is indexed by \
+                 number (DD#80). Use an integer, `${{{name}[$i]}}`, or `$(( … ))`; declare \
+                 `map {name}` for string keys",
             ),
             span,
         });
@@ -696,7 +697,11 @@ fn join_operand_name(expr: &Expr) -> String {
 /// Check if an expression is a plain string literal (non-numeric)
 fn is_string_key(expr: &Expr) -> bool {
     match &expr.kind {
+        // a non-numeric bareword literal is a string key
         ExprKind::Literal(s) => !s.is_empty() && !s.chars().all(|c| c.is_ascii_digit()),
+        // an explicitly quoted key is a string — even a quoted numeric `"5"`
+        // (DD#80: use the unquoted integer `${a[5]}` to index an int array)
+        ExprKind::DoubleQuoted(_) | ExprKind::SingleQuoted(_) => true,
         ExprKind::SimpleExpansion(_) => false, // variable — could be either
         _ => false,
     }

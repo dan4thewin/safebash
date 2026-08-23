@@ -1,3 +1,26 @@
+## ════════ STATUS (2026-08-22) — DD#80 braced subscript key/index discipline ════════
+
+**Committed on `hand-parser`.** DD#80 (companion to DD#79): `${a[K]}` / `${m[K]}`
+take a **direct, unambiguous** key — no *implicit* arithmetic; computation uses
+an explicit nested context. `bare in (( )) = arithmetic; ${ } = direct key.`
+
+- Parse: `try_subscript` now captures the index balanced/quote-aware
+  (`capture_balanced_subscript`) and re-parses it via `parse_expr`, so nested
+  `${…}`/`$(( … ))`/quoted keys work and lower to SSA temporaries for free
+  (`${a[${a[0]}]}` was SB4035 → now works). A bare dollar-subscript `$b[0]` is
+  kept ambiguous (use `${b[0]}`).
+- Reject: **SB4041** (new, `validate::check_subscript_index`) for an
+  ambiguous/implicit bare index (`${a[a[0]]}`, `${a[i+1]}`, `${a[$b[0]]}`);
+  **SB4030** (reused type-check string→int) for a string key on an int array
+  (`${a[foo]}`, bare `${a[i]}`, `${a["5"]}`). Catches word AND arith contexts.
+- Fixes `bug-braced-nested-subscript-index` (the silent inner-cell read) +
+  the wider silent-`0` footgun. Aligned with DD#33 (bare integer on a map is
+  quoted). Filed `converter-braced-subscript-index` (follow-up).
+
+spec/subscript.sh 80.1–80.19 (57 = 19×3). 0 regressions native/c/janet; 51 new
+passing; native gate 0. DD#80, journal 171. This resolved the design thread that
+began with the `arith-bare-subscript-followups` edge-2 finding.
+
 ## ════════ STATUS (2026-08-21, cont.) — arith-bare-subscript-followups DONE (all 4 edges) ════════
 
 **Pushed on `hand-parser`.** Task `arith-bare-subscript-followups` complete.

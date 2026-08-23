@@ -1,6 +1,6 @@
 ---
 title: "bug: braced ${a[a[0]]} nested subscript index reads the inner cell, not the outer"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -43,3 +43,13 @@ SB4030 gate), so the braced-nested rules should mirror the bare-nested ones.
 
 `notes/tasks/arith-bare-subscript-followups.md` edge 2, journal (edge-1/2
 entry).
+
+## Resolved by DD#80 (2026-08-22)
+
+Superseded by the DD#80 braced-key discipline. `${a[a[0]]}` no longer silently
+reads the inner cell — a bare nested subscript is an **ambiguous** braced index
+and is rejected (**SB4041**) in both word and arith contexts. The explicit forms
+`${a[${a[0]}]}` / `${a[$(( a[0] ))]}` compute the outer lookup correctly (the
+index re-parses through the value parser and lowers to SSA temporaries). Specs:
+spec/subscript.sh 80.1/80.12. No separate fix to `subscript_index_expr` needed —
+the whole braced-index path was reworked.

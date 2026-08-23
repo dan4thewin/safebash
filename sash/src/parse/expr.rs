@@ -669,15 +669,22 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     if content.as_bytes()[name_end] != b'[' {
         return None;
     }
-    let close = content[name_end..].find(']')?;
-    let idx = &content[name_end + 1..name_end + close];
-    let after_bracket = &content[name_end + close + 1..];
+    // DD#80: capture the index balanced across `[] {} ()` and skipping quotes,
+    // so a `]` inside a nested `${…}` / `$(( … ))` / quoted key does not close
+    // the subscript early. `close` is the byte index of the matching `]`.
+    let (idx, close) = capture_balanced_subscript(content, name_end)?;
+    let after_bracket = &content[close + 1..];
 
     if idx == "@" || idx == "*" {
         return Some(splat_subscript_expr(name, after_bracket, span));
     }
 
-    let index = Box::new(subscript_index_expr(idx, span));
+    // DD#80: re-parse the index as a full expression so an explicit nested
+    // context (`$var`, `${…}`, `$(…)`, `$(( … ))`, quoted string) works and
+    // lowers to SSA temporaries like any other operand. An implicit/ambiguous
+    // bare form (brackets/operators/mixed) parses to a `Literal`/`Concat` that
+    // `validate::check_subscript_index` rejects (SB4041).
+    let index = Box::new(parse_subscript_index(&idx, span));
 
     if after_bracket.is_empty() {
         return Some(Expr {
@@ -696,6 +703,90 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     // pruned families (`#`/`%`/`/`/`@X`) reject on their operator string exactly
     // as for a scalar, and any other `:`-led op rejects as `cell_string_op`.
     Some(subscript_operator_expr(name, index, after_bracket, span))
+}
+
+/// Capture the `[ … ]` subscript index that starts at `content[open] == '['`,
+/// balanced across `[] {} ()` and skipping quoted spans, so a `]` inside a
+/// nested `${…}` / `$(… )` / `$(( … ))` / `"…"` / `'…'` does not close the
+/// subscript early (DD#80). Returns `(index text, byte index of the matching
+/// `]`)`, or `None` if unbalanced.
+fn capture_balanced_subscript(content: &str, open: usize) -> Option<(String, usize)> {
+    let bytes = content.as_bytes();
+    let mut depth = 0i32;
+    let mut quote: Option<u8> = None;
+    for (i, &b) in bytes.iter().enumerate().skip(open) {
+        if advance_in_quote(&mut quote, b) {
+            continue;
+        }
+        match b {
+            b'"' | b'\'' => quote = Some(b),
+            b'[' | b'{' | b'(' => depth += 1,
+            b']' | b'}' | b')' if step_close_depth(&mut depth) => {
+                // A balanced subscript closes on `]`; another closer at depth 0
+                // means the brackets were mismatched.
+                return (b == b']').then_some((content[open + 1..i].to_string(), i));
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+/// While inside a `"`/`'` quote, consume the byte (closing the quote on its
+/// matching delimiter) and report `true` so the caller skips it.
+fn advance_in_quote(quote: &mut Option<u8>, b: u8) -> bool {
+    if let Some(q) = *quote {
+        if b == q {
+            *quote = None;
+        }
+        return true;
+    }
+    false
+}
+
+/// Decrement bracket depth for a closer; `true` when the subscript's opening
+/// `[` is now balanced (depth 0).
+fn step_close_depth(depth: &mut i32) -> bool {
+    *depth -= 1;
+    *depth == 0
+}
+
+/// Re-parse a captured subscript index as a full value expression (DD#80), so
+/// nested contexts survive. A parse failure or a leftover tail (a mixed/bare
+/// form the value parser cannot consume whole) falls back to a `Literal` — which
+/// `validate::check_subscript_index` then rejects as ambiguous (SB4041).
+fn parse_subscript_index(idx: &str, span: Span) -> Expr {
+    let trimmed = idx.trim();
+    // A bare dollar-subscript `$name[…]` is ambiguous as an index (DD#80): it
+    // parses as a clean cell read, but the explicit cell-read index form is the
+    // braced `${name[…]}`. Keep it a `Literal` so validate rejects it (SB4041)
+    // rather than silently reading a cell.
+    if !is_bare_dollar_subscript(trimmed) {
+        let mut scanner = Scanner::new(trimmed);
+        if let Ok(expr) = parse_expr(&mut scanner) {
+            if scanner.at_eof() {
+                return expr;
+            }
+        }
+    }
+    Expr {
+        kind: ExprKind::Literal(trimmed.to_string()),
+        span,
+    }
+}
+
+/// `$name[…]` — a `$`-sigil identifier immediately followed by a `[` subscript,
+/// with no brace (`${…}` returns false). Ambiguous as a braced index.
+fn is_bare_dollar_subscript(s: &str) -> bool {
+    let Some(rest) = s.strip_prefix('$') else {
+        return false;
+    };
+    match rest.bytes().next() {
+        Some(b) if b.is_ascii_alphabetic() || b == b'_' => {}
+        _ => return false,
+    }
+    let after_ident = rest.trim_start_matches(|c: char| c.is_ascii_alphanumeric() || c == '_');
+    after_ident.starts_with('[')
 }
 
 /// Build the `${a[i]OP}` expansion. `:-`/`:?` attach the cell index to the

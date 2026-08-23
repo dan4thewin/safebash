@@ -165,6 +165,7 @@ fn apply_and_check_flags(flags: &[&str]) {
 fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     let mut vdiags = validate::validate(program);
     vdiags.extend(validate::check_malformed_sed(program));
+    vdiags.extend(validate::check_subscript_index(program));
     if !vdiags.is_empty() {
         print_diags(input, &vdiags);
         std::process::exit(1);

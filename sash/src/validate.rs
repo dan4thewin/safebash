@@ -3249,6 +3249,88 @@ fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// DD#80: a braced subscript index/key `${a[K]}` must be a DIRECT, unambiguous
+/// value — an integer literal, a `$var`, an expansion (`${…}`/`$(…)`/`$(( … ))`),
+/// a quoted string, or a clean-identifier bareword. An implicit/ambiguous bare
+/// form (brackets, operators, whitespace, or a mixed literal+expansion) is
+/// rejected here (SB4041). The parser re-parses the index as a value expression,
+/// so an explicit nested context is a clean expansion node and passes; an
+/// ambiguous bare form falls through to a `Literal` (with stray chars) or a
+/// `Concat`, which this check rejects. Type-level "string key on an int array"
+/// is a separate rule (SB4042, type_check).
+pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| flag_subscript_index(e, &mut diags));
+    }
+    diags
+}
+
+fn flag_subscript_index(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    let index = match &e.kind {
+        ExprKind::Subscript { index, .. } => Some(index.as_ref()),
+        ExprKind::ParameterExpansion(pe) => pe.index.as_deref(),
+        _ => None,
+    };
+    if let Some(index) = index {
+        if let Some(d) = ambiguous_index_diag(index) {
+            diags.push(d);
+        }
+    }
+}
+
+/// The SB4041 diagnostic for an ambiguous braced index, or `None` for an
+/// unambiguous one. Explicit expansions and quoted strings are always fine; a
+/// bare `Literal` is fine only when it is an integer literal or a clean
+/// identifier; anything else (a `Literal` carrying `[`/operators, or a `Concat`
+/// of mixed parts) is ambiguous.
+fn ambiguous_index_diag(index: &Expr) -> Option<Diagnostic> {
+    match &index.kind {
+        ExprKind::SimpleExpansion(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Subscript { .. }
+        | ExprKind::CommandSubstitution(_)
+        | ExprKind::Arithmetic(_)
+        | ExprKind::DoubleQuoted(_)
+        | ExprKind::SingleQuoted(_) => None,
+        ExprKind::Literal(s) if index_is_clean_literal(s) => None,
+        ExprKind::Literal(s) => Some(ambiguous_index_error(index.span, s)),
+        _ => Some(ambiguous_index_error(index.span, "…")),
+    }
+}
+
+/// A clean braced-index literal is an integer literal or a clean identifier.
+fn index_is_clean_literal(s: &str) -> bool {
+    index_is_integer(s) || index_is_identifier(s)
+}
+
+fn index_is_integer(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn index_is_identifier(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    matches!(bytes.next(), Some(b) if b.is_ascii_alphabetic() || b == b'_')
+        && bytes.all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+fn ambiguous_index_error(span: Span, idx: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB4041",
+        format!(
+            "ambiguous braced index `[{idx}]` — `${{ }}` takes a direct key, not a computed \
+             one. Quote a literal key (`[\"…\"]`), use a variable (`[$name]`), or open \
+             arithmetic explicitly (`[$(( … ))]`)"
+        ),
+    )
+}
+
 /// DD#78: a disposition default is evaluated **eagerly** (`emit_default_value`
 /// selects between both arms), so it must be side-effect-free. `$(random)` is
 /// *clean* (a compiler intrinsic) but **stateful** — it advances the PRNG
