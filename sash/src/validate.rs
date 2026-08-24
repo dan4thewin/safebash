@@ -3281,16 +3281,38 @@ pub fn check_subscript_index(program: &Program) -> Vec<Diagnostic> {
 }
 
 fn flag_subscript_index(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let Some(d) = splat_not_subscriptable_diag(e) {
+        diags.push(d);
+        return;
+    }
     let index = match &e.kind {
         ExprKind::Subscript { index, .. } => Some(index.as_ref()),
         ExprKind::ParameterExpansion(pe) => pe.index.as_deref(),
         _ => None,
     };
-    if let Some(index) = index {
-        if let Some(d) = ambiguous_index_diag(index) {
-            diags.push(d);
-        }
+    if let Some(d) = index.and_then(ambiguous_index_diag) {
+        diags.push(d);
     }
+}
+
+/// `$@[i]` / `$*[i]` — the positional splat isn't subscriptable (`$@[0]` reached
+/// codegen as a subscript on an "array" named `@` and ICE'd). Returns the SB5031
+/// reject, or `None` for any other subscript name.
+fn splat_not_subscriptable_diag(e: &Expr) -> Option<Diagnostic> {
+    let ExprKind::Subscript { name, .. } = &e.kind else {
+        return None;
+    };
+    if name != "@" && name != "*" {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        e.span,
+        "SB5031",
+        format!(
+            "`${name}` (the positional splat) isn't subscriptable — use `$1`..`$N`, \
+             or `${{args[i]}}` for a dynamic index inside a function"
+        ),
+    ))
 }
 
 /// The SB4041 diagnostic for an ambiguous braced index, or `None` for an

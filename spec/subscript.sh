@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=19
+plan=21
 echo "1..$plan" >&3
 
 set +e
@@ -107,6 +107,17 @@ if in_modes native,c; then
 else
     skip_chk 80.18; skip_chk 80.19
 fi
+
+# ── F. the positional splat `$@` / `$*` isn't subscriptable (was a codegen ICE
+# `undefined array: @`; now a clean reject). Mode-independent (validate). ──
+
+# 80.20 `$@[i]` rejects → use `$1`..`$N` / `${args[i]}`
+run_sash 'fn f { echo $@[0]; }; f a b c'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.20
+
+# 80.21 `$*[i]` likewise
+run_sash 'fn f { echo $*[0]; }; f a b c'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.21
 
 set -e
 tally

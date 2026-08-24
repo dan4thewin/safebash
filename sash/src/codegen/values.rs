@@ -759,14 +759,7 @@ fn lower_argv_index_value(
     vars: &HashMap<String, VarSlot>,
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let sv = vars
-        .get(&idx_ref.display())
-        .unwrap_or_else(|| panic!("ICE: undefined index var: {}", idx_ref.display()));
-    let idx_ptr = builder.use_var(sv.str_ptr());
-    let idx_len = builder.use_var(sv.str_len());
-    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-    let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-    let idx_int = builder.inst_results(call)[0];
+    let idx_int = index_var_to_int(idx_ref, builder, module, vars, externs);
     // DD#60: argv slice is 0-based — argv[idx] directly (idx 0 = program name).
     let eight = builder.ins().iconst(I64, 8);
     let offset = builder.ins().imul(idx_int, eight);
@@ -788,7 +781,7 @@ fn lower_table_value_value(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let table_ptr = lookup_array_table(array, vars, builder);
-    let idx_int = lookup_atoi_var(index, builder, module, vars, externs);
+    let idx_int = index_var_to_int(index, builder, module, vars, externs);
     let (out_slot, out_addr) = alloc_out_slot(builder);
     let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
     let call = builder.ins().call(tv_ref, &[table_ptr, idx_int, out_addr]);
@@ -806,7 +799,7 @@ fn lower_table_key_value(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let table_ptr = lookup_array_table(array, vars, builder);
-    let idx_int = lookup_atoi_var(index, builder, module, vars, externs);
+    let idx_int = index_var_to_int(index, builder, module, vars, externs);
     let (out_slot, out_addr) = alloc_out_slot(builder);
     let tk_ref = module.declare_func_in_func(externs.table_key, builder.func);
     let call = builder.ins().call(tk_ref, &[table_ptr, idx_int, out_addr]);
@@ -815,8 +808,12 @@ fn lower_table_key_value(
     (key_ptr, key_len)
 }
 
-/// Load a string var by VarRef and run it through sash_atoi.
-fn lookup_atoi_var(
+/// Load a var used as an integer index. Total over both slot kinds: an int slot
+/// is read directly; a string slot is `atoi`'d. This removes the `str_ptr()`
+/// -on-int panic and lets a numeric loop counter be an Int slot (the previous
+/// `str_ptr()+atoi` assumed every index var was a string — a convention between
+/// the loop-lowering and this read, not a type-level guarantee).
+fn index_var_to_int(
     index: &VarRef,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
@@ -826,6 +823,9 @@ fn lookup_atoi_var(
     let idx_sv = vars
         .get(&index.display())
         .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
+    if idx_sv.is_int() {
+        return builder.use_var(*idx_sv.as_int());
+    }
     let idx_ptr = builder.use_var(idx_sv.str_ptr());
     let idx_len = builder.use_var(idx_sv.str_len());
     let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);

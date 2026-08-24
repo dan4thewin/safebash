@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-08-24) — index-var is_int-total + $@[i] ICE + atoi audit ════════
+
+**Committed on `hand-parser`.** Follow-through on the P1/ICE-arms discussion (DG:
+"arrays/index-vars are always Str-slots" is a convention tests can't prove).
+- `codegen/values.rs`: merged the argv/table index-var reads into
+  `index_var_to_int`, `is_int`-total (int slot read directly, string slot
+  `atoi`'d) — removes the `str_ptr`-on-int panic risk, mirrors `lower_var_as_int`.
+- `validate.rs`: `$@[i]` / `$*[i]` (subscripting the positional splat) was a
+  codegen ICE (`undefined array: @`); now SB5031 via `check_subscript_index`.
+  spec subscript.sh 80.20-21.
+- **atoi audit** (DG follow-up): every atoi is a string→int coercion; no atoi on
+  an already-int value. Native clean; filed `c-argv-index-isint-parity` (the C
+  argv-index atoi's the string `__fi` unguarded — parity gap, not a live bug).
+
+0 regressions native/c/janet; native gate 0. Journal 173. The eliminate-ice-arms
+review continues — P1 index-var/Pattern-B done; table sites keep+cite; P2 (lazy
+interner), P4 (CheckedArithOp), P6/P8 still open per the per-pattern review.
+
 ## ════════ STATUS (2026-08-23) — undeclared collection read ICE → SB5031 ════════
 
 **Committed on `hand-parser`.** `echo ${z[0]}` (undeclared array/map read)
