@@ -30,6 +30,31 @@ pub(super) fn atoi_call(
     builder.inst_results(call)[0]
 }
 
+/// The `DataId` for the interned string `s`, or a freshly declared+defined data
+/// object for it. The literal pre-pass (`setup::intern_literals`) interns every
+/// string the SSA references, so a miss here means a codegen path drifted from
+/// that pre-pass — previously a `panic!("ICE: missing literal")`. Declaring on
+/// the fly keeps the lookup total (no ICE); the un-deduplicated data on that
+/// rare drift path is harmless. `module` is already `&mut` at every call site.
+pub(super) fn intern_or_declare(
+    literals: &HashMap<String, cranelift_module::DataId>,
+    module: &mut ObjectModule,
+    s: &str,
+) -> cranelift_module::DataId {
+    if let Some(&id) = literals.get(s) {
+        return id;
+    }
+    let data_id = module
+        .declare_anonymous_data(false, false)
+        .expect("declare data");
+    let mut desc = cranelift_module::DataDescription::new();
+    let mut bytes = s.as_bytes().to_vec();
+    bytes.push(0);
+    desc.define(bytes.into_boxed_slice());
+    module.define_data(data_id, &desc).expect("define data");
+    data_id
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(super) fn lower_value(
     value: &SsaValue,
@@ -524,10 +549,8 @@ fn lower_func_call_value(
     func_constants: &HashMap<String, String>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     if let Some(constant) = func_constants.get(name) {
-        let data_id = literals.get(constant.as_str()).unwrap_or_else(|| {
-            panic!("ICE: constant-folded string not interned: {:?}", constant);
-        });
-        let gv = module.declare_data_in_func(*data_id, builder.func);
+        let data_id = intern_or_declare(literals, module, constant.as_str());
+        let gv = module.declare_data_in_func(data_id, builder.func);
         let ptr = builder.ins().global_value(I64, gv);
         let len = builder.ins().iconst(I64, constant.len() as i64);
         (ptr, len)
@@ -602,10 +625,8 @@ fn lower_assoc_array_value(
 
     let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
     for (key, val_ssa) in pairs.iter() {
-        let key_data = literals.get(key.as_str()).unwrap_or_else(|| {
-            panic!("ICE: assoc array key not interned: {}", key);
-        });
-        let key_gv = module.declare_data_in_func(*key_data, builder.func);
+        let key_data = intern_or_declare(literals, module, key.as_str());
+        let key_gv = module.declare_data_in_func(key_data, builder.func);
         let key_ptr = builder.ins().global_value(I64, key_gv);
         let key_len = builder.ins().iconst(I64, key.len() as i64);
         let (val_ptr, val_len) = lower_value(

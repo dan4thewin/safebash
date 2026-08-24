@@ -10,7 +10,7 @@ use std::collections::HashMap;
 
 use super::redirects::emit_redirects;
 use super::types::{emit_int_to_str, ExternFuncs, VarSlot};
-use super::values::{atoi_call, lower_value};
+use super::values::{atoi_call, intern_or_declare, lower_value};
 use crate::ssa::*;
 
 /// Handle SsaValue::ParamExpansion — ${var:op:operand} forms.
@@ -116,16 +116,12 @@ fn emit_glob_expansion(
     externs: &ExternFuncs,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let dir_str = ".";
-    let dir_id = literals
-        .get(dir_str)
-        .unwrap_or_else(|| panic!("ICE: missing literal: {}", dir_str));
-    let dir_gv = module.declare_data_in_func(*dir_id, builder.func);
+    let dir_id = intern_or_declare(literals, module, dir_str);
+    let dir_gv = module.declare_data_in_func(dir_id, builder.func);
     let dir_ptr = builder.ins().global_value(I64, dir_gv);
     let dir_len = builder.ins().iconst(I64, dir_str.len() as i64);
-    let pat_id = literals
-        .get(operand)
-        .unwrap_or_else(|| panic!("ICE: missing literal: {}", operand));
-    let pat_gv = module.declare_data_in_func(*pat_id, builder.func);
+    let pat_id = intern_or_declare(literals, module, operand);
+    let pat_gv = module.declare_data_in_func(pat_id, builder.func);
     let pat_ptr = builder.ins().global_value(I64, pat_gv);
     let pat_len = builder.ins().iconst(I64, operand.len() as i64);
     let func_id = if use_regex {
@@ -226,10 +222,8 @@ fn intern_join_separator(
     literals: &HashMap<String, cranelift_module::DataId>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let sep_str = if operator == "arrjoin" { operand } else { " " };
-    let sep_data_id = literals
-        .get(sep_str)
-        .unwrap_or_else(|| panic!("ICE: join separator not interned: {:?}", sep_str));
-    let sep_gv = module.declare_data_in_func(*sep_data_id, builder.func);
+    let sep_data_id = intern_or_declare(literals, module, sep_str);
+    let sep_gv = module.declare_data_in_func(sep_data_id, builder.func);
     let sep_ptr = builder.ins().global_value(I64, sep_gv);
     let sep_len = builder.ins().iconst(I64, sep_str.len() as i64);
     (sep_ptr, sep_len)

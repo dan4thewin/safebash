@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms P2 (lazy literal interner) ════════
+
+**Committed on `hand-parser`.** P2 of the per-pattern ICE-arms review: the five
+codegen sites that `panic!`'d on a `literals`-map miss (`"ICE: missing literal"`
+/ `"ICE: assoc array key not interned"`) now go through
+`values::intern_or_declare` — read the map, or declare+define fresh anonymous
+data on a miss. Total by construction (no ICE). No signature churn: `module` is
+already `&mut` everywhere, and `declare_anonymous_data` needs no unique name.
+Sites: glob dir/operand (2), join separator, const-folded string, assoc/indexed
+key. Behavior-preserving (the panics were unreachable drift backstops) → no new
+specs. 0 regressions native/c/janet; native gate 0. Journal 175.
+
+Review remaining: P1 Pattern-A `match` conversions (types.rs flag-checked
+`is_int` sites); keep+cite for the table / P3 / P5 / P7 sites.
+
 ## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms cohort A (join/CheckedArithOp/case) ════════
 
 **Committed on `hand-parser`.** Three ICE arms from the per-pattern review
