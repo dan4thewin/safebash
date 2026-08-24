@@ -1,3 +1,17 @@
+## ════════ STATUS (2026-08-24, cont.) — bug fix: `[[ -o ]]`/`[[ -R ]]` codegen ICE ════════
+
+**Committed on `hand-parser`.** Reachability audit for the ICE-arms keep+cite
+pass surfaced a real bug: the parser's `is_unary_test_op` accepts `-v`/`-o`/`-R`,
+but codegen (tests.rs) implements only `-n`/`-z`/`-i`/`-t` + file tests, and
+validate rejected only `-v` (SB5028). So `[[ -o errexit ]]` and `[[ -R x ]]`
+crashed the compiler (`ICE: unimplemented unary test operator`). Fix follows the
+`-v` precedent: `unsupported_unary_test_hint(op)` rejects all three at validate
+(SB5028); the now-unreachable tests.rs panic gets a keep+cite `// INVARIANT:`
+comment. specs wordsplit.sh 62.20/62.21 (avoided a pre-existing `chk 62.11`
+collision). 0 regressions native/c/janet; 6 new passing; native gate 0.
+Journal 177. Filed `unary-test-ops-k-g-u` (reverse gap: parser under-accepts
+-k/-g/-u that codegen already implements).
+
 ## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms P1 Pattern-A (VarSlot match) ════════
 
 **Committed on `hand-parser`.** P1 Pattern-A: the five codegen sites that

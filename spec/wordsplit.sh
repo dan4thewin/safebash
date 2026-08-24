@@ -191,6 +191,14 @@ run_sash 'if [[ abc != ab* ]]; then echo y; fi'
 run_sash 'x=5; if [[ -v x ]]; then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.5
 
+# 62.20 -o (shell-option test) is unsupported — reject at validate, not codegen ICE
+run_sash 'if [[ -o errexit ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.20
+
+# 62.21 -R (nameref test) is unsupported — reject at validate, not codegen ICE
+run_sash 'if [[ -R x ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 62.21
+
 # 62.6 DD#62: -n is the way to test a non-empty value
 run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.6

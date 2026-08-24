@@ -708,18 +708,32 @@ fn static_regex_pattern(expr: &Expr) -> Option<String> {
     }
 }
 
+/// A `[[ ]]` unary operator the parser accepts (is_unary_test_op) but sash does
+/// not implement — codegen (tests.rs) handles only -n/-z/-i/-t and the file
+/// tests. These three must be rejected here (SB5028) before codegen ICEs on
+/// them. Returns the user-facing hint for the operator, or None if supported.
+///   -v  DD#62: an unset/empty variable is just the empty string
+///   -o  shell-option state — sash has no shell options
+///   -R  nameref state — sash has no namerefs
+fn unsupported_unary_test_hint(op: &str) -> Option<&'static str> {
+    match op {
+        "-v" => Some("use -n to test for a non-empty value"),
+        "-o" => Some("shell-option tests are unsupported"),
+        "-R" => Some("namerefs are unsupported"),
+        _ => None,
+    }
+}
+
 /// SB5019/SB5028: reject operators that are not supported in `[[ ]]`
-/// (numeric comparisons → `(( ))`; `-v` → `-n`).
+/// (numeric comparisons → `(( ))`; `-v`/`-o`/`-R` → no analogue).
 fn check_unsupported_test_ops(test: &TestExpr, diags: &mut Vec<Diagnostic>) {
     match test {
         TestExpr::Unary { op, operand } => {
-            // DD#62: `-v` is removed — an unset/empty variable is just the
-            // empty string, so `-n` is the test.
-            if op == "-v" {
+            if let Some(hint) = unsupported_unary_test_hint(op) {
                 diags.push(Diagnostic::error_span(
                     operand.span,
                     "SB5028",
-                    "sash has no `[[ -v ]]` — use -n to test for a non-empty value".to_string(),
+                    format!("sash has no `[[ {} ]]` — {}", op, hint),
                 ));
             }
         }

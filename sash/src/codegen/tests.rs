@@ -227,6 +227,11 @@ fn lower_test_unary(
             builder.inst_results(call)[0]
         }
         "-t" => emit_isatty_test(builder, module, externs, ptr, len),
+        // INVARIANT: the parser's is_unary_test_op gates which operators reach
+        // here; each one it accepts is either handled above (-n/-z/-i/-t) or is
+        // a file test below, except -v/-o/-R which validate rejects (SB5028,
+        // unsupported_unary_test_hint). A None here means a parser/codegen
+        // drift, not user input.
         other => match file_test_op_code(other) {
             Some(code) => emit_file_test(builder, module, externs, ptr, len, code),
             None => panic!("ICE: unimplemented unary test operator: {}", other),
