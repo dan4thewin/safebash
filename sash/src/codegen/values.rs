@@ -501,17 +501,7 @@ fn lower_var_value(
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let key = vref.display();
-    // Strip numeric SSA version suffix to get base name.
-    let base = if let Some(idx) = key.rfind('_') {
-        let suffix = &key[idx + 1..];
-        if suffix.chars().all(|c| c.is_ascii_digit()) {
-            &key[..idx]
-        } else {
-            key.as_str()
-        }
-    } else {
-        key.as_str()
-    };
+    let base = strip_ssa_version(&key);
     if base == "?" {
         if let Some(esv) = exit_status_var {
             let status = builder.use_var(esv);
@@ -524,20 +514,33 @@ fn lower_var_value(
         let pid = builder.inst_results(call)[0];
         return emit_int_to_str(builder, module, externs, pid);
     }
-    let sv = match vars.get(&key) {
-        Some(v) => v,
+    lower_slot_as_str_value(&key, builder, module, vars, externs)
+}
+
+/// Read a variable's slot in string context: an int slot is formatted to a
+/// decimal string, a string slot yields its (ptr, len) directly. An undefined
+/// variable reads as the empty string (null ptr, zero len).
+fn lower_slot_as_str_value(
+    key: &str,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    externs: &ExternFuncs,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    match vars.get(key) {
         None => {
             let zero = builder.ins().iconst(I64, 0);
-            return (zero, zero);
+            (zero, zero)
         }
-    };
-    if sv.is_int() {
-        let int_val = builder.use_var(*sv.as_int());
-        emit_int_to_str(builder, module, externs, int_val)
-    } else {
-        let ptr = builder.use_var(sv.str_ptr());
-        let len = builder.use_var(sv.str_len());
-        (ptr, len)
+        Some(&VarSlot::Int(v)) => {
+            let int_val = builder.use_var(v);
+            emit_int_to_str(builder, module, externs, int_val)
+        }
+        Some(&VarSlot::Str { ptr, len }) => {
+            let ptr = builder.use_var(ptr);
+            let len = builder.use_var(len);
+            (ptr, len)
+        }
     }
 }
 
@@ -844,14 +847,16 @@ fn index_var_to_int(
     let idx_sv = vars
         .get(&index.display())
         .unwrap_or_else(|| panic!("ICE: undefined index var: {}", index.display()));
-    if idx_sv.is_int() {
-        return builder.use_var(*idx_sv.as_int());
+    match *idx_sv {
+        VarSlot::Int(v) => builder.use_var(v),
+        VarSlot::Str { ptr, len } => {
+            let idx_ptr = builder.use_var(ptr);
+            let idx_len = builder.use_var(len);
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
+            builder.inst_results(call)[0]
+        }
     }
-    let idx_ptr = builder.use_var(idx_sv.str_ptr());
-    let idx_len = builder.use_var(idx_sv.str_len());
-    let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-    let call = builder.ins().call(atoi_ref, &[idx_ptr, idx_len]);
-    builder.inst_results(call)[0]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1246,15 +1251,16 @@ fn lower_var_as_int(
         // Undefined variable → 0 in int context
         return builder.ins().iconst(I64, 0);
     };
-    if sv.is_int() {
-        builder.use_var(*sv.as_int())
-    } else {
-        // String var in int context: atoi
-        let ptr = builder.use_var(sv.str_ptr());
-        let len = builder.use_var(sv.str_len());
-        let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-        let call = builder.ins().call(atoi_ref, &[ptr, len]);
-        builder.inst_results(call)[0]
+    match *sv {
+        VarSlot::Int(v) => builder.use_var(v),
+        VarSlot::Str { ptr, len } => {
+            // String var in int context: atoi
+            let ptr = builder.use_var(ptr);
+            let len = builder.use_var(len);
+            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+            let call = builder.ins().call(atoi_ref, &[ptr, len]);
+            builder.inst_results(call)[0]
+        }
     }
 }
 

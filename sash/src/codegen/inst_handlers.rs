@@ -12,7 +12,7 @@ use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
 use super::redirects::{emit_redirects_guarded, emit_restore, ir_expr_to_ssa_value};
-use super::types::{find_array_slot, ExternFuncs, InstCtx};
+use super::types::{find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::{atoi_call, lower_value, lower_value_as_int};
 use crate::ssa::*;
 
@@ -559,31 +559,34 @@ fn handle_regular_assign(
     ctx: &mut InstCtx,
 ) {
     let sv = ctx.vars[&target.display()];
-    if sv.is_int() {
-        let int_val = lower_value_as_int(
-            value,
-            builder,
-            module,
-            ctx.vars,
-            ctx.literals,
-            ctx.func_constants,
-            ctx.externs,
-            Some(ctx.exit_status_var),
-        );
-        builder.def_var(*sv.as_int(), int_val);
-    } else {
-        let (ptr_val, len_val) = lower_value(
-            value,
-            builder,
-            module,
-            ctx.vars,
-            ctx.literals,
-            ctx.func_constants,
-            ctx.externs,
-            Some(ctx.exit_status_var),
-        );
-        builder.def_var(sv.str_ptr(), ptr_val);
-        builder.def_var(sv.str_len(), len_val);
+    match sv {
+        VarSlot::Int(v) => {
+            let int_val = lower_value_as_int(
+                value,
+                builder,
+                module,
+                ctx.vars,
+                ctx.literals,
+                ctx.func_constants,
+                ctx.externs,
+                Some(ctx.exit_status_var),
+            );
+            builder.def_var(v, int_val);
+        }
+        VarSlot::Str { ptr, len } => {
+            let (ptr_val, len_val) = lower_value(
+                value,
+                builder,
+                module,
+                ctx.vars,
+                ctx.literals,
+                ctx.func_constants,
+                ctx.externs,
+                Some(ctx.exit_status_var),
+            );
+            builder.def_var(ptr, ptr_val);
+            builder.def_var(len, len_val);
+        }
     }
 }
 

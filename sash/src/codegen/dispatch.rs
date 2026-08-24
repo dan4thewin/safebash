@@ -1261,16 +1261,22 @@ impl SsaInst {
         let call = builder.ins().call(cap_ref, &[saved, pipe_rd]);
         let ptr = builder.inst_results(call)[0];
         let len = builder.inst_results(call)[1];
-        let sv = &vars[&target.display()];
-        if sv.is_int() {
-            // Int var: atoi the captured string
-            let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
-            let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
-            let int_val = builder.inst_results(atoi_call)[0];
-            builder.def_var(*sv.as_int(), int_val);
-        } else {
-            builder.def_var(sv.str_ptr(), ptr);
-            builder.def_var(sv.str_len(), len);
+        let sv = vars[&target.display()];
+        match sv {
+            VarSlot::Int(v) => {
+                // Int var: atoi the captured string
+                let atoi_ref = module.declare_func_in_func(externs.atoi, builder.func);
+                let atoi_call = builder.ins().call(atoi_ref, &[ptr, len]);
+                let int_val = builder.inst_results(atoi_call)[0];
+                builder.def_var(v, int_val);
+            }
+            VarSlot::Str {
+                ptr: dst_ptr,
+                len: dst_len,
+            } => {
+                builder.def_var(dst_ptr, ptr);
+                builder.def_var(dst_len, len);
+            }
         }
         false
     }

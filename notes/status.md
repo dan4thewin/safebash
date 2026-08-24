@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms P1 Pattern-A (VarSlot match) ════════
+
+**Committed on `hand-parser`.** P1 Pattern-A: the five codegen sites that
+dispatched on `VarSlot::is_int()` then reached through a panicking accessor
+(`as_int`/`str_ptr`/`str_len`) now match the enum directly
+(`match *sv { VarSlot::Int(v) => .., VarSlot::Str { ptr, len } => .. }`) — total
+by construction. Sites: lower_var_value, index_var_to_int, lower_var_as_int
+(values.rs), handle_regular_assign (inst_handlers.rs), emit_capture_end
+(dispatch.rs). Consequence: `as_int`/`is_int`/`as_str` fell to zero callers and
+were **deleted** — removing 2 more ICE panic arms (`as_int`/`as_str`) outright.
+`str_ptr`/`str_len` kept for the ~40 Pattern-B callers (known-Str slots) with an
+`// INVARIANT:` keep+cite comment. Behavior-preserving (`match` ≡ the 2-arm
+if/else) → no new specs. 0 regressions native/c/janet; native gate 0. Journal 176.
+
+Review remaining: keep+cite for P3 (undefined var/array/index → validate SB5031)
+and P7 (should-have-been-lifted); reachability check on the
+"unimplemented/unsupported operator" panics (tests.rs test ops,
+value_handlers.rs param-expansion op) before cite-vs-fix.
+
 ## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms P2 (lazy literal interner) ════════
 
 **Committed on `hand-parser`.** P2 of the per-pattern ICE-arms review: the five

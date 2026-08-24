@@ -16,13 +16,13 @@ pub(super) enum VarSlot {
 }
 
 impl VarSlot {
-    #[allow(dead_code)]
-    pub(super) fn as_str(&self) -> (&Variable, &Variable) {
-        match self {
-            VarSlot::Str { ptr, len } => (ptr, len),
-            VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
-        }
-    }
+    // INVARIANT: str_ptr/str_len are called only on slots the caller has
+    // already established are strings — positionals, arrays, read/capture
+    // targets, and the `VarSlot::Str` arm of a `match` on this enum (values.rs,
+    // setup.rs, dispatch.rs). The Int arm is unreachable from those sites; a hit
+    // means a codegen path built a slot of the wrong shape (a compiler bug, not
+    // user-reachable input). Int-valued reads dispatch via `match *sv` instead,
+    // so no `is_int()`-then-panicking-accessor dance survives.
     pub(super) fn str_ptr(&self) -> Variable {
         match self {
             VarSlot::Str { ptr, .. } => *ptr,
@@ -34,15 +34,6 @@ impl VarSlot {
             VarSlot::Str { ptr: _, len } => *len,
             VarSlot::Int(_) => panic!("ICE: expected string var, got int"),
         }
-    }
-    pub(super) fn as_int(&self) -> &Variable {
-        match self {
-            VarSlot::Int(v) => v,
-            VarSlot::Str { .. } => panic!("ICE: expected int var, got string"),
-        }
-    }
-    pub(super) fn is_int(&self) -> bool {
-        matches!(self, VarSlot::Int(_))
     }
 }
 
