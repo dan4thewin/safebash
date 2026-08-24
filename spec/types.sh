@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=125
+plan=127
 echo "1..$plan" >&3
 
 set +e
@@ -405,6 +405,13 @@ run_sash 'array a=(one two three); echo @a'
 # 33.15 the directed-to explicit join compiles and prints the joined string
 run_sash 'array a=(one two three); echo $(join @a)'
 [[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.15
+
+# 33.23 `$(join)` with no args is a clean SB5040 (was a compiler ICE panic)
+run_sash 'echo $(join)'
+[[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk 33.23
+# 33.24 `$(join arr x y)` with >2 args rejects (extras were silently dropped)
+run_sash 'array a=(1 2); echo $(join a x y)'
+[[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk 33.24
 
 # 33.16 the reject also fires for a mixed splat (`echo x @a y`)
 run_sash 'array a=(one two); echo x @a y'

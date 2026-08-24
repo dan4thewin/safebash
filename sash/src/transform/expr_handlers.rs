@@ -248,7 +248,9 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     } else if c.args.len() == 1 {
         (&c.args[0], " ".to_string())
     } else {
-        panic!("ICE: join requires at least one argument");
+        // INVARIANT: validate::check_join_arity (SB5040) rejects a 0-arg (and
+        // >2-arg) `$(join …)` before transform, so this is unreachable.
+        unreachable!("join arity guaranteed by validate::check_join_arity");
     };
     // The array arg should be @arr → ParameterExpansion(arrvals)
     let arr_name = match &arr_expr.kind {

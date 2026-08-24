@@ -2928,6 +2928,46 @@ pub fn check_len_operands(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
+/// `$(join …)` arity: a collection and an optional separator. `$(join)` (0 args)
+/// previously reached the transform and **panicked the compiler**
+/// (`ICE: join requires at least one argument`); more than 2 args silently
+/// dropped the extras. Reject both here (SB5040) so the transform's arity is
+/// guaranteed.
+pub fn check_join_arity(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| flag_join_arity(e, &mut diags));
+    }
+    diags
+}
+
+fn flag_join_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return;
+    };
+    if expr_literal_str(&c.name) != "join" {
+        return;
+    }
+    if c.args.is_empty() || c.args.len() > 2 {
+        diags.push(Diagnostic::error_span(
+            expr.span,
+            "SB5040",
+            format!(
+                "`join` takes a collection and an optional separator \
+                 (`$(join arr)` or `$(join arr SEP)`) — got {} argument(s)",
+                c.args.len()
+            ),
+        ));
+    }
+}
+
 fn check_len_in_scope(
     stmts: &[Statement],
     known: &HashSet<String>,
