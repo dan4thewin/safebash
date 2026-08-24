@@ -467,7 +467,7 @@ pub(crate) fn emit_substring(
 /// Allocates a 4096-byte stack buffer; the runtime writes the
 /// converted value and returns the new length.
 pub(crate) fn emit_case_conversion(
-    operator: &str,
+    upper: bool,
     s_ptr: cranelift_codegen::ir::Value,
     s_len: cranelift_codegen::ir::Value,
     builder: &mut FunctionBuilder,
@@ -477,12 +477,13 @@ pub(crate) fn emit_case_conversion(
     let buf_slot =
         builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 4096, 3));
     let buf_ptr = builder.ins().stack_addr(I64, buf_slot, 0);
-    let func_id = match operator {
-        "^" => externs.toupper_first,
-        "^^" => externs.toupper_all,
-        "," => externs.tolower_first,
-        ",," => externs.tolower_all,
-        _ => unreachable!(),
+    // Only whole-string case conversion exists (`$(toupper …)`/`$(tolower …)` →
+    // `SsaValue::CaseConvert { upper }`); the first-char `${var^}`/`${var,}`
+    // family was pruned by DD#65, so there is no `^`/`,` producer.
+    let func_id = if upper {
+        externs.toupper_all
+    } else {
+        externs.tolower_all
     };
     let func_ref = module.declare_func_in_func(func_id, builder.func);
     let call = builder.ins().call(func_ref, &[s_ptr, s_len, buf_ptr]);

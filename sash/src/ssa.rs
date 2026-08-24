@@ -411,6 +411,31 @@ pub enum ArithOp {
     Pow,
 }
 
+/// The three overflow-checked binary ops (DD#25) — a narrowing of `ArithOp` so
+/// the checked-arith emitters (native + C) are total by construction, with no
+/// "only handles Add/Sub/Mul" ICE arm. The caller maps each `ArithOp` variant
+/// to this at the dispatch site.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CheckedArithOp {
+    Add,
+    Sub,
+    Mul,
+}
+
+impl CheckedArithOp {
+    /// The overflow-checked ops (`+`/`-`/`*`); `None` for every other `ArithOp`.
+    /// A total mapping so the emitters take a `CheckedArithOp` and never need an
+    /// "only handles Add/Sub/Mul" ICE arm.
+    pub fn from_arith(op: ArithOp) -> Option<Self> {
+        match op {
+            ArithOp::Add => Some(Self::Add),
+            ArithOp::Sub => Some(Self::Sub),
+            ArithOp::Mul => Some(Self::Mul),
+            _ => None,
+        }
+    }
+}
+
 impl ArithOp {
     pub fn from_str(s: &str) -> Option<ArithOp> {
         match s {

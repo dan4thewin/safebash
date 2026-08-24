@@ -9,7 +9,7 @@ use cranelift_module::{DataDescription, Module};
 use cranelift_object::ObjectModule;
 
 use super::types::ExternFuncs;
-use crate::ssa::ArithOp;
+use crate::ssa::{ArithOp, CheckedArithOp};
 
 pub(super) fn emit_arith_op(
     op: ArithOp,
@@ -25,7 +25,10 @@ pub(super) fn emit_arith_op(
     }
     match op {
         ArithOp::Add | ArithOp::Sub | ArithOp::Mul => {
-            emit_checked_arith(op, lhs, rhs, builder, module, externs)
+            // `from_arith` is `Some` for exactly these three (the arm guard) —
+            // so `emit_checked_arith` takes a `CheckedArithOp` and stays total.
+            let cop = CheckedArithOp::from_arith(op).expect("checked op by arm guard");
+            emit_checked_arith(cop, lhs, rhs, builder, module, externs)
         }
         ArithOp::Div | ArithOp::Mod => {
             emit_div_or_mod_with_zero_check(op, lhs, rhs, builder, module, externs, exit_status_var)
@@ -66,7 +69,7 @@ fn comparison_intcc(op: ArithOp) -> Option<cranelift_codegen::ir::condcodes::Int
 /// abort block that calls `sash_arith_overflow` (writes the diagnostic and
 /// exits). bug-runtime-arith-overflow-wraps.
 fn emit_checked_arith(
-    op: ArithOp,
+    op: CheckedArithOp,
     lhs: cranelift_codegen::ir::Value,
     rhs: cranelift_codegen::ir::Value,
     builder: &mut FunctionBuilder,
@@ -74,10 +77,9 @@ fn emit_checked_arith(
     externs: &ExternFuncs,
 ) -> cranelift_codegen::ir::Value {
     let (result, overflow) = match op {
-        ArithOp::Add => builder.ins().sadd_overflow(lhs, rhs),
-        ArithOp::Sub => builder.ins().ssub_overflow(lhs, rhs),
-        ArithOp::Mul => builder.ins().smul_overflow(lhs, rhs),
-        _ => unreachable!("emit_checked_arith only handles Add/Sub/Mul"),
+        CheckedArithOp::Add => builder.ins().sadd_overflow(lhs, rhs),
+        CheckedArithOp::Sub => builder.ins().ssub_overflow(lhs, rhs),
+        CheckedArithOp::Mul => builder.ins().smul_overflow(lhs, rhs),
     };
     // `overflow` is a 1-bit flag (i8); `brif` treats any non-zero value as
     // true, so it can gate the abort branch directly.

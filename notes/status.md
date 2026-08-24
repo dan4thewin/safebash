@@ -1,3 +1,20 @@
+## ════════ STATUS (2026-08-24, cont.) — eliminate-ice-arms cohort A (join/CheckedArithOp/case) ════════
+
+**Committed on `hand-parser`.** Three ICE arms from the per-pattern review
+(reviewed interactively with DG) retired:
+- **P8** (`3fb3458`) — `$(join)` 0/>2-arg was a **reachable compiler panic**; now
+  `validate::check_join_arity` → SB5040. spec types.sh 33.23-24.
+- **P4** — `ssa::CheckedArithOp{Add,Sub,Mul}` makes `emit_checked_arith(_c)` total
+  (2 arms gone). Dispatch maps each ArithOp variant directly.
+- **P6** — case conversion is now a `bool` (whole-string toupper/tolower), not a
+  stringly-typed `"^^"/",,"` match (2 arms gone; the first-char `^`/`,` family
+  had no producer since DD#65). Removed dead `toupper_first`/`tolower_first`
+  front-end refs; filed `remove-dead-case-first-runtime` (sash-rt twin).
+
+0 regressions native/c/janet; native gate 0. Journal 174. Review remaining:
+P2 (lazy interner ~5 arms), P1 Pattern-A `match` conversions, keep+cite for the
+table/P3/P7 sites.
+
 ## ════════ STATUS (2026-08-24) — index-var is_int-total + $@[i] ICE + atoi audit ════════
 
 **Committed on `hand-parser`.** Follow-through on the P1/ICE-arms discussion (DG:

@@ -187,17 +187,7 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
-        "extern i64 sash_toupper_first(const char* sp, i64 sl, char* out);"
-    )
-    .unwrap();
-    writeln!(
-        out,
         "extern i64 sash_toupper_all(const char* sp, i64 sl, char* out);"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "extern i64 sash_tolower_first(const char* sp, i64 sl, char* out);"
     )
     .unwrap();
     writeln!(
@@ -1148,7 +1138,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // DD#65: $(toupper s) / $(tolower s) — reuse the case-conversion runtime.
         SsaValue::CaseConvert { subject, upper } => {
             let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
-            emit_case_conversion_c(e, if *upper { "^^" } else { ",," }, &s_ptr, &s_len)
+            emit_case_conversion_c(e, *upper, &s_ptr, &s_len)
         }
         // DD#65: ${var:-DEFAULT} — var if set, else the interpolated default.
         SsaValue::DefaultValue { source, default } => {
@@ -1366,7 +1356,10 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
 fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
     use ArithOp::*;
     match op {
-        Add | Sub | Mul => emit_checked_arith_c(e, op, lhs, rhs),
+        Add | Sub | Mul => {
+            let cop = CheckedArithOp::from_arith(op).expect("checked op by arm guard");
+            emit_checked_arith_c(e, cop, lhs, rhs)
+        }
         Div | Mod => emit_div_or_mod_c(e, op, lhs, rhs),
         And => format!("({} && {})", lhs, rhs),
         Or => format!("({} || {})", lhs, rhs),
@@ -1390,12 +1383,11 @@ fn emit_arith_op_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
 /// `__builtin_{add,sub,mul}_overflow` intrinsics; on overflow, calls
 /// `sash_arith_overflow` (writes the diagnostic and exits).
 /// bug-runtime-arith-overflow-wraps.
-fn emit_checked_arith_c(e: &mut Emit, op: ArithOp, lhs: &str, rhs: &str) -> String {
+fn emit_checked_arith_c(e: &mut Emit, op: CheckedArithOp, lhs: &str, rhs: &str) -> String {
     let builtin = match op {
-        ArithOp::Add => "__builtin_add_overflow",
-        ArithOp::Sub => "__builtin_sub_overflow",
-        ArithOp::Mul => "__builtin_mul_overflow",
-        _ => unreachable!("emit_checked_arith_c only handles Add/Sub/Mul"),
+        CheckedArithOp::Add => "__builtin_add_overflow",
+        CheckedArithOp::Sub => "__builtin_sub_overflow",
+        CheckedArithOp::Mul => "__builtin_mul_overflow",
     };
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_l = ({});", lhs, t = t).unwrap();
@@ -2570,13 +2562,13 @@ fn emit_substring_c(e: &mut Emit, s_ptr: &str, s_len: &str, operand: &str) -> CS
 /// emit_case_conversion (codegen/value_handlers.rs:610). Allocates
 /// a 4096-byte stack buffer; runtime writes converted bytes and
 /// returns new length.
-fn emit_case_conversion_c(e: &mut Emit, op: &str, s_ptr: &str, s_len: &str) -> CStr {
-    let func = match op {
-        "^" => "sash_toupper_first",
-        "^^" => "sash_toupper_all",
-        "," => "sash_tolower_first",
-        ",," => "sash_tolower_all",
-        _ => unreachable!(),
+fn emit_case_conversion_c(e: &mut Emit, upper: bool, s_ptr: &str, s_len: &str) -> CStr {
+    // Whole-string only (DD#65 pruned the first-char `^`/`,` family) — see
+    // codegen::value_handlers::emit_case_conversion.
+    let func = if upper {
+        "sash_toupper_all"
+    } else {
+        "sash_tolower_all"
     };
     let t = e.fresh();
     writeln!(e.out, "    char {t}_buf[4096];", t = t).unwrap();

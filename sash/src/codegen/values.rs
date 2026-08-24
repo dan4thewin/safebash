@@ -133,7 +133,7 @@ pub(super) fn lower_value(
                 externs,
                 exit_status_var,
             );
-            let op = if *upper { "^^" } else { ",," };
+            let op = *upper;
             crate::codegen::value_handlers::emit_case_conversion(
                 op, s_ptr, s_len, builder, module, externs,
             )

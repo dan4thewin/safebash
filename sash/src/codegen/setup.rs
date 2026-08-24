@@ -644,12 +644,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     case_sig.params.push(AbiParam::new(I64));
     case_sig.params.push(AbiParam::new(I64));
     case_sig.returns.push(AbiParam::new(I64));
-    let toupper_first_func = module
-        .declare_function("sash_toupper_first", Linkage::Import, &case_sig)
-        .expect("declare");
-    let tolower_first_func = module
-        .declare_function("sash_tolower_first", Linkage::Import, &case_sig)
-        .expect("declare");
     let toupper_all_func = module
         .declare_function("sash_toupper_all", Linkage::Import, &case_sig)
         .expect("declare");
@@ -825,8 +819,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         chdir: chdir_func,
         getcwd: getcwd_func,
         herestring_redirect: herestring_func,
-        toupper_first: toupper_first_func,
-        tolower_first: tolower_first_func,
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
         getpid: getpid_func,
