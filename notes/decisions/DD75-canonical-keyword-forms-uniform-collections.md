@@ -136,8 +136,15 @@ intrinsic call:
 |-------|-----------|----------|
 | `$1`..`$n` | `${args[0]}`..`${args[n-1]}` | subscript |
 | `$@`       | `@args`                    | splat |
-| `$#`       | `${#args}`                 | length (= `$(len args)`) |
+| `$#`       | `$(len args)`              | length (`${#args}` is operator sugar) |
 | `$*`       | *(removed)* → `$(join args)` | — |
+
+- **Amended 2026-08-25 (DG): `$#`'s canonical form is `$(len args)`, not
+  `${#args}`.** The table originally placed the `${#args}` *operator* in the
+  canonical column, contradicting §1 (the `len` intrinsic is canonical; `${#x}`
+  is its operator sugar, and `$#` is bash sugar on top). Length is the one row
+  where the operator form is itself sugar — the splat (`@args`) and subscript
+  (`${args[i]}`) operators *are* canonical, but `${#}` desugars to `$(len …)`.
 
 - **`args` is 0-indexed** (`args[0]..args[n-1]`, keys `0..n-1` in the DD#33
   table; `args[0]` is the first argument). **Amended 2026-08-20 (DG): 0-indexed,
