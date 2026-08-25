@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=60
+plan=61
 echo "1..$plan" >&3
 
 set +e
@@ -408,6 +408,12 @@ run_sash 'fn f { echo "$1"; }
 s=$(f)
 echo $s'
 [[ $rc != 0 && -z $out && $err == *SB5042* ]]; chk 81.13
+
+# 81.14 DD#75/DD#81: `$@` is dropped inside a function ($-sigil that splats) →
+# SB5045; the splat is `@args`, a joined string is `$(join args)`.
+run_sash 'fn f { echo "$@"; }
+f a b'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.14
 
 set -e
 tally

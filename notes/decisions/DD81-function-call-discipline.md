@@ -88,7 +88,7 @@ all referring to the *same* per-function `args`:
 | sugar | canonical | operator |
 |---|---|---|
 | `$1`..`$n` | `${args[0]}`..`${args[n-1]}` | subscript (`$1` ≡ `${args[0]}`) |
-| `$@` | `@args` | splat |
+| `$@` | *(removed)* → `@args` | splat |
 | `$#` | `$(len args)` | length (`${#args}` is operator sugar) |
 | `$*` | *(removed)* → `$(join args)` | — |
 
@@ -96,10 +96,10 @@ all referring to the *same* per-function `args`:
 **this function's own args** (≡ `@args`), *not* the caller's.
 
 Two current-state notes: indexed access is unchecked today (`${args[2]}` with
-one arg yields empty); and — a known **DD#75 §5 migration gap** — the `$@` sugar
-does not yet desugar to `@args` (`$@` reads empty inside a function while `@args`
-is correct; a stale pre-DD#75 path remains). This DD makes the surface a checked
-signature and assumes/repairs the `$@ ≡ @args` equivalence.
+one arg yields empty); and — **`$@` is dropped** (DG 2026-08-25): a `$`-sigil that splats contradicts
+DD#75 §4, so in-function `$@`/`${@}` is rejected (**SB5045**) → use `@args` (the
+splat) or `$(join args)` (joined). `$1`/`$#` stay — genuinely scalar. This DD
+makes the surface a checked signature over `@args`/`${args[i]}`/`$N`.
 
 ### Signature inference
 
@@ -107,7 +107,7 @@ signature and assumes/repairs the `$@ ≡ @args` equivalence.
   is the contiguous set `{0..max}`; a gap is a **hole** (**SB5044**). A function
   with only literal indices and no whole-args access has **fixed arity =
   max+1**.
-- **Whole-args access** — `@args` (≡ `$@`), `$(len args)` (the count; ≡ sugar
+- **Whole-args access** — `@args`, `$(len args)` (the count; ≡ sugar
   `${#args}` / `$#`), or a **dynamic** index `${args[$i]}` — makes the function
   **variadic** (any count; floor = highest literal index + 1 if any is also
   present).

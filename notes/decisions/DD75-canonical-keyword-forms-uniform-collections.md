@@ -135,7 +135,7 @@ intrinsic call:
 | Sugar | Canonical | Operator |
 |-------|-----------|----------|
 | `$1`..`$n` | `${args[0]}`..`${args[n-1]}` | subscript |
-| `$@`       | `@args`                    | splat |
+| `$@`       | *(removed)* → `@args`      | splat |
 | `$#`       | `$(len args)`              | length (`${#args}` is operator sugar) |
 | `$*`       | *(removed)* → `$(join args)` | — |
 
@@ -169,7 +169,7 @@ intrinsic call:
 - `$*` is gone; there is no implicit positional join.
 
 This resolves the `@` double-duty (splat operator in `@a` vs. special-name in
-`$@`): `@` is now always the splat operator, and `$@` is sugar for `@args`.
+`$@`): `@` is now always the splat operator. **`$@` is *removed*** (amended 2026-08-25, DG): a `$`-sigil that *splats* contradicts "`@` is the sole splat" (§4) — the splat is `@args`, a joined string is `$(join args)`. In-function `$@` is SB5045; `$1`/`$#` stay (genuinely scalar).
 It also makes function args uniform with named arrays and with DD#60's
 program-arg model (`argv`/`arg`/`argc`).
 

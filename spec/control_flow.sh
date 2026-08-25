@@ -151,12 +151,18 @@ run_sash 'for x in a b c; do :; done; echo $x'
 
 # --- inside-function positionals stay clean (DD#46) ---
 
-# cf.f11 $@ inside a function is the caller's args (clean)
-run_sash 'fn greet { echo "$@"; }; greet alpha beta gamma'
-[[ $rc = 0 && $out = "alpha beta gamma" && -z $err ]]; chk cf.f11
+# cf.f11 the args joined into a string via `$(join args)` (was `"$@"`, dropped
+# by DD#75/DD#81 — `$@` looks scalar but splats). native,c — janet's own _args
+# model does not expose the `args` name for `$(join args)`.
+if in_modes native,c; then
+    run_sash 'fn greet { echo $(join args); }; greet alpha beta gamma'
+    [[ $rc = 0 && $out = "alpha beta gamma" && -z $err ]]; chk cf.f11
+else
+    skip_chk cf.f11
+fi
 
-# cf.f12 for over $@ inside a function iterates the caller's args
-run_sash 'fn each { for x in $@; do echo "$x"; done }; each a b c'
+# cf.f12 for over @args iterates the function's own args (was `$@`)
+run_sash 'fn each { for x in @args; do echo "$x"; done }; each a b c'
 [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk cf.f12
 
 # cf.f13 $# inside a function is the caller's arg count

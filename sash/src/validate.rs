@@ -1796,8 +1796,102 @@ fn flag_args_toplevel(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-// ── DD#60 splat context (SB5025), DD#22 quoted splat (SB5026),
-//    DD#60 for-in single-source rule (SB5027) ──────────────────────
+// ── DD#75/DD#81: `$@` is dropped inside a function — use `@args` ──────────
+
+/// Reject `$@` / `${@}` inside a function body (SB5045). `$@` is a `$`-sigil
+/// form that *splats*, contradicting DD#75 §4 ("`@` is the sole splat"); the
+/// splat is written `@args`, a joined string is `$(join args)`. Top-level `$@`
+/// is already SB5024 (function-local). `$1`/`$#` stay — they are genuinely
+/// scalar, so their `$` sigil is consistent.
+pub fn check_dollar_at(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in &program.statements {
+        dollar_at_stmt(stmt, false, &mut diags);
+    }
+    diags
+}
+
+fn dollar_at_stmt(stmt: &Statement, in_fn: bool, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Function(f) = &stmt.kind {
+        for s in &f.body {
+            dollar_at_stmt(s, true, diags);
+        }
+        return;
+    }
+    if in_fn {
+        stmt.direct_exprs(&mut |e| dollar_at_expr(e, diags));
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            dollar_at_stmt(s, in_fn, diags);
+        }
+    }
+}
+
+fn dollar_at_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(n) if n == "@" => dollar_at_diag(expr.span, diags),
+        ExprKind::ParameterExpansion(pe) => dollar_at_pexp(expr.span, pe, diags),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            dollar_at_exprs(parts, diags)
+        }
+        ExprKind::AssocArray(pairs) => {
+            for (_, v) in pairs {
+                dollar_at_expr(v, diags);
+            }
+        }
+        ExprKind::Subscript { index, .. } => dollar_at_expr(index, diags),
+        // A `$( … )` inside a function body still runs in its arg scope.
+        ExprKind::CommandSubstitution(stmts) => {
+            for s in stmts {
+                dollar_at_stmt(s, true, diags);
+            }
+        }
+        ExprKind::Test(t) => dollar_at_test(t, diags),
+        _ => {}
+    }
+}
+
+fn dollar_at_exprs(exprs: &[Expr], diags: &mut Vec<Diagnostic>) {
+    for e in exprs {
+        dollar_at_expr(e, diags);
+    }
+}
+
+fn dollar_at_pexp(span: Span, pe: &ParameterExpansion, diags: &mut Vec<Diagnostic>) {
+    if pe.name == "@" {
+        dollar_at_diag(span, diags);
+    }
+    if let Some(op) = &pe.operand {
+        dollar_at_expr(op, diags);
+    }
+}
+
+fn dollar_at_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match t {
+        TestExpr::Unary { operand, .. } => dollar_at_expr(operand, diags),
+        TestExpr::Binary { left, right, .. } => {
+            dollar_at_expr(left, diags);
+            dollar_at_expr(right, diags);
+        }
+        TestExpr::Not(inner) => dollar_at_test(inner, diags),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            dollar_at_test(a, diags);
+            dollar_at_test(b, diags);
+        }
+    }
+}
+
+fn dollar_at_diag(span: Span, diags: &mut Vec<Diagnostic>) {
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5045",
+        "sash has no `$@` — use `@args` (the splat), or `$(join args)` for a \
+         joined string"
+            .to_string(),
+    ));
+}
+
 //
 // `$(argv)` / `$(argv N)` are array-returning splats. They are legal only
 // as the sole source of a for-in header or as the right-hand side of an

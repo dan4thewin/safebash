@@ -1,3 +1,15 @@
+## ════════ STATUS (2026-08-25, cont.) — drop `$@` (SB5045) ════════
+
+**Pushed on `hand-parser`.** DG caught that `$@` breaks DD#75 §4's "`@` is the
+sole splat" (a `$`-sigil that splats). `validate::check_dollar_at` rejects
+in-function `$@`/`${@}` → SB5045 (use `@args`, or `$(join args)` joined);
+top-level stays SB5024; `$1`/`$#` untouched (scalar). DD#75 §5/line 172 + DD#81
+note corrected ($@ removed, not sugar). `"@foo"` stays a literal (no
+false-positives on `user@host`); the converter warns — filed
+`converter-dollar-at-migration`. specs functions.sh 81.14, control_flow.sh
+cf.f11 (→`$(join args)`, native,c)/cf.f12 (→`@args`). 0 regressions; native 0.
+Journal 182.
+
 ## ════════ STATUS (2026-08-25, cont.) — DD#81 COMPLETE (Parts A + B) ════════
 
 **Pushed on `hand-parser`.** DD#81 "function-call discipline" fully implemented.

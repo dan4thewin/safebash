@@ -177,6 +177,7 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
 fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
     let mut tdiags = validate::check_taint(program);
     tdiags.extend(validate::check_positionals(program));
+    tdiags.extend(validate::check_dollar_at(program));
     tdiags.extend(validate::check_argv_splat(program));
     tdiags.extend(validate::check_undeclared_reads(program));
     tdiags.extend(validate::check_len_operands(program));
