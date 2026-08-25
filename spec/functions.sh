@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=47
+plan=53
 echo "1..$plan" >&3
 
 set +e
@@ -308,6 +308,53 @@ greet'
 run_sash 'maybe() { echo hi }
 if ! maybe; then echo y; fi'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 74.18
+
+# ── DD#81 function-call discipline: one name, one meaning ──────────────
+# 81.1 dynamic shadowing rejected: a name used as a command, then defined as
+# a function, is a collision (SB5041) — no silent position-based switch.
+run_sash 'cat /etc/hostname
+fn cat { echo W; }
+cat /etc/hostname'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.1
+
+# 81.2 forward `$(f)` (function defined after the call) → SB5041 (was a
+# codegen ICE; the $( ) gate now matches the plain-call gate).
+run_sash 'echo $(f)
+fn f { echo hi; }'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.2
+
+# 81.3 forward plain call → SB5041 (was a runtime `bug:` / 127).
+run_sash 'f x
+fn f { echo hi; }'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.3
+
+# 81.4 KEPT: a helper defined below its caller — `b` is only ever a function
+# (called when `a` runs, after `b` is defined), never an external. (janet
+# resolves a plain in-body call as an external exec; native+c only.)
+if in_modes native,c; then
+    run_sash 'fn a { b; }
+fn b { echo hi; }
+a'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 81.4
+else
+    skip_chk 81.4
+fi
+
+# 81.5 KEPT: static override — define `fn cat` first, then use it; the name is
+# the function throughout (call the real one via an absolute path).
+if in_modes native,c; then
+    run_sash 'fn cat { echo W; }
+cat'
+    [[ $rc = 0 && $out = "W" && -z $err ]]; chk 81.5
+else
+    skip_chk 81.5
+fi
+
+# 81.6 shadowing through `$( )` is rejected too (same gate).
+run_sash 'x=$(cat /etc/hostname)
+fn cat { echo W; }
+y=$(cat /etc/hostname)'
+[[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.6
 
 set -e
 tally

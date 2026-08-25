@@ -466,6 +466,12 @@ pub(super) fn handle_function_call_or_command(
     if let Some(body) = state.function_bodies.get(&resolved_name).cloned() {
         return inline_function_call(name, &body, c, ssa, state, block);
     }
+    // DD#81: this bareword resolved to an external command (no function defined
+    // so far) — record it so a later `fn NAME` is flagged as a collision. Skip
+    // records made while lowering a dead `fn_` template (not real execution).
+    if !state.lowering_fn_template {
+        state.externally_used.borrow_mut().insert(name.to_string());
+    }
     emit_external_command(name, c, ssa, state, block)
 }
 

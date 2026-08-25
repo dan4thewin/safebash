@@ -1,3 +1,20 @@
+## ════════ STATUS (2026-08-25) — DD#81 Part A: reject shadowing (name resolution) ════════
+
+**Committed on `hand-parser`.** First DD#81 stage. Unified the `$(f)` capture
+gate onto the plain-call `function_bodies` gate (defined-so-far / execution
+order): a not-yet-defined `$(f)` is now an external command substitution, not the
+broken `known_functions`→`func_constants` path. Added **SB5041**: a bareword used
+as an external command, then defined as `fn NAME`, is a shadowing collision
+(`externally_used` set, gated off during dead `fn_` template lowering via
+`lowering_fn_template`). Rejects dynamic shadowing + forward refs (both `$(f)`
+and plain), keeps helper-below-caller / static-override / normal calls. specs
+functions.sh 81.1–81.6; 0 regressions native/c/janet; native gate 0. Journal 178.
+
+**DD#81 remaining (next stages):** remove now-dead `func_constants` /
+`lower_func_call_value` / `fold_function_outputs`; fix `$(f arg)` arg passing;
+Part B uniform arity (SB5042/43/44 from `args` usage); `bug: bare command` →
+`command not found`. Tracked in the session todos.
+
 ## ════════ STATUS (2026-08-24, cont.) — bug fix: `[[ -o ]]`/`[[ -R ]]` codegen ICE ════════
 
 **Committed on `hand-parser`.** Reachability audit for the ICE-arms keep+cite

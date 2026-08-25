@@ -155,6 +155,15 @@ fn lower_function_stmt(
         state.exit_trap = Some(f.body.clone());
         return block;
     }
+    // DD#81 Part A: one name, one meaning. If this name was already used as an
+    // external command earlier in execution order, defining it as a function
+    // now is a command/function shadowing collision.
+    if state.externally_used.borrow().contains(&f.name) {
+        state.diagnostics.push(format!(
+            "{}:{}: error [SB5041] '{}' is used as a command before this definition — a name is either a command or a function, not both (rename, or invoke the external via an absolute path)",
+            stmt.span.line, stmt.span.col, f.name
+        ));
+    }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
     if f.name.starts_with("__local__") {
         state.local_fn_scope.insert(f.name.clone());
@@ -172,7 +181,10 @@ fn lower_function_stmt(
     // the real argc in inline_function_call.
     let mut template_body = f.body.clone();
     super::cmd_handlers::expand_dollar_at_in_body(&mut template_body, 0);
+    let saved_template_flag = state.lowering_fn_template;
+    state.lowering_fn_template = true;
     let fn_exit = lower_stmts(&template_body, ssa, state, fn_entry);
+    state.lowering_fn_template = saved_template_flag;
     state.local_fn_scope = saved_scope;
     ssa.block_mut(fn_exit).terminator = Terminator::Return;
     block

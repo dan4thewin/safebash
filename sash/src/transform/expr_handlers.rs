@@ -24,10 +24,7 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         return SsaValue::Expr(expr_to_string(expr));
     };
     if let Some(name) = name_opt {
-        if state.known_functions.contains(name.as_str()) {
-            return func_call_capture(name, c, state);
-        }
-        if let Some(v) = try_native_intrinsic(&name, c, state) {
+        if let Some(v) = resolve_single_cmdsubst(name, c, state) {
             return v;
         }
     }
@@ -37,6 +34,23 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         _ => vec![],
     };
     SsaValue::CmdSubst { argv, redirects }
+}
+
+/// Resolve a single-command `$(name …)`: a **defined-so-far** function → capture
+/// (DD#81 execution-order gate); a native intrinsic → its value; otherwise
+/// record the external use (for the SB5041 collision) and return `None` so the
+/// caller emits a plain external `CmdSubst`.
+fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> Option<SsaValue> {
+    if state.function_bodies.contains_key(name.as_str()) {
+        return Some(func_call_capture(name, c, state));
+    }
+    if let Some(v) = try_native_intrinsic(&name, c, state) {
+        return Some(v);
+    }
+    if !state.lowering_fn_template {
+        state.externally_used.borrow_mut().insert(name);
+    }
+    None
 }
 
 /// `$(f …)` on a known user function. Option C: an `-> int` function

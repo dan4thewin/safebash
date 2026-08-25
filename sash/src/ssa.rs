@@ -978,6 +978,18 @@ pub struct VersionState {
     /// `&mut` through the whole evaluator. Surfaced onto
     /// `SsaProgram::external_deps` at the end of `ir_to_ssa_typed`.
     pub external_deps: std::cell::RefCell<std::collections::BTreeSet<String>>,
+
+    /// DD#81 Part A: bareword command names resolved as an *external* command
+    /// (not a defined-so-far function). Interior-mutable so the immutable
+    /// `$( … )` expression path can record. On `fn NAME`, a name already here is
+    /// a command/function shadowing collision (SB5041) — one name, one meaning.
+    /// DD#81: true while lowering a function's standalone `fn_` *template*
+    /// block (a dead template — every real call inlines). External command
+    /// resolutions here are not real execution order, so they must not feed the
+    /// SB5041 collision set (else a forward-referenced callee in a body would
+    /// look like an external use before its definition).
+    pub lowering_fn_template: bool,
+    pub externally_used: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 impl VersionState {
@@ -1007,6 +1019,8 @@ impl VersionState {
             inlining: Vec::new(),
             tail_loop: None,
             external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),
+            lowering_fn_template: false,
+            externally_used: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 
