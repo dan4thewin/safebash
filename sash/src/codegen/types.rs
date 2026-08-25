@@ -140,7 +140,6 @@ pub(super) struct InstCtx<'a> {
     pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
     pub(super) capture_saved_var: cranelift_frontend::Variable,
     pub(super) capture_pipe_var: cranelift_frontend::Variable,
-    pub(super) func_constants: &'a std::collections::HashMap<String, String>,
     pub(super) redirect_stack: &'a mut Vec<Vec<super::redirects::SavedFd>>,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,

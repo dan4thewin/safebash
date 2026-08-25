@@ -62,7 +62,6 @@ pub(super) fn lower_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     #[allow(unused_variables)] exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -74,7 +73,10 @@ pub(super) fn lower_value(
             lower_var_value(vref, builder, module, vars, externs, exit_status_var)
         }
         SsaValue::FuncCall(name) => {
-            lower_func_call_value(name, builder, module, literals, func_constants)
+            // DD#81: a `$(f)` on a defined-so-far function is always lifted to a
+            // captured temp during transform (a forward/undefined name resolves
+            // external instead), so a bare FuncCall never reaches codegen.
+            panic!("ICE: FuncCall should have been lifted during transform: {name}")
         }
         SsaValue::IntFuncCall { name, .. } => {
             panic!(
@@ -98,7 +100,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -114,7 +115,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -132,7 +132,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -143,7 +142,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -154,7 +152,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -170,7 +167,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -180,7 +176,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -195,7 +190,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -210,7 +204,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -220,7 +213,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -236,7 +228,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -252,7 +243,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -262,7 +252,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -279,7 +268,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -289,7 +277,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -307,7 +294,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -332,7 +318,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -342,7 +327,6 @@ pub(super) fn lower_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -354,7 +338,6 @@ pub(super) fn lower_value(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -410,7 +393,6 @@ fn lower_regex_replace_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -420,7 +402,6 @@ fn lower_regex_replace_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -430,7 +411,6 @@ fn lower_regex_replace_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -440,7 +420,6 @@ fn lower_regex_replace_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -463,7 +442,6 @@ fn lower_regex_match_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -473,7 +451,6 @@ fn lower_regex_match_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -483,7 +460,6 @@ fn lower_regex_match_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -544,27 +520,6 @@ fn lower_slot_as_str_value(
     }
 }
 
-fn lower_func_call_value(
-    name: &str,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    if let Some(constant) = func_constants.get(name) {
-        let data_id = intern_or_declare(literals, module, constant.as_str());
-        let gv = module.declare_data_in_func(data_id, builder.func);
-        let ptr = builder.ins().global_value(I64, gv);
-        let len = builder.ins().iconst(I64, constant.len() as i64);
-        (ptr, len)
-    } else {
-        panic!(
-            "ICE: non-constant elidable function call not yet supported: {}",
-            name
-        );
-    }
-}
-
 #[allow(clippy::too_many_arguments)]
 fn lower_concat_value(
     parts: &[SsaValue],
@@ -572,7 +527,6 @@ fn lower_concat_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -583,7 +537,6 @@ fn lower_concat_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -594,7 +547,6 @@ fn lower_concat_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         );
@@ -616,7 +568,6 @@ fn lower_assoc_array_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -638,7 +589,6 @@ fn lower_assoc_array_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         );
@@ -660,7 +610,6 @@ fn lower_subscript_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -672,7 +621,6 @@ fn lower_subscript_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -698,7 +646,6 @@ fn lower_subscript_raw(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -710,7 +657,6 @@ fn lower_subscript_raw(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         );
@@ -725,7 +671,6 @@ fn lower_subscript_raw(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )
@@ -752,7 +697,6 @@ fn lower_subscript_as_int(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -764,7 +708,6 @@ fn lower_subscript_as_int(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -868,7 +811,6 @@ fn lower_ternary_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -878,7 +820,6 @@ fn lower_ternary_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -890,7 +831,6 @@ fn lower_ternary_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -900,7 +840,6 @@ fn lower_ternary_value(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -916,7 +855,6 @@ fn lower_indexed_array_value(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -938,7 +876,6 @@ fn lower_indexed_array_value(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         );
@@ -961,7 +898,6 @@ fn lower_disposition_as_int(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Option<cranelift_codegen::ir::Value> {
@@ -981,7 +917,6 @@ fn lower_disposition_as_int(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )),
@@ -991,7 +926,6 @@ fn lower_disposition_as_int(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )),
@@ -1002,7 +936,6 @@ fn lower_disposition_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1012,7 +945,6 @@ fn lower_disposition_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1027,7 +959,6 @@ fn lower_disposition_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1037,7 +968,6 @@ fn lower_disposition_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1060,7 +990,6 @@ pub(super) fn lower_value_as_int(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -1072,7 +1001,6 @@ pub(super) fn lower_value_as_int(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     ) {
@@ -1093,7 +1021,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1107,7 +1034,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1117,7 +1043,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1134,7 +1059,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1146,7 +1070,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1156,7 +1079,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1197,7 +1119,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -1217,7 +1138,6 @@ pub(super) fn lower_value_as_int(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );

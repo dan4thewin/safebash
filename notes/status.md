@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-08-25, cont.) — DD#81: remove dead func_constants machinery ════════
+
+**Committed on `hand-parser`.** Second DD#81 stage. With forward `$(f)` rejected
+(Part A), a bare `SsaValue::FuncCall` can never reach codegen (defined `$(f)`
+always lifts to a captured temp; undefined resolves external). Confirmed dead
+(instrumented panic → 0 native regressions), then removed `fold_function_outputs`
++ `try_fold_block`, `lower_func_call_value`, the setup intern loop, and the
+`func_constants` parameter threaded through the whole value-lowering tree (139
+lines / 8 files + the InstCtx field). The `FuncCall` arm now panics
+"should-have-been-lifted" (joins IntFuncCall/CmdSubstBody). Net −216 lines; 0
+regressions native/c/janet, 0 new (behavior-preserving). Journal 179.
+
+**DD#81 remaining:** `$(f arg)` arg passing; Part B uniform arity
+(SB5042/43/44); `bug: bare command` → `command not found`.
+
 ## ════════ STATUS (2026-08-25) — DD#81 Part A: reject shadowing (name resolution) ════════
 
 **Committed on `hand-parser`.** First DD#81 stage. Unified the `$(f)` capture

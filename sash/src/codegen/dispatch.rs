@@ -31,7 +31,6 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
-        let func_constants = ctx.func_constants;
         let test_result_var = ctx.test_result_var;
         let exit_status_var = ctx.exit_status_var;
         let capture_saved_var = ctx.capture_saved_var;
@@ -114,7 +113,6 @@ impl SsaInst {
                     module,
                     vars,
                     literals,
-                    func_constants,
                     externs,
                     Some(exit_status_var),
                 );
@@ -374,7 +372,6 @@ impl SsaInst {
             module,
             ctx.vars,
             ctx.literals,
-            ctx.func_constants,
             ctx.externs,
             Some(ctx.exit_status_var),
         );
@@ -384,7 +381,6 @@ impl SsaInst {
             module,
             ctx.vars,
             ctx.literals,
-            ctx.func_constants,
             ctx.externs,
             Some(ctx.exit_status_var),
         );
@@ -526,7 +522,6 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let literals = ctx.literals;
         let externs = ctx.externs;
-        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         // Runtime bless enforcement: evaluate test on source, abort if false.
         // On pass, copy source value to target (new clean SSA version).
@@ -536,7 +531,6 @@ impl SsaInst {
             module,
             vars,
             literals,
-            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -669,7 +663,6 @@ impl SsaInst {
         ctx: &mut InstCtx,
     ) -> bool {
         let externs = ctx.externs;
-        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
 
@@ -729,7 +722,6 @@ impl SsaInst {
             module,
             ctx.vars,
             ctx.literals,
-            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -812,7 +804,6 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let func_constants = ctx.func_constants;
         // wait [pid] — wait for specific pid or last bg job
         let pid = if let Some(arg) = args.first() {
             let (ptr, len) = lower_value(
@@ -821,7 +812,6 @@ impl SsaInst {
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 Some(exit_status_var),
             );
@@ -952,7 +942,6 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let func_constants = ctx.func_constants;
         let sv = find_array_slot(vars, array, "array");
         let table_ptr = builder.use_var(sv.str_ptr());
 
@@ -973,7 +962,6 @@ impl SsaInst {
             module,
             vars,
             literals,
-            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -1074,7 +1062,6 @@ impl SsaInst {
         let vars = &mut *ctx.vars;
         let externs = ctx.externs;
         let literals = ctx.literals;
-        let func_constants = ctx.func_constants;
         let exit_status_var = ctx.exit_status_var;
         let test_result_var = ctx.test_result_var;
         // let builtin / loop bound: exit status 0 if value != 0, 1 if == 0.
@@ -1087,7 +1074,6 @@ impl SsaInst {
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 Some(exit_status_var),
             );
@@ -1136,7 +1122,6 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let func_constants = ctx.func_constants;
         // unset map[key] → sash_table_delete(table_ptr, key_ptr, key_len)
         if args.len() >= 2 {
             let (tbl_ptr, _) = lower_value(
@@ -1145,7 +1130,6 @@ impl SsaInst {
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 Some(exit_status_var),
             );
@@ -1155,7 +1139,6 @@ impl SsaInst {
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 Some(exit_status_var),
             );
@@ -1361,7 +1344,6 @@ fn build_argv_on_stack(
             module,
             ctx.vars,
             ctx.literals,
-            ctx.func_constants,
             ctx.externs,
             Some(ctx.exit_status_var),
         );

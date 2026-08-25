@@ -66,82 +66,28 @@ pub fn compile_to_object(bash_source: &str, enable_trace: bool) -> Result<Vec<u8
         return Err(diags);
     }
 
-    // Try to constant-fold elidable function calls
-    let func_constants = fold_function_outputs(&ssa);
-
     // Catch ICE panics in codegen and convert to clean error messages
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        compile_ssa(&ssa, &func_constants, Some(bash_source), enable_trace)
+        compile_ssa(&ssa, Some(bash_source), enable_trace)
     }));
     match result {
         Ok(obj) => Ok(obj),
-        Err(payload) => {
-            let msg = if let Some(s) = payload.downcast_ref::<String>() {
-                s.clone()
-            } else if let Some(s) = payload.downcast_ref::<&str>() {
-                s.to_string()
-            } else {
-                "internal compiler error in codegen".to_string()
-            };
-            Err(vec![msg])
-        }
+        Err(payload) => Err(vec![panic_payload_message(payload)]),
     }
 }
 
-/// Try to evaluate function bodies at compile time. If a function's
-/// SSA blocks contain only echo with literal arguments, the output
-/// is a compile-time constant string.
-fn fold_function_outputs(program: &SsaProgram) -> HashMap<String, String> {
-    let mut result = HashMap::new();
-
-    for block in program.blocks.values() {
-        if let Some(name) = block.label.strip_prefix("fn_") {
-            if let Some(output) = try_fold_block(block, program) {
-                result.insert(name.to_string(), output);
-            }
-        }
+/// Decode a `catch_unwind` panic payload into a clean error message.
+fn panic_payload_message(payload: Box<dyn std::any::Any + Send>) -> String {
+    if let Some(s) = payload.downcast_ref::<String>() {
+        s.clone()
+    } else if let Some(s) = payload.downcast_ref::<&str>() {
+        s.to_string()
+    } else {
+        "internal compiler error in codegen".to_string()
     }
-    result
 }
 
-/// Try to evaluate a single function block as constant output.
-/// Returns None if the function has non-constant output.
-fn try_fold_block(block: &BasicBlock, _program: &SsaProgram) -> Option<String> {
-    let mut output = String::new();
-
-    for inst in &block.insts {
-        match inst {
-            SsaInst::Command { name, args, .. } if name == "echo" => {
-                for (i, arg) in args.iter().enumerate() {
-                    if i > 0 {
-                        output.push(' ');
-                    }
-                    match arg {
-                        SsaValue::Literal(s) => output.push_str(s),
-                        _ => return None, // non-constant argument
-                    }
-                }
-                output.push('\n');
-            }
-            SsaInst::Assign { .. } => {} // assignments don't produce output
-            _ => return None,            // any other instruction makes it non-constant
-        }
-    }
-
-    // Bash $(cmd) strips trailing newlines
-    while output.ends_with('\n') {
-        output.pop();
-    }
-
-    Some(output)
-}
-
-pub fn compile_ssa(
-    program: &SsaProgram,
-    func_constants: &HashMap<String, String>,
-    bash_source: Option<&str>,
-    trace: bool,
-) -> Vec<u8> {
+pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool) -> Vec<u8> {
     let reachable = program.reachable();
     let shared_flags = settings::Flags::new(settings::builder());
     let isa = cranelift_native::builder()
@@ -155,7 +101,7 @@ pub fn compile_ssa(
 
     let externs = super::setup::declare_runtime_functions(&mut module);
     let (literals, space_id, nl_id) =
-        super::setup::intern_literals(&mut module, program, func_constants, bash_source, trace);
+        super::setup::intern_literals(&mut module, program, bash_source, trace);
     let mut literals = literals;
     // ── Build main() ───────────────────────────────────────────
     let main_sig = Signature::new(CallConv::SystemV);
@@ -208,7 +154,6 @@ pub fn compile_ssa(
             capture_pipe_var,
             saved_end_status_var,
             end_cl_block,
-            func_constants,
             space_id,
             nl_id,
             trace,
@@ -249,7 +194,6 @@ struct EmitCtx<'a, 'b> {
     capture_pipe_var: cranelift_frontend::Variable,
     saved_end_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
-    func_constants: &'a HashMap<String, String>,
     space_id: cranelift_module::DataId,
     nl_id: cranelift_module::DataId,
     trace: bool,
@@ -370,7 +314,6 @@ fn emit_block_insts(
                 pipe_read_fd_var: ctx.pipe_read_fd_var,
                 capture_saved_var: ctx.capture_saved_var,
                 capture_pipe_var: ctx.capture_pipe_var,
-                func_constants: ctx.func_constants,
                 redirect_stack,
                 end_cl_block: ctx.end_cl_block,
                 program: ctx.program,

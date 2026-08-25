@@ -70,7 +70,6 @@ fn echo_write_one_arg(
     exit_status_var: Option<Variable>,
     mut failed: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
-    let empty_fc = std::collections::HashMap::new();
     if !is_first {
         let sp_gv = module.declare_data_in_func(space_id, builder.func);
         let sp_ptr = builder.ins().global_value(I64, sp_gv);
@@ -88,7 +87,6 @@ fn echo_write_one_arg(
             module,
             vars,
             literals,
-            &empty_fc,
             externs,
             exit_status_var,
         );
@@ -222,7 +220,6 @@ pub(super) fn build_exec_argv(
         module,
         vars,
         literals,
-        &std::collections::HashMap::new(),
         externs,
         Some(exit_status_var),
     )
@@ -238,7 +235,6 @@ pub(super) fn build_argv_values(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -252,7 +248,6 @@ pub(super) fn build_argv_values(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )
@@ -263,7 +258,6 @@ pub(super) fn build_argv_values(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )
@@ -278,7 +272,6 @@ fn build_argv_fixed(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -292,16 +285,7 @@ fn build_argv_fixed(
 
     for (i, v) in values.iter().enumerate() {
         let offset = (i * 8) as i32;
-        let (ptr, _) = lower_value(
-            v,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        );
+        let (ptr, _) = lower_value(v, builder, module, vars, literals, externs, exit_status_var);
         builder.ins().stack_store(ptr, argv_slot, offset);
     }
 
@@ -320,7 +304,6 @@ fn build_argv_runtime(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -332,7 +315,6 @@ fn build_argv_runtime(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -376,7 +358,6 @@ fn build_argv_runtime(
                     module,
                     vars,
                     literals,
-                    func_constants,
                     externs,
                     exit_status_var,
                 );
@@ -404,7 +385,6 @@ fn resolve_splat_tables(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Vec<cranelift_codegen::ir::Value> {
@@ -419,7 +399,6 @@ fn resolve_splat_tables(
                     module,
                     vars,
                     literals,
-                    func_constants,
                     externs,
                     exit_status_var,
                     tbl,
@@ -451,7 +430,6 @@ fn emit_splat_disposition(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
     tbl: cranelift_codegen::ir::Value,
@@ -464,7 +442,6 @@ fn emit_splat_disposition(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         )

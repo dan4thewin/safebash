@@ -103,7 +103,6 @@ pub(super) fn lower_test_expr(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -116,7 +115,6 @@ pub(super) fn lower_test_expr(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -127,7 +125,6 @@ pub(super) fn lower_test_expr(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -138,7 +135,6 @@ pub(super) fn lower_test_expr(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -146,49 +142,13 @@ pub(super) fn lower_test_expr(
             builder.ins().isub(one, val)
         }
         SsaTest::And(a, b) => {
-            let va = lower_test_expr(
-                a,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            let vb = lower_test_expr(
-                b,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
+            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
+            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
             builder.ins().band(va, vb)
         }
         SsaTest::Or(a, b) => {
-            let va = lower_test_expr(
-                a,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
-            let vb = lower_test_expr(
-                b,
-                builder,
-                module,
-                vars,
-                literals,
-                func_constants,
-                externs,
-                exit_status_var,
-            );
+            let va = lower_test_expr(a, builder, module, vars, literals, externs, exit_status_var);
+            let vb = lower_test_expr(b, builder, module, vars, literals, externs, exit_status_var);
             builder.ins().bor(va, vb)
         }
     }
@@ -202,7 +162,6 @@ fn lower_test_unary(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -212,7 +171,6 @@ fn lower_test_unary(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -315,7 +273,6 @@ fn lower_pair(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (
@@ -330,21 +287,13 @@ fn lower_pair(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
     let (r_ptr, r_len) = match right {
-        SsaTestRhs::Value(v) => lower_value(
-            v,
-            builder,
-            module,
-            vars,
-            literals,
-            func_constants,
-            externs,
-            exit_status_var,
-        ),
+        SsaTestRhs::Value(v) => {
+            lower_value(v, builder, module, vars, literals, externs, exit_status_var)
+        }
         SsaTestRhs::Pattern(p) => lower_literal_value(p, builder, module, literals),
     };
     (l_ptr, l_len, r_ptr, r_len)
@@ -359,7 +308,6 @@ fn lower_test_binary(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> cranelift_codegen::ir::Value {
@@ -370,7 +318,6 @@ fn lower_test_binary(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );

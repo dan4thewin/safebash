@@ -244,7 +244,6 @@ fn emit_stage_redirects(
                 module,
                 ctx.vars,
                 ctx.literals,
-                &std::collections::HashMap::new(),
                 ctx.externs,
                 Some(ctx.exit_status_var),
             );
@@ -534,7 +533,6 @@ fn handle_exit_status_assign(
                 module,
                 ctx.vars,
                 ctx.literals,
-                ctx.func_constants,
                 ctx.externs,
                 Some(ctx.exit_status_var),
             );
@@ -567,7 +565,6 @@ fn handle_regular_assign(
                 module,
                 ctx.vars,
                 ctx.literals,
-                ctx.func_constants,
                 ctx.externs,
                 Some(ctx.exit_status_var),
             );
@@ -580,7 +577,6 @@ fn handle_regular_assign(
                 module,
                 ctx.vars,
                 ctx.literals,
-                ctx.func_constants,
                 ctx.externs,
                 Some(ctx.exit_status_var),
             );
@@ -895,7 +891,6 @@ pub(super) fn handle_cd(
         module,
         ctx.vars,
         ctx.literals,
-        ctx.func_constants,
         ctx.externs,
         Some(ctx.exit_status_var),
     );
@@ -1073,7 +1068,6 @@ pub(super) fn handle_match_into(
         module,
         ctx.vars,
         ctx.literals,
-        ctx.func_constants,
         ctx.externs,
         Some(ctx.exit_status_var),
     );
@@ -1083,7 +1077,6 @@ pub(super) fn handle_match_into(
         module,
         ctx.vars,
         ctx.literals,
-        ctx.func_constants,
         ctx.externs,
         Some(ctx.exit_status_var),
     );
@@ -1139,7 +1132,6 @@ pub(super) fn handle_subscript_assign(
     let literals = ctx.literals;
     let externs = ctx.externs;
     let exit_status_var = ctx.exit_status_var;
-    let func_constants = ctx.func_constants;
 
     let sv = find_array_slot(vars, array, "array");
     let table_ptr = builder.use_var(sv.str_ptr());
@@ -1151,7 +1143,6 @@ pub(super) fn handle_subscript_assign(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             Some(exit_status_var),
         );
@@ -1168,7 +1159,6 @@ pub(super) fn handle_subscript_assign(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             Some(exit_status_var),
         )
@@ -1180,7 +1170,6 @@ pub(super) fn handle_subscript_assign(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         Some(exit_status_var),
     );

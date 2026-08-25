@@ -856,7 +856,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
 pub(super) fn intern_literals(
     module: &mut ObjectModule,
     program: &SsaProgram,
-    func_constants: &HashMap<String, String>,
     _bash_source: Option<&str>,
     trace: bool,
 ) -> (
@@ -879,10 +878,6 @@ pub(super) fn intern_literals(
         for inst in &block.insts {
             interner.intern_inst(inst);
         }
-    }
-
-    for s in func_constants.values() {
-        interner.intern(s);
     }
 
     if trace {

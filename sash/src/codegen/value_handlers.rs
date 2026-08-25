@@ -23,7 +23,6 @@ pub(super) fn handle_param_expansion(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    _func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     _exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -497,7 +496,6 @@ pub(super) fn handle_cmdsub(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -509,7 +507,6 @@ pub(super) fn handle_cmdsub(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ) {
@@ -523,7 +520,6 @@ pub(super) fn handle_cmdsub(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     )
@@ -539,7 +535,6 @@ fn lower_arg_intrinsic(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
@@ -549,7 +544,6 @@ fn lower_arg_intrinsic(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
@@ -564,7 +558,6 @@ fn lower_arg_intrinsic(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         );
@@ -594,7 +587,6 @@ fn try_native_intrinsic(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
@@ -644,7 +636,6 @@ fn try_native_intrinsic(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -681,7 +672,6 @@ fn try_native_intrinsic(
             module,
             vars,
             literals,
-            func_constants,
             externs,
             exit_status_var,
         ),
@@ -692,7 +682,6 @@ fn try_native_intrinsic(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -704,7 +693,6 @@ fn try_native_intrinsic(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -720,7 +708,6 @@ fn try_native_intrinsic(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -732,7 +719,6 @@ fn try_native_intrinsic(
                 module,
                 vars,
                 literals,
-                func_constants,
                 externs,
                 exit_status_var,
             );
@@ -812,7 +798,6 @@ fn emit_cmdsub_exec(
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
     literals: &HashMap<String, cranelift_module::DataId>,
-    func_constants: &HashMap<String, String>,
     externs: &ExternFuncs,
     exit_status_var: Option<Variable>,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
@@ -824,7 +809,6 @@ fn emit_cmdsub_exec(
         module,
         vars,
         literals,
-        func_constants,
         externs,
         exit_status_var,
     );
