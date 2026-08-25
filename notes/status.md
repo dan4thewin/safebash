@@ -1,3 +1,27 @@
+## ════════ STATUS (2026-08-25, cont.) — DD#81 structural stages COMPLETE; Part B (arity) filed ════════
+
+**Pushed on `hand-parser` (c09a4a3, f9f16f5, 9fc930c) + DD 820f0cd.** DD#81
+("function-call discipline") structural work done — three reachable ICEs fixed
+and the "one name, one meaning" principle implemented:
+
+- **Part A** (c09a4a3) — reject command/function shadowing + forward refs
+  (SB5041); unified the `$(f)` gate onto the plain-call `function_bodies` gate.
+- **func_constants removal** (f9f16f5) — the forward-`$(f)` machinery, now
+  provably dead, deleted (−216 lines, 8 files).
+- **`$(f arg)`** (9fc930c) — the capture path now carries + sets up the callee's
+  `args` (was an `undefined array` ICE); unified onto the args-array model.
+- **message cleanup** — MOOT: Part A + SB5011 catch every unresolved/forward
+  bareword at compile, so the sash-rt `bug: bare command` backstop is now an
+  unreachable internal invariant (correctly signals a compiler bug if ever hit).
+
+**Remaining: DD#81 Part B — uniform exact arity from `args` usage**
+(`notes/tasks/dd81-part-b-arity.md`, ready, P2). A feature-sized new
+signature-inference analysis (fixed vs variadic from `@args`/`${args[i]}`/`$(len
+args)`/dynamic-index; holes SB5044; exact checking SB5042/43 on all call paths).
+The current `$N`-only min-arity check (plain+pipeline) is the starting point.
+
+0 regressions native/c/janet throughout; native gate 0. Journals 178–180.
+
 ## ════════ STATUS (2026-08-25, cont.) — DD#81: `$(f arg)` passes args (was ICE) ════════
 
 **Committed on `hand-parser`.** Third DD#81 stage, a reachable ICE fix. `s=$(f
