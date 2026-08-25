@@ -165,6 +165,14 @@ fn lower_function_stmt(
         ));
     }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
+    // DD#81 Part B: a fixed-arity signature must read the full contiguous
+    // `{0..max}` of `args` — a gap is a hole (rule (a)).
+    if let (_, Some(missing)) = super::functions::analyze_arity(&f.body) {
+        state.diagnostics.push(format!(
+            "{}:{}: error [SB5044] function '{}' reads args non-contiguously — argument {} is unused; read args in order from index 0, or use @args for a variable number",
+            stmt.span.line, stmt.span.col, f.name, missing
+        ));
+    }
     if f.name.starts_with("__local__") {
         state.local_fn_scope.insert(f.name.clone());
     }

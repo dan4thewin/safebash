@@ -1,7 +1,7 @@
 //! Command-specific handlers extracted from handle_command.
 
 use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
-use super::functions::{collect_local_vars, collect_max_positional, lift_int_func_args};
+use super::functions::{collect_local_vars, lift_int_func_args};
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
 use crate::ir::*;
@@ -618,16 +618,46 @@ pub(super) fn check_callee_arity(
     call_argc: usize,
     state: &mut VersionState,
 ) {
-    let max_positional = collect_max_positional(body);
-    if max_positional > call_argc {
-        state.diagnostics.push(format!(
-            "1:1: error: function '{}' reads ${}  but called with only {} argument{}",
-            name,
-            max_positional,
-            call_argc,
-            if call_argc == 1 { "" } else { "s" }
-        ));
+    let (min, max) = match super::functions::analyze_arity(body).0 {
+        super::functions::Arity::Fixed(n) => (n, Some(n)),
+        super::functions::Arity::Variadic { floor } => (floor, None),
+    };
+    if call_argc < min {
+        state
+            .diagnostics
+            .push(arity_too_few_msg(name, min, max.is_none(), call_argc));
+    } else if max.is_some_and(|m| call_argc > m) {
+        state
+            .diagnostics
+            .push(arity_too_many_msg(name, min, call_argc));
     }
+}
+
+fn arity_plural(n: usize) -> &'static str {
+    if n == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+fn arity_too_few_msg(name: &str, min: usize, variadic: bool, got: usize) -> String {
+    let atleast = if variadic { "at least " } else { "" };
+    format!(
+        "1:1: error [SB5042] function '{}' expects {}{} argument{} but was called with {}",
+        name,
+        atleast,
+        min,
+        arity_plural(min),
+        got
+    )
+}
+
+fn arity_too_many_msg(name: &str, n: usize, got: usize) -> String {
+    format!(
+        "1:1: error [SB5043] function '{}' takes {} argument{} but was called with {} — use @args to accept a variable number",
+        name, n, arity_plural(n), got
+    )
 }
 
 fn restore_caller_state(

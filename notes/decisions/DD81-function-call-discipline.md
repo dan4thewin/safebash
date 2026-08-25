@@ -176,3 +176,23 @@ DD#23 (compile-time command resolution), DD#60 (caller's `$@`/`$*`), DD#75
 (uniform collections / the `args` array), DD#18 (local functions — the natural
 home for an *explicit* unshadow mechanism, e.g. `unset -f` / scoped functions,
 should controlled dynamic behaviour ever be wanted back).
+
+## Implemented
+
+- **Part A** (c09a4a3) — SB5041 shadowing/forward-ref rejection; `$(f)` gate
+  unified onto the plain-call `function_bodies` gate. + func_constants removal
+  (f9f16f5), `$(f arg)` capture args (9fc930c).
+- **Part B** — `transform/functions.rs::analyze_arity` infers `Arity`
+  (`Fixed(n)` / `Variadic{floor}`) by walking the body's `args` reads
+  (`$N`/`${args[k]}` literal → fixed index; `@args`/`$(len args)`/`${#args}`/
+  `$#`/`$@`/dynamic index → variadic; **including inside `$(( ))`** — arith is
+  scanned via `sig_scan_arith`, else `$#` in a condition is missed). Checked on
+  all three call paths (plain, pipeline, `$( )` capture): fixed → exactly N
+  (**SB5042** too-few / **SB5043** too-many); variadic → ≥ floor (SB5042). A
+  fixed signature must read `{0..max}` contiguously — a gap is **SB5044**
+  (rule (a)).
+- **The no-op idiom** (DG 2026-08-25): to acknowledge an argument a fixed-arity
+  function *takes* but does not otherwise use, reference it in a no-op — `fn f
+  { : $1; echo $2; }` (reads index 0, no hole). To take a *variable* number (or
+  reach a high index without the lower ones), mark the function variadic with
+  `@args` — `fn f { : @args; echo ${args[10]}; }`. specs functions.sh 81.9–81.13.

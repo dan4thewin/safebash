@@ -3,7 +3,6 @@
 use crate::ir::*;
 use crate::ssa::*;
 
-use super::helpers::scan_expr_positionals_stmt;
 use super::statements::lower_stmts;
 
 /// DD#75 §5: bind the callee's implicit `args` array (0-indexed) from the
@@ -291,16 +290,236 @@ pub(super) fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
     locals
 }
 
-/// Scan function body for the highest positional parameter referenced ($1..$9).
-/// Returns 0 if none found.
-pub(super) fn collect_max_positional(stmts: &[Statement]) -> usize {
-    let mut max = 0usize;
-    let mut shifts = 0usize;
-    for stmt in stmts {
-        scan_expr_positionals_stmt(stmt, &mut max, &mut shifts);
+// ── DD#81 Part B: function-call arity from `args` usage ──────────────────
+
+/// A function's inferred call signature (DD#81 Part B).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum Arity {
+    /// Reads only literal indices (`$N`, `${args[k]}`) — no whole-args access.
+    /// Takes exactly this many arguments.
+    Fixed(usize),
+    /// Uses `@args` / `$(len args)` / `${#args}` / `$#` / `$@` / a dynamic
+    /// index. Takes at least `floor` (the highest literal index + 1, if any).
+    Variadic { floor: usize },
+}
+
+#[derive(Default)]
+struct ArgSig {
+    /// 0-based `args` indices read via a literal (`$N` → N-1, `${args[k]}`).
+    indices: std::collections::BTreeSet<usize>,
+    /// Whole-args access → variadic.
+    variadic: bool,
+}
+
+/// Infer a function's arity from how its body reads `args`, plus the lowest
+/// hole (a missing index below the max) when the signature is fixed — DD#81
+/// rule (a): a fixed signature must read the full contiguous `{0..max}`.
+pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Option<usize>) {
+    let mut sig = ArgSig::default();
+    for s in body {
+        sig_scan_stmt(s, &mut sig);
     }
-    // After `shift` N times, a read of $1 actually needs argc >= 1+N
-    max + shifts
+    let count = sig.indices.iter().max().map(|m| m + 1).unwrap_or(0);
+    if sig.variadic {
+        (Arity::Variadic { floor: count }, None)
+    } else {
+        let hole = (0..count).find(|i| !sig.indices.contains(i));
+        (Arity::Fixed(count), hole)
+    }
+}
+
+fn sig_scan_stmts(stmts: &[Statement], sig: &mut ArgSig) {
+    for s in stmts {
+        sig_scan_stmt(s, sig);
+    }
+}
+
+fn sig_scan_exprs(exprs: &[Expr], sig: &mut ArgSig) {
+    for e in exprs {
+        sig_scan_expr(e, sig);
+    }
+}
+
+fn sig_scan_decl(d: &Declaration, sig: &mut ArgSig) {
+    for a in &d.assignments {
+        sig_scan_expr(&a.value, sig);
+    }
+}
+
+fn sig_scan_case(c: &Case, sig: &mut ArgSig) {
+    sig_scan_expr(&c.value, sig);
+    for item in &c.items {
+        sig_scan_stmts(&item.body, sig);
+    }
+}
+
+fn sig_scan_child_bodies(stmt: &Statement, sig: &mut ArgSig) {
+    for body in stmt.child_bodies() {
+        sig_scan_stmts(body, sig);
+    }
+}
+
+fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
+    match &stmt.kind {
+        StmtKind::Command(c) => {
+            sig_scan_expr(&c.name, sig);
+            sig_scan_exprs(&c.args, sig);
+        }
+        StmtKind::Assignment(a) => sig_scan_expr(&a.value, sig),
+        StmtKind::Declaration(d) => sig_scan_decl(d, sig),
+        StmtKind::For(f) => {
+            sig_scan_exprs(&f.words, sig);
+            sig_scan_stmts(&f.body, sig);
+        }
+        StmtKind::Case(c) => sig_scan_case(c, sig),
+        // A nested function has its own `args` scope — don't descend.
+        StmtKind::Function(_) => {}
+        // `(( … ))` as a statement / if/while condition carries an ArithExpr,
+        // not child bodies — scan it directly (else `$#`/`$N` inside a
+        // condition are missed and a variadic function looks fixed).
+        StmtKind::ArithTest(a) => sig_scan_arith(a, sig),
+        _ => sig_scan_child_bodies(stmt, sig),
+    }
+}
+
+fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
+    match &expr.kind {
+        ExprKind::SimpleExpansion(name) => sig_record_name(name, sig),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            sig_scan_exprs(parts, sig)
+        }
+        ExprKind::ParameterExpansion(pe) => sig_scan_pexp(pe, sig),
+        ExprKind::Subscript { name, index } => {
+            if name == "args" {
+                sig_record_index(index, sig);
+            }
+            sig_scan_expr(index, sig);
+        }
+        ExprKind::CommandSubstitution(stmts) => {
+            if cmdsub_reads_whole_args(stmts) {
+                sig.variadic = true;
+            }
+            sig_scan_stmts(stmts, sig);
+        }
+        ExprKind::Test(t) => sig_scan_test(t, sig),
+        ExprKind::Arithmetic(a) => sig_scan_arith(a, sig),
+        _ => {}
+    }
+}
+
+/// `${args[k]:OP}` is an indexed cell; `@args` / `${#args}` (no cell index) is
+/// whole-args → variadic. `${N}`/`${#}` behave like `$N`/`$#`.
+fn sig_scan_pexp(pe: &ParameterExpansion, sig: &mut ArgSig) {
+    if pe.name == "args" {
+        match &pe.index {
+            Some(idx) => sig_record_index(idx, sig),
+            None => sig.variadic = true,
+        }
+    } else {
+        sig_record_name(&pe.name, sig);
+    }
+    if let Some(op) = &pe.operand {
+        sig_scan_expr(op, sig);
+    }
+}
+
+fn sig_scan_test(test: &TestExpr, sig: &mut ArgSig) {
+    match test {
+        TestExpr::Unary { operand, .. } => sig_scan_expr(operand, sig),
+        TestExpr::Binary { left, right, .. } => {
+            sig_scan_expr(left, sig);
+            sig_scan_expr(right, sig);
+        }
+        TestExpr::Not(inner) => sig_scan_test(inner, sig),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            sig_scan_test(a, sig);
+            sig_scan_test(b, sig);
+        }
+    }
+}
+
+/// `$N` / `${N}` (1..9) → 0-based index; `$#`/`$@` → whole-args (variadic).
+fn sig_record_name(name: &str, sig: &mut ArgSig) {
+    if let Ok(n) = name.parse::<usize>() {
+        if (1..=9).contains(&n) {
+            sig.indices.insert(n - 1);
+        }
+    } else if name == "#" || name == "@" {
+        sig.variadic = true;
+    }
+}
+
+/// A `${args[K]}` index: a literal → a fixed index; anything dynamic → variadic.
+fn sig_record_index(idx: &Expr, sig: &mut ArgSig) {
+    match &idx.kind {
+        ExprKind::Literal(s) => match s.parse::<usize>() {
+            Ok(n) => {
+                sig.indices.insert(n);
+            }
+            Err(_) => sig.variadic = true,
+        },
+        _ => sig.variadic = true,
+    }
+}
+
+/// `$(len args)` / `$(join args)` / `$(keys args)` — a whole-args count/fold.
+fn cmdsub_reads_whole_args(stmts: &[Statement]) -> bool {
+    stmts.iter().any(|s| match &s.kind {
+        StmtKind::Command(c) => {
+            matches!(&c.name.kind, ExprKind::Literal(n)
+                if matches!(n.as_str(), "len" | "join" | "keys"))
+                && c.args
+                    .iter()
+                    .any(|a| matches!(&a.kind, ExprKind::Literal(x) if x == "args"))
+        }
+        _ => false,
+    })
+}
+
+/// Scan an arithmetic expression for `args` reads: `$N`/`$#` (`DollarVar`),
+/// bare `args[k]` (`Subscript`), and imported `${args[k]}` (`Expansion`).
+fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
+    match a {
+        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => sig_record_name(name, sig),
+        ArithExpr::Expansion(e) => sig_scan_expr(e, sig),
+        ArithExpr::Subscript { name, index } | ArithExpr::SubscriptAssign { name, index, .. } => {
+            if name == "args" {
+                sig_record_arith_index(index, sig);
+            }
+        }
+        _ => {}
+    }
+    for child in arith_children(a) {
+        sig_scan_arith(child, sig);
+    }
+}
+
+/// The sub-expressions of an arith node, for the recursive `args` scan.
+fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
+    match a {
+        ArithExpr::BinOp { left, right, .. } => vec![left, right],
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => vec![operand],
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => vec![value],
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => vec![cond, true_val, false_val],
+        ArithExpr::Comma(parts) | ArithExpr::FuncCall { args: parts, .. } => parts.iter().collect(),
+        ArithExpr::Subscript { index, .. } => vec![index],
+        ArithExpr::SubscriptAssign { index, value, .. } => vec![index, value],
+        _ => vec![],
+    }
+}
+
+/// A bare `args[k]` arith index: an int literal → fixed index; else variadic.
+fn sig_record_arith_index(idx: &ArithExpr, sig: &mut ArgSig) {
+    match idx {
+        ArithExpr::Literal(n) if *n >= 0 => {
+            sig.indices.insert(*n as usize);
+        }
+        _ => sig.variadic = true,
+    }
 }
 pub(super) fn collect_returns(stmts: &[Statement]) -> Vec<Option<String>> {
     let mut returns = Vec::new();

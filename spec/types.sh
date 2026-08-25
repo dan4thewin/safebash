@@ -526,9 +526,10 @@ fn f { g Z; echo $1; }
 f A'
 [[ $rc = 0 && $out = $'Z\nA' && -z $err ]]; chk 75.19
 # 75.20 user-written ${args[i]} reads the same array (native,c — janet uses its
-# own _args model and does not expose the `args` name)
+# own _args model and does not expose the `args` name). DD#81: `: ${args[1]}`
+# acknowledges the skipped middle param (fixed arity must read args in order).
 if in_modes native,c; then
-    run_sash 'fn f { echo ${args[0]} ${args[2]}; }
+    run_sash 'fn f { : ${args[1]}; echo ${args[0]} ${args[2]}; }
 f a b c'
     [[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
 else
@@ -543,9 +544,10 @@ else
     skip_chk 75.21
 fi
 # 75.22 more than 9 args are reachable via ${args[N]} (the old scalar model
-# capped at $9) (native,c)
+# capped at $9) (native,c). DD#81: reaching a high index without the lower ones
+# makes the function variadic — `: @args` marks it (takes any number).
 if in_modes native,c; then
-    run_sash 'fn f { echo ${args[10]}; }
+    run_sash 'fn f { : @args; echo ${args[10]}; }
 f a b c d e f g h i j k'
     [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
 else

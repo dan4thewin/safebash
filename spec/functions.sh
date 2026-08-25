@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=55
+plan=60
 echo "1..$plan" >&3
 
 set +e
@@ -189,9 +189,10 @@ run_sash 'greet() { echo hi; }
 greet'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 67.1
 
-# 67.2 `name()` sugar passes positionals like fn
-run_sash 'pick() { echo $2; }
-pick a b c'
+# 67.2 `name()` sugar passes positionals like fn. DD#81: a fixed-arity function
+# must read `args` contiguously — `: $1` acknowledges the unused first param.
+run_sash 'pick() { : $1; echo $2; }
+pick a b'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 67.2
 
 # 67.3 `function name { }` keyword form also accepted
@@ -377,6 +378,36 @@ echo $s'
 else
     skip_chk 81.8
 fi
+
+# 81.9 DD#81 Part B: too few args → SB5042
+run_sash 'fn f { echo "$1$2"; }
+f a'
+[[ $rc != 0 && -z $out && $err == *SB5042* ]]; chk 81.9
+
+# 81.10 too many args (fixed arity) → SB5043
+run_sash 'fn f { echo "$1"; }
+f a b'
+[[ $rc != 0 && -z $out && $err == *SB5043* ]]; chk 81.10
+
+# 81.11 a non-contiguous read (hole, rule a) → SB5044
+run_sash 'fn f { echo "$1$3"; }
+f a b c'
+[[ $rc != 0 && -z $out && $err == *SB5044* ]]; chk 81.11
+
+# 81.12 @args makes the function variadic — any count is accepted (native,c)
+if in_modes native,c; then
+    run_sash 'fn f { for x in @args; do echo "$x"; done; }
+f a b c'
+    [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk 81.12
+else
+    skip_chk 81.12
+fi
+
+# 81.13 arity is checked on the $() capture path too → SB5042
+run_sash 'fn f { echo "$1"; }
+s=$(f)
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB5042* ]]; chk 81.13
 
 set -e
 tally

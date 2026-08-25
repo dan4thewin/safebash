@@ -1,6 +1,6 @@
 ---
 title: "DD#81 Part B: uniform exact arity from `args` usage (SB5042/43/44)"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []

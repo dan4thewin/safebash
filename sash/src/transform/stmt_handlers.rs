@@ -1074,6 +1074,9 @@ pub(super) fn capture_func_into(
     block: BlockId,
 ) -> Option<BlockId> {
     let body = state.function_bodies.get(fname).cloned()?;
+    // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
+    // call's args), matching the plain-call and pipeline-stage paths.
+    super::cmd_handlers::check_callee_arity(fname, &body, arg_values.len(), state);
     let locals = collect_local_vars(&body);
 
     ssa.block_mut(block).insts.push(SsaInst::CaptureStart);

@@ -1,3 +1,16 @@
+## ════════ STATUS (2026-08-25, cont.) — DD#81 COMPLETE (Parts A + B) ════════
+
+**Pushed on `hand-parser`.** DD#81 "function-call discipline" fully implemented.
+Part B (exact arity) landed: `transform/functions.rs::analyze_arity` infers a
+per-function `Arity` (Fixed/Variadic) from `args` usage — `$N`/`${args[k]}`
+literal → fixed index; `@args`/`$(len args)`/`${#args}`/`$#`/`$@`/dynamic-index →
+variadic; **arith scanned** (`$#` inside `$(( ))`). Checked exactly on all three
+call paths (plain/pipeline/`$( )` capture): SB5042 too-few, SB5043 too-many,
+SB5044 hole (rule (a)). DG's no-op idiom (`: $1` to acknowledge an unused param,
+`@args` for variadic/high-index) resolved the rule-(a) tension; specs 67.2/75.20/
+75.22 updated. Old min-arity scanner (~130 lines) removed. specs functions.sh
+81.9–81.13; 0 regressions native/c/janet; native gate 0. Journal 181.
+
 ## ════════ STATUS (2026-08-25, cont.) — DD#81 structural stages COMPLETE; Part B (arity) filed ════════
 
 **Pushed on `hand-parser` (c09a4a3, f9f16f5, 9fc930c) + DD 820f0cd.** DD#81
