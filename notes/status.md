@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-08-25, cont.) — DD#81: `$(f arg)` passes args (was ICE) ════════
+
+**Committed on `hand-parser`.** Third DD#81 stage, a reachable ICE fix. `s=$(f
+hello)` / `echo $(f x)` on a defined function reading its args crashed
+(`undefined array`): the capture path (`capture_func_into`) used the old
+positional model (`setup_func_args`, `$1..$9`) and was passed `&[]`, so the
+body's `$1`≡`${args[0]}` (DD#75) found no `args` array. Fix: `SsaValue::FuncCall`
+now carries `args`, and `capture_func_into` uses the same args-array model as
+`inline_function_call` (`save_caller_args`/`setup_callee_args`). Dead positional
+helpers removed. specs functions.sh 81.7/81.8 (native,c); 0 regressions, native
+gate 0. Journal 180.
+
+**DD#81 remaining:** Part B uniform arity (SB5042/43/44 — capture path now
+carries the arg count); `bug: bare command` → `command not found`.
+
 ## ════════ STATUS (2026-08-25, cont.) — DD#81: remove dead func_constants machinery ════════
 
 **Committed on `hand-parser`.** Second DD#81 stage. With forward `$(f)` rejected

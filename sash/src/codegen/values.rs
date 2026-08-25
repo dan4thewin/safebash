@@ -72,7 +72,7 @@ pub(super) fn lower_value(
         SsaValue::Var(vref) => {
             lower_var_value(vref, builder, module, vars, externs, exit_status_var)
         }
-        SsaValue::FuncCall(name) => {
+        SsaValue::FuncCall { name, .. } => {
             // DD#81: a `$(f)` on a defined-so-far function is always lifted to a
             // captured temp during transform (a forward/undefined name resolves
             // external instead), so a bare FuncCall never reaches codegen.

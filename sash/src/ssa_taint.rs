@@ -314,7 +314,7 @@ fn value_is_tainted(
         // lowerer guarantees do not carry external input.
         SsaValue::Literal(_)
         | SsaValue::Expr(_)
-        | SsaValue::FuncCall(_)
+        | SsaValue::FuncCall { .. }
         | SsaValue::IntFuncCall { .. } => Taint::Clean,
 
         // Array reads inherit the named array's taint (DD#61). The array

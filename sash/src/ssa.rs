@@ -519,8 +519,13 @@ pub enum SsaValue {
     /// Complex expression (not yet decomposed — placeholder for
     /// quoted strings, parameter expansions, etc.)
     Expr(String),
-    /// Call an elidable function, capture its output as a string.
-    FuncCall(String),
+    /// DD#81: call a user function in `$( )`, capturing its stdout as a
+    /// string. Carries its argument values so the capture sets up the callee's
+    /// `args` array (like `IntFuncCall`).
+    FuncCall {
+        name: String,
+        args: Vec<SsaValue>,
+    },
     /// DD#58: Call a -> int function in arithmetic context.
     /// Produces an integer return value, not stdout.
     IntFuncCall {

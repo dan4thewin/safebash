@@ -57,21 +57,35 @@ pub(super) fn lift_int_func_calls(
                 .collect();
             inline_int_func(&name, &lifted_args, ssa, state, block)
         }
-        SsaValue::FuncCall(name) => {
+        SsaValue::FuncCall { name, args } => {
             // Option A (string-func-capture-in-arg-ice): a non-int function's
-            // `$(f)` stdout capture in argument position. Reuse the assignment
+            // `$(f …)` stdout capture in argument position. Reuse the assignment
             // path's capture-inline machinery (CaptureStart/End) to inline the
-            // body and capture its stdout into a temp, then use the temp — so
-            // it works for runtime output too, not just const-foldable stdout.
-            // (Args are dropped upstream by `func_call_capture` for a string
-            // `$(f)`, so none are threaded here; matches the pre-existing shape.)
+            // body and capture its stdout into a temp, then use the temp — so it
+            // works for runtime output too, not just const-foldable stdout.
+            // DD#81: the call's args are carried on FuncCall and threaded into
+            // the capture so the callee's `args` array is set up (was dropped).
+            let lifted_args: Vec<SsaValue> = args
+                .into_iter()
+                .map(|a| lift_int_func_calls(a, ssa, state, block))
+                .collect();
             let temp = format!("__strcap_{name}");
-            match super::stmt_handlers::capture_func_into(&temp, &name, &[], state, ssa, *block) {
+            match super::stmt_handlers::capture_func_into(
+                &temp,
+                &name,
+                &lifted_args,
+                state,
+                ssa,
+                *block,
+            ) {
                 Some(new_block) => {
                     *block = new_block;
                     SsaValue::Var(state.lookup(&temp))
                 }
-                None => SsaValue::FuncCall(name),
+                None => SsaValue::FuncCall {
+                    name,
+                    args: lifted_args,
+                },
             }
         }
         SsaValue::CmdSubstBody { body, .. } => {

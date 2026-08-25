@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=53
+plan=55
 echo "1..$plan" >&3
 
 set +e
@@ -355,6 +355,28 @@ run_sash 'x=$(cat /etc/hostname)
 fn cat { echo W; }
 y=$(cat /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5041* ]]; chk 81.6
+
+# 81.7 DD#81: `$(f arg)` passes positional args to the captured function
+# (was a codegen ICE — the capture dropped the args and the body's `$1`/
+# `${args[0]}` hit an undefined args array). native+c (janet: no capture).
+if in_modes native,c; then
+    run_sash 'fn greet { echo "hi $1"; }
+s=$(greet World)
+echo $s'
+    [[ $rc = 0 && $out = "hi World" && -z $err ]]; chk 81.7
+else
+    skip_chk 81.7
+fi
+
+# 81.8 multi-arg capture, read via the `args` array
+if in_modes native,c; then
+    run_sash 'fn pair { echo "${args[0]}-${args[1]}"; }
+s=$(pair a b)
+echo $s'
+    [[ $rc = 0 && $out = "a-b" && -z $err ]]; chk 81.8
+else
+    skip_chk 81.8
+fi
 
 set -e
 tally

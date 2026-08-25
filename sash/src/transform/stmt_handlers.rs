@@ -1024,7 +1024,7 @@ fn handle_plain_assign(
     mut block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
-    if let SsaValue::FuncCall(fname) = &val {
+    if let SsaValue::FuncCall { name: fname, .. } = &val {
         // A string function's result is its stdout; inline-capture it.
         // (An `-> int` function is an IntFuncCall here, not a FuncCall — it
         // falls through to lift_int_func_calls, capturing the return value.)
@@ -1055,7 +1055,8 @@ fn try_capture_inline(
     block: BlockId,
 ) -> Option<BlockId> {
     let func_args = extract_func_args(&a.value);
-    capture_func_into(&a.name, fname, &func_args, state, ssa, block)
+    let arg_values: Vec<SsaValue> = func_args.iter().map(|e| expr_to_value(e, state)).collect();
+    capture_func_into(&a.name, fname, &arg_values, state, ssa, block)
 }
 
 /// Inline the body of function `fname` (with `func_args` bound to its
@@ -1067,7 +1068,7 @@ fn try_capture_inline(
 pub(super) fn capture_func_into(
     target_name: &str,
     fname: &str,
-    func_args: &[Expr],
+    arg_values: &[SsaValue],
     state: &mut VersionState,
     ssa: &mut SsaProgram,
     block: BlockId,
@@ -1076,10 +1077,15 @@ pub(super) fn capture_func_into(
     let locals = collect_local_vars(&body);
 
     ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
-    let (saved, saved_argc) = save_positionals(state);
+    // DD#81: capture uses the same args-array model as inline_function_call
+    // (save_caller_args + setup_callee_args), not the old $1..$9 positional
+    // model — so the callee body's `${args[i]}` / `$N` resolve to the passed
+    // args (previously the args were dropped and `${args[…]}` hit an
+    // undefined array).
+    let saved_args = super::functions::save_caller_args(state);
     let saved_locals = save_locals(fname, &locals, state, ssa, block);
 
-    setup_func_args(func_args, state, ssa, block);
+    super::functions::setup_callee_args(arg_values, ssa, state, block);
 
     let call_block = ssa.new_block(&format!("cap_{}", fname));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -1098,8 +1104,25 @@ pub(super) fn capture_func_into(
             tainted: false,
         });
 
-    restore_positionals(&saved, saved_argc, &saved_locals, state, ssa, restore_block);
+    restore_saved_locals(&saved_locals, state, ssa, restore_block);
+    super::functions::restore_caller_args(saved_args, state);
     Some(restore_block)
+}
+
+/// Restore each caller local from its `__save_<fn>_<local>` snapshot slot.
+fn restore_saved_locals(
+    saved_locals: &[(String, VarRef)],
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) {
+    for (local_name, saved_ref) in saved_locals {
+        let rv = state.define(local_name);
+        ssa.block_mut(block).insts.push(SsaInst::Assign {
+            target: rv,
+            value: SsaValue::Var(saved_ref.clone()),
+        });
+    }
 }
 
 /// Capture a **multi-statement / pipeline** `$(…)` body's stdout into
@@ -1192,17 +1215,6 @@ fn restore_locals(
     }
 }
 
-/// Snapshot the current `$1..$9` and `$#` versions so they can be
-/// rolled back after the inlined call returns. No instructions are
-/// emitted; the caller saves these as `Var` references.
-fn save_positionals(state: &mut VersionState) -> (Vec<(String, VarRef)>, VarRef) {
-    let saved: Vec<(String, VarRef)> = (1..=9)
-        .map(|i| (i.to_string(), state.lookup(&i.to_string())))
-        .collect();
-    let saved_argc = state.lookup("#");
-    (saved, saved_argc)
-}
-
 /// Save each of `locals` into a fresh `__save_<fname>_<lname>`
 /// variable in `block`. Returns the (name, save-ref) pairs for the
 /// later restore.
@@ -1246,66 +1258,5 @@ fn extract_func_args(value: &Expr) -> Vec<Expr> {
         c.args.clone()
     } else {
         vec![]
-    }
-}
-
-/// Install `$#` and `$1..$N` in `block`, then clear `$(N+1)..$9`
-/// (DD#46: keeps the caller's higher slots from leaking through).
-fn setup_func_args(
-    func_args: &[Expr],
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) {
-    let argc_val = SsaValue::Literal(func_args.len().to_string());
-    let argc_var = state.define("#");
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: argc_var,
-        value: argc_val,
-    });
-    for (i, arg) in func_args.iter().enumerate() {
-        let v = expr_to_value(arg, state);
-        let param_var = state.define(&(i + 1).to_string());
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: v,
-        });
-    }
-    for i in (func_args.len() + 1)..=9 {
-        let param_var = state.define(&i.to_string());
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: param_var,
-            value: SsaValue::Literal(String::new()),
-        });
-    }
-}
-
-/// Roll the saved positionals, `$#`, and locals back into `block`.
-fn restore_positionals(
-    saved: &[(String, VarRef)],
-    saved_argc: VarRef,
-    saved_locals: &[(String, VarRef)],
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) {
-    for (param_name, saved_ref) in saved {
-        let rv = state.define(param_name);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: rv,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
-    let ra = state.define("#");
-    ssa.block_mut(block).insts.push(SsaInst::Assign {
-        target: ra,
-        value: SsaValue::Var(saved_argc),
-    });
-    for (local_name, saved_ref) in saved_locals {
-        let rv = state.define(local_name);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: rv,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
     }
 }

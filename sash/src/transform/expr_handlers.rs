@@ -58,11 +58,11 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
 /// lifted into a temp downstream); any other function's result is its stdout
 /// (`FuncCall`).
 fn func_call_capture(name: String, c: &Command, state: &VersionState) -> SsaValue {
+    let args = c.args.iter().map(|a| arg_to_value(a, state)).collect();
     if state.function_int_typed.contains(name.as_str()) {
-        let args = c.args.iter().map(|a| arg_to_value(a, state)).collect();
         SsaValue::IntFuncCall { name, args }
     } else {
-        SsaValue::FuncCall(name)
+        SsaValue::FuncCall { name, args }
     }
 }
 
