@@ -437,55 +437,6 @@ impl CheckedArithOp {
 }
 
 impl ArithOp {
-    pub fn from_str(s: &str) -> Option<ArithOp> {
-        match s {
-            "+" => Some(ArithOp::Add),
-            "-" => Some(ArithOp::Sub),
-            "*" => Some(ArithOp::Mul),
-            "/" => Some(ArithOp::Div),
-            "%" => Some(ArithOp::Mod),
-            "==" => Some(ArithOp::Eq),
-            "!=" => Some(ArithOp::Ne),
-            "<" => Some(ArithOp::Lt),
-            "<=" => Some(ArithOp::Le),
-            ">" => Some(ArithOp::Gt),
-            ">=" => Some(ArithOp::Ge),
-            "&&" => Some(ArithOp::And),
-            "||" => Some(ArithOp::Or),
-            "<<" => Some(ArithOp::Shl),
-            ">>" => Some(ArithOp::Shr),
-            "&" => Some(ArithOp::BitAnd),
-            "|" => Some(ArithOp::BitOr),
-            "^" => Some(ArithOp::BitXor),
-            "**" => Some(ArithOp::Pow),
-            _ => None,
-        }
-    }
-
-    pub fn as_u8(self) -> u8 {
-        match self {
-            ArithOp::Add => b'+',
-            ArithOp::Sub => b'-',
-            ArithOp::Mul => b'*',
-            ArithOp::Div => b'/',
-            ArithOp::Mod => b'%',
-            ArithOp::Eq => 1,
-            ArithOp::Ne => 2,
-            ArithOp::Lt => 3,
-            ArithOp::Le => 4,
-            ArithOp::Gt => 5,
-            ArithOp::Ge => 6,
-            ArithOp::And => 7,
-            ArithOp::Or => 8,
-            ArithOp::Shl => 10,
-            ArithOp::Shr => 11,
-            ArithOp::BitAnd => 12,
-            ArithOp::BitOr => 13,
-            ArithOp::BitXor => 14,
-            ArithOp::Pow => 15,
-        }
-    }
-
     pub fn display(&self) -> &'static str {
         match self {
             ArithOp::Add => "+",
@@ -842,36 +793,6 @@ impl SsaProgram {
 
     pub fn block(&self, id: BlockId) -> &BasicBlock {
         self.blocks.get(&id).expect("block not found")
-    }
-
-    /// Get predecessor blocks for a given block.
-    pub fn predecessors(&self, target: BlockId) -> Vec<BlockId> {
-        let mut preds = Vec::new();
-        for (id, block) in &self.blocks {
-            match &block.terminator {
-                Terminator::Goto(dest) if *dest == target => preds.push(*id),
-                Terminator::Branch {
-                    true_block,
-                    false_block,
-                    ..
-                } => {
-                    if *true_block == target || *false_block == target {
-                        preds.push(*id);
-                    }
-                }
-                Terminator::Loop {
-                    body_block,
-                    exit_block,
-                    ..
-                } => {
-                    if *body_block == target || *exit_block == target {
-                        preds.push(*id);
-                    }
-                }
-                _ => {}
-            }
-        }
-        preds
     }
 
     /// Return set of block IDs reachable from block 0.

@@ -32,14 +32,4 @@ impl Diagnostic {
     pub fn error_span(span: crate::ir::Span, code: &'static str, message: String) -> Self {
         Self::error_at(span.line, span.col, code, message)
     }
-
-    pub fn deferred_at(line: usize, col: usize, code: &'static str, message: String) -> Self {
-        Self {
-            line,
-            col,
-            code,
-            severity: Severity::Deferred,
-            message,
-        }
-    }
 }
