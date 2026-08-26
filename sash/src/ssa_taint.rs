@@ -164,7 +164,10 @@ fn classify_inst_def(
             taint.insert(var_key(target), t);
         }
 
-        // Instructions that don't define a VarRef
+        // Instructions that don't define a VarRef. Array taint (mapfile /
+        // read -a / argv fills) and capture-form builtins are governed by the
+        // CST pass; the SSA backstop does not yet re-derive them (see task
+        // ssa-taint-cmdsub-operand-propagation for the capture/array work).
         SsaInst::Command { .. }
         | SsaInst::Test(_)
         | SsaInst::SubscriptAssign { .. }
@@ -369,7 +372,7 @@ fn value_is_tainted(
         // Command substitution: the only variant whose taint
         // depends on the callee (builtins are clean, externals
         // tainted, user fns clean by DD#24).
-        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, user_functions),
+        SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, taint, user_functions),
     }
 }
 
@@ -399,28 +402,33 @@ fn any_tainted<'a>(
     }
 }
 
-/// Compute the taint of a `$(...)` command substitution. The first
-/// argv element is the (resolved) command name; basename lookup
-/// classifies the capture by COMMAND, not args — a cmdsub's args are
-/// necessarily clean (reading a tainted value is SB5020 everywhere except
-/// inside a bless test):
+/// Compute the taint of a `$(...)` command substitution.
 ///
 /// - `getenv` / `argv` / `arg` — external input, always tainted.
-/// - Internal builtins (`echo`, `len`, `getcwd`, `getpid`, …) — clean,
-///   in-process, no exec.
+/// - Pure generators (`argc`, `epochseconds`, `random`, `getpid`, `getcwd`,
+///   …) and `len` (cardinality only, DD#24-exempt) — always clean.
+/// - **Pass-through transforms** (`echo`, `join`, `keys`, `dtoi`, `itod`) —
+///   the output derives from the operands, so it is tainted iff any operand
+///   is, exactly like every other transform value (`Concat`, `RegexReplace`,
+///   …). For `join`/`keys` the operand may be a splat value (`@a`) or a bare
+///   array-name literal (`a`); both are consulted.
 /// - User-defined functions — clean by DD#24.
-/// - Everything else runs via execve/execveat (`printf`, `pwd`, `cat`,
-///   …) — tainted; an explicit `bless` is required to launder (DG:
-///   "anytime execve(2)/execveat(2) occur, captured output is tainted").
-fn cmd_subst_taint(argv: &[SsaValue], user_functions: &std::collections::HashSet<String>) -> Taint {
+/// - Everything else runs via execve/execveat — tainted.
+fn cmd_subst_taint(
+    argv: &[SsaValue],
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
     let Some(SsaValue::Literal(cmd)) = argv.first() else {
         return Taint::Tainted;
     };
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
         "getenv" | "argv" | "arg" => Taint::Tainted,
-        "echo" | "len" | "keys" | "join" | "epochseconds" | "random" | "argc" | "getpid"
-        | "getppid" | "getcpid" | "getcwd" | "status" | "signum" | "dtoi" | "itod" => Taint::Clean,
+        "len" | "epochseconds" | "random" | "argc" | "getpid" | "getppid" | "getcpid"
+        | "getcwd" | "status" | "signum" => Taint::Clean,
+        "echo" | "dtoi" | "itod" => any_tainted(&argv[1..], taint, user_functions),
+        "join" | "keys" => collection_reader_taint(&argv[1..], taint, user_functions),
         _ => {
             if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
                 Taint::Clean
@@ -429,6 +437,28 @@ fn cmd_subst_taint(argv: &[SsaValue], user_functions: &std::collections::HashSet
             }
         }
     }
+}
+
+/// Taint of a `join`/`keys` reader's operands. Each operand is either a splat
+/// value (`@a` → the array's taint via `value_is_tainted`) or a bare
+/// array-name literal (`a` → `taint_of_name`); tainted if any is.
+fn collection_reader_taint(
+    operands: &[SsaValue],
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    let tainted = any_tainted(operands, taint, user_functions) == Taint::Tainted
+        || operands.iter().any(|v| bare_name_tainted(v, taint));
+    if tainted {
+        Taint::Tainted
+    } else {
+        Taint::Clean
+    }
+}
+
+/// A bare array-name literal operand (`join a`) whose named array is tainted.
+fn bare_name_tainted(v: &SsaValue, taint: &HashMap<String, Taint>) -> bool {
+    matches!(v, SsaValue::Literal(name) if taint_of_name(taint, name) == Taint::Tainted)
 }
 
 fn check_value_use(
@@ -483,7 +513,7 @@ fn check_tainted_var(
 ) {
     if is_tainted(taint, vref) {
         errors.push(format!(
-            "ICE: tainted variable {}_{} used{} as {} — CST taint pass missed this",
+            "tainted variable {}_{} used{} as {} without bless (SSA taint backstop)",
             vref.name, vref.version, where_, context
         ));
     }
@@ -498,7 +528,7 @@ fn check_tainted_array(
 ) {
     if taint_of_name(taint, array) == Taint::Tainted {
         errors.push(format!(
-            "ICE: tainted array {}[...] used as {} — CST taint pass missed this",
+            "tainted array {}[...] used as {} without bless (SSA taint backstop)",
             array, context
         ));
     }

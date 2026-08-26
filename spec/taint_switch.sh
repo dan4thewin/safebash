@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=7
+plan=8
 echo "1..$plan" >&3
 
 set +e
@@ -44,9 +44,14 @@ if in_modes native; then
     # sw.5 the SSA backstop catches a value propagated through echo
     run_sash 'y=$(getenv HOME); x=$(echo $y); echo $x'
     [[ $rc != 0 && -z $out ]]; chk sw.5
+    # sw.8 the SSA backstop catches an operand propagated through a transform
+    # builtin ($(dtoi …)) — cmd_subst_taint propagates operand taint (DD#82)
+    run_sash 'y=$(getenv HOME); x=$(dtoi $y); echo $x'
+    [[ $rc != 0 && -z $out ]]; chk sw.8
 else
     skip_chk sw.4
     skip_chk sw.5
+    skip_chk sw.8
 fi
 unset SASH_CFLAGS
 

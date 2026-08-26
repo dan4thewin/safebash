@@ -1,6 +1,6 @@
 ---
 title: "SSA taint defense-in-depth: cmd_subst_taint should propagate operand taint"
-status: ready
+status: superseded
 priority: P2
 kind: hardening
 depends: []

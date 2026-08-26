@@ -12,6 +12,20 @@ NEXT: SSA hardening (cmd_subst_taint operand propagation + argv/mapfile array
 classification + Test/Redirect use-checks) so `--no-taint-cst` catches the full
 laundering class (task `ssa-taint-cmdsub-operand-propagation`).
 
+## ════════ STATUS (2026-08-26, cont.) — SSA operand propagation (partial) ════════
+
+**On `hand-parser` (committing).** With `--no-taint-cst` able to exercise the
+SSA pass, implemented `cmd_subst_taint` operand propagation (echo/dtoi/itod +
+join/keys via `collection_reader_taint`) — matches every other transform value;
+catches `x=$(dtoi $tainted)` under `--no-taint-cst` (sw.8). SSA messages
+neutralised. **Found the SSA backstop is far from a complete gate**: capture-form
+builtins (`$(join @a)`) bypass `cmd_subst_taint` (they lower via
+`CaptureEnd{tainted}`, a transform-time bool); array taint isn't classified at
+SSA (versioning); inline args/`[[ ]]`/redirect positions aren't in
+`check_inst_uses`. Shipped the principled propagation; scoped the rest as
+`ssa-taint-full-backstop` (P2, supersedes `-cmdsub-operand-propagation`). CST
+stays the authoritative gate. 0 regressions; native gate 0. Journal 187.
+
 ## ════════ STATUS (2026-08-26, cont.) — taint laundering bypass CLOSED ════════
 
 **On `hand-parser` (committing).** DG demo (`argv 1 a; echo $(join a)`) surfaced
