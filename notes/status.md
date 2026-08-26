@@ -1,3 +1,15 @@
+## ════════ STATUS (2026-08-25, cont.) — top-level `$@`/`$*` message → `$(argv 1)` ════════
+
+**On `hand-parser` (uncommitted → committing).** Follow-up to the `$@` drop:
+the top-level SB5024 diagnostic for `$@`/`$*` directed to `$(argv)`, but that
+includes the program name at index 0 (spec/argv.sh av.s1). The function-local
+`$@`/`$*` are the **user args** = `$(argv 1)` (av.s2), matching DD#60.
+`flag_positional` (validate.rs) now says "use $(argv 1) for the user-arg slice
+(or $(arg N) for one)". Rejection itself unchanged (still SB5024); only the
+suggested replacement corrected. `$1`→`$(arg N)`, `$#`→`$(argc)` untouched.
+DD46-positional-local.md updated; specs errors.sh e.dd46.t1/t3. 0 regressions
+native/c/janet; native gate 0. Journal 183.
+
 ## ════════ STATUS (2026-08-25, cont.) — drop `$@` (SB5045) ════════
 
 **Pushed on `hand-parser`.** DG caught that `$@` breaks DD#75 §4's "`@` is the

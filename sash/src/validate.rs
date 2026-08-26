@@ -1763,7 +1763,8 @@ fn check_positionals_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
 fn flag_positional(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
     let directive = if name == "@" || name == "*" {
         format!(
-            "${} is function-local — use $(argv) for iteration or $(arg N) at top level",
+            "${} is function-local — use $(argv 1) for the user-arg slice \
+             (or $(arg N) for one) at top level",
             name
         )
     } else if name == "#" {

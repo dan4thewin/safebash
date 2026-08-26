@@ -4,7 +4,8 @@ status: implemented
 Sash-native: `$1..$N`, `$@`, `$*`, `$#` only valid inside function bodies.
 Top-level references → compile error directing to the DD#60 builtin for
 that form:
-  - `$@` / `$*` → use `$(argv)` (iteration) or `$(arg N)` (one arg)
+  - `$@` / `$*` → use `$(argv 1)` (the user-arg slice; `$(argv)` includes the
+    program name at index 0) or `$(arg N)` (one arg)
   - `$1`..`$N` → use `$(arg N)`
   - `$#`       → use `$(argc)` (C argc — includes the program name;
     subtract 1 for the user-arg count)

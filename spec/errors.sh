@@ -327,17 +327,18 @@ fi
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 
-# e.dd46.t1 top-level $@ → directs to $(argv)
+# e.dd46.t1 top-level $@ → directs to $(argv 1) (the user-arg slice; $(argv)
+# includes the program name)
 run_sash 'echo "$@"'
-[[ $rc != 0 && -z $out && $err == *'use $(argv)'* ]]; chk e.dd46.t1
+[[ $rc != 0 && -z $out && $err == *'use $(argv 1)'* ]]; chk e.dd46.t1
 
 # e.dd46.t2 top-level $1 → directs to $(arg 1)
 run_sash 'echo "$1"'
 [[ $rc != 0 && -z $out && $err == *'use $(arg 1)'* ]]; chk e.dd46.t2
 
-# e.dd46.t3 top-level $* → directs to $(argv)
+# e.dd46.t3 top-level $* → directs to $(argv 1)
 run_sash 'echo "$*"'
-[[ $rc != 0 && -z $out && $err == *'use $(argv)'* ]]; chk e.dd46.t3
+[[ $rc != 0 && -z $out && $err == *'use $(argv 1)'* ]]; chk e.dd46.t3
 
 # e.dd46.t4 top-level $# → directs to $(argc)
 run_sash 'echo "$#"'
