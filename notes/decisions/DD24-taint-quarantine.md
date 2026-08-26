@@ -129,6 +129,31 @@ Arrays and maps: each element carries its own taint by the same
 rules as a scalar. Reads of tainted elements (including `join`,
 iteration, subscript) are rejected unless blessed.
 
+### Amendment (2026-08-26): reads are use-sites in EVERY position
+
+The use-site list above (`b=$a`, `cmd "$x"`, arith operand, function
+arg, `join @arr`, …) is **position-uniform**: a read of tainted data
+is rejected wherever it appears — not only in argument position. In
+particular a command substitution that *reads* already-tainted data
+(`$(join @a)`, `$(join a)` bare-name, `$(echo $tainted)`) is a
+use-site in the **assignment RHS** (`x=$(join @a)`), **subscript /
+array-literal element** (`a[i]=…`, `array c=(…)`), **`[[ … ]]` test
+operand**, **redirect target** (`> …`), and **nested** cmdsubs — the
+same as argument/for-word position. Likewise a *direct* tainted
+scalar in a `[[ ]]` operand or a redirect target is a read.
+
+DG's model: every `$( )` is internally `_tmp=$(…)` and reuses the one
+read-checking machinery, whichever position it sits in. A bare
+*source* (`x=$(getenv X)` / `$(arg N)`) remains the sanctioned way to
+obtain external data (it taints the target); only a *read of
+already-tainted data* is rejected. `len` stays exempt (cardinality,
+not element data); `join`/`keys` expose element data and are reads.
+
+This closed a laundering-bypass class where those positions silently
+compiled and leaked at runtime. CST is the authoritative gate
+(clean SB5020); the SSA pass is defense-in-depth (see task
+`ssa-taint-cmdsub-operand-propagation`). Spec: taint.sh 60.37–60.46.
+
 ## Clarification (2026-05-24): Pipeline taint and exec boundary
 
 "Read from pipe" taint depends on whether the pipe SOURCE execs:

@@ -2498,8 +2498,12 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
                 reject_scalar_rhs_read(p, tainted, diags);
             }
         }
-        // A command substitution in value position is assignment-from-source
-        // (allowed) — its `$(arg N DEFAULT)` default is checked separately.
+        // A command substitution in value position is assignment-from-source:
+        // a bare source ($(getenv X)/$(arg N)) is the sanctioned way to obtain
+        // external data (it taints the target; handled by `is_taint_source`).
+        // But a *read* of already-tainted data inside it (`$(join @a)`,
+        // `$(echo $t)`) is still a use-site (DD#24) — check the inner reads.
+        ExprKind::CommandSubstitution(stmts) => check_cmdsub_inner_reads(stmts, tainted, diags),
         _ => {}
     }
 }
@@ -2572,6 +2576,10 @@ fn reject_tainted_into_array(
             ),
         ));
     }
+    // A read of already-tainted data inside a `$( )` element (`a[i]=$(join @b)`,
+    // `array a=($(join @b))`) is a use-site (SB5020) — `expr_uses_tainted`
+    // above doesn't look inside command substitutions.
+    check_value_cmdsub_reads(e, tainted, diags);
 }
 
 /// Taint a function body. Positional params ($1-$9, $@) are clean within
@@ -2617,6 +2625,12 @@ fn taint_redirected(
         {
             return;
         }
+    }
+    // A redirect target is a read position — `echo > $t` / `> $(join @a)`
+    // uses the tainted value (as a path, or here-string data) without bless.
+    // These were previously unchecked.
+    for rd in &r.redirects {
+        check_expr_taint(&rd.target, tainted, diags);
     }
     taint_stmt(&r.body, tainted, diags);
 }
@@ -2835,7 +2849,27 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
         ExprKind::CommandSubstitution(stmts) => {
             check_cmdsub_use_taint(stmts, expr.span, tainted, diags)
         }
+        // `[[ … ]]` test operands are read positions — a tainted variable or a
+        // tainted read inside a `$( )` operand is a use without bless. These
+        // were previously unchecked (the arm was missing).
+        ExprKind::Test(t) => check_test_taint(t, tainted, diags),
         _ => {}
+    }
+}
+
+/// Taint-check the operands of a `[[ … ]]` test — each is a read position.
+fn check_test_taint(t: &TestExpr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match t {
+        TestExpr::Unary { operand, .. } => check_expr_taint(operand, tainted, diags),
+        TestExpr::Binary { left, right, .. } => {
+            check_expr_taint(left, tainted, diags);
+            check_expr_taint(right, tainted, diags);
+        }
+        TestExpr::Not(inner) => check_test_taint(inner, tainted, diags),
+        TestExpr::And(a, b) | TestExpr::Or(a, b) => {
+            check_test_taint(a, tainted, diags);
+            check_test_taint(b, tainted, diags);
+        }
     }
 }
 
@@ -2882,6 +2916,22 @@ fn check_cmdsub_use_taint(
     diags: &mut Vec<Diagnostic>,
 ) {
     check_bare_cmdsub_taint(stmts, span, diags);
+    check_cmdsub_inner_reads(stmts, tainted, diags);
+}
+
+/// The tainted *reads* inside a command substitution's commands — collection
+/// readers (`join`/`keys`) and each argument expression. This is the
+/// "`_tmp=$(…)`" model: every `$( )` is checked for tainted reads the same
+/// way, wherever it appears. Shared by the argument-position check (which also
+/// rejects a bare scalar source via `check_bare_cmdsub_taint`) and the value
+/// positions (assignment RHS, array element, redirect target), where a bare
+/// source is the *sanctioned* way to obtain external data — there only the
+/// inner reads are use-sites.
+fn check_cmdsub_inner_reads(
+    stmts: &[Statement],
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
     for s in stmts {
         if let StmtKind::Command(c) = &s.kind {
             check_collection_reader_taint(c, tainted, diags);
@@ -2892,12 +2942,35 @@ fn check_cmdsub_use_taint(
     }
 }
 
-/// `keys m` exposes the keys of map `m`; if `m` is a tainted collection
-/// (e.g. populated by `mapfile -m` without bless-all) this is a read of
-/// external data without bless — rejected (SB5020). The map name is a
-/// bare argument literal, so the generic `check_expr_taint` path (which
-/// only flags variable-expansion reads) doesn't catch it. `len` is
-/// exempt — it exposes only cardinality, not element data.
+/// Check the inner reads of every command substitution within a value-position
+/// expression (assignment RHS, array element, subscript value) — where a bare
+/// source is sanctioned but a read of already-tainted data is still a use-site
+/// (SB5020). Descends the concat/quote/array structure to reach a nested `$( )`.
+fn check_value_cmdsub_reads(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) => check_cmdsub_inner_reads(stmts, tainted, diags),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            for p in parts {
+                check_value_cmdsub_reads(p, tainted, diags);
+            }
+        }
+        ExprKind::AssocArray(pairs) => {
+            for (_, v) in pairs {
+                check_value_cmdsub_reads(v, tainted, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A collection reader that exposes tainted *element data* via a bare
+/// argument literal: `keys m` (a map's keys) or `join a` (the joined element
+/// values). Per DD#24 these are reads of tainted elements — if the collection
+/// is tainted (e.g. an `argv`/`mapfile` snapshot without bless-all) this is a
+/// use without bless (SB5020). The name is a bare literal, so the generic
+/// `check_expr_taint` path (which only flags variable-expansion reads like
+/// `@a`/`${a[i]}`) doesn't catch it. `len` is exempt — it exposes only
+/// cardinality, not element data.
 fn check_collection_reader_taint(
     c: &Command,
     tainted: &HashSet<String>,
@@ -2906,23 +2979,24 @@ fn check_collection_reader_taint(
     let ExprKind::Literal(cmd) = &c.name.kind else {
         return;
     };
-    if cmd != "keys" {
+    let Some(arg) = c.args.first() else {
         return;
-    }
-    if let Some(arg) = c.args.first() {
-        if let ExprKind::Literal(name) = &arg.kind {
-            push_taint_use(
-                tainted,
-                name,
-                arg.span,
-                format!(
-                    "keys of tainted map '{name}' without bless — bless-all \
-                     it first: `bless k v in {name} [[ … ]]`"
-                ),
-                diags,
-            );
-        }
-    }
+    };
+    let ExprKind::Literal(name) = &arg.kind else {
+        return;
+    };
+    let msg = match cmd.as_str() {
+        "join" => format!(
+            "join of tainted collection '{name}' without bless — bless-all \
+             it first: `bless … in {name} [[ … ]]`"
+        ),
+        "keys" => format!(
+            "keys of tainted map '{name}' without bless — bless-all \
+             it first: `bless k v in {name} [[ … ]]`"
+        ),
+        _ => return,
+    };
+    push_taint_use(tainted, name, arg.span, msg, diags);
 }
 
 fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diagnostic>) {

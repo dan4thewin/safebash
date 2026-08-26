@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-08-26, cont.) — taint laundering bypass CLOSED ════════
+
+**On `hand-parser` (committing).** DG demo (`argv 1 a; echo $(join a)`) surfaced
+a **taint-laundering bypass class**: a `$( )` that READS already-tainted data
+was only checked in argument position; scalar/subscript-assign RHS, array
+literals, `[[ ]]` operands, redirect targets, and nested cmdsubs silently
+compiled and leaked at runtime. Also found: bare-name `join a` wasn't a reader
+use-site (only `keys` was), and `[[ ]]` operands + redirect targets weren't
+taint-checked at all (direct tainted vars leaked too). DG's model: every `$( )`
+is internally `_tmp=$(…)` reusing the one read-checking machinery. Fixed CST
+(authoritative): extracted `check_cmdsub_inner_reads`, applied it position-
+uniformly; added a `Test` arm to `check_expr_taint`, redirect-target checks,
+and `join` to `check_collection_reader_taint`. SSA defense-in-depth
+(`cmd_subst_taint` operand propagation) filed P2 (`ssa-taint-cmdsub-operand-
+propagation`) — can't fire on CST-cleared programs, backstop-only. specs
+taint.sh 60.37–60.46. 0 regressions native/c/janet; native gate 0; 29 new
+passing. Journal 185. DD#24 amended (reads are use-sites in every position).
+
 ## ════════ STATUS (2026-08-26) — `$@`/`$*` universally rejected (Option A) ════════
 
 **On `hand-parser` (committing).** DG: "haven't we universally rejected `$*`

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=93
+plan=103
 echo "1..$plan" >&3
 
 set +e
@@ -494,6 +494,42 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
 else
     skip_chk mcs.4
+fi
+
+# ── DD#24: a `$( )` that READS already-tainted data is a use-site in EVERY
+# value position, not just argument position (a laundering-bypass class). A
+# tainted `argv 1` snapshot joined without bless-all must be rejected (SB5020)
+# wherever the `$(join …)` appears. Previously only argument/for-word position
+# was checked; assignment RHS / subscript / array-literal / test / redirect /
+# nested all silently compiled and leaked the args at runtime.
+run_sash 'argv 1 a; x=$(join @a); echo $x' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.37
+run_sash 'argv 1 a; array b=(); b[0]=$(join @a); echo ${b[0]}' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.38
+run_sash 'argv 1 a; array c=($(join @a)); echo hi' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.39
+run_sash 'argv 1 a; [[ $(join @a) = x ]] && echo hi' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.40
+run_sash 'argv 1 a; echo z > $(join @a)' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.41
+run_sash 'argv 1 a; s=$(echo $(join @a)); echo $s' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.42
+# 60.43 bare-name reader `join a` (not `@a`) reads element data too (DD#24)
+run_sash 'argv 1 a; x=$(join a); echo $x' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.43
+# 60.44/60.45 a direct tainted scalar in a `[[ ]]` operand / redirect target
+# is a read too — these positions were entirely unchecked before.
+run_sash 'x=$(getenv HOME); [[ $x = y ]] && echo z'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.44
+run_sash 'x=$(getenv HOME); echo hi > $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
+# 60.46 control: a blessed-all snapshot joined is clean and runs (native+c;
+# janet's _args model doesn't expose the named-array join at runtime)
+if in_modes native,c; then
+    run_sash 'argv 1 a; bless x in a [[ -n $x ]]; echo $(join a)' one two
+    [[ $rc = 0 && $out = "one two" && -z $err ]]; chk 60.46
+else
+    skip_chk 60.46
 fi
 
 set -e
