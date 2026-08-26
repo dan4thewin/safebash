@@ -112,7 +112,7 @@ pub fn cli_main(args: Vec<String>) {
         std::process::exit(1);
     }
 
-    run_semantic_checks(input, &program);
+    run_semantic_checks(input, &program, &parsed.flags);
 
     // Transform-time compile errors (SB4016/17/18/…: ignored non-void
     // results, etc.) are backend-independent. native enforces them inside
@@ -172,10 +172,43 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     }
 }
 
+/// DD#82: `--no-taint-cst` (and the stronger `--no-taint`) disable the CST
+/// (front-end) taint pass — a supported bypass, and the switch that lets the
+/// SSA taint backstop be exercised in isolation.
+fn cst_taint_disabled(flags: &[&str]) -> bool {
+    flags.contains(&"--no-taint") || flags.contains(&"--no-taint-cst")
+}
+
+/// DD#82: run the SSA taint backstop unless `--no-taint` disabled it. Exits
+/// the process on a rejection. Kept as its own function so `compile_native`
+/// stays flat (complexity gate).
+fn run_ssa_taint_gate(input: &str, ssa: &crate::ssa::SsaProgram, flags: &[&str]) {
+    if ssa_taint_disabled(flags) {
+        return;
+    }
+    let taint_ices = ssa_taint::verify_ssa_taint(ssa);
+    if !taint_ices.is_empty() {
+        for ice in &taint_ices {
+            eprintln!("{}: {}", input, ice);
+        }
+        std::process::exit(1);
+    }
+}
+
+/// DD#82: `--no-taint` disables ALL taint checking (both the CST front-end
+/// pass and the SSA backstop) — the full escape hatch.
+fn ssa_taint_disabled(flags: &[&str]) -> bool {
+    flags.contains(&"--no-taint")
+}
+
 /// Taint, positional, argv-splat, and type checks. Run after resolution so
 /// the taint pass classifies on the resolved exec form.
-fn run_semantic_checks(input: &str, program: &crate::ir::Program) {
-    let mut tdiags = validate::check_taint(program);
+fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]) {
+    let mut tdiags = if cst_taint_disabled(flags) {
+        Vec::new()
+    } else {
+        validate::check_taint(program)
+    };
     tdiags.extend(validate::check_positionals(program));
     tdiags.extend(validate::check_dollar_at(program));
     tdiags.extend(validate::check_argv_splat(program));
@@ -407,13 +440,7 @@ fn compile_native(
     let type_map = type_check::infer_types(program);
 
     let (ssa, _) = transform::ir_to_ssa_typed(program, type_map);
-    let taint_ices = ssa_taint::verify_ssa_taint(&ssa);
-    if !taint_ices.is_empty() {
-        for ice in &taint_ices {
-            eprintln!("{}: {}", input, ice);
-        }
-        std::process::exit(1);
-    }
+    run_ssa_taint_gate(input, &ssa, flags);
 
     let trace = flags.contains(&"--trace");
     let obj_bytes = match codegen::compile_to_object(source, trace) {

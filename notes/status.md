@@ -1,3 +1,17 @@
+## ════════ STATUS (2026-08-26, cont.) — taint bypass switches (DD#82) ════════
+
+**On `hand-parser` (committing).** DG: a public fork could rip out taint and
+overshadow the original — so provide a *supported* bypass (removes the fork
+incentive), and use the two-layer split to test the SSA backstop in isolation.
+Added `--no-taint-cst` (CST front-end off, SSA backstop on — native) and
+`--no-taint` (all taint off). Taint-only: `--no-taint` + `$@` is still SB5045.
+`lib.rs` gates `check_taint`/`verify_ssa_taint`; `SASH_CFLAGS` (common.sh)
+injects compile flags for tests. specs taint_switch.sh sw.1–sw.7. 0
+regressions native/c/janet; native gate 0; 15 new passing. DD#82, journal 186.
+NEXT: SSA hardening (cmd_subst_taint operand propagation + argv/mapfile array
+classification + Test/Redirect use-checks) so `--no-taint-cst` catches the full
+laundering class (task `ssa-taint-cmdsub-operand-propagation`).
+
 ## ════════ STATUS (2026-08-26, cont.) — taint laundering bypass CLOSED ════════
 
 **On `hand-parser` (committing).** DG demo (`argv 1 a; echo $(join a)`) surfaced

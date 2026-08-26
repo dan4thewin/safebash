@@ -85,7 +85,7 @@ run_sash() {
 
 _run_sash_native() {
     local src=$1; shift
-    sash -c "$src" -o ./test_bin 2> err.raw
+    sash ${SASH_CFLAGS:-} -c "$src" -o ./test_bin 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         # Capture runtime stderr separately (rerr) so abort diagnostics
@@ -97,7 +97,7 @@ _run_sash_native() {
         err=""
     else
         out=""
-        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:' err.raw | grep -v 'static binary' || true)
+        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
     fi
     rm -f err.raw
 }
@@ -105,7 +105,7 @@ _run_sash_native() {
 _run_sash_janet() {
     local src=$1; shift
     printf '%s\n' "$src" > .input.sash
-    sash --janet .input.sash > .out.janet 2> err.raw
+    sash ${SASH_CFLAGS:-} --janet .input.sash > .out.janet 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         out=$(janet .out.janet "$@" 2>/dev/null)
@@ -113,7 +113,7 @@ _run_sash_janet() {
         err=""
     else
         out=""
-        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:' err.raw | grep -v 'static binary' || true)
+        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
     fi
     rm -f .input.sash .out.janet err.raw
 }
@@ -125,7 +125,7 @@ _run_sash_c() {
         return
     fi
     printf '%s\n' "$src" > .input.sash
-    sash --emit-c .input.sash > .out.c 2> err.raw
+    sash ${SASH_CFLAGS:-} --emit-c .input.sash > .out.c 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         gcc -nostartfiles -static -fno-stack-protector -o ./test_bin .out.c "$SASH_RT_LIB" -lpthread 2> gcc.err
@@ -143,7 +143,7 @@ _run_sash_c() {
         rm -f ./test_bin gcc.err
     else
         out=""
-        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:' err.raw | grep -v 'static binary' || true)
+        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
     fi
     rm -f .input.sash .out.c err.raw
 }
