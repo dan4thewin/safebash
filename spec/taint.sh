@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=103
+plan=112
 echo "1..$plan" >&3
 
 set +e
@@ -531,6 +531,42 @@ if in_modes native,c; then
 else
     skip_chk 60.46
 fi
+
+# ── Gap-fill: same laundering-bypass class across read-form × source × more
+# positions, so a regression in any one path is caught (DG 2026-08-26).
+# 60.47 `echo $t` (a tainted SCALAR through a cmdsub) in assignment RHS
+run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.47
+# 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
+run_sash 'array a=(); mapfile -t a < d60b.txt; x=$(join @a); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.48
+# 60.49 `keys` of a tainted map in an array-literal element (a value position)
+run_sash 'map m=(); mapfile -m m < d60m.txt; array k=($(keys m)); echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.49
+# 60.50 bare-name `join a` reader reached through a `[[ ]]` operand
+run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.50
+# 60.51 a tainted array subscript `${a[0]}` (value-flow, not cmdsub) in a test
+run_sash 'array a=(); mapfile -t a < d60b.txt; [[ ${a[0]} = x ]] && echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.51
+# 60.52 bare-name `join a` reader as a redirect target
+run_sash 'argv 1 a; echo hi > $(join a)' a b
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.52
+# 60.53 `echo $t` (tainted scalar) through a cmdsub in a `[[ ]]` operand
+run_sash 'x=$(getenv HOME); [[ $(echo $x) = y ]] && echo z'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.53
+# 60.54 control (positive): a CLEAN `$(echo …)` capture still compiles & runs
+# — guards the assignment-RHS cmdsub read-check against over-rejection.
+if in_modes native,c; then
+    run_sash 'y=$(echo hello); echo $y'
+    [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 60.54
+else
+    skip_chk 60.54
+fi
+# 60.55 control (positive): a CLEAN var in a `[[ ]]` operand still runs — guards
+# the new Test-operand read-check against over-rejecting clean values.
+run_sash 'x=hello; [[ $x = hello ]] && echo yes'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 60.55
 
 set -e
 tally

@@ -15,6 +15,10 @@ and `join` to `check_collection_reader_taint`. SSA defense-in-depth
 propagation`) — can't fire on CST-cleared programs, backstop-only. specs
 taint.sh 60.37–60.46. 0 regressions native/c/janet; native gate 0; 29 new
 passing. Journal 185. DD#24 amended (reads are use-sites in every position).
+Gap-fill (DG "protect against regressions"): taint.sh 60.47–60.55 extend the
+matrix (echo-scalar, mapfile source, keys-in-array-literal, subscript-in-test,
+bare-name in test/redirect, + 2 clean-value positive controls). All pass 3
+modes; 0 regressions; native gate 0.
 
 ## ════════ STATUS (2026-08-26) — `$@`/`$*` universally rejected (Option A) ════════
 

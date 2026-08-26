@@ -78,3 +78,24 @@ forms); sanctioned source (`x=$(getenv X)`), blessed, and clean-array cases
 still compile/run. Full `SPEC_MODES="native c janet"` sweep, diff vs base
 `147327e`: 0 passing→failing, 0 gone, native gate 0. 29 new passing
 (taint.sh 60.37–60.46 × modes; 60.46 janet-skipped). DD#24 amended.
+
+## Gap-fill (regression matrix, taint.sh 60.47–60.55)
+
+DG: "fill gaps — protect against regressions." Extended the coverage across
+read-form × source × position so a regression in any single code path is
+caught:
+
+- 60.47 `echo $t` (tainted **scalar** through a cmdsub) in assignment RHS
+- 60.48 **mapfile**-sourced (not argv) tainted array joined in assignment RHS
+- 60.49 `keys` of a tainted map in an **array-literal** element
+- 60.50 bare-name `join a` reader reached through a `[[ ]]` operand
+- 60.51 tainted **subscript** `${a[0]}` (value-flow) in a `[[ ]]` operand
+- 60.52 bare-name `join a` reader as a **redirect target**
+- 60.53 `echo $t` (tainted scalar) through a cmdsub in a `[[ ]]` operand
+- 60.54 control (+): a **clean** `$(echo …)` capture still runs (native,c)
+- 60.55 control (+): a **clean** var in a `[[ ]]` operand still runs
+
+The two positives guard the newly-checked positions (assignment-RHS cmdsub
+read, Test operand) against over-rejecting clean values. All pass
+native/c/janet (60.46/60.54 janet-skipped — `_args`/capture gap). 0
+regressions; native gate 0.
