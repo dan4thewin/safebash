@@ -587,6 +587,9 @@ fn command_sub_to_expr(content: &str, span: Span) -> Expr {
 pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     let bytes = content.as_bytes();
 
+    if let Some(e) = try_braced_splat(content, span) {
+        return e;
+    }
     if let Some(e) = try_strlen_or_arrlen(content, bytes, span) {
         return e;
     }
@@ -605,20 +608,39 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
 
     let rest = &content[name_end..];
 
-    if let Some(e) = try_sed_op(rest, name, span) {
-        return e;
-    }
-    if let Some(e) = try_substring_op(rest, name, span) {
-        return e;
-    }
-    if let Some(e) = try_at_transform(rest, name, span) {
-        return e;
-    }
-    if let Some(e) = parse_standard_operator(rest, name, span) {
+    if let Some(e) = parse_cell_operator(rest, name, span) {
         return e;
     }
 
     Expr::param(name, None, None, span)
+}
+
+/// The operator-suffixed `${name OP…}` forms: `:s/…` sed, `:off:len`
+/// substring, `@X` transforms, and the standard `:-`/`:=`/`#`/`%`/… operators.
+/// Returns `None` for a bare `${name}` (empty/unmatched `rest`).
+fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
+    try_sed_op(rest, name, span)
+        .or_else(|| try_substring_op(rest, name, span))
+        .or_else(|| try_at_transform(rest, name, span))
+        .or_else(|| parse_standard_operator(rest, name, span))
+}
+
+/// `${@…}` / `${*…}` are braced spellings of the `$@` / `$*` splat — bare
+/// `${@}`/`${*}`, or with a modifier (`${@:-x}`, `${@Q}`). `scan_param_name`
+/// does not treat `@`/`*` as name characters, so these otherwise fall through
+/// to an empty-name `ParameterExpansion` (the sigil lost) and slip past
+/// validation. Parse any such form as the unbraced `SimpleExpansion` so the
+/// SB5045 "sash has no `$@`/`$*`" reject (`validate::check_dollar_at`) sees it;
+/// a dropped modifier is immaterial — the whole form is rejected. Array
+/// `[@]`/`[*]` forms are unaffected (their content starts with the array name).
+fn try_braced_splat(content: &str, span: Span) -> Option<Expr> {
+    match content.as_bytes().first() {
+        Some(b'@') | Some(b'*') => Some(Expr {
+            kind: ExprKind::SimpleExpansion(content[..1].to_string()),
+            span,
+        }),
+        _ => None,
+    }
 }
 
 /// `${#var}` → strlen, or `${#var[@]}`/`${#var[*]}` → arrlen.

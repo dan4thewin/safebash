@@ -96,9 +96,12 @@ all referring to the *same* per-function `args`:
 **this function's own args** (≡ `@args`), *not* the caller's.
 
 Two current-state notes: indexed access is unchecked today (`${args[2]}` with
-one arg yields empty); and — **`$@` is dropped** (DG 2026-08-25): a `$`-sigil that splats contradicts
-DD#75 §4, so in-function `$@`/`${@}` is rejected (**SB5045**) → use `@args` (the
-splat) or `$(join args)` (joined). `$1`/`$#` stay — genuinely scalar. This DD
+one arg yields empty); and — **`$@`/`$*` are dropped** (DG 2026-08-25;
+extended to `$*` and made universal 2026-08-26): a `$`-sigil that splats/joins
+contradicts DD#75 §4, so `$@`/`$*` (and the braced `${@}`/`${*}`, and inside
+`$(( ))`) are rejected **everywhere** (**SB5045** "sash has no `$@`/`$*`") — in
+a function → `@args` (splat) / `$(join args)` (joined); at top level →
+`$(argv 1)` / `$(arg N)` (DD#46). `$1`/`$#` stay — genuinely scalar. This DD
 makes the surface a checked signature over `@args`/`${args[i]}`/`$N`.
 
 ### Signature inference

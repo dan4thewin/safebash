@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=61
+plan=63
 echo "1..$plan" >&3
 
 set +e
@@ -414,6 +414,17 @@ echo $s'
 run_sash 'fn f { echo "$@"; }
 f a b'
 [[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.14
+
+# 81.15 DD#75/DD#81: `$*` inside a function is dropped too (was silently
+# compiling to empty) → SB5045; universally rejected like `$@`.
+run_sash 'fn f { echo "$*"; }
+f a b'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.15
+
+# 81.16 the braced spelling `${*}` (like `${@}`) is the same splat → SB5045.
+run_sash 'fn f { echo "${*}"; }
+f a b'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.16
 
 set -e
 tally

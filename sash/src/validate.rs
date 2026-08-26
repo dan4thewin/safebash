@@ -1758,16 +1758,12 @@ fn check_positionals_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-/// Emit SB5024 if `name` is a function-local positional form. `$0` is
-/// excluded — it is rejected everywhere by REJECTED_POSITIONAL (SB5017).
+/// Emit SB5024 if `name` is a function-local scalar positional form (`$1`..`$N`
+/// or `$#`). `$0` is excluded — it is rejected everywhere by
+/// REJECTED_POSITIONAL (SB5017). `$@`/`$*` are not handled here — they are not
+/// in the language and are rejected everywhere by `check_dollar_at` (SB5045).
 fn flag_positional(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
-    let directive = if name == "@" || name == "*" {
-        format!(
-            "${} is function-local — use $(argv 1) for the user-arg slice \
-             (or $(arg N) for one) at top level",
-            name
-        )
-    } else if name == "#" {
+    let directive = if name == "#" {
         "$# is function-local — use $(argc) at top level \
          (C argc; subtract 1 for the user-arg count)"
             .to_string()
@@ -1799,11 +1795,13 @@ fn flag_args_toplevel(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 
 // ── DD#75/DD#81: `$@` is dropped inside a function — use `@args` ──────────
 
-/// Reject `$@` / `${@}` inside a function body (SB5045). `$@` is a `$`-sigil
-/// form that *splats*, contradicting DD#75 §4 ("`@` is the sole splat"); the
-/// splat is written `@args`, a joined string is `$(join args)`. Top-level `$@`
-/// is already SB5024 (function-local). `$1`/`$#` stay — they are genuinely
-/// scalar, so their `$` sigil is consistent.
+/// Reject `$@` / `$*` (and `${@}` / `${*}`) **everywhere** (SB5045). Neither is
+/// part of the language: both are `$`-sigil forms that *splat*/join, which
+/// DD#75 §4 assigns solely to `@` ("`@` is the sole splat"). The suggested
+/// replacement is context-sensitive — inside a function the args are `@args`
+/// (splat) / `$(join args)` (joined); at top level they are `$(argv 1)` (the
+/// user-arg splat) / `$(arg N)` (one). `$1`/`$#` are genuinely scalar, so they
+/// stay function-local (SB5024) rather than being rejected outright.
 pub fn check_dollar_at(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in &program.statements {
@@ -1819,8 +1817,9 @@ fn dollar_at_stmt(stmt: &Statement, in_fn: bool, diags: &mut Vec<Diagnostic>) {
         }
         return;
     }
-    if in_fn {
-        stmt.direct_exprs(&mut |e| dollar_at_expr(e, diags));
+    stmt.direct_exprs(&mut |e| dollar_at_expr(e, in_fn, diags));
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        dollar_at_arith(a, stmt.span, in_fn, diags);
     }
     for body in stmt.child_bodies() {
         for s in body {
@@ -1829,67 +1828,110 @@ fn dollar_at_stmt(stmt: &Statement, in_fn: bool, diags: &mut Vec<Diagnostic>) {
     }
 }
 
-fn dollar_at_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+fn dollar_at_expr(expr: &Expr, in_fn: bool, diags: &mut Vec<Diagnostic>) {
     match &expr.kind {
-        ExprKind::SimpleExpansion(n) if n == "@" => dollar_at_diag(expr.span, diags),
-        ExprKind::ParameterExpansion(pe) => dollar_at_pexp(expr.span, pe, diags),
+        ExprKind::SimpleExpansion(n) if n == "@" || n == "*" => {
+            dollar_at_diag(expr.span, n, in_fn, diags)
+        }
+        ExprKind::ParameterExpansion(pe) => dollar_at_pexp(expr.span, pe, in_fn, diags),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            dollar_at_exprs(parts, diags)
+            dollar_at_exprs(parts, in_fn, diags)
         }
         ExprKind::AssocArray(pairs) => {
             for (_, v) in pairs {
-                dollar_at_expr(v, diags);
+                dollar_at_expr(v, in_fn, diags);
             }
         }
-        ExprKind::Subscript { index, .. } => dollar_at_expr(index, diags),
-        // A `$( … )` inside a function body still runs in its arg scope.
+        ExprKind::Subscript { index, .. } => dollar_at_expr(index, in_fn, diags),
+        // A `$( … )` runs in the enclosing arg scope — inherit `in_fn`.
         ExprKind::CommandSubstitution(stmts) => {
             for s in stmts {
-                dollar_at_stmt(s, true, diags);
+                dollar_at_stmt(s, in_fn, diags);
             }
         }
-        ExprKind::Test(t) => dollar_at_test(t, diags),
+        ExprKind::Arithmetic(a) => dollar_at_arith(a, expr.span, in_fn, diags),
+        ExprKind::Test(t) => dollar_at_test(t, in_fn, diags),
         _ => {}
     }
 }
 
-fn dollar_at_exprs(exprs: &[Expr], diags: &mut Vec<Diagnostic>) {
+fn dollar_at_exprs(exprs: &[Expr], in_fn: bool, diags: &mut Vec<Diagnostic>) {
     for e in exprs {
-        dollar_at_expr(e, diags);
+        dollar_at_expr(e, in_fn, diags);
     }
 }
 
-fn dollar_at_pexp(span: Span, pe: &ParameterExpansion, diags: &mut Vec<Diagnostic>) {
-    if pe.name == "@" {
-        dollar_at_diag(span, diags);
+fn dollar_at_pexp(span: Span, pe: &ParameterExpansion, in_fn: bool, diags: &mut Vec<Diagnostic>) {
+    if pe.name == "@" || pe.name == "*" {
+        dollar_at_diag(span, &pe.name, in_fn, diags);
     }
     if let Some(op) = &pe.operand {
-        dollar_at_expr(op, diags);
+        dollar_at_expr(op, in_fn, diags);
     }
 }
 
-fn dollar_at_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
+/// `$@` / `$*` reached through `$(( … ))` / `(( … ))` — a bare `$@` operand is
+/// an `ArithExpr::DollarVar`, so the `Expr` walk cannot surface it. Child
+/// operands are gathered by `arith_operands` so this stays a three-way match.
+fn dollar_at_arith(a: &crate::ir::ArithExpr, span: Span, in_fn: bool, diags: &mut Vec<Diagnostic>) {
+    use crate::ir::ArithExpr::*;
+    match a {
+        DollarVar(name) if name == "@" || name == "*" => dollar_at_diag(span, name, in_fn, diags),
+        Expansion(inner) => dollar_at_expr(inner, in_fn, diags),
+        _ => {
+            for child in arith_operands(a) {
+                dollar_at_arith(child, span, in_fn, diags);
+            }
+        }
+    }
+}
+
+/// The `ArithExpr` sub-operands of `a` (an `Expansion`'s inner `Expr` is
+/// handled by the caller). A flat dispatcher — mirrors
+/// `transform::functions::arith_children`.
+fn arith_operands(a: &crate::ir::ArithExpr) -> Vec<&crate::ir::ArithExpr> {
+    use crate::ir::ArithExpr::*;
+    match a {
+        BinOp { left, right, .. } => vec![left, right],
+        UnaryOp { operand, .. } | Paren(operand) => vec![operand],
+        Assign { value, .. } | CompoundAssign { value, .. } => vec![value],
+        Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => vec![cond, true_val, false_val],
+        Comma(parts) | FuncCall { args: parts, .. } => parts.iter().collect(),
+        Subscript { index, .. } => vec![index],
+        SubscriptAssign { index, value, .. } => vec![index, value],
+        _ => vec![],
+    }
+}
+
+fn dollar_at_test(t: &TestExpr, in_fn: bool, diags: &mut Vec<Diagnostic>) {
     match t {
-        TestExpr::Unary { operand, .. } => dollar_at_expr(operand, diags),
+        TestExpr::Unary { operand, .. } => dollar_at_expr(operand, in_fn, diags),
         TestExpr::Binary { left, right, .. } => {
-            dollar_at_expr(left, diags);
-            dollar_at_expr(right, diags);
+            dollar_at_expr(left, in_fn, diags);
+            dollar_at_expr(right, in_fn, diags);
         }
-        TestExpr::Not(inner) => dollar_at_test(inner, diags),
+        TestExpr::Not(inner) => dollar_at_test(inner, in_fn, diags),
         TestExpr::And(a, b) | TestExpr::Or(a, b) => {
-            dollar_at_test(a, diags);
-            dollar_at_test(b, diags);
+            dollar_at_test(a, in_fn, diags);
+            dollar_at_test(b, in_fn, diags);
         }
     }
 }
 
-fn dollar_at_diag(span: Span, diags: &mut Vec<Diagnostic>) {
+fn dollar_at_diag(span: Span, sigil: &str, in_fn: bool, diags: &mut Vec<Diagnostic>) {
+    let hint = if in_fn {
+        "use `@args` (the splat), or `$(join args)` for a joined string"
+    } else {
+        "at top level use `$(argv 1)` (the user-arg splat), or `$(arg N)` for one"
+    };
     diags.push(Diagnostic::error_span(
         span,
         "SB5045",
-        "sash has no `$@` — use `@args` (the splat), or `$(join args)` for a \
-         joined string"
-            .to_string(),
+        format!("sash has no `${sigil}` — {hint}"),
     ));
 }
 

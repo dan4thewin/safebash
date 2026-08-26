@@ -175,7 +175,7 @@ run_sash 'fn one { echo "$1"; }; one alpha'
 
 # --- DD#46 top-level positional rejection (directed to DD#60 builtins) ---
 
-# cf.dd46.1 top-level $@ rejected (use $(argv))
+# cf.dd46.1 top-level $@ rejected (SB5045; directs to $(argv 1))
 run_sash 'echo "$@"'
 [[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.1
 
@@ -183,7 +183,7 @@ run_sash 'echo "$@"'
 run_sash 'echo "$1"'
 [[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.2
 
-# cf.dd46.3 top-level $* rejected (use $(argv))
+# cf.dd46.3 top-level $* rejected (SB5045; directs to $(argv 1))
 run_sash 'echo "$*"'
 [[ $rc != 0 && -z $out && -n $err ]]; chk cf.dd46.3
 

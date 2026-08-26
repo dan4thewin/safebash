@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=85
+plan=87
 echo "1..$plan" >&3
 
 set +e
@@ -327,18 +327,18 @@ fi
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 
-# e.dd46.t1 top-level $@ → directs to $(argv 1) (the user-arg slice; $(argv)
-# includes the program name)
+# e.dd46.t1 top-level $@ → SB5045 (sash has no $@/$*), directs to $(argv 1)
+# (the user-arg slice; $(argv) would include the program name at index 0)
 run_sash 'echo "$@"'
-[[ $rc != 0 && -z $out && $err == *'use $(argv 1)'* ]]; chk e.dd46.t1
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'argv 1'* ]]; chk e.dd46.t1
 
 # e.dd46.t2 top-level $1 → directs to $(arg 1)
 run_sash 'echo "$1"'
 [[ $rc != 0 && -z $out && $err == *'use $(arg 1)'* ]]; chk e.dd46.t2
 
-# e.dd46.t3 top-level $* → directs to $(argv 1)
+# e.dd46.t3 top-level $* → SB5045 (sash has no $@/$*), directs to $(argv 1)
 run_sash 'echo "$*"'
-[[ $rc != 0 && -z $out && $err == *'use $(argv 1)'* ]]; chk e.dd46.t3
+[[ $rc != 0 && -z $out && $err == *SB5045* && $err == *'argv 1'* ]]; chk e.dd46.t3
 
 # e.dd46.t4 top-level $# → directs to $(argc)
 run_sash 'echo "$#"'
@@ -347,6 +347,14 @@ run_sash 'echo "$#"'
 # e.dd46.t5 top-level $0 → directs to $(arg 0)
 run_sash 'echo "$0"'
 [[ $rc != 0 && -z $out && $err == *'use $(arg 0)'* ]]; chk e.dd46.t5
+
+# e.dd46.t6 top-level braced ${@} is the same splat → SB5045 (was slipping)
+run_sash 'echo "${@}"'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk e.dd46.t6
+
+# e.dd46.t7 top-level $@ inside $(( )) → SB5045 (arith path)
+run_sash 'echo $(( $@ ))'
+[[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk e.dd46.t7
 
 # ── DD#70/#71 dual: a value binding used in a boolean context is rejected ──
 # A boolean context (if/while/until cond, left of &&/||, operand of !) must

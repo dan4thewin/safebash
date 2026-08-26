@@ -1,3 +1,19 @@
+## ════════ STATUS (2026-08-26) — `$@`/`$*` universally rejected (Option A) ════════
+
+**On `hand-parser` (committing).** DG: "haven't we universally rejected `$*`
+and `$@` now?" — no. The `$@` drop left three gaps: in-function `$*` **silently
+compiled** (SB5045 matched only `@`); top-level `$@`/`$*` were SB5024 but
+mislabeled "function-local" (they're rejected everywhere); braced `${@}`/`${*}`
+(and `${@:-x}`) never fired SB5045 at all (`scan_param_name` drops the `@`/`*`
+sigil → empty-name ParameterExpansion). **Option A** (DG): `$@`/`$*` are *not in
+the language* — one identity (SB5045 "sash has no `$@`/`$*`") fires **everywhere**
+with a context-sensitive hint (in-fn → `@args`/`$(join args)`; top-level →
+`$(argv 1)`/`$(arg N)`); only `$1`/`$#` stay function-local (SB5024). Parser:
+`${@…}`/`${*…}` → `SimpleExpansion` (array `[@]`/`[*]` untouched, still SB4038).
+`check_dollar_at` now walks everywhere + arith. specs functions.sh 81.15/81.16,
+errors.sh e.dd46.t6/t7 (+t1/t3 assertions SB5024→SB5045). 0 regressions
+native/c/janet; native gate 0; 12 new passing. Journal 184. DD#46/#75/#81 amended.
+
 ## ════════ STATUS (2026-08-25, cont.) — top-level `$@`/`$*` message → `$(argv 1)` ════════
 
 **On `hand-parser` (uncommitted → committing).** Follow-up to the `$@` drop:
