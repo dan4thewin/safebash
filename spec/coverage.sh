@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=28
+plan=48
 echo "1..$plan" >&3
 
 set +e
@@ -115,6 +115,64 @@ if in_modes native; then
     [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk cov.28
 else
     skip_chk cov.28
+fi
+# cov.29-48 arithmetic-operator coverage: no feature spec exercises these
+# operators with a variable operand, leaving transform/expr_handlers.rs
+# (unaryop_to_ssa / try_fold_unop / incdec_to_ssa / compound_assign_to_ssa /
+# comma_to_ssa) and validate_arith_comma_in_condition's passing path
+# untested. All compile+run identically in native and c.
+if in_modes native,c; then
+    # unary ops in $(( )) with a runtime (variable) operand — unaryop_to_ssa
+    run_sash 'int x=5; echo $(( -x ))'
+    [[ $rc = 0 && $out = -5 && -z $err ]]; chk cov.29
+    run_sash 'int x=5; echo $(( ~x ))'
+    [[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.30
+    run_sash 'int x=5; echo $(( !x ))'
+    [[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.31
+    run_sash 'int x=0; echo $(( !x ))'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.32
+    # unary ops on a constant operand — try_fold_unop (compile-time fold)
+    run_sash 'echo $(( ~5 ))'
+    [[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.33
+    run_sash 'echo $(( !0 ))'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.34
+    # postfix inc/dec as a (( )) statement — incdec_to_ssa
+    run_sash 'int x=5; (( x++ )); echo $x'
+    [[ $rc = 0 && $out = 6 && -z $err ]]; chk cov.35
+    run_sash 'int x=5; (( x-- )); echo $x'
+    [[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.36
+    # compound-assign statements — compound_assign_to_ssa + each arith op
+    run_sash 'int x=5; (( x += 3 )); echo $x'
+    [[ $rc = 0 && $out = 8 && -z $err ]]; chk cov.37
+    run_sash 'int x=5; (( x -= 3 )); echo $x'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.38
+    run_sash 'int x=5; (( x *= 3 )); echo $x'
+    [[ $rc = 0 && $out = 15 && -z $err ]]; chk cov.39
+    run_sash 'int x=6; (( x /= 3 )); echo $x'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.40
+    run_sash 'int x=7; (( x %= 3 )); echo $x'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.41
+    run_sash 'int x=5; (( x <<= 1 )); echo $x'
+    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.42
+    run_sash 'int x=20; (( x >>= 2 )); echo $x'
+    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.43
+    run_sash 'int x=5; (( x &= 3 )); echo $x'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.44
+    run_sash 'int x=5; (( x |= 2 )); echo $x'
+    [[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.45
+    run_sash 'int x=5; (( x ^= 1 )); echo $x'
+    [[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.46
+    # comma expression in $(( )) — comma_to_ssa (value is the last part)
+    run_sash 'int a=1; int b=2; echo $(( a, b ))'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.47
+    # comma-in-condition PASSING path: a non-final mutation then a final
+    # test — validate_arith_comma_in_condition accepts (cov.1-3 reject)
+    run_sash 'int a=0; if (( a += 1, a )); then echo y; fi'
+    [[ $rc = 0 && $out = y && -z $err ]]; chk cov.48
+else
+    for n in 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48; do
+        skip_chk cov.$n
+    done
 fi
 
 set -e

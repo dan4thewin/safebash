@@ -40,3 +40,19 @@ leave whole functions dead but still line-counted. Deleting them raises the
 covered fraction without writing a single spec, and — more importantly —
 keeps the tree honest: no compiled-in code paths that no input can reach.
 Continuing to hunt these across transform/codegen/emit_c.
+
+## Follow-on: arith-operator coverage (coverage.sh cov.29-48)
+
+Fresh release re-measure after the removal: **88.55% lines** (2544 missed),
+up from 87.69%. Triaging the map, the largest contiguous missing run in
+`transform/expr_handlers.rs` (465-542) was five arith lowering fns —
+`unaryop_to_ssa`/`try_fold_unop`/`incdec_to_ssa`/`compound_assign_to_ssa`/
+`comma_to_ssa` — all *reachable* but exercised by no feature spec with a
+variable operand. Same for `validate_arith_comma_in_condition`'s accept path.
+
+Added cov.29-48 (native+c): unary `-`/`~`/`!` on a runtime var and on a
+constant (fold), postfix `(( x++ ))`/`(( x-- ))`, all ten compound-assign ops
+(`+= -= *= /= %= <<= >>= &= |= ^=`), the `$(( a, b ))` comma value, and the
+`(( a += 1, a ))` comma-in-condition accept path. +20 native, +20 c, 0
+regressions. These also incidentally cover the matching operator paths in
+`parse/arith.rs` and `emit_c.rs`.
