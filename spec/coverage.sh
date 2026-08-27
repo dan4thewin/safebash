@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=24
+plan=25
 echo "1..$plan" >&3
 
 set +e
@@ -84,6 +84,14 @@ run_sash 'int x=0; (( ++x ))'
 # cov.24 `export` is rejected (parser) → SB5001
 run_sash 'export A=1'
 [[ $rc != 0 && -z $out && $err == *SB5001* ]]; chk cov.24
+# cov.25 compact dispatch with the `=~` operator (no spaces) — existing specs
+# only exercise compact `==`; this covers the `=~` compact-parse path
+if in_modes native,c; then
+    run_sash '[[abc=~b]] && echo match'
+    [[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
+else
+    skip_chk cov.25
+fi
 
 set -e
 tally
