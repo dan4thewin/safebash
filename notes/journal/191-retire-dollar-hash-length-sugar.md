@@ -56,3 +56,11 @@ Converter rewrite (`${#x}` → `$(len x)`) is the next commit.
 
 Native gate 0 regressions; the 3 janet types failures are pre-existing
 (16.1/33.10 baseline-failing; unrelated to `${#}`).
+
+## Commit 2: converter rewrite
+
+`sash-convert` `convert_expansion` now rewrites bash `${#x}` / `${#a}` /
+`${#a[@]}` / `${#a[i]}` → `$(len x)` (subscript stripped; `len` dispatches on
+the collection). `${#}` (arg count) is unaffected — it still maps to
+`$(($(argc) - 1))`. So pasted bash keeps working after the native-side
+retirement. spec convert.sh 57.13c; 0 regressions.

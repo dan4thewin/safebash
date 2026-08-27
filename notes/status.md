@@ -11,8 +11,8 @@ rewrites bash `${#x}`→`$(len x)`. Impl: parser `${#…}`→SB4038 everywhere
 Migrated ~10 spec sites (types/arithmetic/var_modifiers); repurposed 75.4-75.6
 to assert the retirement. DD#75 §2/§4/§6 amended; SUBSET.md; journal 191. Native
 + c gate 0 regressions; guarded types.sh 30.11 native,c (pre-existing janet
-unset+len nil crash → task `janet-unset-len-nil`). NEXT: converter rewrite
-(Commit 2).
+unset+len nil crash → task `janet-unset-len-nil`). Converter rewrite DONE
+(Commit 2: `${#x}`→`$(len x)`, spec convert.sh 57.13c).
 
 ## ════════ STATUS (2026-08-27) — spec coverage grind (in progress) ════════
 

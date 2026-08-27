@@ -798,6 +798,19 @@ fn convert_expansion(
             }
             return;
         }
+        // DD#75 §4: the bash `${#x}` length sugar is retired in sash-native →
+        // `$(len x)`. Strip any subscript (`[@]`/`[*]`/`[i]`) — `len` dispatches
+        // on the whole collection. `${#}` (empty) is the arg count, handled
+        // above; `${##…}` (prefix strip) has `#` twice, excluded.
+        if let Some(rest) = inner.strip_prefix('#') {
+            if !rest.is_empty() && !rest.starts_with('#') {
+                let base = rest.split('[').next().unwrap_or(rest);
+                if !base.is_empty() && base.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                    patches.push(Patch::replace_node(node, format!("$(len {})", base), None));
+                    return;
+                }
+            }
+        }
     }
 
     // ${var-x} → ${var:-x}  (but not ${var:-x} which already has the colon)

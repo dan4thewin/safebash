@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=70
+plan=71
 echo "1..$plan" >&3
 
 set +e
@@ -166,6 +166,12 @@ echo $1'
 run_convert '#!/bin/bash
 echo ${1} ; for x in ${@}; do echo $x; done ; echo ${#}'
 [[ $rc = 0 && $out == *'$(arg 1)'* && $out == *'$(argv)'* && $out == *'$(($(argc) - 1))'* && -z $err ]]; chk 57.13b
+
+# 57.13c ${#x} length sugar → $(len x) (DD#75 §4; strips any subscript). ${#}
+# (arg count) is unaffected — it still maps to $(($(argc) - 1)) above.
+run_convert '#!/bin/bash
+arr=(a b c); echo ${#arr}; s=hi; echo ${#s}; echo ${#arr[@]}'
+[[ $rc = 0 && $out == *'$(len arr)'* && $out == *'$(len s)'* && $out != *'${#'* && -z $err ]]; chk 57.13c
 
 # conv.f1 $@ inside a function is preserved (function-local, DD#46)
 run_convert '#!/bin/bash
