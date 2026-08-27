@@ -406,9 +406,6 @@ impl SsaInst {
         if args.is_empty() {
             emit_exec_redirects_only(redirects, builder, module, ctx);
             false
-        } else if has_dollar_at(args) {
-            emit_exec_with_dollar_at(args, builder, module, ctx);
-            true
         } else {
             emit_exec_static_argv(args, builder, module, ctx);
             true
@@ -1288,30 +1285,6 @@ fn emit_exec_redirects_only(
     builder.def_var(ctx.exit_status_var, zero);
 }
 
-fn has_dollar_at(args: &[SsaValue]) -> bool {
-    args.iter().any(is_dollar_at)
-}
-
-fn is_dollar_at(v: &SsaValue) -> bool {
-    matches!(v, SsaValue::Var(vref) if vref.name == "@")
-}
-
-/// `exec cmd args... $@ ...` — splice the program argv into the args
-/// vector at runtime via sash_splice_argv.
-fn emit_exec_with_dollar_at(
-    args: &[SsaValue],
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    ctx: &mut InstCtx,
-) {
-    let prefix_args: Vec<&SsaValue> = args.iter().filter(|a| !is_dollar_at(a)).collect();
-    let prefix_addr = build_argv_on_stack(&prefix_args, builder, module, ctx);
-    let merged_argv = splice_in_program_argv(prefix_addr, builder, module, ctx.externs);
-    finalize_exec(merged_argv, builder, module, ctx.externs);
-}
-
-/// `exec cmd args...` (no $@) — build a static argv on the stack and
-/// hand it straight to exec.
 fn emit_exec_static_argv(
     args: &[SsaValue],
     builder: &mut FunctionBuilder,
@@ -1354,27 +1327,6 @@ fn build_argv_on_stack(
         .ins()
         .stack_store(null, argv_slot, (args.len() * 8) as i32);
     builder.ins().stack_addr(I64, argv_slot, 0)
-}
-
-/// Load the program's argv/argc and call sash_splice_argv to merge
-/// them with the caller's prefix. Returns the merged argv pointer.
-fn splice_in_program_argv(
-    prefix_addr: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-) -> cranelift_codegen::ir::Value {
-    let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-    let argv_ptr = builder.ins().global_value(I64, argv_gv);
-    let argv_val = builder.ins().load(I64, MemFlags::new(), argv_ptr, 0);
-    let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-    let argc_ptr = builder.ins().global_value(I64, argc_gv);
-    let argc_val = builder.ins().load(I64, MemFlags::new(), argc_ptr, 0);
-    let splice_ref = module.declare_func_in_func(externs.splice_argv, builder.func);
-    let call = builder
-        .ins()
-        .call(splice_ref, &[prefix_addr, argv_val, argc_val]);
-    builder.inst_results(call)[0]
 }
 
 /// Common tail for both exec paths: call exec(argv, envp); if it returns,
