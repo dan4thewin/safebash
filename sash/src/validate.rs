@@ -311,7 +311,6 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     if check_heredoc(name, c, span, diags) {
         return;
     }
-    check_export_or_declare(name, c, span, diags);
     check_dynexec(name, span, diags);
     check_test_constructs(name, c, span, diags);
     check_inline_glob(c, diags);
@@ -372,37 +371,6 @@ fn check_heredoc(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic
         }
     }
     false
-}
-
-/// SB5001: reject `export` and `declare -x`.
-fn check_export_or_declare(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
-    if name == "export" {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5001",
-            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
-             variable for a command"
-                .to_string(),
-        ));
-    } else if name == "declare" {
-        check_declare_x_flag(c, span, diags);
-    }
-}
-
-/// SB5001: reject `declare -x` (export via `declare`).
-fn check_declare_x_flag(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
-    for arg in &c.args {
-        let s = expr_literal_str(arg);
-        if s == "-x" || (s.contains('x') && s.starts_with('-')) {
-            diags.push(Diagnostic::error_span(
-                span,
-                "SB5001",
-                "`declare -x` is rejected — sash has no export; use \
-                 `/usr/bin/env NAME=value …`"
-                    .to_string(),
-            ));
-        }
-    }
 }
 
 /// SB4001: reject dynamic-execution builtins.
