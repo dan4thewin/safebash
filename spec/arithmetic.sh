@@ -293,17 +293,17 @@ if in_modes native,c; then
     # 58.13 (len m) on a map in arith → entry count
     run_sash 'map m=([a]=1 [b]=2 [c]=3); echo $(( (len m) ))'
     [[ $rc = 0 && $out = "3" && -z $err ]]; chk 58.13
-    # DD#75 §2: `${#x}` braced-length is int-valued inside $(( )) too (the
-    # canonical length form; parses to the same len intrinsic as (len x)).
-    # 58.14 ${#a} array count in arith
-    run_sash 'array a=(x y z); int n=$(( ${#a} + 1 )); echo $n'
+    # DD#75 §4 (amended): the `${#x}` braced-length sugar is retired; the
+    # canonical arithmetic length is the `(len x)` sexpr (58.11-58.13 above).
+    # 58.14 (len a) array count in arith
+    run_sash 'array a=(x y z); int n=$(( (len a) + 1 )); echo $n'
     [[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.14
-    # 58.15 ${#s} string byte length in arith
-    run_sash 's=hello; int n=$(( ${#s} * 2 )); echo $n'
+    # 58.15 (len s) string byte length in arith
+    run_sash 's=hello; int n=$(( (len s) * 2 )); echo $n'
     [[ $rc = 0 && $out = "10" && -z $err ]]; chk 58.15
-    # 58.16 ${#m} map entry count in arith
-    run_sash 'map m=([a]=1 [b]=2 [c]=3); echo $(( ${#m} ))'
-    [[ $rc = 0 && $out = "3" && -z $err ]]; chk 58.16
+    # 58.16 (len m) map entry count in arith (int-typed)
+    run_sash 'map m=([a]=1 [b]=2 [c]=3); int n=$(( (len m) + 1 )); echo $n'
+    [[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.16
 else
     skip_chk 58.10; skip_chk 58.11; skip_chk 58.12; skip_chk 58.13
     skip_chk 58.14; skip_chk 58.15; skip_chk 58.16

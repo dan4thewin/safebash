@@ -96,9 +96,10 @@ run_sash 'echo ${HOME}'
 #       reference regardless of the modifier)
 run_sash 'echo ${HOME:-x}'
 [[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk bvb.3
-# bvb.4 the length form `${#HOME}` rejects too
+# bvb.4 the retired `${#…}` length sugar rejects at parse (SB4038) regardless
+#       of the operand — fires before the env-var reference check
 run_sash 'echo ${#HOME}'
-[[ $rc != 0 && -z $out && $err == *SB5018* ]]; chk bvb.4
+[[ $rc != 0 && -z $out && $err == *SB4038* ]]; chk bvb.4
 # bvb.5 a normal braced read / disposition stays clean (no false positive)
 run_sash 'x=5; echo "${x} ${x:-9}"'
 [[ $rc = 0 && $out = "5 5" && -z $err ]]; chk bvb.5

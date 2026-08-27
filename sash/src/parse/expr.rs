@@ -643,19 +643,17 @@ fn try_braced_splat(content: &str, span: Span) -> Option<Expr> {
     }
 }
 
-/// `${#var}` → strlen, or `${#var[@]}`/`${#var[*]}` → arrlen.
+/// `${#…}` length sugar — retired entirely (DD#75 §4, amended 2026-08-27).
+/// Every form (`${#x}`, `${#a}`, `${#a[@]}`, `${#a[i]}`) is tagged
+/// `len_retired` for the parse-level reject; `$(len x)` (value) / `(len x)`
+/// (arithmetic) is the sole length spelling.
 fn try_strlen_or_arrlen(content: &str, bytes: &[u8], span: Span) -> Option<Expr> {
     if bytes.first() != Some(&b'#') || bytes.len() <= 1 || bytes[1] == b'#' {
         return None;
     }
     let rest = &content[1..];
-    if rest.contains("[@]") || rest.contains("[*]") {
-        // DD#75 §4: the `${#a[@]}` / `${#a[*]}` bracket-length form is retired
-        // (use `${#a}` / `$(len a)`); tag it for the parse-level reject.
-        let name = rest.split('[').next().unwrap_or(rest);
-        return Some(Expr::param(name, Some("arrlen_retired"), None, span));
-    }
-    Some(Expr::param(rest, Some("strlen"), None, span))
+    let name = rest.split('[').next().unwrap_or(rest);
+    Some(Expr::param(name, Some("len_retired"), None, span))
 }
 
 /// `${!var}` → indirection, or `${!var[@]}` → array keys.

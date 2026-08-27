@@ -40,7 +40,6 @@ pub(super) fn handle_param_expansion(
             let arr_len = emit_table_len(s_ptr, builder, module, externs);
             emit_int_to_str(builder, module, externs, arr_len)
         }
-        "strlen_elem" => emit_strlen_elem(operand, s_ptr, builder, module, externs),
         op if op == "arrkeys"
             || op == "arrvals"
             || op == "arrjoin"
@@ -81,29 +80,6 @@ fn emit_table_len(
     let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
     let call = builder.ins().call(len_ref, &[s_ptr]);
     builder.inst_results(call)[0]
-}
-
-/// ${#arr[N]} — string length of element N. The element pointer
-/// comes back via the return value of `sash_table_value`; the
-/// length comes back via the out-pointer in the third argument.
-fn emit_strlen_elem(
-    operand: &str,
-    s_ptr: cranelift_codegen::ir::Value,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
-    let idx_val = builder
-        .ins()
-        .iconst(I64, operand.parse::<i64>().unwrap_or(0));
-    let out_len_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-    let call = builder.ins().call(tv_ref, &[s_ptr, idx_val, out_len_addr]);
-    let _elem_ptr = builder.inst_results(call)[0];
-    let elem_len = builder.ins().stack_load(I64, out_len_slot, 0);
-    emit_int_to_str(builder, module, externs, elem_len)
 }
 
 fn emit_glob_expansion(

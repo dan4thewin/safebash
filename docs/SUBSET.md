@@ -51,7 +51,7 @@ distinction is irrelevant in sash since nothing is ever unset.
 
 | Construct | Description |
 |-----------|-------------|
-| `${#var}` | Length |
+| `$(len var)` | Length (int). The bash `${#var}` sugar is retired — DD#75 §2 |
 | `${var#pat}`, `${var##pat}` | Prefix strip (shortest, longest) |
 | `${var%pat}`, `${var%%pat}` | Suffix strip (shortest, longest) |
 | `${var:offset:length}` | Substring (negative length supported) |

@@ -361,10 +361,6 @@ enum ATok {
     BadLit(String),
     Var(String),
     DollarVar(String),
-    /// `${#name}` braced-length inside `$(( ))` (DD#75 §2): the length of
-    /// `name` — array/map element count or string byte length. Carries the
-    /// inner name; the parser lowers it to the `len` intrinsic sexpr shape.
-    LenOf(String),
     /// `${name[index]}` inside `$(( ))` — a normal-parse subscript rvalue
     /// (name, raw index text). The parser builds the ordinary `Subscript` Expr
     /// (so a map's string key works) and wraps it as `ArithExpr::Expansion`.
@@ -639,14 +635,11 @@ fn scan_arith_braced_var(input: &str, bytes: &[u8], start: usize) -> (ATok, usiz
     (braced_body_token(body), j)
 }
 
-/// Classify a `${…}` body inside `$(( ))`. DD#75 §2: a `${#name}` body (a
-/// `#` prefix followed by an identifier) is the braced-length form and yields
-/// a `LenOf` token; a bare `${#}` empty name, or any other body, yields an
-/// ordinary `DollarVar`.
+/// Classify a `${…}` body inside `$(( ))`. A `${#…}` length body is retired
+/// (DD#75 §4, amended): it is not recognized here, so it falls through to the
+/// parameter-expansion path and the real parser rejects it (`$(len x)` /
+/// `(len x)` is the sole length spelling). A bare `${name}` is a var read.
 fn braced_body_token(body: &str) -> ATok {
-    if let Some(t) = braced_length_token(body) {
-        return t;
-    }
     if let Some(sub) = try_braced_subscript(body) {
         return sub;
     }
@@ -658,12 +651,6 @@ fn braced_body_token(body: &str) -> ATok {
     // `%`, `:s/`, …) — route it through the real parser (DD#77) rather than the
     // old bogus `DollarVar(body)` → silent 0.
     ATok::ParamExpansion(body.to_string())
-}
-
-/// `${#name}` (name a bare identifier) → the arith braced-length `LenOf` token.
-fn braced_length_token(body: &str) -> Option<ATok> {
-    let name = body.strip_prefix('#')?;
-    is_bare_ident(name).then(|| ATok::LenOf(name.to_string()))
 }
 
 /// True for a non-empty run of `[A-Za-z0-9_]` — a bare variable name.
@@ -968,14 +955,6 @@ impl ArithParser {
     /// out of `parse_prefix_atom` to keep the dispatcher small.
     fn parse_expansion_atom(&mut self, tok: &ATok) -> Option<Result<ArithExpr, Diagnostic>> {
         match tok {
-            ATok::LenOf(name) => {
-                // DD#75 §2: `${#name}` → the `len` intrinsic sexpr shape.
-                self.advance();
-                Some(Ok(ArithExpr::FuncCall {
-                    name: "len".to_string(),
-                    args: vec![ArithExpr::Var(name.clone())],
-                }))
-            }
             ATok::Subscript(name, idx) => {
                 // `${a[i]}` / `${m[k]}` — a normal-parse `Subscript` Expr imported
                 // as an rvalue value (arith-subscript-values).

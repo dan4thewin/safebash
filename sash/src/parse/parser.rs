@@ -2512,10 +2512,10 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
     None
 }
 
-/// DD#75 §4: reject a retired `[@]`/`[*]` bracket-subscript collection form,
-/// pointing at its canonical replacement. `@a` is the sole splat; length is
-/// `${#a}` / `$(len a)`; keys are `$(keys m)` (maps only). Returns `None` for
-/// any non-retired operator.
+/// DD#75 §4: reject a retired collection form (`[@]`/`[*]` bracket subscripts)
+/// or the retired `${#…}` length sugar, pointing at its canonical replacement.
+/// `@a` is the sole splat; length is `$(len a)`; keys are `$(keys m)` (maps
+/// only). Returns `None` for any non-retired operator.
 fn retired_bracket_operator_diag(
     pe: &ParameterExpansion,
     op: &str,
@@ -2528,9 +2528,9 @@ fn retired_bracket_operator_diag(
              retired — use `@{name}` for the splat, or `$(join {name})` for a \
              joined string"
         ),
-        "arrlen_retired" => format!(
-            "the `[@]`/`[*]` length form `${{#{name}[@]}}` is retired — use \
-             `${{#{name}}}` (or `$(len {name})`)"
+        "len_retired" => format!(
+            "the `${{#…}}` length sugar (`${{#{name}}}`) is retired — use \
+             `$(len {name})` in value context or `(len {name})` inside `$(( ))`"
         ),
         "arrkeys_retired" => format!(
             "the `[@]`/`[*]` keys form `${{!{name}[@]}}` is retired — use \

@@ -71,11 +71,21 @@ knows collection-ness via `state.collections`):
   `len(string)`, which is bytes, not runes).
 - `len <undefined / unknown name>` → **compile error** (no runtime garbage).
 
-`${#x}` is **Int-typed sugar for `$(len x)`** — the only surviving `${#…}`
-length form (see §4). Both are int, so `int n=${#a}`, `int n=$(len a)`, and
-`$(( (len a) + 1 ))` all type-check and evaluate. This retires the syntactic
-`$`-sigil dispatch of the old `len` (`len a` = array vs `len $a` = string),
-which was the source of the scalar-`len` garbage bug.
+`$(len x)` (value context) and `(len x)` (inside `$(( ))`) are the **sole**
+length spellings. Both are int, so `int n=$(len a)` and `$(( (len a) + 1 ))`
+type-check and evaluate. This retires the syntactic `$`-sigil dispatch of the
+old `len` (`len a` = array vs `len $a` = string), the source of the
+scalar-`len` garbage bug.
+
+**Amended 2026-08-27 (DG): the `${#…}` length sugar is retired *entirely*.**
+Originally `${#x}` was kept as Int-typed sugar for `$(len x)`; DG dropped it —
+a `${#…}` `$`-sigil hides a `len` call (the same "looks scalar, isn't" hazard
+that removed `$@`/`$*` in §5), and one length spelling beats paste-from-bash
+friendliness. Every `${#…}` form (`${#x}`, `${#a}`, `${#a[@]}`, `${#a[i]}`, and
+`${#a}` inside `$(( ))`) is now **SB4038** everywhere, pointing at `$(len x)` /
+`(len x)`. The converter rewrites bash `${#x}` → `$(len x)` (§6) so pasted bash
+still works. (This also let the never-wired `emit_strlen_elem` element-length
+handler — which silently returned 0 — be deleted.)
 
 ## 3. `keys` is map-only
 
@@ -102,7 +112,7 @@ are retired (compile error, pointing at the canonical form):
 |---------|------|-----------------------|
 | `${a[@]}`, `$a[@]`   | splat        | `@a` |
 | `${a[*]}`, `$a[*]`   | splat/join   | `@a` (splat) / `$(join a)` (join) |
-| `${#a[@]}`, `${#a[*]}` | length     | `${#a}` / `$(len a)` |
+| `${#a[@]}`, `${#a[*]}` | length     | `$(len a)` |
 | `${!a[@]}`, `${!a[*]}` | keys       | `$(keys m)` (maps only, §3) |
 
 The implicit-join `*` forms (`${a[*]}`, and `$*` in §5) are dropped outright:
@@ -212,7 +222,8 @@ pre-existing); a friendlier `shift`-removed diagnostic.
 The converter emits the canonical forms and accepts the bash forms as input:
 
 - `${a[@]}` / `${a[*]}` → `@a`; `"${a[*]}"` / `"$*"` → `$(join a)` / `$(join args)`.
-- `${#a[@]}` / `${#a}` → `${#a}` (or `$(len a)`).
+- `${#x}` / `${#a}` / `${#a[@]}` / `${#a[i]}` → `$(len x)` (DD#75 §2 amendment:
+  the `${#…}` sugar is fully retired; `$(len …)` is the sole spelling).
 - `${!m[@]}` → `$(keys m)`; `${!a[@]}` on an indexed array → a counting `for (( ))`.
 - `$?` / `$!` / `$$` → `$(status)` / `$(getcpid)` / `$(getpid)`.
 - Positionals per DD#46/#60 and §5.

@@ -1,3 +1,19 @@
+## ════════ STATUS (2026-08-27) — `${#…}` retired (DD#75 §2 amended) ════════
+
+**On `hand-parser` (committing).** Coverage grind surfaced dead
+`emit_strlen_elem`; probing it found a bug: `${#a[N]}` (element length)
+silently returned 0 (element-length was half-wired, no parser producer). DG
+chose **Policy C**: drop the `${#…}` length sugar *entirely* — `$(len x)`
+(value) / `(len x)` (arith) is the sole length spelling; keep `len`; converter
+rewrites bash `${#x}`→`$(len x)`. Impl: parser `${#…}`→SB4038 everywhere
+(`len_retired`), removed arith `ATok::LenOf`, deleted dead `emit_strlen_elem`.
+`$(len …)` untouched (converges on the same live `strlen`/`arrlen` operators).
+Migrated ~10 spec sites (types/arithmetic/var_modifiers); repurposed 75.4-75.6
+to assert the retirement. DD#75 §2/§4/§6 amended; SUBSET.md; journal 191. Native
++ c gate 0 regressions; guarded types.sh 30.11 native,c (pre-existing janet
+unset+len nil crash → task `janet-unset-len-nil`). NEXT: converter rewrite
+(Commit 2).
+
 ## ════════ STATUS (2026-08-27) — spec coverage grind (in progress) ════════
 
 **On `hand-parser`.** DG asked to understand spec-suite coverage, delete dead
