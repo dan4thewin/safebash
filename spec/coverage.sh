@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=25
+plan=28
 echo "1..$plan" >&3
 
 set +e
@@ -91,6 +91,30 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
 else
     skip_chk cov.25
+fi
+# cov.26 `>&N` dup redirect (emit_dup_output) — only the harness/converter use
+# it; no spec exercises the compiled codegen path. `echo hi >&2` → stderr.
+if in_modes native; then
+    run_sash 'echo hi >&2'
+    [[ $rc = 0 && -z $out && $rerr = hi ]]; chk cov.26
+else
+    skip_chk cov.26
+fi
+# cov.27 a file redirect whose TARGET is a variable expansion (`> $f`) — the
+# only `> $var` specs are taint rejections, so this clean codegen path (redirect
+# target as a runtime expr) is untested.
+if in_modes native; then
+    run_sash 'f=rvfile; echo hi > $f; cat $f'
+    [[ $rc = 0 && $out = hi && -z $err ]]; chk cov.27
+else
+    skip_chk cov.27
+fi
+# cov.28 append (`>>`) to a variable-expansion target
+if in_modes native; then
+    run_sash 'f=rvfile2; echo a > $f; echo b >> $f; cat $f'
+    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk cov.28
+else
+    skip_chk cov.28
 fi
 
 set -e
