@@ -1104,7 +1104,7 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
         }
         SsaValue::Var(vref) => emit_var_value(e, vref, types),
-        SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } => {
+        SsaValue::ArithExpr { .. } | SsaValue::ArithBinOp { .. } | SsaValue::Ternary { .. } => {
             let int_expr = lower_value_as_int(e, value, types);
             emit_itoa_temp(e, &int_expr)
         }
@@ -1330,6 +1330,16 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             let r = lower_value_as_int(e, right, types);
             emit_arith_op_c(e, *op, &l, &r)
         }
+        // A ternary is int-valued; lower it to an if/else that assigns the
+        // chosen branch into a temp, so each branch's side-effecting statements
+        // (overflow/div-by-zero checks) only run when selected — mirrors
+        // native's block-structured lower_ternary_value, not a C `?:` (which
+        // would emit both branches' guards unconditionally).
+        SsaValue::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => emit_ternary_as_int_c(e, cond, true_val, false_val, types),
         // DD#76: an int cell handled in lower_disposition_as_int_c.
         // DD#77 arith disposition (:- / :?) handled in lower_disposition_as_int_c.
         _ => {
@@ -1339,6 +1349,29 @@ fn lower_value_as_int(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Strin
             format!("sash_atoi({}, {})", ptr, len)
         }
     }
+}
+
+/// Lower an int-valued ternary to an if/else that assigns the selected branch
+/// into a fresh temp, returning that temp's name. Each branch's lowering emits
+/// its statements *inside* the corresponding block, so guards run lazily.
+fn emit_ternary_as_int_c(
+    e: &mut Emit,
+    cond: &SsaValue,
+    true_val: &SsaValue,
+    false_val: &SsaValue,
+    types: &VarTypes,
+) -> String {
+    let c = lower_value_as_int(e, cond, types);
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t};").unwrap();
+    writeln!(e.out, "    if ({}) {{", c).unwrap();
+    let tv = lower_value_as_int(e, true_val, types);
+    writeln!(e.out, "        {t} = ({});", tv).unwrap();
+    writeln!(e.out, "    }} else {{").unwrap();
+    let fv = lower_value_as_int(e, false_val, types);
+    writeln!(e.out, "        {t} = ({});", fv).unwrap();
+    writeln!(e.out, "    }}").unwrap();
+    t
 }
 
 /// Emit a C i64 expression for an arithmetic op on already-lowered

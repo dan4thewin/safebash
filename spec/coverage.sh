@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=48
+plan=56
 echo "1..$plan" >&3
 
 set +e
@@ -171,6 +171,39 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = y && -z $err ]]; chk cov.48
 else
     for n in 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48; do
+        skip_chk cov.$n
+    done
+fi
+# cov.49-56 arithmetic ternary `cond ? a : b` — no feature spec exercises it,
+# leaving native transform/codegen (SsaValue::Ternary / lower_ternary_value)
+# and the emit_c str/int ternary path untested. Simple (side-effect-free)
+# branches so native and c agree (a div/overflow in the *untaken* branch would
+# diverge — native eagerly evaluates both; task native-ternary-eager-eval).
+if in_modes native,c; then
+    run_sash 'int x=5; echo $(( x>0 ? 1 : 2 ))'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.49
+    run_sash 'int x=-5; echo $(( x>0 ? 1 : 2 ))'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.50
+    # expression branches (arith on each side)
+    run_sash 'int x=5; int y=$(( x>3 ? x*2 : x+1 )); echo $y'
+    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.51
+    # falsy condition (0) selects the else branch
+    run_sash 'int x=0; echo $(( x ? 10 : 20 ))'
+    [[ $rc = 0 && $out = 20 && -z $err ]]; chk cov.52
+    # truthy (non-zero) condition selects the then branch
+    run_sash 'int x=7; echo $(( x ? 10 : 20 ))'
+    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.53
+    # nested ternary in the then branch
+    run_sash 'int x=7; echo $(( x>5 ? (x>10 ? 3 : 2) : 1 ))'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.54
+    # ternary in an int-assignment (max of two)
+    run_sash 'int a=1; int b=2; int m=$(( a>b ? a : b )); echo $m'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.55
+    # `!=` condition (spaced) selecting the else branch
+    run_sash 'int x=0; echo $(( x != 0 ? 5 : 9 ))'
+    [[ $rc = 0 && $out = 9 && -z $err ]]; chk cov.56
+else
+    for n in 49 50 51 52 53 54 55 56; do
         skip_chk cov.$n
     done
 fi
