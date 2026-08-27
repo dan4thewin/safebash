@@ -1,6 +1,6 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::cmd_handlers::{check_callee_arity, expand_dollar_at_in_body, resolve_function_name};
+use super::cmd_handlers::{check_callee_arity, resolve_function_name};
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
@@ -829,9 +829,7 @@ fn build_function_pipeline_stage(
     idx: usize,
 ) -> Option<usize> {
     let resolved = resolve_function_name(name, state);
-    let mut body = state.function_bodies.get(&resolved).cloned()?;
-    // DD#60: expand $@/"$@" to the explicit positional list before lowering.
-    expand_dollar_at_in_body(&mut body, c.args.len());
+    let body = state.function_bodies.get(&resolved).cloned()?;
 
     let saved = state.snapshot();
     let saved_return = state.return_target;

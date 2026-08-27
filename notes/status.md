@@ -10,9 +10,14 @@ the 91%↔48% debug swing is just line-counting granularity). Harness: needs
 workspace (convert/expand) before those specs; force-rebuild uninstrumented
 after. Batches pushed (0 regressions, native 0): `4d94eb9` 4 dead methods;
 `0f36b7a` parser-shadowed check_export_or_declare + coverage.sh cov.1-3;
-`877d55e` coverage.sh cov.4-10 (7 reachable-untested diagnostics). Method:
-per cluster — shadowed-dead → remove+verify-behaviour-preserved; reachable →
-spec. Multi-session grind; journals 188-189.
+`877d55e` coverage.sh cov.4-10 (7 reachable-untested diagnostics);
+cov.11-28 (more reachable diagnostics + redirect forms); `ed95432` dead
+`$@`-exec codegen path; **dead `$@`-expansion transform machinery**
+(`expand_dollar_at_*`, ~82 lines — all no-ops post-DD#81 `$@`-rejection).
+High-yield pattern: recent feature *removals* ($@, case, var-modifiers)
+leave whole dead functions still line-counted — delete + verify
+behaviour-preserved. Method: per cluster — shadowed-dead → remove+verify;
+reachable → spec. Multi-session grind; journals 188-190.
 
 ## ════════ STATUS (2026-08-26, cont.) — taint bypass switches (DD#82) ════════
 

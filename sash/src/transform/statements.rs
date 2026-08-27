@@ -183,12 +183,9 @@ fn lower_function_stmt(
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
     let saved_scope = state.local_fn_scope.clone();
     // The standalone function block is a template lowered without a call
-    // site; its $@/$* have no caller args here (every real call is inlined
-    // with the args known). Expand them to empty so this template never
-    // produces a program-argv splat (DD#60). Per-call $@ is expanded with
-    // the real argc in inline_function_call.
-    let mut template_body = f.body.clone();
-    super::cmd_handlers::expand_dollar_at_in_body(&mut template_body, 0);
+    // site; $@/$* are rejected at validation (DD#81) and never reach here.
+    // Per-call args are bound when inline_function_call lowers each call.
+    let template_body = f.body.clone();
     let saved_template_flag = state.lowering_fn_template;
     state.lowering_fn_template = true;
     let fn_exit = lower_stmts(&template_body, ssa, state, fn_entry);
