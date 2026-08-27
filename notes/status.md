@@ -1,3 +1,19 @@
+## ════════ STATUS (2026-08-27) — spec coverage grind (in progress) ════════
+
+**On `hand-parser`.** DG asked to understand spec-suite coverage, delete dead
+code, and add specs toward every spec-reachable line (ignoring janet). Reliable
+release baseline (native+c, compiler only): **87.69% lines** (2750 missed).
+Release coverage IS reliable (a debug-mode detour + "unreliable" claim were
+retracted — every verified "missing" line was genuinely dead-or-untested;
+the 91%↔48% debug swing is just line-counting granularity). Harness: needs
+`cargo llvm-cov clean --workspace` to force instrumentation; rebuild whole
+workspace (convert/expand) before those specs; force-rebuild uninstrumented
+after. Batches pushed (0 regressions, native 0): `4d94eb9` 4 dead methods;
+`0f36b7a` parser-shadowed check_export_or_declare + coverage.sh cov.1-3;
+`877d55e` coverage.sh cov.4-10 (7 reachable-untested diagnostics). Method:
+per cluster — shadowed-dead → remove+verify-behaviour-preserved; reachable →
+spec. Multi-session grind; journals 188-189.
+
 ## ════════ STATUS (2026-08-26, cont.) — taint bypass switches (DD#82) ════════
 
 **On `hand-parser` (committing).** DG: a public fork could rip out taint and
