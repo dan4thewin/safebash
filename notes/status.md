@@ -1,4 +1,30 @@
-## ════════ STATUS (2026-08-27) — `${#…}` retired (DD#75 §2 amended) ════════
+## ════════ STATUS (2026-08-27) — ternary fixes + coverage grind (89.66%) ════════
+
+**On `hand-parser`, pushed @ `9218f23`.** Coverage grind continued (DG: "no
+rest, continue while a path forward exists"). Release line coverage **87.69%
+→ 89.66%** this session (compiler, native+c, no janet; ~447 fewer missed
+lines). Commits this run (all 0 native/c regressions):
+- `29bdd25` removed dead `$@` transform machinery (post-DD#81, ~82 lines).
+- `d66b831` arith-operator coverage cov.29-48 (unary/inc-dec/compound-assign/
+  comma).
+- `ddeb1d4` + `3971248` **retired `${#…}` entirely** (DG Policy C) — see block
+  below.
+- `2fcacd8` **c-backend ternary was silently empty** (no lower_value_as_str
+  arm) → fixed via lower_value_as_int + emit_ternary_as_int_c (if/else temp,
+  lazy). cov.49-56.
+- `9218f23` **native ternary was eager** (evaluated both branches → leaked a
+  side-effecting untaken branch's div-by-zero/overflow) → both sites
+  (lower_ternary_value + new lower_ternary_int) rewritten to brif+phi merge.
+  Now native==c==bash (lazy). cov.57 pins it. Closed native-ternary-eager-eval.
+
+3 bugs found+fixed (${#a[N]} silent-0, c-ternary empty, native-ternary eager),
+1 filed (janet-unset-len-nil P3). NEXT (coverage grind, still a path forward):
+more reachable-untested fns from the "fully-uncovered function" scan
+(emit_cmdsubst_pipe_while_read, parse_slurp_form, extract_from_literal,
+init_at_var, ssa::display/emit_branch_outcome_trace behind flags). Re-measure:
+`/tmp/rcov.sh`; map: `/tmp/rcov_missing.txt`.
+
+
 
 **On `hand-parser` (committing).** Coverage grind surfaced dead
 `emit_strlen_elem`; probing it found a bug: `${#a[N]}` (element length)
