@@ -102,8 +102,6 @@ pub enum BuiltinCmd {
     Exec,
     Cd,
     Wait,
-    /// `command` builtin (bypass function lookup).
-    CommandBuiltin,
     /// `bless VAR [[ ... ]]` — recognized at IR level, becomes
     /// `SsaInst::Bless` in SSA. Only appears as a `Command` in
     /// fallback paths (no TestExpr arg).
@@ -171,7 +169,6 @@ impl BuiltinCmd {
             "exec" => Self::Exec,
             "cd" => Self::Cd,
             "wait" => Self::Wait,
-            "command" => Self::CommandBuiltin,
             "bless" => Self::Bless,
             "read" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,

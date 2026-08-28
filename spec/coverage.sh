@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=57
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -211,6 +211,12 @@ else
         skip_chk cov.$n
     done
 fi
+# cov.58 the `command` builtin is not in sash-native (DD#23 — "command -v" is
+# `[[ -x /path ]]`); any `command …` is rejected as dynamic execution (SB4001,
+# check_dynexec), same class as eval/source. Pins the removal of the dead
+# emit_command_builtin codegen (validation shadows it).
+run_sash 'command /bin/echo hi'
+[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.58
 
 set -e
 tally

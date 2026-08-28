@@ -11,7 +11,7 @@ use cranelift_frontend::FunctionBuilder;
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
-use super::commands::{lower_echo, lower_exec};
+use super::commands::lower_echo;
 use super::redirects::{emit_redirects, emit_restore};
 use super::tests::lower_test_expr;
 use super::types::{emit_int_to_str, find_array_slot, ExternFuncs, InstCtx, VarSlot};
@@ -224,9 +224,6 @@ impl SsaInst {
                 return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
             }
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
-            BuiltinCmd::CommandBuiltin => {
-                return self.emit_command_builtin(name, args, redirects, builder, module, ctx);
-            }
             // All other builtins (read, mapfile, printf, bless, etc.) and
             // external commands / user functions fall through to the general
             // command handler, which dispatches on `name` for the remaining
@@ -845,85 +842,6 @@ impl SsaInst {
         let call = builder.ins().call(wait_ref, &[pid]);
         let status = builder.inst_results(call)[0];
         builder.def_var(exit_status_var, status);
-        false
-    }
-
-    fn emit_command_builtin(
-        &self,
-        _name: &str,
-        args: &[SsaValue],
-        redirects: &[crate::ir::Redirect],
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        let test_result_var = ctx.test_result_var;
-        // DD#23: `command -v` is rejected by the validator. If we reach here,
-        // it's `command [-p] <cmd>` — just run the command, bypassing functions.
-        let restore = emit_redirects(
-            redirects,
-            builder,
-            module,
-            externs,
-            literals,
-            vars,
-            Some(exit_status_var),
-        );
-        let mut cmd_start = 0;
-        for (i, arg) in args.iter().enumerate() {
-            if let SsaValue::Literal(s) = arg {
-                match s.as_str() {
-                    "-p" | "--" => {
-                        cmd_start = i + 1;
-                    }
-                    _ => {
-                        cmd_start = i;
-                        break;
-                    }
-                }
-            } else {
-                cmd_start = i;
-                break;
-            }
-        }
-        if cmd_start < args.len() {
-            if let SsaValue::Literal(real_name) = &args[cmd_start] {
-                let real_args = args[cmd_start + 1..].to_vec();
-                lower_exec(
-                    real_name,
-                    &real_args,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    test_result_var,
-                    exit_status_var,
-                );
-            } else {
-                let real_name_str = match &args[cmd_start] {
-                    SsaValue::Literal(s) => s.clone(),
-                    _ => "command".to_string(),
-                };
-                let real_args = args[cmd_start + 1..].to_vec();
-                lower_exec(
-                    &real_name_str,
-                    &real_args,
-                    builder,
-                    module,
-                    vars,
-                    literals,
-                    externs,
-                    test_result_var,
-                    exit_status_var,
-                );
-            }
-        }
-        emit_restore(restore, builder, module, externs);
         false
     }
 
