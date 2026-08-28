@@ -21,9 +21,11 @@ fully-uncovered-function scan has false positives — verify each empirically).
 **Coverage:** 87.69% → ~91% lines this session (compiler, native+c). Many
 commits, 0 native/c regressions throughout. Journals 190-201.
 
-**Remaining threads (lower yield / need DG):** `ssa::display` (add `--dump-ssa`
-to make it spec-coverable, or accept test-only); `extract_from_literal` (compact
-`[[ ]]` — scan false positive, verify); the exec c/janet backend gap.
+**Remaining threads (lower yield / need DG):** `extract_from_literal` (compact
+`[[ ]]` — scan false positive, verify); the exec c/janet backend gap. (Note:
+the earlier "ssa::display / SSA pretty-printer" thread was a mischaracterization
+— there is NO SSA pretty-printer; the flagged symbol was `ArithOp::display`, a
+dead operator→string helper, now removed.)
 
 
 

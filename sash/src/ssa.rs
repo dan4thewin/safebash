@@ -431,32 +431,6 @@ impl CheckedArithOp {
     }
 }
 
-impl ArithOp {
-    pub fn display(&self) -> &'static str {
-        match self {
-            ArithOp::Add => "+",
-            ArithOp::Sub => "-",
-            ArithOp::Mul => "*",
-            ArithOp::Div => "/",
-            ArithOp::Mod => "%",
-            ArithOp::Eq => "==",
-            ArithOp::Ne => "!=",
-            ArithOp::Lt => "<",
-            ArithOp::Le => "<=",
-            ArithOp::Gt => ">",
-            ArithOp::Ge => ">=",
-            ArithOp::And => "&&",
-            ArithOp::Or => "||",
-            ArithOp::Shl => "<<",
-            ArithOp::Shr => ">>",
-            ArithOp::BitAnd => "&",
-            ArithOp::BitOr => "|",
-            ArithOp::BitXor => "^",
-            ArithOp::Pow => "**",
-        }
-    }
-}
-
 /// A value in SSA — either a literal or a variable reference.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SsaValue {

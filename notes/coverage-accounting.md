@@ -34,6 +34,7 @@ table (0 callers = truly dead) — not by the scan alone.
 | `init_numeric_positional` + `init_at_var` | top-level positionals→SB5024/5045; DD#60 args-array | 211c464 |
 | `emit_strlen_elem` (element-length) | never had a producer | ddeb1d4 |
 | `handle_trap` + `handle_trap_exit`/`_ignore_reset` + `Trap` variant | DD#56: `trap`→SB4043; converter owns bash→signal/END | (this session) |
+| `ArithOp::display` (dead operator→string helper, NOT an SSA pretty-printer) | 0 callers — codegen matches `ArithOp` directly | (this session) |
 
 ## `exec` — SUPPORTED (DG 2026-08-28), native
 
@@ -52,12 +53,29 @@ don't emit exec yet (task `c-janet-exec-support`).
 
 ## Bucket C — reachable but not spec-hittable (explained)
 
-- **`ssa.rs::Display` (`display`, cc=20)** — the SSA pretty-printer. **No CLI
-  flag emits SSA** (`lib.rs` has `--janet`/`--emit-c`/`--extract`/`--annotate`
-  but no `--emit-ssa`/`--dump-ssa`); the Display impl is used only by Rust unit
-  tests and ad-hoc debugging. Not reachable from any `sash` invocation, so no
-  spec can hit it. (Options for DG later: add a `--dump-ssa` debug flag to make
-  it spec-coverable, or accept it as test-only.)
+*(none currently — the one prior entry was a mischaracterization; see below.)*
+
+## Correction — there is NO SSA pretty-printer (DG 2026-08-28)
+
+An earlier draft of this file listed "`ssa.rs::Display` — the SSA
+pretty-printer" as a Bucket-C item. **That was wrong on both counts** (DG caught
+it):
+1. **There is no SSA pretty-printer.** No SSA type (`SsaProgram`/`BasicBlock`/
+   `SsaInst`/`SsaValue`) has a `Display`/`fmt` impl, and no CLI flag dumps SSA.
+2. The symbol the scan flagged (`ssa.rs:435`) was **`ArithOp::display`** — a
+   trivial 19-arm `match` mapping each arithmetic operator to its symbol string
+   (`Add => "+"`). The cc=20 was just the wide match; it's not complex, and
+   it's not a pretty-printer.
+
+`ArithOp::display` turned out to be **dead code** — zero callers (native codegen
+matches `ArithOp` directly in `emit_arith_op`; emit_c hardcodes the operator
+strings; a `pub fn`, so no dead-code warning fired). Removed and verified
+(compiles clean, full native suite 0 regressions). Moved to Bucket B below.
+
+This is another instance of the scan-false-positive caveat: the "cc=20" +
+"uncovered" signals looked like a complex unhittable function but were a dead
+lookup table. Always resolve the actual symbol + callers, don't trust the
+scan's label.
 
 ## Bucket A — specs added this session
 
