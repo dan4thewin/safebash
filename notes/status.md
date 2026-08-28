@@ -1,3 +1,31 @@
+## ════════ STATUS (2026-08-27) — coverage grind: dead code + specs (90.36%) ════════
+
+**On `hand-parser`, pushed @ `88910be`.** Coverage grind continued (DG: "keep
+going"). Release line coverage **87.69% → 90.36%** across the session (compiler,
+native+c; 610 fewer missed lines). Commits after the ternary work (all 0
+native/c regressions):
+- `2346c36` removed the dead `command` builtin codegen (`emit_command_builtin`
+  + `BuiltinCmd::CommandBuiltin` chain, ~79 lines) — DD#23 rejects `command`
+  via SB4001 (`check_dynexec`); the codegen was shadowed vestige. cov.58 pins
+  it; shrinks the command-exec attack surface.
+- `7bd1a81` `spec/trace.sh` (NEW, native-only) covers DD#32 tracing
+  (`--trace` + `SASH_TRACE=1` → `emit_branch_outcome_trace` /
+  `intern_trace_terminator`, ~68 lines). tr.1-3 (if.then/if.else/while).
+- `88910be` cov.59 covers `$(< file)` slurp parse (parse_slurp_form).
+
+**Candidate-dead (needs careful verification, NOT removed):**
+`codegen/setup.rs::init_numeric_positional` + `init_at_var` (+ their only caller
+`init_one_positional`). Top-level `$1`/`$@`/`$#` are all validation-rejected
+(SB5024/SB5045) and function positionals inline via the args-array (DD#60), so
+`collect_positional_refs` only ever surfaces `$?`/`$$` (which
+`init_positional_params` skips) — the init cluster (~90 lines) appears dead but
+removing positional codegen is delicate; verify `scan_value_for_vars` can never
+surface a numeric/`@` ref before deleting.
+
+NEXT (still a path forward): the candidate-dead positional cluster; remaining
+reachable-untested from the scan (handle_trap, emit_cmdsubst_pipe_while_read,
+lexer scan_dq_backtick/scan_ansi_c_octal). Re-measure: `/tmp/rcov.sh`.
+
 ## ════════ STATUS (2026-08-27) — ternary fixes + coverage grind (89.66%) ════════
 
 **On `hand-parser`, pushed @ `9218f23`.** Coverage grind continued (DG: "no
