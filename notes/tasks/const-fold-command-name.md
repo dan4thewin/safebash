@@ -1,6 +1,6 @@
 ---
 title: "Const-fold a command name: allow `const x=/path; $x arg` via compile-time resolution"
-status: pending
+status: wontfix
 priority: P3
 kind: feature
 depends: []
@@ -42,3 +42,11 @@ Care: only fold a **const** whose initializer is a pure string literal
 (no interpolation / concat that could depend on runtime state). Keep the
 folded value subject to the same resolution + taint rules as a written
 literal path.
+
+## Discarded (2026-08-21, DG)
+
+DG: "discard the const-fold-command-name, that's gpp territory." A command name
+computed from a `const` binding is a source-preprocessing / general-purpose-
+preprocessor concern, not something sash's compiler should special-case. A
+command head stays a literal path (SB5011 for any variable/expansion). Closed
+wontfix.

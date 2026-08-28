@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=63
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -248,6 +248,31 @@ run_sash "echo \$'\\061\\062\\063'"
 # All backends.
 run_sash '[[ ( -n x ) ]] && echo y'
 [[ $rc = 0 && $out = y && -z $err ]]; chk cov.64
+# cov.65-67 binary bitwise operators in $(( )) with runtime operands
+# (codegen/arithmetic.rs emit_arith_op BitAnd/BitOr/BitXor → band/bor/bxor).
+# The compound-assign forms (&=,|=,^=) are cov.44-46; the BINARY forms were
+# untested. a=6,b=3 → &=2, |=7, ^=5. native+c.
+if in_modes native,c; then
+    run_sash 'int a=6; int b=3; echo $(( a & b ))'
+    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.65
+    run_sash 'int a=6; int b=3; echo $(( a | b ))'
+    [[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.66
+    run_sash 'int a=6; int b=3; echo $(( a ^ b ))'
+    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.67
+else
+    skip_chk cov.65; skip_chk cov.66; skip_chk cov.67
+fi
+# cov.68-69 runtime divide/modulo by zero (codegen/arithmetic.rs
+# emit_div_by_zero_error) — the FIRING path: bash's "division by 0" to stderr,
+# result 0, rc 0 (cov.57 only tested the ternary-UNTAKEN, non-firing case).
+if in_modes native; then
+    run_sash 'int x=0; echo $(( 5 / x ))'
+    [[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.68
+    run_sash 'int x=0; echo $(( 5 % x ))'
+    [[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.69
+else
+    skip_chk cov.68; skip_chk cov.69
+fi
 
 set -e
 tally

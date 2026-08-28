@@ -33,14 +33,6 @@ impl Expr {
         }
     }
 
-    /// Shorthand: simple variable expansion ($var).
-    pub fn expansion(name: impl Into<String>, span: Span) -> Self {
-        Self {
-            kind: ExprKind::SimpleExpansion(name.into()),
-            span,
-        }
-    }
-
     /// Shorthand: parameter expansion with operator.
     pub fn param(
         name: impl Into<String>,
