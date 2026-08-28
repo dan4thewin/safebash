@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=60
+plan=61
 echo "1..$plan" >&3
 
 set +e
@@ -231,6 +231,18 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = $'start\nend\ncleanup' && -z $err ]]; chk cov.60
 else
     skip_chk cov.60
+fi
+# cov.61 `for x in $(cmd)` → the DD#28/#40 pipe-while-read transform
+# (control_flow.rs emit_cmdsubst_pipe_while_read / build_cmdsubst_stage /
+# build_pipeline_stages_from_cmdsubst). `read` is line-based (one iteration for
+# `echo a b c`, no word-split — a deliberate divergence from bash), and the
+# tainted loop var is blessed with a predicate. Native-only: the c backend does
+# an extra empty EOF iteration here (task c-pipe-while-read-eof-extra-iter).
+if in_modes native; then
+    run_sash 'for x in $(echo a b c); do bless x [[ -n $x ]]; echo "$x"; done'
+    [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk cov.61
+else
+    skip_chk cov.61
 fi
 
 set -e
