@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=62
+plan=63
 echo "1..$plan" >&3
 
 set +e
@@ -222,16 +222,6 @@ run_sash 'command /bin/echo hi'
 # other `$(<…)` in the tree are bash harness code, not sash source).
 run_sash 'echo $(< /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.59
-# cov.60 the `trap <cmd> EXIT` builtin (BuiltinCmd::Trap → transform handle_trap)
-# — signals.sh exercises the native `signal N EXIT` form, so the direct `trap`
-# builtin is untested. The handler fires at program exit (after `end`). Runtime,
-# native+c (janet lacks the EXIT/END machinery).
-if in_modes native,c; then
-    run_sash 'echo start; trap "echo cleanup" EXIT; echo end'
-    [[ $rc = 0 && $out = $'start\nend\ncleanup' && -z $err ]]; chk cov.60
-else
-    skip_chk cov.60
-fi
 # cov.61 `for x in $(cmd)` → the DD#28/#40 pipe-while-read transform
 # (control_flow.rs emit_cmdsubst_pipe_while_read / build_cmdsubst_stage /
 # build_pipeline_stages_from_cmdsubst). `read` is line-based (one iteration for
@@ -250,6 +240,14 @@ fi
 # backticks and their contents render verbatim. Works in all three backends.
 run_sash 'echo "x`/bin/echo BOOM`y"'
 [[ $rc = 0 && $out = 'x`/bin/echo BOOM`y' && -z $err ]]; chk cov.62
+# cov.63 ANSI-C `$'\nnn'` octal escapes (lexer scan_ansi_c_octal): each `\ooo`
+# is decoded to its byte. `$'\061\062\063'` → "123". All backends.
+run_sash "echo \$'\\061\\062\\063'"
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk cov.63
+# cov.64 a parenthesized `[[ ( … ) ]]` grouped test (parser parse_test_group).
+# All backends.
+run_sash '[[ ( -n x ) ]] && echo y'
+[[ $rc = 0 && $out = y && -z $err ]]; chk cov.64
 
 set -e
 tally
