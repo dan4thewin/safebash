@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=59
+plan=60
 echo "1..$plan" >&3
 
 set +e
@@ -222,6 +222,16 @@ run_sash 'command /bin/echo hi'
 # other `$(<…)` in the tree are bash harness code, not sash source).
 run_sash 'echo $(< /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.59
+# cov.60 the `trap <cmd> EXIT` builtin (BuiltinCmd::Trap → transform handle_trap)
+# — signals.sh exercises the native `signal N EXIT` form, so the direct `trap`
+# builtin is untested. The handler fires at program exit (after `end`). Runtime,
+# native+c (janet lacks the EXIT/END machinery).
+if in_modes native,c; then
+    run_sash 'echo start; trap "echo cleanup" EXIT; echo end'
+    [[ $rc = 0 && $out = $'start\nend\ncleanup' && -z $err ]]; chk cov.60
+else
+    skip_chk cov.60
+fi
 
 set -e
 tally
