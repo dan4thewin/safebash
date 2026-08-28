@@ -35,18 +35,20 @@ table (0 callers = truly dead) — not by the scan alone.
 | `emit_strlen_elem` (element-length) | never had a producer | ddeb1d4 |
 | `handle_trap` + `handle_trap_exit`/`_ignore_reset` + `Trap` variant | DD#56: `trap`→SB4043; converter owns bash→signal/END | (this session) |
 
-## `exec` — a real feature to SUPPORT (DG 2026-08-28), currently broken
+## `exec` — SUPPORTED (DG 2026-08-28), native
 
-DG: `exec` has **no replacement** for its two use cases and we must support them:
-1. **manipulate the running program's file handles** — `exec > file`,
-   `exec 3< file` (persistent redirects on the current process).
-2. **replace the running program** — `exec cmd args` (execve, no return).
+DG: `exec` has no replacement for its two use cases and must be supported. Done
+(journal 201, DD#14 amended):
+1. **fd manipulation** — `exec > file` etc. applies redirects to the running
+   process (persist, no fork).
+2. **program replacement** — `exec CMD args` execve's the process (no-return).
 
-Today `"exec" => BuiltinCmd::Exec` + the codegen (`emit_exec` /
-`emit_exec_static_argv` / `build_argv_on_stack` / `emit_exec_redirects_only` /
-`finalize_exec`) exist, but **resolution rejects `exec` as an unresolved command
-(SB5011) before dispatch**, so the feature is unreachable. This is a
-half-built feature to finish, NOT dead code. See task `support-exec-builtin`.
+The target follows DD#23/#24 like any command: literal external path
+(variable→SB5011, tainted arg→SB5020, bare name→resolved external path,
+recorded in `--manifest`). specs `spec/exec.sh` ex.1-11 (native). The exec
+codegen cluster (emit_exec/emit_exec_static_argv/build_argv_on_stack/
+finalize_exec/emit_exec_redirects_only) is now covered. **Native-only** — c/janet
+don't emit exec yet (task `c-janet-exec-support`).
 
 ## Bucket C — reachable but not spec-hittable (explained)
 

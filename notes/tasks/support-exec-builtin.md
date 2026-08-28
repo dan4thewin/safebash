@@ -1,6 +1,6 @@
 ---
 title: "Support the `exec` builtin: fd manipulation + program replacement"
-status: ready
+status: done
 priority: P1
 kind: feature
 depends: []

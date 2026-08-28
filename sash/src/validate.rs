@@ -1217,6 +1217,7 @@ const BUILTINS: &[&str] = &[
     "[[",
     // Process/signal
     "signal",
+    "exec",
     "wait",
     "kill",
     "signum",
@@ -1420,6 +1421,15 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         return;
     }
     let name = expr_literal_str(&c.name);
+    // DD#14: `exec` replaces the running program (or manipulates its fds). Its
+    // target — the first argument, for the replace form — must be resolvable at
+    // compile time exactly like a command head; the fd-only form (`exec >file`)
+    // has no target. Validate the target here (the `exec` head itself is a
+    // BUILTIN, so it passes the resolvability check below).
+    if name == "exec" {
+        check_exec_target(c, diags);
+        return;
+    }
     if name.is_empty() || is_valid_command(name, funcs) {
         return;
     }
@@ -1433,11 +1443,47 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
     ));
 }
 
-/// DD#63/SB4033: a `sub`/`gsub` replacement may use `\0`–`\9` (backrefs)
-/// and `\\` (a literal backslash). Any other `\<char>` — or a trailing
-/// `\` — is a compile error (DD#64 removed shell backslash, so sash
-/// rejects the ambiguity rather than guessing, diverging from sed's
-/// leniency). Walks the function form `$(sub …)` / `$(gsub …)`, the only
+/// DD#14: validate the target of `exec CMD args…` (the replace form). `CMD`
+/// (the first argument) must be a literal, compile-time-resolvable **external**
+/// command — the same discipline as a command head (DD#23), since `exec`
+/// replaces the process image with it. A variable/expansion target is a
+/// runtime-chosen command (SB5011); an unresolvable one is not-found (SB5011).
+/// The fd-only form (`exec > file`, no target argument) is allowed.
+fn check_exec_target(c: &Command, diags: &mut Vec<Diagnostic>) {
+    let Some(target) = c.args.first() else {
+        return; // fd-manipulation-only form: `exec > file`
+    };
+    if !matches!(&target.kind, ExprKind::Literal(_)) {
+        diags.push(Diagnostic::error_span(
+            target.span,
+            "SB5011",
+            "an `exec` target must be a literal path — a variable or expansion \
+             can't be resolved at compile time; use the literal path, or \
+             `/usr/bin/env` for a runtime tool"
+                .to_string(),
+        ));
+        return;
+    }
+    let tname = expr_literal_str(target);
+    if tname.is_empty() {
+        return;
+    }
+    // exec replaces the process with an EXTERNAL program: an absolute path or a
+    // PATH-resolvable name (not the inline `echo`/`:` shortcut — the transform
+    // resolves the target to its real path).
+    if !tname.starts_with('/') && !resolve_on_path(tname) {
+        diags.push(Diagnostic::error_span(
+            target.span,
+            "SB5011",
+            format!(
+                "`exec` target '{}' not found — use an absolute path or a \
+                 command on PATH",
+                tname
+            ),
+        ));
+    }
+}
+
 /// replacement surface currently implemented (the `s///` sugar desugars
 /// to it). A dynamic (interpolated) replacement is not statically
 /// checkable and is skipped.

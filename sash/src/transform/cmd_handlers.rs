@@ -507,6 +507,16 @@ fn emit_external_command(
     // Option C: `$(f)` / `$((f))` on an `-> int` function is an IntFuncCall;
     // materialize it into a temp so the argv is scalar (unlifted → codegen ICE).
     let args = lift_int_func_args(raw, ssa, state, &mut block);
+    // DD#14: `exec CMD …` replaces the running program — resolve the target
+    // (args[0]) to its external absolute path so codegen's `sash_exec` (which
+    // rejects bare names) gets a real path. Unlike a normal command head, exec
+    // must not keep `echo`/`:` inline; it runs the external program. The
+    // fd-only form (`exec > file`) has no args and is unaffected.
+    let args = if name == "exec" {
+        resolve_exec_target_arg(args, state)
+    } else {
+        args
+    };
     ssa.block_mut(block).insts.push(SsaInst::command(
         resolve_pipeline_command(name, state),
         args,
@@ -514,4 +524,20 @@ fn emit_external_command(
         true,
     ));
     block
+}
+
+/// Rewrite an `exec` target (args[0]) to its resolved external absolute path
+/// and record it as an external dependency (for `--manifest`). A target that
+/// already contains `/` or is not a literal (the latter is rejected at
+/// validation) is left untouched.
+fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &VersionState) -> Vec<SsaValue> {
+    let target = match args.first() {
+        Some(SsaValue::Literal(s)) if !s.contains('/') => s.clone(),
+        _ => return args,
+    };
+    if let Some(path) = crate::resolve::resolve_command_path(&target) {
+        state.external_deps.borrow_mut().insert(path.clone());
+        args[0] = SsaValue::Literal(path);
+    }
+    args
 }
