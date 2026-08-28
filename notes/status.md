@@ -1,4 +1,31 @@
-## ════════ STATUS (2026-08-27) — coverage grind: dead code + specs (90.36%) ════════
+## ════════ STATUS (2026-08-27) — coverage grind: 90.80%, dead-code removals ════════
+
+**On `hand-parser`, pushed @ `0401ec2`.** Coverage grind (DG: "keep going").
+Release line coverage **87.69% → 90.80%** across the session (compiler,
+native+c). Latest commits (all 0 native/c regressions, verified by full
+3-mode sweep):
+- `211c464` removed the dead positional-init cluster
+  (`init_numeric_positional`/`init_at_var`, ~90 lines) — top-level positionals
+  are validation-rejected and function positionals use the args-array (DD#60),
+  so `init_one_positional` only ever hits its DD#53 empty-default. **Verified
+  DG's way: remove + full-suite run confirms safety, git checkout reverts.**
+- `2346c36` removed the dead `command` builtin codegen (DD#23/SB4001-shadowed).
+- `7bd1a81` `spec/trace.sh` (DD#32 `--trace`/SASH_TRACE tracing).
+- `88910be`/`86ac293`/`0401ec2` cov.59-61 (`$(< file)` slurp, `trap … EXIT`,
+  for-in-cmdsubst pipe-while-read).
+
+**Bugs filed this stretch:** `c-pipe-while-read-eof-extra-iter` (P3 — c does an
+extra empty EOF iteration in `for x in $(cmd)`; native correct).
+
+**Remaining uncovered = mostly not-spec-reachable or ambiguous:** `ssa::display`
+(no CLI trigger — only Rust tests / debug); `extract_from_literal` (compact
+`[[a==b]]`, partly covered, attribution unclear); lexer `scan_dq_backtick`
+(backtick-in-dquotes literalized — diverges from bash, possibly a gap not a
+feature) / `scan_ansi_c_octal`; exec paths (`build_argv_on_stack`,
+`emit_exec_redirects_only`). The clear, safe, gate-verifiable targets are
+largely exhausted; further progress needs DG input on the ambiguous forms.
+
+
 
 **On `hand-parser`, pushed @ `88910be`.** Coverage grind continued (DG: "keep
 going"). Release line coverage **87.69% → 90.36%** across the session (compiler,
