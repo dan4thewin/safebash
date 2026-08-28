@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=68
+plan=74
 echo "1..$plan" >&3
 
 set +e
@@ -272,6 +272,50 @@ if in_modes native; then
     [[ $rc = 0 && $out = 0 && $rerr == *"division by 0"* ]]; chk cov.69
 else
     skip_chk cov.68; skip_chk cov.69
+fi
+# cov.70 non-final comma in a condition that is NOT a mutation → SB5007 via
+# validate_arith_comma_in_condition (a bare name `a` as a non-final comma part).
+# Distinct from cov.2 (`a==1, b=2`) whose final `b=2` mutation trips the earlier
+# mutation-in-condition check first; here the non-final `a` reaches the comma
+# validator's "must be a mutation" arm. Front-end reject — all modes.
+run_sash 'int a=1; if (( a, a>0 )); then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk cov.70
+# cov.71 malformed `=~ s/…` substitution (two delimiters) → SB4032 via
+# parse_regex_mutation/sed_malformed_err. Front-end reject — all modes.
+run_sash 's="x"; s=~ s/a/b'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk cov.71
+# cov.72 substring `${var:off:len}` → native codegen emit_string_op_expansion
+# (the only ParamExpansion operator that still reaches codegen; DD#65). native.
+if in_modes native; then
+    run_sash 's="hello"; echo ${s:1:3}'
+    [[ $rc = 0 && $out = ell && -z $err ]]; chk cov.72
+else
+    skip_chk cov.72
+fi
+# cov.73 `keys` as the sole source of a for-in loop (the array-splat for-in
+# path). native.
+if in_modes native; then
+    run_sash 'map m=([x]=1 [y]=2); for k in $(keys m); do echo $k; done'
+    [[ $rc = 0 && $out = $'x\ny' && -z $err ]]; chk cov.73
+else
+    skip_chk cov.73
+fi
+# cov.74 a compact (glued) dispatch operator `[[ $x ==b { … } ]]` → parser
+# extract_compact_operator (operator-adjacent-to-pattern split). native.
+if in_modes native; then
+    run_sash 'x=b; [[ $x ==b { echo m } ]]'
+    [[ $rc = 0 && $out = m && -z $err ]]; chk cov.74
+else
+    skip_chk cov.74
+fi
+# cov.75 a predicate function whose body is a dispatch with a default arm where
+# every arm returns → validate case_always_returns (definite-return, DD#74).
+# native.
+if in_modes native; then
+    run_sash 'f() { [[ $1 == a { return 0 } || { return 1 } ]] }; if f a; then echo yes; fi'
+    [[ $rc = 0 && $out = yes && -z $err ]]; chk cov.75
+else
+    skip_chk cov.75
 fi
 
 set -e
