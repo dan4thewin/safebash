@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=58
+plan=59
 echo "1..$plan" >&3
 
 set +e
@@ -217,6 +217,11 @@ fi
 # emit_command_builtin codegen (validation shadows it).
 run_sash 'command /bin/echo hi'
 [[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.58
+# cov.59 the `$(< file)` slurp form (parse/expr.rs parse_slurp_form) parses,
+# then reads a file → tainted → SB5020 (no feature spec uses `$(< …)`; the
+# other `$(<…)` in the tree are bash harness code, not sash source).
+run_sash 'echo $(< /etc/hostname)'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.59
 
 set -e
 tally
