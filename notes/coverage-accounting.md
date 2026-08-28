@@ -33,19 +33,20 @@ table (0 callers = truly dead) — not by the scan alone.
 | `emit_command_builtin` + `CommandBuiltin` chain | DD#23 `command`→SB4001 | 2346c36 |
 | `init_numeric_positional` + `init_at_var` | top-level positionals→SB5024/5045; DD#60 args-array | 211c464 |
 | `emit_strlen_elem` (element-length) | never had a producer | ddeb1d4 |
+| `handle_trap` + `handle_trap_exit`/`_ignore_reset` + `Trap` variant | DD#56: `trap`→SB4043; converter owns bash→signal/END | (this session) |
 
-## Bucket B — shadowed-dead, REMOVAL PENDING A DG DECISION
+## `exec` — a real feature to SUPPORT (DG 2026-08-28), currently broken
 
-- **`exec` builtin cluster** — `emit_exec` / `emit_exec_static_argv` /
-  `build_argv_on_stack` / `emit_exec_redirects_only` / `finalize_exec`
-  (~90 lines, `codegen/dispatch.rs`). `"exec" => BuiltinCmd::Exec` is in
-  `from_name` and the codegen exists, but **resolution rejects `exec` as an
-  unresolved command (SB5011)** before the `BuiltinCmd::Exec` dispatch is ever
-  reached — exactly the `command` pattern, but with **no explicit DD** saying
-  `exec` is out of sash. Needs DG: is the `exec` builtin (process replacement /
-  fd redirect) intended to be in sash (→ fix resolution to recognize it) or
-  not (→ remove the dead codegen)? Until decided, this is reachable-in-principle
-  code that no spec can hit.
+DG: `exec` has **no replacement** for its two use cases and we must support them:
+1. **manipulate the running program's file handles** — `exec > file`,
+   `exec 3< file` (persistent redirects on the current process).
+2. **replace the running program** — `exec cmd args` (execve, no return).
+
+Today `"exec" => BuiltinCmd::Exec` + the codegen (`emit_exec` /
+`emit_exec_static_argv` / `build_argv_on_stack` / `emit_exec_redirects_only` /
+`finalize_exec`) exist, but **resolution rejects `exec` as an unresolved command
+(SB5011) before dispatch**, so the feature is unreachable. This is a
+half-built feature to finish, NOT dead code. See task `support-exec-builtin`.
 
 ## Bucket C — reachable but not spec-hittable (explained)
 
@@ -60,35 +61,15 @@ table (0 callers = truly dead) — not by the scan alone.
 
 cov.29-64 (arith operators, ternary + laziness, `command`/slurp rejects,
 for-in-cmdsubst, backtick-in-quotes, ANSI-C `$'\ooo'` octal [scan_ansi_c_octal],
-`[[ ( … ) ]]` grouped test [parse_test_group]) + `trace.sh` (DD#32). See
-journals 190-199.
+`[[ ( … ) ]]` grouped test [parse_test_group]) + `trace.sh` (DD#32) + signals.sh
+56.14/56.15 (`trap`→SB4043). See journals 190-200.
 
-## Bucket B — accepted-in-source bash forms that the DESIGN makes converter-input (DG decision pending)
+## Resolved: `trap` rejected (DG 2026-08-28)
 
-These are bash spellings that sash currently **accepts and lowers** in source,
-but the design says the native form is different and the bash form is the
-converter's input. So the accept-machinery is reachable only via a form that
-shouldn't be written by hand — a candidate to **reject** (directing to the
-native form), which turns the machinery into dead/reject code (cf. `command`,
-removed in 2346c36).
-
-- **`trap`** — DD#56 makes the native signal model `signal N {IGN,DFL,FLAG,EXIT}`
-  + `END { }`; `trap` is bash the converter rewrites to those (signals.sh 57.14
-  is a `run_convert` test). Yet `"trap" => BuiltinCmd::Trap` + `handle_trap` /
-  `handle_trap_ignore_reset` / `signal_name_to_num` accept & lower direct `trap`
-  in sash source — and buggily (a signal command handler aborts with `bare
-  command passed to sash_exec`). The converter emits `signal`, never `trap`, so
-  this machinery is reachable ONLY via hand-written `trap`, which DD#56 says
-  isn't a native form. **Removed the mistaken cov.60/65/66 specs that pinned it.**
-- **`exec`** — `"exec" => BuiltinCmd::Exec` + `emit_exec`/`emit_exec_static_argv`/
-  `build_argv_on_stack`/`emit_exec_redirects_only`/`finalize_exec` exist, but
-  resolution rejects `exec` as an unresolved command (SB5011) before dispatch.
-  No explicit DD.
-
-**DG decision needed:** should direct `trap` and `exec` in sash source be
-**rejected** (SB error → use `signal`/`END`; use the resolved path), making
-these clusters dead-and-removable? Or kept as bash-compat (then the trap
-signal-handler bug must be fixed and `exec` resolution wired)?
+DG: "trap needs to be purged from native." Done — direct `trap` → **SB4043**
+(use `signal`/`END`; the converter owns the bash→native rewrite). The
+`handle_trap` front-end machinery was removed (see Bucket B table above). This
+was the same shape as `command` (DD#23-shadowed, removed 2346c36).
 
 ## TODO — candidates still to classify (verify empirically, then file here)
 

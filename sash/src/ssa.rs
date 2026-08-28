@@ -116,7 +116,6 @@ pub enum BuiltinCmd {
     Continue,
     Return,
     Signal,
-    Trap,
     Unset,
 
     // ─── Sash-native intrinsics ───
@@ -177,7 +176,6 @@ impl BuiltinCmd {
             "continue" => Self::Continue,
             "return" => Self::Return,
             "signal" => Self::Signal,
-            "trap" => Self::Trap,
             "unset" => Self::Unset,
             "len" => Self::Len,
             "keys" => Self::Keys,

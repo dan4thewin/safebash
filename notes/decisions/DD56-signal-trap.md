@@ -135,3 +135,15 @@ get implicit exit checks. A failed command aborts END and calls
 | `trap : SIG` | `signal N FLAG` |
 | `trap handler SIG` | MANUAL (arbitrary handler bodies not supported) |
 | `trap handler EXIT` | MANUAL: restructure as `END { ... }` |
+
+## `trap` is not a native form (amended 2026-08-28, DG)
+
+`trap` is **rejected** in sash source (**SB4043**), pointing at the native
+`signal` builtin + `END { }`. `trap` is bash the converter rewrites (table
+above) — it is not a sash spelling. Originally the compiler quietly accepted a
+hand-written `trap` and transformed it to `signal`/`END` internally
+(`handle_trap`); that in-compiler alias is removed (the converter, not the
+compiler, owns the bash→native migration — same policy as `command`, DD#23).
+The shared `signal`-lowering machinery (`TrapSignal`/`SignalFlag` SSA sigils,
+the `exit_trap`/END path) is unchanged; only the `trap`-specific front-end
+(`BuiltinCmd::Trap`, `handle_trap`) was deleted.

@@ -312,6 +312,7 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
         return;
     }
     check_dynexec(name, span, diags);
+    check_trap(name, span, diags);
     check_test_constructs(name, c, span, diags);
     check_inline_glob(c, diags);
 }
@@ -389,6 +390,23 @@ fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
             span,
             "SB4001",
             "sash has no `coproc` — asynchronous coprocesses are outside its model".to_string(),
+        ));
+    }
+}
+
+/// SB4043 (DD#56): `trap` is not part of native sash. The signal model is the
+/// `signal N {IGN,DFL,FLAG,EXIT}` builtin plus the `END { }` block; the
+/// converter rewrites bash `trap` to those. Reject a hand-written `trap`,
+/// pointing at the native forms.
+fn check_trap(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name == "trap" {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB4043",
+            "`trap` is not part of sash — use the `signal` builtin \
+             (`signal N IGN|DFL|FLAG|EXIT`) and the `END { }` block (DD#56); \
+             the converter rewrites bash `trap` to these"
+                .to_string(),
         ));
     }
 }
@@ -1198,7 +1216,6 @@ const BUILTINS: &[&str] = &[
     // Test
     "[[",
     // Process/signal
-    "trap",
     "signal",
     "wait",
     "kill",

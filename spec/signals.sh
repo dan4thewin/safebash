@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=17
+plan=19
 setup signals
 
 set +e
@@ -109,6 +109,18 @@ echo ok'
 run_sash 'signal 15 IGN
 echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 56.13
+
+# --- DD#56: `trap` is not a native form (SB4043) ---
+# The native signal model is the `signal` builtin + `END { }`; `trap` is a bash
+# spelling the converter rewrites (57.14 below). A hand-written `trap` in sash
+# source is rejected, pointing at signal/END. (Validation reject — all modes.)
+
+# 56.14 `trap … EXIT` (command handler) → SB4043
+run_sash 'trap "echo cleanup" EXIT; echo hi'
+[[ $rc != 0 && -z $out && $err == *SB4043* ]]; chk 56.14
+# 56.15 `trap "" SIG` / `trap - SIG` (ignore/reset) → SB4043 too
+run_sash 'trap "" SIGINT; echo hi'
+[[ $rc != 0 && -z $out && $err == *SB4043* ]]; chk 56.15
 
 # --- converter ---
 

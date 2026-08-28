@@ -68,9 +68,6 @@ fn try_builtin(
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
-        BuiltinCmd::Trap => Some(super::cmd_handlers::handle_trap(
-            name, c, stmt, ssa, state, *block,
-        )),
         BuiltinCmd::Unset => Some(super::cmd_handlers::handle_unset(
             name, c, stmt, ssa, state, *block,
         )),
