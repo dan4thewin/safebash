@@ -64,7 +64,11 @@ don't emit exec yet (task `c-janet-exec-support`).
 cov.29-64 (arith operators, ternary + laziness, `command`/slurp rejects,
 for-in-cmdsubst, backtick-in-quotes, ANSI-C `$'\ooo'` octal [scan_ansi_c_octal],
 `[[ ( … ) ]]` grouped test [parse_test_group]) + `trace.sh` (DD#32) + signals.sh
-56.14/56.15 (`trap`→SB4043). See journals 190-200.
+56.14/56.15 (`trap`→SB4043) + `exec.sh` ex.1-11 (the exec cluster: emit_exec /
+emit_exec_static_argv / build_argv_on_stack / finalize_exec /
+emit_exec_redirects_only — now 0 missing lines). See journals 190-201.
+
+Session coverage: **87.69% → 91.91%** lines (compiler, native+c).
 
 ## Resolved: `trap` rejected (DG 2026-08-28)
 

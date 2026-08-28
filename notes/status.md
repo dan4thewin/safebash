@@ -1,4 +1,31 @@
-## ════════ STATUS (2026-08-27) — coverage grind: 90.80%, dead-code removals ════════
+## ════════ STATUS (2026-08-28) — trap purged + exec supported; coverage accounting ════════
+
+**On `hand-parser`, pushed @ `e7d83b8`.** Two DG dispositions of the
+"accepted-in-source bash forms" the coverage grind surfaced:
+- **`trap` PURGED** (`8385580`) — direct `trap` → **SB4043** (use `signal`/
+  `END`; the converter owns bash→native). Removed `handle_trap`* machinery
+  (~90 lines); kept the shared `TrapSignal`/`SignalFlag`/`exit_trap`/END
+  machinery. DD#56 amended; signals.sh 56.14/56.15.
+- **`exec` SUPPORTED** (`e7d83b8`) — DG: it has no replacement for fd
+  manipulation (`exec > file`) + program replacement (`exec cmd`). Unblocked
+  (exec→BUILTINS) + closed a security hole (`exec $var`→SB5011) + DD#23 target
+  resolution + DD#24 taint (inherited). spec/exec.sh ex.1-11 (native). DD#14
+  amended. **Native-only** (c/janet emit no exec → task `c-janet-exec-support`).
+
+**DG's accounting goal** ("explain every reachable-but-unhittable block"):
+`notes/coverage-accounting.md` is the living ledger — buckets for removed-dead,
+not-spec-reachable (`ssa::display` — no CLI trigger), specs-added (cov.29-64 +
+trace.sh + exec.sh + signals 56.14/15), and the method caveat (the
+fully-uncovered-function scan has false positives — verify each empirically).
+
+**Coverage:** 87.69% → ~91% lines this session (compiler, native+c). Many
+commits, 0 native/c regressions throughout. Journals 190-201.
+
+**Remaining threads (lower yield / need DG):** `ssa::display` (add `--dump-ssa`
+to make it spec-coverable, or accept test-only); `extract_from_literal` (compact
+`[[ ]]` — scan false positive, verify); the exec c/janet backend gap.
+
+
 
 **On `hand-parser`, pushed @ `0401ec2`.** Coverage grind (DG: "keep going").
 Release line coverage **87.69% → 90.80%** across the session (compiler,
