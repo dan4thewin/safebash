@@ -1092,8 +1092,10 @@ impl Scanner {
         }
     }
 
-    /// Handle a `` ` `` inside a `"…"` string. Captures the backtick
-    /// span as a CommandSub so the validator can reject it (SB5020).
+    /// A `` ` `` inside a `"…"` string is a **literal** backtick character:
+    /// backticks are only top-level `$( )` sugar and have no special meaning in
+    /// quotes (DG 2026-08-28). Emit the `` `…` `` span as a plain Literal (never
+    /// a CommandSub — nothing in quotes should be executable via backticks).
     fn scan_dq_backtick(&mut self, parts: &mut Vec<StringPart>, literal: &mut String) {
         if !literal.is_empty() {
             parts.push(StringPart::Literal(std::mem::take(literal)));
@@ -1107,7 +1109,7 @@ impl Scanner {
         if self.pos < self.source.len() {
             self.pos += 1; // closing `
         }
-        parts.push(StringPart::CommandSub(format!("`{}`", content)));
+        parts.push(StringPart::Literal(format!("`{}`", content)));
     }
 
     /// Scan $'...' ANSI-C quoted string (opening $' already consumed).

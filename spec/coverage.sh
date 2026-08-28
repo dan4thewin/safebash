@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=61
+plan=62
 echo "1..$plan" >&3
 
 set +e
@@ -244,6 +244,12 @@ if in_modes native; then
 else
     skip_chk cov.61
 fi
+# cov.62 a backtick inside "…" is a LITERAL char (lexer scan_dq_backtick emits a
+# Literal, not a CommandSub): backticks are only top-level `$( )` sugar and have
+# no special meaning in quotes (DG 2026-08-28). The command is never run — the
+# backticks and their contents render verbatim. Works in all three backends.
+run_sash 'echo "x`/bin/echo BOOM`y"'
+[[ $rc = 0 && $out = 'x`/bin/echo BOOM`y' && -z $err ]]; chk cov.62
 
 set -e
 tally
