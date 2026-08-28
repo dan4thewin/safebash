@@ -11,7 +11,7 @@ use cranelift_module::{DataDescription, Linkage, Module};
 use cranelift_object::ObjectModule;
 use std::collections::HashMap;
 
-use super::types::{emit_int_to_str, ExternFuncs};
+use super::types::ExternFuncs;
 use crate::ssa::*;
 
 /// Declare all runtime function signatures and return the ExternFuncs struct.
@@ -1344,25 +1344,14 @@ pub(super) fn init_positional_params(
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,
     program: &SsaProgram,
-    externs: &ExternFuncs,
+    _externs: &ExternFuncs,
     vars: &mut std::collections::HashMap<String, super::types::VarSlot>,
     literals: &mut std::collections::HashMap<String, cranelift_module::DataId>,
     _reachable: &std::collections::HashSet<usize>,
     _space_id: cranelift_module::DataId,
-    exit_status_var: cranelift_frontend::Variable,
+    _exit_status_var: cranelift_frontend::Variable,
     _test_result_var: cranelift_frontend::Variable,
 ) {
-    use cranelift_codegen::ir::types::I64;
-    use cranelift_codegen::ir::{InstBuilder, MemFlags};
-
-    let argv_gv = module.declare_data_in_func(externs.argv, builder.func);
-    let argv_ptr = builder.ins().global_value(I64, argv_gv);
-    let argv_val = builder.ins().load(I64, MemFlags::trusted(), argv_ptr, 0);
-
-    let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-    let argc_ptr = builder.ins().global_value(I64, argc_gv);
-    let argc_val = builder.ins().load(I64, MemFlags::trusted(), argc_ptr, 0);
-
     let positional_refs = collect_positional_refs(program);
 
     for var_name in &positional_refs {
@@ -1377,16 +1366,7 @@ pub(super) fn init_positional_params(
             continue;
         }
 
-        let sv = init_one_positional(
-            var_name,
-            builder,
-            module,
-            externs,
-            literals,
-            argv_val,
-            argc_val,
-            exit_status_var,
-        );
+        let sv = init_one_positional(var_name, builder, module, literals);
         vars.insert(key, sv);
     }
 }
@@ -1447,131 +1427,27 @@ fn scan_command_args(
     }
 }
 
-/// Allocate a VarSlot and emit the initialization code for one
-/// positional or special variable. Dispatches on the name to pick
-/// the init strategy:
-///   - numeric (`1`, `2`, …) — argv[idx] with argc bounds check
-///   - `#` — argc - 1, stringified
-///   - `@` — argv joined with space
-///   - anything else — DD#53 empty-string default
-#[allow(clippy::too_many_arguments)]
+/// Allocate a VarSlot for a referenced positional/special var and give it the
+/// DD#53 empty-string default. The numeric (`$1`), `$#`, and `$@` init
+/// strategies were retired: top-level positionals are validation-rejected
+/// (SB5024/SB5045) and function positionals resolve through the `args` array
+/// (DD#60), so those forms never reach here — only special names that fall to
+/// the empty default do.
 fn init_one_positional(
     var_name: &str,
     builder: &mut cranelift_frontend::FunctionBuilder,
     module: &mut ObjectModule,
-    externs: &ExternFuncs,
     literals: &mut std::collections::HashMap<String, cranelift_module::DataId>,
-    argv_val: cranelift_codegen::ir::Value,
-    argc_val: cranelift_codegen::ir::Value,
-    _exit_status_var: cranelift_frontend::Variable,
 ) -> super::types::VarSlot {
     use super::types::VarSlot;
     use cranelift_codegen::ir::types::I64;
-    use cranelift_codegen::ir::InstBuilder;
 
     let sv = VarSlot::Str {
         ptr: builder.declare_var(I64),
         len: builder.declare_var(I64),
     };
-
-    if let Ok(idx) = var_name.parse::<i64>() {
-        init_numeric_positional(builder, externs, module, &sv, idx, argv_val, argc_val);
-        return sv;
-    }
-    match var_name {
-        "#" => {
-            let one = builder.ins().iconst(I64, 1);
-            let count = builder.ins().isub(argc_val, one);
-            let (str_ptr, str_len) = emit_int_to_str(builder, module, externs, count);
-            builder.def_var(sv.str_ptr(), str_ptr);
-            builder.def_var(sv.str_len(), str_len);
-        }
-        "@" => init_at_var(builder, module, externs, literals, &sv, argv_val, argc_val),
-        _ => init_empty_var(builder, module, literals, &sv, var_name),
-    }
+    init_empty_var(builder, module, literals, &sv, var_name);
     sv
-}
-
-/// `$N` for numeric N: load argv[N] if N < argc, else empty.
-/// Emitted as a 3-block diamond around the bounds check.
-fn init_numeric_positional(
-    builder: &mut cranelift_frontend::FunctionBuilder,
-    externs: &ExternFuncs,
-    module: &mut ObjectModule,
-    sv: &super::types::VarSlot,
-    idx: i64,
-    argv_val: cranelift_codegen::ir::Value,
-    argc_val: cranelift_codegen::ir::Value,
-) {
-    use super::values::emit_strlen;
-    use cranelift_codegen::ir::types::I64;
-    use cranelift_codegen::ir::{condcodes::IntCC, InstBuilder, MemFlags};
-
-    let idx_val = builder.ins().iconst(I64, idx);
-    let in_bounds = builder.ins().icmp(IntCC::SignedLessThan, idx_val, argc_val);
-
-    let load_block = builder.create_block();
-    let empty_block = builder.create_block();
-    let done_block = builder.create_block();
-
-    builder
-        .ins()
-        .brif(in_bounds, load_block, &[], empty_block, &[]);
-
-    builder.switch_to_block(load_block);
-    builder.seal_block(load_block);
-    let offset = builder.ins().imul_imm(idx_val, 8);
-    let arg_ptr_addr = builder.ins().iadd(argv_val, offset);
-    let arg_ptr = builder
-        .ins()
-        .load(I64, MemFlags::trusted(), arg_ptr_addr, 0);
-    let len = emit_strlen(builder, module, externs.strlen, arg_ptr);
-    builder.def_var(sv.str_ptr(), arg_ptr);
-    builder.def_var(sv.str_len(), len);
-    builder.ins().jump(done_block, &[]);
-
-    builder.switch_to_block(empty_block);
-    builder.seal_block(empty_block);
-    let null_ptr = builder.ins().iconst(I64, 0);
-    let zero_len = builder.ins().iconst(I64, 0);
-    builder.def_var(sv.str_ptr(), null_ptr);
-    builder.def_var(sv.str_len(), zero_len);
-    builder.ins().jump(done_block, &[]);
-
-    builder.switch_to_block(done_block);
-    builder.seal_block(done_block);
-}
-
-/// `$@`: join all positional params with a single space separator.
-/// Calls sash_join_args, stashing the resulting length via a stack slot.
-fn init_at_var(
-    builder: &mut cranelift_frontend::FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    literals: &mut std::collections::HashMap<String, cranelift_module::DataId>,
-    sv: &super::types::VarSlot,
-    argv_val: cranelift_codegen::ir::Value,
-    argc_val: cranelift_codegen::ir::Value,
-) {
-    use cranelift_codegen::ir::types::I64;
-    use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind};
-
-    let space_id = intern_string(module, literals, " ");
-    let space_gv = module.declare_data_in_func(space_id, builder.func);
-    let space_ptr = builder.ins().global_value(I64, space_gv);
-    let space_len = builder.ins().iconst(I64, 1);
-    let out_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
-    let join_ref = module.declare_func_in_func(externs.join_args, builder.func);
-    let call = builder.ins().call(
-        join_ref,
-        &[argv_val, argc_val, space_ptr, space_len, out_addr],
-    );
-    let str_ptr = builder.inst_results(call)[0];
-    let str_len = builder.ins().stack_load(I64, out_slot, 0);
-    builder.def_var(sv.str_ptr(), str_ptr);
-    builder.def_var(sv.str_len(), str_len);
 }
 
 /// DD#53: any undeclared variable referenced as `$NAME` is
