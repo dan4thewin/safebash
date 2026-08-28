@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=56
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -174,11 +174,11 @@ else
         skip_chk cov.$n
     done
 fi
-# cov.49-56 arithmetic ternary `cond ? a : b` — no feature spec exercises it,
-# leaving native transform/codegen (SsaValue::Ternary / lower_ternary_value)
-# and the emit_c str/int ternary path untested. Simple (side-effect-free)
-# branches so native and c agree (a div/overflow in the *untaken* branch would
-# diverge — native eagerly evaluates both; task native-ternary-eager-eval).
+# cov.49-57 arithmetic ternary `cond ? a : b` — no feature spec exercises it,
+# leaving native transform/codegen (SsaValue::Ternary / lower_ternary_value /
+# lower_ternary_int) and the emit_c str/int ternary path untested. cov.49-56
+# use simple branches; cov.57 pins lazy evaluation (both backends short-circuit
+# like bash — the fix for the eager-eval bug).
 if in_modes native,c; then
     run_sash 'int x=5; echo $(( x>0 ? 1 : 2 ))'
     [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.49
@@ -202,8 +202,12 @@ if in_modes native,c; then
     # `!=` condition (spaced) selecting the else branch
     run_sash 'int x=0; echo $(( x != 0 ? 5 : 9 ))'
     [[ $rc = 0 && $out = 9 && -z $err ]]; chk cov.56
+    # lazy eval: a div-by-zero in the UNTAKEN branch must NOT fire (bash
+    # short-circuits `?:`). x=0 → else → 42, no `division by 0` on stderr.
+    run_sash 'int x=0; echo $(( x>0 ? 10/x : 42 ))'
+    [[ $rc = 0 && $out = 42 && -z $err ]]; chk cov.57
 else
-    for n in 49 50 51 52 53 54 55 56; do
+    for n in 49 50 51 52 53 54 55 56 57; do
         skip_chk cov.$n
     done
 fi

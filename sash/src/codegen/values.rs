@@ -5,7 +5,9 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
-use cranelift_codegen::ir::{InstBuilder, MemFlags, StackSlot, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::{
+    BlockArg, InstBuilder, MemFlags, StackSlot, StackSlotData, StackSlotKind,
+};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
@@ -802,6 +804,71 @@ fn index_var_to_int(
     }
 }
 
+/// Lazy int-valued ternary: brif on the condition into then/else blocks, each
+/// lowering only its own branch, merging the chosen i64 via a block param. Like
+/// `lower_ternary_value` but for a single int result (side effects stay lazy).
+#[allow(clippy::too_many_arguments)]
+fn lower_ternary_int(
+    cond: &SsaValue,
+    true_val: &SsaValue,
+    false_val: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> cranelift_codegen::ir::Value {
+    let cond_int = lower_value_as_int(
+        cond,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let zero = builder.ins().iconst(I64, 0);
+    let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
+    let then_block = builder.create_block();
+    let else_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let result = builder.append_block_param(merge_block, I64);
+    builder
+        .ins()
+        .brif(is_true, then_block, &[], else_block, &[]);
+
+    builder.switch_to_block(then_block);
+    builder.seal_block(then_block);
+    let t = lower_value_as_int(
+        true_val,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    builder.ins().jump(merge_block, &[BlockArg::Value(t)]);
+
+    builder.switch_to_block(else_block);
+    builder.seal_block(else_block);
+    let f = lower_value_as_int(
+        false_val,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    builder.ins().jump(merge_block, &[BlockArg::Value(f)]);
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
+    result
+}
+
 #[allow(clippy::too_many_arguments)]
 fn lower_ternary_value(
     cond: &SsaValue,
@@ -825,6 +892,20 @@ fn lower_ternary_value(
     );
     let zero = builder.ins().iconst(I64, 0);
     let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
+    // Lazy: lower each branch inside its own block so a side-effecting branch
+    // (div/mod-by-zero, overflow trap) runs only when selected — matches bash's
+    // short-circuit `?:`. A flat `select` over both branches evaluated both.
+    let then_block = builder.create_block();
+    let else_block = builder.create_block();
+    let merge_block = builder.create_block();
+    let r_ptr = builder.append_block_param(merge_block, I64);
+    let r_len = builder.append_block_param(merge_block, I64);
+    builder
+        .ins()
+        .brif(is_true, then_block, &[], else_block, &[]);
+
+    builder.switch_to_block(then_block);
+    builder.seal_block(then_block);
     let (t_ptr, t_len) = lower_value(
         true_val,
         builder,
@@ -834,6 +915,13 @@ fn lower_ternary_value(
         externs,
         exit_status_var,
     );
+    builder.ins().jump(
+        merge_block,
+        &[BlockArg::Value(t_ptr), BlockArg::Value(t_len)],
+    );
+
+    builder.switch_to_block(else_block);
+    builder.seal_block(else_block);
     let (f_ptr, f_len) = lower_value(
         false_val,
         builder,
@@ -843,8 +931,13 @@ fn lower_ternary_value(
         externs,
         exit_status_var,
     );
-    let r_ptr = builder.ins().select(is_true, t_ptr, f_ptr);
-    let r_len = builder.ins().select(is_true, t_len, f_len);
+    builder.ins().jump(
+        merge_block,
+        &[BlockArg::Value(f_ptr), BlockArg::Value(f_len)],
+    );
+
+    builder.switch_to_block(merge_block);
+    builder.seal_block(merge_block);
     (r_ptr, r_len)
 }
 
@@ -1052,38 +1145,17 @@ pub(super) fn lower_value_as_int(
             cond,
             true_val,
             false_val,
-        } => {
-            let cond_int = lower_value_as_int(
-                cond,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let zero = builder.ins().iconst(I64, 0);
-            let is_true = builder.ins().icmp(IntCC::NotEqual, cond_int, zero);
-            let t = lower_value_as_int(
-                true_val,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let f = lower_value_as_int(
-                false_val,
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            builder.ins().select(is_true, t, f)
-        }
+        } => lower_ternary_int(
+            cond,
+            true_val,
+            false_val,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         // `${#arr[@]}` (array length) is already an integer — call
         // sash_table_len directly instead of round-tripping through a
         // decimal string + atoi (the generic fallback below). Matters for

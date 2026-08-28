@@ -1,6 +1,6 @@
 ---
 title: "native: arithmetic ternary eagerly evaluates both branches (side effects leak)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -9,6 +9,16 @@ gates:
   - "the untaken branch's side effects (div/mod-by-zero diagnostic, overflow trap) do not fire"
   - "oracle_tests / a spec pins native == bash for a side-effecting untaken ternary branch"
 ---
+
+## RESOLVED 2026-08-27 (journal 193)
+
+Fixed in the same session it was filed. `codegen/values.rs::lower_ternary_value`
+(string) and the int-context `SsaValue::Ternary` arm (extracted to
+`lower_ternary_int`) now lower with real control flow: `brif` on the condition
+into then/else blocks, each lowering only its own branch, merging the result
+through a block param (phi) — mirroring `codegen/arithmetic.rs`'s div-by-zero
+merge. Both backends (native + c, journal 192) are now lazy and match bash.
+Regression pin: spec coverage.sh cov.57. All gates met.
 
 ## Symptom
 
