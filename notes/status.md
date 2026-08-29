@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-08-29) — redirect fd-dup target validated (SB4048) ════════
+
+**On `hand-parser`.** Answering DG's "were there more bugs before resuming the
+never-run grind?", I probed the sibling operator-dispatch parsers for the
+silent-degrade class. arith/`[[ ]]`/subscript are clean (reject); **redirects
+had the bug**. Journal 212.
+
+`>&`/`<&` fd-dup targets weren't validated — `emit_dup_output` did
+`s.parse().unwrap_or(2)` / `_ => 2`, so `>&foo`, `>&999x`, `2>&1x`, `>&-` all
+silently dup'd to fd 2. Fix (DG: **reject-only**): `reject_nonfd_dup_target` in
+`parse_redirect` → **SB4048** for any non-numeric/malformed target; `>&N` /
+`N>&M` / `<&N` still work. `RedirectOp` gained `Copy`. specs coverage.sh
+cov.86-88 (all modes). Full 3-mode sweep vs `ad5c557`: **0 regressions**, +3
+each. Follow-up filed: fd dup/close as **builtins** (`fd-manipulation-builtins`).
+
+**Next:** resume the never-run grind (`grind-continue`) — the native gate is
+clean (only latent native bug left is `arith-args-subscript-codegen`, masked by
+SB5031; the rest are c/janet baselines).
+
 ## ════════ STATUS (2026-08-29) — no-ambiguity param fallthrough (SB4047) ════════
 
 **On `hand-parser`.** DG: "need to prevent ambiguity — if the compiler doesn't

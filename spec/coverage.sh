@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=84
+plan=87
 echo "1..$plan" >&3
 
 set +e
@@ -100,6 +100,15 @@ if in_modes native; then
 else
     skip_chk cov.26
 fi
+# cov.86-88 a `>&`/`<&` fd-dup target that isn't a plain fd number is rejected
+# SB4048 (DG 2026-08-29) — was a silent dup-to-fd-2 fallback
+# (bug-redirect-dup-target-unvalidated). All modes (parse reject).
+run_sash 'echo hi >&foo'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cov.86
+run_sash 'echo hi 2>&1x'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cov.87
+run_sash 'echo hi >&-'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cov.88
 # cov.27 a file redirect whose TARGET is a variable expansion (`> $f`) — the
 # only `> $var` specs are taint rejections, so this clean codegen path (redirect
 # target as a runtime expr) is untested.

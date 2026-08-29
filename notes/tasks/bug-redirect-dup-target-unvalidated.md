@@ -1,6 +1,6 @@
 ---
 title: "BUG — redirect fd-dup target isn't validated; malformed/non-numeric targets silently dup to fd 2"
-status: pending
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -8,6 +8,19 @@ gates:
   - "`echo hi >&foo` and `echo hi 2>&1x` reject at compile time (not silently dup to fd 2)"
   - "`>&-` / `N>&-` either closes the fd (if implemented) or rejects — never dups to fd 2"
 ---
+
+## RESOLVED (2026-08-29, DG: reject-only)
+
+`reject_nonfd_dup_target` (parse/parser.rs, in `parse_redirect`) now rejects a
+`>&`/`<&` target that isn't a plain non-negative fd number → **SB4048**. So
+`>&foo`, `>&999x`, `2>&1x` (trailing garbage), `>&-` (close), and `>&$n`
+(dynamic) all reject; `>&N` / `N>&M` / `<&N` still work. The silent
+`unwrap_or(2)` / `_ => 2` fallback in `emit_dup_output` is now unreachable
+(the parser guarantees a numeric literal). `RedirectOp` gained `Copy`. Specs
+coverage.sh cov.86-88; 0 native/c/janet regressions.
+
+Follow-up (DG): expose fd dup/close as **builtins** rather than `>&`/`<&`
+syntax → `fd-manipulation-builtins`.
 
 ## Symptom (native; same silent-degrade class as the 2026-08-29 param work)
 

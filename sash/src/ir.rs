@@ -566,7 +566,7 @@ pub struct Redirect {
     pub target: Expr,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
     Write,      // >
     Append,     // >>

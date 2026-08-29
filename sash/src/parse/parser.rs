@@ -2409,7 +2409,39 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
     };
 
     let target = parse_expr(scanner)?;
+    if matches!(op, RedirectOp::DupOutput | RedirectOp::DupInput) {
+        reject_nonfd_dup_target(&target, op, span)?;
+    }
     Ok(Redirect { fd, op, target })
+}
+
+/// A `>&`/`<&` fd-dup target must be a plain non-negative fd number. Reject
+/// anything else — a non-numeric target (`>&foo`), trailing garbage (`2>&1x`),
+/// the bash close form (`>&-`), or a dynamic word (`>&$n`) — rather than the
+/// old silent dup-to-fd-2 fallback in `emit_dup_output`
+/// (bug-redirect-dup-target-unvalidated). DG (2026-08-29): reject-only for now;
+/// exposing dup/close as builtins is a separate follow-up.
+fn reject_nonfd_dup_target(target: &Expr, op: RedirectOp, span: Span) -> Result<(), Diagnostic> {
+    let is_fd = matches!(&target.kind,
+        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+    if is_fd {
+        return Ok(());
+    }
+    let arrow = if op == RedirectOp::DupInput {
+        "<&"
+    } else {
+        ">&"
+    };
+    Err(parse_error(
+        span,
+        "SB4048",
+        format!(
+            "`{arrow}` needs a file-descriptor number (e.g. `{arrow}2`) — sash \
+             doesn't support `{arrow}` with a non-numeric target, trailing text, \
+             or the `-` close form. Redirect to a file with `>`/`<`, or dup a \
+             numbered fd."
+        ),
+    ))
 }
 
 // ── Helpers ──────────────────────────────────────────────────
