@@ -357,22 +357,6 @@ fn inline_function_call(
     let call_block = ssa.new_block(&format!("call_{}", name));
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
 
-    // Apply function-level redirects if defined with `f() { ... } > file`
-    let func_redirs = state
-        .function_redirects
-        .get(name)
-        .cloned()
-        .unwrap_or_default();
-    if !func_redirs.is_empty() {
-        ssa.block_mut(call_block).insts.push(SsaInst::Command {
-            name: "__redirect_push".to_string(),
-            kind: BuiltinCmd::RedirectPush,
-            args: vec![],
-            redirects: func_redirs.clone(),
-            checked: true,
-        });
-    }
-
     // Set return target so `return` jumps to restore block
     let restore_block = ssa.new_block(&format!("ret_{}", name));
     let saved_return_target = state.return_target;
@@ -384,13 +368,6 @@ fn inline_function_call(
     let exit_block = lower_stmts(body, ssa, state, call_block);
     state.tail_loop = saved_tail;
     state.return_target = saved_return_target;
-
-    // Pop function-level redirects before leaving
-    if !func_redirs.is_empty() {
-        ssa.block_mut(exit_block)
-            .insts
-            .push(SsaInst::sigil(BuiltinCmd::RedirectPop, vec![], true));
-    }
 
     // Normal fall-through also goes to restore block
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);

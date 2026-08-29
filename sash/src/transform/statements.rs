@@ -231,14 +231,12 @@ fn lower_redirected_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if let StmtKind::Function(ref f) = r.body.kind {
-        return lower_redirected_function(f, r, ssa, state, block);
-    }
-
     // Compound bodies and bulk reads (mapfile / readarray / read -a) bracket
     // with __redirect_push/pop. Bulk reads lower to Mapfile / ReadArray, which
     // carry no redirect list, so attaching to the last inst (below) would
     // silently drop a `< file` redirect (DD#61 fix — matches `read < file`).
+    // (A redirect on a function definition / declaration / assignment is
+    // rejected at parse time — SB4046 — so those never reach here.)
     let needs_bracket = is_compound_stmt(&r.body.kind) || is_bulk_read_cmd(&r.body.kind);
     if needs_bracket && !r.redirects.is_empty() {
         return bracket_compound_with_redirects(r, ssa, state, block);
@@ -301,23 +299,6 @@ fn is_compound_stmt(kind: &StmtKind) -> bool {
     )
 }
 
-/// `f() { ... } > out` — store the redirects keyed by function name so
-/// they're applied at every call site (handle_function_call_or_command).
-fn lower_redirected_function(
-    f: &Function,
-    r: &Redirected,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> BlockId {
-    if !r.redirects.is_empty() {
-        state
-            .function_redirects
-            .insert(f.name.clone(), r.redirects.clone());
-    }
-    lower_one(&r.body, ssa, state, block)
-}
-
 /// `(while/if/for/case/{}/(...)) > out` — wrap the lowered body with
 /// __redirect_push / __redirect_pop so the redirects apply to every
 /// inst emitted between them.
@@ -376,6 +357,19 @@ fn lower_arith_test_stmt(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> BlockId {
+    // Bug #3: a `(( … ))` statement / `if`/`while` condition whose value embeds
+    // an assignment (`(( (a=2) ))`, `(( 1 + (a=2) ))`) must apply the store —
+    // bash evaluates the assignment for its side effect and uses the assigned
+    // value. Hoist the embedded stores here (where we hold `&mut` state/block),
+    // leaving a mutation-free residual to evaluate. The common mutation-free
+    // condition skips this entirely.
+    let hoisted;
+    let expr: &ArithExpr = if arith_has_mutation(expr) {
+        hoisted = hoist_arith_mutations(expr, stmt.span, ssa, state, block);
+        &hoisted
+    } else {
+        expr
+    };
     let ir_expr = crate::ir::Expr {
         kind: crate::ir::ExprKind::Arithmetic(Box::new(expr.clone())),
         span: stmt.span,
@@ -393,6 +387,154 @@ fn lower_arith_test_stmt(
         true,
     ));
     *block
+}
+
+/// Bug #3: apply the stores for assignments embedded in a `(( … ))` statement or
+/// condition, then return a mutation-free residual in which each assignment is a
+/// read of its now-stored target. Each store is emitted as an `Assignment`
+/// lowered through the standard path (`lower_one`), so taint / type / SSA
+/// bookkeeping match a top-level `(( a=2 ))`. `validate` (SB4020) has already
+/// rejected the forms this can't apply in place — an embedded `++`/`--`, an
+/// `a[i]` mutation, or a mutation under `&&`/`||`/`?:` — so those arms are
+/// defensive; the recursion only ever emits stores from unconditionally-
+/// evaluated positions.
+fn hoist_arith_mutations(
+    a: &ArithExpr,
+    span: Span,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> ArithExpr {
+    if let Some(residual) = hoist_mutation_node(a, span, ssa, state, block) {
+        return residual;
+    }
+    match a {
+        ArithExpr::BinOp { left, op, right } => ArithExpr::BinOp {
+            left: Box::new(hoist_arith_mutations(left, span, ssa, state, block)),
+            op: *op,
+            right: Box::new(hoist_arith_mutations(right, span, ssa, state, block)),
+        },
+        ArithExpr::UnaryOp { op, operand } => ArithExpr::UnaryOp {
+            op: *op,
+            operand: Box::new(hoist_arith_mutations(operand, span, ssa, state, block)),
+        },
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => ArithExpr::Ternary {
+            cond: Box::new(hoist_arith_mutations(cond, span, ssa, state, block)),
+            true_val: Box::new(hoist_arith_mutations(true_val, span, ssa, state, block)),
+            false_val: Box::new(hoist_arith_mutations(false_val, span, ssa, state, block)),
+        },
+        ArithExpr::Paren(inner) => ArithExpr::Paren(Box::new(hoist_arith_mutations(
+            inner, span, ssa, state, block,
+        ))),
+        ArithExpr::Comma(es) => ArithExpr::Comma(
+            es.iter()
+                .map(|e| hoist_arith_mutations(e, span, ssa, state, block))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Emit the store for a single arith mutation node and return its residual read
+/// (`Var` / `Subscript`); return `None` when `a` is not a mutation, so
+/// `hoist_arith_mutations` recurses structurally instead. `validate` (SB4020)
+/// has already rejected the mutation forms that can't be applied in place (an
+/// embedded `++`/`--`, an `a[i]` mutation, or a mutation under `&&`/`||`/`?:`),
+/// so those arms here are defensive — reached only from unconditionally-
+/// evaluated positions.
+fn hoist_mutation_node(
+    a: &ArithExpr,
+    span: Span,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> Option<ArithExpr> {
+    match a {
+        ArithExpr::Assign { var, value } => {
+            let rhs = hoist_arith_mutations(value, span, ssa, state, block);
+            emit_arith_store(var.clone(), None, rhs, span, ssa, state, block);
+            Some(ArithExpr::Var(var.clone()))
+        }
+        ArithExpr::CompoundAssign { var, op, value } => {
+            let rhs = hoist_arith_mutations(value, span, ssa, state, block);
+            let full = ArithExpr::BinOp {
+                left: Box::new(ArithExpr::Var(var.clone())),
+                op: *op,
+                right: Box::new(rhs),
+            };
+            emit_arith_store(var.clone(), None, full, span, ssa, state, block);
+            Some(ArithExpr::Var(var.clone()))
+        }
+        ArithExpr::PostIncDec { var, inc } | ArithExpr::PreIncDec { var, inc } => {
+            let op = if *inc { IrArithOp::Add } else { IrArithOp::Sub };
+            let full = ArithExpr::BinOp {
+                left: Box::new(ArithExpr::Var(var.clone())),
+                op,
+                right: Box::new(ArithExpr::Literal(1)),
+            };
+            emit_arith_store(var.clone(), None, full, span, ssa, state, block);
+            Some(ArithExpr::Var(var.clone()))
+        }
+        ArithExpr::SubscriptAssign {
+            name,
+            index,
+            op,
+            value,
+        } => {
+            let rhs0 = hoist_arith_mutations(value, span, ssa, state, block);
+            let rhs = match op {
+                None => rhs0,
+                Some(o) => ArithExpr::BinOp {
+                    left: Box::new(ArithExpr::Subscript {
+                        name: name.clone(),
+                        index: index.clone(),
+                    }),
+                    op: *o,
+                    right: Box::new(rhs0),
+                },
+            };
+            let idx = crate::ir::Expr {
+                kind: crate::ir::ExprKind::Arithmetic(index.clone()),
+                span,
+            };
+            emit_arith_store(name.clone(), Some(idx), rhs, span, ssa, state, block);
+            Some(ArithExpr::Subscript {
+                name: name.clone(),
+                index: index.clone(),
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Emit `name[index] = value` (index `None` = scalar) as an `Assignment`
+/// statement lowered through the standard path, advancing `block`.
+fn emit_arith_store(
+    name: String,
+    index: Option<crate::ir::Expr>,
+    value: ArithExpr,
+    span: Span,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) {
+    let stmt = Statement {
+        kind: StmtKind::Assignment(Assignment {
+            name,
+            index,
+            op: AssignOp::Set,
+            value: crate::ir::Expr {
+                kind: crate::ir::ExprKind::Arithmetic(Box::new(value)),
+                span,
+            },
+        }),
+        span,
+    };
+    *block = lower_one(&stmt, ssa, state, *block);
 }
 
 /// DD#55: `- cmd` (suppressed) — lower the inner statement, then mark the last

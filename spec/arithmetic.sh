@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=159
+plan=171
 echo "1..$plan" >&3
 
 set +e
@@ -812,6 +812,66 @@ run_sash 's=x; echo $(( ${s:-010} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7
 run_sash 's=x; echo $(( ${s:-16#ff} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.7b
+
+
+# --- bug #3: a nested / parenthesized arith assignment applies its store ---
+# (was silently dropped: `(( (a=2) ))` left a unchanged). Fork A: the transform
+# hoists an embedded assignment in an unconditional position so the side effect
+# persists and the value is the assigned value — matching bash. Forms it can't
+# apply in place (`$(( … ))` value, embedded `++`/`--`, `&&`/`||`/`?:`) are a
+# compile error (SB4020), never a silent wrong value.
+
+# 31.25 a paren-wrapped assignment applies (statement (( )))
+run_sash 'int a=0; (( (a=2) )); echo $a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 31.25
+
+# 31.26 an assignment as a `+` operand applies; value discarded
+run_sash 'int a=0; (( 1 + (a=2) )); echo $a'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 31.26
+
+# 31.27 two operand assignments both apply, left-to-right
+run_sash 'int a=0; int b=0; (( (a=2) + (b=3) )); echo "$a-$b"'
+[[ $rc = 0 && $out = "2-3" && -z $err ]]; chk 31.27
+
+# 31.28 a comma element that is a paren-wrapped assignment applies
+run_sash 'int a=0; int b=0; (( a=2, (b=3) )); echo "$a-$b"'
+[[ $rc = 0 && $out = "2-3" && -z $err ]]; chk 31.28
+
+# 31.29 embedded assignment in an `if (( … ))` condition applies + branch taken
+run_sash 'int a=0; if (( (a=2) )); then echo yes; fi; echo $a'
+[[ $rc = 0 && $out = "yes
+2" && -z $err ]]; chk 31.29
+
+# 31.30 embedded compound-assign applies (value == new, bash-exact)
+run_sash 'int a=1; (( (a+=5) )); echo $a'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.30
+
+# 31.31 embedded compound-assign as an operand applies
+run_sash 'int a=1; (( 10 + (a+=5) )); echo $a'
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.31
+
+# 31.32 assignment embedded in a while condition re-applies every iteration
+run_sash 'int i=0; while (( (i=i+1) <= 3 )); do echo $i; done'
+[[ $rc = 0 && $out = "1
+2
+3" && -z $err ]]; chk 31.32
+
+# 31.33 doubly-parenthesized assignment applies
+run_sash 'int a=0; (( ((a=7)) )); echo $a'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 31.33
+
+# 31.34 an assignment inside a `$(( … ))` VALUE can't take effect → SB4020
+# (was silent: x=3 but a stayed 0).
+run_sash 'int a=0; int x=$(( (a=2) + 1 )); echo "$x $a"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.34
+
+# 31.35 an embedded `++`/`--` can't take effect (post/pre ordering) → SB4020
+run_sash 'int a=0; (( 1 + a++ ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.35
+
+# 31.36 an assignment under `?:` (conditionally evaluated) → SB4020
+run_sash 'int a=1; int b=0; (( a ? (b=2) : 0 ))'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.36
 
 
 set -e

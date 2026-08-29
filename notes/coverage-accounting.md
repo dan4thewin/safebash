@@ -154,11 +154,10 @@ DG: "trap needs to be purged from native." Done — direct `trap` → **SB4043**
 `handle_trap` front-end machinery was removed (see Bucket B table above). This
 was the same shape as `command` (DD#23-shadowed, removed 2346c36).
 
-## Bugs surfaced by the grind (filed, awaiting DG fork decision)
+## Bugs surfaced by the grind
 
 The point of exercising never-run code is that unexamined paths hide bugs.
-Two P1 bugs found this way (both a `bug:`/panic invariant reachable from user
-source — must never happen):
+Four bugs found this way — the never-run signal pointed straight at each:
 
 1. **const-reassign panic** (`notes/tasks/const-reassign-panic.md`) — **FIXED**
    (SB4044, fork C): validate `check_const_reassignment` (spanned) + `define()`
@@ -167,21 +166,40 @@ source — must never happen):
    — **FIXED** (SB4045, fork C): validate `check_cmdsub_arity` (spanned) +
    transform `resolve_single_cmdsubst` backstop (no bare exec, survives
    `--bypass`). specs errors.sh 55.42-45.
-3. **nested/parenthesized arith assignment dropped** (`notes/tasks/bug-nested-arith-assign-dropped.md`,
-   P1, OPEN): `(( (a=2) ))` / `(( 1+(a=2) ))` silently leave `a=0` (bash: 2) —
-   the value path (`incdec_to_ssa`/`compound_assign_to_ssa`) computes the value
-   but never emits the store. This is why those two showed never-run: they're
-   half-wired, not dead. Fork A (emit the store) / B (reject nested assignment).
-4. **redirected function def unregistered** (`notes/tasks/bug-redirected-function-def-unregistered.md`,
-   P2, OPEN): `f(){…} >file; f` → SB5011 (f never registered — function
-   collection doesn't descend into `Redirected`), leaving `lower_redirected_function`
-   unreachable. Fork A (support) / B (reject cleanly + remove the dead path).
+3. **nested/parenthesized arith assignment dropped**
+   (`notes/tasks/bug-nested-arith-assign-dropped.md`) — **FIXED** (fork A,
+   DG-chosen): `(( (a=2) ))` / `(( 1+(a=2) ))` used to silently leave `a=0`
+   (bash: 2). `lower_arith_test_stmt` now **hoists** an embedded assignment in an
+   unconditional position into a real store (`hoist_arith_mutations`); forms that
+   can't be applied in place — a mutation in a `$(( … ))` value, an embedded
+   `++`/`--`, an `a[i]` mutation, or a mutation under `&&`/`||`/`?:` — are a clean
+   **SB4020** compile error (never a silent wrong value). The half-wired value
+   arms (`incdec_to_ssa`, `compound_assign_to_ssa`, and the mutation arms of
+   `arith_to_ssa`) were **removed** — now a documented `unreachable!` since
+   validate+hoist guarantee no mutation reaches the value path. specs
+   arithmetic.sh 31.25-36.
+4. **redirected function def unregistered**
+   (`notes/tasks/bug-redirected-function-def-unregistered.md`) — **FIXED**
+   (reject + delete, DG-chosen option B): a redirect on a function definition /
+   declaration / assignment is now one clean spanned **SB4046** (was: misleading
+   SB5011 for a function, misleading SB4014 for a declaration, and **silently
+   dropped** for a bare `x=5 >f`). Rejected at the `wrap_pipeline_part` parser
+   chokepoint; declaration parsing stops at a redirect token to reach it. The
+   dead `lower_redirected_function` + the now-unreachable `function_redirects`
+   machinery were deleted. specs commands.sh 14.13-16.
 
-Bugs 3-4 revise the never-run classification: `incdec_to_ssa`/
+Bugs 3-4 confirmed the reframed classification: `incdec_to_ssa`/
 `compound_assign_to_ssa` (was "B shadowed-dead") and `lower_redirected_function`
-(was "A untested") are actually **half-wired features** — the never-run signal
-pointed straight at the bug. The other B-candidate, `try_keys_intrinsic`, still
-needs the same probe.
+(was "A untested") were **half-wired features**, not dead code — the never-run
+signal was pointing at the bug. All four are now resolved; the removed value-path
+mutation arms are gone rather than merely untested. The other B-candidate,
+`try_keys_intrinsic`, still needs the same probe.
+
+A fifth issue surfaced while validating the new specs but is **unrelated to the
+grind and pre-existing** (`notes/tasks/bug-nested-bare-cmdsub-bless-taint.md`,
+P1): nested bare `$( … $() … )` with `bless` flips pass/fail **per run** —
+HashSet-seed nondeterminism in the taint walk. Proven independent of the bug#3/#4
+work (two fresh HEAD-vs-change native baselines: 0 regressions).
 
 ## Never-run named functions — classification (73 total incl. closures; 27 named)
 

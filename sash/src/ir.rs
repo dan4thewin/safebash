@@ -748,6 +748,42 @@ pub enum ArithExpr {
     },
 }
 
+/// True if `a` contains an arithmetic mutation (`x = …`, `x += …`, `x++`/`x--`,
+/// `a[i] = …`) anywhere in its tree. Shared by `validate` (to reject a mutation
+/// that can't take effect where it sits — SB4020) and by the transform (to
+/// decide whether a `(( … ))` needs its embedded stores hoisted). A mutation
+/// node short-circuits to `true` without recursing into its rvalue.
+pub(crate) fn arith_has_mutation(a: &ArithExpr) -> bool {
+    match a {
+        ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. }
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::PreIncDec { .. }
+        | ArithExpr::SubscriptAssign { .. } => true,
+        ArithExpr::BinOp { left, right, .. } => {
+            arith_has_mutation(left) || arith_has_mutation(right)
+        }
+        ArithExpr::UnaryOp { operand, .. } => arith_has_mutation(operand),
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            arith_has_mutation(cond)
+                || arith_has_mutation(true_val)
+                || arith_has_mutation(false_val)
+        }
+        ArithExpr::Comma(es) => es.iter().any(arith_has_mutation),
+        ArithExpr::Paren(inner) => arith_has_mutation(inner),
+        ArithExpr::FuncCall { args, .. } => args.iter().any(arith_has_mutation),
+        ArithExpr::Subscript { index, .. } => arith_has_mutation(index),
+        ArithExpr::Literal(_)
+        | ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::Expansion(_) => false,
+    }
+}
+
 /// Binary arithmetic operators (IR level).
 /// Mirrors ssa::ArithOp but lives in the IR for clean layering.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

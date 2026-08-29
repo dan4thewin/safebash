@@ -61,7 +61,17 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     // with the wrong number of arguments.
     for &block in &blocks {
         for stmt in block {
-            walk_all_exprs(stmt, &mut |expr| check_cmdsub_arity(expr, &mut diags));
+            walk_all_exprs(stmt, &mut |expr| {
+                check_cmdsub_arity(expr, &mut diags);
+                // SB4020 (bug #3): an assignment / `++` / `--` inside a
+                // `$(( … ))` value can't take effect (the value path has no
+                // side effects) — direct to a standalone `(( … ))` statement.
+                check_arith_value_mutation(expr, &mut diags);
+            });
+            // SB4020 (bug #3): a `(( … ))` statement / condition whose embedded
+            // mutation the transform can't hoist (`++`/`--`, `a[i]`, or under
+            // `&&`/`||`/`?:`).
+            check_arith_test_placement(stmt, &mut diags);
         }
     }
     diags
@@ -1002,6 +1012,128 @@ fn validate_arith_as_statement(
         ));
     }
     check_arith_nested_mutation(expr, span, diags);
+}
+
+/// SB4020 (bug #3): an arithmetic mutation inside a `$(( … ))` **value** can't
+/// take effect — the value path is side-effect-free — so reject any embedded
+/// assignment / `++` / `--` and direct the user to a standalone `(( … ))`
+/// statement. (A `(( … ))` *statement* or condition is a `StmtKind::ArithTest`,
+/// not an `ExprKind::Arithmetic`, so it is handled by
+/// `check_arith_test_placement`, which lets the transform hoist the store.)
+fn check_arith_value_mutation(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let ExprKind::Arithmetic(a) = &expr.kind {
+        if arith_has_mutation(a) {
+            diags.push(Diagnostic::error_span(
+                expr.span,
+                "SB4020",
+                "an assignment or `++`/`--` inside `$(( … ))` can't take effect — \
+                 perform it in a separate `(( … ))` statement"
+                    .to_string(),
+            ));
+        }
+    }
+}
+
+/// SB4020 (bug #3): in a `(( … ))` statement or `if`/`while` condition, the
+/// transform hoists an embedded assignment in an unconditionally-evaluated
+/// position (`(( (a=2) ))`, `(( 1 + (a=2) ))`) so the store takes effect
+/// (matching bash). What it can't apply in place is rejected here: an embedded
+/// `++`/`--` (post/pre-value ordering), an `a[i]` mutation, or a mutation under
+/// a short-circuit / ternary operator (`&&` / `||` / `?:`), whose operand may
+/// go unevaluated.
+fn check_arith_test_placement(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        if let Some(msg) = arith_unhoistable_reason(a) {
+            diags.push(Diagnostic::error_span(stmt.span, "SB4020", msg.to_string()));
+        }
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_arith_test_placement(s, diags);
+        }
+    }
+}
+
+/// The reason an embedded mutation in a `(( … ))` statement/condition can't be
+/// hoisted, or `None` when every mutation is a plain / compound assignment in an
+/// unconditionally-evaluated position (which the transform emits in place).
+fn arith_unhoistable_reason(a: &ArithExpr) -> Option<&'static str> {
+    if arith_has_incdec(a) {
+        return Some(
+            "an embedded `++`/`--` in `(( … ))` can't take effect — use a \
+             separate `(( … ))` statement",
+        );
+    }
+    if arith_has_subscript_assign(a) {
+        return Some(
+            "an embedded `a[i]` assignment in `(( … ))` can't take effect — use \
+             a separate `(( … ))` statement",
+        );
+    }
+    if arith_mutation_under_cond(a) {
+        return Some(
+            "an assignment under `&&` / `||` / `?:` in `(( … ))` can't take \
+             effect reliably — use a separate `(( … ))` statement",
+        );
+    }
+    None
+}
+
+/// The directly-nested arith sub-expressions of `a`, for generic recursion.
+fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
+    match a {
+        ArithExpr::BinOp { left, right, .. } => vec![left, right],
+        ArithExpr::UnaryOp { operand, .. } => vec![operand],
+        ArithExpr::Paren(inner) => vec![inner],
+        ArithExpr::Comma(es) => es.iter().collect(),
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => vec![cond, true_val, false_val],
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => vec![value],
+        ArithExpr::SubscriptAssign { index, value, .. } => vec![index, value],
+        ArithExpr::FuncCall { args, .. } => args.iter().collect(),
+        ArithExpr::Subscript { index, .. } => vec![index],
+        _ => vec![],
+    }
+}
+
+fn arith_has_incdec(a: &ArithExpr) -> bool {
+    matches!(
+        a,
+        ArithExpr::PostIncDec { .. } | ArithExpr::PreIncDec { .. }
+    ) || arith_children(a).into_iter().any(arith_has_incdec)
+}
+
+fn arith_has_subscript_assign(a: &ArithExpr) -> bool {
+    matches!(a, ArithExpr::SubscriptAssign { .. })
+        || arith_children(a)
+            .into_iter()
+            .any(arith_has_subscript_assign)
+}
+
+/// A mutation located under a short-circuit (`&&` / `||`) or a ternary branch,
+/// whose evaluation is conditional — the transform can't hoist it (hoisting
+/// would run the store unconditionally). A ternary *condition* is
+/// unconditional, so recurse into it for a deeper short-circuit.
+fn arith_mutation_under_cond(a: &ArithExpr) -> bool {
+    match a {
+        ArithExpr::BinOp {
+            op: IrArithOp::And | IrArithOp::Or,
+            ..
+        } => arith_has_mutation(a),
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            arith_has_mutation(true_val)
+                || arith_has_mutation(false_val)
+                || arith_mutation_under_cond(cond)
+        }
+        _ => arith_children(a).into_iter().any(arith_mutation_under_cond),
+    }
 }
 
 /// Check for nested mutations like `x = y++` in statement arithmetic

@@ -1,6 +1,6 @@
 ---
 title: "BUG: nested/parenthesized arith assignment silently drops its side-effect"
-status: pending
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -9,6 +9,30 @@ gates:
   - "`(( 1 + (a=2) )); echo $a` prints 2"
   - "either the side-effect is emitted, or the nested-assignment form is a compile error — never a silent wrong value"
 ---
+
+## Resolution (2026-08-28) — fork A (DG-chosen)
+
+Implemented. A `(( … ))` statement or `if`/`while` condition now **hoists** an
+embedded assignment in an unconditionally-evaluated position — the store takes
+effect and the expression's value is the assigned value, matching bash:
+`(( (a=2) ))`, `(( 1 + (a=2) ))`, `(( a=2, (b=3) ))`, `(( (a+=5) ))`,
+`if (( (a=2) ))`, per-iteration `while (( (i=i+1) <= 3 ))`. Done in
+`lower_arith_test_stmt` → `hoist_arith_mutations` (transform/statements.rs),
+emitting each store via the standard `Assignment` path.
+
+Forms that can't be applied in place are a clean **SB4020** compile error
+(never a silent wrong value, honoring gate 3): an assignment inside a `$(( … ))`
+**value** (`check_arith_value_mutation`), and — in a `(( … ))` statement — an
+embedded `++`/`--`, an `a[i]` mutation, or a mutation under `&&`/`||`/`?:`
+(`check_arith_test_placement` / `arith_unhoistable_reason`, validate.rs). The
+pre-existing `(( x = y++ ))` reject (parser `reject_nested_mutation`) is
+unchanged.
+
+The now-unreachable value-path arms (`incdec_to_ssa`, `compound_assign_to_ssa`,
+and the `Assign`/`CompoundAssign`/`IncDec` arms of `arith_to_ssa`) were removed
+/ replaced with a documented `unreachable!` — the half-wired path that dropped
+the store no longer exists. Specs `arithmetic.sh` 31.25–31.36. native+c 0
+regressions; all 12 new tests pass native+c.
 
 ## Symptom (found via the coverage grind)
 

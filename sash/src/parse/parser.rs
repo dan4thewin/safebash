@@ -780,7 +780,26 @@ fn parse_declaration_assignments(
     let mut assignments = Vec::new();
 
     loop {
-        if scanner.at_eof() || matches!(scanner.peek().token, Tok::Newline | Tok::Semi | Tok::Eof) {
+        if scanner.at_eof()
+            || matches!(
+                scanner.peek().token,
+                Tok::Newline
+                    | Tok::Semi
+                    | Tok::Eof
+                    // Stop at a trailing redirect so `int x=5 > f` returns a clean
+                    // Declaration; `wrap_pipeline_part` then rejects the redirect
+                    // (SB4046) instead of the misleading SB4014 that greedy
+                    // consumption of `>` used to produce.
+                    | Tok::Gt
+                    | Tok::DblGt
+                    | Tok::Lt
+                    | Tok::GtAmp
+                    | Tok::LtAmp
+                    | Tok::LtGt
+                    | Tok::AmpGt
+                    | Tok::HereString
+            )
+        {
             break;
         }
         assignments.push(parse_one_decl_assignment(scanner, span)?);
@@ -2290,8 +2309,31 @@ fn parse_list_operand(scanner: &mut Scanner) -> Result<Option<Statement>, Diagno
 /// Redirects + pipeline (`|`), but NOT trailing list operators.
 fn wrap_pipeline_part(scanner: &mut Scanner, stmt: Statement) -> Result<Statement, Diagnostic> {
     let redirects = parse_trailing_redirects(scanner, stmt.span)?;
+    if !redirects.is_empty() {
+        if let Some(what) = noncommand_redirect_target(&stmt.kind) {
+            return Err(parse_error(
+                stmt.span,
+                "SB4046",
+                format!("a redirect cannot attach to {what} — redirects attach to a command"),
+            ));
+        }
+    }
     let result = wrap_with_redirects(stmt, redirects);
     parse_trailing_pipeline(scanner, result)
+}
+
+/// A redirect may only attach to a command. If `kind` is a function
+/// definition, a variable declaration, or a variable assignment, a trailing
+/// redirect is illegal (SB4046) — returns the noun for the diagnostic; `None`
+/// means a redirect is allowed on this statement kind. (Compound commands are
+/// handled separately by `reject_compound_postfix`, SB4021.)
+fn noncommand_redirect_target(kind: &StmtKind) -> Option<&'static str> {
+    match kind {
+        StmtKind::Function(_) => Some("a function definition"),
+        StmtKind::Declaration(_) => Some("a variable declaration"),
+        StmtKind::Assignment(_) => Some("a variable assignment"),
+        _ => None,
+    }
 }
 
 fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {

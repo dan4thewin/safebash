@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=29
+plan=33
 echo "1..$plan" >&3
 
 set +e
@@ -158,6 +158,30 @@ run_sash 'x=$(/bin/echo $(/bin/echo hi)); bless x [[ -n $x ]]; echo "$x"'
 # 14.8 triple-nested bare cmdsub (`)))` splits into three closes)
 run_sash 'x=$(/bin/echo $(/bin/echo $(/bin/echo deep))); bless x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && $out = "deep" && -z $err ]]; chk 14.8
+
+# --- bug #4: a redirect may only attach to a command (SB4046) ---
+# A redirect gluing onto a function definition, a declaration, or an assignment
+# is rejected with one clear spanned error (was: misleading SB5011 for a
+# function, misleading SB4014 for a declaration, and SILENTLY DROPPED for a bare
+# assignment — `x=5 > f` truncated f and set x with no diagnostic). Ids are
+# 14.13+ (commands.sh shares the 14.x block with wordsplit.sh, which owns
+# 14.4–14.9).
+
+# 14.13 redirect on a function definition → SB4046 (was SB5011 on the call)
+run_sash 'f() { echo hi } > /tmp/sash_test_redir3; f'
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk 14.13
+
+# 14.14 redirect on a declaration → SB4046 (was SB4014 "expected variable name")
+run_sash 'int x=5 > /tmp/sash_test_redir3; echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk 14.14
+
+# 14.15 redirect on a bare assignment → SB4046 (was silently accepted+dropped)
+run_sash 'x=5 > /tmp/sash_test_redir3; echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4046* ]]; chk 14.15
+
+# 14.16 control: a plain function definition + call still works (no redirect)
+run_sash 'f() { echo hi }; f'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.16
 
 set -e
 tally

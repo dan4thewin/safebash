@@ -1,39 +1,53 @@
-## ════════ STATUS (2026) — coverage accounting reframed; 2 P1 bugs fixed ════════
+## ════════ STATUS (2026) — 2 more grind bugs fixed (#3 arith, #4 redirect) ════════
 
-**On `hand-parser`, pushed @ `d8696b9`.** The coverage grind was reframed and
-two P1 bugs it surfaced were fixed (DG-approved fork C for each).
+**On `hand-parser`.** Two more grind-surfaced bugs closed, DG-directed ("fix #3;
+reject and delete"). Journal 206.
 
-**Methodology correction (the key result):** source-based LLVM coverage is
-**optimization-independent** — measured at opt-level 0, `inline-threshold=0`,
-and full `-O3` the numbers are byte-identical. So the per-function `count` from
-`cargo llvm-cov report --json` is **authoritative**; the earlier "line-level is
-too noisy / inlining false-zeros" worry was wrong. The reliable frame is
-**function coverage: 95.03% (73/1469 never-run)** — a tractable list, each
-classified A/B/C/D in `notes/coverage-accounting.md`. A passing feature probe
-does NOT prove a specific fn ran (it may route through a different path).
+- **Bug #3 — nested/embedded arith assignment dropped → FIXED (fork A).**
+  `(( (a=2) ))`, `(( 1+(a=2) ))`, `(( a=2,(b=3) ))`, `if (( (a=2) ))` used to
+  silently leave the var unchanged. `lower_arith_test_stmt` now **hoists** an
+  embedded assignment in an unconditional position into a real store
+  (`hoist_arith_mutations`), matching bash; forms it can't apply in place (a
+  mutation in a `$(( … ))` value, embedded `++`/`--`, `a[i]`, or under
+  `&&`/`||`/`?:`) are a clean **SB4020** (never silent). The half-wired value
+  arms (`incdec_to_ssa`/`compound_assign_to_ssa` + the mutation arms of
+  `arith_to_ssa`) were **deleted** — documented `unreachable!`, proven by a
+  0-new-failure sweep. arithmetic.sh 31.25-36.
+
+- **Bug #4 — redirect on a non-command → FIXED (reject + delete).** A redirect on
+  a function-def / declaration / assignment is one clean spanned **SB4046** (was:
+  misleading SB5011 / SB4014, and **silently dropped** for `x=5 >f`). Rejected at
+  `wrap_pipeline_part`; dead `lower_redirected_function` + `function_redirects`
+  machinery deleted. commands.sh 14.13-16.
+
+New codes: SB4020 reuse (arith mutation placement), **SB4046** (redirect on
+non-command). No new DD. **Verification:** two fresh HEAD-vs-change baselines
+(native + c) → **0 regressions** each; 16 new tests pass native+c; `test_status`
+0 native/0 c failing. fmt+clippy clean.
+
+**Filed (pre-existing, P1):** `bug-nested-bare-cmdsub-bless-taint.md` — nested
+bare `$( … $() … )` with `bless` flips pass/fail **per run** (HashSet-seed
+nondeterminism in the taint walk). Proven independent of this work (0 regressions
+on fresh baselines). A security verdict depending on a random seed → priority;
+also de-collide shared 14.7/14.8/14.9 chk ids (commands.sh vs wordsplit.sh).
+
+**Next (DG mandate — keep draining the A-bucket via specs):** remaining named
+never-run functions (sig_scan_case/sig_record_arith_index, c-backend
+emit_dup_output/latest_var_as_str/emit_arr_keys_joined, taint
+collection_reader_taint, redirect/arith scanner sub-paths, fully-glued
+extract_from_literal). B-candidates to confirm-then-remove: try_keys_intrinsic.
+C: sysroot CLI. See `notes/coverage-accounting.md` for the full classification.
+
+## ════════ (prior) coverage accounting reframed; 2 P1 bugs fixed ════════
 
 **Coverage:** lines 87.69% → **92.28%**, functions → **95.03%** (native+c).
-cov.65-75 added (bitwise, div/mod-zero, arith-comma SB5007, sed SB4032,
-substring, keys-forin, compact-dispatch, dispatch-predicate). 0 regressions.
-
-**2 P1 bugs FIXED** (reachable panic/`bug:` invariants on ordinary input — the
-concrete payoff of "account for every reachable line"):
-- **const-reassign panic** → **SB4044** (journal 204). `const x=1; x=2` panicked
-  ssa.rs:926. Fork C: validate `check_const_reassignment` (spanned) + `define()`
-  spanless backstop. types.sh 35.3-35.9.
-- **intrinsic-arity fallthrough** → **SB4045** (journal 205). `$(sub a)` aborted
-  at runtime `bug: bare command passed to sash_exec`. Fork C: validate
-  `check_cmdsub_arity` (spanned) + transform backstop (survives `--bypass`).
-  Makes `len` strict. errors.sh 55.42-45.
-
-**Next (DG mandate — keep draining the A-bucket via specs):** ~15 remaining
-named never-run functions are reachable-but-untested (has_mutation via nested
-arith mutation, sig_scan_case/sig_record_arith_index, lower_redirected_function,
-c-backend emit_dup_output/latest_var_as_str/emit_arr_keys_joined, taint
-collection_reader_taint, redirect/arith scanner sub-paths, fully-glued
-extract_from_literal). B-candidates to confirm-then-remove: incdec_to_ssa/
-compound_assign_to_ssa/try_keys_intrinsic value-path arms. C: sysroot CLI. See
-`notes/coverage-accounting.md` for the full classification + measurement recipe.
+Source-based LLVM coverage is **optimization-independent** — the per-function
+`count` from `cargo llvm-cov report --json` is **authoritative**. A passing
+feature probe does NOT prove a specific fn ran. Two earlier P1 bugs fixed:
+- **const-reassign panic** → **SB4044** (journal 204). Fork C: validate
+  `check_const_reassignment` (spanned) + `define()` spanless backstop.
+- **intrinsic-arity fallthrough** → **SB4045** (journal 205). Fork C: validate
+  `check_cmdsub_arity` (spanned) + transform backstop.
 
 ## ════════ (prior) trap purged + exec supported ════════
 

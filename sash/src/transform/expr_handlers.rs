@@ -340,13 +340,22 @@ fn arith_to_ssa(arith: &ArithExpr, expr: &Expr, state: &VersionState) -> SsaValu
     match arith {
         ArithExpr::BinOp { left, op, right } => binop_to_ssa(left, *op, right, expr, state),
         ArithExpr::UnaryOp { op, operand } => unaryop_to_ssa(*op, operand, expr, state),
-        ArithExpr::PreIncDec { var, inc } | ArithExpr::PostIncDec { var, inc } => {
-            incdec_to_ssa(var, *inc, state)
-        }
-        ArithExpr::Assign { value, .. } => arith_to_ssa(value, expr, state),
-        ArithExpr::CompoundAssign { var, op, value } => {
-            compound_assign_to_ssa(var, *op, value, expr, state)
-        }
+        // A mutation (`x = …`, `x += …`, `x++`/`x--`, `a[i] = …`) never reaches
+        // the value path: in a `$(( … ))` value it is rejected by validate
+        // (SB4020, `check_arith_value_mutation`); in a `(( … ))` statement or
+        // condition it is either a top-level statement-mutation
+        // (`lower_arith_mutation_structured`) or hoisted into a preceding store
+        // by `lower_arith_test_stmt`, which leaves a mutation-free residual
+        // here. (Bug #3 fork A — this closed the half-wired value path that
+        // used to silently drop the store.)
+        ArithExpr::PreIncDec { .. }
+        | ArithExpr::PostIncDec { .. }
+        | ArithExpr::Assign { .. }
+        | ArithExpr::CompoundAssign { .. }
+        | ArithExpr::SubscriptAssign { .. } => unreachable!(
+            "arith mutation in a value context is rejected by validate (SB4020) \
+             or hoisted before reaching the value path"
+        ),
         ArithExpr::Ternary {
             cond,
             true_val,
@@ -519,30 +528,6 @@ fn try_fold_unop(inner: &SsaValue, op: IrUnaryArithOp) -> Option<SsaValue> {
         IrUnaryArithOp::Not => (if v == 0 { 1 } else { 0 }).to_string(),
     };
     Some(SsaValue::Expr(folded))
-}
-
-fn incdec_to_ssa(var: &str, inc: bool, state: &VersionState) -> SsaValue {
-    let op = if inc { ArithOp::Add } else { ArithOp::Sub };
-    SsaValue::ArithBinOp {
-        left: Box::new(SsaValue::Var(state.lookup(var))),
-        op,
-        right: Box::new(SsaValue::Expr("1".to_string())),
-    }
-}
-
-fn compound_assign_to_ssa(
-    var: &str,
-    op: IrArithOp,
-    value: &ArithExpr,
-    expr: &Expr,
-    state: &VersionState,
-) -> SsaValue {
-    let rhs = arith_to_ssa(value, expr, state);
-    SsaValue::ArithBinOp {
-        left: Box::new(SsaValue::Var(state.lookup(var))),
-        op: ir_op_to_ssa(op),
-        right: Box::new(rhs),
-    }
 }
 
 fn comma_to_ssa(exprs: &[ArithExpr], expr: &Expr, state: &VersionState) -> SsaValue {
