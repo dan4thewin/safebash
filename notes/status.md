@@ -47,6 +47,17 @@ ids moved (tests unchanged, plan counts preserved); native+c 0 failing, and no
 de-collided pair unmasked a real failure. The task carries a re-runnable audit
 (cross-file collisions AND within-file duplicate `chk` must both be empty).
 
+**Coverage grind round (2026-08-29, journal 208):** re-measured per-function
+count. bug#3/#4 already removed 3 never-run fns (95.03%→95.30%); this round
+flipped 3 more via `coverage.sh` cov.76-78 (`skip_balanced_squote/dquote`,
+`parameter_expansion_type`) → **95.50% (67 never-run)**. cov.78 surfaced a real
+**c/janet bug**: `${int_var:-default}` miscompiles (c `x_ptr` undeclared; janet
+`(length int)`) — filed `bug-cjanet-default-on-int-var.md` (P2), cov.78 guarded
+native. Reclassified (accounting): `collection_reader_taint`/`bare_name_tainted`
+shadowed-dead (join/keys→intrinsics, removable); `extract_from_literal`/
+`extract_leading_operator` need the dispatch-glued form (P3); `scan_base_hash_span`
+reachability discrepancy (needs arith-tokenizer trace).
+
 **Next (DG mandate — keep draining the A-bucket via specs):** remaining named
 never-run functions (sig_scan_case/sig_record_arith_index, c-backend
 emit_dup_output/latest_var_as_str/emit_arr_keys_joined, taint

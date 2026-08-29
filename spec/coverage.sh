@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=74
+plan=78
 echo "1..$plan" >&3
 
 set +e
@@ -317,6 +317,38 @@ if in_modes native; then
 else
     skip_chk cov.75
 fi
+
+# --- coverage grind (2026-08-29): drive never-run named fns to count>0 ---
+# (Verified via cargo-llvm-cov per-function count: each spec below flips its
+# named target 0->>0, except cov.79 which documents a reject path.)
+
+# cov.76 a single-quoted run inside a `$( )` inside double quotes → the lexer's
+# skip_balanced_squote skips it so an inner `'` can't miscount the `)`. The
+# tainted cmdsub is then rejected (SB5020), but the lexer path is exercised.
+run_sash 'echo "$(/bin/echo '\''q'\'')"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.76
+
+# cov.77 a nested double-quoted run inside the same → skip_balanced_dquote
+# (honours `\` escapes).
+run_sash 'echo "$(/bin/echo "q")"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.77
+
+# cov.78 a `${x:-0}` default preserves the int type of `x` → type_check
+# parameter_expansion_type (the `:-` arm returns the operand var's type).
+# native-only: the c/janet backends mishandle `${int_var:-default}` (they emit
+# the string ptr/len of an int var) — bug-cjanet-default-on-int-var.
+if in_modes native; then
+    run_sash 'int x=5; int n=${x:-0}; echo $n'
+    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.78
+else
+    skip_chk cov.78
+fi
+
+# cov.79 a direct `base#digits` arith literal (`16#ff`) is rejected SB4035 (bash
+# arbitrary base, DD#72-dropped) — the direct-arith path, distinct from the
+# `${s:-16#ff}` default path (arithmetic.sh d4.7).
+run_sash 'echo $(( 16#ff ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk cov.79
 
 set -e
 tally

@@ -56,13 +56,41 @@ was itself wrong**, and the correction matters:
   Distinguish by probing: if any valid input flips the count, it's A; if every
   input that would reach it is rejected upstream, it's B.
 
-## Current numbers (2026, post cov.70-75)
+## Current numbers (2026-08-29, post cov.76-79)
 
 Compiler (native+c; janet/convert/expand/tests excluded):
-**lines 92.28%** (1703/22070 missed), **functions 95.03%** (73/1469 missed),
-regions 91.53%. The 1703 missed lines decompose as: lines inside the ~27
-remaining named never-run functions + never-run closures (untaken branches)
-+ untaken error/defensive arms *within* run functions (the bulk — bucket D).
+**functions 95.50%** (67/1489 never-run), lines 92.62%, regions 91.82%.
+(Was 95.03% / 73-never-run before the bug#3/#4 work removed `incdec_to_ssa`,
+`compound_assign_to_ssa`, `lower_redirected_function`; this grind round flipped
+3 more — see below.)
+
+### Grind round 2026-08-29 (cov.76-79)
+
+Measured per-function count (authoritative). **3 named fns flipped 0→>0**:
+- `skip_balanced_squote` / `skip_balanced_dquote` (parse/lexer) — a `'`/`"`-quoted
+  run inside a `$( )` inside `"…"` (cov.76/77; the tainted cmdsub is then SB5020
+  but the lexer path runs first).
+- `parameter_expansion_type` (type_check) — `int n=${x:-0}` (the `:-` type-preserve
+  arm) (cov.78).
+
+**4 specs missed their named target** (hit an adjacent path — the classic caveat;
+each verified by re-measuring). Reclassified:
+- `collection_reader_taint` + `bare_name_tainted` (ssa_taint) → **B, shadowed-dead**:
+  `$(join …)`/`$(keys …)` are lowered to intrinsics by `try_native_intrinsic`
+  (`join_intrinsic` / `try_keys_intrinsic`), so a `join`/`keys` **Command** never
+  appears in SSA → `cmd_subst_taint`'s join/keys arm and `collection_reader_taint`
+  are unreachable. Removable (confirm with the remove-then-suite method).
+- `extract_from_literal` / `extract_leading_operator` (parse/parser) → reachable
+  only from `parse_test_binary_tail`'s `_` arm, i.e. a **glued** operator the lexer
+  didn't split (`[[ $x==a { … } ]]` dispatch form). Compact `[[ a==b ]]` splits `==`
+  into `Tok::Eq` (normal path). The dispatch-glued form currently errors SB4014 —
+  tied to the P3 `dispatch-compact-operator-spacing` task. Deferred.
+- `scan_base_hash_span` (parse/arith) → **discrepancy**: the path looks direct
+  (`next_arith_token`→`scan_arith_number`→ `#` at line 548 → `scan_base_hash_span`),
+  yet a direct `$(( 16#ff ))` / `(( n=8#17 ))` rejects SB4035 without flipping it.
+  The `$(( ))` / `(( ))` arith likely tokenizes base# via a different path. Needs a
+  deeper trace. (cov.79 keeps the direct-reject regression test regardless.)
+
 
 ## Method (superseded — see the CORRECTED method above)
 
