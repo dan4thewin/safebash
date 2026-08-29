@@ -544,11 +544,11 @@ fn scan_arith_number(input: &str, bytes: &[u8], i: usize) -> (ATok, usize) {
         }
     }
     let digits_end = scan_decimal_digits(bytes, i);
-    // bash arbitrary base `base#digits` (`16#ff`) — dropped (DD#72).
-    if digits_end < bytes.len() && bytes[digits_end] == b'#' {
-        let end = scan_base_hash_span(bytes, digits_end);
-        return (ATok::BadLit(input[i..end].to_string()), end);
-    }
+    // Note: a bash arbitrary-base literal `base#digits` (`16#ff`) never reaches
+    // here as a contiguous run — `collect_arith_content` tokenizes the body with
+    // the logos lexer (which emits `#` as its own token) and rejoins with spaces,
+    // so `16#ff` arrives as `16 # ff`. The lone `#` is rejected as an unknown byte
+    // by `tokenize_arith`'s fallback (SB4035). (DD#72 dropped base#.)
     scan_decimal_literal(input, i, digits_end)
 }
 
@@ -571,18 +571,6 @@ fn scan_radix_literal(input: &str, bytes: &[u8], start: usize, radix: u32) -> (A
         Ok(v) => (ATok::Num(v as i64), j),
         Err(_) => (ATok::BadNum(input[start..j].to_string()), j),
     }
-}
-
-/// Extent of a `base#digits` payload starting at the `#` (for the SB4035 span):
-/// the `#` plus the following bash base-digit run (alphanumerics / `_` / `@`).
-fn scan_base_hash_span(bytes: &[u8], hash: usize) -> usize {
-    let mut j = hash + 1;
-    while j < bytes.len()
-        && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_' || bytes[j] == b'@')
-    {
-        j += 1;
-    }
-    j
 }
 
 fn scan_decimal_digits(bytes: &[u8], start: usize) -> usize {

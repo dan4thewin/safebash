@@ -62,7 +62,7 @@ Compiler (native+c; janet/convert/expand/tests excluded):
 **functions 95.50%** (67/1489 never-run), lines 92.62%, regions 91.82%.
 (Was 95.03% / 73-never-run before the bug#3/#4 work removed `incdec_to_ssa`,
 `compound_assign_to_ssa`, `lower_redirected_function`; this grind round flipped
-3 more — see below.)
+3 more, and removed the dead `scan_base_hash_span` → **66 never-run** now.)
 
 ### Grind round 2026-08-29 (cov.76-79)
 
@@ -85,11 +85,14 @@ each verified by re-measuring). Reclassified:
   didn't split (`[[ $x==a { … } ]]` dispatch form). Compact `[[ a==b ]]` splits `==`
   into `Tok::Eq` (normal path). The dispatch-glued form currently errors SB4014 —
   tied to the P3 `dispatch-compact-operator-spacing` task. Deferred.
-- `scan_base_hash_span` (parse/arith) → **discrepancy**: the path looks direct
-  (`next_arith_token`→`scan_arith_number`→ `#` at line 548 → `scan_base_hash_span`),
-  yet a direct `$(( 16#ff ))` / `(( n=8#17 ))` rejects SB4035 without flipping it.
-  The `$(( ))` / `(( ))` arith likely tokenizes base# via a different path. Needs a
-  deeper trace. (cov.79 keeps the direct-reject regression test regardless.)
+- `scan_base_hash_span` (parse/arith) → **REMOVED** (DG chose A, 2026-08-29).
+  Traced to shadowed-dead: `collect_arith_content` tokenizes the `(( ))`/`$(( ))`
+  body with the logos lexer (which emits `#` as its own token) and rejoins with
+  spaces, so `16#ff` reaches `tokenize_arith` as `"16 # ff"`; `scan_arith_number`
+  scans `"16"` (stops at the space), so its base# branch never fires and the lone
+  `#` is rejected as an unknown byte (SB4035 *"invalid numeric literal '#'"*).
+  Deleted the dead branch (`scan_arith_number`) + `scan_base_hash_span`; `16#ff`
+  still rejects SB4035 unchanged, full sweep green (proving it was dead).
 
 
 ## Method (superseded — see the CORRECTED method above)
