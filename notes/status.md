@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-08-29) — `$(( args[i] ))` in a function fixed (arith args resolve) ════════
+
+**On `hand-parser`.** DG "fix now" — the latent native bug flagged while
+answering "were there more bugs". Journal 213.
+
+`$(( args[0] ))` in a function was an SB5031 false positive masking a codegen
+ICE: the arith-subscript lowering never resolved `args`→`__argsN` (the word path
+does). Fix: (1) `subscript_read_to_ssa` calls `resolve_args_name` (mirror
+`subscript_to_value`); (2) `check_function_scope` adds `args` to `fn_known`
+(DD#75 §5). The defensive `find_array_slot` ICE stays (it's a guard, not dead
+code). `f(){ echo $(( args[0]+1 )); }; f 5` → 6. Unmasking routes arith args
+through the pre-existing positional rules (non-contiguous → SB5044, over-arity →
+SB5043; parity with `${args[i]}`); top-level `args` still SB5031. specs
+arithmetic.sh bsx.8/9/10. Full 3-mode sweep vs `499859c`: **0 regressions**; +3
+native/c, +1 janet. janet arith subscript still gapped (`janet-arith-subscript-
+read`).
+
+**Native gate has no known latent bugs now — clear to resume `grind-continue`.**
+
 ## ════════ STATUS (2026-08-29) — redirect fd-dup target validated (SB4048) ════════
 
 **On `hand-parser`.** Answering DG's "were there more bugs before resuming the

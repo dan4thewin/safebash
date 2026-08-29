@@ -377,11 +377,17 @@ fn subscript_read_to_ssa(
     expr: &Expr,
     state: &VersionState,
 ) -> SsaValue {
+    // Resolve the implicit positional array `args` → the per-inline `__argsN`
+    // slot, exactly as the word cell-read path does (`subscript_to_value`).
+    // Without this, `$(( args[i] ))` reached codegen with the unresolved name
+    // and tripped the defensive `find_array_slot` ICE
+    // (arith-args-subscript-codegen); the SB5031 false-positive had masked it.
+    let resolved = super::expressions::resolve_args_name(name, state);
     SsaValue::Subscript {
-        array: name.to_string(),
         index: Box::new(arith_to_ssa(index, expr, state)),
-        is_integer_key: !state.assoc_arrays.contains(name),
-        is_integer_value: state.type_map.get(name).copied() == Some(crate::ir::VarType::Int),
+        is_integer_key: !state.assoc_arrays.contains(&resolved),
+        is_integer_value: state.type_map.get(&resolved).copied() == Some(crate::ir::VarType::Int),
+        array: resolved,
     }
 }
 

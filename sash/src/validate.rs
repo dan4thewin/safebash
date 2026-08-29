@@ -3593,6 +3593,11 @@ fn check_function_scope(f: &Function, known: &HashSet<String>, diags: &mut Vec<D
     let mut fn_known = HashSet::new();
     collect_scope_names(&f.body, &mut fn_known);
     fn_known.extend(known.iter().cloned());
+    // DD#75 §5: the implicit positional array `args` is in scope in every
+    // function body (`$(( args[i] ))` / `${args[i]}`). Without this, the bare
+    // arith cell read `$(( args[0] ))` was an SB5031 false positive
+    // (arith-args-subscript-codegen).
+    fn_known.insert("args".to_string());
     check_reads_in_scope(&f.body, &fn_known, diags);
 }
 

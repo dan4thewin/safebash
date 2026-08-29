@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=171
+plan=174
 echo "1..$plan" >&3
 
 set +e
@@ -470,8 +470,18 @@ if in_modes native,c; then
     # bsx.5 bare a[i] = lvalue
     run_sash 'int array a=(7 13 21); (( a[0] = 99 )); echo $a[0]'
     [[ $rc = 0 && $out = "99" && -z $err ]]; chk bsx.5
+    # bsx.8 bare `args[i]` (the implicit positional array) in arith inside a
+    # function — resolves to the per-inline __argsN slot like the word form
+    # ${args[i]} (arith-args-subscript-codegen; was an SB5031 false positive
+    # masking a codegen ICE).
+    run_sash 'f() { echo $(( args[0] + 1 )); }; f 5'
+    [[ $rc = 0 && $out = "6" && -z $err ]]; chk bsx.8
+    # bsx.9 contiguous multi-arg read `args[0]`+`args[1]`
+    run_sash 'f() { echo $(( args[0] + args[1] )); }; f 3 4'
+    [[ $rc = 0 && $out = "7" && -z $err ]]; chk bsx.9
 else
     skip_chk bsx.1; skip_chk bsx.2; skip_chk bsx.3; skip_chk bsx.4; skip_chk bsx.5
+    skip_chk bsx.8; skip_chk bsx.9
 fi
 # bsx.6 bare `m[k]` on a MAP in arith → compile error (string key not
 # expressible under arith rules; use `${m[k]}` / `m[k]=`). Literal index so the
@@ -482,6 +492,10 @@ run_sash 'int map m=([k]=5); int x=$(( m[0] + 1 ))'
 # bsx.7 bare `m[0]++` mutation on a map → compile error
 run_sash 'int map m=([k]=5); (( m[0]++ ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk bsx.7
+# bsx.10 bare `args[i]` in arith at TOP LEVEL (not in a function) stays rejected
+# — positionals are function-only (SB5031). Mode-independent.
+run_sash 'echo $(( args[0] ))'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk bsx.10
 
 # ── arith-bare-subscript-followups edge 1: `$a[i]` (dollar, non-brace) isn't a
 # subscript read in arith. The `$(( ))` content is rebuilt token→string→re-lexed
