@@ -1,3 +1,27 @@
+## ════════ STATUS (2026-08-29) — int `:-` identity-element default (all 3 backends) ════════
+
+**On `hand-parser`.** DG-directed, closing the open bug
+`bug-cjanet-default-on-int-var`. Journal 209.
+
+- **Semantic (DG):** `:-` triggers the default on the **identity element** of the
+  subject's type — `""` for strings, **`0` for ints**. `${int_x:-D}` ≡
+  `(x == 0 ? D : x)`. DD#62 meaningful-zero preserved; `:-` just picks 0 as its
+  trigger. Was a **native behavior change** too (native returned `0` for
+  `int x=0; ${x:-99}`) — all 3 backends had wrongly string-emptiness-tested an int.
+- **Literal-only default (DG):** an int `:-` default `D` must be an **int
+  literal** (decimal/`0x`/`0o`/`0b`) → else **SB4030** at type_check. Unifies with
+  the arith-context rule (DD#77 D4).
+- **Impl:** transform lowers int `:-` to `Ternary{x==0 ? D : x}` (native+c via
+  SSA); janet `emit_pe_default` int branch `(if (= name 0) …)`; type_check fourth
+  pass `check_int_value_defaults` (treats `$(( ))` opaque — no dup with the arith
+  default check). DD#65 addendum; new task `janet-int-array-and-cell-default` (P3,
+  janet int arrays broken independent of `:-`).
+
+**Verification:** full 3-mode sweep vs HEAD `328e529` → **0 regressions** native/
+c/janet; +6 native, +6 c, +5 janet new passing, c:cov.78 skip→pass. coverage.sh
+cov.78/80/81 (positives), 82/83/84 (rejects), 85 (int-cell, native+c). fmt+clippy
+clean; new fns pass the cog/cc gate.
+
 ## ════════ STATUS (2026) — 2 more grind bugs fixed (#3 arith, #4 redirect) ════════
 
 **On `hand-parser`.** Two more grind-surfaced bugs closed, DG-directed ("fix #3;

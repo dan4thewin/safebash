@@ -155,3 +155,33 @@ over the interpolated default; janet interpolates it at the IR level).
 - DD#64 — no shell backslash (the `/`-op `\/` escape goes away with it).
 - DD#62 — drop glob (the `/` glob-replace is a holdover).
 - DD#61 — only *restricts* `#`/`%` for taint; does not drop them (this DD does).
+
+## Addendum (2026-08-29) — int `:-` = identity-element default, literal-only
+
+DG ratified two coupled refinements to the `${var:-D}` default when the subject
+is **int**-typed (a scalar `int` or an int-array/map cell):
+
+1. **Identity-element trigger.** `:-` triggers the default on the *identity
+   element* of the subject's type: `""` for strings (existing), **`0` for ints**
+   (new). So `${int_x:-D}` ≡ `(x == 0 ? D : x)`. DD#62's "meaningful zero" is
+   preserved — `:-` merely *chooses* 0 as its trigger (the additive identity, the
+   int analogue of the empty string), op-locally. It does **not** make 0 "unset".
+
+   This corrected a latent inconsistency: all three backends had been applying a
+   *string-emptiness* test to an int. Native returned `0` for `int x=0;
+   ${x:-99}` (int→string "0" has length 1 → "non-empty" → default never fired);
+   c/janet failed to compile (`x_ptr`/`(length x)` on an int). Now all three test
+   `int == 0`. (See `bug-cjanet-default-on-int-var`, resolved.)
+
+2. **Literal-only default.** When the subject is int, `D` must be an **int
+   literal** (decimal / `0x`/`0o`/`0b`) — not a string, an interpolation
+   (`$y`, `$((…))`), or empty. Rejected at type_check (**SB4030**). This unifies
+   with the arithmetic-context default rule (DD#77 D4): one mental model — "an
+   int `:-` default is an int literal" — and keeps the disposition homogeneously
+   int, so no mixed-type ternary and no string round-trip in the value.
+   (Bare `-` — default-on-*unset* — is unaffected: sash vars are always set, so
+   its default is dead code and its type is irrelevant.)
+
+Lowering: an int source lowers to `SsaValue::Ternary{ ArithBinOp{src,Eq,0} ?
+default : src }` (native + c via SSA); janet emits the `(if (= name 0) …)` form
+directly from the IR. Specs: coverage.sh cov.78/80/81/82/83/84/85.

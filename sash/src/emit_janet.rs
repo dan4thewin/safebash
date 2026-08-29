@@ -2173,7 +2173,16 @@ fn emit_pe_default(pe: &ParameterExpansion, ctx: &EmitCtx) -> String {
         );
     }
     if ctx.is_declared(&pe.name) {
-        format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
+        if ctx.is_int(&pe.name) {
+            // `:-` triggers on the additive identity `0` for ints (DG), not
+            // string emptiness — `(length int)` would error
+            // (bug-cjanet-default-on-int-var). Yield strings on both arms (like
+            // the string branch) so the int-context `scan-number` wrapper and a
+            // bare string context both consume the result uniformly.
+            format!("(if (= {0} 0) (string {1}) (string {0}))", pe.name, default)
+        } else {
+            format!("(if (= (length {}) 0) {} {})", pe.name, default, pe.name)
+        }
     } else {
         format!("(or (os/getenv \"{}\") {})", pe.name, default)
     }

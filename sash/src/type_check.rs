@@ -493,6 +493,122 @@ fn default_is_arith_literal(operand: Option<&Expr>) -> bool {
     lit.and_then(crate::parse::parse_dd72_literal).is_some()
 }
 
+/// DG (2026-08-29): a `${x:-D}` default in *value* context, where the subject
+/// `x` is int-typed (an `int` scalar or an int-array cell), must be an int
+/// literal — the same discipline as an arithmetic default
+/// (`check_arith_default_literals`). An int `:-` triggers on the additive
+/// identity `0` (the int analogue of `""`), lowering to `x == 0 ? D : x`; a
+/// non-literal `D` (a string `hello`, an interpolation `$y`, `0xZZ`, or an
+/// empty default) would make the disposition mixed-type, so reject it (SB4030).
+/// Arithmetic-context PEs are owned by `check_arith_default_literals`, so this
+/// walk treats `$(( … ))` as opaque (no duplicate diagnostic).
+fn check_int_value_defaults(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    stmt.direct_exprs(&mut |e| walk_value_default(e, env, errors));
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_int_value_defaults(s, env, errors);
+        }
+    }
+}
+
+/// Walk a value-context expression tree, flagging each int-subject `${x:-D}`
+/// with a non-literal default. Mirrors `walk_expr_tree` but stops at
+/// `ExprKind::Arithmetic` (owned by `check_arith_default_literals`). A thin
+/// dispatcher — each arm delegates so the traversal stays flat.
+fn walk_value_default(expr: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    match &expr.kind {
+        ExprKind::ParameterExpansion(pe) => walk_pe_default(pe, expr.span, env, errors),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
+            walk_value_slice(parts, env, errors)
+        }
+        ExprKind::AssocArray(pairs) => walk_value_pairs(pairs, env, errors),
+        ExprKind::CommandSubstitution(stmts) => walk_value_cmdsub(stmts, env, errors),
+        ExprKind::Subscript { index, .. } => walk_value_default(index, env, errors),
+        ExprKind::Test(t) => walk_value_test(t, env, errors),
+        // `$(( … ))` defaults are owned by check_arith_default_literals.
+        ExprKind::Arithmetic(_) => {}
+        _ => {}
+    }
+}
+
+/// Check a `${…}` node, then descend into its default operand.
+fn walk_pe_default(
+    pe: &ParameterExpansion,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    check_int_pe_default(pe, span, env, errors);
+    if let Some(op) = pe.operand.as_deref() {
+        walk_value_default(op, env, errors);
+    }
+}
+
+/// Recurse into each expr of a slice (`DoubleQuoted` / `Concat` / `Array`).
+fn walk_value_slice(parts: &[Expr], env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    for p in parts {
+        walk_value_default(p, env, errors);
+    }
+}
+
+/// Recurse into each value of an assoc-array literal.
+fn walk_value_pairs(pairs: &[(String, Expr)], env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    for (_, v) in pairs {
+        walk_value_default(v, env, errors);
+    }
+}
+
+/// Recurse into each statement of a `$(…)` command substitution.
+fn walk_value_cmdsub(stmts: &[Statement], env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    for s in stmts {
+        check_int_value_defaults(s, env, errors);
+    }
+}
+
+/// Descend a `[[ … ]]` test tree into its operand expressions.
+fn walk_value_test(t: &TestExpr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    match t {
+        TestExpr::Unary { operand, .. } => walk_value_default(operand, env, errors),
+        TestExpr::Binary { left, right, .. } => {
+            walk_value_default(left, env, errors);
+            walk_value_default(right, env, errors);
+        }
+        TestExpr::Not(inner) => walk_value_test(inner, env, errors),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            walk_value_test(l, env, errors);
+            walk_value_test(r, env, errors);
+        }
+    }
+}
+
+/// Flag a single `${x:-D}` whose int subject carries a non-literal default.
+fn check_int_pe_default(
+    pe: &ParameterExpansion,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    if pe.operator.as_deref() != Some(":-") {
+        return;
+    }
+    if env.var_type(&pe.name) != VarType::Int {
+        return;
+    }
+    if default_is_arith_literal(pe.operand.as_deref()) {
+        return;
+    }
+    let name = &pe.name;
+    errors.push(TypeError {
+        message: format!(
+            "default for int `{name}` must be an integer literal (decimal or \
+             `0x`/`0o`/`0b`, e.g. `${{{name}:-0}}`) — an int `:-` default triggers on \
+             the identity element `0`, so the fallback must itself be an int, not a \
+             string, interpolation, or empty default."
+        ),
+        span,
+    });
+}
+
 /// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic
 /// (or dtoi/itod — Q2: capture via `$()`), or a user string/void function. Int
 /// intrinsics (`len`, `getpid`, `argc`, …), user `-> int` functions, and a bare
@@ -553,6 +669,13 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     // to 0 in a sexpr, sidestepping SB5020). bug-arith-sexpr-intrinsics-zero.
     for stmt in &program.statements {
         check_sexpr_string_producers(stmt, &env, &mut errors);
+    }
+
+    // Fourth pass (DG 2026-08-29): a value-context `${int_x:-D}` default must be
+    // an int literal (SB4030) — see check_int_value_defaults. Separate from the
+    // arith pass, which owns `$(( … ))` defaults.
+    for stmt in &program.statements {
+        check_int_value_defaults(stmt, &env, &mut errors);
     }
 
     errors

@@ -282,3 +282,16 @@ with a fixture sysroot, or leave explained.
 `panic_payload_message` (formats a caught codegen panic — only on ICE),
 `<TypeError as Display>::fmt` (error Display impl; the type-error path prints via
 a different formatter), the `_ => panic!` ICE arm in `emit_string_op_expansion`.
+
+## 2026-08-29 — int `:-` identity-element default (bucket A, added covered code)
+
+Closing `bug-cjanet-default-on-int-var`: int `${x:-D}` now lowers to the
+identity-element ternary `x==0 ? D : x` (native+c via the SSA `Ternary`; janet
+from the IR), and a non-literal int default is rejected SB4030. The type_check
+reject added `check_int_value_defaults` + `walk_value_default` +
+`walk_pe_default`/`walk_value_slice`/`walk_value_pairs`/`walk_value_cmdsub` +
+`check_int_pe_default` — **all bucket A** (hit by coverage.sh cov.82/83/84;
+positives cov.78/80/81; int-cell cov.85 native+c). No functions removed; the
+never-run count is unchanged. The one deliberately-deferred emit path (janet
+int-array cell `:-`) is bucket C for janet only (janet is excluded from the
+accounting anyway) and tracked in `janet-int-array-and-cell-default`.

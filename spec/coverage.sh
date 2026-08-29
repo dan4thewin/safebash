@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=78
+plan=84
 echo "1..$plan" >&3
 
 set +e
@@ -333,15 +333,46 @@ run_sash 'echo "$(/bin/echo '\''q'\'')"'
 run_sash 'echo "$(/bin/echo "q")"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.77
 
-# cov.78 a `${x:-0}` default preserves the int type of `x` → type_check
-# parameter_expansion_type (the `:-` arm returns the operand var's type).
-# native-only: the c/janet backends mishandle `${int_var:-default}` (they emit
-# the string ptr/len of an int var) — bug-cjanet-default-on-int-var.
-if in_modes native; then
-    run_sash 'int x=5; int n=${x:-0}; echo $n'
-    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.78
+# cov.78 `${x:-0}` on an int `x` triggers the default on the additive identity
+# `0` (DG's identity-element semantic — the int analogue of "" for strings), not
+# on "unset". So a non-zero `x` yields the value. All three backends now
+# (bug-cjanet-default-on-int-var, fixed).
+run_sash 'int x=5; int n=${x:-0}; echo $n'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.78
+
+# cov.80 the same `:-` with `x == 0` (the identity element) → the default fires.
+run_sash 'int x=0; echo ${x:-99}'
+[[ $rc = 0 && $out = 99 && -z $err ]]; chk cov.80
+
+# cov.81 identity-element default in a string context (`echo`), non-zero int →
+# the value, not the default.
+run_sash 'int x=5; echo ${x:-99}'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.81
+
+# cov.82 an int `:-` default must be an int literal (DG 2026-08-29) — a string
+# default is rejected at type_check (SB4030), so the disposition stays
+# homogeneously int. All modes (front-end reject).
+run_sash 'int x=5; echo ${x:-hello}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.82
+
+# cov.83 an *empty* int default (`${x:-}`) is likewise rejected — 0 is the
+# identity element (not "empty"), so there is no empty-string fallback for an int.
+run_sash 'int x=5; echo ${x:-}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.83
+
+# cov.84 the int-literal-default rule extends to an int-array *cell*
+# (`${a[i]:-D}`): a non-literal default is rejected (SB4030). All modes.
+run_sash 'int array a=(1 2 3); echo ${a[0]:-hi}'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.84
+
+# cov.85 an int-array cell with a literal default is accepted and lowers to the
+# identity-element ternary — native/c only (int arrays are a pre-existing janet
+# gap: `scan-number` on the array literal; janet-int-array-and-cell-default).
+if in_modes native,c; then
+    run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
+    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.85
 else
-    skip_chk cov.78
+    skip_chk cov.85
 fi
 
 # cov.79 a direct `base#digits` arith literal (`16#ff`) is rejected SB4035 (bash

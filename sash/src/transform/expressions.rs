@@ -248,10 +248,30 @@ fn source_carrying_value(
     state: &VersionState,
 ) -> Option<SsaValue> {
     match op {
-        ":-" => Some(SsaValue::DefaultValue {
-            source: Box::new(source),
-            default: Box::new(pe_operand_value(pe, state)),
-        }),
+        ":-" => {
+            let default = pe_operand_value(pe, state);
+            if source_is_int(&source, pe, state) {
+                // DD#62 + DG: `:-` triggers on the *identity element* of the
+                // subject's type — `""` for strings, `0` for ints (zero stays a
+                // meaningful value; `:-` just means "fall back if identity"). So
+                // `${int:-d}` is `x == 0 ? d : x`, emitted as a ternary the SSA
+                // backends already handle (bug-cjanet-default-on-int-var).
+                Some(SsaValue::Ternary {
+                    cond: Box::new(SsaValue::ArithBinOp {
+                        left: Box::new(source.clone()),
+                        op: crate::ssa::ArithOp::Eq,
+                        right: Box::new(SsaValue::Expr("0".to_string())),
+                    }),
+                    true_val: Box::new(default),
+                    false_val: Box::new(source),
+                })
+            } else {
+                Some(SsaValue::DefaultValue {
+                    source: Box::new(source),
+                    default: Box::new(default),
+                })
+            }
+        }
         ":?" => Some(SsaValue::RequireValue {
             source: Box::new(source),
             message: Box::new(pe_operand_value(pe, state)),
@@ -262,6 +282,22 @@ fn source_carrying_value(
             spec: pe_operand_string(pe),
         }),
         _ => None,
+    }
+}
+
+/// True if the `${…:-…}` subject is an int-typed value — a scalar `int`
+/// variable, or an int-valued array/map cell (`is_integer_value`). For such a
+/// subject, `:-` triggers on `0` (the additive identity) rather than string
+/// emptiness — see the `:-` arm.
+fn source_is_int(source: &SsaValue, pe: &ParameterExpansion, state: &VersionState) -> bool {
+    match source {
+        SsaValue::Var(_) => {
+            pe.index.is_none() && state.type_map.get(&pe.name) == Some(&crate::ir::VarType::Int)
+        }
+        SsaValue::Subscript {
+            is_integer_value, ..
+        } => *is_integer_value,
+        _ => false,
     }
 }
 
