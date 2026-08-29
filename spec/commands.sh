@@ -149,15 +149,22 @@ run_sash 'int i=0; while (( i < 3 )); do echo $i; (( i++ )); done | /usr/bin/wc 
 run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 14.6
 
-# 14.7 a BARE (unquoted) nested command substitution as a command argument.
+# 14.17 a BARE (unquoted) nested command substitution as a command argument.
 # `$(f $(g))` — the two adjacent `))` are two cmdsub closes, not the arith
-# `))` terminator (bug-bare-nested-cmdsub-arg). Regression guard for the lexer
-# split of DblParenClose outside arith mode.
+# `))` terminator (bug-bare-nested-cmdsub-arg). This still guards the lexer
+# split of DblParenClose outside arith mode: the SB5020 below can only fire if
+# the inner `$( )` was recognized as a cmdsub. But it is a TAINT ERROR — the
+# inner `$(/bin/echo hi)` is external (tainted) and its result is *read* to
+# become an argument to the outer command, and `bless x` covers only the outer
+# assignment, not that inner read. So a tainted nested cmdsub is rejected.
+# (Ids are 14.17+ to avoid the pre-existing collision with wordsplit.sh, which
+# owns 14.4-14.9; see bug-commands-wordsplit-14x-chk-collision.)
 run_sash 'x=$(/bin/echo $(/bin/echo hi)); bless x [[ -n $x ]]; echo "$x"'
-[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.7
-# 14.8 triple-nested bare cmdsub (`)))` splits into three closes)
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.17
+# 14.18 triple-nested bare cmdsub (`)))` splits into three closes) — parses, and
+# the tainted inner reads are likewise rejected (SB5020).
 run_sash 'x=$(/bin/echo $(/bin/echo $(/bin/echo deep))); bless x [[ -n $x ]]; echo "$x"'
-[[ $rc = 0 && $out = "deep" && -z $err ]]; chk 14.8
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.18
 
 # --- bug #4: a redirect may only attach to a command (SB4046) ---
 # A redirect gluing onto a function definition, a declaration, or an assignment

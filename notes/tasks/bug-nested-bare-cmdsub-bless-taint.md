@@ -1,15 +1,41 @@
 ---
-title: "BUG: nested bare `$( … $() … )` with bless rejected SB5020 (spec 14.7/14.8, pre-existing)"
-status: pending
+title: "NOT A BUG: nested tainted `$( … $() … )` is correctly rejected (SB5020)"
+status: done
 priority: P1
 kind: bug
 depends: []
 gates:
-  - "`x=$(/bin/echo $(/bin/echo hi)); bless x [[ -n $x ]]; echo \"$x\"` compiles and prints `hi`"
-  - "spec commands.sh 14.7 / 14.8 pass in native mode"
+  - "resolved — SB5020 is the correct behavior; specs fixed + collision filed"
 ---
 
-## Symptom
+## Resolution (2026-08-29) — mischaracterized; SB5020 is correct
+
+DG: *"the results of the nested `$()` have to be read to become an argument to
+the outer `$()`, so if the nested one is tainted, it violates the read-only-in-
+bless-test rule."* Correct. In `x=$(/bin/echo $(/bin/echo hi))` the inner
+`$(/bin/echo hi)` is external (tainted) and its result is **read** as an
+argument to the outer command; `bless x` covers only the outer assignment, not
+that inner read. So **SB5020 is the right answer** — the construct is not in
+the safe subset.
+
+There is **no taint bypass and no nondeterminism**. The apparent "per-run
+flip-flop" was a **chk-id collision**: `commands.sh` 14.7/14.8 (this tainted
+nested cmdsub → correctly failing) and `wordsplit.sh` 14.7/14.8 (`&&`-on-
+compound → passing) share ids; `wordsplit.sh` sorts later so its `passing`
+overwrote `commands.sh`'s `failing`, so `spec.db` showed `native:14.7 =
+passing`. The taint check rejects **deterministically** (660/660 direct + 30/30
+via the spec harness).
+
+Fixed: `commands.sh` 14.7/14.8 rewritten to **expect SB5020** and renumbered to
+14.17/14.18 to de-collide. The broader `commands.sh`↔`wordsplit.sh` 14.4-14.9
+collision is filed separately (`bug-commands-wordsplit-14x-chk-collision.md`).
+
+## Original (incorrect) symptom, kept for the record
+
+The filing wrongly assumed the construct *should* compile. See above — it must
+not; the inner tainted read is a use without bless.
+
+## Original symptom text
 
 A nested *bare* command substitution used as an argument inside an outer
 command substitution is rejected even when the outer result is blessed:

@@ -197,11 +197,16 @@ signal was pointing at the bug. All four are now resolved; the removed value-pat
 mutation arms are gone rather than merely untested. The other B-candidate,
 `try_keys_intrinsic`, still needs the same probe.
 
-A fifth issue surfaced while validating the new specs but is **unrelated to the
-grind and pre-existing** (`notes/tasks/bug-nested-bare-cmdsub-bless-taint.md`,
-P1): nested bare `$( … $() … )` with `bless` flips pass/fail **per run** —
-HashSet-seed nondeterminism in the taint walk. Proven independent of the bug#3/#4
-work (two fresh HEAD-vs-change native baselines: 0 regressions).
+A fifth issue surfaced while validating the new specs and was **initially
+mischaracterized** as taint nondeterminism, then resolved: nested tainted
+`$( … $() … )` is **correctly** rejected SB5020 (the inner tainted result is
+read as an argument to the outer command; `bless x` covers only the outer
+assignment — DG). The apparent per-run flip was a **chk-id collision**
+(`commands.sh` 14.7/14.8 vs `wordsplit.sh` 14.7/14.8; the later file's `passing`
+masked commands.sh's correct `failing`). Fixed: commands.sh specs now expect
+SB5020, renumbered to 14.17/14.18; broader collision filed
+(`bug-commands-wordsplit-14x-chk-collision.md`). No taint bypass exists
+(660/660 deterministic reject).
 
 ## Never-run named functions — classification (73 total incl. closures; 27 named)
 

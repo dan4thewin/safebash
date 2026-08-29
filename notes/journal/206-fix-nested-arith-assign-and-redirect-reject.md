@@ -93,14 +93,17 @@ wholesale in this environment on a linker/setjmp `.note.GNU-stack` issue (all
 ~250 codegen/e2e/oracle/taint tests, unrelated to source); the lib.rs unit
 tests that don't link a binary pass 12/12. Spec suite is the gate.
 
-## Filed
+## Filed / follow-up
 
-`bug-nested-bare-cmdsub-bless-taint.md` (P1) — nested bare `$( … $() … )` with
-`bless` flips pass/fail **per run** (HashSet-seed nondeterminism in the taint
-walk; `spec.db` shows ~420 both-status rows for `native:14.7`). Pre-existing,
-proven independent of this work. The taint-check flakiness (a security verdict
-depending on a random seed) is the priority; also de-collide the shared
-14.7/14.8/14.9 chk ids between commands.sh and wordsplit.sh.
+`bug-nested-bare-cmdsub-bless-taint.md` — filed as a P1 taint-nondeterminism
+bug, then **corrected** (2026-08-29): nested tainted `$( … $() … )` is
+**correctly** rejected SB5020 (DG: the inner tainted result is read as an
+argument to the outer command; `bless x` covers only the outer assignment).
+There is no bypass — the reject is deterministic (660/660). The "flip-flop" was
+a **chk-id collision** (commands.sh 14.7/14.8 vs wordsplit.sh 14.7/14.8; the
+`~420` both-status `spec.db` rows were the two colliding tests). Fixed:
+commands.sh 14.7/14.8 rewritten to expect SB5020, renumbered to 14.17/14.18;
+broader collision filed as `bug-commands-wordsplit-14x-chk-collision.md`.
 
 New code: SB4020 reuse (arith mutation placement), SB4046 (redirect on
 non-command). No new DD.

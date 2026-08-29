@@ -28,11 +28,15 @@ non-command). No new DD. **Verification:** two fresh HEAD-vs-change baselines
 (native + c) → **0 regressions** each; 16 new tests pass native+c; `test_status`
 0 native/0 c failing. fmt+clippy clean.
 
-**Filed (pre-existing, P1):** `bug-nested-bare-cmdsub-bless-taint.md` — nested
-bare `$( … $() … )` with `bless` flips pass/fail **per run** (HashSet-seed
-nondeterminism in the taint walk). Proven independent of this work (0 regressions
-on fresh baselines). A security verdict depending on a random seed → priority;
-also de-collide shared 14.7/14.8/14.9 chk ids (commands.sh vs wordsplit.sh).
+**Taint follow-up (2026-08-29):** the P1 I filed
+(`bug-nested-bare-cmdsub-bless-taint.md`) was **mischaracterized**. DG: nested
+tainted `$( … $() … )` is **correctly** rejected SB5020 — the inner tainted
+result is read as an argument to the outer command, and `bless x` covers only
+the outer assignment. No bypass / nondeterminism (660/660 deterministic reject);
+the "flip-flop" was a **chk-id collision** (commands.sh 14.7/14.8 masked by
+wordsplit.sh 14.7/14.8). Fixed: commands.sh 14.7/14.8 now expect SB5020,
+renumbered to 14.17/14.18; broader collision filed
+(`bug-commands-wordsplit-14x-chk-collision.md`, P2).
 
 **Next (DG mandate — keep draining the A-bucket via specs):** remaining named
 never-run functions (sig_scan_case/sig_record_arith_index, c-backend
