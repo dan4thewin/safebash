@@ -212,3 +212,18 @@ coerced to colon forms" (contradicting this decision) and still listed the
 DD#65-dropped `:=`/`:+` as supported — drifted from the DDs and actively
 misleading. DG: "remove SUBSET.md, it's worse than useless." The safe subset is
 defined by the DDs in `notes/decisions/`.
+
+### Follow-on (2026-08-29) — no-ambiguity fallthrough (SB4047)
+
+DG: "need to prevent ambiguity — if the compiler doesn't know what something
+does, that's very bad." Generalised the non-colon fix: `parse_parameter_expansion`
+used to fall through to a bare `${name}` whenever trailing content matched no
+operator parser, **silently dropping** that content (`${x&y}`, `${x:foo}`,
+`${x.y}`, `${x:}`, `${x y}` all degraded to `$x`). Now the fallthrough carries
+the raw remainder on a sentinel `unrecognized` operator and rejects it —
+**SB4047** ("the compiler does not recognise this parameter operator and will
+not silently ignore it"). Two-layer model: SB4034 = a *known* dropped operator
+(specific "use :- / builtins" guidance); SB4047 = *genuinely unknown* content.
+The kept forms (`:-`/`:?`/`:off:len`/`:s/`, subscripts, `@`-transform SB4015,
+`!`-indirect SB4003, strlen) are all recognised earlier, so only real garbage
+reaches the reject. Specs `spec/var_modifiers.sh` vm.un1-4.

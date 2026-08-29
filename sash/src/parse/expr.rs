@@ -612,7 +612,22 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
         return e;
     }
 
-    Expr::param(name, None, None, span)
+    // DG (2026-08-29): no ambiguity. Reaching here means there is trailing
+    // content after the name that no parser recognised (name_end < len, so
+    // `rest` is non-empty) — e.g. `${x&y}`, `${x:foo}`. It used to silently
+    // degrade to a bare `${name}` (dropping `rest`). Carry the raw `rest` on a
+    // sentinel `unrecognized` operator so `rejected_param_operator_diag` rejects
+    // it (SB4047): the compiler must never emit code for input it doesn't fully
+    // understand.
+    Expr::param(
+        name,
+        Some("unrecognized"),
+        Some(Box::new(Expr {
+            kind: ExprKind::Literal(rest.to_string()),
+            span,
+        })),
+        span,
+    )
 }
 
 /// The operator-suffixed `${name OP…}` forms: `:s/…` sed, `:off:len`

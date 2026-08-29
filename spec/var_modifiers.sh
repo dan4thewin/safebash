@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=53
+plan=57
 echo "1..$plan" >&3
 
 set +e
@@ -175,6 +175,17 @@ run_sash 'x=5; echo "${x=4}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr21
 run_sash 'x=5; echo "${x?msg}"'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr22
+# un1-4: content the compiler does NOT recognise as an operator is rejected
+# SB4047 (DG 2026-08-29: no ambiguity — never silently ignore trailing content).
+# Distinct from SB4034 (known-dropped ops): these are genuinely unknown.
+run_sash 'x=5; echo "${x&y}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un1
+run_sash 'x=5; echo "${x:foo}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un2
+run_sash 'x=5; echo "${x.y}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un3
+run_sash 'x=5; echo "${x:}"'
+[[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un4
 
 set -e
 tally

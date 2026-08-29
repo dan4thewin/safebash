@@ -2489,12 +2489,42 @@ fn check_rejected_param_expansion(
     }
 }
 
-/// The reject diagnostic for a rejected `${var:OP}` operator, or `None`. The
-/// operator is a single value, so at most one applies: indirect `${!x}`
-/// (SB4003), `@`-transforms (SB4015), and the DD#65 pruned modifier family
-/// (SB4034).
-fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
-    let op = pe.operator.as_deref()?;
+/// DG (2026-08-29): trailing content the compiler doesn't recognise (`${x&y}`,
+/// `${x:foo}`, …), carried as the raw unparsed remainder on a sentinel
+/// `unrecognized` operator by `parse_parameter_expansion`. Reject rather than
+/// silently drop it — the compiler must never emit code for input it doesn't
+/// fully understand.
+fn unrecognized_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
+    let trailing = match pe.operand.as_deref() {
+        Some(Expr {
+            kind: ExprKind::Literal(s),
+            ..
+        }) => s.as_str(),
+        _ => "",
+    };
+    Some(parse_error(
+        span,
+        "SB4047",
+        format!(
+            "unrecognized content `{trailing}` after `{}` in `${{…}}` — the \
+             compiler does not recognise this parameter operator and will not \
+             silently ignore it. sash's parameter operators are `:-` / `:?` / \
+             `:off:len` / `:s/…/…/` (plus the string builtins toupper/tolower, \
+             sub/gsub, basename/dirname)",
+            pe.name
+        ),
+    ))
+}
+
+/// The single-operator rejects that are a plain equality (or the two-char
+/// `@X` transform): indirect `${!x}` (SB4003), a substring/`:s/` on an array
+/// cell (SB4039), and the `@`-transform family (SB4015). `None` if `op` is
+/// none of these.
+fn simple_rejected_operator_diag(
+    op: &str,
+    pe: &ParameterExpansion,
+    span: Span,
+) -> Option<Diagnostic> {
     if op == "!" {
         return Some(parse_error(
             span,
@@ -2528,6 +2558,21 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
                 op
             ),
         ));
+    }
+    None
+}
+
+/// The reject diagnostic for a rejected `${var:OP}` operator, or `None`. The
+/// operator is a single value, so at most one applies: indirect `${!x}`
+/// (SB4003), `@`-transforms (SB4015), and the DD#65 pruned modifier family
+/// (SB4034).
+fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
+    let op = pe.operator.as_deref()?;
+    if op == "unrecognized" {
+        return unrecognized_operator_diag(pe, span);
+    }
+    if let Some(d) = simple_rejected_operator_diag(op, pe, span) {
+        return Some(d);
     }
     // DD#75 §4: the `[@]`/`[*]` bracket-subscript collection forms are retired
     // — `@a` is the sole splat. Reject each with its canonical replacement.

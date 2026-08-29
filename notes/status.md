@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-08-29) — no-ambiguity param fallthrough (SB4047) ════════
+
+**On `hand-parser`.** DG: "need to prevent ambiguity — if the compiler doesn't
+know what something does, that's very bad." (Journal 211, follows 210.)
+
+`parse_parameter_expansion` used to fall through to a bare `${name}` for any
+unrecognised trailing content, **silently dropping** it (`${x&y}`, `${x:foo}`,
+`${x.y}`, `${x:}`, `${x y}` → `$x`). Now the fallthrough carries the raw
+remainder on a sentinel `unrecognized` operator and rejects → **SB4047**.
+Two-layer model: SB4034 = known-dropped op (specific guidance); SB4047 =
+genuinely unknown content. Everything sash understands (`:-`/`:?`/`:off:len`/
+`:s/`, subscripts, `@`→SB4015, `!`→SB4003, strlen) is recognised earlier, so
+only garbage reaches SB4047. specs var_modifiers.sh vm.un1-4. Full 3-mode sweep
+vs `df6fe84`: **0 regressions, 0 gone** — nothing relied on the silent-accept.
+
 ## ════════ STATUS (2026-08-29) — non-colon param family rejected + SUBSET.md deleted ════════
 
 **On `hand-parser`.** DG-directed (journal 210). "Isn't `${x-4}` invalid sash?"
