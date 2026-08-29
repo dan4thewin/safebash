@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=87
+plan=91
 echo "1..$plan" >&3
 
 set +e
@@ -518,6 +518,21 @@ if in_modes native,c; then
 else
     skip_chk cc.1; skip_chk cc.2; skip_chk cc.3; skip_chk cc.4
 fi
+
+# --- SB4045: value-intrinsic wrong arity (was: fall-through to a bare command
+# and a runtime "bug: bare command passed to sash_exec"). Front-end — all modes.
+# 55.42 sub needs 3 args
+run_sash 's=x; echo $(sub a)'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 55.42
+# 55.43 toupper needs 1 arg (0 given)
+run_sash 'echo $(toupper)'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 55.43
+# 55.44 len is now strict too (was lenient — silently ignored extra args)
+run_sash 'a=x; echo $(len a b)'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 55.44
+# 55.45 a correct-arity call still compiles + runs
+run_sash 's=hello; echo $(len s)'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk 55.45
 
 set -e
 tally

@@ -1,13 +1,30 @@
 ---
 title: "Malformed value-intrinsic arity falls through to sash_exec (runtime `bug:` abort)"
-status: pending
+status: done
 priority: P1
 kind: bug
 depends: []
 gates: []
 ---
 
-## Symptom
+## RESOLVED (2026, fork C — DG-approved)
+
+**SB4045** both ways (defense-in-depth):
+- **A (validate.rs `check_cmdsub_arity`)**: walks every `$( )` (via
+  `walk_all_exprs`); a single-command body whose head is a fixed-arity value
+  intrinsic (`value_intrinsic_arity` in ssa.rs: len/keys/toupper/tolower/
+  basename/dirname=1, match=2, sub/gsub=3) with a mismatched arg count →
+  **spanned** SB4045. Also makes `len` strict (was silently ignoring extras).
+- **B (transform `resolve_single_cmdsubst` backstop)**: a fixed-arity value
+  intrinsic that fell through (`try_native_intrinsic` → None) no longer records
+  an external use / emits a bare command — it yields an empty capture, so
+  nothing bare reaches `sash_exec` even when validation is bypassed
+  (DG's `--bypass` switches).
+
+specs `spec/errors.sh` 55.42-45 (`$(sub a)`, `$(toupper)`, `$(len a b)`, and a
+correct-arity control). Full 3-mode sweep: 0 regressions, 12 new passing.
+
+## Symptom (original)
 
 A value intrinsic (`$(sub …)`, `$(toupper …)`, etc.) called with the **wrong
 argument count** compiles cleanly, then aborts at **runtime** with an

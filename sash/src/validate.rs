@@ -57,6 +57,13 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     check_predicate_definite_return(program, &functions, &mut diags);
     // SB4044: a `const`/`readonly` variable cannot be reassigned.
     check_const_reassignment(&blocks, &mut diags);
+    // SB4045: a fixed-arity value-intrinsic (`sub`, `len`, …) called via `$( )`
+    // with the wrong number of arguments.
+    for &block in &blocks {
+        for stmt in block {
+            walk_all_exprs(stmt, &mut |expr| check_cmdsub_arity(expr, &mut diags));
+        }
+    }
     diags
 }
 
@@ -138,6 +145,54 @@ fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
              binding is immutable"
         ),
     )
+}
+
+/// SB4045: a value-intrinsic (`len`, `sub`, `toupper`, …) invoked via `$( )`
+/// with the wrong argument count. Without this, a strict-arity intrinsic
+/// (`sub`, `match`, …) whose arity check fails falls through to a bare external
+/// command and aborts at runtime ("bare command passed to sash_exec"); a
+/// lenient one (`len`) silently ignores extra args. This makes arity a uniform
+/// compile-time error.
+fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(c) = single_cmdsub_command(stmts) else {
+        return;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return;
+    };
+    let Some(arity) = crate::ssa::value_intrinsic_arity(name) else {
+        return;
+    };
+    if c.args.len() != arity {
+        diags.push(Diagnostic::error_span(
+            c.name.span,
+            "SB4045",
+            format!(
+                "`{name}` expects {arity} argument{} but got {} — a value intrinsic \
+                 must be called with its exact arity",
+                if arity == 1 { "" } else { "s" },
+                c.args.len()
+            ),
+        ));
+    }
+}
+
+/// The single command body of a `$( )` (ignoring comments), or `None` if the
+/// substitution holds a pipeline / multiple statements (not a simple intrinsic
+/// call).
+fn single_cmdsub_command(stmts: &[Statement]) -> Option<&Command> {
+    let mut cmd = None;
+    for s in stmts {
+        match &s.kind {
+            StmtKind::Comment(_) => {}
+            StmtKind::Command(c) if cmd.is_none() => cmd = Some(c),
+            _ => return None,
+        }
+    }
+    cmd
 }
 
 /// SB4037 (DD#74): a function used in a boolean context must supply its

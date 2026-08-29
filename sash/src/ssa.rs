@@ -887,6 +887,20 @@ pub struct VersionState {
     pub externally_used: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
+/// Fixed argument count for a value-producing intrinsic (`len`, `sub`, …) when
+/// used as a `$( )` head. `None` for variadic intrinsics (`join`, `echo`) and
+/// non-intrinsics. Shared by validate (SB4045 arity check) and the transform
+/// backstop that keeps a malformed intrinsic from falling through to a bare
+/// external command.
+pub(crate) fn value_intrinsic_arity(name: &str) -> Option<usize> {
+    match name {
+        "len" | "keys" | "toupper" | "tolower" | "basename" | "dirname" => Some(1),
+        "match" => Some(2),
+        "sub" | "gsub" => Some(3),
+        _ => None,
+    }
+}
+
 impl VersionState {
     pub fn with_types(type_map: HashMap<String, crate::ir::VarType>) -> Self {
         Self {

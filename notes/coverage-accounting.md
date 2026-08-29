@@ -163,11 +163,10 @@ source — must never happen):
 1. **const-reassign panic** (`notes/tasks/const-reassign-panic.md`) — **FIXED**
    (SB4044, fork C): validate `check_const_reassignment` (spanned) + `define()`
    backstop (spanless). specs types.sh 35.3-35.9.
-2. **intrinsic-arity fallthrough** (`notes/tasks/bug-intrinsic-arity-fallthrough.md`):
-   `$(sub a)`, `$(toupper)` (wrong arg count) fall through to `sash_exec` →
-   runtime `bug: bare command passed to sash_exec`. Should be a compile-time SB.
-   Fork C approved (A arity-check in `try_native_intrinsic` + B exec-funnel
-   backstop) — next up.
+2. **intrinsic-arity fallthrough** (`notes/tasks/bug-intrinsic-arity-fallthrough.md`)
+   — **FIXED** (SB4045, fork C): validate `check_cmdsub_arity` (spanned) +
+   transform `resolve_single_cmdsubst` backstop (no bare exec, survives
+   `--bypass`). specs errors.sh 55.42-45.
 
 ## Never-run named functions — classification (73 total incl. closures; 27 named)
 

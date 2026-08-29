@@ -47,6 +47,17 @@ fn resolve_single_cmdsubst(name: String, c: &Command, state: &VersionState) -> O
     if let Some(v) = try_native_intrinsic(&name, c, state) {
         return Some(v);
     }
+    // Backstop (fork B): a fixed-arity value-intrinsic that didn't lower is a
+    // malformed (wrong-arity) call. It must NOT fall through to a bare external
+    // command — that reaches `sash_exec` and aborts at runtime ("bare command
+    // passed to sash_exec"). Yield an empty capture instead; validate (SB4045)
+    // reports the arity error under normal compilation, and this keeps the SSA
+    // well-formed even when validation is bypassed.
+    if let Some(arity) = crate::ssa::value_intrinsic_arity(&name) {
+        if c.args.len() != arity {
+            return Some(SsaValue::Literal(String::new()));
+        }
+    }
     if !state.lowering_fn_template {
         state.externally_used.borrow_mut().insert(name);
     }
