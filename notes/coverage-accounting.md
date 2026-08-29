@@ -168,16 +168,18 @@ Four bugs found this way — the never-run signal pointed straight at each:
    `--bypass`). specs errors.sh 55.42-45.
 3. **nested/parenthesized arith assignment dropped**
    (`notes/tasks/bug-nested-arith-assign-dropped.md`) — **FIXED** (fork A,
-   DG-chosen): `(( (a=2) ))` / `(( 1+(a=2) ))` used to silently leave `a=0`
-   (bash: 2). `lower_arith_test_stmt` now **hoists** an embedded assignment in an
-   unconditional position into a real store (`hoist_arith_mutations`); forms that
-   can't be applied in place — a mutation in a `$(( … ))` value, an embedded
-   `++`/`--`, an `a[i]` mutation, or a mutation under `&&`/`||`/`?:` — are a clean
-   **SB4020** compile error (never a silent wrong value). The half-wired value
-   arms (`incdec_to_ssa`, `compound_assign_to_ssa`, and the mutation arms of
-   `arith_to_ssa`) were **removed** — now a documented `unreachable!` since
-   validate+hoist guarantee no mutation reaches the value path. specs
-   arithmetic.sh 31.25-36.
+   DG-chosen): `(( (a=2) ))` / `(( 1+(a=2) ))` (statements) used to silently leave
+   `a=0` (bash: 2). `lower_arith_test_stmt` now **hoists** an embedded assignment
+   in a `(( … ))` **statement** into a real store (`hoist_arith_mutations`).
+   Consistent subset rule (SUBSET.md — a mutation belongs in a `(( … ))` statement
+   only): a mutation in a `$(( … ))` value → **SB4020**, in an `if`/`while`
+   **condition** → **SB5007** (`validate_arith_in_condition` now checks
+   `arith_has_mutation`), and an embedded `++`/`--`, `a[i]`, or mutation under
+   `&&`/`||`/`?:` in a statement → **SB4020** (never a silent wrong value). The
+   half-wired value arms (`incdec_to_ssa`, `compound_assign_to_ssa`, and the
+   mutation arms of `arith_to_ssa`) were **removed** — now a documented
+   `unreachable!` since validate+hoist guarantee no mutation reaches the value
+   path. specs arithmetic.sh 31.25-36.
 4. **redirected function def unregistered**
    (`notes/tasks/bug-redirected-function-def-unregistered.md`) — **FIXED**
    (reject + delete, DG-chosen option B): a redirect on a function definition /

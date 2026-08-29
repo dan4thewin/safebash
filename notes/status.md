@@ -4,15 +4,18 @@
 reject and delete"). Journal 206.
 
 - **Bug #3 — nested/embedded arith assignment dropped → FIXED (fork A).**
-  `(( (a=2) ))`, `(( 1+(a=2) ))`, `(( a=2,(b=3) ))`, `if (( (a=2) ))` used to
-  silently leave the var unchanged. `lower_arith_test_stmt` now **hoists** an
-  embedded assignment in an unconditional position into a real store
-  (`hoist_arith_mutations`), matching bash; forms it can't apply in place (a
-  mutation in a `$(( … ))` value, embedded `++`/`--`, `a[i]`, or under
-  `&&`/`||`/`?:`) are a clean **SB4020** (never silent). The half-wired value
-  arms (`incdec_to_ssa`/`compound_assign_to_ssa` + the mutation arms of
-  `arith_to_ssa`) were **deleted** — documented `unreachable!`, proven by a
-  0-new-failure sweep. arithmetic.sh 31.25-36.
+  `(( (a=2) ))`, `(( 1+(a=2) ))`, `(( a=2,(b=3) ))` (statements) used to silently
+  leave the var unchanged. `lower_arith_test_stmt` now **hoists** an embedded
+  assignment in a `(( … ))` **statement** into a real store
+  (`hoist_arith_mutations`), matching bash. Consistent subset rule (SUBSET.md): a
+  mutation belongs in a `(( … ))` statement only — a mutation in a `$(( … ))`
+  **value** → SB4020, in an `if`/`while` **condition** → SB5007
+  (`validate_arith_in_condition` now checks `arith_has_mutation`, so
+  `if (( (a=2) ))` joins `if (( x=5 ))`), and an embedded `++`/`--`, `a[i]`, or
+  mutation under `&&`/`||`/`?:` in a statement → SB4020 (never silent). The
+  half-wired value arms (`incdec_to_ssa`/`compound_assign_to_ssa` + the mutation
+  arms of `arith_to_ssa`) were **deleted** — documented `unreachable!`, proven by
+  a 0-new-failure sweep. arithmetic.sh 31.25-36.
 
 - **Bug #4 — redirect on a non-command → FIXED (reject + delete).** A redirect on
   a function-def / declaration / assignment is one clean spanned **SB4046** (was:

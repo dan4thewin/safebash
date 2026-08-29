@@ -919,7 +919,7 @@ fn validate_arith_context(
 
     let kind = classify_arith_expr(expr);
     if in_condition {
-        validate_arith_in_condition(expr, kind, span, diags);
+        validate_arith_in_condition(expr, span, diags);
     } else {
         validate_arith_as_statement(expr, kind, span, diags);
     }
@@ -928,20 +928,17 @@ fn validate_arith_context(
 /// In condition context (`if (( … ))`, `while (( … ))`, etc.):
 /// DD#31 permits comma expressions whose non-final parts are
 /// mutations and final part is a comparison. Outside that shape,
-/// a bare mutation is rejected (SB5007).
-fn validate_arith_in_condition(
-    expr: &ArithExpr,
-    kind: crate::parse::ArithKind,
-    span: Span,
-    diags: &mut Vec<Diagnostic>,
-) {
-    use crate::parse::ArithKind;
-
+/// any mutation — top-level or embedded — is rejected (SB5007).
+fn validate_arith_in_condition(expr: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
     if let ArithExpr::Comma(exprs) = expr {
         validate_arith_comma_in_condition(exprs, span, diags);
         return;
     }
-    if kind == ArithKind::Mutation {
+    // A condition is a pure test: any mutation — a top-level one (`if (( x=5 ))`,
+    // `if (( x++ ))`) or one embedded under a paren / operator
+    // (`if (( (a=2) ))`, `while (( (i=i+1) <= 3 ))`) — is rejected. The statement
+    // form `(( … ))` is where an assignment belongs (there it is hoisted; bug #3).
+    if arith_has_mutation(expr) {
         let desc = arith_brief(expr);
         diags.push(Diagnostic::error_span(
             span,

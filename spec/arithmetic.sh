@@ -837,10 +837,11 @@ run_sash 'int a=0; int b=0; (( (a=2) + (b=3) )); echo "$a-$b"'
 run_sash 'int a=0; int b=0; (( a=2, (b=3) )); echo "$a-$b"'
 [[ $rc = 0 && $out = "2-3" && -z $err ]]; chk 31.28
 
-# 31.29 embedded assignment in an `if (( … ))` condition applies + branch taken
-run_sash 'int a=0; if (( (a=2) )); then echo yes; fi; echo $a'
-[[ $rc = 0 && $out = "yes
-2" && -z $err ]]; chk 31.29
+# 31.29 an embedded assignment in an `if (( … ))` CONDITION is rejected — a
+# condition is a pure test (SUBSET.md), like `if (( x=5 ))` / `if (( x++ ))`.
+# The store belongs in a `(( … ))` statement (31.25-28 above).
+run_sash 'int a=0; if (( (a=2) )); then echo yes; fi'
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk 31.29
 
 # 31.30 embedded compound-assign applies (value == new, bash-exact)
 run_sash 'int a=1; (( (a+=5) )); echo $a'
@@ -850,11 +851,10 @@ run_sash 'int a=1; (( (a+=5) )); echo $a'
 run_sash 'int a=1; (( 10 + (a+=5) )); echo $a'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk 31.31
 
-# 31.32 assignment embedded in a while condition re-applies every iteration
+# 31.32 an embedded assignment in a `while (( … ))` CONDITION is rejected
+# (pure-test rule); mutate in the loop body or use the DD#31 comma form.
 run_sash 'int i=0; while (( (i=i+1) <= 3 )); do echo $i; done'
-[[ $rc = 0 && $out = "1
-2
-3" && -z $err ]]; chk 31.32
+[[ $rc != 0 && -z $out && $err == *SB5007* ]]; chk 31.32
 
 # 31.33 doubly-parenthesized assignment applies
 run_sash 'int a=0; (( ((a=7)) )); echo $a'

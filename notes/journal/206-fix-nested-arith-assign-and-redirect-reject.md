@@ -4,38 +4,46 @@ Two grind-surfaced bugs closed, both DG-directed ("fix #3; reject and delete").
 
 ## Bug #3 — nested / embedded arith assignment silently dropped (fork A)
 
-`(( (a=2) ))`, `(( 1 + (a=2) ))`, `(( a=2, (b=3) ))`, `if (( (a=2) ))`,
-`x=$(( (a=2)+1 ))` all used to compute a value but **drop the store** — the
-variable kept its old value with no diagnostic. Root cause: an assignment that
-isn't the top-level `(( … ))` mutation is lowered by the *value* path
-(`arith_to_ssa`), which built an `ArithBinOp` value and never emitted the store.
+`(( (a=2) ))`, `(( 1 + (a=2) ))`, `(( a=2, (b=3) ))` all used to compute a value
+but **drop the store** — the variable kept its old value with no diagnostic.
+Root cause: an assignment that isn't the top-level `(( … ))` mutation is lowered
+by the *value* path (`arith_to_ssa`), which built an `ArithBinOp` value and never
+emitted the store.
 
-DG chose **fork A** (emit the store, match bash). The value path is immutable
-(`&VersionState`, no block handle), so the fix lives where `&mut` is held:
+DG chose **fork A** (emit the store, match bash) — but only where the subset
+already treats `(( … ))` as a mutation site, i.e. a **statement**. The consistent
+rule is: *a mutation belongs in a `(( … ))` statement — never in a condition or a
+`$(( … ))` value* (SUBSET.md: conditions are pure tests; `$(( ))` is read-only).
+The value path is immutable (`&VersionState`, no block handle), so the store
+emission lives where `&mut` is held:
 
-- **transform** `lower_arith_test_stmt` (both bare `(( … ))` statements and
-  `if`/`while` conditions route through it as `ArithTest`): when the expression
-  contains a mutation, `hoist_arith_mutations` emits each embedded
+- **transform** `lower_arith_test_stmt` (a bare `(( … ))` statement): when the
+  expression contains a mutation, `hoist_arith_mutations` emits each embedded
   Assign/CompoundAssign/SubscriptAssign as a real `Assignment` (via the standard
   `lower_one` path, so taint/type/SSA bookkeeping match a top-level `(( a=2 ))`),
   then returns a mutation-free residual in which each assignment is a **read** of
-  its now-stored target. Bash-exact for the assigned value; per-iteration correct
-  in a `while` condition (evaluated in place each pass). Guarded by
-  `arith_has_mutation`, so the common mutation-free condition is untouched.
+  its now-stored target. Guarded by `arith_has_mutation`, so the common
+  mutation-free case is untouched.
 
-- **validate** (SB4020) rejects the forms the hoist can't apply in place, so
-  there is never a silent wrong value (gate 3): any mutation inside a `$(( … ))`
-  **value** (`check_arith_value_mutation` — the value path has no side effects),
-  and in a `(( … ))` statement an embedded `++`/`--`, an `a[i]` mutation, or a
-  mutation under a short-circuit / ternary operator (`check_arith_test_placement`
-  → `arith_unhoistable_reason`, which tracks a conditional-position flag). The
-  pre-existing `(( x = y++ ))` reject (parser `reject_nested_mutation`) is
+- **validate** rejects the forms that can't (or mustn't) be applied in place, so
+  there is never a silent wrong value (gate 3):
+  - a mutation in a `$(( … ))` **value** → SB4020 (`check_arith_value_mutation`
+    — the value path has no side effects);
+  - a mutation in a `(( … ))` / `if`/`while` **condition** → SB5007
+    (`validate_arith_in_condition` now checks `arith_has_mutation`, not just
+    top-level classification, so `if (( (a=2) ))` and `while (( (i=i+1) <= 3 ))`
+    join `if (( x=5 ))` / `if (( x++ ))` as errors — conditions are pure tests);
+  - in a `(( … ))` **statement**, an embedded `++`/`--`, an `a[i]` mutation, or a
+    mutation under a short-circuit / ternary operator → SB4020
+    (`check_arith_test_placement` → `arith_unhoistable_reason`).
+
+  The pre-existing `(( x = y++ ))` reject (parser `reject_nested_mutation`) is
   unchanged.
 
-Before/after (fresh HEAD baseline): three previously **silent-wrong** cases
-(`$(( (a=2)+1 ))`, `(( 1+a++ ))`, `(( a?(b=2):0 ))`) are now clean SB4020;
-the gate cases now emit the store. `arith_has_mutation` is a shared
-`pub(crate)` walker in `ir.rs`.
+Before/after (fresh HEAD baseline): four previously **silent-wrong** cases
+(`$(( (a=2)+1 ))`, `(( 1+a++ ))`, `(( a?(b=2):0 ))`, and `if (( (a=2) ))` /
+`while (( (i=i+1)<=3 ))`) are now clean errors; the statement gate cases now emit
+the store. `arith_has_mutation` is a shared `pub(crate)` walker in `ir.rs`.
 
 **Dead code removed** (completing fork A): with validate+hoist guaranteeing no
 mutation reaches the value path, `incdec_to_ssa`, `compound_assign_to_ssa`, and

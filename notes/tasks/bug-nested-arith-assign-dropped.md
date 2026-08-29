@@ -10,29 +10,35 @@ gates:
   - "either the side-effect is emitted, or the nested-assignment form is a compile error — never a silent wrong value"
 ---
 
-## Resolution (2026-08-28) — fork A (DG-chosen)
+## Resolution (2026-08-28) — fork A (DG-chosen), statement-only
 
-Implemented. A `(( … ))` statement or `if`/`while` condition now **hoists** an
-embedded assignment in an unconditionally-evaluated position — the store takes
-effect and the expression's value is the assigned value, matching bash:
-`(( (a=2) ))`, `(( 1 + (a=2) ))`, `(( a=2, (b=3) ))`, `(( (a+=5) ))`,
-`if (( (a=2) ))`, per-iteration `while (( (i=i+1) <= 3 ))`. Done in
+Implemented. A `(( … ))` **statement** now **hoists** an embedded assignment in
+an unconditionally-evaluated position — the store takes effect and the value is
+the assigned value, matching bash: `(( (a=2) ))`, `(( 1 + (a=2) ))`,
+`(( a=2, (b=3) ))`, `(( (a+=5) ))`, `(( ((a=7)) ))`. Done in
 `lower_arith_test_stmt` → `hoist_arith_mutations` (transform/statements.rs),
 emitting each store via the standard `Assignment` path.
 
-Forms that can't be applied in place are a clean **SB4020** compile error
-(never a silent wrong value, honoring gate 3): an assignment inside a `$(( … ))`
-**value** (`check_arith_value_mutation`), and — in a `(( … ))` statement — an
-embedded `++`/`--`, an `a[i]` mutation, or a mutation under `&&`/`||`/`?:`
-(`check_arith_test_placement` / `arith_unhoistable_reason`, validate.rs). The
-pre-existing `(( x = y++ ))` reject (parser `reject_nested_mutation`) is
+The consistent rule (SUBSET.md): a mutation belongs in a `(( … ))` **statement**
+only. Everything else is a clean compile error (never a silent wrong value,
+honoring gate 3):
+- a mutation in a `$(( … ))` **value** → SB4020 (`check_arith_value_mutation`);
+- a mutation in an `if`/`while`/`(( … ))` **condition** → SB5007
+  (`validate_arith_in_condition` now tests `arith_has_mutation`, so
+  `if (( (a=2) ))` / `while (( (i=i+1) <= 3 ))` join the existing
+  `if (( x=5 ))` / `if (( x++ ))` rejects — conditions are pure tests);
+- in a `(( … ))` statement, an embedded `++`/`--`, an `a[i]` mutation, or a
+  mutation under `&&`/`||`/`?:` → SB4020 (`check_arith_test_placement` /
+  `arith_unhoistable_reason`).
+
+The pre-existing `(( x = y++ ))` reject (parser `reject_nested_mutation`) is
 unchanged.
 
 The now-unreachable value-path arms (`incdec_to_ssa`, `compound_assign_to_ssa`,
 and the `Assign`/`CompoundAssign`/`IncDec` arms of `arith_to_ssa`) were removed
 / replaced with a documented `unreachable!` — the half-wired path that dropped
-the store no longer exists. Specs `arithmetic.sh` 31.25–31.36. native+c 0
-regressions; all 12 new tests pass native+c.
+the store no longer exists. Specs `arithmetic.sh` 31.25–31.36 (7 statement
+hoists, 5 rejects incl. 2 condition-context). native+c 0 regressions.
 
 ## Symptom (found via the coverage grind)
 
