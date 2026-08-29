@@ -407,11 +407,11 @@ fn any_tainted<'a>(
 /// - `getenv` / `argv` / `arg` — external input, always tainted.
 /// - Pure generators (`argc`, `epochseconds`, `random`, `getpid`, `getcwd`,
 ///   …) and `len` (cardinality only, DD#24-exempt) — always clean.
-/// - **Pass-through transforms** (`echo`, `join`, `keys`, `dtoi`, `itod`) —
-///   the output derives from the operands, so it is tainted iff any operand
-///   is, exactly like every other transform value (`Concat`, `RegexReplace`,
-///   …). For `join`/`keys` the operand may be a splat value (`@a`) or a bare
-///   array-name literal (`a`); both are consulted.
+/// - **Pass-through transforms** (`echo`, `dtoi`, `itod`) — the output derives
+///   from the operands, so it is tainted iff any operand is, exactly like every
+///   other transform value (`Concat`, `RegexReplace`, …). (`join`/`keys` never
+///   reach here: the transform lowers them to intrinsics, not a command
+///   capture, so a bare `join`/`keys` argv can't appear in SSA.)
 /// - User-defined functions — clean by DD#24.
 /// - Everything else runs via execve/execveat — tainted.
 fn cmd_subst_taint(
@@ -428,7 +428,6 @@ fn cmd_subst_taint(
         "len" | "epochseconds" | "random" | "argc" | "getpid" | "getppid" | "getcpid"
         | "getcwd" | "status" | "signum" => Taint::Clean,
         "echo" | "dtoi" | "itod" => any_tainted(&argv[1..], taint, user_functions),
-        "join" | "keys" => collection_reader_taint(&argv[1..], taint, user_functions),
         _ => {
             if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
                 Taint::Clean
@@ -437,28 +436,6 @@ fn cmd_subst_taint(
             }
         }
     }
-}
-
-/// Taint of a `join`/`keys` reader's operands. Each operand is either a splat
-/// value (`@a` → the array's taint via `value_is_tainted`) or a bare
-/// array-name literal (`a` → `taint_of_name`); tainted if any is.
-fn collection_reader_taint(
-    operands: &[SsaValue],
-    taint: &HashMap<String, Taint>,
-    user_functions: &std::collections::HashSet<String>,
-) -> Taint {
-    let tainted = any_tainted(operands, taint, user_functions) == Taint::Tainted
-        || operands.iter().any(|v| bare_name_tainted(v, taint));
-    if tainted {
-        Taint::Tainted
-    } else {
-        Taint::Clean
-    }
-}
-
-/// A bare array-name literal operand (`join a`) whose named array is tainted.
-fn bare_name_tainted(v: &SsaValue, taint: &HashMap<String, Taint>) -> bool {
-    matches!(v, SsaValue::Literal(name) if taint_of_name(taint, name) == Taint::Tainted)
 }
 
 fn check_value_use(

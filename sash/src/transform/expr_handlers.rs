@@ -125,7 +125,9 @@ fn unwrap_subst_wrappers(mut s: &StmtKind) -> &StmtKind {
 fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option<SsaValue> {
     match BuiltinCmd::from_name(name) {
         BuiltinCmd::Len => try_len_intrinsic(c, state),
-        BuiltinCmd::Keys => try_keys_intrinsic(c, state),
+        // `keys` is not a scalar value intrinsic: a value-context `$(keys m)` is
+        // rejected SB5025 in validate, and `for … in $(keys m)` uses the splat
+        // path — so it falls to `_ => None` here (was a dead `try_keys_intrinsic`).
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
         BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
         BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
@@ -248,18 +250,6 @@ fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
     Some(SsaValue::ParamExpansion {
         var: v,
         operator: operator.to_string(),
-        operand: String::new(),
-    })
-}
-
-fn try_keys_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    let arg = c.args.first()?;
-    let arg_str = expr_to_string(arg);
-    let arg_str = super::expressions::resolve_args_name(&arg_str, state);
-    let v = state.lookup(&arg_str);
-    Some(SsaValue::ParamExpansion {
-        var: v,
-        operator: "arrkeys".to_string(),
         operand: String::new(),
     })
 }

@@ -62,7 +62,9 @@ Compiler (native+c; janet/convert/expand/tests excluded):
 **functions 95.50%** (67/1489 never-run), lines 92.62%, regions 91.82%.
 (Was 95.03% / 73-never-run before the bug#3/#4 work removed `incdec_to_ssa`,
 `compound_assign_to_ssa`, `lower_redirected_function`; this grind round flipped
-3 more, and removed the dead `scan_base_hash_span` → **66 never-run** now.)
+3 more, and removed the dead `scan_base_hash_span`; a follow-up deleted the
+shadowed-dead `collection_reader_taint`/`bare_name_tainted`/`try_keys_intrinsic`
+→ **63 never-run** now.)
 
 ### Grind round 2026-08-29 (cov.76-79)
 
@@ -75,11 +77,15 @@ Measured per-function count (authoritative). **3 named fns flipped 0→>0**:
 
 **4 specs missed their named target** (hit an adjacent path — the classic caveat;
 each verified by re-measuring). Reclassified:
-- `collection_reader_taint` + `bare_name_tainted` (ssa_taint) → **B, shadowed-dead**:
-  `$(join …)`/`$(keys …)` are lowered to intrinsics by `try_native_intrinsic`
-  (`join_intrinsic` / `try_keys_intrinsic`), so a `join`/`keys` **Command** never
-  appears in SSA → `cmd_subst_taint`'s join/keys arm and `collection_reader_taint`
-  are unreachable. Removable (confirm with the remove-then-suite method).
+- `collection_reader_taint` + `bare_name_tainted` (ssa_taint) + `try_keys_intrinsic`
+  (transform) → **shadowed-dead → REMOVED** (2026-08-29, DG "delete dead code
+  first"): `$(join …)`/`$(keys …)` are lowered to intrinsics by
+  `try_native_intrinsic`, so a `join`/`keys` **Command** never appears in SSA
+  (`cmd_subst_taint`'s join/keys arm was unreachable), and a value-context
+  `$(keys m)` is rejected SB5025 in validate while `for … in $(keys m)` uses the
+  splat path (so `try_native_intrinsic`'s Keys arm → `try_keys_intrinsic` was
+  unreachable). Deleted all three fns + the two dead dispatch arms; full sweep
+  green (0 native/c failing), for-in keys still works, value keys still SB5025.
 - `extract_from_literal` / `extract_leading_operator` (parse/parser) → reachable
   only from `parse_test_binary_tail`'s `_` arm, i.e. a **glued** operator the lexer
   didn't split (`[[ $x==a { … } ]]` dispatch form). Compact `[[ a==b ]]` splits `==`
