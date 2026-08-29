@@ -1,31 +1,44 @@
-## ════════ STATUS (2026-08-28) — trap purged + exec supported; coverage accounting ════════
+## ════════ STATUS (2026) — coverage accounting reframed; 2 P1 bugs fixed ════════
 
-**On `hand-parser`, pushed @ `e7d83b8`.** Two DG dispositions of the
-"accepted-in-source bash forms" the coverage grind surfaced:
-- **`trap` PURGED** (`8385580`) — direct `trap` → **SB4043** (use `signal`/
-  `END`; the converter owns bash→native). Removed `handle_trap`* machinery
-  (~90 lines); kept the shared `TrapSignal`/`SignalFlag`/`exit_trap`/END
-  machinery. DD#56 amended; signals.sh 56.14/56.15.
-- **`exec` SUPPORTED** (`e7d83b8`) — DG: it has no replacement for fd
-  manipulation (`exec > file`) + program replacement (`exec cmd`). Unblocked
-  (exec→BUILTINS) + closed a security hole (`exec $var`→SB5011) + DD#23 target
-  resolution + DD#24 taint (inherited). spec/exec.sh ex.1-11 (native). DD#14
-  amended. **Native-only** (c/janet emit no exec → task `c-janet-exec-support`).
+**On `hand-parser`, pushed @ `d8696b9`.** The coverage grind was reframed and
+two P1 bugs it surfaced were fixed (DG-approved fork C for each).
 
-**DG's accounting goal** ("explain every reachable-but-unhittable block"):
-`notes/coverage-accounting.md` is the living ledger — buckets for removed-dead,
-not-spec-reachable (`ssa::display` — no CLI trigger), specs-added (cov.29-64 +
-trace.sh + exec.sh + signals 56.14/15), and the method caveat (the
-fully-uncovered-function scan has false positives — verify each empirically).
+**Methodology correction (the key result):** source-based LLVM coverage is
+**optimization-independent** — measured at opt-level 0, `inline-threshold=0`,
+and full `-O3` the numbers are byte-identical. So the per-function `count` from
+`cargo llvm-cov report --json` is **authoritative**; the earlier "line-level is
+too noisy / inlining false-zeros" worry was wrong. The reliable frame is
+**function coverage: 95.03% (73/1469 never-run)** — a tractable list, each
+classified A/B/C/D in `notes/coverage-accounting.md`. A passing feature probe
+does NOT prove a specific fn ran (it may route through a different path).
 
-**Coverage:** 87.69% → ~91% lines this session (compiler, native+c). Many
-commits, 0 native/c regressions throughout. Journals 190-201.
+**Coverage:** lines 87.69% → **92.28%**, functions → **95.03%** (native+c).
+cov.65-75 added (bitwise, div/mod-zero, arith-comma SB5007, sed SB4032,
+substring, keys-forin, compact-dispatch, dispatch-predicate). 0 regressions.
 
-**Remaining threads (lower yield / need DG):** `extract_from_literal` (compact
-`[[ ]]` — scan false positive, verify); the exec c/janet backend gap. (Note:
-the earlier "ssa::display / SSA pretty-printer" thread was a mischaracterization
-— there is NO SSA pretty-printer; the flagged symbol was `ArithOp::display`, a
-dead operator→string helper, now removed.)
+**2 P1 bugs FIXED** (reachable panic/`bug:` invariants on ordinary input — the
+concrete payoff of "account for every reachable line"):
+- **const-reassign panic** → **SB4044** (journal 204). `const x=1; x=2` panicked
+  ssa.rs:926. Fork C: validate `check_const_reassignment` (spanned) + `define()`
+  spanless backstop. types.sh 35.3-35.9.
+- **intrinsic-arity fallthrough** → **SB4045** (journal 205). `$(sub a)` aborted
+  at runtime `bug: bare command passed to sash_exec`. Fork C: validate
+  `check_cmdsub_arity` (spanned) + transform backstop (survives `--bypass`).
+  Makes `len` strict. errors.sh 55.42-45.
+
+**Next (DG mandate — keep draining the A-bucket via specs):** ~15 remaining
+named never-run functions are reachable-but-untested (has_mutation via nested
+arith mutation, sig_scan_case/sig_record_arith_index, lower_redirected_function,
+c-backend emit_dup_output/latest_var_as_str/emit_arr_keys_joined, taint
+collection_reader_taint, redirect/arith scanner sub-paths, fully-glued
+extract_from_literal). B-candidates to confirm-then-remove: incdec_to_ssa/
+compound_assign_to_ssa/try_keys_intrinsic value-path arms. C: sysroot CLI. See
+`notes/coverage-accounting.md` for the full classification + measurement recipe.
+
+## ════════ (prior) trap purged + exec supported ════════
+
+**Pushed @ `e7d83b8`.** Two DG dispositions of the "accepted-in-source bash
+forms" the coverage grind surfaced:
 
 
 

@@ -167,6 +167,21 @@ source — must never happen):
    — **FIXED** (SB4045, fork C): validate `check_cmdsub_arity` (spanned) +
    transform `resolve_single_cmdsubst` backstop (no bare exec, survives
    `--bypass`). specs errors.sh 55.42-45.
+3. **nested/parenthesized arith assignment dropped** (`notes/tasks/bug-nested-arith-assign-dropped.md`,
+   P1, OPEN): `(( (a=2) ))` / `(( 1+(a=2) ))` silently leave `a=0` (bash: 2) —
+   the value path (`incdec_to_ssa`/`compound_assign_to_ssa`) computes the value
+   but never emits the store. This is why those two showed never-run: they're
+   half-wired, not dead. Fork A (emit the store) / B (reject nested assignment).
+4. **redirected function def unregistered** (`notes/tasks/bug-redirected-function-def-unregistered.md`,
+   P2, OPEN): `f(){…} >file; f` → SB5011 (f never registered — function
+   collection doesn't descend into `Redirected`), leaving `lower_redirected_function`
+   unreachable. Fork A (support) / B (reject cleanly + remove the dead path).
+
+Bugs 3-4 revise the never-run classification: `incdec_to_ssa`/
+`compound_assign_to_ssa` (was "B shadowed-dead") and `lower_redirected_function`
+(was "A untested") are actually **half-wired features** — the never-run signal
+pointed straight at the bug. The other B-candidate, `try_keys_intrinsic`, still
+needs the same probe.
 
 ## Never-run named functions — classification (73 total incl. closures; 27 named)
 
