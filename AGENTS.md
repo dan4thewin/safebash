@@ -90,7 +90,7 @@ on a consequential fork violates Decision authority.
 - **sash-convert/** — bash → sash-native converter
 - **sash-expand/** — expansion utilities
 - **sash-rt-tests/** — runtime test harness
-- **docs/** — GUIDE, SUBSET, TIMELINE
+- **docs/** — GUIDE, TIMELINE
 - **notes/** — iwe knowledge graph: journal, decisions, tasks, status, architecture
 - **audit/** — adversarial audit findings and remediation
 - **contrib/** — contributed scripts/tools
@@ -179,7 +179,8 @@ preprocessor and global `ARITH_MAP` are gone.)
 - `notes/journal/` — full journal in 54 files
 - `notes/tasks/` — backlog with bare frontmatter (status, depends, gates)
 - `docs/GUIDE.md` — architecture overview (public-facing)
-- `docs/SUBSET.md` — safe subset specification (public-facing)
+- the safe subset is defined by the DDs in `notes/decisions/` (SUBSET.md was
+  removed 2026-08-29 — it had drifted from the DDs and was misleading)
 
 ## Build and test
 

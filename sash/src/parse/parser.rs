@@ -2535,7 +2535,9 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
         return Some(d);
     }
     // DD#65: the pruned `${var:OP}` family — every `split_operator` op EXCEPT
-    // `:-` (assign-default/alt/error, prefix/suffix strip, glob replace, case).
+    // the kept `:-` / `:?` (default / require; `:?` re-added by DD#77). Includes
+    // the non-colon forms `-` `+` `=` `?` (DG 2026-08-29: no compiler coercion —
+    // one spelling, the colon forms; conversion `-`→`:-` is sash-convert's job).
     // Rejects uniformly; migration to the builtins is sash-convert's job (see
     // task `converter-var-modifier-migration`).
     if is_dropped_param_operator(op) {
@@ -2545,7 +2547,7 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
             format!(
                 "the `{}` parameter operator (in ${{{}…}}) isn't part of sash — \
                  use the string builtins (toupper/tolower, sub/gsub, basename/dirname) \
-                 or the :- / :off:len / :s/ forms",
+                 or the :- / :? / :off:len / :s/ forms",
                 user_facing_operator(op),
                 pe.name
             ),
@@ -2597,15 +2599,19 @@ fn user_facing_operator(op: &str) -> String {
 }
 
 /// DD#65: operators dropped from the `${var:OP}` family — the full
-/// `split_operator` set minus the kept `:-`. The `/`-family glob-replace is
-/// remapped to `glob_replace` at parse (parse_standard_operator) so it is
-/// distinguishable here from the kept `:s/` sed op, which shares the raw
-/// `/`//` operator strings. The per-element **array** forms `${arr[@]OP}`
-/// (operator `arrvals_<op>`, `parse_subscript_operator`) are dropped too, for
-/// consistency with the scalar drop — the replacement is a `for x in @a` loop
-/// with `$(sub …)`/`$(gsub …)`. Kept forms (`substring`/`:off:len`, `:s/`,
-/// `strlen`, plain `arrvals`/`arrkeys`/`arrjoin` join, `glob`) arrive via other
-/// parse paths / operators and are not matched here.
+/// `split_operator` set minus the kept `:-` / `:?` (DD#77). Includes the
+/// non-colon default family `-` `+` `=` `?` (DG 2026-08-29 — see
+/// `rejected_param_operator_diag`): these are recognised by `split_operator` so
+/// they reject explicitly here instead of silently dropping (`${x-4}` → `${x}`).
+/// The `/`-family glob-replace is remapped to `glob_replace` at parse
+/// (parse_standard_operator) so it is distinguishable here from the kept `:s/`
+/// sed op, which shares the raw `/`//` operator strings. The per-element
+/// **array** forms `${arr[@]OP}` (operator `arrvals_<op>`,
+/// `parse_subscript_operator`) are dropped too, for consistency with the scalar
+/// drop — the replacement is a `for x in @a` loop with `$(sub …)`/`$(gsub …)`.
+/// Kept forms (`substring`/`:off:len`, `:s/`, `strlen`, plain
+/// `arrvals`/`arrkeys`/`arrjoin` join, `glob`) arrive via other parse paths /
+/// operators and are not matched here.
 fn is_dropped_param_operator(op: &str) -> bool {
     // Per-element array form: `arrvals_<raw op>` (the array parse path keeps the
     // raw `/`//`, unlike the scalar `glob_replace` remap). Plain `arrvals`
@@ -2618,7 +2624,20 @@ fn is_dropped_param_operator(op: &str) -> bool {
     }
     matches!(
         op,
-        ":=" | ":+" | "#" | "##" | "%" | "%%" | "glob_replace" | "^" | "^^" | "," | ",,"
+        ":=" | ":+"
+            | "#"
+            | "##"
+            | "%"
+            | "%%"
+            | "glob_replace"
+            | "^"
+            | "^^"
+            | ","
+            | ",,"
+            | "-"
+            | "+"
+            | "="
+            | "?"
     )
 }
 

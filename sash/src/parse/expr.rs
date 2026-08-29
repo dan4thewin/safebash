@@ -1113,38 +1113,27 @@ fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr>
 // ── Operator splitting ─────────────────────────────────────────────
 
 fn split_operator(s: &str) -> (Option<String>, Option<String>) {
-    let bytes = s.as_bytes();
-    if bytes.is_empty() {
-        return (None, None);
-    }
-
+    // Two-char ops first (`:-` before `-`, `##` before `#`, …) so the longer
+    // operator wins. Both tiers share `match_leading_operator`.
     let two_char_ops = &[
         ":-", ":=", ":+", ":?", "##", "%%", "//", "/#", "/%", "^^", ",,",
     ];
-    for op in two_char_ops {
+    let one_char_ops = &["%", "#", "/", "^", ",", "-", "+", "=", "?"];
+    match_leading_operator(s, two_char_ops)
+        .or_else(|| match_leading_operator(s, one_char_ops))
+        .unwrap_or((None, None))
+}
+
+/// The first `ops` entry that prefixes `s`, split into `(operator, operand)`
+/// (operand `None` when nothing follows). `None` if no operator matches.
+fn match_leading_operator(s: &str, ops: &[&str]) -> Option<(Option<String>, Option<String>)> {
+    for op in ops {
         if let Some(rest) = s.strip_prefix(op) {
-            let operand = if rest.is_empty() {
-                None
-            } else {
-                Some(rest.to_string())
-            };
-            return (Some(op.to_string()), operand);
+            let operand = (!rest.is_empty()).then(|| rest.to_string());
+            return Some((Some(op.to_string()), operand));
         }
     }
-
-    let one_char_ops = &["%", "#", "/", "^", ","];
-    for op in one_char_ops {
-        if let Some(rest) = s.strip_prefix(op) {
-            let operand = if rest.is_empty() {
-                None
-            } else {
-                Some(rest.to_string())
-            };
-            return (Some(op.to_string()), operand);
-        }
-    }
-
-    (None, None)
+    None
 }
 
 // ── Command substitution ───────────────────────────────────────────

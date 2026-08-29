@@ -49,10 +49,14 @@ keeps the disposition homogeneously int.
 
 ### Scope notes
 
-- **Bare `-`** (default-on-*unset*) is unaffected: sash vars are always set, so
-  its default is dead code and its type is irrelevant. Native `${x-4}`/`${s-hi}`
-  already match bash. (A phantom "miscompile" I chased was my own test error —
-  `sash -c` takes a **code string** à la `bash -c`, not a file path.)
+- **Non-colon family** (`${x-4}` `${x+4}` `${x=4}` `${x?m}`) — corrected the
+  next session (journal 210): these were silently dropped (parsed as bare
+  `${x}`, the operator+word discarded — `${x+4}` even yielded `$x` not the
+  alternate). DG: DD#65 governs — reject all non-`:-`/`:?` forms (SB4034), no
+  compiler coercion, one spelling. *(This supersedes an earlier claim here that
+  bare `-` "matches bash / is unaffected" — that was wrong; the form should be
+  rejected, and my "matches bash" test was itself the `sash -c` code-string-vs-
+  file mistake.)*
 - **Janet int arrays** are broken independent of `:-` (`int array a=(4 5 6)` →
   `(scan-number @["4" "5" "6"])` → nil), so an int-array **cell** `:-` also
   fails in janet; native + c handle it. Filed →

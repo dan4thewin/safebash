@@ -179,9 +179,36 @@ is **int**-typed (a scalar `int` or an int-array/map cell):
    with the arithmetic-context default rule (DD#77 D4): one mental model — "an
    int `:-` default is an int literal" — and keeps the disposition homogeneously
    int, so no mixed-type ternary and no string round-trip in the value.
-   (Bare `-` — default-on-*unset* — is unaffected: sash vars are always set, so
-   its default is dead code and its type is irrelevant.)
+   (Bare `-` — default-on-*unset* — is **not** an accepted alias: like the whole
+   non-colon family it is rejected SB4034, see the 2026-08-29 non-colon
+   addendum below.)
 
 Lowering: an int source lowers to `SsaValue::Ternary{ ArithBinOp{src,Eq,0} ?
 default : src }` (native + c via SSA); janet emits the `(if (= name 0) …)` form
 directly from the IR. Specs: coverage.sh cov.78/80/81/82/83/84/85.
+
+## Addendum (2026-08-29) — non-colon default family rejected (`-` `+` `=` `?`)
+
+DG: "clarity favors a single spelling. DD65 gives the answer." The non-colon
+forms `${x-D}` `${x+D}` `${x=D}` `${x?D}` are dropped, same as their colon
+cousins — **rejected SB4034**, no compiler coercion. (Migration `-`→`:-` etc.
+is sash-convert's separate job; the compiler does not silently rewrite.)
+
+These had been a silent-degrade gap: `split_operator` didn't recognise them, so
+`${x-4}` parsed as a bare `${x}` with `-4` **discarded** — and `${x+4}` returned
+`$x` instead of the alternate (a silently *wrong* answer). This is exactly the
+"reject rather than silently degrade" failure DD#65's machinery was built to
+prevent; the non-colon family had simply slipped through. Fix: add `-`/`+`/`=`/
+`?` to `split_operator`'s one-char ops (so they parse to an operator) and to
+`is_dropped_param_operator` (so they reject). The per-element array path
+(`parse_subscript_operator`) is self-guarded and unaffected.
+
+The **kept** spelling is the colon forms only: `:-` (default) and `:?` (require,
+DD#77). SB4034's message now points at `:- / :? / :off:len / :s/`. Specs:
+`spec/var_modifiers.sh` vm.dr19-22 (one per non-colon operator).
+
+**SUBSET.md deleted (same day).** It had claimed "non-colon forms are silently
+coerced to colon forms" (contradicting this decision) and still listed the
+DD#65-dropped `:=`/`:+` as supported — drifted from the DDs and actively
+misleading. DG: "remove SUBSET.md, it's worse than useless." The safe subset is
+defined by the DDs in `notes/decisions/`.

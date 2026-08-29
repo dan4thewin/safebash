@@ -171,7 +171,7 @@ sash/           compiler (validates, type-checks, compiles to native)
 sash-convert/   converter (bash → sash-native source transformation)
 sash-rt/        runtime library (#![no_std], rustix, no libc)
 sash-expand/    expansion utilities
-docs/           GUIDE.md, SUBSET.md, TIMELINE.md
+docs/           GUIDE.md, TIMELINE.md
 notes/          iwe knowledge graph (journal, decisions, tasks, status)
 audit/          adversarial review results (5 models, 3 passes)
 contrib/        vendored deps (plan9port-regexp, freertos-heap4)

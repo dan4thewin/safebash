@@ -112,7 +112,7 @@ safebash/
 ├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
 │   └── src/lib.rs         — ~2300 lines
 ├── sash-expand/           — Expansion utilities
-├── docs/                  — Design docs (GUIDE, SUBSET, TIMELINE)
+├── docs/                  — Design docs (GUIDE, TIMELINE)
 ├── notes/                 — iwe knowledge graph (journal, decisions, tasks)
 ├── audit/                 — Adversarial review results
 │   └── run-1/             — 5 models, 3 passes, remediation done

@@ -1,3 +1,26 @@
+## ════════ STATUS (2026-08-29) — non-colon param family rejected + SUBSET.md deleted ════════
+
+**On `hand-parser`.** DG-directed (journal 210). "Isn't `${x-4}` invalid sash?"
+— yes, and it was a silent-degrade gap.
+
+- **Bug:** `split_operator` didn't recognise the non-colon default family
+  (`-` `+` `=` `?`), so `${x-4}` parsed as bare `${x}` with `-4` **silently
+  discarded**; `${x+4}` even returned `$x` (5) not the alternate (bash 4) — a
+  silently wrong answer.
+- **DG:** "clarity favors a single spelling. DD65 gives the answer." → reject all
+  non-`:-`/`:?` forms **SB4034**, no compiler coercion (conversion `-`→`:-` is
+  sash-convert's separate job). Kept spelling = the colon forms `:-`/`:?`.
+- **Fix:** add `-`/`+`/`=`/`?` to `split_operator` one-char ops +
+  `is_dropped_param_operator`. Array path self-guarded; converter (tree-sitter)
+  unaffected. specs var_modifiers.sh vm.dr19-22. DD#65 non-colon addendum.
+- **SUBSET.md deleted** (DG: "worse than useless" — claimed non-colon coercion,
+  listed dropped `:=`/`:+` as supported). Repointed README/AGENTS/GUIDE/REVIEW at
+  `notes/decisions/` as the subset authority. Corrected the journal-209/DD#65
+  bare-`-` note (was wrong).
+
+**Verification:** full 3-mode sweep vs `174164e` → **0 regressions**; +4 each
+(vm.dr19-22). fmt+clippy clean.
+
 ## ════════ STATUS (2026-08-29) — int `:-` identity-element default (all 3 backends) ════════
 
 **On `hand-parser`.** DG-directed, closing the open bug

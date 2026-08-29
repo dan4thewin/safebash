@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=49
+plan=53
 echo "1..$plan" >&3
 
 set +e
@@ -163,6 +163,18 @@ run_sash 'array a=(pre_one pre_two three); echo ${a[@]#pre_}'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr17
 run_sash 'array a=(file.txt doc.txt note.md); echo ${a[@]%%.txt}'
 [[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr18
+# dr19-22: the NON-COLON default family (`-` `+` `=` `?`) is dropped too (DG
+# 2026-08-29, DD#65 — no compiler coercion; one spelling, the colon forms).
+# These used to parse as a bare `${x}` with the operator+word SILENTLY DROPPED
+# (`${x+4}` even yielded `$x`, not the alternate) — now a clean SB4034.
+run_sash 'x=5; echo "${x-4}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr19
+run_sash 'x=5; echo "${x+4}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr20
+run_sash 'x=5; echo "${x=4}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr21
+run_sash 'x=5; echo "${x?msg}"'
+[[ $rc != 0 && -z $out && $err == *SB4034* ]]; chk vm.dr22
 
 set -e
 tally

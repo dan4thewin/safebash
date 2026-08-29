@@ -28,12 +28,11 @@ If a construct isn't explicitly handled, compilation fails.
 
 | File | What to verify |
 |------|---------------|
-| `docs/SUBSET.md` | The safe subset definition |
-| `src/rules/*.rs` (16 files) | Each rejected construct has a validator rule |
-| `src/validator.rs` | All rules are registered and run |
+| `notes/decisions/` (DD#*) | The safe subset definition (one DD per decision) |
+| `sash/src/validate.rs` | Each rejected construct has a validator rule, all registered/run |
 
-**Key question:** Is there any Bash construct that isn't in SUBSET.md
-and also isn't rejected by a rule?
+**Key question:** Is there any Bash construct that isn't covered by a DD in
+`notes/decisions/` and also isn't rejected by a validator rule?
 
 ### Phase 2: Data provenance (taint model)
 
