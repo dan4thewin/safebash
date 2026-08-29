@@ -216,10 +216,10 @@ run_sash 'false && echo A || echo B && echo C'
 [[ $rc = 0 && $out = $'B\nC' && -z $err ]]; chk 62.9
 run_sash 'true || echo A && echo B'
 [[ $rc = 0 && $out = B && -z $err ]]; chk 62.10
-# 62.11 per-command status pin: a successful echo must leave status 0 so a
+# 62.30 per-command status pin: a successful echo must leave status 0 so a
 # following `&& cmd` runs (the c/janet regression this fix closes).
 run_sash 'echo A && echo B && echo C'
-[[ $rc = 0 && $out = $'A\nB\nC' && -z $err ]]; chk 62.11
+[[ $rc = 0 && $out = $'A\nB\nC' && -z $err ]]; chk 62.30
 
 
 # ── Additional coverage (2026-05-24) ──

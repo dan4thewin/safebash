@@ -1,6 +1,6 @@
 ---
 title: "chk-id collision: commands.sh and wordsplit.sh both use 14.4-14.9"
-status: pending
+status: done
 priority: P2
 kind: chore
 depends: []
@@ -9,7 +9,17 @@ gates:
   - "a failure in either file's 14.x test is visible in spec.db (not masked)"
 ---
 
-## Problem
+## Done (2026-08-29) — superseded by decollide-spec-chk-ids.md
+
+Resolved as part of a full-suite de-collision. The only real overlap was
+14.7/14.8 (commands.sh moved to 14.17/14.18, commit de79db9); commands.sh
+(14.1-14.6, 14.17-14.18) and wordsplit.sh (14.7-14.9) are now disjoint. The
+broader audit + fixes (4 more cross-file pairs + types.sh internal duplicates +
+errors.sh 55.30) are recorded in `decollide-spec-chk-ids.md`, which also carries
+the re-runnable audit.
+
+## Original problem (kept for the record)
+
 
 `chk` ids are a flat GLOBAL namespace (AGENTS.md). `commands.sh` and
 `wordsplit.sh` both use the `14.x` block for *different* tests:

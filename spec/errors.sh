@@ -313,16 +313,16 @@ echo after'
     [[ $rc != 0 && -z $out && -z $err \
        && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.26
 
-    # 55.30 open failure is catchable with || too (symmetry with if), no diag
+    # 55.50 open failure is catchable with || too (symmetry with if), no diag
     run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
-    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.30
+    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.50
     else
-        skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.30
+        skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.50
     fi
 else
     skip_chk 55.20; skip_chk 55.21; skip_chk 55.22; skip_chk 55.23
     skip_chk 55.27; skip_chk 55.28; skip_chk 55.29
-    skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.30
+    skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.50
 fi
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---

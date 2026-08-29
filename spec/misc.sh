@@ -43,22 +43,22 @@ else
     skip_chk 15.2
 fi
 
-# 20.3 lastpipe always on
+# 20.30 lastpipe always on
 run_sash 'echo hello | read x; echo $x'
-[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.3
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.30
 
-# 20.4 `case` is removed (DD#66) — rejected as a reserved word (this also
+# 20.31 `case` is removed (DD#66) — rejected as a reserved word (this also
 #      subsumes the old extglob `@()` reject, which lived inside a case arm)
 run_sash 'case x in @(a|b)) echo yes;; esac'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 20.4
+[[ $rc != 0 && -z $out && -n $err ]]; chk 20.31
 
-# 20.5 globstar ** rejected
+# 20.32 globstar ** rejected
 run_sash 'for f in **/*.sh; do echo $f; done'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 20.5
+[[ $rc != 0 && -z $out && -n $err ]]; chk 20.32
 
-# 20.6 pipefail always on
+# 20.33 pipefail always on
 run_sash '/bin/false | /bin/true'
-[[ $rc != 0 && -z $err ]]; chk 20.6
+[[ $rc != 0 && -z $err ]]; chk 20.33
 
 # 32.1 binary contains .sash_source section (native ELF only)
 if in_modes native; then

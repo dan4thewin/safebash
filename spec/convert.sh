@@ -380,11 +380,11 @@ if [[ $x -eq 0 ]]; then echo yes; fi'
 
 # --- DD#30 unset scalar conversion ---
 
-# 30.7 convert unset var (scalar) to var=""
+# 30.30 convert unset var (scalar) to var=""
 run_convert '#!/bin/bash
 x=hello
 unset x'
-[[ $rc = 0 && $out == *'x=""'* && -z $err ]]; chk 30.7
+[[ $rc = 0 && $out == *'x=""'* && -z $err ]]; chk 30.30
 
 
 # --- DD#53 tilde expansion (~, ~/path) — converter side (compiler side: taint.sh 53.x) ---

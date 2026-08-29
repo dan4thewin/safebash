@@ -311,62 +311,62 @@ run_sash 'fn f -> int { return 42; }
 int n=$(f); echo $n'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.9
 
-# 58.10 `n += $(f)` likewise captures + adds the return value (n: 0 → 42).
+# 58.30 `n += $(f)` likewise captures + adds the return value (n: 0 → 42).
 run_sash 'fn f -> int { return 42; }
 int n=0; n+=$(f); echo $n'
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.10
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.30
 
-# 58.11 the arithmetic form is equivalent — same result.
+# 58.31 the arithmetic form is equivalent — same result.
 run_sash 'fn f -> int { return 42; }
 int n=$((f)); echo $n'
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.11
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 58.31
 
-# 58.12 Option C in a command ARGUMENT: `echo $(f)` prints the return value,
+# 58.32 Option C in a command ARGUMENT: `echo $(f)` prints the return value,
 #       and it works embedded in a double-quoted string too.
 run_sash 'fn f -> int { return 42; }
 echo "port=$(f)"'
-[[ $rc = 0 && $out = "port=42" && -z $err ]]; chk 58.12
+[[ $rc = 0 && $out = "port=42" && -z $err ]]; chk 58.32
 
-# 58.13 `$(f arg…)` passes positional args to the int function.
+# 58.33 `$(f arg…)` passes positional args to the int function.
 run_sash 'fn add -> int { return $(( $1 + $2 )); }
 int n=$(add 3 4); echo $n'
-[[ $rc = 0 && $out = "7" && -z $err ]]; chk 58.13
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 58.33
 
-# 58.14 a sexpr call arg that is itself a PARENTHESISED arith expression
+# 58.34 a sexpr call arg that is itself a PARENTHESISED arith expression
 # `(dbl (2 + 1))` computes dbl(3)=6. Regression guard for
 # bug-arith-sexpr-nested-cmdsub-arg: the `$(( ))` content collector must count
 # individual parens, so the `))` of `(2 + 1))` are two single closes, not the
 # arith terminator (which truncated the content and yielded a silent 0).
 run_sash 'fn dbl -> int { return $(( $1 * 2 )); }
 int x=$(( (dbl (2 + 1)) )); echo $x'
-[[ $rc = 0 && $out = "6" && -z $err ]]; chk 58.14
-# 58.15 the same nested-paren sexpr arg works in a `(( ))` condition
+[[ $rc = 0 && $out = "6" && -z $err ]]; chk 58.34
+# 58.35 the same nested-paren sexpr arg works in a `(( ))` condition
 run_sash 'fn dbl -> int { return $(( $1 * 2 )); }
 if (( (dbl (2 + 1)) == 6 )); then echo yes; else echo no; fi'
-[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.15
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 58.35
 
 # --- DD#30 unset semantics ---
 
-# 30.8 unset var (scalar) → compile error
+# 30.40 unset var (scalar) → compile error
 run_sash 'x=hello; unset x'
-[[ $rc != 0 && -z $out && -n $err ]]; chk 30.8
+[[ $rc != 0 && -z $out && -n $err ]]; chk 30.40
 
-# 30.9 unset arr[N] removes element
+# 30.41 unset arr[N] removes element
 run_sash 'array a=(one two three); unset a[1]; echo ${a[0]} ${a[2]}'
-[[ $rc = 0 && $out = "one three" && -z $err ]]; chk 30.9
+[[ $rc = 0 && $out = "one three" && -z $err ]]; chk 30.41
 
-# 30.10 unset map[key] removes key
+# 30.42 unset map[key] removes key
 run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
-[[ $rc = 0 && $out = "2" && -z $err ]]; chk 30.10
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 30.42
 
-# 30.11 unset arr clears collection (canonical length $(len a); DD#75 §4).
+# 30.43 unset arr clears collection (canonical length $(len a); DD#75 §4).
 # Guarded native,c: janet's unset leaves the slot nil and `(length nil)`
 # crashes (pre-existing janet backend gap — task janet-unset-len-nil).
 if in_modes native,c; then
     run_sash 'array a=(one two three); unset a; echo $(len a)'
-    [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.11
+    [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.43
 else
-    skip_chk 30.11
+    skip_chk 30.43
 fi
 
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
@@ -415,27 +415,27 @@ run_sash 'array a=(10 20 30); i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
 # --- subscript append a[i]+=v (read-modify-write). All backends: c lowers the
 # Concat value (bug-c-janet-concat-in-value) and janet lowers indexed
 # assignment via `put` (bug-janet-indexed-assignment).
-# 33.11 indexed literal-index append concatenates onto the current element
+# 33.40 indexed literal-index append concatenates onto the current element
 run_sash 'array a=(1 2 3); a[0]+=9; echo ${a[0]}'
-[[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.11
+[[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.40
 
-# 33.12 indexed dynamic-index append
+# 33.41 indexed dynamic-index append
 run_sash 'array a=(x y); i=1; a[$i]+=z; echo ${a[1]}'
-[[ $rc = 0 && $out = "yz" && -z $err ]]; chk 33.12
+[[ $rc = 0 && $out = "yz" && -z $err ]]; chk 33.41
 
 # 33.13 map subscript append
 run_sash 'map m=([k]=ab); m[k]+=cd; echo ${m[k]}'
 [[ $rc = 0 && $out = "abcd" && -z $err ]]; chk 33.13
 
-# 33.14 `echo @a` is a clean compile error (SB5030), not an ICE — echo joins
+# 33.42 `echo @a` is a clean compile error (SB5030), not an ICE — echo joins
 # its args, so an array splat there would flatten the array (DD#22/DD#69 §3);
 # the user writes the explicit `echo $(join @a)`.
 run_sash 'array a=(one two three); echo @a'
-[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.14
+[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.42
 
-# 33.15 the directed-to explicit join compiles and prints the joined string
+# 33.43 the directed-to explicit join compiles and prints the joined string
 run_sash 'array a=(one two three); echo $(join @a)'
-[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.15
+[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.43
 
 # 33.23 `$(join)` with no args is a clean SB5040 (was a compiler ICE panic)
 run_sash 'echo $(join)'
@@ -444,17 +444,17 @@ run_sash 'echo $(join)'
 run_sash 'array a=(1 2); echo $(join a x y)'
 [[ $rc != 0 && -z $out && $err == *SB5040* ]]; chk 33.24
 
-# 33.16 the reject also fires for a mixed splat (`echo x @a y`)
+# 33.44 the reject also fires for a mixed splat (`echo x @a y`)
 run_sash 'array a=(one two); echo x @a y'
-[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.16
+[[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.44
 
-# 33.17 $(keys m) is an array splat: in command-arg position it is SB5025
+# 33.45 $(keys m) is an array splat: in command-arg position it is SB5025
 # (the DD#60/#75 context rule, same as $(argv)) — not a silent space-join.
 run_sash 'map m=([a]=1 [b]=2); printf "%s\n" $(keys m)'
-[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.17
-# 33.18 $(keys m) in scalar-assignment context → SB5025 (array splat in scalar)
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.45
+# 33.46 $(keys m) in scalar-assignment context → SB5025 (array splat in scalar)
 run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
-[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.18
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.46
 
 # 33.19–33.21 join arr SEP — DD#75: array first, separator second.
 # (janet's join intrinsic only handles the `@a` space-join today: it execs

@@ -38,6 +38,15 @@ wordsplit.sh 14.7/14.8). Fixed: commands.sh 14.7/14.8 now expect SB5020,
 renumbered to 14.17/14.18; broader collision filed
 (`bug-commands-wordsplit-14x-chk-collision.md`, P2).
 
+**Spec chk-id de-collision (2026-08-29):** audited the whole suite for the same
+masking hazard and fixed **every** collision (`decollide-spec-chk-ids.md`, done):
+4 cross-file pairs (arithmetic↔types `58.10-15`; convert↔types `30.7`;
+misc↔wordsplit `20.3-6`; types↔wordsplit `62.11`) + within-file duplicates
+(types.sh had 2-3 blocks reusing `30.8-11`/`33.11-18`; errors.sh `55.30`). Only
+ids moved (tests unchanged, plan counts preserved); native+c 0 failing, and no
+de-collided pair unmasked a real failure. The task carries a re-runnable audit
+(cross-file collisions AND within-file duplicate `chk` must both be empty).
+
 **Next (DG mandate — keep draining the A-bucket via specs):** remaining named
 never-run functions (sig_scan_case/sig_record_arith_index, c-backend
 emit_dup_output/latest_var_as_str/emit_arr_keys_joined, taint
