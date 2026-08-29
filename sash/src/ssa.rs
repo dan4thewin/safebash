@@ -921,9 +921,16 @@ impl VersionState {
 
     /// Define a new version of a variable.
     pub fn define(&mut self, name: &str) -> VarRef {
-        // Compile-time readonly enforcement: error if reassigning a readonly variable
+        // Readonly enforcement backstop. validate.rs (SB4044) is the spanned,
+        // user-facing check; this catches any mutation channel it misses so a
+        // readonly reassignment can never reach a panic. Spanless — record the
+        // diagnostic and fall through, letting lowering continue to surface any
+        // further errors.
         if self.readonly_vars.contains(name) && self.current.contains_key(name) {
-            panic!("sash: {}: readonly variable — cannot reassign", name);
+            self.diagnostics.push(format!(
+                "1:1: error [SB4044] readonly variable `{name}` cannot be reassigned — \
+                 a `const`/`readonly` binding is immutable"
+            ));
         }
         let next = self.counter.entry(name.to_string()).or_insert(0);
         *next += 1;

@@ -160,13 +160,14 @@ The point of exercising never-run code is that unexamined paths hide bugs.
 Two P1 bugs found this way (both a `bug:`/panic invariant reachable from user
 source — must never happen):
 
-1. **const-reassign panic** (`notes/tasks/const-reassign-panic.md`):
-   `const x=1; x=2` → `panic!` at ssa.rs:926 (`VersionState::define`). Validate
-   has no const-reassignment check. Fork A (define-site) / B (validate-time) / C.
+1. **const-reassign panic** (`notes/tasks/const-reassign-panic.md`) — **FIXED**
+   (SB4044, fork C): validate `check_const_reassignment` (spanned) + `define()`
+   backstop (spanless). specs types.sh 35.3-35.9.
 2. **intrinsic-arity fallthrough** (`notes/tasks/bug-intrinsic-arity-fallthrough.md`):
    `$(sub a)`, `$(toupper)` (wrong arg count) fall through to `sash_exec` →
    runtime `bug: bare command passed to sash_exec`. Should be a compile-time SB.
-   Fork A (arity-check in `try_native_intrinsic`) / B (exec-funnel backstop) / C.
+   Fork C approved (A arity-check in `try_native_intrinsic` + B exec-funnel
+   backstop) — next up.
 
 ## Never-run named functions — classification (73 total incl. closures; 27 named)
 

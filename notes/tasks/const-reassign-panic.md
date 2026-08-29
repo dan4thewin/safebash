@@ -1,6 +1,6 @@
 ---
 title: "BUG: const reassignment panics the compiler (ssa.rs:926) instead of a clean diagnostic"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -9,6 +9,27 @@ gates:
   - "all reassignment paths of a const are covered: plain `x=2`, compound `x+=1`, arith `(( x=5 ))` / `(( x++ ))`, and re-`const x=2`"
   - "a spec pins const-reassignment → the SB code (errors.sh)"
 ---
+
+## RESOLVED (2026, fork C — DG-approved)
+
+Fixed with **SB4044** both ways (defense-in-depth):
+- **B (validate.rs)** `check_const_reassignment`: a flat pass collecting
+  `const`/`readonly` names and flagging plain/append/indexed assignment,
+  re-declaration, and arith `(( ))` mutation (`x=`, `x++`, `x+=`, `a[i]=`) of a
+  const — **spanned** diagnostic.
+- **A (ssa.rs)** `VersionState::define`: the `panic!` is replaced by a spanless
+  `SB4044` pushed to `state.diagnostics` (fall through, no panic) — a backstop
+  for any channel B doesn't enumerate (`read`/`mapfile` into a const both
+  verified to hit it).
+
+Specs `spec/types.sh` 35.3-35.9 (plain, `+=`, `(( x++ ))`, `(( x=5 ))`,
+re-`const`, `read` backstop, and the no-false-positive case) — 21 new passing
+across native/c/janet, 0 regressions. Gates met.
+
+Known adjacent edge (NOT this bug): `argv [0] x` into a const isn't blocked by
+SB4044 — but it independently runtime-aborts via the intrinsic-arity fallthrough
+(`notes/tasks/bug-intrinsic-arity-fallthrough.md`), so it's entangled with that
+bug, not a silent const violation.
 
 ## Symptom (found via the coverage audit, 2026-08-28)
 

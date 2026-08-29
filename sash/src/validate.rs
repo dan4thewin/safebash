@@ -55,7 +55,89 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     }
     // SB4037 (DD#74): a function used as a predicate must `return` on every path
     check_predicate_definite_return(program, &functions, &mut diags);
+    // SB4044: a `const`/`readonly` variable cannot be reassigned.
+    check_const_reassignment(&blocks, &mut diags);
     diags
+}
+
+/// SB4044: a `const`/`readonly` variable cannot be reassigned. Flat model,
+/// matching the transform's `readonly_vars`: once a name is declared
+/// `const`/`readonly`, a later assignment or re-declaration is rejected here
+/// with a **spanned** diagnostic. Statement-level arith mutations
+/// (`(( x=5 ))`, `(( x++ ))`) lower to `Assignment` nodes, so they're caught by
+/// the Assignment arm too. The rarer channels (`read`/`mapfile`/`argv` into a
+/// const) are caught by the spanless backstop in `VersionState::define`, so no
+/// path can ever reach the old `define()` panic.
+fn check_const_reassignment(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
+    let mut consts: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for &block in blocks {
+        scan_const_stmts(block, &mut consts, diags);
+    }
+}
+
+fn scan_const_stmts(
+    stmts: &[Statement],
+    consts: &mut std::collections::HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        scan_const_stmt(stmt, consts, diags);
+    }
+}
+
+fn scan_const_stmt(
+    stmt: &Statement,
+    consts: &mut std::collections::HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match &stmt.kind {
+        StmtKind::Declaration(d) => scan_const_decl(d, stmt.span, consts, diags),
+        StmtKind::Assignment(a) => flag_if_const(consts, &a.name, stmt.span, diags),
+        _ => {}
+    }
+    for body in stmt.child_bodies() {
+        scan_const_stmts(body, consts, diags);
+    }
+}
+
+/// A declaration reassigns a const if it re-declares/re-inits an already-const
+/// name; a `const`/`readonly` declaration records its names.
+fn scan_const_decl(
+    d: &Declaration,
+    span: Span,
+    consts: &mut std::collections::HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for a in &d.assignments {
+        flag_if_const(consts, &a.name, span, diags);
+    }
+    if d.keyword == DeclKeyword::Readonly {
+        for a in &d.assignments {
+            consts.insert(a.name.clone());
+        }
+    }
+}
+
+fn flag_if_const(
+    consts: &std::collections::HashSet<String>,
+    name: &str,
+    span: Span,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if consts.contains(name) {
+        diags.push(const_reassign_diag(span, name));
+    }
+}
+
+fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB4044",
+        format!(
+            "readonly variable `{name}` cannot be reassigned — a `const`/`readonly` \
+             binding is immutable"
+        ),
+    )
 }
 
 /// SB4037 (DD#74): a function used in a boolean context must supply its
