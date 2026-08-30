@@ -336,3 +336,37 @@ long tail, mostly requiring per-function bucket triage.
   arith scan may not be wired to the fixed path).
 - `redirect_expr_zero` / `ir_expr_to_ssa_value` (codegen/redirects.rs) — narrow
   redirect-target-expr internals; classify next.
+
+## 2026-08-30 — grind resumed on a CORRECT (spec-only) measurement
+
+The prior measurement was broken (spec-run profraw lost to the per-test mktemp
+cwd), so it reported ~202 native-core never-run. DG fixed the harness
+(`mk cov-spec-only`, `SASH=` instrumented binary, absolute `LLVM_PROFILE_FILE`;
+run.sh/tally reporting made robust — journal 214). The REAL native-core
+never-run count is **26** (spec-only; emit_c/emit_janet excluded). Triage:
+
+- **Spec-added (flipped, verified 0→>0):** `emit_isatty_test` (`[[ -t 1 ]]`,
+  cov.89 native,c) and `parse_comment_stmt` (a standalone comment line, cov.90).
+- **BUG (filed `bug-redirect-nonsimple-target-empty`):** `redirect_expr_zero` +
+  `ir_expr_to_ssa_value` are the `_ =>` fallbacks for a non-simple redirect
+  target (`> $(cmd)`, `> ${x:-f}`, …) and silently produce an EMPTY filename
+  (`(0,0)` / `Literal("")`). Same silent-degrade class as the fd-dup bug; needs a
+  DG reject-vs-implement decision.
+- **Deferred (dispatch task):** `extract_from_literal` / `extract_leading_operator`
+  — the *dispatch* compact-operator parse (`[[ $x==a { … } ]]`), NOT the boolean
+  `[[ a==a ]]` (that hit an adjacent path and did not flip them). Owned by
+  `dispatch-compact-operator-spacing`.
+- **Lexer-shadowed (bucket B candidate):** `strip_matching_quotes` — the glued
+  `[k]="v"` map-element word branch of `try_parse_assoc_element`. `map m=([k]="v")`
+  does NOT flip it (the lexer splits `[k]` + `=` + value → the separate-token
+  branch), so branch 1 is unreachable. Verify + remove next.
+- **CLI-only (bucket C — not spec-reachable via `run_sash`, which only does
+  `-c`/`--janet`/`--emit-c`):** `dump_sash_source` (`--emit-source`/`--annotate`),
+  `emit_manifest` (`--manifest`), `set_sysroot`/`sysroot_file_exists`
+  (`--sysroot`). Covered by the Rust e2e tests, not the spec suite. Either add a
+  CLI-mode spec runner or leave explained here.
+- **Test harness, not compiler code:** `oracle.rs` `run_bash`/`run_janet`/
+  `run_janet_ok` — the rust-test oracle glue (spec-only runs never touch it).
+- **Defensive ICE (unit-test candidate, DG "unit test every intentional ICE"):**
+  `panic_payload_message` (formats a caught codegen panic).
+- **Closures** (`{closure#N}`): measurement artifacts, not separate work items.

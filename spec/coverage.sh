@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=87
+plan=89
 echo "1..$plan" >&3
 
 set +e
@@ -389,6 +389,20 @@ fi
 # `${s:-16#ff}` default path (arithmetic.sh d4.7).
 run_sash 'echo $(( 16#ff ))'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk cov.79
+
+# cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test) — native,c only
+# (janet has no `-t`). Captured stdout in the harness is not a tty → notty.
+if in_modes native,c; then
+    run_sash '[[ -t 1 ]] && echo tty || echo notty'
+    [[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
+else
+    skip_chk cov.89
+fi
+# cov.90 a full-line comment inside a compiled program (parse_comment_stmt) —
+# no feature spec has a standalone comment line in the source.
+run_sash '# a comment
+echo hi'
+[[ $rc = 0 && $out = hi && -z $err ]]; chk cov.90
 
 set -e
 tally
