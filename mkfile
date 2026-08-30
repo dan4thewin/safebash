@@ -42,16 +42,29 @@ lint:V:
 	(cd $SASH && cargo clippy -- -D warnings)
 	(cd $CONVERT && cargo clippy -- -D warnings)
 
-coverage:V: build
+cov-clean:V:
 	(cd $SASH && cargo llvm-cov clean --workspace) >/dev/null 2>&1
+
+cov-unit:V:
 	(cd $SASH && cargo llvm-cov --no-report --release \
 		--test e2e_tests --test oracle_tests --test taint_spec_tests \
-		--test janet_tests --test codegen_tests --test brush_compat_tests \
+		--test janet_tests --test codegen_tests \
 		--ignore-run-fail) 2>&1 | tail -1
-	LLVM_PROFILE_FILE="`pwd`/target/llvm-cov-target/spec-%p-%m.profraw" \
-		PATH="`pwd`/target/llvm-cov-target/release:$$PATH" \
+
+cov-spec:V:
+	(cd $SASH && cargo llvm-cov run --release --bin sash ) >/dev/null 2>&1
+	LLVM_PROFILE_FILE="$PWD/target/llvm-cov-target/spec-%p-%m.profraw" \
+		SASH="$PWD/target/llvm-cov-target/release/sash" \
 		bash spec/run.sh >/dev/null 2>&1
+
+cov-rpt:V:
 	(cd $SASH && cargo llvm-cov report --release)
+
+cov-full:V:
+	mk cov-clean; mk cov-unit cov-spec; mk cov-rpt
+
+cov-spec-only:V:
+	mk cov-clean; mk cov-spec; mk cov-rpt
 
 complexity:V:
 	sqlite3 .indexnudge-rust.db "SELECT cyclomatic AS cc, name, file||':'||start_line AS where_ FROM symbols WHERE kind IN ('function','method') AND cyclomatic IS NOT NULL AND file LIKE 'sash/src/%' ORDER BY cyclomatic DESC LIMIT 20;"

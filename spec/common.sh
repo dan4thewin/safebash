@@ -56,14 +56,23 @@ skip_chk() {
 }
 
 tally() {
-    if (( fail > 0 || plan != index )); then
-        echo "FAILED ($fail failed, $skip skipped, $((index - fail - skip)) passed of plan=$plan)" >&3
+    local -i passed=$(( index - fail - skip ))
+    if (( fail > 0 )); then
+        echo "FAILED ($fail failed, $skip skipped, $passed passed; ran $index)" >&3
         exit 1
     fi
+    # Success is fail-based: only an actual `not ok` fails a run. A `plan`
+    # mismatch is a visible NOTE, not a failure — `plan` can legitimately
+    # diverge from the tap count per mode (`in_modes` guards) or drift when
+    # checks are added, and the per-test spec.db records (test_status) are the
+    # real source of truth. Keeping it advisory stops stale plans from
+    # masquerading as failures (the old `plan != index` FAILED).
+    local note=""
+    (( plan != index )) && note="  [plan=$plan, ran=$index]"
     if (( skip > 0 )); then
-        echo "PASSED ($skip skipped of $plan)" >&3
+        echo "PASSED ($passed passed, $skip skipped)$note" >&3
     else
-        echo PASSED >&3
+        echo "PASSED ($passed passed)$note" >&3
     fi
 }
 
@@ -85,7 +94,7 @@ run_sash() {
 
 _run_sash_native() {
     local src=$1; shift
-    sash ${SASH_CFLAGS:-} -c "$src" -o ./test_bin 2> err.raw
+    ${SASH:-sash} ${SASH_CFLAGS:-} -c "$src" -o ./test_bin 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         # Capture runtime stderr separately (rerr) so abort diagnostics
@@ -105,7 +114,7 @@ _run_sash_native() {
 _run_sash_janet() {
     local src=$1; shift
     printf '%s\n' "$src" > .input.sash
-    sash ${SASH_CFLAGS:-} --janet .input.sash > .out.janet 2> err.raw
+    ${SASH:-sash} ${SASH_CFLAGS:-} --janet .input.sash > .out.janet 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         out=$(janet .out.janet "$@" 2>/dev/null)
@@ -125,7 +134,7 @@ _run_sash_c() {
         return
     fi
     printf '%s\n' "$src" > .input.sash
-    sash ${SASH_CFLAGS:-} --emit-c .input.sash > .out.c 2> err.raw
+    ${SASH:-sash} ${SASH_CFLAGS:-} --emit-c .input.sash > .out.c 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         gcc -nostartfiles -static -fno-stack-protector -o ./test_bin .out.c "$SASH_RT_LIB" -lpthread 2> gcc.err

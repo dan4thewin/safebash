@@ -46,11 +46,22 @@ DROP TABLE _import;
 SQL
 fi
 
-# Summary per mode
+# Summary per mode — read the CURRENT status of each test (latest run per
+# test_id, via the test_status view), NOT the raw row count at this sha.
+# The old `count(*) … WHERE commit_hash=$sha` inflated permanently: every
+# suite run appends a row per test, so a single broken/partial run left
+# thousands of stale `failing` rows that persisted even after later runs
+# passed those tests. test_status dedupes to the latest result.
 sqlite3 spec.db "
-SELECT substr(test_id, 1, instr(test_id, ':') - 1) AS mode, status, count(*)
-FROM runs
-WHERE commit_hash='$sha'
+SELECT substr(id, 1, instr(id, ':') - 1) AS mode, status, count(*)
+FROM test_status
+WHERE instr(id, ':') > 0
 GROUP BY mode, status
 ORDER BY mode, status
 "
+# List any tests whose latest result is failing (actionable, deduped).
+fails=$(sqlite3 spec.db "SELECT id FROM test_status WHERE status='failing' ORDER BY id")
+if [[ -n $fails ]]; then
+    echo "--- currently failing (latest run per test) ---"
+    echo "$fails"
+fi

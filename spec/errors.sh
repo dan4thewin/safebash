@@ -198,6 +198,8 @@ echo unreached'
     [[ $rc != 0 && -z $out \
        && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
        && $rerr == *"/nonexistent_binary_xyz: command failed (exit 127)"* ]]; chk 55.30
+else
+    skip_chk 55.30
 fi
 
 # 55.31 CAUGHT exec failure (`|| …`) → only the child's errno detail; the
@@ -207,6 +209,8 @@ if in_modes native; then
     [[ $rc = 0 && $out = "caught" && -z $err \
        && $rerr == *"/nonexistent_binary_xyz: No such file or directory"* \
        && $rerr != *"command failed"* ]]; chk 55.31
+else
+    skip_chk 55.31
 fi
 
 # 55.17 $(status) only valid as first expression in handling branch

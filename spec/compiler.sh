@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup compiler
-plan=9
+plan=12
 echo "1..$plan" >&3
 
 set +e

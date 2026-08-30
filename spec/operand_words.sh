@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup operand_words
-plan=10
+plan=13
 echo "1..$plan" >&3
 
 set +e
