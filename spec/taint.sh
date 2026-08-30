@@ -510,7 +510,7 @@ run_sash 'argv 1 a; array c=($(join @a)); echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.39
 run_sash 'argv 1 a; [[ $(join @a) = x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.40
-run_sash 'argv 1 a; echo z > $(join @a)' a b
+run_sash 'argv 1 a; x=$(join @a); echo z > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.41
 run_sash 'argv 1 a; s=$(echo $(join @a)); echo $s' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.42
@@ -549,8 +549,10 @@ run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
 # 60.51 a tainted array subscript `${a[0]}` (value-flow, not cmdsub) in a test
 run_sash 'array a=(); mapfile -t a < d60b.txt; [[ ${a[0]} = x ]] && echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.51
-# 60.52 bare-name `join a` reader as a redirect target
-run_sash 'argv 1 a; echo hi > $(join a)' a b
+# 60.52 bare-name `join a` reader as a redirect target (routed through a
+# scalar — a direct `$(…)` redirect *target* is now rejected structurally at
+# parse, SB4049, so the taint of the array-join source is exercised via `$x`)
+run_sash 'argv 1 a; x=$(join a); echo hi > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.52
 # 60.53 `echo $t` (tainted scalar) through a cmdsub in a `[[ ]]` operand
 run_sash 'x=$(getenv HOME); [[ $(echo $x) = y ]] && echo z'

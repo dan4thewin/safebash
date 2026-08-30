@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=33
+plan=39
 echo "1..$plan" >&3
 
 set +e
@@ -189,6 +189,56 @@ run_sash 'x=5 > /tmp/sash_test_redir3; echo $x'
 # 14.16 control: a plain function definition + call still works (no redirect)
 run_sash 'f() { echo hi }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.16
+
+# --- redirect target must be a scalar (SB4049; DG 2026-08-30) ---
+# A file-redirect target (`>`/`>>`/`<`/`<>`/`&>`) must be a scalar the compiler
+# can evaluate to a filename: a literal/quoted path, `$x`, `${x:-default}`, or
+# `$a[i]`. A command substitution `$(…)` or arithmetic `$((…))` is rejected —
+# the compiler can't know the resulting filename, and the old fallthrough
+# silently redirected to an *empty* target (bug-redirect-nonsimple-target-empty).
+# Scalar reads beyond a bare `$x` (a `:-` default, a subscript) are supported by
+# spilling the lowered value to a temp before the redirect. janet has no file
+# redirects (it emits a no-op comment), so the positives are native,c only.
+
+# 14.19 reject: command-substitution redirect target → SB4049 (all modes: parse)
+run_sash 'echo x > $(echo f)'
+[[ $rc != 0 && -z $out && $err == *SB4049* ]]; chk 14.19
+
+# 14.20 reject: arithmetic redirect target → SB4049
+run_sash 'echo x > $(( 1 + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB4049* ]]; chk 14.20
+
+# 14.21 support: `${x:-default}` target (x unset) opens the DEFAULT filename
+if in_modes native,c; then
+    run_sash 'echo d > ${miss:-r14def}; cat r14def'
+    [[ $rc = 0 && $out = "d" && -z $err ]]; chk 14.21
+else
+    skip_chk 14.21
+fi
+
+# 14.22 support: `${x:-default}` target (x set) opens the SET value, not default
+if in_modes native,c; then
+    run_sash 'f=r14set; echo s > ${f:-r14fallback}; cat r14set'
+    [[ $rc = 0 && $out = "s" && -z $err ]]; chk 14.22
+else
+    skip_chk 14.22
+fi
+
+# 14.23 support: `$a[i]` subscript redirect target opens the element's filename
+if in_modes native,c; then
+    run_sash 'array a=(r14zero r14one); echo sub > $a[1]; cat r14one'
+    [[ $rc = 0 && $out = "sub" && -z $err ]]; chk 14.23
+else
+    skip_chk 14.23
+fi
+
+# 14.24 support: append `>> $a[i]` accumulates to the element's filename
+if in_modes native,c; then
+    run_sash 'array a=(x r14ap); echo l1 > $a[1]; echo l2 >> $a[1]; cat r14ap'
+    [[ $rc = 0 && $out == *l1* && $out == *l2* && -z $err ]]; chk 14.24
+else
+    skip_chk 14.24
+fi
 
 set -e
 tally

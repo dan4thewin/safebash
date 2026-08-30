@@ -238,13 +238,67 @@ fn lower_redirected_stmt(
     // (A redirect on a function definition / declaration / assignment is
     // rejected at parse time — SB4046 — so those never reach here.)
     let needs_bracket = is_compound_stmt(&r.body.kind) || is_bulk_read_cmd(&r.body.kind);
-    if needs_bracket && !r.redirects.is_empty() {
-        return bracket_compound_with_redirects(r, ssa, state, block);
+    let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
+    if needs_bracket && !redirects.is_empty() {
+        return bracket_compound_with_redirects(r, &redirects, ssa, state, block);
     }
 
     let result_block = lower_one(&r.body, ssa, state, block);
-    attach_redirects_to_result(ssa, block, result_block, &r.redirects);
+    attach_redirects_to_result(ssa, block, result_block, &redirects);
     result_block
+}
+
+/// A redirect target that is a scalar *read* — `${x:-f}` (ParameterExpansion)
+/// or `$a[i]` (Subscript), possibly nested inside a concatenation / double
+/// quote — can't be lowered by the ad-hoc redirect-target codegen, which only
+/// knows literals, `$x`, and concatenations of those (the rest silently
+/// redirected to an *empty* filename). Spill it: bind the fully-lowered value
+/// (via `expr_to_value`, so it inherits the same default / subscript / string
+/// semantics as any other value position) to a synthetic scalar, then rewrite
+/// the target to read that scalar (`$__redir_target_N`), which codegen already
+/// handles. Command-substitution / arithmetic targets never reach here — they
+/// are rejected at parse (SB4049). Here-strings feed stdin *data* (not a
+/// filename) and keep their own lowering path untouched.
+fn target_needs_spill(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::ParameterExpansion(_) | ExprKind::Subscript { .. } => true,
+        ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+            parts.iter().any(|p| target_needs_spill(&p.kind))
+        }
+        _ => false,
+    }
+}
+
+fn spill_scalar_redirect_targets(
+    redirects: &[Redirect],
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Vec<Redirect> {
+    let mut out = Vec::with_capacity(redirects.len());
+    for redir in redirects {
+        let spill =
+            !matches!(redir.op, RedirectOp::HereString) && target_needs_spill(&redir.target.kind);
+        if spill {
+            let val = expr_to_value(&redir.target, state);
+            let name = format!("__redir_target_{}_{}", ssa.blocks.len(), out.len());
+            let target = state.define(&name);
+            ssa.block_mut(block)
+                .insts
+                .push(SsaInst::Assign { target, value: val });
+            out.push(Redirect {
+                fd: redir.fd,
+                op: redir.op,
+                target: Expr {
+                    kind: ExprKind::SimpleExpansion(name),
+                    span: Span::default(),
+                },
+            });
+        } else {
+            out.push(redir.clone());
+        }
+    }
+    out
 }
 
 /// Attach a simple command's redirects to the last emitted instruction in
@@ -304,6 +358,7 @@ fn is_compound_stmt(kind: &StmtKind) -> bool {
 /// inst emitted between them.
 fn bracket_compound_with_redirects(
     r: &Redirected,
+    redirects: &[Redirect],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -312,7 +367,7 @@ fn bracket_compound_with_redirects(
         name: "__redirect_push".to_string(),
         kind: BuiltinCmd::RedirectPush,
         args: vec![],
-        redirects: r.redirects.clone(),
+        redirects: redirects.to_vec(),
         checked: true,
     });
     let result_block = lower_one(&r.body, ssa, state, block);
@@ -320,7 +375,7 @@ fn bracket_compound_with_redirects(
         name: "__redirect_pop".to_string(),
         kind: BuiltinCmd::RedirectPop,
         args: vec![],
-        redirects: r.redirects.clone(),
+        redirects: redirects.to_vec(),
         checked: true,
     });
     result_block

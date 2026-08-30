@@ -1,3 +1,29 @@
+## ════════ STATUS (2026-08-30) — redirect target must be a scalar (SB4049 + spill) ════════
+
+**On `hand-parser`.** DG's ruling on the redirect-target silent-empty bug
+(`bug-redirect-nonsimple-target-empty`, surfaced by the grind): **support
+scalars, reject complex.** Journal 215; bug task marked done.
+
+`> ${x:-f}` / `> $a[i]` silently redirected to an empty filename; `> $(cmd)` /
+`> $((x))` too. Fix in two parts: (1) **parse reject SB4049** —
+`reject_nonscalar_redirect_target` on every file-redirect target
+(`>`/`>>`/`<`/`<>`/`&>`; not `<<<`, not `>&`/`<&` fd-dups); allowlist =
+literal/quoted/`$x`/`${…}`/`$a[i]`/concat-of-those. (2) **transform spill** —
+`lower_redirected_stmt` lowers a ParameterExpansion/Subscript target via the
+normal `expr_to_value` into a synthetic `__redir_target_N` scalar and rewrites
+the redirect to read it (codegen already handles `$var`); no new SSA type,
+native+c inherit it. janet unchanged (no file redirects; reject still applies at
+parse). specs commands.sh 14.19–24 (plan 33→39); taint.sh 60.41/60.52 rerouted
+through a scalar (direct `$(join …)` target now SB4049 before SB5020). Full
+3-mode sweep vs `65b4375`: **native/c 0 regressions, +6 each; janet 0, +2**.
+fmt+clippy clean, complexity gate clear.
+
+**Filed:** `bug-herestring-nonscalar-data-empty` (P2) — the `<<<` DATA path has
+the same silent-empty class + a likely missing-newline bug; left for a DG ruling
+(here-strings feed stdin data, so "reject complex" doesn't transfer 1:1).
+
+**Next:** resume the never-run grind (`grind-continue`) — native gate clean.
+
 ## ════════ STATUS (2026-08-29) — `$(( args[i] ))` in a function fixed (arith args resolve) ════════
 
 **On `hand-parser`.** DG "fix now" — the latent native bug flagged while

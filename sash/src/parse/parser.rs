@@ -2362,6 +2362,7 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
             // &>file → >file 2>&1 (handled at IR level)
             // For now, emit as write redirect
             let target = parse_expr(scanner)?;
+            reject_nonscalar_redirect_target(&target, span)?;
             return Ok(Redirect {
                 fd: Some(1),
                 op: RedirectOp::Write,
@@ -2411,6 +2412,8 @@ fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnos
     let target = parse_expr(scanner)?;
     if matches!(op, RedirectOp::DupOutput | RedirectOp::DupInput) {
         reject_nonfd_dup_target(&target, op, span)?;
+    } else {
+        reject_nonscalar_redirect_target(&target, span)?;
     }
     Ok(Redirect { fd, op, target })
 }
@@ -2441,6 +2444,46 @@ fn reject_nonfd_dup_target(target: &Expr, op: RedirectOp, span: Span) -> Result<
              or the `-` close form. Redirect to a file with `>`/`<`, or dup a \
              numbered fd."
         ),
+    ))
+}
+
+/// A file-redirect target (`>` / `>>` / `<` / `<>` / `&>`) must be a *scalar*
+/// read the compiler can evaluate into a filename: a literal, a quoted path,
+/// `$x`, `${x:-default}`, `$a[i]`, or a concatenation of those. Reject a
+/// command substitution `$(…)`, arithmetic `$((…))`, or any other non-scalar
+/// form (array literal, `[[ … ]]`): the compiler can't know what filename a
+/// command would produce, and the old fallthrough silently redirected to an
+/// *empty* target (bug-redirect-nonsimple-target-empty). DG (2026-08-30):
+/// support scalars, reject complex — assign the value to a variable first,
+/// then redirect to `$v`. Here-strings (`<<<`) feed stdin *data*, not a
+/// filename, and are intentionally not restricted here.
+fn redirect_target_is_scalar(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::Literal(_)
+        | ExprKind::SingleQuoted(_)
+        | ExprKind::SimpleExpansion(_)
+        | ExprKind::ParameterExpansion(_)
+        | ExprKind::Subscript { .. } => true,
+        ExprKind::Concat(parts) | ExprKind::DoubleQuoted(parts) => {
+            parts.iter().all(|p| redirect_target_is_scalar(&p.kind))
+        }
+        _ => false,
+    }
+}
+
+fn reject_nonscalar_redirect_target(target: &Expr, span: Span) -> Result<(), Diagnostic> {
+    if redirect_target_is_scalar(&target.kind) {
+        return Ok(());
+    }
+    Err(parse_error(
+        span,
+        "SB4049",
+        "a redirect target must be a scalar filename — a literal/quoted path, \
+         `$x`, `${x:-default}`, or `$a[i]`. sash doesn't support a command \
+         substitution `$(…)` or arithmetic `$((…))` as a redirect target: the \
+         compiler can't know the resulting filename. Assign it to a variable \
+         first, then redirect to `$v`."
+            .to_string(),
     ))
 }
 
