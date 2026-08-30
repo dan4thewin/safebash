@@ -295,3 +295,44 @@ positives cov.78/80/81; int-cell cov.85 native+c). No functions removed; the
 never-run count is unchanged. The one deliberately-deferred emit path (janet
 int-array cell `:-`) is bucket C for janet only (janet is excluded from the
 accounting anyway) and tracked in `janet-int-array-and-cell-default`.
+
+## 2026-08-29 (grind resume) — removed dead `has_mutation`/`check_arith_nested_mutation` (bucket B)
+
+Re-measured per-function LLVM counts (rust tests + all 3 spec modes). Confirmed
+`has_mutation` count=0 and removed it + its sole caller
+`check_arith_nested_mutation` + the call in `validate_arith_as_statement`.
+
+**Why dead:** `check_arith_nested_mutation` emitted SB5007 for a `(( x = <RHS
+with a mutation> ))` statement — but a `(( … ))` **assignment** ArithTest never
+reaches `validate_arith_as_statement`: it routes through the hoisting path /
+`check_arith_test_placement`, which emits **SB4020** (bug #3, this session's
+earlier work). So `validate_arith_as_statement` only ever sees non-assignment
+bare statements (comparisons), `check_arith_nested_mutation`'s `if let Assign`
+was never true, and `has_mutation` was never called. The SB5007 was fully
+shadowed by the newer SB4020 (and its message was misleading — it told the user
+to "use (( )) statement" when they already were). Verified: `(( x=y++ ))` →
+SB4020 (unchanged, single diagnostic), comparison-stmt → SB5007 (kept), valid
+`(( x=2 ))` → runs; remove-then-run full 3-mode sweep = 0 regressions, and the
+build had no unused-code warnings (they were the sole users).
+
+**Method reminder re-confirmed the hard way:** two speculative specs
+(`(( x=2 ))`, `map m=([k]="v")`) were tried first and did NOT flip their targets
+(`has_mutation`, `strip_matching_quotes` stayed 0) — they hit adjacent
+already-covered paths. Reverted them. A passing spec proves nothing until the
+per-function count flips.
+
+**Scale note.** The never-run tail is much larger than the earlier "63"
+working-set: the llvm-cov *text* report shows ~280 missed functions in the
+native core (emit_c/emit_janet excluded per this file's scope) — the grind is a
+long tail, mostly requiring per-function bucket triage.
+
+**Remaining probed candidates (not yet actioned):**
+- `strip_matching_quotes` (parse/expr.rs) — count=0; the glued `[key]=value`
+  word branch of `try_parse_assoc_element` appears **lexer-shadowed** (the lexer
+  splits `[key]` + `=` + value → the separate-token branch). Likely bucket B;
+  needs a lexer-reachability check before removal.
+- `sig_record_arith_index` (transform/functions.rs) — count=0 even after the
+  `$(( args[i] ))` fix + bsx.8/9 specs; needs investigation (the arg-signature
+  arith scan may not be wired to the fixed path).
+- `redirect_expr_zero` / `ir_expr_to_ssa_value` (codegen/redirects.rs) — narrow
+  redirect-target-expr internals; classify next.

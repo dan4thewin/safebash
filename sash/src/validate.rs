@@ -985,9 +985,9 @@ fn validate_arith_comma_in_condition(exprs: &[ArithExpr], span: Span, diags: &mu
 }
 
 /// As a bare statement (`(( … ))` standalone): a comparison is a
-/// no-op (the program does nothing with the boolean); flag it
-/// (SB5007). Also check for nested mutations like `x = y++` in
-/// the assignment RHS.
+/// no-op (the program does nothing with the boolean); flag it (SB5007).
+/// (An assignment statement `(( x = … ))` never reaches here — it routes
+/// through the hoisting path / `check_arith_test_placement` SB4020.)
 fn validate_arith_as_statement(
     expr: &ArithExpr,
     kind: crate::parse::ArithKind,
@@ -1008,7 +1008,6 @@ fn validate_arith_as_statement(
             ),
         ));
     }
-    check_arith_nested_mutation(expr, span, diags);
 }
 
 /// SB4020 (bug #3): an arithmetic mutation inside a `$(( … ))` **value** can't
@@ -1130,31 +1129,6 @@ fn arith_mutation_under_cond(a: &ArithExpr) -> bool {
                 || arith_mutation_under_cond(cond)
         }
         _ => arith_children(a).into_iter().any(arith_mutation_under_cond),
-    }
-}
-
-/// Check for nested mutations like `x = y++` in statement arithmetic
-fn check_arith_nested_mutation(expr: &ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
-    if let ArithExpr::Assign { value, .. } = expr {
-        // Check if RHS has side effects
-        if has_mutation(value) {
-            let desc = arith_brief(value);
-            diags.push(Diagnostic::error_span(span, "SB5007",
-                format!("mutation {} not allowed in statement (( )) expression context — use (( )) statement instead", desc),
-            ));
-        }
-    }
-}
-
-fn has_mutation(expr: &ArithExpr) -> bool {
-    match expr {
-        ArithExpr::PostIncDec { .. }
-        | ArithExpr::PreIncDec { .. }
-        | ArithExpr::Assign { .. }
-        | ArithExpr::CompoundAssign { .. } => true,
-        ArithExpr::BinOp { left, right, .. } => has_mutation(left) || has_mutation(right),
-        ArithExpr::Paren(inner) => has_mutation(inner),
-        _ => false,
     }
 }
 
