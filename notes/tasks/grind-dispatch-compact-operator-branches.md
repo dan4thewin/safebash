@@ -1,6 +1,6 @@
 ---
 title: "grind: dispatch compact-operator Literal/leading-op branches are never-run (extract_from_literal, extract_leading_operator)"
-status: ready
+status: done
 priority: P3
 kind: coverage
 depends: []
@@ -8,7 +8,34 @@ gates:
   - "extract_from_literal and extract_leading_operator either flip 0→>0 with a targeted dispatch spec, or are proven shadowed-dead and removed"
 ---
 
-## What
+## Resolution (2026-08-31) — shadowed-dead, REMOVED (bucket B)
+
+Settled by an eprintln probe on `extract_compact_operator` /
+`extract_from_literal` / `extract_leading_operator`, run against a comprehensive
+`[[ ]]` battery (dispatch + boolean, compact + spaced, quoted + bare): **neither
+sub-branch ever fired.** Every compact operand — `a==a`, `$x==a`, `pre$x==post`,
+`ab==cd==ef` — arrives at `extract_compact_operator` as a `Concat` whose `==`/`=~`
+is its own **middle** part (`Concat([$x, "==", a])`), because the `[[ ]]` lexer
+always splits the operator into a separate token. So:
+
+- `extract_from_literal` needed a single glued `Literal("a==b")` — unreachable
+  (the operand is always split into a Concat). A quoted `"a==a"` arrives as
+  `DoubleQuoted` and a `'a==a'` as `SingleQuoted` → `_ => None` (correctly *not*
+  treated as an operator).
+- `extract_leading_operator` needed the last Concat part to be `"==rest"` —
+  unreachable (the operator is always its own part, never glued to the pattern).
+
+Only `extract_from_concat`'s middle-part branch (`match_operator` on the interior
+`==`/`=~` Literal) is live, and it covers every `dp.co1`–`dp.co8` case.
+
+Removed `extract_from_literal`, `extract_leading_operator`, the `Literal` arm of
+`extract_compact_operator`, and the last-part branch of `extract_from_concat`.
+remove-then-run: all dispatch + boolean compact forms still work; full 3-mode
+sweep **0 regressions**. (Original never-run finding — journal 217 / accounting
+2026-08-31.)
+
+
+## Background (original finding)
 
 Two functions in the dispatch compact-operator parse are never-run by the spec
 suite (surfaced in the 2026-08-31 coverage grind):

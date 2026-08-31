@@ -483,3 +483,24 @@ counts 18 / 163 / 1672 (covered by cov.91–93). Always check the entry whose
 **Endpoint:** spec-only never-run = only the two unit-tested ICEs (expected, they
 can't be spec-driven) + the two queued dispatch branches. Everything else is
 covered or a documented artifact.
+
+## 2026-08-31 (cont.2) — dispatch compact-op branches removed (shadowed-dead)
+
+`extract_from_literal` + `extract_leading_operator` (the last two grind
+never-runs) resolved to **bucket B** by an eprintln probe: across a full `[[ ]]`
+battery (dispatch + boolean, compact + spaced, quoted + bare), neither fired.
+The `[[ ]]` lexer always splits `==`/`=~` into its own token, so a compact
+operand always reaches `extract_compact_operator` as a `Concat` with the operator
+as a **middle** part (handled by `extract_from_concat`'s `match_operator` branch)
+— never a single glued `Literal("a==b")` (extract_from_literal) and never glued
+to the last part (extract_leading_operator). Removed both fns + the
+`extract_compact_operator` Literal arm + the `extract_from_concat` last-part
+branch; remove-then-run 0 regressions. Task `grind-dispatch-compact-operator-branches`
+→ done.
+
+**Grind endpoint reached.** Spec-only native-core never-run is now only the two
+intentional ICEs (`panic_payload_message`, `redirect_target_ice`) — both
+unit-tested (they can't be spec-driven by construction) — plus `type_check::fmt`
+(documented uncalled `Display` impl). Every other native-core function is
+exercised by the spec suite. The demangle-artifact caveat (ir.rs walker closures)
+remains the only measurement footnote.

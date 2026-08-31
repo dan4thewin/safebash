@@ -1,3 +1,16 @@
+## ════════ STATUS (2026-08-31, cont.2) — dispatch compact-op dead branches removed ════════
+
+**On `hand-parser`.** The last two grind never-runs (`extract_from_literal`,
+`extract_leading_operator`) resolved to shadowed-dead: an eprintln probe over a
+full `[[ ]]` battery showed neither ever fires — the lexer always splits `==`/`=~`
+into its own token, so a compact operand always arrives as `Concat([subj, "==",
+pat])` (middle-part branch), never a glued `Literal` or glued last part. Removed
+both fns + the two dead call-site branches; remove-then-run 0 regressions (3-mode
+sweep vs `d398170`). Task done.
+
+**Grind endpoint reached** — spec-only native-core never-run is now only the two
+unit-tested intentional ICEs + `type_check::fmt` (documented artifact).
+
 ## ════════ STATUS (2026-08-31, cont.) — grind tail resolved (CLI + ICEs + queue) ════════
 
 **On `hand-parser`.** Closed out the coverage grind tail per DG:
