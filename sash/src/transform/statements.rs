@@ -165,13 +165,22 @@ fn lower_function_stmt(
         ));
     }
     state.function_bodies.insert(f.name.clone(), f.body.clone());
-    // DD#81 Part B: a fixed-arity signature must read the full contiguous
-    // `{0..max}` of `args` — a gap is a hole (rule (a)).
-    if let (_, Some(missing)) = super::functions::analyze_arity(&f.body) {
-        state.diagnostics.push(format!(
-            "{}:{}: error [SB5044] function '{}' reads args non-contiguously — argument {} is unused; read args in order from index 0, or use @args for a variable number",
-            stmt.span.line, stmt.span.col, f.name, missing
-        ));
+    // DD#81 rule (a) contiguity + DD#84 mixing / optional-trailing: emit each
+    // structural defect of the fixed-arity `args` signature at the definition.
+    for defect in super::functions::analyze_arity(&f.body).1 {
+        let (line, col, name) = (stmt.span.line, stmt.span.col, &f.name);
+        let msg = match defect {
+            super::functions::ArityDefect::Hole(i) => format!(
+                "{line}:{col}: error [SB5044] function '{name}' reads args non-contiguously — argument {i} is unused; read args in order from index 0, or use @args for a variable number"
+            ),
+            super::functions::ArityDefect::Mixed(i) => format!(
+                "{line}:{col}: error [SB5047] function '{name}' reads argument {i} both as required (${{args[{i}]}}) and optional (${{args[{i}]:-}}/`:~`) — a positional is one or the other; drop the bare read or give every read a disposition"
+            ),
+            super::functions::ArityDefect::RequiredAfterOptional(i) => format!(
+                "{line}:{col}: error [SB5048] function '{name}' has a required argument {i} after an optional one — optional args (`:-`/`:~`) must be trailing; reorder so required args come first"
+            ),
+        };
+        state.diagnostics.push(msg);
     }
     if f.name.starts_with("__local__") {
         state.local_fn_scope.insert(f.name.clone());

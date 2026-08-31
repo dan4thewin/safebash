@@ -1,3 +1,20 @@
+## ════════ STATUS (2026-08-31) — DD#84 optional trailing args + `:~` elide (native+c) ════════
+
+**On `hand-parser`.** DG-designed feature (discussed + ratified this session):
+make a trailing argument optional and let a scalar token *disappear* from a
+list. Two capabilities: **(A)** a trailing `${args[i]}` read only via `:-`/`:~`
+is optional (arity `[min,max]`; mixing bare+disposition → SB5047, required-after-
+optional → SB5048); **(B)** `${x:~}` / `${args[i]:~}` *elides* — zero tokens when
+empty, one otherwise — in an elidable position (command arg / array element),
+rejected elsewhere (SB5046) and never takes a word (SB4051). DD#84; journal 218.
+
+Lowering: `:~` → `SsaValue::ElideEmpty`; native + c list builders do a runtime
+0-or-1 on emptiness (argv + array literal, compacting). specs
+`spec/optional_args.sh` (84.1–18). Full 3-mode sweep vs `d88969b`: **0
+regressions; +18 native/c, +4 janet** (arity refactor touched every fn def —
+clean). janet deferred (no `args` model; `janet-optional-args-elision`); int-cell
+identity deferred (elides on empty string).
+
 ## ════════ STATUS (2026-08-31, cont.2) — dispatch compact-op dead branches removed ════════
 
 **On `hand-parser`.** The last two grind never-runs (`extract_from_literal`,

@@ -1859,7 +1859,7 @@ fn emit_argv(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes, ind:
     let argv = format!("{}_argv", t);
     if args
         .iter()
-        .any(|a| matches!(a, SsaValue::ArraySplat { .. }))
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty(_)))
     {
         emit_argv_splat(e, name, args, types, ind, &t, &argv);
     } else {
@@ -1937,6 +1937,12 @@ fn emit_argv_splat(
                  {argv}[{t}_w++] = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); }}"
             )
             .unwrap();
+        } else if let SsaValue::ElideEmpty(inner) = arg {
+            // DD#84: store only when non-empty — an identity value is elided.
+            // lower_value_as_str returns already-evaluated ptr/len (temps for
+            // complex reads), so the guard evaluates them once.
+            let (ptr, len) = lower_value_as_str(e, inner, types);
+            writeln!(e.out, "{ind}if (({len}) != 0) {argv}[{t}_w++] = {ptr};").unwrap();
         } else {
             let (ptr, _len) = lower_value_as_str(e, arg, types);
             writeln!(e.out, "{ind}{argv}[{t}_w++] = {ptr};").unwrap();
@@ -3226,19 +3232,24 @@ fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CSt
         cap = capacity
     )
     .unwrap();
-    for (i, val_ssa) in elems.iter().enumerate() {
-        let (val_ptr, val_len) = lower_value_as_str(e, val_ssa, types);
-        // 8-byte int key: store the int into a stack i64, pass its addr.
-        writeln!(e.out, "    i64 {t}_k{i} = {i};", t = t, i = i).unwrap();
-        writeln!(
-            e.out,
-            "    sash_table_set({t}_tbl, (const char*)&{t}_k{i}, 8, {vp}, {vl});",
-            t = t,
-            i = i,
-            vp = val_ptr,
-            vl = val_len
-        )
-        .unwrap();
+    // DD#84: a running write index so a `${…:~}` element that is empty is
+    // skipped and the rest stay contiguous (`(x ${y:~} z)` empty y → [x, z]).
+    writeln!(e.out, "    i64 {t}_w = 0;", t = t).unwrap();
+    for val_ssa in elems {
+        let (inner, guard) = match val_ssa {
+            SsaValue::ElideEmpty(inner) => (inner.as_ref(), true),
+            other => (other, false),
+        };
+        let (val_ptr, val_len) = lower_value_as_str(e, inner, types);
+        let set = format!(
+            "{{ i64 {t}_k = {t}_w; sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {vp}, {vl}); {t}_w++; }}",
+            t = t, vp = val_ptr, vl = val_len
+        );
+        if guard {
+            writeln!(e.out, "    if (({}) != 0) {}", val_len, set).unwrap();
+        } else {
+            writeln!(e.out, "    {}", set).unwrap();
+        }
     }
     (format!("(const char*){}_tbl", t), "0".to_string())
 }

@@ -417,7 +417,7 @@ pub(super) fn check_callee_arity(
     state: &mut VersionState,
 ) {
     let (min, max) = match super::functions::analyze_arity(body).0 {
-        super::functions::Arity::Fixed(n) => (n, Some(n)),
+        super::functions::Arity::Fixed { min, max } => (min, Some(max)),
         super::functions::Arity::Variadic { floor } => (floor, None),
     };
     if call_argc < min {

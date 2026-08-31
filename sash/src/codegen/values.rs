@@ -96,6 +96,15 @@ pub(super) fn lower_value(
                 array
             );
         }
+        SsaValue::ElideEmpty(_) => {
+            // DD#84: `:~` is only valid in an elidable list position, where the
+            // argv / array-literal builder intercepts it. Reaching a scalar
+            // lower_value means validate's SB5046 guard was bypassed.
+            panic!(
+                "ICE: ElideEmpty (:~) must be expanded by a list builder, \
+                 not lowered as a scalar value"
+            );
+        }
         SsaValue::Concat(parts) => lower_concat_value(
             parts,
             builder,
@@ -957,27 +966,91 @@ fn lower_indexed_array_value(
     let call = builder.ins().call(new_ref, &[cap_val]);
     let table_ptr = builder.inst_results(call)[0];
 
-    let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
-    for (i, val_ssa) in elems.iter().enumerate() {
-        let (idx_slot, key_ptr) = alloc_out_slot(builder);
-        let idx_val = builder.ins().iconst(I64, i as i64);
-        builder.ins().stack_store(idx_val, idx_slot, 0);
-        let key_len = builder.ins().iconst(I64, 8);
-        let (val_ptr, val_len) = lower_value(
-            val_ssa,
-            builder,
-            module,
-            vars,
-            literals,
-            externs,
-            exit_status_var,
-        );
-        builder
-            .ins()
-            .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
+    // DD#84: a running write index (a Cranelift Variable) rather than the
+    // element position, so a `${…:~}` element that is empty is skipped and the
+    // remaining elements stay contiguous (`(x ${y:~} z)` with empty y → [x, z]).
+    let widx = builder.declare_var(I64);
+    let zero0 = builder.ins().iconst(I64, 0);
+    builder.def_var(widx, zero0);
+    for val_ssa in elems {
+        match val_ssa {
+            SsaValue::ElideEmpty(inner) => {
+                let (val_ptr, val_len) = lower_value(
+                    inner,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    exit_status_var,
+                );
+                emit_array_set_if_nonempty(
+                    builder, module, externs, table_ptr, widx, val_ptr, val_len,
+                );
+            }
+            _ => {
+                let (val_ptr, val_len) = lower_value(
+                    val_ssa,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    exit_status_var,
+                );
+                emit_array_set_running(builder, module, externs, table_ptr, widx, val_ptr, val_len);
+            }
+        }
     }
     let zero = builder.ins().iconst(I64, 0);
     (table_ptr, zero)
+}
+
+/// `table[widx++] = (val_ptr, val_len)` — set at the running index and advance.
+fn emit_array_set_running(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    table_ptr: cranelift_codegen::ir::Value,
+    widx: Variable,
+    val_ptr: cranelift_codegen::ir::Value,
+    val_len: cranelift_codegen::ir::Value,
+) {
+    let (idx_slot, key_ptr) = alloc_out_slot(builder);
+    let cur = builder.use_var(widx);
+    builder.ins().stack_store(cur, idx_slot, 0);
+    let key_len = builder.ins().iconst(I64, 8);
+    let set_ref = module.declare_func_in_func(externs.table_set, builder.func);
+    builder
+        .ins()
+        .call(set_ref, &[table_ptr, key_ptr, key_len, val_ptr, val_len]);
+    let next = builder.ins().iadd_imm(cur, 1);
+    builder.def_var(widx, next);
+}
+
+/// DD#84: `table[widx++] = val` only when `val_len != 0` — an empty (identity)
+/// `${…:~}` element is elided, keeping indices contiguous.
+fn emit_array_set_if_nonempty(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    table_ptr: cranelift_codegen::ir::Value,
+    widx: Variable,
+    val_ptr: cranelift_codegen::ir::Value,
+    val_len: cranelift_codegen::ir::Value,
+) {
+    let set_blk = builder.create_block();
+    let cont_blk = builder.create_block();
+    let is_empty = builder.ins().icmp_imm(IntCC::Equal, val_len, 0);
+    builder.ins().brif(is_empty, cont_blk, &[], set_blk, &[]);
+
+    builder.switch_to_block(set_blk);
+    builder.seal_block(set_blk);
+    emit_array_set_running(builder, module, externs, table_ptr, widx, val_ptr, val_len);
+    builder.ins().jump(cont_blk, &[]);
+
+    builder.switch_to_block(cont_blk);
+    builder.seal_block(cont_blk);
 }
 
 /// DD#77 arith `:-`/`:?` dispositions in int context — `${s:-N}` via

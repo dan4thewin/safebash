@@ -276,6 +276,10 @@ fn source_carrying_value(
             source: Box::new(source),
             message: Box::new(pe_operand_value(pe, state)),
         }),
+        // DD#84: `${x:~}` / `${a[i]:~}` (elide) — carry the subject; the argv /
+        // array-literal builders drop it when empty. Rejected outside an
+        // elidable position at validate (SB5046), so it only reaches a list.
+        ":~" => Some(SsaValue::ElideEmpty(Box::new(source))),
         // The scalar `${s:o:l}` (no index) keeps the `ParamExpansion` path.
         "substring" if pe.index.is_some() => Some(SsaValue::Substring {
             source: Box::new(source),

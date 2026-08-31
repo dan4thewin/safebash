@@ -2580,6 +2580,19 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
     if op == "unrecognized" {
         return unrecognized_operator_diag(pe, span);
     }
+    // DD#84: `:~` (elide) never takes a word — `${x:~foo}` is a syntax error.
+    // If you want a value/default, that is `:-`.
+    if op == ":~" && pe.operand.is_some() {
+        return Some(parse_error(
+            span,
+            "SB4051",
+            format!(
+                "`${{{}:~}}` (elide) takes no word — `:~` only removes the token \
+                 when its value is empty. For a default value use `${{{}:-WORD}}`.",
+                pe.name, pe.name
+            ),
+        ));
+    }
     if let Some(d) = simple_rejected_operator_diag(op, pe, span) {
         return Some(d);
     }

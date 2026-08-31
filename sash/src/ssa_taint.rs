@@ -357,6 +357,7 @@ fn value_is_tainted(
         // the source being a plain var (scalar) or a cell read (`${a[i]:?…}`).
         SsaValue::IntCell(inner)
         | SsaValue::RequireValue { source: inner, .. }
+        | SsaValue::ElideEmpty(inner)
         | SsaValue::Substring { source: inner, .. } => {
             value_is_tainted(inner, taint, user_functions)
         }

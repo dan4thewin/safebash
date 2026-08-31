@@ -1883,6 +1883,120 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
 // not just at top level.
 
 /// Reject top-level positional parameters, directing to the DD#60 builtins.
+/// DD#84: `${…:~}` (elide) is legal only in an *elidable position* — a direct
+/// argument of a command / builtin, or a direct element of an array literal —
+/// where dropping the token is well-defined. Anywhere a value is required (a
+/// scalar assignment RHS, a `[[ ]]` operand, a subscript index, nested inside a
+/// concatenation / double-quote) it is rejected: SB5046. `:~` never yields a
+/// value, so a non-list position has no meaning (use `:-` for a default).
+pub fn check_elide_positions(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in &program.statements {
+        check_elide_stmt(stmt, &mut diags);
+    }
+    if let Some(ref end) = program.end_block {
+        for stmt in end {
+            check_elide_stmt(stmt, &mut diags);
+        }
+    }
+    diags
+}
+
+fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    // A command's direct args are elidable; its name is not.
+    if let StmtKind::Command(c) = &stmt.kind {
+        check_elide_expr(&c.name, false, diags);
+        for a in &c.args {
+            check_elide_expr(a, true, diags);
+        }
+    } else {
+        stmt.direct_exprs(&mut |e| check_elide_expr(e, false, diags));
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_elide_stmt(s, diags);
+        }
+    }
+}
+
+fn check_elide_expr(expr: &Expr, elidable: bool, diags: &mut Vec<Diagnostic>) {
+    match &expr.kind {
+        ExprKind::ParameterExpansion(pe) => check_elide_pexp(pe, expr.span, elidable, diags),
+        // Array-literal elements are elidable; every other sub-expr is not.
+        ExprKind::Array(elems) => check_elide_seq(elems, true, diags),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
+            check_elide_seq(parts, false, diags)
+        }
+        ExprKind::AssocArray(pairs) => check_elide_pairs(pairs, diags),
+        ExprKind::Subscript { index, .. } => check_elide_expr(index, false, diags),
+        // A `[[ … ]]` test arrives as a command arg (elidable=true above), but
+        // its operands are value positions — reset to non-elidable.
+        ExprKind::Test(t) => check_elide_test(t, diags),
+        ExprKind::CommandSubstitution(stmts) => check_elide_stmt_seq(stmts, diags),
+        _ => {}
+    }
+}
+
+fn check_elide_seq(parts: &[Expr], elidable: bool, diags: &mut Vec<Diagnostic>) {
+    for p in parts {
+        check_elide_expr(p, elidable, diags);
+    }
+}
+
+fn check_elide_pairs(pairs: &[(String, Expr)], diags: &mut Vec<Diagnostic>) {
+    for (_, v) in pairs {
+        check_elide_expr(v, false, diags);
+    }
+}
+
+fn check_elide_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for s in stmts {
+        check_elide_stmt(s, diags);
+    }
+}
+
+fn check_elide_pexp(
+    pe: &ParameterExpansion,
+    span: Span,
+    elidable: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if pe.operator.as_deref() == Some(":~") && !elidable {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5046",
+            format!(
+                "`${{{}:~}}` (elide) is only valid in a list position — a command \
+                 argument or an array literal element — where the token can \
+                 disappear. Here a value is required; use `${{{}:-DEFAULT}}` for \
+                 an empty/default value.",
+                pe.name, pe.name
+            ),
+        ));
+    }
+    if let Some(op) = &pe.operand {
+        check_elide_expr(op, false, diags);
+    }
+    if let Some(idx) = &pe.index {
+        check_elide_expr(idx, false, diags);
+    }
+}
+
+fn check_elide_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
+    match t {
+        TestExpr::Unary { operand, .. } => check_elide_expr(operand, false, diags),
+        TestExpr::Binary { left, right, .. } => {
+            check_elide_expr(left, false, diags);
+            check_elide_expr(right, false, diags);
+        }
+        TestExpr::Not(inner) => check_elide_test(inner, diags),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            check_elide_test(l, diags);
+            check_elide_test(r, diags);
+        }
+    }
+}
+
 pub fn check_positionals(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in &program.statements {

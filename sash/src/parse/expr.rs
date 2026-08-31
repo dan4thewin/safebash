@@ -830,7 +830,8 @@ fn is_bare_dollar_subscript(s: &str) -> bool {
 /// builds a cell-reading `Substring` node); every other operator parses as the
 /// scalar form so `#`/`%`/`/`/`@X` reject identically.
 fn subscript_operator_expr(name: &str, index: Box<Expr>, after: &str, span: Span) -> Expr {
-    if after.starts_with(":-") || after.starts_with(":?") {
+    // DD#84: `:~` (elide) joins `:-`/`:?` as a cell disposition.
+    if after.starts_with(":-") || after.starts_with(":?") || after.starts_with(":~") {
         let mut expr = parse_standard_operator(after, name, span)
             .unwrap_or_else(|| Expr::param(name, None, None, span));
         attach_cell_index(&mut expr, index);
@@ -1131,7 +1132,7 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     // Two-char ops first (`:-` before `-`, `##` before `#`, …) so the longer
     // operator wins. Both tiers share `match_leading_operator`.
     let two_char_ops = &[
-        ":-", ":=", ":+", ":?", "##", "%%", "//", "/#", "/%", "^^", ",,",
+        ":-", ":=", ":+", ":?", ":~", "##", "%%", "//", "/#", "/%", "^^", ",,",
     ];
     let one_char_ops = &["%", "#", "/", "^", ",", "-", "+", "=", "?"];
     match_leading_operator(s, two_char_ops)

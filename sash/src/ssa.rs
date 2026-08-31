@@ -533,6 +533,13 @@ pub enum SsaValue {
         source: Box<SsaValue>,
         message: Box<SsaValue>,
     },
+    /// DD#84: `${x:~}` / `${args[i]:~}` (elide) — in an elidable position (an
+    /// external/builtin arg list or an array literal), contributes *zero*
+    /// tokens when `source` is the identity element (empty string) and one
+    /// token (the value) otherwise. Only valid where a token is one of a
+    /// sequence; a non-elidable position is rejected at validate (SB5046), so
+    /// this never reaches a scalar `lower_value`.
+    ElideEmpty(Box<SsaValue>),
     /// `${a[i]:off:len}` — substring of a value `source` (a `Subscript` cell
     /// read; the scalar `${s:o:l}` uses `ParamExpansion` "substring"). `spec` is
     /// the `off` / `off:len` operand. Mirrors `DefaultValue`'s source carrying,
@@ -638,6 +645,7 @@ impl SsaValue {
             SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::DefaultValue { source, default } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
+            SsaValue::ElideEmpty(inner) => vec![inner],
             SsaValue::Substring { source, .. } => vec![source],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {

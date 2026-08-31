@@ -240,7 +240,7 @@ pub(super) fn build_argv_values(
 ) -> cranelift_codegen::ir::Value {
     if values
         .iter()
-        .any(|a| matches!(a, SsaValue::ArraySplat { .. }))
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty(_)))
     {
         build_argv_runtime(
             values,
@@ -350,6 +350,22 @@ fn build_argv_runtime(
             SsaValue::ArraySplat { .. } => {
                 emit_splat_fill(builder, module, externs, base, widx, splat_tables[si]);
                 si += 1;
+            }
+            // DD#84: `${…:~}` (elide) — store the value only when non-empty, so
+            // an identity value contributes zero args. argv is over-allocated
+            // (each elide counted as 1 above), so a skipped store just leaves a
+            // spare slot; the NUL terminates at the real count (widx).
+            SsaValue::ElideEmpty(inner) => {
+                let (ptr, len) = lower_value(
+                    inner,
+                    builder,
+                    module,
+                    vars,
+                    literals,
+                    externs,
+                    exit_status_var,
+                );
+                store_argv_entry_if_nonempty(builder, base, widx, ptr, len);
             }
             scalar => {
                 let (ptr, _) = lower_value(
@@ -483,6 +499,30 @@ fn store_argv_entry(
     builder.ins().store(MemFlags::new(), ptr, addr, 0);
     let next = builder.ins().iadd_imm(cur, 1);
     builder.def_var(widx, next);
+}
+
+/// DD#84: store `ptr` at `argv[widx++]` only when `len != 0` — an empty
+/// (identity) value is elided (contributes zero args). `widx` is a Cranelift
+/// `Variable`, so the conditional increment merges at the continuation block.
+fn store_argv_entry_if_nonempty(
+    builder: &mut FunctionBuilder,
+    base: cranelift_codegen::ir::Value,
+    widx: Variable,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+) {
+    let store_blk = builder.create_block();
+    let cont_blk = builder.create_block();
+    let is_empty = builder.ins().icmp_imm(IntCC::Equal, len, 0);
+    builder.ins().brif(is_empty, cont_blk, &[], store_blk, &[]);
+
+    builder.switch_to_block(store_blk);
+    builder.seal_block(store_blk);
+    store_argv_entry(builder, base, widx, ptr);
+    builder.ins().jump(cont_blk, &[]);
+
+    builder.switch_to_block(cont_blk);
+    builder.seal_block(cont_blk);
 }
 
 /// Append every element of `tbl` to argv: for i in 0..len { argv[widx++]

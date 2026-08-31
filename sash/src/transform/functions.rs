@@ -296,36 +296,85 @@ pub(super) fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(super) enum Arity {
     /// Reads only literal indices (`$N`, `${args[k]}`) — no whole-args access.
-    /// Takes exactly this many arguments.
-    Fixed(usize),
+    /// The call must pass `min..=max` args. `min < max` when trailing args are
+    /// optional (DD#84: read only via `:-`/`:~`); `min == max` when every read
+    /// index is required.
+    Fixed { min: usize, max: usize },
     /// Uses `@args` / `$(len args)` / `${#args}` / `$#` / `$@` / a dynamic
     /// index. Takes at least `floor` (the highest literal index + 1, if any).
     Variadic { floor: usize },
 }
 
+/// A structural defect in a fixed-arity `args` signature (DD#81 rule (a) +
+/// DD#84), emitted at the function definition.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(super) enum ArityDefect {
+    /// SB5044 — index `i` in `0..max` is never read (a hole).
+    Hole(usize),
+    /// SB5047 — index `i` is read both bare (required) and via a disposition
+    /// (`:-`/`:~`, optional).
+    Mixed(usize),
+    /// SB5048 — a required index `i` follows an optional one (DD#84: optional
+    /// args must be trailing).
+    RequiredAfterOptional(usize),
+}
+
 #[derive(Default)]
 struct ArgSig {
-    /// 0-based `args` indices read via a literal (`$N` → N-1, `${args[k]}`).
-    indices: std::collections::BTreeSet<usize>,
+    /// 0-based `args` indices read *bare* (`$N`, `${args[k]}`, `${args[k]:?}`)
+    /// — required.
+    required: std::collections::BTreeSet<usize>,
+    /// 0-based indices read only via a `:-`/`:~` disposition (DD#84) —
+    /// candidate optional.
+    optional: std::collections::BTreeSet<usize>,
     /// Whole-args access → variadic.
     variadic: bool,
 }
 
-/// Infer a function's arity from how its body reads `args`, plus the lowest
-/// hole (a missing index below the max) when the signature is fixed — DD#81
-/// rule (a): a fixed signature must read the full contiguous `{0..max}`.
-pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Option<usize>) {
+/// Infer a function's arity from how its body reads `args`, plus any structural
+/// defects (DD#81 rule (a) contiguity + DD#84 mixing / optional-trailing).
+pub(super) fn analyze_arity(body: &[Statement]) -> (Arity, Vec<ArityDefect>) {
     let mut sig = ArgSig::default();
     for s in body {
         sig_scan_stmt(s, &mut sig);
     }
-    let count = sig.indices.iter().max().map(|m| m + 1).unwrap_or(0);
     if sig.variadic {
-        (Arity::Variadic { floor: count }, None)
-    } else {
-        let hole = (0..count).find(|i| !sig.indices.contains(i));
-        (Arity::Fixed(count), hole)
+        let floor = sig
+            .required
+            .iter()
+            .chain(sig.optional.iter())
+            .max()
+            .map(|m| m + 1)
+            .unwrap_or(0);
+        return (Arity::Variadic { floor }, vec![]);
     }
+    let mut defects = Vec::new();
+    // SB5047 — an index read both bare and via a disposition.
+    for &i in sig.required.intersection(&sig.optional) {
+        defects.push(ArityDefect::Mixed(i));
+    }
+    let all: std::collections::BTreeSet<usize> =
+        sig.required.union(&sig.optional).copied().collect();
+    let max = all.iter().max().map(|m| m + 1).unwrap_or(0);
+    // SB5044 — contiguity: every index in `0..max` must be read.
+    if let Some(hole) = (0..max).find(|i| !all.contains(i)) {
+        defects.push(ArityDefect::Hole(hole));
+    }
+    // DD#84 — optional args are trailing: `min` is the first optional-only
+    // index; every required index must be below it. (A mixed index counts as
+    // required for the range math — it errors via SB5047 regardless.)
+    let opt_only: std::collections::BTreeSet<usize> =
+        sig.optional.difference(&sig.required).copied().collect();
+    let min = match opt_only.iter().next() {
+        Some(&lowest_opt) => {
+            if let Some(&bad) = sig.required.iter().find(|&&r| r > lowest_opt) {
+                defects.push(ArityDefect::RequiredAfterOptional(bad));
+            }
+            lowest_opt
+        }
+        None => max,
+    };
+    (Arity::Fixed { min, max }, defects)
 }
 
 fn sig_scan_stmts(stmts: &[Statement], sig: &mut ArgSig) {
@@ -391,7 +440,7 @@ fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
         ExprKind::ParameterExpansion(pe) => sig_scan_pexp(pe, sig),
         ExprKind::Subscript { name, index } => {
             if name == "args" {
-                sig_record_index(index, sig);
+                sig_record_index(index, sig, false);
             }
             sig_scan_expr(index, sig);
         }
@@ -412,7 +461,12 @@ fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
 fn sig_scan_pexp(pe: &ParameterExpansion, sig: &mut ArgSig) {
     if pe.name == "args" {
         match &pe.index {
-            Some(idx) => sig_record_index(idx, sig),
+            // DD#84: `${args[i]:-}` / `${args[i]:~}` reads index i *optionally*;
+            // any other disposition (`:?`, substring, …) is a required read.
+            Some(idx) => {
+                let optional = matches!(pe.operator.as_deref(), Some(":-") | Some(":~"));
+                sig_record_index(idx, sig, optional);
+            }
             None => sig.variadic = true,
         }
     } else {
@@ -439,22 +493,28 @@ fn sig_scan_test(test: &TestExpr, sig: &mut ArgSig) {
 }
 
 /// `$N` / `${N}` (1..9) → 0-based index; `$#`/`$@` → whole-args (variadic).
+/// A bare `$N` is a *required* read.
 fn sig_record_name(name: &str, sig: &mut ArgSig) {
     if let Ok(n) = name.parse::<usize>() {
         if (1..=9).contains(&n) {
-            sig.indices.insert(n - 1);
+            sig.required.insert(n - 1);
         }
     } else if name == "#" || name == "@" {
         sig.variadic = true;
     }
 }
 
-/// A `${args[K]}` index: a literal → a fixed index; anything dynamic → variadic.
-fn sig_record_index(idx: &Expr, sig: &mut ArgSig) {
+/// A `${args[K]}` index: a literal → a fixed index (recorded as optional or
+/// required per `optional`); anything dynamic → variadic.
+fn sig_record_index(idx: &Expr, sig: &mut ArgSig, optional: bool) {
     match &idx.kind {
         ExprKind::Literal(s) => match s.parse::<usize>() {
             Ok(n) => {
-                sig.indices.insert(n);
+                if optional {
+                    sig.optional.insert(n);
+                } else {
+                    sig.required.insert(n);
+                }
             }
             Err(_) => sig.variadic = true,
         },
@@ -512,11 +572,12 @@ fn arith_children(a: &ArithExpr) -> Vec<&ArithExpr> {
     }
 }
 
-/// A bare `args[k]` arith index: an int literal → fixed index; else variadic.
+/// A bare `args[k]` arith index: an int literal → fixed *required* index; else
+/// variadic. (Arithmetic reads are always bare — no disposition in `$(( ))`.)
 fn sig_record_arith_index(idx: &ArithExpr, sig: &mut ArgSig) {
     match idx {
         ArithExpr::Literal(n) if *n >= 0 => {
-            sig.indices.insert(*n as usize);
+            sig.required.insert(*n as usize);
         }
         _ => sig.variadic = true,
     }
