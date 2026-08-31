@@ -276,16 +276,21 @@ pub(super) fn lower_ir_redirect_expr(
         crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
             redirect_expr_concat(parts, builder, module, vars, literals, externs)
         }
-        _ => redirect_expr_zero(builder),
+        other => redirect_target_ice(&format!("unexpected non-scalar target kind {other:?}")),
     }
 }
 
-fn redirect_expr_zero(
-    builder: &mut FunctionBuilder,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    use cranelift_codegen::ir::types::I64;
-    let z = builder.ins().iconst(I64, 0);
-    (z, z)
+/// A redirect target that couldn't be resolved to a `(ptr, len)`. Every path
+/// that reaches here is guarded upstream — a non-scalar target is rejected at
+/// parse (SB4049), a `${x:-f}` / `$a[i]` target is spilled to a scalar in the
+/// transform, an undeclared `$f` is rejected by validate (SB5031), and a
+/// literal target is always interned — so arriving here is a compiler-invariant
+/// violation. Raise a loud ICE (caught by `catch_unwind` in
+/// `compile_to_object`, surfaced as a clean error) instead of the old silent
+/// `(0, 0)`, which redirected to an EMPTY filename
+/// (bug-redirect-nonsimple-target-empty class).
+fn redirect_target_ice(reason: &str) -> ! {
+    panic!("ICE: unresolved redirect target — {reason}");
 }
 
 fn redirect_expr_literal(
@@ -301,7 +306,7 @@ fn redirect_expr_literal(
         let len = builder.ins().iconst(I64, s.len() as i64);
         (ptr, len)
     } else {
-        redirect_expr_zero(builder)
+        redirect_target_ice(&format!("literal {s:?} not interned in the literals map"))
     }
 }
 
@@ -313,7 +318,7 @@ fn redirect_expr_simple_expansion(
     if let Some(sv) = find_highest_version(vars, var) {
         (builder.use_var(sv.str_ptr()), builder.use_var(sv.str_len()))
     } else {
-        redirect_expr_zero(builder)
+        redirect_target_ice(&format!("variable ${var} has no slot"))
     }
 }
 
@@ -369,4 +374,33 @@ fn redirect_expr_concat(
         acc_len = builder.ins().stack_load(I64, out_slot, 0);
     }
     (acc_ptr, acc_len)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cranelift_codegen::ir::Function;
+    use cranelift_frontend::FunctionBuilderContext;
+
+    // `redirect_expr_simple_expansion` on an absent variable takes the
+    // find_highest_version → None branch, which is a loud ICE (not a silent
+    // empty target). The condition is unreachable in real compiles — validate
+    // rejects an undeclared `$f` with SB5031 — so a unit test is the only way to
+    // exercise the guard. Confirms it panics rather than returning (0, 0).
+    #[test]
+    fn unresolved_redirect_var_is_loud_ice() {
+        let mut fbctx = FunctionBuilderContext::new();
+        let mut func = Function::new();
+        let mut builder = FunctionBuilder::new(&mut func, &mut fbctx);
+        let entry = builder.create_block();
+        builder.switch_to_block(entry);
+        let vars: HashMap<String, VarSlot> = HashMap::new();
+        let caught = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            redirect_expr_simple_expansion("nonexistent_var", &mut builder, &vars)
+        }));
+        assert!(
+            caught.is_err(),
+            "an unresolved redirect-target variable must raise a loud ICE"
+        );
+    }
 }

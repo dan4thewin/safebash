@@ -437,3 +437,49 @@ defined in validate.rs and covered there.
 `dump_sash_source`/`emit_manifest`/`set_sysroot`/`sysroot_file_exists`, deferred
 `extract_from_literal`/`extract_leading_operator` (dispatch task), and
 `type_check::fmt` (derive artifact).
+
+## 2026-08-31 (cont.) — CLI switches covered, ICEs unit-tested, tail resolved
+
+The grind tail is now fully accounted — every native-core function is spec-tested,
+unit-tested, queued, or explained.
+
+- **CLI switches → `spec/cli.sh` (new, cli.1–6, all modes):** `emit_manifest`
+  (`--manifest`), `dump_sash_source` (`--extract` of the `.sash_source` section),
+  `set_sysroot` + `sysroot_file_exists` (`--sysroot=` dir branch). These reach
+  lib.rs handlers the `-c`/`--janet`/`--emit-c` runner never touches; the script
+  invokes `${SASH}` with the flags directly (absolute, so `PATH=/bin` overrides
+  for the sysroot test don't lose the binary). All four flipped 0→>0
+  (counts 6/6/3/9). The squashfs branch of `sysroot_file_exists` stays uncovered
+  (needs `unsquashfs` + a `.squashfs` image) — explained, not spec-worthy.
+- **Intentional ICEs → unit tests (DG: "unit test every intentional ICE"):**
+  - `panic_payload_message` (codegen/entry.rs) — 3 `#[cfg(test)]` cases (String /
+    &str / other payload). Covered by `mk test` (`--lib`), NOT cov-spec-only
+    (specs don't run unit tests) — that's expected for an ICE-only path.
+  - `redirect_expr_zero` **removed**; the three silent-empty `(0,0)` fallbacks
+    (non-scalar `_` arm, literal-not-interned, var-no-slot) are now a **loud ICE**
+    `redirect_target_ice(reason) -> !`. Unit test `unresolved_redirect_var_is_loud_ice`
+    builds a minimal `FunctionBuilder`, calls `redirect_expr_simple_expansion`
+    with empty vars, and asserts it panics (the condition is unreachable in real
+    compiles — validate rejects undeclared `$f` with SB5031 — so a unit test is
+    the only way to exercise it). Full 3-mode sweep after making it loud:
+    **0 regressions**, proving nothing real reached the silent-empty fallback.
+- **Queued:** `extract_from_literal` / `extract_leading_operator` — the dispatch
+  compact-operator Literal / leading-op-in-last-Concat-part branches. Filed
+  `grind-dispatch-compact-operator-branches` (bucket A-or-B: measure which input
+  flips them; add a dispatch spec, else remove as shadowed-dead).
+- **Explained artifact:** `type_check::fmt` — the hand-written `Display for
+  TypeError` impl. `TypeError` the *type* is heavily used (every type-check
+  diagnostic is a `TypeError`), but its `Display` is never invoked: errors
+  surface through their `.message` / `.span` fields via the diagnostic layer,
+  not `{}`-formatting. An idiomatic-but-uncalled trait impl; kept (harmless, and
+  a reasonable thing to have on an error type), not spec/unit-worthy.
+
+**Measurement caveat reconfirmed:** the count-0 `find_dollar_question` /
+`expr_invokes_random` / `check_arg_default_taint` entries are ir.rs
+monomorphized walker **closures**; the real functions live in validate.rs with
+counts 18 / 163 / 1672 (covered by cov.91–93). Always check the entry whose
+`filenames` matches the function's defining file.
+
+**Endpoint:** spec-only never-run = only the two unit-tested ICEs (expected, they
+can't be spec-driven) + the two queued dispatch branches. Everything else is
+covered or a documented artifact.

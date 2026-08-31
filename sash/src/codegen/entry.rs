@@ -456,3 +456,33 @@ fn embed_sash_source(product: &mut cranelift_object::ObjectProduct, bash_source:
         .object
         .append_section_data(section_id, src.as_bytes(), 1);
 }
+
+#[cfg(test)]
+mod tests {
+    use super::panic_payload_message;
+
+    // `panic_payload_message` decodes a caught codegen `catch_unwind` payload.
+    // It only runs when a codegen ICE actually fires, which every guard is
+    // meant to prevent — so it's covered by unit tests, not the spec suite.
+    #[test]
+    fn payload_string_is_recovered() {
+        let p: Box<dyn std::any::Any + Send> = Box::new(String::from("boom from panic!"));
+        assert_eq!(panic_payload_message(p), "boom from panic!");
+    }
+
+    #[test]
+    fn payload_static_str_is_recovered() {
+        let p: Box<dyn std::any::Any + Send> = Box::new("static boom");
+        assert_eq!(panic_payload_message(p), "static boom");
+    }
+
+    #[test]
+    fn payload_other_type_falls_back() {
+        // A non-string payload (e.g. an integer) → the generic ICE message.
+        let p: Box<dyn std::any::Any + Send> = Box::new(42_i32);
+        assert_eq!(
+            panic_payload_message(p),
+            "internal compiler error in codegen"
+        );
+    }
+}

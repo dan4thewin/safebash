@@ -1,3 +1,23 @@
+## ════════ STATUS (2026-08-31, cont.) — grind tail resolved (CLI + ICEs + queue) ════════
+
+**On `hand-parser`.** Closed out the coverage grind tail per DG:
+- **CLI switches → `spec/cli.sh`** (new; cli.1–6, all modes): `--manifest`
+  (emit_manifest), `--extract` (dump_sash_source), `--sysroot=` (set_sysroot +
+  sysroot_file_exists). All four lib.rs handlers flipped 0→>0.
+- **Intentional ICEs → unit tests**: `panic_payload_message` (3 cases);
+  `redirect_expr_zero` **removed** → the three silent-empty `(0,0)` redirect-target
+  fallbacks are now a **loud ICE** `redirect_target_ice`, with a unit test that
+  builds a FunctionBuilder and asserts the panic. Full sweep after making it loud:
+  0 regressions (nothing real reached the silent-empty path).
+- **Queued**: `extract_from_literal`/`extract_leading_operator` (dispatch
+  compact-operator Literal/leading-op branches) → `grind-dispatch-compact-operator-branches`.
+- **Explained**: `type_check::fmt` (uncalled `Display for TypeError` — errors
+  surface via `.message`/`.span`, not `{}`).
+
+Full 3-mode sweep vs `cd97212`: **0 regressions, +6 cli each**. 16 lib unit tests
+pass. Spec-only never-run endpoint = the two unit-tested ICEs (can't be
+spec-driven) + the two queued dispatch branches; all else covered or documented.
+
 ## ════════ STATUS (2026-08-31) — pipeline-stage redirect targets fixed (grind) ════════
 
 **On `hand-parser`.** Resumed the coverage grind; probing never-run redirect fns
