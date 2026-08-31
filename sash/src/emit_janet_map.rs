@@ -138,7 +138,6 @@ fn sanitize(name: &str) -> String {
 fn render_stmt(stmt: &Statement, depth: usize, env: &Env) -> String {
     let ind = indent(depth);
     match &stmt.kind {
-        StmtKind::Comment(c) => format!("{}# {}", ind, c.trim_start_matches('#').trim()),
         StmtKind::Assignment(a) => {
             format!(
                 "{}(set {} {})",
@@ -181,7 +180,6 @@ fn stmt_kind_name(k: &StmtKind) -> String {
         StmtKind::Redirected(_) => "redirected",
         StmtKind::List(_) => "list",
         StmtKind::Group(_) => "group",
-        StmtKind::Comment(_) => "comment",
         StmtKind::Suppressed(_) => "suppressed",
         StmtKind::Negated(_) => "negated",
         StmtKind::ArithTest(_) => "arith-test",

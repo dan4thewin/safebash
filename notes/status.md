@@ -1,3 +1,25 @@
+## ════════ STATUS (2026-08-31, cont.5) — comments are lexical trivia (DD#85) ════════
+
+**On `hand-parser`.** DG: "trailing comments seem to be broken." They were —
+`echo hi # c`, `int foo=1 # c`, `for x in a b # c`, `if true # c`,
+`echo hi | cat # c`, `return 0 # c` all → SB4014. Root cause: value-collecting
+parse loops recognized only `Newline|Semi|Eof` as terminators, so a trailing
+`Tok::Comment` hit the value parser.
+
+DG chose **B — comments as lexical trivia** (over patching every parse
+position): the Scanner now drops `Tok::Comment` (`next_token_skip_comments`),
+and `StmtKind::Comment` + `parse_comment_stmt` are removed. Safe because
+`.sash_source` embeds source **verbatim** (round-trip unaffected), comments were
+already no-ops in native/c, and `--emit-source`/`--annotate` are already
+rejected. Only loss: non-gate janet stops rendering comments (DG accepted).
+DD#85; journal 221.
+
+`next_token` left byte-identical (grandfathered); the filter is a tiny wrapper.
+Behavior matches bash (`# ; x` runs nothing after `#`; same-line `# c }` eats
+the `}`; shebang dropped; `#` in `$(( ))` stays a Word per DD#72). specs
+`spec/comments.sh` cmt.1–11 (all modes; cmt.11 native,c). Full 3-mode sweep vs
+`e638e84`: **0 regressions, +32 passing**. Lib tests green.
+
 ## ════════ STATUS (2026-08-31, cont.4) — `!` on the terminal pipeline segment ════════
 
 **On `hand-parser`.** DG's `… | ! grep -q z` (journal 219's line) uses a `!` on

@@ -398,8 +398,9 @@ if in_modes native,c; then
 else
     skip_chk cov.89
 fi
-# cov.90 a full-line comment inside a compiled program (parse_comment_stmt) —
-# no feature spec has a standalone comment line in the source.
+# cov.90 a full-line comment inside a compiled program — comments are lexical
+# trivia dropped by the Scanner (see spec/comments.sh); this pins that a
+# standalone comment line still compiles and runs the following statement.
 run_sash '# a comment
 echo hi'
 [[ $rc = 0 && $out = hi && -z $err ]]; chk cov.90

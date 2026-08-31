@@ -274,7 +274,6 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         StmtKind::Redirected(r) => emit_redirected(out, ctx, r, depth),
         StmtKind::List(l) => emit_list(out, ctx, l, depth),
         StmtKind::Group(g) => emit_group(out, ctx, g, depth),
-        StmtKind::Comment(text) => emit_comment(out, text, depth),
         StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
         StmtKind::Negated(inner) => emit_negated(out, ctx, inner, depth),
         StmtKind::ArithTest(expr) => emit_arith_test(out, ctx, expr, depth),
@@ -599,15 +598,6 @@ fn emit_group(out: &mut String, ctx: &mut EmitCtx, g: &Group, depth: usize) {
     }
     indent(out, depth);
     writeln!(out, ")").unwrap();
-}
-
-fn emit_comment(out: &mut String, text: &str, depth: usize) {
-    indent(out, depth);
-    if text.starts_with("#!") {
-        // Skip shebang
-    } else {
-        writeln!(out, "{}", text).unwrap();
-    }
 }
 
 fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth: usize) {

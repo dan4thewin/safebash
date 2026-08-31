@@ -129,7 +129,6 @@ fn dispatch_statement(
     span: Span,
 ) -> Result<Option<Statement>, Diagnostic> {
     match tok {
-        Tok::Comment(text) => parse_comment_stmt(scanner, text, span),
         Tok::If => parse_if(scanner),
         Tok::While | Tok::Until => parse_while(scanner),
         Tok::For => parse_for(scanner),
@@ -152,18 +151,6 @@ fn dispatch_statement(
         Tok::Word(_) if is_paren_function(scanner) => parse_paren_function(scanner),
         _ => parse_simple_or_assignment(scanner),
     }
-}
-
-fn parse_comment_stmt(
-    scanner: &mut Scanner,
-    text: String,
-    span: Span,
-) -> Result<Option<Statement>, Diagnostic> {
-    scanner.next();
-    Ok(Some(Statement {
-        kind: StmtKind::Comment(text),
-        span,
-    }))
 }
 
 /// SB4021–SB4024 reject all postfix composition on compound commands.

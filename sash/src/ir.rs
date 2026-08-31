@@ -93,7 +93,6 @@ impl Statement {
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
             | StmtKind::Command(_)
-            | StmtKind::Comment(_)
             | StmtKind::ArithTest(_) => vec![],
         }
     }
@@ -126,7 +125,6 @@ impl Statement {
             StmtKind::Assignment(_)
             | StmtKind::Declaration(_)
             | StmtKind::Command(_)
-            | StmtKind::Comment(_)
             | StmtKind::ArithTest(_) => vec![],
         }
     }
@@ -374,9 +372,6 @@ pub enum StmtKind {
 
     /// { statements; }
     Group(Group),
-
-    /// Comment line (preserved for round-trip fidelity)
-    Comment(String),
 
     /// DD#55: `- cmd` — suppressed command (no implicit exit check)
     Suppressed(Box<Statement>),

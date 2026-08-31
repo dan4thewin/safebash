@@ -215,7 +215,7 @@ impl Scanner {
     /// Peek at the next token without consuming it.
     pub fn peek(&mut self) -> &SpannedToken {
         if self.peeked.is_empty() {
-            let tok = self.next_token();
+            let tok = self.next_token_skip_comments();
             self.peeked.push(tok);
         }
         &self.peeked[0]
@@ -224,7 +224,7 @@ impl Scanner {
     /// Peek at the Nth token ahead (0-based).
     pub fn peek_n(&mut self, n: usize) -> &SpannedToken {
         while self.peeked.len() <= n {
-            let tok = self.next_token();
+            let tok = self.next_token_skip_comments();
             self.peeked.push(tok);
         }
         &self.peeked[n]
@@ -235,7 +235,7 @@ impl Scanner {
         let tok = if !self.peeked.is_empty() {
             self.peeked.remove(0)
         } else {
-            self.next_token()
+            self.next_token_skip_comments()
         };
         self.last_end = tok.span.end;
         tok
@@ -277,6 +277,23 @@ impl Scanner {
     //
     // r47-decide-logos-vs-handroll: kept hand-roll for `<` (heredoc),
     // `-` (dash vs word), and the punct/word boundary cases.
+
+    /// Fetch the next non-trivia token. Comments are lexical trivia (DG
+    /// 2026-08-31): the scanner drops `# … EOL` tokens entirely so a trailing
+    /// comment never reaches the parser (it would otherwise be an "expected
+    /// expression" at every value-collecting loop). The source is preserved
+    /// verbatim in the `.sash_source` ELF section, so `--extract` round-trip is
+    /// unaffected. (Inside `$(( ))` a `#` is a Word, not a Comment — see
+    /// `arith_hash_word` — so arithmetic is untouched.)
+    fn next_token_skip_comments(&mut self) -> SpannedToken {
+        loop {
+            let tok = self.next_token();
+            if matches!(tok.token, Tok::Comment(_)) {
+                continue;
+            }
+            return tok;
+        }
+    }
 
     fn next_token(&mut self) -> SpannedToken {
         self.skip_whitespace();

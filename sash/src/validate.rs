@@ -197,7 +197,6 @@ fn single_cmdsub_command(stmts: &[Statement]) -> Option<&Command> {
     let mut cmd = None;
     for s in stmts {
         match &s.kind {
-            StmtKind::Comment(_) => {}
             StmtKind::Command(c) if cmd.is_none() => cmd = Some(c),
             _ => return None,
         }
@@ -267,7 +266,6 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // SB5007: check arithmetic in context
             validate_arith_context(expr, stmt.span, in_condition, diags);
         }
-        StmtKind::Comment(_) => {}
         // Wrappers (List, Pipeline, Subshell, Suppressed, Redirected) and
         // reset-context constructs (Function, Case) — see `validate_nested`.
         _ => validate_nested(stmt, in_condition, diags),

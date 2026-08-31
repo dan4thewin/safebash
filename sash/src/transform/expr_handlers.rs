@@ -11,11 +11,7 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         // by `lift_int_func_calls` (like `IntFuncCall`). Was a silent `$(...)`
         // placeholder at runtime.
         if let ExprKind::CommandSubstitution(stmts) = &expr.kind {
-            let body: Vec<Statement> = stmts
-                .iter()
-                .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
-                .cloned()
-                .collect();
+            let body: Vec<Statement> = stmts.to_vec();
             return SsaValue::CmdSubstBody {
                 body,
                 redirects: vec![],
@@ -86,10 +82,7 @@ fn single_command_subst(expr: &Expr) -> Option<(&Statement, Option<String>, &Com
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };
-    let real_stmts: Vec<&Statement> = stmts
-        .iter()
-        .filter(|s| !matches!(s.kind, StmtKind::Comment(_)))
-        .collect();
+    let real_stmts: Vec<&Statement> = stmts.iter().collect();
     if real_stmts.len() != 1 {
         return None;
     }

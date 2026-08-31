@@ -48,7 +48,6 @@ pub(super) fn lower_one(
         StmtKind::Redirected(r) => lower_redirected_stmt(r, ssa, state, block),
         StmtKind::Group(g) => lower_stmts(&g.body, ssa, state, block),
         StmtKind::Case(c) => lower_case(c, ssa, state, block),
-        StmtKind::Comment(_) => block,
         StmtKind::ArithTest(expr) => lower_arith_test_stmt(expr, stmt, ssa, state, &mut block),
         StmtKind::Suppressed(inner) => lower_suppressed_stmt(inner, ssa, state, block),
         StmtKind::Negated(inner) => lower_negated_stmt(inner, ssa, state, block),
