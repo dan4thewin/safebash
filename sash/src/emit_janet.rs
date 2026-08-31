@@ -276,6 +276,7 @@ fn emit_stmt(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement, depth: usize
         StmtKind::Group(g) => emit_group(out, ctx, g, depth),
         StmtKind::Comment(text) => emit_comment(out, text, depth),
         StmtKind::Suppressed(inner) => emit_suppressed(out, ctx, inner, depth),
+        StmtKind::Negated(inner) => emit_negated(out, ctx, inner, depth),
         StmtKind::ArithTest(expr) => emit_arith_test(out, ctx, expr, depth),
         StmtKind::ReturnProducer(inner) => emit_return_producer(out, ctx, inner, depth),
     }
@@ -621,6 +622,22 @@ fn emit_suppressed(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth
     writeln!(out, "  nil)").unwrap();
 }
 
+/// DD#70: a standalone `Negated(inner)` — emit the inner as a boolean and flip
+/// `__last_exit` (0↔1). In practice `Negated` is a per-segment pipeline marker
+/// (handled in `emit_pipeline_do`); this is the defensive statement fallback.
+fn emit_negated(out: &mut String, ctx: &mut EmitCtx, inner: &Statement, depth: usize) {
+    indent(out, depth);
+    writeln!(out, "(do").unwrap();
+    let outer = ctx.checked;
+    ctx.checked = false;
+    emit_stmt(out, ctx, inner, depth + 1);
+    ctx.checked = outer;
+    indent(out, depth + 1);
+    writeln!(out, "(set __last_exit (if (zero? __last_exit) 1 0))").unwrap();
+    indent(out, depth + 1);
+    writeln!(out, "__last_exit)").unwrap();
+}
+
 fn emit_arith_test(out: &mut String, ctx: &EmitCtx, expr: &ArithExpr, depth: usize) {
     indent(out, depth);
     writeln!(out, "(not= 0 {})", arith_expr_to_janet(expr, ctx)).unwrap();
@@ -780,6 +797,11 @@ fn emit_pipeline_do(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: us
         .iter()
         .map(|c| matches!(c.kind, StmtKind::Suppressed(_)))
         .collect();
+    let negated: Vec<bool> = p
+        .commands
+        .iter()
+        .map(|c| matches!(c.kind, StmtKind::Negated(_)))
+        .collect();
     indent(out, depth);
     writeln!(out, "(do").unwrap();
     for (i, cmd) in p.commands.iter().enumerate() {
@@ -795,6 +817,14 @@ fn emit_pipeline_do(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: us
         if sup {
             // Suppressed stage: reap only, status excluded from the aggregate.
             writeln!(out, "(os/proc-wait p{})", i).unwrap();
+        } else if negated.get(i).copied().unwrap_or(false) {
+            // DD#70: negated stage — invert its status (0↔nonzero) before fold.
+            writeln!(
+                out,
+                "(let [_s0 (os/proc-wait p{}) _s (if (zero? _s0) 1 0)] (when (and (zero? __last_exit) (not= 0 _s)) (set __last_exit _s)))",
+                i
+            )
+            .unwrap();
         } else {
             writeln!(
                 out,
@@ -1068,9 +1098,10 @@ fn emit_pipeline_stage(
     depth: usize,
 ) {
     // DD#55: a `-`-suppressed stage still runs — unwrap to the inner command
-    // (its status is excluded from the aggregate in emit_pipeline_do).
+    // (its status is excluded from the aggregate in emit_pipeline_do). DD#70: a
+    // `!`-negated stage also runs; its status is inverted in emit_pipeline_do.
     let cmd = match &cmd.kind {
-        StmtKind::Suppressed(inner) => inner.as_ref(),
+        StmtKind::Suppressed(inner) | StmtKind::Negated(inner) => inner.as_ref(),
         _ => cmd,
     };
     let StmtKind::Command(c) = &cmd.kind else {

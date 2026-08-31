@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=91
+plan=97
 echo "1..$plan" >&3
 
 set +e
@@ -449,6 +449,32 @@ run_sash 'if ! /bin/true | /bin/cat; then echo x; fi'
 # bng.5 `- !` cannot suppress a boolean → SB4019 (was the garbage SB4014)
 run_sash '- ! /bin/false'
 [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.5
+
+# ── DD#70 terminal-segment negation (DG 2026-08-31): `!` may negate the FINAL
+# pipeline stage (`a | ! b`), which supplies the pipeline's result — the same
+# `!` a standalone simple command allows. Its status is inverted (0↔nonzero)
+# before the DD#55 worst-of. A `!` on a non-terminal stage is SB4040 (a
+# plumbing status a reviewer can't trace). All three backends implement it. ──
+# bng.7 `a | ! b` — b fails (no match) → `!` true → the branch is taken
+run_sash 'if /bin/echo abc | ! /bin/grep -q z; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $rerr ]]; chk bng.7
+# bng.8 `a | ! b` — b matches → `!` false → the else branch
+run_sash 'if /bin/echo xyz | ! /bin/grep -q y; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "F" && -z $rerr ]]; chk bng.8
+# bng.9 negation is on the TERMINAL stage of a 3-stage pipeline
+run_sash 'if /bin/echo abc | /bin/cat | ! /bin/grep -q z; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $rerr ]]; chk bng.9
+# bng.10 `!` on a NON-terminal stage (`a | ! b | c`) is rejected — SB4040
+run_sash '/bin/echo abc | ! /bin/grep abc | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.10
+# bng.11 `! -` (negate a suppressed command) is the `- !` mirror → SB4019
+run_sash '/bin/echo abc | ! - /bin/grep -q z'
+[[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.11
+# bng.12 `return ! X | Y` — a non-terminal `!` in a return producer → SB4040
+#        (was the confusing bare-`!` SB4014)
+run_sash 'f() { return ! /bin/echo abc | /bin/grep -q z }
+if f; then echo T; fi'
+[[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.12
 
 # e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
 # native+c: janet doesn't yet compile a `-> int` function used in `|| :`

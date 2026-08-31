@@ -948,9 +948,21 @@ fn case_removed_error(span: Span) -> Diagnostic {
 /// function's; it is consumed (never aborts). Disambiguation: `[[`/`((`, or a
 /// non-numeric command word after `return`, is a producer; a numeric literal,
 /// a `$`-expansion, or end-of-statement is a value.
+fn parse_return_producer_head(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+    match scanner.peek().token {
+        Tok::DblBracketOpen => parse_test_command(scanner),
+        Tok::DblParen => parse_arith_stmt(scanner),
+        // DD#70/#74: `return ! X` — a negated producer. `parse_negated` folds
+        // the `!` onto the terminal unit and rejects a non-terminal `!`
+        // (`return ! X | Y` → SB4040), instead of the bare-`!` SB4014.
+        Tok::Bang => parse_negated(scanner),
+        _ => parse_simple_or_assignment(scanner),
+    }
+}
+
 fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let after = scanner.peek_n(1).token.clone();
-    let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen)
+    let is_producer = matches!(after, Tok::DblBracketOpen | Tok::DblParen | Tok::Bang)
         || matches!(&after, Tok::Word(w) if !w.chars().all(|c| c.is_ascii_digit()));
     if !is_producer {
         return parse_simple_or_assignment(scanner);
@@ -958,11 +970,7 @@ fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'return'
-    let producer = match scanner.peek().token {
-        Tok::DblBracketOpen => parse_test_command(scanner)?,
-        Tok::DblParen => parse_arith_stmt(scanner)?,
-        _ => parse_simple_or_assignment(scanner)?,
-    };
+    let producer = parse_return_producer_head(scanner)?;
     match producer {
         Some(p) => {
             // DD#74: `return` takes a status *producer*, and a producer can be a
@@ -1008,6 +1016,18 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
     if stmt_is_dispatch(&stmt) {
         return Err(dispatch_stmt_only_error(span));
     }
+    // DD#70: `-` and `!` cannot combine on one segment. `- ! cmd` is SB4019
+    // (parse_suppressed); reject the mirror `! - cmd` symmetrically — negating a
+    // suppressed status is contradictory (suppress = "don't count it").
+    if matches!(&stmt.kind, StmtKind::Suppressed(_)) {
+        return Err(parse_error(
+            span,
+            "SB4019",
+            "`!` cannot negate a `-`-suppressed command — `-` and `!` don't \
+             combine on one stage (suppress discards the status; `!` inverts it)"
+                .to_string(),
+        ));
+    }
     // Reviewability (SB4040): `!` on a pipeline (`! a | b`) is rejected — a
     // trailing `|`, or an already-folded multi-stage pipeline. Escape hatch:
     // wrap the pipeline in a function and negate the function.
@@ -1026,14 +1046,18 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
     }))
 }
 
-/// SB4040: `!` cannot negate a multi-stage pipeline (reviewability — a reviewer
-/// can't see how far `!` reaches). Direct to the function escape hatch.
+/// SB4040: `!` may only negate the **terminal** segment of a pipeline (DD#70).
+/// A `!` on a non-terminal stage (`! a | b`, `a | ! b | c`) is rejected — its
+/// status is plumbing, and negating it then folding it into the pipefail
+/// aggregate is illegible. `a | ! b` (negating the final stage, which supplies
+/// the pipeline's result) is allowed. Escape hatch: wrap in a predicate.
 fn negate_pipeline_error(span: Span) -> Diagnostic {
     parse_error(
         span,
         "SB4040",
-        "`!` cannot negate a pipeline — a reviewer can't tell how far `!` \
-         reaches. Wrap the pipeline in a predicate function and negate that: \
+        "`!` may only negate the final stage of a pipeline (`a | ! b`) — a `!` \
+         on an earlier stage negates a plumbing status a reviewer can't trace. \
+         Wrap the pipeline in a predicate and negate that: \
          `f() { if a | b; then return 0; fi; return 1 }` then `if ! f; then …`"
             .to_string(),
     )
@@ -2167,9 +2191,22 @@ fn parse_trailing_pipeline(
 }
 
 /// Append a parsed `|`-stage, flattening a nested pipeline (right-associative
-/// `a | b | c` → one flat stage list).
+/// `a | b | c` → one flat stage list). A negated single-command stage
+/// (`a | ! b`) arrives from `parse_negated` as `Pipeline{[b], negated:true}`;
+/// preserve the negation as a per-segment `Negated(b)` marker instead of
+/// flattening it away (DD#70 terminal-segment negation). A non-terminal `!`
+/// (`a | ! b | c`) never reaches here — `parse_negated` rejects it (SB4040)
+/// because the negated unit has a trailing `|`.
 fn append_pipeline_stage(commands: &mut Vec<Statement>, next_stmt: Statement) {
     match next_stmt.kind {
+        StmtKind::Pipeline(p) if p.negated && p.commands.len() == 1 => {
+            let span = next_stmt.span;
+            let inner = p.commands.into_iter().next().unwrap();
+            commands.push(Statement {
+                kind: StmtKind::Negated(Box::new(inner)),
+                span,
+            });
+        }
         StmtKind::Pipeline(p) => commands.extend(p.commands),
         _ => commands.push(next_stmt),
     }

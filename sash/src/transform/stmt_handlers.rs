@@ -685,6 +685,7 @@ fn handle_pipe_while_or_mapfile(
         capture_read_fd: true,
         checked: true,
         suppressed: vec![],
+        negated: vec![],
     });
     if is_mapfile {
         block = lower_one(last, ssa, state, block);
@@ -730,6 +731,7 @@ fn handle_lastpipe_read(
         capture_read_fd: true,
         checked: true,
         suppressed: vec![],
+        negated: vec![],
     });
     if let StmtKind::Command(c) = &last.kind {
         let (var_names, delim, field_sep) = parse_read_flags(&c.args);
@@ -767,20 +769,27 @@ fn handle_regular_pipeline(
 ) {
     let mut stages = vec![];
     let mut suppressed = vec![];
+    let mut negated = vec![];
     for (idx, cmd) in p.commands.iter().enumerate() {
         // DD#55: a `-`-suppressed segment still RUNS (real pipe stage); only
-        // its exit status is excluded from the aggregate. Peel the Suppressed
-        // wrapper and record the mask, rather than dropping the stage.
-        let (unwrapped, is_suppressed) = match &cmd.kind {
-            StmtKind::Suppressed(inner) => (inner.as_ref(), true),
-            _ => (cmd, false),
+        // its exit status is excluded from the aggregate. DD#70: a `!`-negated
+        // stage also runs, but its status is inverted before the aggregate.
+        // Peel the wrapper and record the mask, rather than dropping the stage.
+        let (unwrapped, is_suppressed, is_negated) = match &cmd.kind {
+            StmtKind::Suppressed(inner) => (inner.as_ref(), true, false),
+            StmtKind::Negated(inner) => (inner.as_ref(), false, true),
+            _ => (cmd, false, false),
         };
         let stages_before = stages.len();
         lower_one_pipeline_stage(unwrapped, idx, ssa, state, block, &mut stages);
         // push_command_stage may add >1 stage (function inlining); mark each.
         suppressed.resize(stages.len(), false);
+        negated.resize(stages.len(), false);
         if is_suppressed {
             suppressed[stages_before..].fill(true);
+        }
+        if is_negated {
+            negated[stages_before..].fill(true);
         }
     }
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
@@ -788,6 +797,7 @@ fn handle_regular_pipeline(
         capture_read_fd: false,
         checked: true,
         suppressed,
+        negated,
     });
 }
 

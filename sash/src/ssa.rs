@@ -310,6 +310,11 @@ pub enum SsaInst {
         /// suppressed stage still runs (real pipe stage); only its exit
         /// status is excluded from the pipefail aggregate. Empty ⇒ none.
         suppressed: Vec<bool>,
+        /// DD#70 per-segment `!` negation, aligned with `stages`. A negated
+        /// stage still runs; its exit status is inverted (0↔nonzero) before it
+        /// joins the DD#55 worst-of aggregate. Only the terminal stage may be
+        /// negated (enforced at parse). Empty ⇒ none.
+        negated: Vec<bool>,
     },
     /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.

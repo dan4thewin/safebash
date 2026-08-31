@@ -85,7 +85,9 @@ impl Statement {
                 std::slice::from_ref(l.right.as_ref()),
             ],
             StmtKind::Group(g) => vec![&g.body],
-            StmtKind::Suppressed(inner) | StmtKind::ReturnProducer(inner) => {
+            StmtKind::Suppressed(inner)
+            | StmtKind::ReturnProducer(inner)
+            | StmtKind::Negated(inner) => {
                 vec![std::slice::from_ref(inner.as_ref())]
             }
             StmtKind::Assignment(_)
@@ -116,7 +118,9 @@ impl Statement {
                 std::slice::from_mut(l.right.as_mut()),
             ],
             StmtKind::Group(g) => vec![&mut g.body],
-            StmtKind::Suppressed(inner) | StmtKind::ReturnProducer(inner) => {
+            StmtKind::Suppressed(inner)
+            | StmtKind::ReturnProducer(inner)
+            | StmtKind::Negated(inner) => {
                 vec![std::slice::from_mut(inner.as_mut())]
             }
             StmtKind::Assignment(_)
@@ -376,6 +380,13 @@ pub enum StmtKind {
 
     /// DD#55: `- cmd` — suppressed command (no implicit exit check)
     Suppressed(Box<Statement>),
+
+    /// DD#70: `! cmd` as a *pipeline stage* (`a | ! b`) — a per-segment
+    /// negation of the (terminal) stage's status, symmetric with `Suppressed`.
+    /// The stage still runs; its status is inverted (0↔nonzero) before the
+    /// DD#55 worst-of aggregate. Only ever appears inside a multi-stage
+    /// pipeline's `commands`; the standalone `! cmd` uses `Pipeline.negated`.
+    Negated(Box<Statement>),
 
     /// (( expr )) used as a condition — arithmetic test.
     /// Distinct from [[ ]] which is string/file tests only.

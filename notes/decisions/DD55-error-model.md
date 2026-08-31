@@ -80,6 +80,12 @@ the programmer's responsibility — use `- cmd` on the producing
 side or choose tools that don't trigger it (`sed -n 1p` over
 `head -1`).
 
+Per-segment `!` negation is the companion operator (DD#70 addendum
+2026-08-31): `cmd1 | ! cmd2` inverts the **terminal** segment's status
+(0↔nonzero) before it joins the worst-of below. Only the terminal segment
+may be negated (a non-terminal `!` is SB4040); `-` and `!` don't combine on
+one segment (SB4019).
+
 ### Aggregate is context-independent; position decides the consequence (2026-07-24)
 
 The pipeline's truth value is **one** definition everywhere: the worst

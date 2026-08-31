@@ -202,3 +202,40 @@ The rest of the positional template still holds: bare `! X` → SB4018, `- ! X`
 native), consumed positions negate the aggregate. Implemented in
 `parse/parser.rs::parse_negated` (single-unit parse + SB4040) and
 `parse_suppressed` (`- !` → SB4019). spec errors.sh bng.1-6. Journal 156.
+
+## Addendum (2026-08-31, DG): `!` may negate the TERMINAL pipeline segment
+
+The 2026-08-19 line ("`!` on a multi-stage pipeline is rejected — SB4040") is
+**refined**, not reversed. DG: `-` and `!` are both *per-segment* pipeline
+operators. `-Si` suppresses a segment from the DD#55 aggregate; the **terminal**
+segment supplies the pipeline's result, so it may take the same `!` a standalone
+simple command takes.
+
+- **`a | ! b` — negating the FINAL stage — is allowed.** The stage still runs;
+  its status is inverted (0↔nonzero) *before* the DD#55 worst-of fold (a
+  per-segment negate, **not** a whole-pipeline negate — that would revive the
+  "how far does `!` reach?" ambiguity). So `echo abc | ! grep -q z` is true
+  exactly when `grep` fails. `a | b | ! c` (negate the terminal of a 3-stage)
+  likewise.
+- **`!` on a NON-terminal stage stays SB4040.** `! a | b` (= `(!a) | b`, negate
+  segment 0) and `a | ! b | c` (negate a middle stage) are rejected — a
+  non-terminal status is plumbing, and negating it then folding it into the
+  aggregate is illegible. This *unifies* the old leading-`!` rejection: it is
+  simply "you negated a non-terminal segment," with a precise message.
+- **`-` and `!` don't combine on one segment.** `- ! cmd` (SB4019, existing) and
+  its mirror `! - cmd` (SB4019, new) are both rejected — suppress discards a
+  status, `!` inverts it; asking for both is contradictory.
+- **`return ! X`** is a negated producer (DD#74). `return ! X | Y` routes through
+  the same rule → SB4040 for the non-terminal `!` (was a confusing bare-`!`
+  SB4014).
+
+Representation: a terminal `! b` stage is a per-segment `StmtKind::Negated(b)`
+wrapper (symmetric with `Suppressed`), lowered to a `negated: Vec<bool>` mask on
+the SSA `Pipeline` (parallel to `suppressed`); the native `wait_for_children` and
+c `emit_pipeline_wait` invert a negated stage's status before the worst-of.
+janet mirrors it in `emit_pipeline_do`. The standalone `! cmd` path
+(`Pipeline.negated: bool` → `NegateTestResult`) is unchanged. All three backends
+implement the runtime negation. Implemented in `parse/parser.rs`
+(`append_pipeline_stage`, `parse_negated`, `parse_return_producer_head`),
+`transform/stmt_handlers.rs::handle_regular_pipeline`, codegen + emit_c +
+emit_janet. spec errors.sh bng.7-12. Journal 220.

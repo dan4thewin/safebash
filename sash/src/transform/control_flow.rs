@@ -535,6 +535,7 @@ fn emit_cmdsubst_pipe_while_read(
         capture_read_fd: true,
         checked: true,
         suppressed: vec![],
+        negated: vec![],
     });
 
     let loop_var = &f.variable;

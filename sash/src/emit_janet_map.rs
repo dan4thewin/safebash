@@ -97,6 +97,7 @@ fn collect_stmt_vars(s: &Statement, acc: &mut BTreeSet<String>) {
         }
         StmtKind::Function(f) => collect_vars(&f.body, acc),
         StmtKind::Suppressed(inner) => collect_stmt_vars(inner, acc),
+        StmtKind::Negated(inner) => collect_stmt_vars(inner, acc),
         _ => {}
     }
 }
@@ -182,6 +183,7 @@ fn stmt_kind_name(k: &StmtKind) -> String {
         StmtKind::Group(_) => "group",
         StmtKind::Comment(_) => "comment",
         StmtKind::Suppressed(_) => "suppressed",
+        StmtKind::Negated(_) => "negated",
         StmtKind::ArithTest(_) => "arith-test",
         StmtKind::ReturnProducer(_) => "return-producer",
     };

@@ -964,7 +964,16 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             checked,
             capture_read_fd,
             suppressed,
-        } => emit_pipeline(e, stages, *checked, *capture_read_fd, suppressed, types),
+            negated,
+        } => emit_pipeline(
+            e,
+            stages,
+            *checked,
+            *capture_read_fd,
+            suppressed,
+            negated,
+            types,
+        ),
         // Phase 5: SsaInst::SubscriptAssign → sash_table_set.
         // Mirrors handle_subscript_assign (codegen/inst_handlers.rs:1070).
         SsaInst::SubscriptAssign {
@@ -2998,6 +3007,7 @@ fn emit_pipeline(
     checked: bool,
     capture_read_fd: bool,
     suppressed: &[bool],
+    negated: &[bool],
     types: &VarTypes,
 ) {
     let n = stages.len();
@@ -3038,7 +3048,7 @@ fn emit_pipeline(
     }
 
     emit_pipeline_parent_close(e, &p, num_pipes, capture_read_fd);
-    emit_pipeline_wait(e, &p, n, suppressed);
+    emit_pipeline_wait(e, &p, n, suppressed, negated);
     writeln!(e.out, "    __exit_status = {p}_status;", p = p).unwrap();
     writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
     // DD#55: a nonzero aggregate aborts in a `checked` (statement) position;
@@ -3087,22 +3097,32 @@ fn emit_pipeline_parent_close(e: &mut Emit, p: &str, num_pipes: usize, capture_r
 
 /// Parent waits for (reaps) all `n` children, computing the DD#55
 /// aggregate = first-nonzero status over the NON-suppressed stages.
-/// A `-`-suppressed stage still ran; only its status is excluded.
-fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize, suppressed: &[bool]) {
+/// A `-`-suppressed stage still ran; only its status is excluded. DD#70: a
+/// `!`-negated stage inverts its status (0↔nonzero) before the fold.
+fn emit_pipeline_wait(e: &mut Emit, p: &str, n: usize, suppressed: &[bool], negated: &[bool]) {
     writeln!(e.out, "    i64 {p}_status = 0;", p = p).unwrap();
     for i in 0..n {
-        if suppressed.get(i).copied().unwrap_or(false) {
+        let is_suppressed = suppressed.get(i).copied().unwrap_or(false);
+        let is_negated = negated.get(i).copied().unwrap_or(false);
+        if is_suppressed {
             writeln!(e.out, "    sash_wait({p}_pids[{i}]);", p = p, i = i).unwrap();
-        } else {
-            writeln!(
-                e.out,
-                "    {{ i64 {p}_st = sash_wait({p}_pids[{i}]); \
-                 if ({p}_status == 0 && {p}_st != 0) {p}_status = {p}_st; }}",
-                p = p,
-                i = i
-            )
-            .unwrap();
+            continue;
         }
+        let st = if is_negated {
+            // invert: a negated stage is true (0) exactly when it failed.
+            format!("(({p}_st == 0) ? 1 : 0)", p = p)
+        } else {
+            format!("{p}_st", p = p)
+        };
+        writeln!(
+            e.out,
+            "    {{ i64 {p}_st = sash_wait({p}_pids[{i}]); i64 {p}_s2 = {st}; \
+             if ({p}_status == 0 && {p}_s2 != 0) {p}_status = {p}_s2; }}",
+            p = p,
+            i = i,
+            st = st
+        )
+        .unwrap();
     }
 }
 

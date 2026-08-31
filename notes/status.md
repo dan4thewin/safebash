@@ -1,3 +1,24 @@
+## ════════ STATUS (2026-08-31, cont.4) — `!` on the terminal pipeline segment ════════
+
+**On `hand-parser`.** DG's `… | ! grep -q z` (journal 219's line) uses a `!` on
+a non-first pipeline stage. Designed + implemented **terminal-segment
+negation**: `a | ! b` negates the FINAL stage's status (0↔nonzero) before the
+DD#55 worst-of; a non-terminal `!` (`! a | b`, `a | ! b | c`) stays SB4040;
+`-`/`!` don't combine on one segment (SB4019 both directions); `return ! X | Y`
+→ SB4040 (was SB4014).
+
+Bug fixed: `append_pipeline_stage` flattened the parsed `! b` stage and **dropped
+the negation**. New `StmtKind::Negated` per-segment wrapper (symmetric with
+`Suppressed`) → `negated: Vec<bool>` mask on SSA `Pipeline`; native/c/janet all
+invert the negated stage's status in the pipeline wait. Standalone `! cmd`
+(`Pipeline.negated: bool`) untouched. `parse_return` cc 14→7 (extracted producer
+head).
+
+DD#70 addendum + DD#55 pointer. specs `spec/errors.sh` bng.7–12 (plan 91→97), all
+three modes. Full 3-mode sweep vs `25d7d66`: **0 regressions, +18 passing**. Rust
+suites: failure set identical at baseline (stash-verified; pre-existing rot).
+journal 220. The `X | ! Y` open item from cont.3 is now **resolved**.
+
 ## ════════ STATUS (2026-08-31, cont.3) — `return <composite producer>` (SB4037 fix) ════════
 
 **On `hand-parser`.** DG (demo): `fn f { return echo abc | ! grep -q z }`

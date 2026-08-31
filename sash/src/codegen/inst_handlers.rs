@@ -21,11 +21,13 @@ use crate::ssa::*;
 /// TRUST: Each stage name was resolved at compile time (DD#23).
 /// Stages are connected via anonymous pipes (pipe/dup2/close).
 /// No shell interpretation — each stage is a direct execve.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn handle_pipeline(
     stages: &[(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)],
     capture_read_fd: bool,
     checked: bool,
     suppressed: &[bool],
+    negated: &[bool],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -70,7 +72,7 @@ pub(super) fn handle_pipeline(
         stage_names.push(diag_static_seg(name, ctx.literals, module, builder));
     }
     let (final_worst, fail_name_ptr, fail_name_len) =
-        wait_for_children(builder, suppressed, pid_slot, &pe, &stage_names);
+        wait_for_children(builder, suppressed, negated, pid_slot, &pe, &stage_names);
     update_pipeline_status(builder, final_worst, ctx);
 
     if checked {
@@ -373,6 +375,7 @@ fn save_capture_fd(
 fn wait_for_children(
     builder: &mut FunctionBuilder,
     suppressed: &[bool],
+    negated: &[bool],
     pid_slot: cranelift_codegen::ir::StackSlot,
     pe: &PipelineExterns,
     names: &[(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)],
@@ -392,7 +395,17 @@ fn wait_for_children(
     for (i, &(np, nl)) in names.iter().enumerate() {
         let pid = builder.ins().stack_load(I64, pid_slot, (i * 8) as i32);
         let call = builder.ins().call(pe.wait, &[pid]);
-        let status = builder.inst_results(call)[0];
+        let raw_status = builder.inst_results(call)[0];
+        // DD#70: a `!`-negated stage inverts its status (0↔nonzero) before it
+        // joins the aggregate, so `a | ! b` reports true exactly when b failed.
+        let status = if negated.get(i).copied().unwrap_or(false) {
+            let zero = builder.ins().iconst(I64, 0);
+            let is_zero = builder.ins().icmp(IntCC::Equal, raw_status, zero);
+            let one = builder.ins().iconst(I64, 1);
+            builder.ins().select(is_zero, one, zero)
+        } else {
+            raw_status
+        };
         // DD#55: a `-`-suppressed stage still ran, but its status is excluded
         // from the aggregate.
         if suppressed.get(i).copied().unwrap_or(false) {
