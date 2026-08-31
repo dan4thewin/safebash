@@ -964,10 +964,20 @@ fn parse_return(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
         _ => parse_simple_or_assignment(scanner)?,
     };
     match producer {
-        Some(p) => Ok(Some(Statement {
-            kind: StmtKind::ReturnProducer(Box::new(p)),
-            span,
-        })),
+        Some(p) => {
+            // DD#74: `return` takes a status *producer*, and a producer can be a
+            // composite — `return A | B`, `return A && B`, `return A > f`. The
+            // per-kind parse above yields only the first command / `[[ ]]` /
+            // `(( ))`; fold any trailing pipeline / `&&`/`||` list / redirect
+            // into the producer (the same `maybe_wrap_redirects` a normal
+            // statement gets) so the whole composite is consumed by the return,
+            // not left as an uncaught pipeline stage after a stage-0 `return`.
+            let folded = maybe_wrap_redirects(scanner, p)?;
+            Ok(Some(Statement {
+                kind: StmtKind::ReturnProducer(Box::new(folded)),
+                span,
+            }))
+        }
         None => Err(parse_error(
             span,
             "SB4014",

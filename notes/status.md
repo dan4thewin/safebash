@@ -1,3 +1,32 @@
+## ════════ STATUS (2026-08-31, cont.3) — `return <composite producer>` (SB4037 fix) ════════
+
+**On `hand-parser`.** DG (demo): `fn f { return echo abc | ! grep -q z }`
+reported **SB4037** but is clean. Root cause: `parse_return` parsed only the
+first producer unit, so `return A | B` folded to `Pipeline([return A, B])` — the
+`return` trapped in stage 0, `B` uncaught (SB4037 in a predicate; a silent abort
+as a statement). Whole class `return A|B` / `A&&B` / `A||B` / `A>f` broken.
+
+Fix: `parse_return` now folds the producer through `maybe_wrap_redirects` (the
+same composite-folding a statement gets) before `ReturnProducer`. Lowering
+already handled `ReturnProducer(Pipeline/List)` (condition-context lower +
+un-check last). One-line-ish parser change; cc 12 / cog 4 clears the gate.
+Verified vs bash (pipeline match/no-match, `&&` both-true/second-false, `||`).
+
+specs `spec/functions.sh` 74.19–74.23 (plan 63→68): pipelines 74.19/20 all
+modes; `&&`/`||` lists 74.21–23 native,c only. **0 regressions** (3-mode diff vs
+HEAD `496ece5`); +12 passing (5 native + 5 c + 2 janet), 0 new failing. DD#74
+producer table amended; journal 219.
+
+janet gated: its AST return-producer emit **collapses** an `&&`/`||` list to one
+operand (emits `(if true 0 1)` regardless) — filed `janet-return-composite-
+producer`. Pipelines are genuine in janet.
+
+**Open (raised separately, needs DG):** `X | ! Y` — a negated **non-first**
+pipeline stage silently drops the `!` (inverted result) + aborts as a statement.
+Pre-existing, inconsistent with the SB4040 rejection of `! X | Y`. DG's line uses
+it. Fork: reject (SB4040/DD#70-consistent) vs support (negated final stage
+governs status).
+
 ## ════════ STATUS (2026-08-31) — DD#84 optional trailing args + `:~` elide (native+c) ════════
 
 **On `hand-parser`.** DG-designed feature (discussed + ratified this session):

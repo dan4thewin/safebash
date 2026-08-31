@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=63
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -309,6 +309,52 @@ greet'
 run_sash 'maybe() { echo hi }
 if ! maybe; then echo y; fi'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 74.18
+
+# --- DD#74: `return` takes a COMPOSITE producer (pipeline / && / ||) ---
+# The producer parse grabbed only the first command, so `return A | B` folded
+# to `Pipeline([return A, B])` — the return was trapped in stage 0, the rest ran
+# uncaught (SB4037 in a predicate; a runtime abort as a statement). `return` now
+# absorbs the full pipeline / list / redirect composite (DG 2026-08-31).
+
+# 74.19 `return <pipeline>` — the pipeline's status drives the condition (match)
+run_sash 'has() { return /bin/echo abc | /bin/grep -q a }
+if has; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.19
+
+# 74.20 `return <pipeline>` — no match → false (and no abort — the return
+#       consumes the pipeline)
+run_sash 'has() { return /bin/echo abc | /bin/grep -q z }
+if has; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.20
+
+# 74.21 `return A && B` — an and-list producer (both true → true).
+# Gated native,c: janet emits return-producers from the AST and collapses an
+# `&&`/`||` list to a single operand (filed: janet-return-composite-producer).
+if in_modes native,c; then
+    run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 2 ]] }
+if both; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.21
+else
+    skip_chk 74.21
+fi
+
+# 74.22 `return A && B` — second false → false
+if in_modes native,c; then
+    run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 3 ]] }
+if both; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.22
+else
+    skip_chk 74.22
+fi
+
+# 74.23 `return A || B` — an or-list producer (first false, second true → true)
+if in_modes native,c; then
+    run_sash 'either() { return [[ 1 = 2 ]] || [[ 3 = 3 ]] }
+if either; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.23
+else
+    skip_chk 74.23
+fi
 
 # ── DD#81 function-call discipline: one name, one meaning ──────────────
 # 81.1 dynamic shadowing rejected: a name used as a command, then defined as

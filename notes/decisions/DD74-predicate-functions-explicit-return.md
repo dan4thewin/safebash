@@ -31,7 +31,21 @@ result. To yield a status, wrap it in `return`.
 | `return (( EXPR ))` | the arith truth — 0 if `EXPR` ≠ 0, else 1 |
 | `return N` | an explicit status code — **meaningful codes beyond 0/1** |
 | `return $?` | the last status (handling position only — DD#55) |
+| `return A \| B` | a **pipeline** producer — the pipeline's aggregate status (DD#55) |
+| `return A && B`, `return A \|\| B` | an **and/or-list** producer — the list's short-circuit status |
+| `return CMD > f` | a producer with a trailing **redirect** |
 | `return` | status 0 |
+
+A producer is not limited to a single command: `return` absorbs a full
+**composite** — a pipeline, an `&&`/`||` list, or a trailing redirect — exactly
+as a normal statement would. The `return` is still the handler for the whole
+composite: every stage / operand runs under the return (no uncaught abort), and
+the composite's aggregate status (DD#55 pipeline semantics) becomes the returned
+status. Without this, `return A | B` parsed as `Pipeline([return A, B])` — the
+`return` trapped in stage 0, with `B` running uncaught after it (SB4037 in a
+predicate; a silent abort as a statement). Fixed by folding the parsed producer
+through the same `maybe_wrap_redirects` a statement gets (`parse_return`, DG
+2026-08-31).
 
 `return [[ … ]]` also discharges the DD#70 must-consume obligation on `[[ … ]]`
 — the `return` consumes the test — so the natural predicate spelling compiles
