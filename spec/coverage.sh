@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=89
+plan=92
 echo "1..$plan" >&3
 
 set +e
@@ -403,6 +403,22 @@ fi
 run_sash '# a comment
 echo hi'
 [[ $rc = 0 && $out = hi && -z $err ]]; chk cov.90
+
+# cov.91 `$?` / `$(status)` with no preceding command → SB5012
+# (find_dollar_question) — no feature spec reads status at program start.
+run_sash 'echo $?'
+[[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk cov.91
+
+# cov.92 a `$(random)` disposition default → SB5035 (expr_invokes_random,
+# DD#78) — the PRNG side effect under eager default eval is rejected.
+run_sash 'echo ${y:-$(random)}'
+[[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk cov.92
+
+# cov.93 a tainted `$(arg N DEFAULT)` default in an assignment RHS → SB5020
+# (check_arg_default_taint, DD#60/78). The `$(arg …)` source assignment is
+# allowed, but the nested default is a read; `x=$(arg 1 cleanlit)` compiles.
+run_sash 'argv 1 a; t=$(getenv HOME); x=$(arg 1 $t)' one
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.93
 
 set -e
 tally

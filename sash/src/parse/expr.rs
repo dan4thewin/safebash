@@ -1383,23 +1383,14 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
     let mut is_assoc = false;
 
     loop {
-        while matches!(scanner.peek().token, Tok::Newline) {
-            scanner.next();
-        }
-        if matches!(scanner.peek().token, Tok::RParen) {
-            scanner.next();
+        if array_literal_at_end(scanner) {
             break;
         }
-        if scanner.at_eof() {
-            break;
-        }
-
-        if let Some((key, val)) = try_parse_assoc_element(scanner, span)? {
+        if let Some((key, val)) = try_parse_assoc_element(scanner)? {
             is_assoc = true;
             assoc_pairs.push((key, val));
             continue;
         }
-
         elems.push(parse_expr(scanner)?);
     }
 
@@ -1411,6 +1402,19 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
     Ok(Expr { kind, span })
 }
 
+/// Skip blank lines inside an `=(...)` literal and report whether the list is
+/// finished: consumes and returns `true` at the closing `)` (or at EOF).
+fn array_literal_at_end(scanner: &mut Scanner) -> bool {
+    while matches!(scanner.peek().token, Tok::Newline) {
+        scanner.next();
+    }
+    if matches!(scanner.peek().token, Tok::RParen) {
+        scanner.next();
+        return true;
+    }
+    scanner.at_eof()
+}
+
 /// Recognise an associative-array element at the scanner cursor.
 /// Bash accepts two surface forms inside an `=(...)` literal:
 /// `[key]=value` (the `]=` lives inside one Word token) and
@@ -1419,31 +1423,13 @@ pub fn parse_array_literal(scanner: &mut Scanner, span: Span) -> Result<Expr, Di
 /// has been advanced past the value; `Ok(None)` if the next token
 /// is not an assoc element and the caller should parse it as a
 /// plain element.
-fn try_parse_assoc_element(
-    scanner: &mut Scanner,
-    span: Span,
-) -> Result<Option<(String, Expr)>, Diagnostic> {
+fn try_parse_assoc_element(scanner: &mut Scanner) -> Result<Option<(String, Expr)>, Diagnostic> {
     let tok = scanner.peek().token.clone();
     let Tok::Word(ref w) = tok else {
         return Ok(None);
     };
     if !w.starts_with('[') {
         return Ok(None);
-    }
-
-    if let Some(close) = w.find("]=") {
-        let key = w[1..close].to_string();
-        let val_str = w[close + 2..].to_string();
-        scanner.next();
-        let val = if val_str.is_empty() {
-            parse_expr(scanner)?
-        } else {
-            Expr {
-                kind: ExprKind::Literal(strip_matching_quotes(&val_str)),
-                span,
-            }
-        };
-        return Ok(Some((key, val)));
     }
 
     if w.ends_with(']') && w.len() > 2 && matches!(scanner.peek_n(1).token, Tok::Eq) {
@@ -1455,24 +1441,6 @@ fn try_parse_assoc_element(
     }
 
     Ok(None)
-}
-
-/// Strip a single layer of matching surrounding quotes ("..." or
-/// '...') from `s`. Returns `s` unchanged if no matching pair is
-/// present. Used when an `=(...)` element embeds its value directly
-/// inside the `]=value` word token; the rest of the parser handles
-/// quote stripping via the lexer, but this short-circuit path does
-/// not pass through that layer.
-fn strip_matching_quotes(s: &str) -> String {
-    let bytes = s.as_bytes();
-    if bytes.len() >= 2
-        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
-            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
-    {
-        s[1..s.len() - 1].to_string()
-    } else {
-        s.to_string()
-    }
 }
 
 // ── Utilities ─────────────────────────────────────────────────────

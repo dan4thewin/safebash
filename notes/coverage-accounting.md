@@ -409,3 +409,31 @@ spilling stage targets in `push_command_stage`; deleted `ir_expr_to_ssa_value`.
 - **Deferred (dispatch task):** `extract_from_literal` / `extract_leading_operator`
   (`dispatch-compact-operator-spacing`).
 - **Artifact:** `type_check::fmt` (derived Debug/Display).
+
+### Round result (2026-08-31, cov.91-93 + strip_matching_quotes removed)
+
+- **Removed (bucket B):** `strip_matching_quotes` + the `w.find("]=")` branch of
+  `try_parse_assoc_element` — a glued `[k]=v` word never forms (the lexer splits
+  `[k]` + `=` + value → the `peek==Eq` branch handles every assoc element).
+  remove-then-run: `map m=([k]="v"|=v|='v')` all still yield `v`; full 3-mode
+  sweep 0 regressions. Dropped the now-unused `span` param.
+- **Flipped (bucket A, cov.91/92/93):** `find_dollar_question` (SB5012),
+  `expr_invokes_random` (SB5035), `check_arg_default_taint` (SB5020) — **verified
+  by RAW per-function count** (validate.rs: 18 / 163 / 1672), not the aggregated
+  never-run list.
+
+**⚠ DEMANGLE ARTIFACT (measurement caveat):** the JSON has count-0 entries whose
+demangled short name collides with a covered function but which live in a
+DIFFERENT file — they are monomorphized closures passed to the generic `ir.rs`
+walkers (`walk_exprs_in_stmt` etc.). E.g. `find_dollar_question` shows ~6 count-0
+`ir.rs` entries AND one count-18 `validate.rs` entry; the function is covered.
+**When a never-run candidate's defining file (from `symbols`) differs from the
+count-0 entry's file, spot-check the raw count of the entry whose `filenames`
+matches the defining file before treating it as never-run.** The three above are
+defined in validate.rs and covered there.
+
+**True remaining (~9 distinct):** `panic_payload_message` (defensive ICE),
+`redirect_expr_zero` (defensive silent-empty fallback), CLI-only
+`dump_sash_source`/`emit_manifest`/`set_sysroot`/`sysroot_file_exists`, deferred
+`extract_from_literal`/`extract_leading_operator` (dispatch task), and
+`type_check::fmt` (derive artifact).
