@@ -1,3 +1,24 @@
+## ════════ STATUS (2026-08-31) — pipeline-stage redirect targets fixed (grind) ════════
+
+**On `hand-parser`.** Resumed the coverage grind; probing never-run redirect fns
+found a bug (DG ruled "fix to support"). Pipeline-stage redirects silently
+dropped every non-literal target (`echo hi > $f | cat` etc. leaked to the pipe
+instead of the file) — the stage path had its own `ir_expr_to_ssa_value` that
+hardcoded SSA version 0 and dropped `${x:-f}`/`$a[i]`. Fixed: route
+`emit_stage_redirects` through the top-level `lower_ir_redirect_expr`; spill
+stage targets in `push_command_stage` (threaded `block` through the pipeline
+builders); deleted `ir_expr_to_ssa_value`. Journal 217.
+
+specs commands.sh 14.26–31 (stage `$f`/`${x:-f}`/`$a[i]`; plus never-run
+`&>`/`> '…'`/`> "$x.txt"`; plan 40→46, native,c). Full 3-mode sweep vs
+`5ea5ceb`: **native/c 0 regressions, +6 each; janet 0**. Coverage re-measured:
+native-core never-run **25 → 21** (4 flipped/removed).
+
+**Grind continues** (21 left, triaged in `coverage-accounting.md`): bucket-A
+diagnostic specs (`find_dollar_question`/`expr_invokes_random`/
+`check_arg_default_taint`), bucket-B `strip_matching_quotes` (remove), defensive
+`redirect_expr_zero`/`panic_payload_message`, CLI-only fns.
+
 ## ════════ STATUS (2026-08-30) — here-strings `<<<` dropped (DD#83, SB4050) ════════
 
 **On `hand-parser`.** DG ruled `<<<` out of the language. It's exact sugar over

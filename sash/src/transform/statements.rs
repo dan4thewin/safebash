@@ -268,7 +268,7 @@ fn target_needs_spill(kind: &ExprKind) -> bool {
     }
 }
 
-fn spill_scalar_redirect_targets(
+pub(super) fn spill_scalar_redirect_targets(
     redirects: &[Redirect],
     ssa: &mut SsaProgram,
     state: &mut VersionState,

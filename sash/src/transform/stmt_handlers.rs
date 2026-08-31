@@ -7,7 +7,7 @@ use super::expressions::{
 use super::functions::{collect_local_vars, lift_int_func_args, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
-use super::statements::{lower_one, lower_stmts};
+use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
 use crate::ir::*;
 use crate::ssa::*;
 
@@ -582,6 +582,7 @@ fn build_producer_stages(
     cmds: &[Statement],
     ssa: &mut SsaProgram,
     state: &mut VersionState,
+    block: BlockId,
 ) -> Vec<(String, Vec<SsaValue>, Vec<Redirect>)> {
     let mut stages = vec![];
     for (idx, cmd) in cmds.iter().enumerate() {
@@ -590,7 +591,7 @@ fn build_producer_stages(
             other => (other, vec![]),
         };
         if let StmtKind::Command(c) = inner {
-            push_command_stage(c, redirects, idx, ssa, state, &mut stages);
+            push_command_stage(c, redirects, idx, ssa, state, block, &mut stages);
         }
     }
     stages
@@ -606,8 +607,14 @@ fn push_command_stage(
     idx: usize,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
+    block: BlockId,
     stages: &mut Vec<(String, Vec<SsaValue>, Vec<Redirect>)>,
 ) {
+    // Spill `${x:-f}` / `$a[i]` stage-redirect targets to a synthetic scalar
+    // (assigned into `block`, before the Pipeline inst) exactly as a top-level
+    // redirect does, so codegen's stage-redirect lowering only sees scalar
+    // reads it can resolve (was: silently redirected to an empty filename).
+    let redirects = spill_scalar_redirect_targets(&redirects, ssa, state, block);
     let name = expr_to_string(&c.name);
     if state.known_functions.contains(&name) {
         if let Some(entry) = build_function_pipeline_stage(&name, c, ssa, state, idx) {
@@ -672,7 +679,7 @@ fn handle_pipe_while_or_mapfile(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state);
+    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: true,
@@ -717,7 +724,7 @@ fn handle_lastpipe_read(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state);
+    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: true,
@@ -769,7 +776,7 @@ fn handle_regular_pipeline(
             _ => (cmd, false),
         };
         let stages_before = stages.len();
-        lower_one_pipeline_stage(unwrapped, idx, ssa, state, &mut stages);
+        lower_one_pipeline_stage(unwrapped, idx, ssa, state, block, &mut stages);
         // push_command_stage may add >1 stage (function inlining); mark each.
         suppressed.resize(stages.len(), false);
         if is_suppressed {
@@ -793,6 +800,7 @@ fn lower_one_pipeline_stage(
     idx: usize,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
+    block: BlockId,
     stages: &mut Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
 ) {
     let (inner, redirects) = match &stmt.kind {
@@ -800,7 +808,7 @@ fn lower_one_pipeline_stage(
         other => (other, vec![]),
     };
     if let StmtKind::Command(c) = inner {
-        push_command_stage(c, redirects, idx, ssa, state, stages);
+        push_command_stage(c, redirects, idx, ssa, state, block, stages);
     } else {
         let compound_entry = ssa.new_block(&format!("pipe_compound_{}", idx));
         let compound_exit = lower_one(stmt, ssa, state, compound_entry);

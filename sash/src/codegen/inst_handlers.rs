@@ -11,7 +11,7 @@ use cranelift_module::Module;
 use cranelift_object::ObjectModule;
 
 use super::commands::{lower_echo, lower_exec};
-use super::redirects::{emit_redirects_guarded, emit_restore, ir_expr_to_ssa_value};
+use super::redirects::{emit_redirects_guarded, emit_restore, lower_ir_redirect_expr};
 use super::types::{find_array_slot, ExternFuncs, InstCtx, VarSlot};
 use super::values::{atoi_call, lower_value, lower_value_as_int};
 use crate::ssa::*;
@@ -221,36 +221,52 @@ fn emit_stage_redirects(
     pe: &PipelineExterns,
 ) {
     for redir in redirects {
-        let fd = builder.ins().iconst(I64, redir.fd.unwrap_or(1) as i64);
-        let flags = builder.ins().iconst(
-            I64,
-            match redir.op {
-                crate::ir::RedirectOp::Write => 1,
-                crate::ir::RedirectOp::Append => 2,
-                _ => 0,
-            },
-        );
-        if let crate::ir::ExprKind::Literal(s) = &redir.target.kind {
-            if let Some(&data_id) = ctx.literals.get(s.as_str()) {
-                let gv = module.declare_data_in_func(data_id, builder.func);
-                let path_ptr = builder.ins().global_value(I64, gv);
-                builder.ins().call(pe.redirect, &[fd, path_ptr, flags]);
-            }
-        } else {
-            let target_ssa = ir_expr_to_ssa_value(&redir.target);
-            let (ptr, len) = lower_value(
-                &target_ssa,
-                builder,
-                module,
-                ctx.vars,
-                ctx.literals,
-                ctx.externs,
-                Some(ctx.exit_status_var),
-            );
-            let redirect_s_ref = module.declare_func_in_func(ctx.externs.redirect_s, builder.func);
-            builder.ins().call(redirect_s_ref, &[fd, ptr, len, flags]);
-        }
+        emit_one_stage_redirect(redir, builder, module, ctx, pe);
     }
+}
+
+fn stage_redirect_flags(op: &crate::ir::RedirectOp) -> i64 {
+    match op {
+        crate::ir::RedirectOp::Write => 1,
+        crate::ir::RedirectOp::Append => 2,
+        _ => 0,
+    }
+}
+
+fn emit_one_stage_redirect(
+    redir: &crate::ir::Redirect,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+    pe: &PipelineExterns,
+) {
+    let fd = builder.ins().iconst(I64, redir.fd.unwrap_or(1) as i64);
+    let flags = builder.ins().iconst(I64, stage_redirect_flags(&redir.op));
+    // Literal fast-path: use the interned constant directly.
+    if let crate::ir::ExprKind::Literal(s) = &redir.target.kind {
+        if let Some(&data_id) = ctx.literals.get(s.as_str()) {
+            let gv = module.declare_data_in_func(data_id, builder.func);
+            let path_ptr = builder.ins().global_value(I64, gv);
+            builder.ins().call(pe.redirect, &[fd, path_ptr, flags]);
+        }
+        return;
+    }
+    // Lower the target the same way a top-level redirect does
+    // (find_highest_version for `$f`, concat for `"$x.txt"`); the old ad-hoc
+    // ir_expr_to_ssa_value hardcoded version 0 and dropped `${x:-f}` / `$a[i]`,
+    // silently redirecting a pipeline stage to an empty filename.
+    // ParameterExpansion / Subscript targets are spilled to a `$__redir_target_N`
+    // scalar in the transform, so only the handled scalar kinds reach here.
+    let (ptr, len) = lower_ir_redirect_expr(
+        &redir.target,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+    );
+    let redirect_s_ref = module.declare_func_in_func(ctx.externs.redirect_s, builder.func);
+    builder.ins().call(redirect_s_ref, &[fd, ptr, len, flags]);
 }
 
 /// Returns true if `name` is an inline pipeline-stage builtin.

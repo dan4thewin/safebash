@@ -238,23 +238,6 @@ pub(super) fn emit_restore(
     }
 }
 
-/// Convert an IR Expr to an SsaValue for use in lower_value.
-/// Used for redirect targets that contain runtime expressions (tilde expansion, etc).
-pub(super) fn ir_expr_to_ssa_value(expr: &crate::ir::Expr) -> crate::ssa::SsaValue {
-    use crate::ssa::{SsaValue, VarRef};
-    match &expr.kind {
-        crate::ir::ExprKind::Literal(s) | crate::ir::ExprKind::SingleQuoted(s) => {
-            SsaValue::Literal(s.clone())
-        }
-        crate::ir::ExprKind::SimpleExpansion(v) => SsaValue::Var(VarRef::new(v, 0)),
-        crate::ir::ExprKind::Concat(parts) | crate::ir::ExprKind::DoubleQuoted(parts) => {
-            let vals: Vec<SsaValue> = parts.iter().map(ir_expr_to_ssa_value).collect();
-            SsaValue::Concat(vals)
-        }
-        _ => SsaValue::Literal(String::new()),
-    }
-}
-
 /// Scan an IR Expr (redirect target) for variable references.
 pub(super) fn scan_redirect_for_vars(
     expr: &crate::ir::Expr,

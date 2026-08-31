@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=40
+plan=46
 echo "1..$plan" >&3
 
 set +e
@@ -245,6 +245,59 @@ fi
 # word-splitting) — pure sugar, so it's removed. `cat <<< $x` → `echo $x | cat`.
 run_sash 'cat <<< hi'
 [[ $rc != 0 && -z $out && $err == *SB4050* ]]; chk 14.25
+
+# --- more redirect-target forms (never-run coverage + a stage-redirect bug) ---
+
+# 14.26 support: `&>file` (parse_ampgt_redirect) — stdout+stderr to a scalar
+if in_modes native,c; then
+    run_sash 'echo amp &> r14amp; cat r14amp'
+    [[ $rc = 0 && $out = "amp" && -z $err ]]; chk 14.26
+else
+    skip_chk 14.26
+fi
+
+# 14.27 support: single-quoted target `> '…'` (redirect_expr_literal)
+if in_modes native,c; then
+    run_sash "echo sq > 'r14sq'; cat r14sq"
+    [[ $rc = 0 && $out = "sq" && -z $err ]]; chk 14.27
+else
+    skip_chk 14.27
+fi
+
+# 14.28 support: double-quoted concat target `> "$x.txt"` (redirect_expr_concat)
+if in_modes native,c; then
+    run_sash 'x=r14dq; echo dq > "$x.txt"; cat r14dq.txt'
+    [[ $rc = 0 && $out = "dq" && -z $err ]]; chk 14.28
+else
+    skip_chk 14.28
+fi
+
+# 14.29 BUG FIX: a pipeline-stage redirect with a `$var` target was silently
+# DROPPED (the stage went to the pipe instead of the file) — the stage path had
+# its own ad-hoc target lowering (ir_expr_to_ssa_value) that hardcoded SSA
+# version 0. Now it reuses the top-level lower_ir_redirect_expr.
+if in_modes native,c; then
+    run_sash 'f=r14st; echo hi > $f | cat; cat r14st'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.29
+else
+    skip_chk 14.29
+fi
+
+# 14.30 BUG FIX: a pipeline-stage redirect with a `${x:-f}` target (spilled)
+if in_modes native,c; then
+    run_sash 'echo hi > ${miss:-r14sd} | cat; cat r14sd'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.30
+else
+    skip_chk 14.30
+fi
+
+# 14.31 BUG FIX: a pipeline-stage redirect with a `$a[i]` target (spilled)
+if in_modes native,c; then
+    run_sash 'array a=(x r14se); echo hi > $a[1] | cat; cat r14se'
+    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.31
+else
+    skip_chk 14.31
+fi
 
 set -e
 tally

@@ -370,3 +370,42 @@ never-run count is **26** (spec-only; emit_c/emit_janet excluded). Triage:
 - **Defensive ICE (unit-test candidate, DG "unit test every intentional ICE"):**
   `panic_payload_message` (formats a caught codegen panic).
 - **Closures** (`{closure#N}`): measurement artifacts, not separate work items.
+
+## 2026-08-31 — grind resumed after redirect/here-string work (25 → 21)
+
+Re-measured (`mk cov-spec-only`, `scan_radix_literal`=281 valid). The
+redirect-target scalar work (journal 215) + here-string drop (216) changed the
+redirect cluster; probing the never-run redirect fns found a **bug** (journal
+217): pipeline-stage redirects silently dropped every non-literal target
+(`ir_expr_to_ssa_value` hardcoded version 0 / dropped `${}`/`[]`). Fixed by
+routing `emit_stage_redirects` through the top-level `lower_ir_redirect_expr` +
+spilling stage targets in `push_command_stage`; deleted `ir_expr_to_ssa_value`.
+
+**Flipped/removed (4):** `ir_expr_to_ssa_value` (deleted), `redirect_expr_literal`
+(spec 14.27 `> '…'`), `redirect_expr_concat` (14.28 `> "$x.txt"`),
+`parse_ampgt_redirect` (14.26 `&>`). Stage-redirect specs 14.29–31.
+
+**Remaining 21 native-core never-run — triage:**
+- **Bucket A (add a spec — diagnostic paths no spec triggers):**
+  `find_dollar_question` (SB5012 — `$?`/`$(status)` with no preceding command),
+  `expr_invokes_random` (SB5035 — `${x:-$(random)}` / `$(arg N $(random))`
+  disposition default, DD#78), `check_arg_default_taint` (SB5020 — a tainted
+  `$(arg N DEFAULT)` default in an **assignment** RHS; note `echo $(arg 1 $t)`
+  hits the general cmdsub-taint path instead, so the spec must be `x=$(arg …)`).
+- **Bucket B (verify + remove):** `strip_matching_quotes` (the glued `[k]="v"`
+  branch of `try_parse_assoc_element`; the lexer splits `[k]`+`=`+value, so the
+  branch is unreachable — confirm then delete).
+- **Defensive (understand / unit-test the ICE):** `redirect_expr_zero` — after
+  the stage fix its only remaining callers are the impossible-condition
+  fallbacks inside `redirect_expr_literal` (literals-map miss) and
+  `redirect_expr_simple_expansion` (var-slot miss), plus the now-unreachable
+  `_ =>` arm (targets are scalar-rejected/spilled). A silent-empty; decide
+  remove-vs-loud with DG. `panic_payload_message` — codegen-ICE formatter,
+  unit-test candidate.
+- **CLI-only (bucket C — not reachable via `run_sash`, which only does
+  `-c`/`--janet`/`--emit-c`):** `dump_sash_source`, `set_sysroot`,
+  `emit_manifest`, `sysroot_file_exists`. Exercised by Rust e2e, not the spec
+  suite. Decide: a CLI-mode spec runner, or leave explained.
+- **Deferred (dispatch task):** `extract_from_literal` / `extract_leading_operator`
+  (`dispatch-compact-operator-spacing`).
+- **Artifact:** `type_check::fmt` (derived Debug/Display).
