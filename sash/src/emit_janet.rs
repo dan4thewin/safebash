@@ -1460,27 +1460,13 @@ fn emit_janet_cat(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 }
 
 fn emit_redirected(out: &mut String, ctx: &mut EmitCtx, r: &Redirected, depth: usize) {
-    if has_herestring_redirect(&r.redirects) {
-        let body_text = collect_herestring_body_text(&r.redirects);
-        emit_redirected_herestring(out, ctx, &r.body.kind, &body_text, depth);
-    } else {
-        emit_redirected_no_herestring(out, ctx, r, depth);
+    // janet has no file redirects; emit the body and note the (dropped)
+    // redirect as a comment. (sash has no here-strings — DD#83.)
+    for rd in &r.redirects {
+        indent(out, depth);
+        writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();
     }
-}
-
-fn has_herestring_redirect(redirects: &[Redirect]) -> bool {
-    redirects
-        .iter()
-        .any(|rd| matches!(rd.op, RedirectOp::HereString))
-}
-
-fn collect_herestring_body_text(redirects: &[Redirect]) -> String {
-    redirects
-        .iter()
-        .filter(|rd| matches!(rd.op, RedirectOp::HereString))
-        .map(|rd| expr_to_literal(&rd.target))
-        .collect::<Vec<_>>()
-        .join("")
+    emit_stmt(out, ctx, &r.body, depth);
 }
 
 /// Escape a string for inclusion as a Janet string literal:
@@ -1489,118 +1475,6 @@ fn escape_for_janet_string(s: &str) -> String {
     s.replace('\\', "\\\\")
         .replace('"', "\\\"")
         .replace('\n', "\\n")
-}
-
-fn is_cat_no_args(kind: &StmtKind) -> bool {
-    matches!(kind, StmtKind::Command(c) if expr_to_literal(&c.name) == "cat" && c.args.is_empty())
-}
-
-fn emit_redirected_herestring(
-    out: &mut String,
-    ctx: &mut EmitCtx,
-    body_kind: &StmtKind,
-    body_text: &str,
-    depth: usize,
-) {
-    if is_cat_no_args(body_kind) {
-        emit_redirected_cat_herestring(out, body_text, depth);
-        return;
-    }
-    if let StmtKind::Command(c) = body_kind {
-        if expr_to_literal(&c.name) == "read" {
-            emit_redirected_herestring_read(out, ctx, body_text, c, depth);
-            return;
-        }
-    }
-    emit_redirected_generic_herestring(out, ctx, body_kind, body_text, depth);
-}
-
-/// `cat <<< "string"` — herestring-as-string pattern; just print body.
-fn emit_redirected_cat_herestring(out: &mut String, body_text: &str, depth: usize) {
-    indent(out, depth);
-    let escaped = escape_for_janet_string(body_text.trim_end_matches('\n'));
-    writeln!(out, "(print \"{}\")", escaped).unwrap();
-}
-
-/// `read <<< "string"` — herestring assigns trimmed body to var (default REPLY).
-fn emit_redirected_herestring_read(
-    out: &mut String,
-    ctx: &mut EmitCtx,
-    body_text: &str,
-    c: &Command,
-    depth: usize,
-) {
-    let var_name = c
-        .args
-        .iter()
-        .map(expr_to_literal)
-        .find(|a| !a.starts_with('-'))
-        .unwrap_or_else(|| "REPLY".to_string());
-    let val = body_text.trim_end_matches('\n');
-    indent(out, depth);
-    if !ctx.is_declared(&var_name) {
-        ctx.declare(&var_name);
-        writeln!(out, "(var {} \"{}\")", var_name, val).unwrap();
-    } else {
-        writeln!(out, "(set {} \"{}\")", var_name, val).unwrap();
-    }
-}
-
-/// Generic command with herestring — spawn the command and pipe the body
-/// to its stdin.
-fn emit_redirected_generic_herestring(
-    out: &mut String,
-    ctx: &mut EmitCtx,
-    body_kind: &StmtKind,
-    body_text: &str,
-    depth: usize,
-) {
-    indent(out, depth);
-    let escaped = escape_for_janet_string(body_text);
-    writeln!(out, "(do").unwrap();
-    indent(out, depth + 1);
-    writeln!(out, "(def _herestring_body \"{}\")", escaped).unwrap();
-    let (cmd_name, args) = extract_command_name_and_args(body_kind, ctx);
-    let mut parts = vec![format!("\"{}\"", cmd_name)];
-    parts.extend(args);
-    indent(out, depth + 1);
-    writeln!(
-        out,
-        "(def p (os/spawn [{}] :p {{:in :pipe}}))",
-        parts.join(" ")
-    )
-    .unwrap();
-    indent(out, depth + 1);
-    writeln!(out, "(:write (p :in) _herestring_body)").unwrap();
-    indent(out, depth + 1);
-    writeln!(out, "(:close (p :in))").unwrap();
-    indent(out, depth + 1);
-    writeln!(out, "(os/proc-wait p)").unwrap();
-    indent(out, depth);
-    writeln!(out, ")").unwrap();
-}
-
-fn extract_command_name_and_args(kind: &StmtKind, ctx: &EmitCtx) -> (String, Vec<String>) {
-    match kind {
-        StmtKind::Command(c) => (
-            expr_to_literal(&c.name),
-            c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect(),
-        ),
-        _ => ("?".to_string(), vec![]),
-    }
-}
-
-fn emit_redirected_no_herestring(
-    out: &mut String,
-    ctx: &mut EmitCtx,
-    r: &Redirected,
-    depth: usize,
-) {
-    for rd in &r.redirects {
-        indent(out, depth);
-        writeln!(out, "# redirect: fd={} op={:?}", rd.fd.unwrap_or(1), rd.op).unwrap();
-    }
-    emit_stmt(out, ctx, &r.body, depth);
 }
 
 /// Emit a condition (test_command) inline for if/while.

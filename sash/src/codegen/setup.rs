@@ -629,15 +629,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_getcwd", Linkage::Import, &getcwd_sig)
         .expect("declare sash_getcwd");
 
-    // sash_herestring_redirect(fd, body_ptr, body_len)
-    let mut herestring_sig = module.make_signature();
-    herestring_sig.params.push(AbiParam::new(I64));
-    herestring_sig.params.push(AbiParam::new(I64));
-    herestring_sig.params.push(AbiParam::new(I64));
-    let herestring_func = module
-        .declare_function("sash_herestring_redirect", Linkage::Import, &herestring_sig)
-        .expect("declare sash_herestring_redirect");
-
     // Case conversion functions: (s_ptr, s_len, out_ptr) -> result_len
     let mut case_sig = module.make_signature();
     case_sig.params.push(AbiParam::new(I64));
@@ -818,7 +809,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         file_same_dev: file_same_dev_func,
         chdir: chdir_func,
         getcwd: getcwd_func,
-        herestring_redirect: herestring_func,
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
         getpid: getpid_func,

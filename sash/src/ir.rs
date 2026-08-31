@@ -568,13 +568,12 @@ pub struct Redirect {
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RedirectOp {
-    Write,      // >
-    Append,     // >>
-    Read,       // <
-    DupOutput,  // >&
-    DupInput,   // <&
-    ReadWrite,  // <>
-    HereString, // <<<
+    Write,     // >
+    Append,    // >>
+    Read,      // <
+    DupOutput, // >&
+    DupInput,  // <&
+    ReadWrite, // <>
 }
 
 #[derive(Debug, Clone, PartialEq)]

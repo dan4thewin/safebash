@@ -257,8 +257,7 @@ fn lower_redirected_stmt(
 /// semantics as any other value position) to a synthetic scalar, then rewrite
 /// the target to read that scalar (`$__redir_target_N`), which codegen already
 /// handles. Command-substitution / arithmetic targets never reach here — they
-/// are rejected at parse (SB4049). Here-strings feed stdin *data* (not a
-/// filename) and keep their own lowering path untouched.
+/// are rejected at parse (SB4049).
 fn target_needs_spill(kind: &ExprKind) -> bool {
     match kind {
         ExprKind::ParameterExpansion(_) | ExprKind::Subscript { .. } => true,
@@ -277,9 +276,7 @@ fn spill_scalar_redirect_targets(
 ) -> Vec<Redirect> {
     let mut out = Vec::with_capacity(redirects.len());
     for redir in redirects {
-        let spill =
-            !matches!(redir.op, RedirectOp::HereString) && target_needs_spill(&redir.target.kind);
-        if spill {
+        if target_needs_spill(&redir.target.kind) {
             let val = expr_to_value(&redir.target, state);
             let name = format!("__redir_target_{}_{}", ssa.blocks.len(), out.len());
             let target = state.define(&name);

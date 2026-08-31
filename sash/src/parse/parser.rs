@@ -2349,66 +2349,61 @@ fn background_list_op(scanner: &mut Scanner, left: Statement) -> Statement {
     }
 }
 
-fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnostic> {
-    let tok = scanner.next();
-    let (fd, op) = match tok.token {
+/// The plain `(fd, op)` for a redirect operator token. `&>` and `<<<` are
+/// handled separately (they own their target parsing / are rejected), and any
+/// other token returns `None` (→ SB4014). A pure dispatcher.
+fn redirect_op_for_token(tok: &Tok) -> Option<(Option<u32>, RedirectOp)> {
+    Some(match tok {
         Tok::Gt => (None, RedirectOp::Write),
         Tok::DblGt => (None, RedirectOp::Append),
         Tok::Lt => (None, RedirectOp::Read),
         Tok::GtAmp => (None, RedirectOp::DupOutput),
         Tok::LtAmp => (None, RedirectOp::DupInput),
         Tok::LtGt => (None, RedirectOp::ReadWrite),
-        Tok::AmpGt => {
-            // &>file → >file 2>&1 (handled at IR level)
-            // For now, emit as write redirect
-            let target = parse_expr(scanner)?;
-            reject_nonscalar_redirect_target(&target, span)?;
-            return Ok(Redirect {
-                fd: Some(1),
-                op: RedirectOp::Write,
-                target,
-            });
-        }
-        Tok::HereString => {
-            let target_expr = parse_expr(scanner)?;
-            // Herestring: add trailing newline to match bash behavior
-            let target = match target_expr.kind {
-                ExprKind::Literal(s) => Expr {
-                    kind: ExprKind::Literal(format!("{}\n", s)),
-                    span: target_expr.span,
-                },
-                ExprKind::SingleQuoted(s) => Expr {
-                    kind: ExprKind::Literal(format!("{}\n", s)),
-                    span: target_expr.span,
-                },
-                ExprKind::DoubleQuoted(parts) => {
-                    let mut new_parts = parts;
-                    new_parts.push(Expr {
-                        kind: ExprKind::Literal("\n".to_string()),
-                        span: target_expr.span,
-                    });
-                    Expr {
-                        kind: ExprKind::DoubleQuoted(new_parts),
-                        span: target_expr.span,
-                    }
-                }
-                _ => target_expr,
-            };
-            return Ok(Redirect {
-                fd: None,
-                op: RedirectOp::HereString,
-                target,
-            });
-        }
-        _ => {
-            return Err(parse_error(
-                span,
-                "SB4014",
-                "expected redirect operator".to_string(),
-            ));
-        }
-    };
+        _ => return None,
+    })
+}
 
+/// `&>file` → `>file 2>&1` (the `2>&1` half is handled at the IR level); the
+/// target must be a scalar filename like any other write redirect.
+fn parse_ampgt_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnostic> {
+    let target = parse_expr(scanner)?;
+    reject_nonscalar_redirect_target(&target, span)?;
+    Ok(Redirect {
+        fd: Some(1),
+        op: RedirectOp::Write,
+        target,
+    })
+}
+
+/// DD#83: sash has no here-strings. `consumer <<< X` is exactly
+/// `producer | consumer` in sash (no subshell → the reader persists; taint is
+/// provenance-based, not channel-based; sash doesn't word-split) — pure sugar
+/// over a pipe, with no semantics a pipe lacks. Dropped rather than maintained
+/// (also retires the silent-empty / missing-newline here-string bugs).
+fn here_string_diag(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4050",
+        "sash has no here-strings (`<<<`) — they are exactly a pipe in sash \
+         (no subshell, provenance-based taint, no word-splitting). Feed the \
+         data with `producer | consumer`: `cat <<< $x` → `echo $x | cat`; \
+         `read v <<< $x` → `echo $x | read v`."
+            .to_string(),
+    )
+}
+
+fn parse_redirect(scanner: &mut Scanner, span: Span) -> Result<Redirect, Diagnostic> {
+    let tok = scanner.next();
+    // `&>file` and `<<<` have their own target handling; everything else maps
+    // to a plain (fd, op) via redirect_op_for_token.
+    match tok.token {
+        Tok::AmpGt => return parse_ampgt_redirect(scanner, span),
+        Tok::HereString => return Err(here_string_diag(span)),
+        _ => {}
+    }
+    let (fd, op) = redirect_op_for_token(&tok.token)
+        .ok_or_else(|| parse_error(span, "SB4014", "expected redirect operator".to_string()))?;
     let target = parse_expr(scanner)?;
     if matches!(op, RedirectOp::DupOutput | RedirectOp::DupInput) {
         reject_nonfd_dup_target(&target, op, span)?;

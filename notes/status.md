@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-08-30) — here-strings `<<<` dropped (DD#83, SB4050) ════════
+
+**On `hand-parser`.** DG ruled `<<<` out of the language. It's exact sugar over
+`producer | consumer` in sash — no subshell (so `echo $x | read v` already
+persists `v`), provenance-based taint (clean/tainted is the source, not the
+channel), no word-splitting → `<<< X` ≡ `echo-of-X | consumer` for every
+operand, byte-for-byte. Pure sugar, so removed. DD#83, journal 216.
+
+`<<<` → **SB4050** at parse (message names the rewrite). Removed
+`RedirectOp::HereString` + all downstream (native/c/janet emitters, the
+`sash_herestring_redirect` runtime symbol, the validate taint exception, the
+`ssa_taint` clean-literal source, the transform special-case) — 9 sites, driven
+by exhaustiveness. specs commands.sh 14.25 (SB4050 all modes; plan 39→40);
+taint.sh 24.6 rewritten to `echo hello | read x`. Full 3-mode sweep vs
+`be6837e`: **0 regressions, +1 each**. Supersedes
+`bug-herestring-nonscalar-data-empty`; filed `converter-herestring-to-pipe` (P3).
+
+**Next:** resume the never-run grind (`grind-continue`) — native gate clean.
+
 ## ════════ STATUS (2026-08-30) — redirect target must be a scalar (SB4049 + spill) ════════
 
 **On `hand-parser`.** DG's ruling on the redirect-target silent-empty bug

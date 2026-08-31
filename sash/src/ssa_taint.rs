@@ -133,19 +133,17 @@ fn classify_inst_def(
         }
         SsaInst::ReadLine {
             target,
-            redirects,
             clean_pipe,
             ..
         } => {
-            taint.insert(var_key(target), read_line_taint(redirects, *clean_pipe));
+            taint.insert(var_key(target), read_line_taint(*clean_pipe));
         }
         SsaInst::ReadLineMulti {
             targets,
-            redirects,
             clean_pipe,
             ..
         } => {
-            let t = read_line_taint(redirects, *clean_pipe);
+            let t = read_line_taint(*clean_pipe);
             for tg in targets {
                 taint.insert(var_key(tg), t);
             }
@@ -182,13 +180,12 @@ fn classify_inst_def(
     }
 }
 
-/// Heredoc/herestring data is literal in the program source; clean-pipe
-/// is data flowing from another sash function. Anything else is tainted.
-fn read_line_taint(redirects: &[crate::ir::Redirect], clean_pipe: bool) -> Taint {
-    let from_literal = redirects
-        .iter()
-        .any(|r| r.op == crate::ir::RedirectOp::HereString);
-    if from_literal || clean_pipe {
+/// A `read` is clean only when it draws from a clean pipe (data flowing from
+/// another sash function). Reading from stdin or a file redirect is external
+/// input → tainted. (sash has no here-strings; that clean-literal source is
+/// gone — DD#83.)
+fn read_line_taint(clean_pipe: bool) -> Taint {
+    if clean_pipe {
         Taint::Clean
     } else {
         Taint::Tainted

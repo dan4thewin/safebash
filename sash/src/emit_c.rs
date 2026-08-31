@@ -269,11 +269,6 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_redirect_s(i64 fd, const char* path_ptr, i64 path_len, i64 flags);"
     )
     .unwrap();
-    writeln!(
-        out,
-        "extern void sash_herestring_redirect(i64 fd, const char* body_ptr, i64 body_len);"
-    )
-    .unwrap();
     // Phase 4 — pipelines
     writeln!(out, "extern i64 sash_fork(void);").unwrap();
     writeln!(out, "extern i64 sash_pipe(i64* out_pair);").unwrap();
@@ -2866,7 +2861,7 @@ fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereString => 0,
+        RedirectOp::Read | RedirectOp::DupInput => 0,
         _ => 1,
     }
 }
@@ -2898,7 +2893,6 @@ fn emit_one_redirect(
     }
     match r.op {
         RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
-        RedirectOp::HereString => emit_herestring_redirect(e, fd, &r.target, types),
         _ => {
             writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
         }
@@ -2961,21 +2955,6 @@ fn emit_dup_output(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
         _ => 2,
     };
     writeln!(e.out, "    sash_dup2({tf}, {fd});", tf = target_fd, fd = fd).unwrap();
-}
-
-/// `<<EOF` / `<<<"string"` — pipe body to stdin via
-/// sash_herestring_redirect. Mirrors emit_herestring_redirect
-/// (codegen/redirects.rs:183).
-fn emit_herestring_redirect(e: &mut Emit, fd: i64, body: &crate::ir::Expr, types: &VarTypes) {
-    let (ptr, len) = ir_expr_as_str(e, body, types);
-    writeln!(
-        e.out,
-        "    sash_herestring_redirect({fd}, {p}, {l});",
-        fd = fd,
-        p = ptr,
-        l = len
-    )
-    .unwrap();
 }
 
 /// Mirrors emit_restore (codegen/redirects.rs:214). Walk saved

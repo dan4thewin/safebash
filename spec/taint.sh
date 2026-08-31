@@ -28,8 +28,9 @@ run_sash 'mapfile -t arr; echo ${arr[0]}'
 run_sash 'x=$(/bin/date); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.5
 
-# 24.6 read from clean heredoc → clean
-run_sash 'read x <<< "hello"; echo $x'
+# 24.6 read from a clean inline pipe → clean (sash has no here-strings — DD#83;
+# `read x <<< "hello"` is written `echo hello | read x`)
+run_sash 'echo hello | read x; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.6
 
 # 24.7 user func capture → clean

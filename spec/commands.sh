@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=39
+plan=40
 echo "1..$plan" >&3
 
 set +e
@@ -239,6 +239,12 @@ if in_modes native,c; then
 else
     skip_chk 14.24
 fi
+
+# 14.25 reject: here-strings are dropped (DD#83) → SB4050 (all modes: parse).
+# `<<<` is exactly a pipe in sash (no subshell, provenance-based taint, no
+# word-splitting) — pure sugar, so it's removed. `cat <<< $x` → `echo $x | cat`.
+run_sash 'cat <<< hi'
+[[ $rc != 0 && -z $out && $err == *SB4050* ]]; chk 14.25
 
 set -e
 tally

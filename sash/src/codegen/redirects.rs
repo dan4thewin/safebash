@@ -48,7 +48,7 @@ pub(super) fn emit_redirects(
 /// least one redirect is a file `open(2)` (Write/Append/Read), so the
 /// caller can apply the DD#55 setup-failure semantics (skip body, fail
 /// status, abort governed by context). Returns `None` failure when no
-/// open redirect is present (dup/herestring only).
+/// open redirect is present (dup only).
 pub(super) fn emit_redirects_guarded(
     redirects: &[crate::ir::Redirect],
     builder: &mut FunctionBuilder,
@@ -89,7 +89,7 @@ fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::HereString => 0,
+        RedirectOp::Read | RedirectOp::DupInput => 0,
         _ => 1,
     }
 }
@@ -113,10 +113,10 @@ fn emit_save_fd(
 
 /// Dispatch on the RedirectOp shape. `Write`/`Append`/`Read` share the
 /// open-and-dup2 pattern (open_flags_for_op covers the three flag
-/// values); `DupOutput` and `HereString` get their own
-/// emitters. Unknown ops are no-ops (the save still happened).
-/// Returns `Some((failed, path_ptr, path_len))` for a file `open(2)`
-/// redirect (DD#55 setup-failure surfacing); `None` for dup/herestring/noop.
+/// values); `DupOutput` gets its own emitter. Unknown ops are no-ops
+/// (the save still happened). Returns `Some((failed, path_ptr, path_len))`
+/// for a file `open(2)` redirect (DD#55 setup-failure surfacing); `None`
+/// for dup/noop.
 fn emit_one_redirect(
     redir: &crate::ir::Redirect,
     fd_val: cranelift_codegen::ir::Value,
@@ -139,22 +139,8 @@ fn emit_one_redirect(
             vars,
         );
     }
-    match redir.op {
-        RedirectOp::DupOutput => {
-            emit_dup_output(fd_val, &redir.target, builder, module, externs);
-        }
-        RedirectOp::HereString => {
-            emit_herestring_redirect(
-                fd_val,
-                &redir.target,
-                builder,
-                module,
-                externs,
-                literals,
-                vars,
-            );
-        }
-        _ => {}
+    if redir.op == RedirectOp::DupOutput {
+        emit_dup_output(fd_val, &redir.target, builder, module, externs);
     }
     None
 }
@@ -232,38 +218,6 @@ fn emit_dup_output(
         .iconst(cranelift_codegen::ir::types::I64, target_fd);
     let dup2_ref = module.declare_func_in_func(externs.dup2, builder.func);
     builder.ins().call(dup2_ref, &[target_val, fd_val]);
-}
-
-/// `<<EOF` / `<<<"string"` — pipe body text to stdin. Literal body
-/// missing from the literals map → skip (matches pre-refactor).
-fn emit_herestring_redirect(
-    fd_val: cranelift_codegen::ir::Value,
-    body: &crate::ir::Expr,
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    literals: &HashMap<String, cranelift_module::DataId>,
-    vars: &HashMap<String, VarSlot>,
-) {
-    let (body_ptr, body_len) = if let crate::ir::ExprKind::Literal(s) = &body.kind {
-        let Some(&data_id) = literals.get(s.as_str()) else {
-            return;
-        };
-        let gv = module.declare_data_in_func(data_id, builder.func);
-        let ptr = builder
-            .ins()
-            .global_value(cranelift_codegen::ir::types::I64, gv);
-        let len = builder
-            .ins()
-            .iconst(cranelift_codegen::ir::types::I64, s.len() as i64);
-        (ptr, len)
-    } else {
-        lower_ir_redirect_expr(body, builder, module, vars, literals, externs)
-    };
-    let herestring_ref = module.declare_func_in_func(externs.herestring_redirect, builder.func);
-    builder
-        .ins()
-        .call(herestring_ref, &[fd_val, body_ptr, body_len]);
 }
 
 /// Restore saved fds after a command completes

@@ -113,3 +113,16 @@ starts rather than trusting these numbers.
 
 - brush_compat failures (bash-compat the subset deliberately rejects) stay
   tracked separately by `brush-rerun`.
+
+### Feature-removal debt to sweep at fix time (tests of dropped constructs)
+As language surface is removed, benched Rust tests that exercised the dropped
+form now fail (they compile a construct sash rejects). Convert to the sash
+idiom or make them expect the reject. Known:
+- **here-strings `<<<`** (removed by DD#83, → SB4050): `codegen_tests.rs:2078`
+  (`cat <<< "hello world"`), `e2e_tests.rs:840,943` (`read x <<< …`),
+  `taint_spec_tests.rs:329,456` (`read <<< …`), `brush_compat_tests.rs:467`
+  (`while read … done <<<"$content"`). Rewrite to the pipe idiom
+  (`echo $x | read v`, `printf … | cmd`, `cmd | while read`) — the spec suite
+  already covers the pipe forms (taint.sh 24.6).
+- the 5 true/false body-semantics tests noted earlier (explicit-`return` idiom).
+

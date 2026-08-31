@@ -499,7 +499,9 @@ fn heredoc_diag(span: Span) -> Diagnostic {
     Diagnostic::error_span(
         span,
         "SB5002",
-        "sash has no heredocs — use a herestring (<<<) with a multi-line \"…\" string".to_string(),
+        "sash has no heredocs or here-strings — pipe the data instead: \
+         `printf '…' | consumer` or `echo $x | consumer`"
+            .to_string(),
     )
 }
 
@@ -1842,10 +1844,10 @@ fn resolve_on_path(name: &str) -> bool {
 // A variable is tainted if its value came from:
 //   - $(getenv NAME), $(argv N)  — external input
 //   - $(/absolute/path ...)      — external command output
-//   - read from stdin (no herestring)
+//   - read from stdin or a file  — external input
 // A variable is clean if:
 //   - assigned from literals, arithmetic, clean variables
-//   - read from herestring (<<<) — data came from sash code
+//   - read from a clean pipe (<-) — data came from another sash function
 //   - function parameters ($1-$9) inside function bodies
 //   - bless explicitly removes taint after validation
 //
@@ -2880,26 +2882,13 @@ fn taint_pipeline(
     }
 }
 
-/// Taint a redirected statement, with a `read … <<< "literal"` exception
-/// (herestring/heredoc sources are sash code, not external input).
+/// Taint a redirected statement. A redirect target is a read position, so a
+/// tainted target (`echo > $t`) is checked like any other read.
 fn taint_redirected(
     r: &crate::ir::Redirected,
     tainted: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if let StmtKind::Command(c) = &r.body.kind {
-        let name = expr_literal_str(&c.name);
-        if (name == "read" || name == "mapfile")
-            && r.redirects
-                .iter()
-                .any(|rd| matches!(rd.op, crate::ir::RedirectOp::HereString))
-        {
-            return;
-        }
-    }
-    // A redirect target is a read position — `echo > $t` / `> $(join @a)`
-    // uses the tainted value (as a path, or here-string data) without bless.
-    // These were previously unchecked.
     for rd in &r.redirects {
         check_expr_taint(&rd.target, tainted, diags);
     }
