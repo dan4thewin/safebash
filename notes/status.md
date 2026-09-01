@@ -20,6 +20,15 @@ the `}`; shebang dropped; `#` in `$(( ))` stays a Word per DD#72). specs
 `spec/comments.sh` cmt.1–11 (all modes; cmt.11 native,c). Full 3-mode sweep vs
 `e638e84`: **0 regressions, +32 passing**. Lib tests green.
 
+**Open follow-up (filed, needs a DG decision):**
+`notes/tasks/arith-block-separators-and-comments.md` — DG observed that
+multi-line `(( ))` disallows end-of-line comments, and that the `;`/`,`/newline
+separator story inside `(( ))` is inconsistent (for-header allows `;`, standalone
+rejects it; `,` works). Three linked decisions: (1) is multi-line `(( ))` one
+expression or a sequence block (newline ≡ comma)? (2) `;` ≡ `,` in a standalone
+`(( ))`? (3) allow `#` comments inside arith (DD#72 freed `#`)? All are
+deliberate-divergence-from-bash calls; today sash matches bash on each.
+
 ## ════════ STATUS (2026-08-31, cont.4) — `!` on the terminal pipeline segment ════════
 
 **On `hand-parser`.** DG's `… | ! grep -q z` (journal 219's line) uses a `!` on
