@@ -934,6 +934,17 @@ pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
     sash_malloc(n)
 }
 
+/// DD#87 invariant: every sash **string** buffer is NUL-terminated at `[len]`,
+/// so a sash string can cross into an execve/C-string boundary directly (an
+/// external command reads argv entries as C strings). Allocates `len + 1`
+/// bytes and writes the terminator at `[len]`; the caller fills `[0..len]`.
+/// (Non-string allocations — tables, pointer arrays — keep using `sash_alloc`.)
+unsafe fn alloc_cstr(len: usize) -> *mut u8 {
+    let buf = sash_alloc(len + 1);
+    *buf.add(len) = 0;
+    buf
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn sash_free_ptr(ptr: *mut u8) {
     sash_free_c(ptr);
@@ -1021,7 +1032,7 @@ pub unsafe extern "C" fn sash_concat(
     out_len: *mut i64,
 ) -> *mut u8 {
     let total = a_len as usize + b_len as usize;
-    let buf = sash_alloc(total);
+    let buf = alloc_cstr(total);
     if a_len > 0 && !a_ptr.is_null() {
         core::ptr::copy_nonoverlapping(a_ptr, buf, a_len as usize);
     }
@@ -1100,7 +1111,7 @@ pub unsafe extern "C" fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8 {
     let mut tmp = [0u8; 21];
     let formatted = itoa_inner(val, &mut tmp);
     let len = formatted.len();
-    let buf = sash_alloc(len);
+    let buf = alloc_cstr(len);
     core::ptr::copy_nonoverlapping(formatted.as_ptr(), buf, len);
     *out_len = len as i64;
     buf
@@ -1123,7 +1134,7 @@ pub unsafe extern "C" fn sash_join_args(
 
     if argc <= 1 {
         *out_len = 0;
-        return sash_alloc(1);
+        return alloc_cstr(0);
     }
 
     let mut total = 0usize;
@@ -1137,7 +1148,7 @@ pub unsafe extern "C" fn sash_join_args(
         }
     }
 
-    let buf = sash_alloc(total);
+    let buf = alloc_cstr(total);
     let mut pos = 0usize;
     for i in 1..argc {
         let arg = *argv.add(i);
@@ -1242,7 +1253,7 @@ pub extern "C" fn sash_read_line(fd: i64) -> (*mut u8, usize) {
         return (core::ptr::null_mut(), 0);
     }
     // Empty line (got_newline with total=0) or normal line
-    let ptr = unsafe { sash_alloc(core::cmp::max(total, 1)) };
+    let ptr = unsafe { alloc_cstr(total) };
     if total > 0 {
         unsafe {
             core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
@@ -1464,7 +1475,7 @@ pub unsafe extern "C" fn sash_table_set(
         let ei = (*t).entry_count as usize;
         let e = &mut *(*t).entries.add(ei);
         // Copy key to heap so table owns it (caller's key may be stack-allocated)
-        let key_copy = sash_alloc(key_len as usize);
+        let key_copy = alloc_cstr(key_len as usize);
         core::ptr::copy_nonoverlapping(key_ptr, key_copy, key_len as usize);
         e.key_ptr = key_copy;
         e.key_len = key_len;
@@ -1622,6 +1633,12 @@ pub unsafe extern "C" fn sash_dtoi(digits: i64, ptr: *const u8, len: i64) -> i64
 pub unsafe extern "C" fn sash_itod(digits: i64, value: i64, out_len: *mut i64) -> *const u8 {
     static mut ITOD_BUF: [u8; 32] = [0u8; 32];
     let len = itod_inner(digits, value, &mut ITOD_BUF);
+    // DD#87 invariant: the static buffer is reused across calls, so a shorter
+    // value could leave a stale byte at [len]; re-terminate for the C boundary.
+    // (Guarded against a full 32-byte buffer — a pathological padding width.)
+    if len < ITOD_BUF.len() {
+        ITOD_BUF[len] = 0;
+    }
     *out_len = len as i64;
     ITOD_BUF.as_ptr()
 }
@@ -1811,7 +1828,7 @@ pub unsafe extern "C" fn sash_regex_match_into(
             let len = ep as usize - sp as usize;
             // Copy the captured slice to heap so the array owns its data
             // (the subject may be a temporary that outlives this call).
-            let cp = sash_alloc(if len == 0 { 1 } else { len });
+            let cp = alloc_cstr(len);
             core::ptr::copy_nonoverlapping(str_ptr.add(start_off), cp, len);
             (cp, len as i64)
         };
@@ -1857,7 +1874,7 @@ unsafe fn expand_replacement(rep: &[u8], resub: *const *const u8) -> (*mut u8, u
             i += 1;
         }
     }
-    let out = sash_alloc(if out_len == 0 { 1 } else { out_len });
+    let out = alloc_cstr(out_len);
     // Pass 2: fill.
     let mut w = 0usize;
     i = 0;
@@ -1914,7 +1931,7 @@ pub unsafe extern "C" fn sash_regex_replace(
     let prog = regcomp9(pat_buf);
     if prog.is_null() {
         // No match possible — return copy of original
-        let out = sash_alloc(str_len as usize);
+        let out = alloc_cstr(str_len as usize);
         core::ptr::copy_nonoverlapping(str_ptr, out, str_len as usize);
         return (out, str_len);
     }
@@ -2024,6 +2041,15 @@ pub unsafe extern "C" fn sash_regex_replace(
         }
     }
 
+    // DD#87 invariant: NUL-terminate the grown result buffer at [result_len]
+    // so it is a valid C string at the execve boundary. The grow buffers keep
+    // headroom (`*2`, `+256`), but guard the tight case explicitly.
+    if result_len == result_cap {
+        let grown = alloc_cstr(result_len);
+        core::ptr::copy_nonoverlapping(result, grown, result_len);
+        return (grown, result_len as i64);
+    }
+    *result.add(result_len) = 0;
     (result, result_len as i64)
 }
 
@@ -2343,7 +2369,17 @@ pub extern "C" fn sash_substring(
         remaining
     };
 
-    (unsafe { s_ptr.add(start) }, len as i64)
+    // DD#87 invariant: a substring must be NUL-terminated at its own length,
+    // but a slice into the subject is terminated only when it reaches the
+    // subject's end. Copy into a NUL-terminated buffer so it is a valid C
+    // string at the execve boundary (a partial `${s:0:2}` otherwise reads on
+    // into the subject for an external command).
+    let start_ptr = unsafe { s_ptr.add(start) };
+    let out = unsafe { alloc_cstr(len) };
+    if len > 0 {
+        unsafe { core::ptr::copy_nonoverlapping(start_ptr, out, len) };
+    }
+    (out as *const u8, len as i64)
 }
 
 /// Test if fd is a terminal (isatty equivalent)
@@ -2701,7 +2737,7 @@ pub extern "C" fn sash_read_delim(fd: i64, delim: i64) -> (*mut u8, usize) {
         // Empty field between delimiters — return empty string
         return (core::ptr::null_mut(), 0);
     }
-    let ptr = unsafe { sash_alloc(total) };
+    let ptr = unsafe { alloc_cstr(total) };
     unsafe {
         core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
     }
@@ -2728,7 +2764,7 @@ pub extern "C" fn sash_epochseconds() -> (*mut u8, usize) {
         }
     }
     let len = buf.len() - i;
-    let ptr = unsafe { sash_alloc(len) };
+    let ptr = unsafe { alloc_cstr(len) };
     unsafe {
         core::ptr::copy_nonoverlapping(buf[i..].as_ptr(), ptr, len);
     }
@@ -2782,7 +2818,7 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
         return (core::ptr::null_mut(), 0);
     }
 
-    let ptr = unsafe { sash_alloc(total) };
+    let ptr = unsafe { alloc_cstr(total) };
     unsafe {
         core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
     }
@@ -3096,7 +3132,7 @@ pub extern "C" fn sash_glob(
                     let idx_bytes = idx.to_ne_bytes();
                     // DD#73: store `<prefix>/name` (absolute), not the bare name.
                     let total = prefix_len + 1 + name.len();
-                    let elem = unsafe { sash_alloc(total) };
+                    let elem = unsafe { alloc_cstr(total) };
                     unsafe {
                         core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
                         *elem.add(prefix_len) = b'/';
@@ -3221,7 +3257,7 @@ pub extern "C" fn sash_glob_regex(
                     let idx_bytes = idx.to_ne_bytes();
                     // DD#73: store `<prefix>/name` (absolute), not the bare name.
                     let total = prefix_len + 1 + name.len();
-                    let elem = unsafe { sash_alloc(total) };
+                    let elem = unsafe { alloc_cstr(total) };
                     unsafe {
                         core::ptr::copy_nonoverlapping(prefix_buf.as_ptr(), elem, prefix_len);
                         *elem.add(prefix_len) = b'/';
@@ -3345,7 +3381,7 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
     if total == 0 {
         return (core::ptr::null_mut(), 0);
     }
-    let out = unsafe { sash_alloc(total) };
+    let out = unsafe { alloc_cstr(total) };
     unsafe {
         core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total);
     }
