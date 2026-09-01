@@ -1,3 +1,15 @@
+## ════════ STATUS (2026-09-01, cont) — DD#86 Phase 3: no shadowing (SB5049) ════════
+
+**On `hand-parser`.** DD#86 Phase 3 — a typed re-declaration
+(`str`/`int`/`array`/`map`/`const`) inside a function of a top-level global name
+is a redeclaration error (**SB5049**); a bare assignment writes the global.
+`check_no_shadow` in validate.rs collects top-level decls (globals, not
+descending into fn bodies) then scans each fn body for typed decls colliding
+with a global. specs scope.sh 86.7–86.12 (native,c,janet). Full 3-mode sweep vs
+`b935e28`: native 0 regressions +6, c 0 regressions +6, janet +8. journal 227.
+
+**Next:** Phase 4 (dead-var), Phase 5 (converter + docs).
+
 ## ════════ STATUS (2026-09-01, cont) — DD#86 Phase 2: drop `local` ════════
 
 **On `hand-parser`.** DG: "let's finish the local-related work." DD#86 Phase 2 —

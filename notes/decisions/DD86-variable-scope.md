@@ -99,7 +99,9 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    fixed a latent bug: a function-local `const` tripped SB4044 because the
    body is lowered twice and `readonly_vars` leaked (isolated via
    `enter/exit_fn_body_scope`).**
-3. No-shadowing / redeclaration error.
+3. No-shadowing / redeclaration error. **— shipped (journal 227): SB5049,
+   `check_no_shadow` in validate.rs; a typed re-declaration inside a function
+   of a top-level global is rejected; a bare assignment writes the global.**
 4. Dead-variable rejection (new validate pass, dual of DD#62).
 5. Retire `local fn`; converter; specs; GUIDE/SUBSET. **— `local fn` done in
    Phase 2; remaining: converter `local`→drop, GUIDE/SUBSET, DD#35 amend.**

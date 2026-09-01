@@ -57,6 +57,9 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     check_predicate_definite_return(program, &functions, &mut diags);
     // SB4044: a `const`/`readonly` variable cannot be reassigned.
     check_const_reassignment(&blocks, &mut diags);
+    // SB5049 (DD#86): no shadowing — a typed declaration inside a function of a
+    // top-level global name is a redeclaration error.
+    check_no_shadow(program, &mut diags);
     // SB4045: a fixed-arity value-intrinsic (`sub`, `len`, …) called via `$( )`
     // with the wrong number of arguments.
     for &block in &blocks {
@@ -153,6 +156,96 @@ fn const_reassign_diag(span: Span, name: &str) -> Diagnostic {
         format!(
             "readonly variable `{name}` cannot be reassigned — a `const`/`readonly` \
              binding is immutable"
+        ),
+    )
+}
+
+/// SB5049 (DD#86): no shadowing. A name declared at top level is a **global**;
+/// a *typed* re-declaration (`str`/`int`/`array`/`map`/`const`) of that name
+/// inside a function is a redeclaration error — there is no way to create a
+/// local that shadows a global. A *bare* assignment inside a function writes
+/// the global (allowed, and not flagged here).
+fn check_no_shadow(program: &Program, diags: &mut Vec<Diagnostic>) {
+    let mut globals: HashSet<String> = HashSet::new();
+    collect_top_level_decls(&program.statements, &mut globals);
+    if let Some(ref end) = program.end_block {
+        collect_top_level_decls(end, &mut globals);
+    }
+    scan_fn_shadow(&program.statements, &globals, diags);
+    if let Some(ref end) = program.end_block {
+        scan_fn_shadow(end, &globals, diags);
+    }
+}
+
+/// Collect the names declared/assigned at top level (the globals), NOT
+/// descending into function bodies.
+fn collect_top_level_decls(stmts: &[Statement], globals: &mut HashSet<String>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            // A function body is its own scope — its names are not globals.
+            StmtKind::Function(_) => {}
+            StmtKind::Declaration(d) => insert_decl_names(d, globals),
+            StmtKind::Assignment(a) => {
+                globals.insert(a.name.clone());
+            }
+            _ => {
+                for body in stmt.child_bodies() {
+                    collect_top_level_decls(body, globals);
+                }
+            }
+        }
+    }
+}
+
+/// Walk to each function body and scan it for typed declarations that shadow a
+/// global.
+fn scan_fn_shadow(stmts: &[Statement], globals: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Function(f) => scan_body_shadow(&f.body, globals, diags),
+            _ => {
+                for body in stmt.child_bodies() {
+                    scan_fn_shadow(body, globals, diags);
+                }
+            }
+        }
+    }
+}
+
+/// Flag every typed declaration in a function body (recursively, including
+/// nested functions and control-flow bodies) whose name is a top-level global.
+fn scan_body_shadow(stmts: &[Statement], globals: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        if let StmtKind::Declaration(d) = &stmt.kind {
+            flag_shadow_decl(d, stmt.span, globals, diags);
+        }
+        for body in stmt.child_bodies() {
+            scan_body_shadow(body, globals, diags);
+        }
+    }
+}
+
+fn flag_shadow_decl(
+    d: &Declaration,
+    span: Span,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for a in &d.assignments {
+        if globals.contains(&a.name) {
+            diags.push(shadow_diag(span, &a.name));
+        }
+    }
+}
+
+fn shadow_diag(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5049",
+        format!(
+            "cannot redeclare global `{name}` inside a function — sash has no variable \
+             shadowing (DD#86). Write the global with a bare assignment `{name} = …`, or \
+             rename this local so it does not collide with the top-level `{name}`"
         ),
     )
 }

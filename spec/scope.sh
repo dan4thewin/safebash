@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=6
+plan=12
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -47,6 +47,49 @@ show
 advance
 show'
 [[ $rc = 0 && $out = $'start\ndone' && -z $err ]]; chk 86.6
+
+# ── Phase 3: no shadowing (SB5049) ───────────────────────────────
+# A typed re-declaration inside a function of a top-level global is a
+# redeclaration error — a bare assignment writes the global instead.
+
+# 86.7 `int` re-declaration of a global inside a function → SB5049
+run_sash 'int x = 1
+fn f { int x = 9; /bin/echo $x }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.7
+
+# 86.8 `str` re-declaration of a global inside a function → SB5049
+run_sash 'str s = hi
+fn f { str s = bye; /bin/echo $s }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.8
+
+# 86.9 `const` re-declaration of a global inside a function → SB5049
+run_sash 'int g = 5
+fn f { const int g = 9; /bin/echo $g }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.9
+
+# 86.10 a bare assignment to a global inside a function is NOT a shadow
+run_sash 'int n = 0
+fn bump { n = $((n + 1)) }
+bump
+bump
+/bin/echo "n=$n"'
+[[ $rc = 0 && $out = "n=2" && -z $err ]]; chk 86.10
+
+# 86.11 a typed declaration of a NEW (non-global) name inside a function is a
+# fresh function-local — not a shadow
+run_sash 'int x = 1
+fn f { int y = 9; /bin/echo "y=$y" }
+f'
+[[ $rc = 0 && $out = "y=9" && -z $err ]]; chk 86.11
+
+# 86.12 shadowing also caught for a collection type (`array`)
+run_sash 'array a = (1 2)
+fn f { array a = (3 4); /bin/echo ${a[0]} }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.12
 
 set -e
 tally
