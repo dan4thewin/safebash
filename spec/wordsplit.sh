@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=72
+plan=77
 echo "1..$plan" >&3
 
 set +e
@@ -323,6 +323,38 @@ run_sash '/bin/cat <<EOF
 hello
 EOF'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 5.2
+
+# ── readc: cooked read (switch-free-read-family) ─────────────────
+# readc honors `\`-escapes: `\<ws>` does not split, and the field is
+# de-escaped. Contrast the always-raw `read`. janet has no cooked
+# read yet (codegen treats readc as raw), so gate native,c. (Tests
+# use `\ ` — escaped space — whose double-quote handling matches bash;
+# `\\` in double quotes is a separate pre-existing divergence.)
+if in_modes native,c; then
+    # 22.20 readc: `\ ` keeps the space in the field AND de-escapes it.
+    # This is the getopt-csh idiom: a space-bearing token stays one field.
+    run_sash 'echo "has\ space rest" | readc a b; echo "a=[$a]"; echo "b=[$b]"'
+    [[ $rc = 0 && $out = $'a=[has space]\nb=[rest]' && -z $err ]]; chk 22.20
+
+    # 22.21 readc: last var (remainder) is de-escaped too
+    run_sash 'echo "first tail\ with\ escapes" | readc a b; echo "[$b]"'
+    [[ $rc = 0 && $out = "[tail with escapes]" && -z $err ]]; chk 22.21
+
+    # 22.22 readc single var de-escapes the whole line
+    run_sash 'echo "a\ b\ c" | readc line; echo "[$line]"'
+    [[ $rc = 0 && $out = "[a b c]" && -z $err ]]; chk 22.22
+
+    # 22.23 raw read keeps backslashes (contrast with readc)
+    run_sash 'echo "a\ b\ c" | read a b; echo "a=[$a]"; echo "b=[$b]"'
+    [[ $rc = 0 && $out = $'a=[a\\]\nb=[b\\ c]' && -z $err ]]; chk 22.23
+
+    # 22.24 readc target is tainted when the source is external
+    run_sash '/bin/echo hi | readc v; echo $v'
+    [[ $rc != 0 && -z $out && -n $err ]]; chk 22.24
+else
+    skip_chk 22.20; skip_chk 22.21; skip_chk 22.22
+    skip_chk 22.23; skip_chk 22.24
+fi
 
 
 set -e

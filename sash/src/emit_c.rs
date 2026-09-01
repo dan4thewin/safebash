@@ -347,6 +347,12 @@ fn emit_prologue(out: &mut String) {
         "extern sash_pair sash_split_field(const char* p, i64 l, i64 delim, const char** rp, i64* rl);"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern sash_pair sash_split_first_word_cooked(const char* p, i64 l, const char** rp, i64* rl);"
+    )
+    .unwrap();
+    writeln!(out, "extern sash_pair sash_deescape(const char* p, i64 l);").unwrap();
     writeln!(out, "extern sash_pair sash_read_all(i64 fd);").unwrap();
     writeln!(
         out,
@@ -441,6 +447,14 @@ fn collection_or_declared_type(value: &SsaValue, declared: VarType) -> VarType {
     }
 }
 
+/// Record every read target as a String var so `declare_vars` emits its
+/// `_ptr`/`_len` even when the value is never read later.
+fn insert_read_target_types(targets: &[VarRef], types: &mut VarTypes) {
+    for t in targets {
+        types.insert((t.name.clone(), t.version), VarType::String);
+    }
+}
+
 fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
     match inst {
         SsaInst::Assign { target, value } => {
@@ -460,6 +474,15 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
         // The capture target holds the captured stdout (its declared type).
         SsaInst::CaptureEnd { target, .. } => {
             types.insert((target.name.clone(), target.version), target.var_type);
+        }
+        // Read targets are String; declare them even when the value is
+        // never read later (native declares all read targets — otherwise
+        // c emits an assignment to an undeclared `_ptr`/`_len`).
+        SsaInst::ReadLine { target, .. } => {
+            insert_read_target_types(std::slice::from_ref(target), types);
+        }
+        SsaInst::ReadLineMulti { targets, .. } => {
+            insert_read_target_types(targets, types);
         }
         // DD#61 bless-all: the loop binders are set inside the emitted loop, so
         // they need C slot declarations (as String ptr/len). c_var_name
@@ -666,16 +689,18 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             fd,
             delim,
             redirects,
+            cooked,
             ..
-        } => emit_readline(e, target, *fd, *delim, redirects, types),
+        } => emit_readline(e, target, *fd, *delim, redirects, *cooked, types),
         // read VAR1 VAR2 … [-f<sep>] — split one line across N targets.
         SsaInst::ReadLineMulti {
             targets,
             fd,
             delim,
             field_sep,
+            cooked,
             ..
-        } => emit_readline_multi(e, targets, *fd, *delim, *field_sep, types),
+        } => emit_readline_multi(e, targets, *fd, *delim, *field_sep, *cooked, types),
         // mapfile -t ARR / mapfile -m MAP — bulk-read fd into an array/map.
         SsaInst::Mapfile {
             array,
@@ -3535,6 +3560,7 @@ fn emit_readline(
     fd: i64,
     delim: Option<u8>,
     redirects: &[crate::ir::Redirect],
+    cooked: bool,
     types: &VarTypes,
 ) {
     // `read VAR < file` / `read VAR <<< word` — apply the redirect (e.g.
@@ -3547,6 +3573,20 @@ fn emit_readline(
         Some(b) => format!("sash_read_delim({}, {})", fdx, b),
     };
     writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
+    // readc: cooked read de-escapes the whole line (backslashes honored).
+    let t = if cooked {
+        let d = e.fresh();
+        writeln!(
+            e.out,
+            "    sash_pair {d} = ({t}.ptr == (const char*)0) ? {t} : sash_deescape({t}.ptr, {t}.len);",
+            d = d,
+            t = t
+        )
+        .unwrap();
+        d
+    } else {
+        t
+    };
     let base = c_var_name(&target.name, target.version);
     writeln!(e.out, "    {0}_ptr = {1}.ptr;", base, t).unwrap();
     writeln!(e.out, "    {0}_len = {1}.len;", base, t).unwrap();
@@ -3580,6 +3620,7 @@ fn emit_readline_multi(
     fd: i64,
     delim: Option<u8>,
     field_sep: Option<u8>,
+    cooked: bool,
     _types: &VarTypes,
 ) {
     let t = e.fresh();
@@ -3601,28 +3642,58 @@ fn emit_readline_multi(
     for (i, target) in targets.iter().enumerate() {
         let base = c_var_name(&target.name, target.version);
         if i == last {
-            writeln!(
-                e.out,
-                "    {0}_ptr = {t}_cp; {0}_len = {t}_cl;",
-                base,
-                t = t
-            )
-            .unwrap();
+            emit_readline_last(e, &base, &t, cooked);
         } else {
-            emit_readline_field(e, &base, &t, field_sep);
+            emit_readline_field(e, &base, &t, field_sep, cooked);
         }
+    }
+}
+
+/// Assign the remainder cursor (`{t}_cp/{t}_cl`) to the last read target.
+/// readc (cooked read) de-escapes the remainder (backslashes honored).
+fn emit_readline_last(e: &mut Emit, base: &str, t: &str, cooked: bool) {
+    if cooked {
+        let d = e.fresh();
+        writeln!(
+            e.out,
+            "    sash_pair {d} = sash_deescape({t}_cp, {t}_cl);",
+            d = d,
+            t = t
+        )
+        .unwrap();
+        writeln!(
+            e.out,
+            "    {0}_ptr = {d}.ptr; {0}_len = {d}.len;",
+            base,
+            d = d
+        )
+        .unwrap();
+    } else {
+        writeln!(
+            e.out,
+            "    {0}_ptr = {t}_cp; {0}_len = {t}_cl;",
+            base,
+            t = t
+        )
+        .unwrap();
     }
 }
 
 /// Split the next field off the `{t}_cp/{t}_cl` cursor into `base` and
 /// advance the cursor to the remainder (by `field_sep`, else whitespace).
-fn emit_readline_field(e: &mut Emit, base: &str, t: &str, field_sep: Option<u8>) {
+fn emit_readline_field(e: &mut Emit, base: &str, t: &str, field_sep: Option<u8>, cooked: bool) {
     let w = e.fresh();
     let split = match field_sep {
         Some(sep) => format!(
             "sash_split_field({t}_cp, {t}_cl, {sep}, &{w}_rp, &{w}_rl)",
             t = t,
             sep = sep,
+            w = w
+        ),
+        // readc: cooked whitespace split honors `\`-escaped spaces.
+        None if cooked => format!(
+            "sash_split_first_word_cooked({t}_cp, {t}_cl, &{w}_rp, &{w}_rl)",
+            t = t,
             w = w
         ),
         None => format!(

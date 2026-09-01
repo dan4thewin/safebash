@@ -123,9 +123,11 @@ impl SsaInst {
                 fd,
                 delim,
                 redirects,
+                cooked,
                 ..
             } => {
-                return self.emit_readline(target, fd, delim, redirects, builder, module, ctx);
+                return self
+                    .emit_readline(target, fd, delim, redirects, *cooked, builder, module, ctx);
             }
             SsaInst::ReadLineMulti {
                 targets,
@@ -133,10 +135,11 @@ impl SsaInst {
                 delim,
                 redirects,
                 field_sep,
+                cooked,
                 ..
             } => {
                 return self.emit_readline_multi(
-                    targets, fd, delim, redirects, field_sep, builder, module, ctx,
+                    targets, fd, delim, redirects, field_sep, *cooked, builder, module, ctx,
                 );
             }
             SsaInst::Pipeline {
@@ -419,6 +422,7 @@ impl SsaInst {
         delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
         field_sep: &Option<u8>,
+        cooked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -443,62 +447,30 @@ impl SsaInst {
         } else {
             builder.ins().iconst(I64, *fd)
         };
-        let (line_ptr, line_len) = if let Some(d) = delim {
-            let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
-            let delim_val = builder.ins().iconst(I64, *d as i64);
-            let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
-            (builder.inst_results(call)[0], builder.inst_results(call)[1])
-        } else {
-            let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
-            let call = builder.ins().call(read_line_ref, &[fd_val]);
-            (builder.inst_results(call)[0], builder.inst_results(call)[1])
-        };
+        let (line_ptr, line_len) = emit_read_line_call(builder, module, externs, fd_val, delim);
 
         let zero = builder.ins().iconst(I64, 0);
         let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, line_len, zero);
         let result = builder.ins().uextend(I64, got_data);
         builder.def_var(test_result_var, result);
 
-        let split_ref = module.declare_func_in_func(externs.split_first_word, builder.func);
-        let split_field_ref = module.declare_func_in_func(externs.split_field, builder.func);
-        let mut cur_ptr = line_ptr;
-        let mut cur_len = line_len;
-
+        let refs = ReadSplitRefs {
+            word: module.declare_func_in_func(externs.split_first_word, builder.func),
+            word_cooked: module.declare_func_in_func(externs.split_first_word_cooked, builder.func),
+            field: module.declare_func_in_func(externs.split_field, builder.func),
+            deescape: module.declare_func_in_func(externs.deescape, builder.func),
+        };
+        let mut cur = (line_ptr, line_len);
+        let last = targets.len() - 1;
         for (i, target) in targets.iter().enumerate() {
-            let sv = &vars[&target.display()];
-            if i == targets.len() - 1 {
-                builder.def_var(sv.str_ptr(), cur_ptr);
-                builder.def_var(sv.str_len(), cur_len);
+            let (sp, sl) = {
+                let sv = &vars[&target.display()];
+                (sv.str_ptr(), sv.str_len())
+            };
+            if i == last {
+                emit_read_last_var(builder, &refs, sp, sl, cur, cooked);
             } else {
-                let rest_ptr_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let rest_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                    StackSlotKind::ExplicitSlot,
-                    8,
-                    3,
-                ));
-                let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
-                let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
-                let (word_ptr, word_len) = if let Some(sep) = field_sep {
-                    let delim_val = builder.ins().iconst(I64, *sep as i64);
-                    let call = builder.ins().call(
-                        split_field_ref,
-                        &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr],
-                    );
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                } else {
-                    let call = builder
-                        .ins()
-                        .call(split_ref, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
-                    (builder.inst_results(call)[0], builder.inst_results(call)[1])
-                };
-                builder.def_var(sv.str_ptr(), word_ptr);
-                builder.def_var(sv.str_len(), word_len);
-                cur_ptr = builder.ins().stack_load(I64, rest_ptr_slot, 0);
-                cur_len = builder.ins().stack_load(I64, rest_len_slot, 0);
+                cur = emit_read_field_split(builder, &refs, sp, sl, cur, field_sep, cooked);
             }
         }
         emit_restore(saved, builder, module, externs);
@@ -896,6 +868,7 @@ impl SsaInst {
         fd: &i64,
         delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
+        cooked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -922,15 +895,14 @@ impl SsaInst {
         } else {
             builder.ins().iconst(I64, *fd)
         };
-        let (ptr, len) = if let Some(d) = delim {
-            let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
-            let delim_val = builder.ins().iconst(I64, *d as i64);
-            let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
+        let (ptr, len) = emit_read_line_call(builder, module, externs, fd_val, delim);
+        // readc: cooked read de-escapes the whole line (backslashes honored).
+        let (ptr, len) = if cooked {
+            let deescape_ref = module.declare_func_in_func(externs.deescape, builder.func);
+            let call = builder.ins().call(deescape_ref, &[ptr, len]);
             (builder.inst_results(call)[0], builder.inst_results(call)[1])
         } else {
-            let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
-            let call = builder.ins().call(read_line_ref, &[fd_val]);
-            (builder.inst_results(call)[0], builder.inst_results(call)[1])
+            (ptr, len)
         };
         let sv = &vars[&target.display()];
         builder.def_var(sv.str_ptr(), ptr);
@@ -1180,6 +1152,99 @@ impl SsaInst {
         }
         false
     }
+}
+
+/// Read one line into `(ptr, len)` from `fd_val`: `sash_read_delim` when a
+/// custom delimiter is set (`read -d`), else `sash_read_line` (newline).
+/// Shared by single- and multi-target read codegen.
+fn emit_read_line_call(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    fd_val: cranelift_codegen::ir::Value,
+    delim: &Option<u8>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    if let Some(d) = delim {
+        let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
+        let delim_val = builder.ins().iconst(I64, *d as i64);
+        let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
+        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    } else {
+        let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
+        let call = builder.ins().call(read_line_ref, &[fd_val]);
+        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    }
+}
+
+/// Cranelift `FuncRef`s for the four read-split runtime entry points,
+/// declared once per `emit_readline_multi` and reused per target.
+struct ReadSplitRefs {
+    word: cranelift_codegen::ir::FuncRef,
+    word_cooked: cranelift_codegen::ir::FuncRef,
+    field: cranelift_codegen::ir::FuncRef,
+    deescape: cranelift_codegen::ir::FuncRef,
+}
+
+/// Assign the whole remaining cursor to the last read target,
+/// de-escaping it first when `cooked` (`readc`, switch-free-read-family).
+fn emit_read_last_var(
+    builder: &mut FunctionBuilder,
+    refs: &ReadSplitRefs,
+    str_ptr: cranelift_frontend::Variable,
+    str_len: cranelift_frontend::Variable,
+    cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
+    cooked: bool,
+) {
+    let (cur_ptr, cur_len) = cur;
+    let (p, l) = if cooked {
+        let call = builder.ins().call(refs.deescape, &[cur_ptr, cur_len]);
+        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    } else {
+        (cur_ptr, cur_len)
+    };
+    builder.def_var(str_ptr, p);
+    builder.def_var(str_len, l);
+}
+
+/// Split one field off the `cur` cursor into a non-last read target and
+/// return the new `(cur_ptr, cur_len)` cursor over the remainder. Uses
+/// `field_sep` when set, else a whitespace word (cooked-aware: `readc`
+/// honors `\`-escaped spaces; readc cooked read).
+fn emit_read_field_split(
+    builder: &mut FunctionBuilder,
+    refs: &ReadSplitRefs,
+    str_ptr: cranelift_frontend::Variable,
+    str_len: cranelift_frontend::Variable,
+    cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
+    field_sep: &Option<u8>,
+    cooked: bool,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (cur_ptr, cur_len) = cur;
+    let rest_ptr_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let rest_len_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
+    let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
+    let (word_ptr, word_len) = if let Some(sep) = field_sep {
+        let delim_val = builder.ins().iconst(I64, *sep as i64);
+        let call = builder.ins().call(
+            refs.field,
+            &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr],
+        );
+        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    } else {
+        let f = if cooked { refs.word_cooked } else { refs.word };
+        let call = builder
+            .ins()
+            .call(f, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
+        (builder.inst_results(call)[0], builder.inst_results(call)[1])
+    };
+    builder.def_var(str_ptr, word_ptr);
+    builder.def_var(str_len, word_len);
+    let np = builder.ins().stack_load(I64, rest_ptr_slot, 0);
+    let nl = builder.ins().stack_load(I64, rest_len_slot, 0);
+    (np, nl)
 }
 
 /// `exec` with no args: standalone fd manipulation. Applies the

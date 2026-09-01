@@ -698,7 +698,8 @@ fn match_while_read(w: &While) -> Option<&Command> {
     let StmtKind::Command(c) = &w.condition[0].kind else {
         return None;
     };
-    if expr_to_literal(&c.name) == "read" {
+    let n = expr_to_literal(&c.name);
+    if n == "read" || n == "readc" {
         Some(c)
     } else {
         None

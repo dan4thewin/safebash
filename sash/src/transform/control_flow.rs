@@ -552,6 +552,7 @@ fn emit_cmdsubst_pipe_while_read(
         delim: None,
         redirects: vec![],
         clean_pipe: false,
+        cooked: false,
     });
     ssa.block_mut(header).terminator = Terminator::Branch {
         condition: "__test_result".to_string(),

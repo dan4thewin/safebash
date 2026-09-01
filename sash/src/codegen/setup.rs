@@ -724,6 +724,21 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_split_first_word", Linkage::Import, &split_sig)
         .expect("declare");
 
+    // sash_split_first_word_cooked — same sig as split_first_word (DD#86 readc).
+    let split_first_word_cooked_func = module
+        .declare_function("sash_split_first_word_cooked", Linkage::Import, &split_sig)
+        .expect("declare");
+
+    // sash_deescape(ptr, len) -> (out_ptr, out_len)  (DD#86 readc)
+    let mut deescape_sig = module.make_signature();
+    deescape_sig.params.push(AbiParam::new(I64)); // ptr
+    deescape_sig.params.push(AbiParam::new(I64)); // len
+    deescape_sig.returns.push(AbiParam::new(I64)); // out_ptr
+    deescape_sig.returns.push(AbiParam::new(I64)); // out_len
+    let deescape_func = module
+        .declare_function("sash_deescape", Linkage::Import, &deescape_sig)
+        .expect("declare");
+
     // sash_split_field(ptr, len, delim, rest_ptr_out, rest_len_out) -> (field_ptr, field_len)
     let mut split_field_sig = module.make_signature();
     split_field_sig.params.push(AbiParam::new(I64)); // ptr
@@ -821,6 +836,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         capture_start: capture_start_func,
         capture_end: capture_end_func,
         split_first_word: split_first_word_func,
+        split_first_word_cooked: split_first_word_cooked_func,
+        deescape: deescape_func,
         split_field: split_field_func,
         split_into_array: split_into_array_func,
         read_all: read_all_func,

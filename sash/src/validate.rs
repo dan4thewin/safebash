@@ -1443,6 +1443,7 @@ const BUILTINS: &[&str] = &[
     "continue",
     // Input
     "read",
+    "readc",
     "mapfile",
     // Taint
     "bless",
@@ -2698,7 +2699,7 @@ fn taint_stmt_no_read_taint(
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
-        if name == "read" || name == "mapfile" {
+        if name == "read" || name == "readc" || name == "mapfile" {
             check_expr_taint(&c.name, tainted, diags);
             for arg in &c.args {
                 check_expr_taint(arg, tainted, diags);
@@ -3030,7 +3031,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if name == "read" || name == "mapfile" || name == "argv" {
+    if name == "read" || name == "readc" || name == "mapfile" || name == "argv" {
         taint_read_target(c, tainted);
     } else if name == "bless" {
         taint_bless(c, span, tainted, diags);
@@ -3432,7 +3433,7 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
-        "read" | "mapfile" | "readarray" => {
+        "read" | "readc" | "mapfile" | "readarray" => {
             for arg in &c.args {
                 insert_read_target_arg(arg, set);
             }

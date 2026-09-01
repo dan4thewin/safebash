@@ -2694,6 +2694,116 @@ pub unsafe extern "C" fn sash_split_field(
 }
 
 // ═══════════════════════════════════════════════════════════════
+// sash_split_first_word_cooked / sash_deescape — DD#86 `readc` (cooked read)
+// ═══════════════════════════════════════════════════════════════
+
+/// Cooked word split: like `sash_split_first_word`, but a backslash escapes the
+/// next byte — `\ ` / `\t` do NOT terminate the word (the whitespace is kept),
+/// and the returned word is **de-escaped** (backslashes removed, escaped byte
+/// kept literally). The `rest` is left RAW (still escaped) so the next split
+/// sees the escapes. Used by `readc a b c` field splitting; the last var
+/// de-escapes its remainder via `sash_deescape`. DD#87: result NUL-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn sash_split_first_word_cooked(
+    ptr: *const u8,
+    len: i64,
+    rest_ptr_out: *mut *const u8,
+    rest_len_out: *mut i64,
+) -> (*const u8, i64) {
+    if ptr.is_null() || len <= 0 {
+        *rest_ptr_out = ptr;
+        *rest_len_out = 0;
+        return (alloc_cstr(0) as *const u8, 0);
+    }
+    let s = core::slice::from_raw_parts(ptr, len as usize);
+    // Skip leading unescaped whitespace.
+    let mut i = 0;
+    while i < s.len() && (s[i] == b' ' || s[i] == b'\t') {
+        i += 1;
+    }
+    let word_start = i;
+    // Find the word end (first UNescaped whitespace) and count output bytes.
+    let mut n = 0usize;
+    let mut j = word_start;
+    while j < s.len() {
+        let b = s[j];
+        if b == b'\\' && j + 1 < s.len() {
+            n += 1;
+            j += 2;
+            continue;
+        }
+        if b == b' ' || b == b'\t' {
+            break;
+        }
+        n += 1;
+        j += 1;
+    }
+    let word_end = j;
+    // Build the de-escaped word.
+    let buf = alloc_cstr(n);
+    let mut w = 0usize;
+    let mut k = word_start;
+    while k < word_end {
+        let b = s[k];
+        if b == b'\\' && k + 1 < s.len() {
+            *buf.add(w) = s[k + 1];
+            w += 1;
+            k += 2;
+        } else {
+            *buf.add(w) = b;
+            w += 1;
+            k += 1;
+        }
+    }
+    // Rest starts after the terminating unescaped whitespace (kept RAW).
+    let mut r = word_end;
+    while r < s.len() && (s[r] == b' ' || s[r] == b'\t') {
+        r += 1;
+    }
+    *rest_ptr_out = ptr.add(r);
+    *rest_len_out = (s.len() - r) as i64;
+    (buf as *const u8, n as i64)
+}
+
+/// De-escape a cooked value: a `\` escapes the next byte (backslash removed,
+/// byte kept literally); a trailing lone `\` is kept. Used for a single-var
+/// `readc x` and for the last (remainder) var of a multi-var `readc a b c`.
+/// DD#87: result NUL-terminated.
+#[no_mangle]
+pub unsafe extern "C" fn sash_deescape(ptr: *const u8, len: i64) -> (*const u8, i64) {
+    if ptr.is_null() || len <= 0 {
+        return (alloc_cstr(0) as *const u8, 0);
+    }
+    let s = core::slice::from_raw_parts(ptr, len as usize);
+    let mut n = 0usize;
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'\\' && i + 1 < s.len() {
+            n += 1;
+            i += 2;
+        } else {
+            n += 1;
+            i += 1;
+        }
+    }
+    let buf = alloc_cstr(n);
+    let mut w = 0usize;
+    let mut i = 0;
+    while i < s.len() {
+        if s[i] == b'\\' && i + 1 < s.len() {
+            *buf.add(w) = s[i + 1];
+            w += 1;
+            i += 2;
+        } else {
+            *buf.add(w) = s[i];
+            w += 1;
+            i += 1;
+        }
+    }
+    (buf as *const u8, n as i64)
+}
+
+// ═══════════════════════════════════════════════════════════════
 // sash_read_delim — read until a specific delimiter byte
 // ═══════════════════════════════════════════════════════════════
 

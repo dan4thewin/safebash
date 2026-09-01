@@ -1,3 +1,35 @@
+## ════════ STATUS (2026-09-01, cont) — `readc` cooked read (switch-free step 1) ════════
+
+**On `hand-parser`.** DG: "capture the larger question, plus a survey of all
+switch use into a decision task; implement readc now." The decision task
+(`switch-free-read-family`, filed earlier) holds the larger direction
+(`read`→`readr`/`readc`, drop `-a`/`-f`/`-d`/`-z`). This session lands the first
+concrete step: **`readc`**, a cooked read (honors `\`-escapes; `\<ws>` doesn't
+split, field de-escaped) — the bash-default `read`, where sash `read` stays raw
+(bash `read -r`). Unblocks the eval-free getopt-csh idiom.
+
+Runtime `sash_split_first_word_cooked` + `sash_deescape` (NUL-term per DD#87);
+`cooked: bool` on `ReadLine`/`ReadLineMulti`; `readc` recognized everywhere
+`read` is (BUILTINS/SB5011, taint, type_check, lastpipe, janet while-read).
+Native + c codegen wired (single-var de-escapes the line; multi-var:
+cooked-split middle fields, de-escape the remainder). janet recognizes readc
+but treats it raw (cooked deferred → `janet-readc-cooked`).
+
+**Pre-existing c bug fixed:** `emit_c::collect_inst_var_types` never declared a
+read target that's assigned-but-never-read (native always did) → C compile error
+on `… | read a b; echo $b`. Reproduces at HEAD with raw `read`. Fixed via
+`insert_read_target_types`.
+
+**Not a bug:** an early spec exposed sash double-quote `\\` keeping two
+backslashes vs bash's one — that's DD#64 (no-shell-backslash), ratified; spec
+dropped.
+
+specs `spec/wordsplit.sh` 22.20–22.24 (native,c; janet skip). Full 3-mode
+sweep vs HEAD `005c7d4`: **native 0 regressions +5, c 0 regressions +5**,
+janet 0/0. fmt+clippy clean; complexity gate cleared (extracted
+`emit_read_line_call`/`emit_read_last_var`/`emit_read_field_split` native,
+`emit_readline_last`/`insert_read_target_types` c). journal 225.
+
 ## ════════ STATUS (2026-09-01, cont) — bless-fallback via `||` ════════
 
 **On `hand-parser`.** DG wanted "use DEFAULT when a bless fails" (the unbuilt

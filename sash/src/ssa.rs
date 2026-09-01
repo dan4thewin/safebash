@@ -170,6 +170,7 @@ impl BuiltinCmd {
             "wait" => Self::Wait,
             "bless" => Self::Bless,
             "read" => Self::Read,
+            "readc" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
             "break" => Self::Break,
@@ -243,6 +244,8 @@ pub enum SsaInst {
         redirects: Vec<crate::ir::Redirect>,
         /// True when read is in a lastpipe position with clean producer stages
         clean_pipe: bool,
+        /// DD#86: `readc` — cooked read (honor `\` escapes; de-escape the value).
+        cooked: bool,
     },
     /// read -r var1 var2 ... varN: read line, split on whitespace into N vars
     /// Last var gets the remainder.
@@ -255,6 +258,9 @@ pub enum SsaInst {
         clean_pipe: bool,
         /// DD#22: field separator byte (-f flag). None = whitespace split.
         field_sep: Option<u8>,
+        /// DD#86: `readc` — cooked split (backslash-escaped whitespace stays in
+        /// the field; each field is de-escaped).
+        cooked: bool,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {
