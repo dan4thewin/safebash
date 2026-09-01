@@ -92,9 +92,14 @@ lands on *another* declared global — fundamentally undetectable, and rare.
 
 ## Implementation phases
 
-1. `str` keyword (additive).
+1. `str` keyword (additive). **— shipped (journal 223).**
 2. Drop `local` + make scope structural (top-level global vs function-local),
-   frictionless global R/W.
+   frictionless global R/W. **— shipped (journal 226); `local fn` (DD#18)
+   retired in the same phase since it shared all the machinery. Surfaced +
+   fixed a latent bug: a function-local `const` tripped SB4044 because the
+   body is lowered twice and `readonly_vars` leaked (isolated via
+   `enter/exit_fn_body_scope`).**
 3. No-shadowing / redeclaration error.
 4. Dead-variable rejection (new validate pass, dual of DD#62).
-5. Retire `local fn`; converter; specs; GUIDE/SUBSET.
+5. Retire `local fn`; converter; specs; GUIDE/SUBSET. **— `local fn` done in
+   Phase 2; remaining: converter `local`→drop, GUIDE/SUBSET, DD#35 amend.**

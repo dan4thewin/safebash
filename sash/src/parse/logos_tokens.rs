@@ -56,8 +56,6 @@ pub enum LogosTok {
     Fn,
     #[token("function")]
     Function,
-    #[token("local")]
-    Local,
     #[token("str")]
     Str,
     #[token("int")]
@@ -149,7 +147,6 @@ pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
         LogosTok::Esac => Tok::Esac,
         LogosTok::Fn => Tok::Fn,
         LogosTok::Function => Tok::Function,
-        LogosTok::Local => Tok::Local,
         LogosTok::Str => Tok::Str,
         LogosTok::Int => Tok::Int,
         LogosTok::Const => Tok::Const,

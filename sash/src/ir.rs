@@ -429,7 +429,6 @@ pub struct Declaration {
 #[derive(Debug, Clone, PartialEq)]
 pub enum DeclKeyword {
     Declare,
-    Local,
     Export,
     Readonly,
 }
@@ -555,8 +554,6 @@ pub struct Function {
     pub name: String,
     pub return_type: VarType,
     pub body: Vec<Statement>,
-    /// DD#18: local fn — scoped to enclosing function.
-    pub is_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

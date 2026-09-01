@@ -100,7 +100,7 @@ fn try_producer_tail_call(
         return None;
     };
     let (tf, header, aname) = state.tail_loop.clone()?;
-    if super::cmd_handlers::resolve_function_name(&expr_to_string(&c.name), state) != tf {
+    if expr_to_string(&c.name) != tf {
         return None;
     }
     let new_args: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
@@ -142,7 +142,7 @@ fn lower_while_stmt(
 
 /// Function definition. Registers the body for inline expansion at call sites,
 /// then emits the body into a dedicated SSA block sequence terminating in Return.
-/// Special cases: `__sash_end__` (DD#56 exit trap), `__local__*` (DD#18 local scope),
+/// Special cases: `__sash_end__` (DD#56 exit trap),
 /// `-> int` return type tracking, DD#55 non-void detection + SB4017 emission.
 fn lower_function_stmt(
     f: &Function,
@@ -182,24 +182,21 @@ fn lower_function_stmt(
         };
         state.diagnostics.push(msg);
     }
-    if f.name.starts_with("__local__") {
-        state.local_fn_scope.insert(f.name.clone());
-    }
     if f.return_type == crate::ir::VarType::Int {
         state.function_int_typed.insert(f.name.clone());
     }
     analyze_function_returns(f, stmt, state);
     let fn_entry = ssa.new_block(&format!("fn_{}", f.name));
-    let saved_scope = state.local_fn_scope.clone();
     // The standalone function block is a template lowered without a call
     // site; $@/$* are rejected at validation (DD#81) and never reach here.
     // Per-call args are bound when inline_function_call lowers each call.
     let template_body = f.body.clone();
     let saved_template_flag = state.lowering_fn_template;
+    let saved_ro = super::functions::enter_fn_body_scope(state);
     state.lowering_fn_template = true;
     let fn_exit = lower_stmts(&template_body, ssa, state, fn_entry);
     state.lowering_fn_template = saved_template_flag;
-    state.local_fn_scope = saved_scope;
+    super::functions::exit_fn_body_scope(state, saved_ro);
     ssa.block_mut(fn_exit).terminator = Terminator::Return;
     block
 }

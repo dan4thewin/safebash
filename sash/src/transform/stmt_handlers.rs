@@ -1,10 +1,10 @@
 //! Extracted handlers for the largest StmtKind match arms.
 
-use super::cmd_handlers::{check_callee_arity, resolve_function_name};
+use super::cmd_handlers::check_callee_arity;
 use super::expressions::{
     arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
 };
-use super::functions::{collect_local_vars, lift_int_func_args, lift_int_func_calls};
+use super::functions::{lift_int_func_args, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
 use super::resolution::resolve_pipeline_command;
 use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
@@ -846,7 +846,7 @@ fn build_function_pipeline_stage(
     state: &mut VersionState,
     idx: usize,
 ) -> Option<usize> {
-    let resolved = resolve_function_name(name, state);
+    let resolved = name.to_string();
     let body = state.function_bodies.get(&resolved).cloned()?;
 
     let saved = state.snapshot();
@@ -862,6 +862,7 @@ fn build_function_pipeline_stage(
         return None;
     }
     state.inlining.push(resolved.clone());
+    let saved_ro = super::functions::enter_fn_body_scope(state);
 
     let entry = ssa.new_block(&format!("pipe_fn_{}_{}", name, idx));
     let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
@@ -876,6 +877,7 @@ fn build_function_pipeline_stage(
     ssa.block_mut(ret_block).terminator = Terminator::Return;
 
     state.return_target = saved_return;
+    super::functions::exit_fn_body_scope(state, saved_ro);
     state.restore(&saved);
     super::functions::restore_caller_args(saved_args, state);
     state.inlining.pop();
@@ -1093,7 +1095,6 @@ pub(super) fn capture_func_into(
     // DD#81 Part B: arity-check the `$( )` capture path too (it now carries the
     // call's args), matching the plain-call and pipeline-stage paths.
     super::cmd_handlers::check_callee_arity(fname, &body, arg_values.len(), state);
-    let locals = collect_local_vars(&body);
 
     ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
     // DD#81: capture uses the same args-array model as inline_function_call
@@ -1102,7 +1103,7 @@ pub(super) fn capture_func_into(
     // args (previously the args were dropped and `${args[…]}` hit an
     // undefined array).
     let saved_args = super::functions::save_caller_args(state);
-    let saved_locals = save_locals(fname, &locals, state, ssa, block);
+    let saved_ro = super::functions::enter_fn_body_scope(state);
 
     super::functions::setup_callee_args(arg_values, ssa, state, block);
 
@@ -1123,25 +1124,9 @@ pub(super) fn capture_func_into(
             tainted: false,
         });
 
-    restore_saved_locals(&saved_locals, state, ssa, restore_block);
+    super::functions::exit_fn_body_scope(state, saved_ro);
     super::functions::restore_caller_args(saved_args, state);
     Some(restore_block)
-}
-
-/// Restore each caller local from its `__save_<fn>_<local>` snapshot slot.
-fn restore_saved_locals(
-    saved_locals: &[(String, VarRef)],
-    state: &mut VersionState,
-    ssa: &mut SsaProgram,
-    block: BlockId,
-) {
-    for (local_name, saved_ref) in saved_locals {
-        let rv = state.define(local_name);
-        ssa.block_mut(block).insts.push(SsaInst::Assign {
-            target: rv,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
 }
 
 /// Capture a **multi-statement / pipeline** `$(…)` body's stdout into

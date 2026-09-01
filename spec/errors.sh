@@ -91,8 +91,9 @@ run_sash '- /bin/false; echo $?'
 run_sash 'x=$?'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.6
 
-# 55.7 local x=$(cmd) checks exit status (taint orthogonal — don't reference x)
-run_sash 'fn f { local x=$(/bin/false); }; f'
+# 55.7 x=$(cmd) checks exit status: a failing cmdsub aborts before the read
+# (DD#86: `local` removed; x is read via bless so it isn't a dead variable)
+run_sash 'fn f { x=$(/bin/false); bless x [[ -n $x ]]; echo $x }; f'
 [[ $rc != 0 && -z $err ]]; chk 55.7
 
 # 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)

@@ -224,14 +224,23 @@ fn check_predicate_definite_return(
     if let Some(ref end) = program.end_block {
         collect_function_defs(end, &mut fn_defs);
     }
-    for (name, span, body) in &fn_defs {
-        let short = name.strip_prefix("__local__").unwrap_or(name);
-        if predicate_uses.contains(short) && !body_always_returns(body) {
+    report_non_returning_predicates(&fn_defs, &predicate_uses, diags);
+}
+
+/// SB4037: emit a diagnostic for each predicate-used function whose body does
+/// not `return` on every path.
+fn report_non_returning_predicates(
+    fn_defs: &[(&str, Span, &[Statement])],
+    predicate_uses: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for (name, span, body) in fn_defs {
+        if predicate_uses.contains(*name) && !body_always_returns(body) {
             diags.push(Diagnostic::error_span(
                 *span,
                 "SB4037",
                 format!(
-                    "function `{short}` is used as a predicate but does not `return` on every \
+                    "function `{name}` is used as a predicate but does not `return` on every \
                      path — a function in a boolean context must end each path with an explicit \
                      `return` (a command, `[[ … ]]`, `(( … ))`, or a status code)"
                 ),
@@ -1480,29 +1489,11 @@ const BUILTINS: &[&str] = &[
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
     for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::Function(f) => {
-                funcs.insert(f.name.clone());
-                // Local functions have __local__ prefix; also register unprefixed
-                if let Some(short) = f.name.strip_prefix("__local__") {
-                    funcs.insert(short.to_string());
-                }
-                // Also collect nested (local) functions
-                collect_functions(&f.body, funcs);
-            }
-            StmtKind::If(i) => {
-                collect_functions(&i.then_body, funcs);
-                for elif in &i.elif_clauses {
-                    collect_functions(&elif.body, funcs);
-                }
-                if let Some(ref eb) = i.else_body {
-                    collect_functions(eb, funcs);
-                }
-            }
-            StmtKind::While(w) => collect_functions(&w.body, funcs),
-            StmtKind::For(f) => collect_functions(&f.body, funcs),
-            StmtKind::Group(g) => collect_functions(&g.body, funcs),
-            _ => {}
+        if let StmtKind::Function(f) = &stmt.kind {
+            funcs.insert(f.name.clone());
+        }
+        for body in stmt.child_bodies() {
+            collect_functions(body, funcs);
         }
     }
 }

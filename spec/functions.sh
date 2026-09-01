@@ -35,40 +35,33 @@ else
     skip_chk 17.3; skip_chk 17.4
 fi
 
-# 18.1 local fn visible only within block
+# 18.1 DD#86: `local` keyword removed — a bare `local` is now an unknown command
+run_sash 'fn f { local x=5; echo $x }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 18.1
+
+# 18.2 DD#86: `local fn` (DD#18 block-scoped functions) removed — `local` before
+# `fn` is an unknown command
 run_sash 'fn outer {
-  local fn inner { echo inside; }
+  local fn inner { echo inside }
+}
+outer'
+[[ $rc != 0 && $err == *SB5011* ]]; chk 18.2
+
+# 18.3 DD#86: no block scope — a nested `fn` is an ordinary (global) function,
+# callable from outside its defining function
+run_sash 'fn outer { fn inner { echo in } }
+outer
+inner'
+[[ $rc = 0 && $out = "in" && -z $err ]]; chk 18.3
+
+# 18.4 a nested `fn` def is usable within its defining function too
+run_sash 'fn outer {
+  fn inner { echo inside }
   inner
 }
 outer'
-[[ $rc = 0 && $out = "inside" && -z $err ]]; chk 18.1
-
-# 18.2 local fn overrides global within block
-run_sash 'fn greet { echo global; }
-fn outer {
-  local fn greet { echo local; }
-  greet
-}
-outer'
-[[ $rc = 0 && $out = "local" && -z $err ]]; chk 18.2
-
-# 18.3 global restored after block exits
-run_sash 'fn greet { echo global; }
-fn outer {
-  local fn greet { echo local; }
-  greet
-}
-outer
-greet'
-[[ $rc = 0 && $out == *"local"*"global"* && -z $err ]]; chk 18.3
-
-# 18.4 local fn not callable from outside
-run_sash 'fn outer {
-  local fn inner { echo inside; }
-}
-outer
-inner'
-[[ $rc != 0 && -z $err ]]; chk 18.4
+[[ $rc = 0 && $out = "inside" && -z $err ]]; chk 18.4
 
 # 42.1 $(getenv VAR) reads env var
 run_sash 'x=$(getenv HOME)

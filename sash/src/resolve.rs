@@ -98,9 +98,6 @@ fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
     for stmt in stmts {
         if let StmtKind::Function(f) = &stmt.kind {
             funcs.insert(f.name.clone());
-            if let Some(short) = f.name.strip_prefix("__local__") {
-                funcs.insert(short.to_string());
-            }
         }
         for body in stmt.child_bodies() {
             collect_functions(body, funcs);

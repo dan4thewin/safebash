@@ -176,8 +176,8 @@ run_sash 'map m=(a 1 b 2); echo ${m[a]}'
 run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k=${m[$k]}"; done'
 [[ $rc = 0 && $out = $'a=1\nb=2' && -z $err ]]; chk 33.10
 
-# 35.1 stackable: local const int
-run_sash 'fn f { local const int x=5; echo $x; }; f'
+# 35.1 stackable: const int (DD#86: `local` axis retired; a fn-local const int)
+run_sash 'fn f { const int x=5; echo $x; }; f'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 35.1
 
 # 35.2 const on array → compile error

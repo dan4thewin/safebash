@@ -674,11 +674,11 @@ else
     skip_chk ivc.1; skip_chk ivc.2; skip_chk ivc.3; skip_chk ivc.4; skip_chk ivc.5
     skip_chk ivc.6; skip_chk ivc.7; skip_chk ivc.11
 fi
-# ivc.8 axis stacking: `local int array` inside a function. native+c — emit_c
-# now declares the function-local int-collection as a table slot (declare_vars
-# "String wins" + the save/restore Var override, 2026-08-20). janet deferred.
+# ivc.8 axis stacking: `int array` inside a function (DD#86: `local` retired).
+# native+c — emit_c declares the function-local int-collection as a table slot
+# (declare_vars "String wins"). janet deferred.
 if in_modes native,c; then
-    run_sash 'fn f { local int array a=(7 8); echo ${a[1]}; }; f'
+    run_sash 'fn f { int array a=(7 8); echo ${a[1]}; }; f'
     [[ $rc = 0 && $out = "8" && -z $err ]]; chk ivc.8
 else
     skip_chk ivc.8

@@ -41,6 +41,25 @@ pub(super) fn restore_caller_args(saved: String, state: &mut VersionState) {
     state.current_args_name = saved;
 }
 
+/// DD#86: a `const`/`readonly` declaration inside a function body is a
+/// *function-local* — its readonly-ness must not leak into the caller scope.
+/// A function body is lowered more than once (a throwaway template at the
+/// definition + once per inlined call), so snapshot `readonly_vars` before
+/// lowering the body and restore it after. A top-level const remains in the
+/// restored set, so global-const enforcement is preserved; a fn-local const
+/// is dropped, so re-lowering the same declaration doesn't trip the readonly
+/// backstop.
+pub(super) fn enter_fn_body_scope(state: &VersionState) -> std::collections::HashSet<String> {
+    state.readonly_vars.clone()
+}
+
+pub(super) fn exit_fn_body_scope(
+    state: &mut VersionState,
+    saved: std::collections::HashSet<String>,
+) {
+    state.readonly_vars = saved;
+}
+
 pub(super) fn lift_int_func_calls(
     val: SsaValue,
     ssa: &mut SsaProgram,
@@ -205,20 +224,10 @@ pub(super) fn inline_int_func(
     }
     state.inlining.push(name.to_string());
 
-    let locals = collect_local_vars(&body);
-
     // DD#75 §5: positionals are backed by the `args` array (below), not scalar
     // "1".."9"/"#" vars — save/restore just `args`.
     let saved_args = save_caller_args(state);
-
-    // Save local vars
-    let saved_locals: Vec<(String, VarRef)> = locals
-        .iter()
-        .map(|lname| {
-            let save_ref = state.lookup(lname);
-            (lname.clone(), save_ref)
-        })
-        .collect();
+    let saved_ro = enter_fn_body_scope(state);
 
     // DD#75 §5: materialize the implicit `args` array (0-indexed).
     setup_callee_args(args, ssa, state, *block);
@@ -251,15 +260,7 @@ pub(super) fn inline_int_func(
     });
 
     restore_caller_args(saved_args, state);
-
-    // Restore locals
-    for (lname, saved_ref) in &saved_locals {
-        let rv = state.define(lname);
-        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-            target: rv,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
+    exit_fn_body_scope(state, saved_ro);
 
     // Restore exit status
     let status_restore = state.define("?");
@@ -271,23 +272,6 @@ pub(super) fn inline_int_func(
     *block = restore_block;
     state.inlining.pop();
     SsaValue::Var(temp_var)
-}
-
-pub(super) fn collect_local_vars(stmts: &[Statement]) -> Vec<String> {
-    let mut locals = Vec::new();
-    for stmt in stmts {
-        match &stmt.kind {
-            StmtKind::Declaration(d) if d.keyword == DeclKeyword::Local => {
-                for a in &d.assignments {
-                    if !locals.contains(&a.name) {
-                        locals.push(a.name.clone());
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    locals
 }
 
 // ── DD#81 Part B: function-call arity from `args` usage ──────────────────

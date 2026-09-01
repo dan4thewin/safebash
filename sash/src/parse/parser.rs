@@ -133,8 +133,7 @@ fn dispatch_statement(
         Tok::While | Tok::Until => parse_while(scanner),
         Tok::For => parse_for(scanner),
         Tok::Case => Err(case_removed_error(span)),
-        Tok::Fn | Tok::Function => parse_function(scanner, false),
-        Tok::Local => parse_local(scanner),
+        Tok::Fn | Tok::Function => parse_function(scanner),
         Tok::Str => parse_declaration(scanner, "str"),
         Tok::Int => parse_declaration(scanner, "int"),
         Tok::Const => parse_declaration(scanner, "const"),
@@ -514,7 +513,7 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
 
 // ── function ─────────────────────────────────────────────────
 
-fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statement>, Diagnostic> {
+fn parse_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
     scanner.next(); // consume 'fn' or 'function'
@@ -522,7 +521,7 @@ fn parse_function(scanner: &mut Scanner, is_local: bool) -> Result<Option<Statem
     let name = expect_word(scanner, span, "expected function name")?;
 
     parse_optional_empty_parens(scanner, span)?;
-    Ok(Some(finish_function_def(scanner, name, span, is_local)?))
+    Ok(Some(finish_function_def(scanner, name, span)?))
 }
 
 /// DD#67: bash `name() { ... }` function-definition sugar (no `fn`/
@@ -544,7 +543,7 @@ fn parse_paren_function(scanner: &mut Scanner) -> Result<Option<Statement>, Diag
         span,
         "expected ')' in function definition",
     )?;
-    Ok(Some(finish_function_def(scanner, name, span, false)?))
+    Ok(Some(finish_function_def(scanner, name, span)?))
 }
 
 /// True if the upcoming tokens are `WORD ( )` — the bash `name()`
@@ -559,7 +558,6 @@ fn finish_function_def(
     scanner: &mut Scanner,
     name: String,
     span: Span,
-    is_local: bool,
 ) -> Result<Statement, Diagnostic> {
     let return_type = parse_optional_return_type(scanner);
 
@@ -573,18 +571,11 @@ fn finish_function_def(
     let body = parse_body_until(scanner, &[Tok::RBrace])?;
     expect(scanner, &Tok::RBrace, span, "expected '}'")?;
 
-    let func_name = if is_local {
-        format!("__local__{}", name)
-    } else {
-        name
-    };
-
     Ok(Statement {
         kind: StmtKind::Function(Function {
-            name: func_name,
+            name,
             return_type,
             body,
-            is_local,
         }),
         span,
     })
@@ -626,71 +617,6 @@ fn consume_int_token(scanner: &mut Scanner) -> VarType {
     } else {
         VarType::String
     }
-}
-
-// ── local ────────────────────────────────────────────────────
-
-fn parse_local(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
-    let sp = scanner.peek().span;
-    let span = span_from(scanner, sp.start);
-    scanner.next(); // consume 'local'
-
-    // Check for 'local fn name' — DD#18
-    if matches!(scanner.peek().token, Tok::Fn) {
-        return parse_function(scanner, true);
-    }
-
-    // Otherwise it's a local declaration: local x=val or local -i x=val
-    let mut var_type = VarType::String;
-    let mut flags = Vec::new();
-
-    // Check for type modifiers
-    loop {
-        match &scanner.peek().token {
-            Tok::Int => {
-                var_type = VarType::Int;
-                scanner.next();
-            }
-            Tok::Const => {
-                flags.push("-r".to_string());
-                scanner.next();
-            }
-            Tok::Array => {
-                flags.push("-a".to_string());
-                scanner.next();
-            }
-            Tok::Map => {
-                flags.push("-A".to_string());
-                scanner.next();
-            }
-            Tok::Word(w) if w.starts_with('-') => {
-                let w = w.clone();
-                scanner.next();
-                for ch in w[1..].chars() {
-                    match ch {
-                        'i' => var_type = VarType::Int,
-                        'a' => flags.push("-a".to_string()),
-                        'A' => flags.push("-A".to_string()),
-                        'r' => flags.push("-r".to_string()),
-                        _ => flags.push(format!("-{}", ch)),
-                    }
-                }
-            }
-            _ => break,
-        }
-    }
-
-    let assignments = parse_declaration_assignments(scanner, span)?;
-
-    Ok(Some(Statement {
-        kind: StmtKind::Declaration(Declaration {
-            keyword: DeclKeyword::Local,
-            var_type,
-            flags,
-            assignments,
-        }),
-        span,
-    }))
 }
 
 // ── declarations (int, const, array, map) ────────────────────
@@ -867,7 +793,6 @@ fn parse_end_block(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnosti
             name: "__sash_end__".to_string(),
             return_type: VarType::String,
             body,
-            is_local: false,
         }),
         span,
     }))

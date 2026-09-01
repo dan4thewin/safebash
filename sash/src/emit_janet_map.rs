@@ -259,7 +259,6 @@ fn parse_unsigned_int(body: &str) -> Option<i64> {
 fn sanitize_flags(d: &Declaration) -> String {
     let kw = match d.keyword {
         DeclKeyword::Declare => "declare",
-        DeclKeyword::Local => "local",
         DeclKeyword::Export => "export",
         DeclKeyword::Readonly => "readonly",
     };

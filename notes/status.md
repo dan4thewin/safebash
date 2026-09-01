@@ -1,3 +1,31 @@
+## ════════ STATUS (2026-09-01, cont) — DD#86 Phase 2: drop `local` ════════
+
+**On `hand-parser`.** DG: "let's finish the local-related work." DD#86 Phase 2 —
+removed the `local` keyword and **all** its machinery (lexer/parser `Tok::Local`
++ `parse_local` + `is_local`; IR `DeclKeyword::Local` + `Function::is_local`;
+transform `collect_local_vars`/`save_caller_locals`/`restore_caller_state`/
+`local_fn_scope`/`__local__`; validate/resolve/janet arms). DG confirmed **drop
+`local fn` (DD#18) entirely** — folded into Phase 2 since it shared every piece
+of machinery. `local x` / `local fn` now → SB5011 (converter drops it, Phase 5);
+a nested `fn` is an ordinary top-level function.
+
+Structural scope was already mostly in place (bare `x=v` in a fn writes the
+global; a new fn-only name is invisible at top level via SSA versioning +
+SB5031). `local` only added a *shadow* — pure deletion.
+
+**Latent bug surfaced + fixed:** a function-local `const int x=5` tripped SB4044
+because the body is lowered twice (template + inline) and `readonly_vars` leaked;
+`local const` masked it (keyword was `Local`, never populated `readonly_vars`).
+Fixed with `enter/exit_fn_body_scope` snapshot/restore of `readonly_vars` around
+every fn-body lowering — fn-local const is now isolated while global-const and
+within-fn reassignment enforcement are preserved.
+
+Specs: rewrote the 7 `local` specs (functions 18.1–18.4, types 35.1, arithmetic
+ivc.8, errors 55.7). Full 3-mode sweep vs `0445fe1`: **native 0 regressions,
+c 0 regressions**, janet +2. fmt/clippy clean; lib unit tests pass. journal 226.
+
+**Next:** Phase 3 (no-shadow), Phase 4 (dead-var), Phase 5 (converter + docs).
+
 ## ════════ STATUS (2026-09-01, cont) — `readc` cooked read (switch-free step 1) ════════
 
 **On `hand-parser`.** DG: "capture the larger question, plus a survey of all

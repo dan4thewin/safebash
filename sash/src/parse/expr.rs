@@ -188,7 +188,6 @@ fn literal_token_text(tok: &Tok, mode: AbsorbMode) -> Option<String> {
         | Tok::Esac
         | Tok::Fn
         | Tok::Function
-        | Tok::Local
         | Tok::Int
         | Tok::Const
         | Tok::Array
@@ -1470,7 +1469,6 @@ fn keyword_to_str(tok: &Tok) -> &'static str {
         Tok::Esac => "esac",
         Tok::Fn => "fn",
         Tok::Function => "function",
-        Tok::Local => "local",
         Tok::Int => "int",
         Tok::Const => "const",
         Tok::Array => "array",

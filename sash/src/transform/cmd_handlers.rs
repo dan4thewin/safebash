@@ -1,7 +1,7 @@
 //! Command-specific handlers extracted from handle_command.
 
 use super::expressions::{arg_to_value, expr_to_string, expr_to_value};
-use super::functions::{collect_local_vars, lift_int_func_args};
+use super::functions::lift_int_func_args;
 use super::resolution::resolve_pipeline_command;
 use super::statements::lower_stmts;
 use crate::ir::*;
@@ -296,8 +296,7 @@ pub(super) fn handle_function_call_or_command(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let resolved_name = resolve_function_name(name, state);
-    if let Some(body) = state.function_bodies.get(&resolved_name).cloned() {
+    if let Some(body) = state.function_bodies.get(name).cloned() {
         return inline_function_call(name, &body, c, ssa, state, block);
     }
     // DD#81: this bareword resolved to an external command (no function defined
@@ -309,22 +308,9 @@ pub(super) fn handle_function_call_or_command(
     emit_external_command(name, c, ssa, state, block)
 }
 
-/// DD#18: prefer a local function (`__local__name`) when in scope and defined;
-/// fall back to the global `name`.
-pub(super) fn resolve_function_name(name: &str, state: &VersionState) -> String {
-    let local_name = format!("__local__{}", name);
-    if state.local_fn_scope.contains(&local_name) && state.function_bodies.contains_key(&local_name)
-    {
-        local_name
-    } else {
-        name.to_string()
-    }
-}
-
 /// Inline a known function body into the current block.
-/// Saves caller's positional params + named locals, sets up the
-/// callee's $1..$9 and $#, lowers the body into a fresh call block,
-/// then emits a restore block that re-defines the caller's variables.
+/// Saves caller's positional params, sets up the callee's `args`,
+/// lowers the body into a fresh call block, then emits a restore block.
 fn inline_function_call(
     name: &str,
     body: &[Statement],
@@ -344,11 +330,6 @@ fn inline_function_call(
     }
     state.inlining.push(name.to_string());
 
-    let locals = collect_local_vars(body);
-
-    // DD#18: save local function scope before inlining
-    let saved_local_fn_scope = state.local_fn_scope.clone();
-
     // Lower the call arguments ONCE in the caller's scope (before `args` is
     // redefined), so a side-effecting `$( … )` arg is not executed twice and
     // args reading the caller's positionals see the caller's values.
@@ -356,7 +337,7 @@ fn inline_function_call(
 
     check_callee_arity(name, body, arg_values.len(), state);
     let saved_args = super::functions::save_caller_args(state);
-    let saved_locals = save_caller_locals(name, &locals, ssa, state, block);
+    let saved_ro = super::functions::enter_fn_body_scope(state);
     super::functions::setup_callee_args(&arg_values, ssa, state, block);
 
     // Inline the function body
@@ -378,39 +359,11 @@ fn inline_function_call(
     // Normal fall-through also goes to restore block
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
-    restore_caller_state(&saved_locals, ssa, state, restore_block);
+    super::functions::exit_fn_body_scope(state, saved_ro);
     super::functions::restore_caller_args(saved_args, state);
-
-    // DD#18: restore local function scope
-    state.local_fn_scope = saved_local_fn_scope;
 
     state.inlining.pop();
     restore_block
-}
-
-/// Snapshot the caller's versions of each local variable into
-/// `__save_<fn>_<local>` slots so the inlined body can clobber them
-/// freely; restore_caller_state copies the saves back.
-fn save_caller_locals(
-    name: &str,
-    locals: &[String],
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> Vec<(String, VarRef)> {
-    locals
-        .iter()
-        .map(|lname| {
-            let save_name = format!("__save_{}_{}", name, lname);
-            let src = state.lookup(lname);
-            let save_ref = state.define(&save_name);
-            ssa.block_mut(block).insts.push(SsaInst::Assign {
-                target: save_ref.clone(),
-                value: SsaValue::Var(src),
-            });
-            (lname.to_string(), save_ref)
-        })
-        .collect()
 }
 
 /// DD#46/#48: emit a diagnostic if the callee reads `$K` (accounting for
@@ -462,21 +415,6 @@ fn arity_too_many_msg(name: &str, n: usize, got: usize) -> String {
         "1:1: error [SB5043] function '{}' takes {} argument{} but was called with {} — use @args to accept a variable number",
         name, n, arity_plural(n), got
     )
-}
-
-fn restore_caller_state(
-    saved_locals: &[(String, VarRef)],
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    restore_block: BlockId,
-) {
-    for (local_name, saved_ref) in saved_locals {
-        let restore_var = state.define(local_name);
-        ssa.block_mut(restore_block).insts.push(SsaInst::Assign {
-            target: restore_var,
-            value: SsaValue::Var(saved_ref.clone()),
-        });
-    }
 }
 
 fn emit_external_command(

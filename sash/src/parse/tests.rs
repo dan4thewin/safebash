@@ -93,7 +93,7 @@ mod logos_equivalence {
 
     #[test]
     fn keywords_recognized() {
-        let src = "if then else elif fi while until do done for in case esac fn function local int const array map bless END";
+        let src = "if then else elif fi while until do done for in case esac fn function int const array map bless END";
         let toks = tokens_of(src);
         let mut got: Vec<LogosTok> = toks.into_iter().map(|(_, _, t)| t).collect();
         let expected = vec![
@@ -112,7 +112,6 @@ mod logos_equivalence {
             LogosTok::Esac,
             LogosTok::Fn,
             LogosTok::Function,
-            LogosTok::Local,
             LogosTok::Int,
             LogosTok::Const,
             LogosTok::Array,
@@ -198,7 +197,6 @@ mod logos_equivalence {
             LogosTok::Esac,
             LogosTok::Fn,
             LogosTok::Function,
-            LogosTok::Local,
             LogosTok::Int,
             LogosTok::Const,
             LogosTok::Array,
