@@ -1696,6 +1696,10 @@ fn emit_expr_as_int(expr: &Expr, ctx: &EmitCtx) -> String {
 
 /// A bare numeric literal stays unquoted; anything else is parsed at runtime.
 fn int_literal_to_janet(s: &str) -> String {
+    if s.is_empty() {
+        // DD#62/#86: a no-initializer int (`int n`) is meaningful-zero 0.
+        return "0".to_string();
+    }
     if s.chars().all(|c| c.is_ascii_digit() || c == '-') {
         s.to_string()
     } else {

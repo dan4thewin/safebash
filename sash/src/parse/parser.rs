@@ -135,6 +135,7 @@ fn dispatch_statement(
         Tok::Case => Err(case_removed_error(span)),
         Tok::Fn | Tok::Function => parse_function(scanner, false),
         Tok::Local => parse_local(scanner),
+        Tok::Str => parse_declaration(scanner, "str"),
         Tok::Int => parse_declaration(scanner, "int"),
         Tok::Const => parse_declaration(scanner, "const"),
         Tok::Array => parse_declaration(scanner, "array"),
@@ -741,6 +742,9 @@ fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarTy
     }
     match keyword {
         "int" => (DeclKeyword::Declare, VarType::Int, vec![]),
+        // DD#86: `var name` declares a string, meaningful-zero "" (parallel to
+        // `int`). Enables declaring a string global at top level without `=""`.
+        "str" => (DeclKeyword::Declare, VarType::String, vec![]),
         "const" => (
             DeclKeyword::Readonly,
             VarType::String,

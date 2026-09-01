@@ -1,3 +1,33 @@
+## ════════ STATUS (2026-09-01) — DD#86 scope model (Phase 1) + DD#87 runtime NUL fix ════════
+
+**On `hand-parser`.** Two things this session, both pushed:
+
+**DD#87 (pushed `031b5f5`) — critical runtime bug.** Found while testing DD#86:
+interpolating an int var + a string var into one string and passing it to an
+**external** command produced trailing garbage (`/bin/echo "n=$n s=$s"`), while
+the builtin echo was clean. Root cause: sash-rt string builders allocated exactly
+`len` bytes with no NUL; execve reads argv as C strings → read past the end.
+Masked because specs use the builtin (length-based) echo. DG chose approach **B**
+(whole-runtime invariant): every sash string NUL-terminated at `[len]` via a new
+`alloc_cstr` helper; `sash_substring` now copies; `sash_itod`/`sash_regex_replace`
+re-terminate. specs `spec/extern_args.sh` xa.1–8; 0 regressions, +16 passing.
+DD#87, journal 222.
+
+**DD#86 Phase 1 (this commit) — the `str` keyword.** DD#86 (variable scope: no
+`local`, no shadowing, use-before-and-after) is fully ratified with DG and is a
+5-phase change. Phase 1: `str` declares a string with meaningful-zero `""`
+(parallel to `int`), so a string global can be declared at top level without
+`=""`. DG picked `str` over `var` (names the type; 0 spec collisions vs 50).
+Also fixed a pre-existing janet bug (`int n` no-init → malformed `(var n )`;
+now `0`). specs `spec/scope.sh` 86.1–6 (all modes); 0 regressions, +18 passing.
+DD#86, journal 223.
+
+**Phases 2–5 remain** (filed `notes/tasks/dd86-scope-phases-2-5.md`): drop
+`local` + structural scope (top-level=global, new-in-fn=local, frictionless
+global R/W); no-shadowing/redeclaration error; dead-variable rejection (dual of
+DD#62, no warnings); abandon `local fn` (DD#18); converter + all `local` specs +
+DD#35 amend. Each phase lands with its spec updates to keep the gate green.
+
 ## ════════ STATUS (2026-08-31, cont.5) — comments are lexical trivia (DD#85) ════════
 
 **On `hand-parser`.** DG: "trailing comments seem to be broken." They were —
