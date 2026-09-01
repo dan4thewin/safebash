@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=112
+plan=118
 echo "1..$plan" >&3
 
 set +e
@@ -570,6 +570,53 @@ fi
 # the new Test-operand read-check against over-rejecting clean values.
 run_sash 'x=hello; [[ $x = hello ]] && echo yes'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 60.55
+
+# ── bless-fallback: `bless V [[t]] || V=DEFAULT` (DG 2026-09-01) ──────────
+# A bless as the left operand of `&&`/`||` is a *caught* gate (like `if bless`),
+# not a bare abort. `bless V [[t]] || V=dflt` = "V validated, else the default"
+# — a clean, usable value either way. The fallback is trusted, not re-validated
+# (caveat programmer). native,c: bless is a native/c runtime construct.
+if in_modes native,c; then
+    # bfb.1 valid input passes the gate → V keeps its value (was wrongly the
+    #       default before the fix)
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+/bin/echo "$v"' 5000
+    [[ $rc = 0 && $out = "5000" && -z $rerr ]]; chk bfb.1
+
+    # bfb.2 invalid input fails the gate → the default (no abort)
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+/bin/echo "$v"' abc
+    [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.2
+
+    # bfb.3 empty input fails the gate → the default
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+/bin/echo "$v"' ""
+    [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.3
+
+    # bfb.4 V is clean and reusable after the fallback (both branches clean)
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+/bin/echo "$v $v"' abc
+    [[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
+
+    # bfb.5 `bless && X` runs X only on pass
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+/bin/echo done' 42
+    [[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
+
+    # bfb.6 `bless && X` on fail: X skipped, execution continues (caught, no abort)
+    run_sash 'v=$(arg 1)
+bless v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+/bin/echo reached' abc
+    [[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
+else
+    skip_chk bfb.1; skip_chk bfb.2; skip_chk bfb.3
+    skip_chk bfb.4; skip_chk bfb.5; skip_chk bfb.6
+fi
 
 set -e
 tally

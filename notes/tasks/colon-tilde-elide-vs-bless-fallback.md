@@ -1,14 +1,27 @@
 ---
 title: "`:~` syntax collision — DD#84 elide (no word) vs the `${var:~DEFAULT}` bless-fallback (never built)"
-status: ready
+status: done
 priority: P2
 kind: decision
 depends: []
 gates:
-  - "DG decides whether the bless-fallback `${var:~DEFAULT}` is still wanted; if so, it and DD#84 elide are given non-colliding syntax; DD#84 (and DD#24/journal 036) reconciled; specs pin the chosen forms"
+  - "RESOLVED (DG 2026-09-01): bless-fallback delivered via `bless V [[t]] || V=dflt` (fixed); `:~` stays DD#84 elide; no `:!` operator; no re-validation of the default"
 ---
 
-# `:~` — DD#84 elide vs the `${var:~DEFAULT}` bless-fallback
+## Resolution (2026-09-01) — `||`, not a new operator
+
+DG chose to deliver the "use DEFAULT if the bless fails" idiom through the
+**existing** `||`, not a new `:!`/`:~` operator. `bless V [[t]] || V=dflt` now
+composes correctly (a bless in a caught `&&`/`||` position catches like `if
+bless` — fixed in `transform/statements.rs::lower_list_stmt`; it previously
+mis-compiled). The default is **trusted, not re-validated** (caveat programmer).
+`:~` remains the DD#84 elide operator; no `:!` is added. See DD#24 amendment
+(2026-09-01) and specs `taint.sh` bfb.1–6. The collision is moot. Closed.
+
+---
+
+# (original) `:~` — DD#84 elide vs the `${var:~DEFAULT}` bless-fallback
+
 
 DG (2026-09-01): "`:~` in variable as elide collides with use in bless context …
 we have a syntax for 'use this value if the bless test fails' — the port 8080

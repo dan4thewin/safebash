@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-09-01, cont) — bless-fallback via `||` ════════
+
+**On `hand-parser`.** DG wanted "use DEFAULT when a bless fails" (the unbuilt
+journal-036 `${port:~8080}` idea). Instead of a new operator, DG asked whether
+`||` solves it — and it should, but `bless v [[t]] || v=dflt` **mis-compiled**
+(aborted on fail; ran the fallback even on valid input). Root cause: a bless as
+the left of `&&`/`||` lowered to the *abort* form, not the catchable if-bless
+form. Fixed `lower_list_stmt` to rewrite `bless … || X` → `if bless {} else {X}`
+(and `&& X` → `if bless {X}`), reusing `lower_if_bless`. Now `bless v [[t]] ||
+v=dflt` = validated-or-default, clean either way; fallback trusted, not
+re-validated (caveat programmer). Bare bless still aborts. specs taint.sh
+bfb.1–6; 0 regressions, +12 passing. DD#24 amended; `:~` stays DD#84 elide (the
+`colon-tilde-elide-vs-bless-fallback` task is closed, no `:!` operator). journal
+224.
+
 ## ════════ STATUS (2026-09-01) — DD#86 scope model (Phase 1) + DD#87 runtime NUL fix ════════
 
 **On `hand-parser`.** Two things this session, both pushed:

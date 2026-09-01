@@ -113,6 +113,31 @@ Two forms:
 On success, VAR becomes clean from this point forward (new SSA
 version). A later re-assignment from a tainted source re-taints it.
 
+### Amendment (2026-09-01, DG): bless in a caught `&&`/`||` position
+
+A `bless` as the **left operand of `&&`/`||`** is a *caught* gate — exactly like
+`if bless` — not a bare abort. This makes the **validated-or-default** idiom
+fall out of the existing control-flow model, with no new operator:
+
+| Form | On failure |
+|---|---|
+| `bless VAR [[ t ]] \|\| VAR=DEFAULT` | run the fallback; VAR := DEFAULT (clean) |
+| `bless VAR [[ t ]] && CMD` | short-circuit; CMD skipped; execution continues |
+
+`bless port [[ $port =~ ^[0-9]+$ ]] || port=8080` yields `port` when it validates
+(clean, blessed) and `8080` otherwise (clean literal) — usable either way. The
+fallback is **trusted, not re-validated** (DG: caveat programmer — a default
+that wouldn't pass the gate is the author's responsibility). This supersedes the
+earlier unbuilt `${var:~DEFAULT}` sketch (journal 036); `:~` stays the DD#84
+elide operator.
+
+Lowering (`transform/statements.rs::lower_list_stmt`): a bless left operand of
+`&&`/`||` is rewritten to the if-bless form (`bless … || X` → `if bless {} else
+{ X }`; `bless … && X` → `if bless { X }`), reusing `lower_if_bless`
+(branch-on-test, retag-clean-on-pass). Previously it lowered as the abort form,
+so `||` never caught it: it aborted on failure and, on **success**, the branch
+read a stale status and wrongly ran the right side. specs taint.sh bfb.1–6.
+
 ## Auto-bless
 
 `known_externals.rs` provides auto-bless patterns for 26 environment

@@ -781,6 +781,76 @@ fn track_collection_kind(name: &str, val: &SsaValue, state: &mut VersionState) {
     }
 }
 
+/// A `bless VAR [[ … ]]` command as an `&&`/`||` operand — detected so
+/// `lower_list_stmt` can route it through the if-bless catch machinery.
+fn is_bless_left(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StmtKind::Command(c)
+        if expr_to_string(&c.name) == "bless" && c.args.len() >= 2)
+}
+
+/// DD#24/#47: a `bless` as the left operand of `&&`/`||` is a *caught* gate, not
+/// a bare abort — its pass/fail must feed the short-circuit exactly like `if
+/// bless`. Rewrite to the if-bless form so it reuses `lower_if_bless` (branch on
+/// the test, retag clean on pass):
+///   `bless V [[t]] || X`  →  `if bless V [[t]] { } else { X }`  (X on fail)
+///   `bless V [[t]] && X`  →  `if bless V [[t]] { X }`           (X on pass)
+/// Without this the bless lowers as the abort form and the `||` never catches it
+/// — it aborts on failure, and on *success* the branch reads a stale status and
+/// wrongly runs the right side (`bless … || v=dflt` gave the default even for
+/// valid input). The fallback is trusted, not re-validated (DG 2026-09-01).
+/// Returns `None` (fall through to the normal list lowering) unless the left is
+/// a bless and the op is `&&`/`||`.
+fn try_lower_bless_list(
+    l: &List,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> Option<BlockId> {
+    if !matches!(l.op, ListOp::And | ListOp::Or) || !is_bless_left(&l.left) {
+        return None;
+    }
+    let cond = vec![l.left.as_ref().clone()];
+    let right = vec![l.right.as_ref().clone()];
+    let synth = if matches!(l.op, ListOp::Or) {
+        If {
+            condition: cond,
+            then_body: vec![],
+            elif_clauses: vec![],
+            else_body: Some(right),
+        }
+    } else {
+        If {
+            condition: cond,
+            then_body: right,
+            elif_clauses: vec![],
+            else_body: None,
+        }
+    };
+    Some(lower_if(&synth, ssa, state, block))
+}
+
+/// DD#55: at top level, `a || b` is a guard — if the right side completes, the
+/// list "succeeded", so reset `$?` to 0 so the program doesn't exit with the
+/// left side's failure status. In a *caught* position (a condition, or the left
+/// of an enclosing `&&`/`||`) the aggregate's real status is the condition
+/// value — resetting it would make `if false || false` wrongly take the
+/// then-branch, so keep the right side's true status. No-op when caught.
+fn reset_or_status_at_top_level(
+    caught: bool,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    if caught {
+        return;
+    }
+    let zero_ref = state.define("?");
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: zero_ref,
+        value: SsaValue::Literal("0".to_string()),
+    });
+}
+
 fn lower_list_stmt(
     l: &List,
     _stmt: &Statement,
@@ -788,6 +858,9 @@ fn lower_list_stmt(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
+    if let Some(done) = try_lower_bless_list(l, ssa, state, block) {
+        return done;
+    }
     // DD#55: in a *caught* position — an `if`/`while` condition, or the left
     // operand of an enclosing `&&`/`||` (both bump `in_condition`) — the whole
     // aggregate's status is consumed, so the RIGHT operand's failure is caught,
@@ -832,20 +905,7 @@ fn lower_list_stmt(
             if caught {
                 super::entry::uncheck_last_condition_inst(&mut ssa.block_mut(right_end).insts);
             }
-            // DD#55: at top level, `a || b` is a guard — if the right side
-            // completes, the list "succeeded", so reset the exit status to 0 so
-            // the program doesn't exit with the left side's failure status. In a
-            // *caught* position (a condition, or the left of an enclosing
-            // `&&`/`||`) the aggregate's real status is the condition value —
-            // resetting it would make `if false || false` wrongly take the
-            // then-branch, so keep the right side's true status.
-            if !caught {
-                let zero_ref = state.define("?");
-                ssa.block_mut(right_end).insts.push(SsaInst::Assign {
-                    target: zero_ref,
-                    value: SsaValue::Literal("0".to_string()),
-                });
-            }
+            reset_or_status_at_top_level(caught, ssa, state, right_end);
             ssa.block_mut(right_end).terminator = Terminator::Goto(merge_block);
             merge_block
         }
