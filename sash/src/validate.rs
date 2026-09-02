@@ -3522,7 +3522,8 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
-        "read" | "mapfile" | "readarray" => {
+        "read" => collect_read_flag_targets(&c.args, set),
+        "mapfile" | "readarray" => {
             for arg in &c.args {
                 insert_read_target_arg(arg, set);
             }
@@ -3533,6 +3534,17 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
             }
         }
         _ => {}
+    }
+}
+
+/// `read x`/`read -a ARR`: the shared classifier's scalar var names plus the
+/// `-a` array-target name. The classifier skips `-d`/`-f` VALUES (a delim like
+/// `:` is not a target).
+fn collect_read_flag_targets(args: &[Expr], set: &mut HashSet<String>) {
+    let f = crate::ir::classify_read_flags(args);
+    set.extend(f.var_names);
+    if let Some(a) = f.array_name {
+        set.insert(a);
     }
 }
 

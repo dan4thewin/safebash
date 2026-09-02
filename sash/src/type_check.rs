@@ -1037,11 +1037,8 @@ fn register_argv_target(c: &Command, env: &mut TypeEnv) {
 
 /// `read -a a` fills (auto-declares) an indexed array target.
 fn register_read_array_target(c: &Command, env: &mut TypeEnv) {
-    let args: Vec<String> = c.args.iter().map(expr_to_name).collect();
-    if let Some(pos) = args.iter().position(|a| a == "-a") {
-        if let Some(name) = args.get(pos + 1) {
-            env.collections.insert(name.clone());
-        }
+    if let Some(name) = crate::ir::classify_read_flags(&c.args).array_name {
+        env.collections.insert(name);
     }
 }
 

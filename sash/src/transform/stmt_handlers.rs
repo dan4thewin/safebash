@@ -626,48 +626,6 @@ fn push_command_stage(
     stages.push((resolve_pipeline_command(&name, state), args, redirects));
 }
 
-/// Parse `read` flags (-d <c>, -d<c>, -f <c>, -f<c>) and collect var names.
-/// Returns (var_names, delim, field_sep).
-fn parse_read_flags(args: &[Expr]) -> (Vec<String>, Option<u8>, Option<u8>) {
-    let mut var_names = vec![];
-    let mut delim: Option<u8> = None;
-    let mut field_sep: Option<u8> = None;
-    let mut skip_next = false;
-    for arg in args {
-        let s = expr_to_string(arg);
-        if skip_next {
-            if field_sep == Some(0) {
-                field_sep = Some(s.as_bytes().first().copied().unwrap_or(0));
-            }
-            skip_next = false;
-            continue;
-        }
-        if s == "-d" {
-            skip_next = true;
-            delim = Some(0);
-            continue;
-        }
-        if let Some(rest) = s.strip_prefix("-d") {
-            delim = Some(rest.as_bytes().first().copied().unwrap_or(0));
-            continue;
-        }
-        if s == "-f" {
-            skip_next = true;
-            field_sep = Some(0);
-            continue;
-        }
-        if let Some(rest) = s.strip_prefix("-f") {
-            field_sep = Some(rest.as_bytes().first().copied().unwrap_or(0));
-            continue;
-        }
-        if s.starts_with('-') {
-            continue;
-        }
-        var_names.push(s);
-    }
-    (var_names, delim, field_sep)
-}
-
 /// `cmd1 | ... | while read -r var` or `cmd1 | ... | mapfile`.
 /// Emit producer stages as a pipeline that returns a pipe fd,
 /// then lower the last stage with fd = -1 (pipe-fd sentinel).
@@ -734,25 +692,34 @@ fn handle_lastpipe_read(
         negated: vec![],
     });
     if let StmtKind::Command(c) = &last.kind {
-        let (var_names, delim, field_sep) = parse_read_flags(&c.args);
-        if var_names.len() == 1 {
-            let target = state.define(&var_names[0]);
+        let flags = crate::ir::classify_read_flags(&c.args);
+        if let Some(bad) = &flags.unknown_flag {
+            state.diagnostics.push(format!(
+                "{}:{}: error [SB5015] read: unknown flag '{}'",
+                last.span.line, last.span.col, bad
+            ));
+            return;
+        }
+        // An array read (`-a`) in a pipeline is peeled off earlier by
+        // `is_mapfile_last`, so only scalar reads reach here.
+        if flags.var_names.len() == 1 {
+            let target = state.define(&flags.var_names[0]);
             ssa.block_mut(block).insts.push(SsaInst::ReadLine {
                 target,
                 fd: -1,
-                delim,
+                delim: flags.delim,
                 redirects: vec![],
                 clean_pipe: true,
             });
-        } else if var_names.len() > 1 {
-            let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
+        } else if flags.var_names.len() > 1 {
+            let targets: Vec<VarRef> = flags.var_names.iter().map(|n| state.define(n)).collect();
             ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
                 targets,
                 fd: -1,
-                delim,
+                delim: flags.delim,
                 redirects: vec![],
                 clean_pipe: true,
-                field_sep,
+                field_sep: flags.field_sep,
             });
         }
     }

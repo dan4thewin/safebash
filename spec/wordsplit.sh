@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=73
+plan=77
 echo "1..$plan" >&3
 
 set +e
@@ -328,6 +328,35 @@ EOF'
 # sash-getopt) — it is now an unknown command
 run_sash 'echo x | readc a'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.20
+
+# ── read: unified flag parsing + `-d ''` NUL (sash-getopt idiom) ──
+# One shared classifier (ir::classify_read_flags) drives every read path.
+
+# 22.21 `-d ''` (empty delimiter) = NUL: `read -a arr -d ''` splits
+# NUL-separated fields into an array (bash's read -d '' convention). This is
+# the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`. janet lacks
+# custom-delimiter array reads, so gate native,c.
+if in_modes native,c; then
+    run_sash 'printf "a\0b c\0d" > f22_21; read -a arr -d "" < f22_21; bless x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
+    [[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
+
+    # 22.22 a `-d` delimiter VALUE (`:`) is not mistaken for a target variable
+    # (the shared classifier skips flag values — previously a dead-var false
+    # positive on `:`). `-d :` reads one record up to the first `:`.
+    run_sash 'printf "a:b" | read -d : x; bless x [[ -n $x ]]; echo "[$x]"'
+    [[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.22
+else
+    skip_chk 22.21; skip_chk 22.22
+fi
+
+# 22.23 an unknown read flag is rejected consistently in BOTH the standalone
+# and lastpipe paths (the two parsers are unified) — `-z` is not a read flag
+run_sash 'echo hi | read -z x; echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5015* ]]; chk 22.23
+
+# 22.24 same rejection standalone (contract with cov.20)
+run_sash 'read -z x < /etc/hostname'
+[[ $rc != 0 && -z $out && $err == *SB5015* ]]; chk 22.24
 
 
 set -e

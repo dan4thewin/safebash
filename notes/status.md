@@ -1,3 +1,24 @@
+## ════════ STATUS (2026-09-02) — read-flag parsers unified; `read -d ''` = NUL ════════
+
+**On `hand-parser`.** DG: "unify them, support -d '', call out other read
+behaviors." Replaced **four** independent read-arg parsers (transform ×2,
+validate `collect_read_targets`, type_check `register_read_array_target`) with
+one shared `ir::classify_read_flags`. Kills the reject-vs-ignore inconsistency
+(unknown flags now → SB5015 in BOTH standalone + lastpipe), the lastpipe `-d`
+split-form bug, and a dead-var (SB5050) false positive where a delim value
+(`read -d : x` → `:`) was mistaken for a target. `read -d ''` now = NUL (root
+cause was `expr_to_string` re-quoting; `read_arg_value` unwraps quotes, empty
+→ NUL) — the sash-getopt idiom `sash-getopt … | read -a arr -d ''` works
+end-to-end (both pipe + redirect; space-bearing fields stay one element).
+`read -z` still rejected but consistently. specs wordsplit.sh 22.21–22.24.
+3-mode sweep vs `002b833`: 0 regressions. journal 232.
+
+**Called out (filed `read-behaviors-not-wired`):** (1) `-r` — rejected but
+sash is always raw, and bash uses it everywhere → recommend accept-as-no-op;
+(2) NUL-terminator trailing-empty (getopt's final NUL leaves a trailing `[]`;
+bash mapfile -d '' drops it) → recommend terminator semantics for `-d`;
+(3) `-n`/`-N`/`-u`/interactive flags — leave unless needed.
+
 ## ════════ STATUS (2026-09-02) — `sash-getopt` vendored (NUL/unquoted) ════════
 
 **On `hand-parser`.** Second half of the readc-drop directive: vendored

@@ -276,14 +276,20 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     }
 }
 
-/// Strip a single layer of quotes from a separator word: a bare/single/
-/// double-quoted literal yields its text; anything richer falls back to
-/// `expr_to_string`.
-fn strip_word_quotes(expr: &Expr) -> String {
+/// Strip a single layer of quotes from a word, yielding its literal VALUE
+/// (not its source form): a bare/single/double-quoted literal yields its
+/// text, an empty `''`/`""` yields the empty string; anything richer falls
+/// back to `expr_to_string`. Used for `read`/`echo` separator/flag words so
+/// `read -d ''` sees an empty value (→ NUL), not the quote characters.
+pub(super) fn strip_word_quotes(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
-        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => match &parts[0].kind {
-            ExprKind::Literal(s) => s.clone(),
+        ExprKind::DoubleQuoted(parts) => match parts.as_slice() {
+            [] => String::new(),
+            [p] => match &p.kind {
+                ExprKind::Literal(s) => s.clone(),
+                _ => expr_to_string(expr),
+            },
             _ => expr_to_string(expr),
         },
         _ => expr_to_string(expr),
