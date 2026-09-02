@@ -134,7 +134,7 @@ run_sash 'for i in 1 2; do for j in a b; do echo "$i$j"; done; done'
 [[ $rc = 0 && $out = $'1a\n1b\n2a\n2b' && -z $err ]]; chk cf.f6
 
 # cf.f7 for over an empty user-arg slice runs zero iterations
-run_sash 'for x in $(argv 1); do echo never; done; echo done'
+run_sash 'for x in $(argv 1); do bless x [[ -n $x ]]; echo never; done; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk cf.f7
 
 # cf.f8 C-style for in arithmetic context

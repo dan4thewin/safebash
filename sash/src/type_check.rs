@@ -807,7 +807,7 @@ fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
 
 /// The collection name a `join` operand refers to: `@a` (arrvals splat) → `a`;
 /// a bare name → itself; anything else → empty (not a simple name operand).
-fn join_operand_name(expr: &Expr) -> String {
+pub(crate) fn join_operand_name(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
             pe.name.clone()

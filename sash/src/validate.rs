@@ -3576,11 +3576,231 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     if let Some(ref end) = program.end_block {
         collect_functions(end, &mut globals);
     }
-    check_reads_in_scope(&program.statements, &globals, &mut diags);
+    let mut sink = ReadSink::Flag(&mut diags);
+    check_reads_in_scope(&program.statements, &globals, &mut sink);
     if let Some(ref end) = program.end_block {
-        check_reads_in_scope(end, &globals, &mut diags);
+        check_reads_in_scope(end, &globals, &mut sink);
     }
     diags
+}
+
+// ── SB5050: reject a variable assigned but never read (dead variable) ──
+//
+// DD#86: the dual of SB5031. Every variable must appear in both a write and a
+// read. A **global** (a top-level introduction) is dead if it is read nowhere
+// in the program (a global may be read from any function); a **function-local**
+// is dead if it is read nowhere within its function. This is the safety net
+// for a misspelled write target (a stray local stranded on the write side).
+//
+// A `for` loop variable and a `read`/`readc`/`mapfile` target are ordinary
+// writes and ARE checked (DG 2026-09-02): an unused loop variable or a
+// discarded read field is dead. Reads are recognised by the SB5031 enumerator
+// (`ReadSink::Collect`) plus the value-fn bare operands, so the check never
+// false-positives; the escape hatch for a deliberately-unused write is to
+// read it with `: $v` (an established acknowledgment, DD#81 arity).
+
+/// SB5050 (DD#86): reject an assigned-but-never-read variable.
+pub fn check_dead_variables(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    check_dead_globals(program, &mut diags);
+    check_dead_locals(program, &mut diags);
+    diags
+}
+
+/// A top-level (global) write is dead iff it is read nowhere in the whole
+/// program (a global may be read from any function).
+fn check_dead_globals(program: &Program, diags: &mut Vec<Diagnostic>) {
+    let mut reads = HashSet::new();
+    let mut writes = Vec::new();
+    for block in program_blocks(program) {
+        collect_reads(block, &mut reads);
+        collect_writes(block, &mut writes);
+    }
+    report_dead(&writes, |n| !reads.contains(n), diags);
+}
+
+/// Each function-local write (a name that is not a top-level global) is dead
+/// iff it is read nowhere within that function.
+fn check_dead_locals(program: &Program, diags: &mut Vec<Diagnostic>) {
+    let mut globals = HashSet::new();
+    for block in program_blocks(program) {
+        collect_scope_names(block, &mut globals);
+    }
+    for block in program_blocks(program) {
+        check_dead_in_functions(block, &globals, diags);
+    }
+}
+
+/// The top-level statement list plus the `__END__` block, as separate scopes.
+fn program_blocks(program: &Program) -> Vec<&[Statement]> {
+    std::iter::once(program.statements.as_slice())
+        .chain(program.end_block.as_deref())
+        .collect()
+}
+
+/// Emit SB5050 for each write whose name `is_dead`, de-duplicating by name.
+fn report_dead(
+    writes: &[(String, Span)],
+    is_dead: impl Fn(&str) -> bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut reported: HashSet<String> = HashSet::new();
+    for (name, span) in writes {
+        if is_dead(name) && reported.insert(name.clone()) {
+            diags.push(dead_var_diag(*span, name));
+        }
+    }
+}
+
+/// Find each function body and flag its dead function-locals.
+fn check_dead_in_functions(
+    stmts: &[Statement],
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        if let StmtKind::Function(f) = &stmt.kind {
+            check_fn_dead(&f.body, globals, diags);
+        }
+        for body in stmt.child_bodies() {
+            check_dead_in_functions(body, globals, diags);
+        }
+    }
+}
+
+/// A write in a function to a non-global name is dead iff it is read nowhere in
+/// the function body.
+fn check_fn_dead(body: &[Statement], globals: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    let mut fn_reads = HashSet::new();
+    collect_reads(body, &mut fn_reads);
+    let mut writes = Vec::new();
+    collect_writes(body, &mut writes);
+    report_dead(
+        &writes,
+        |n| !globals.contains(n) && !fn_reads.contains(n),
+        diags,
+    );
+}
+
+/// Collect `(write-name, span)` for each assignment / typed declaration /
+/// read-target / `for` variable in `stmts`. Descends control-flow bodies (same
+/// scope) but NOT nested function bodies (each its own scope).
+fn collect_writes(stmts: &[Statement], out: &mut Vec<(String, Span)>) {
+    for stmt in stmts {
+        match &stmt.kind {
+            StmtKind::Assignment(a) => out.push((a.name.clone(), stmt.span)),
+            StmtKind::Declaration(d) => push_decl_writes(d, stmt.span, out),
+            StmtKind::Command(c) => push_read_target_writes(c, stmt.span, out),
+            StmtKind::For(f) => {
+                // DD#86 (DG 2026-09-02): a `for` variable is an ordinary
+                // variable — an unused loop variable is dead.
+                out.push((f.variable.clone(), stmt.span));
+                collect_writes(&f.body, out);
+            }
+            StmtKind::Function(_) => {} // separate scope
+            _ => {
+                for body in stmt.child_bodies() {
+                    collect_writes(body, out);
+                }
+            }
+        }
+    }
+}
+
+fn push_decl_writes(d: &Declaration, span: Span, out: &mut Vec<(String, Span)>) {
+    for a in &d.assignments {
+        out.push((a.name.clone(), span));
+    }
+}
+
+fn push_read_target_writes(c: &Command, span: Span, out: &mut Vec<(String, Span)>) {
+    let mut targets = HashSet::new();
+    collect_read_targets(c, &mut targets);
+    for n in targets {
+        out.push((n, span));
+    }
+}
+
+/// Collect every variable *read* in `stmts` into `set`, reusing the exact
+/// SB5031 read-enumerator (`check_reads_in_scope` in `Collect` mode) so
+/// dead-var and SB5031 can never disagree on what a read is. `known` is
+/// irrelevant in collect mode (a scope-agnostic superset is what we want),
+/// so an empty set is passed.
+///
+/// The enumerator does not recognise the bare *collection-name* operand of a
+/// value builtin (`len a` / `join a` / `keys m`) — those are the asymmetric
+/// case tracked in `notes/tasks/bare-collection-name-operand-asymmetry.md` —
+/// so `collect_value_fn_operands` adds them.
+fn collect_reads(stmts: &[Statement], set: &mut HashSet<String>) {
+    let empty = HashSet::new();
+    let mut sink = ReadSink::Collect(set);
+    check_reads_in_scope(stmts, &empty, &mut sink);
+    collect_value_fn_operands(stmts, set);
+}
+
+/// A bare collection-name operand to `len`/`join`/`keys` is a read of that
+/// collection (`len a` reads `a`). Record it for every command, including those
+/// inside a `$( )` capture. Reuses `len_operand_name`/`join_operand_name`
+/// (which also unwrap the `@a` splat form).
+fn collect_value_fn_operands(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            record_value_fn_operand(c, set);
+        }
+        walk_all_exprs(stmt, &mut |e| record_cmdsub_value_fn_operands(e, set));
+    }
+}
+
+/// Record the value-fn operand of every command inside a `$( )` expression.
+fn record_cmdsub_value_fn_operands(e: &Expr, set: &mut HashSet<String>) {
+    let ExprKind::CommandSubstitution(inner) = &e.kind else {
+        return;
+    };
+    for s in inner {
+        if let StmtKind::Command(c) = &s.kind {
+            record_value_fn_operand(c, set);
+        }
+    }
+}
+
+fn record_value_fn_operand(c: &Command, set: &mut HashSet<String>) {
+    let name = expr_literal_str(&c.name);
+    if name == "len" {
+        record_len_operand(c, set);
+    } else if name == "join" || name == "keys" {
+        record_collection_operand(c, set);
+    }
+}
+
+/// `len X` reads the bare-name operand `X` (a collection or a string).
+fn record_len_operand(c: &Command, set: &mut HashSet<String>) {
+    if let Some(n) = len_operand_name(c) {
+        set.insert(n);
+    }
+}
+
+/// `join X` / `keys X` read the bare collection name `X` (or `@X` splat).
+fn record_collection_operand(c: &Command, set: &mut HashSet<String>) {
+    let n = c
+        .args
+        .first()
+        .map(crate::type_check::join_operand_name)
+        .filter(|s| !s.is_empty());
+    if let Some(n) = n {
+        set.insert(n);
+    }
+}
+
+fn dead_var_diag(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5050",
+        format!(
+            "variable `{name}` is assigned but never read (dead variable) — every variable \
+             must be read somewhere (DD#86). Remove the assignment, or read `{name}` \
+             (a stray write is usually a misspelled target)"
+        ),
+    )
 }
 
 // ── SB5039: reject `len <undefined>` (DD#75 §2) ──────────────────────
@@ -3735,21 +3955,80 @@ fn len_operand_name(c: &Command) -> Option<String> {
     }
 }
 
-fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+/// Read-recognition sink shared by SB5031 (flag an undeclared read) and the
+/// SB5050 dead-variable check (collect every read). The one traversal below
+/// drives a single `record` per variable read; the sink decides what to do —
+/// so the two passes can never diverge on "what counts as a read".
+enum ReadSink<'a> {
+    /// SB5031: flag a read whose name is not in the current scope's `known`.
+    Flag(&'a mut Vec<Diagnostic>),
+    /// SB5050: collect every read name (scope-agnostic superset).
+    Collect(&'a mut HashSet<String>),
+}
+
+impl ReadSink<'_> {
+    fn record(&mut self, name: &str, span: Span, known: &HashSet<String>) {
+        self.record_param(name, span, known, false);
+    }
+
+    /// Record a name only for dead-var (Collect mode); a no-op for SB5031
+    /// (Flag mode). Used where the name might be a variable but is not a read
+    /// SB5031 should flag — e.g. a DD#58 arith sexpr `(name …)`, whose name may
+    /// be a variable (`(x)`), a user function (`(f)`), or an intrinsic
+    /// (`(random)`, `(len m)`); only the first is a variable read, and SB5031
+    /// must not flag the intrinsic/function names.
+    fn collect_only(&mut self, name: &str) {
+        if let ReadSink::Collect(set) = self {
+            set.insert(name.to_string());
+        }
+    }
+
+    /// Record a variable read. `opt_out` marks a parameter expansion carrying an
+    /// operator (`${x:-…}`, `@a`, `${x:s/…/…/}`): SB5031 treats it as the
+    /// explicit "intentional default / transform" opt-out and does NOT flag it,
+    /// but dead-var still counts it as a read of the variable.
+    fn record_param(&mut self, name: &str, span: Span, known: &HashSet<String>, opt_out: bool) {
+        match self {
+            ReadSink::Collect(set) => {
+                set.insert(name.to_string());
+            }
+            ReadSink::Flag(diags) => {
+                if opt_out
+                    || !is_plain_identifier(name)
+                    || handled_elsewhere(name)
+                    || known.contains(name)
+                {
+                    return;
+                }
+                diags.push(Diagnostic::error_span(
+                    span,
+                    "SB5031",
+                    format!(
+                        "'${}' is assigned nowhere (possible typo) — assign it first, \
+                         or write ${{{}:-DEFAULT}} for an intentional default",
+                        name, name
+                    ),
+                ));
+            }
+        }
+    }
+}
+
+fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, sink: &mut ReadSink) {
     for stmt in stmts {
         match &stmt.kind {
-            StmtKind::Function(f) => check_function_scope(f, known, diags),
+            StmtKind::Function(f) => check_function_scope(f, known, sink),
             // `bless` with a decodable form is handled specially (below);
             // a non-bless / malformed one falls through to the default arm.
-            StmtKind::Command(c) if try_check_bless_stmt(c, known, diags) => {}
-            _ => check_stmt_exprs_and_bodies(stmt, known, diags),
+            StmtKind::Command(c) if try_check_bless_stmt(c, known, sink) => {}
+            _ => check_stmt_exprs_and_bodies(stmt, known, sink),
         }
     }
 }
 
 /// A nested function is a new scope: its own introductions plus the
 /// enclosing (global) names it can see.
-fn check_function_scope(f: &Function, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_function_scope(f: &Function, known: &HashSet<String>, sink: &mut ReadSink) {
     let mut fn_known = HashSet::new();
     collect_scope_names(&f.body, &mut fn_known);
     fn_known.extend(known.iter().cloned());
@@ -3758,14 +4037,14 @@ fn check_function_scope(f: &Function, known: &HashSet<String>, diags: &mut Vec<D
     // arith cell read `$(( args[0] ))` was an SB5031 false positive
     // (arith-args-subscript-codegen).
     fn_known.insert("args".to_string());
-    check_reads_in_scope(&f.body, &fn_known, diags);
+    check_reads_in_scope(&f.body, &fn_known, sink);
 }
 
 /// `bless ARR in VAR [[ …$VAR… ]]` (and the map form) introduce
 /// predicate-local binder variable(s): check the test with them added,
 /// and don't treat the binder/array literals as reads. Returns `true`
 /// when the statement was a decodable bless (and has been checked).
-fn try_check_bless_stmt(c: &Command, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) -> bool {
+fn try_check_bless_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSink) -> bool {
     if expr_literal_str(&c.name) != "bless" {
         return false;
     }
@@ -3774,38 +4053,42 @@ fn try_check_bless_stmt(c: &Command, known: &HashSet<String>, diags: &mut Vec<Di
     };
     let mut bless_known = known.clone();
     match form {
-        crate::ir::BlessForm::Indexed { binder, .. } => {
+        crate::ir::BlessForm::Indexed { binder, array } => {
             bless_known.insert(binder.to_string());
+            // The array being blessed is read (bless iterates it) — count it for
+            // dead-var; SB5031 handles an undeclared bless array elsewhere.
+            sink.collect_only(array);
         }
-        crate::ir::BlessForm::Map { key, val, .. } => {
+        crate::ir::BlessForm::Map { key, val, map } => {
             bless_known.insert(key.to_string());
             bless_known.insert(val.to_string());
+            sink.collect_only(map);
         }
         crate::ir::BlessForm::Scalar { .. } => {}
     }
-    check_test_reads(test, &bless_known, diags);
+    check_test_reads(test, &bless_known, sink);
     true
 }
 
 /// Default statement handling: check its own expressions, then recurse
 /// into any control-flow child bodies (same scope).
-fn check_stmt_exprs_and_bodies(
-    stmt: &Statement,
-    known: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
-    stmt.direct_exprs(&mut |e| check_expr_reads(e, known, diags));
+fn check_stmt_exprs_and_bodies(stmt: &Statement, known: &HashSet<String>, sink: &mut ReadSink) {
+    stmt.direct_exprs(&mut |e| check_expr_reads(e, known, sink));
+    // A `(( … ))` statement / condition holds its reads in an `ArithExpr` tree,
+    // not a direct `Expr` (`direct_exprs` returns nothing for it) — walk it so
+    // a bare `(( x > 0 ))` read is seen (by both SB5031 and dead-var).
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        check_arith_reads(a, stmt.span, known, sink);
+    }
     for body in stmt.child_bodies() {
-        check_reads_in_scope(body, known, diags);
+        check_reads_in_scope(body, known, sink);
     }
 }
 
-fn check_expr_reads(expr: &Expr, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_expr_reads(expr: &Expr, known: &HashSet<String>, sink: &mut ReadSink) {
     match &expr.kind {
-        ExprKind::SimpleExpansion(name) => flag_if_unknown(name, expr.span, known, diags),
-        ExprKind::ParameterExpansion(pe) => {
-            check_param_expansion_reads(pe, expr.span, known, diags)
-        }
+        ExprKind::SimpleExpansion(name) => sink.record(name, expr.span, known),
+        ExprKind::ParameterExpansion(pe) => check_param_expansion_reads(pe, expr.span, known, sink),
         ExprKind::Subscript { name, index } => {
             // The collection name is itself a read — flag an undeclared one so it
             // reports SB5031 rather than ICE-ing at codegen (`undefined array`).
@@ -3813,22 +4096,22 @@ fn check_expr_reads(expr: &Expr, known: &HashSet<String>, diags: &mut Vec<Diagno
             // SB5024 (skip it here to avoid a double), and inside a function it
             // is already in scope.
             if name != "args" {
-                flag_if_unknown(name, expr.span, known, diags);
+                sink.record(name, expr.span, known);
             }
-            check_expr_reads(index, known, diags);
+            check_expr_reads(index, known, sink);
         }
-        ExprKind::CommandSubstitution(stmts) => check_cmdsub_reads(stmts, known, diags),
+        ExprKind::CommandSubstitution(stmts) => check_cmdsub_reads(stmts, known, sink),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            check_exprs(parts, known, diags)
+            check_exprs(parts, known, sink)
         }
-        ExprKind::AssocArray(pairs) => check_assoc_values(pairs, known, diags),
-        ExprKind::Test(t) => check_test_reads(t, known, diags),
+        ExprKind::AssocArray(pairs) => check_assoc_values(pairs, known, sink),
+        ExprKind::Test(t) => check_test_reads(t, known, sink),
         // B2 (DD arith-subscript / SB5031-consistency): a bare name *read* in
         // arithmetic that is assigned nowhere is a typo, exactly like `$x`
         // outside arith. `(( i++ ))` / `(( x = … ))` lower to an assignment
         // (their name is collected as in-scope), so anything you assign is fine;
         // a pure read (`$(( y + 1 ))`, the index `i` in `a[i]`) is not.
-        ExprKind::Arithmetic(a) => check_arith_reads(a, expr.span, known, diags),
+        ExprKind::Arithmetic(a) => check_arith_reads(a, expr.span, known, sink),
         _ => {}
     }
 }
@@ -3837,49 +4120,79 @@ fn check_arith_reads(
     a: &crate::ir::ArithExpr,
     span: Span,
     known: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sink: &mut ReadSink,
 ) {
     use crate::ir::ArithExpr::*;
     match a {
-        Var(name) | DollarVar(name) => flag_if_unknown(name, span, known, diags),
+        Var(name) | DollarVar(name) => sink.record(name, span, known),
         // A bare int-array cell read: the array name is read, and the index is
         // a read position too.
         Subscript { name, index } => {
-            flag_if_unknown(name, span, known, diags);
-            check_arith_reads(index, span, known, diags);
+            sink.record(name, span, known);
+            check_arith_reads(index, span, known, sink);
         }
+        SubscriptAssign {
+            name, index, value, ..
+        } => {
+            sink.record(name, span, known);
+            check_arith_reads(index, span, known, sink);
+            check_arith_reads(value, span, known, sink);
+        }
+        // DD#58 sexpr: a bare `(name …)` parses as a `FuncCall`; the name may be
+        // a variable read (`$(( (x) ))`), a user function (`$((f))`), or an
+        // intrinsic (`(random)`, `(len m)`). Only the first is a variable read;
+        // collect it for dead-var but never flag it for SB5031 (the intrinsic /
+        // function names are not undeclared reads).
+        FuncCall { name, args } => {
+            sink.collect_only(name);
+            check_arith_each(args, span, known, sink);
+        }
+        // `${…}` import — normal-parse rvalue, checked by the ordinary path.
+        Expansion(inner) => check_expr_reads(inner, known, sink),
+        _ => check_arith_compound(a, span, known, sink),
+    }
+}
+
+/// The structural (non-leaf, non-name) arith arms: recurse into operands.
+fn check_arith_compound(
+    a: &crate::ir::ArithExpr,
+    span: Span,
+    known: &HashSet<String>,
+    sink: &mut ReadSink,
+) {
+    use crate::ir::ArithExpr::*;
+    match a {
         BinOp { left, right, .. } => {
-            check_arith_reads(left, span, known, diags);
-            check_arith_reads(right, span, known, diags);
+            check_arith_reads(left, span, known, sink);
+            check_arith_reads(right, span, known, sink);
         }
-        UnaryOp { operand, .. } | Paren(operand) => check_arith_reads(operand, span, known, diags),
+        UnaryOp { operand, .. } | Paren(operand) => check_arith_reads(operand, span, known, sink),
         Ternary {
             cond,
             true_val,
             false_val,
         } => {
-            check_arith_reads(cond, span, known, diags);
-            check_arith_reads(true_val, span, known, diags);
-            check_arith_reads(false_val, span, known, diags);
+            check_arith_reads(cond, span, known, sink);
+            check_arith_reads(true_val, span, known, sink);
+            check_arith_reads(false_val, span, known, sink);
         }
-        Comma(exprs) | FuncCall { args: exprs, .. } => {
-            for e in exprs {
-                check_arith_reads(e, span, known, diags);
-            }
-        }
+        Comma(exprs) => check_arith_each(exprs, span, known, sink),
         Assign { value, .. } | CompoundAssign { value, .. } => {
-            check_arith_reads(value, span, known, diags)
+            check_arith_reads(value, span, known, sink)
         }
-        SubscriptAssign {
-            name, index, value, ..
-        } => {
-            flag_if_unknown(name, span, known, diags);
-            check_arith_reads(index, span, known, diags);
-            check_arith_reads(value, span, known, diags);
-        }
-        // `${…}` import — normal-parse rvalue, checked by the ordinary path.
-        Expansion(inner) => check_expr_reads(inner, known, diags),
-        Literal(_) | PostIncDec { .. } | PreIncDec { .. } => {}
+        // Leaf/name arms are handled by check_arith_reads; the rest are no-ops.
+        _ => {}
+    }
+}
+
+fn check_arith_each(
+    exprs: &[crate::ir::ArithExpr],
+    span: Span,
+    known: &HashSet<String>,
+    sink: &mut ReadSink,
+) {
+    for e in exprs {
+        check_arith_reads(e, span, known, sink);
     }
 }
 
@@ -3889,69 +4202,50 @@ fn check_param_expansion_reads(
     pe: &ParameterExpansion,
     span: Span,
     known: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
+    sink: &mut ReadSink,
 ) {
-    if pe.operator.is_none() {
-        flag_if_unknown(&pe.name, span, known, diags);
-    }
+    // Bare `${x}` is a read SB5031 flags; `${x:-…}`/`@a`/`${x:s/…/…/}` carry an
+    // operator — SB5031's opt-out, but a real read for dead-var.
+    sink.record_param(&pe.name, span, known, pe.operator.is_some());
     if let Some(ref operand) = pe.operand {
-        check_expr_reads(operand, known, diags);
+        check_expr_reads(operand, known, sink);
     }
 }
 
 /// A command substitution runs in a subshell: its statements see the
 /// enclosing scope plus their own (subshell-local) introductions, which
 /// do NOT leak back out.
-fn check_cmdsub_reads(stmts: &[Statement], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_cmdsub_reads(stmts: &[Statement], known: &HashSet<String>, sink: &mut ReadSink) {
     let mut sub_known = known.clone();
     collect_scope_names(stmts, &mut sub_known);
-    check_reads_in_scope(stmts, &sub_known, diags);
+    check_reads_in_scope(stmts, &sub_known, sink);
 }
 
-fn check_exprs(parts: &[Expr], known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_exprs(parts: &[Expr], known: &HashSet<String>, sink: &mut ReadSink) {
     for p in parts {
-        check_expr_reads(p, known, diags);
+        check_expr_reads(p, known, sink);
     }
 }
 
-fn check_assoc_values(
-    pairs: &[(String, Expr)],
-    known: &HashSet<String>,
-    diags: &mut Vec<Diagnostic>,
-) {
+fn check_assoc_values(pairs: &[(String, Expr)], known: &HashSet<String>, sink: &mut ReadSink) {
     for (_, v) in pairs {
-        check_expr_reads(v, known, diags);
+        check_expr_reads(v, known, sink);
     }
 }
 
-fn check_test_reads(test: &TestExpr, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_test_reads(test: &TestExpr, known: &HashSet<String>, sink: &mut ReadSink) {
     match test {
-        TestExpr::Unary { operand, .. } => check_expr_reads(operand, known, diags),
+        TestExpr::Unary { operand, .. } => check_expr_reads(operand, known, sink),
         TestExpr::Binary { left, right, .. } => {
-            check_expr_reads(left, known, diags);
-            check_expr_reads(right, known, diags);
+            check_expr_reads(left, known, sink);
+            check_expr_reads(right, known, sink);
         }
-        TestExpr::Not(inner) => check_test_reads(inner, known, diags),
+        TestExpr::Not(inner) => check_test_reads(inner, known, sink),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {
-            check_test_reads(l, known, diags);
-            check_test_reads(r, known, diags);
+            check_test_reads(l, known, sink);
+            check_test_reads(r, known, sink);
         }
     }
-}
-
-fn flag_if_unknown(name: &str, span: Span, known: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    if !is_plain_identifier(name) || handled_elsewhere(name) || known.contains(name) {
-        return;
-    }
-    diags.push(Diagnostic::error_span(
-        span,
-        "SB5031",
-        format!(
-            "'${}' is assigned nowhere (possible typo) — assign it first, \
-             or write ${{{}:-DEFAULT}} for an intentional default",
-            name, name
-        ),
-    ));
 }
 
 /// DD#63: a `${var:s/…}` payload missing a mandatory `/` field delimiter is

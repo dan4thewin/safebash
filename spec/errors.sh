@@ -97,7 +97,7 @@ run_sash 'fn f { x=$(/bin/false); bless x [[ -n $x ]]; echo $x }; f'
 [[ $rc != 0 && -z $err ]]; chk 55.7
 
 # 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)
-run_sash 'x=$(/bin/false)'
+run_sash 'x=$(/bin/false); bless x [[ -n $x ]]'
 [[ $rc != 0 && -z $err ]] \
   && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.8
 
@@ -223,7 +223,7 @@ run_sash '/bin/true || { /bin/echo x; s=$(status); }'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.17b
 
 # $(status) as first expression → OK
-run_sash '/bin/false || s=$(status)'
+run_sash '/bin/false || s=$(status); : $s'
 [[ $rc = 0 && -z $err ]]; chk 55.17c
 
 # 55.18 $? is sugar for $(status)
@@ -388,7 +388,7 @@ run_sash 'x=a; if [[ $x == a ]]; then echo t; fi'
 run_sash 'x=foo; echo $x'
 [[ $rc = 0 && $out = "foo" && -z $err ]]; chk e.br9
 # br10 (positive) an assignment on the RIGHT of || (the consequent) is fine
-run_sash 'false || x=set; echo done'
+run_sash 'false || x=set; : $x; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.br10
 
 # ── DD#70 (A)/(B) error-model contract ───────────────────────────────

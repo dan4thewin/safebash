@@ -284,13 +284,13 @@ run_sash 'echo "*"'
 [[ $rc = 0 && $out = "*" && -z $err ]]; chk 20.3
 
 # 20.4 array-literal glob `array a=(*)` still globs (unchanged)
-run_sash 'array a=(*); echo ok'
+run_sash 'array a=(*); : @a; echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 20.4
 
 # 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69). native/c
 #      only — Janet lowers from IR and does not expand globs.
 if in_modes native,c; then
-    run_sash 'for f in *.nomatchZZZ; do echo ran; done; echo done'
+    run_sash 'for f in *.nomatchZZZ; do echo "$f"; done; echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 20.5
 else
     skip_chk 20.5
@@ -336,8 +336,9 @@ if in_modes native,c; then
     run_sash 'echo "has\ space rest" | readc a b; echo "a=[$a]"; echo "b=[$b]"'
     [[ $rc = 0 && $out = $'a=[has space]\nb=[rest]' && -z $err ]]; chk 22.20
 
-    # 22.21 readc: last var (remainder) is de-escaped too
-    run_sash 'echo "first tail\ with\ escapes" | readc a b; echo "[$b]"'
+    # 22.21 readc: last var (remainder) is de-escaped too (`: $a` acknowledges
+    # the leading field, which this case does not otherwise use — DD#86 dead-var)
+    run_sash 'echo "first tail\ with\ escapes" | readc a b; : $a; echo "[$b]"'
     [[ $rc = 0 && $out = "[tail with escapes]" && -z $err ]]; chk 22.21
 
     # 22.22 readc single var de-escapes the whole line

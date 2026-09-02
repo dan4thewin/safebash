@@ -106,7 +106,7 @@ run_sash 'array a=(x y); for f in @{a:?}; do /bin/echo "$f"; done'
 
 # gs.19 quotes are literal (bash-compatible), NOT a splat: `echo "@a"` prints
 #       the literal `@a` (the native splat is the UNQUOTED `@a`). Not rejected.
-run_sash 'array a=(x y); echo "@a"'
+run_sash 'array a=(x y); : @a; echo "@a"'
 [[ $rc = 0 && $out = "@a" && -z $err ]]; chk gs.19
 
 set -e

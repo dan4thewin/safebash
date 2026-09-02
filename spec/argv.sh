@@ -91,7 +91,7 @@ run_sash 'for x in $(argv 1); do bless x [[ -n $x ]]; echo "$x"; done' a b c
 [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk av.s2
 
 # av.s3 $(argv N) with N >= argc yields zero iterations (NOT an abort)
-run_sash 'for x in $(argv 99); do echo iter; done' a b c
+run_sash 'for x in $(argv 99); do bless x [[ -n $x ]]; echo iter; done' a b c
 [[ $rc = 0 && -z $out && -z $err ]]; chk av.s3
 
 # av.s4 $(argv 0) is identical to $(argv)

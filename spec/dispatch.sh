@@ -109,7 +109,7 @@ run_sash 'x=b; if [[ $x == a ]]; then echo t; else echo f; fi'
 # `[[` / `]]` tokenize even when glued to adjacent words or their contents
 # (a single `[`/`]` stays a subscript char). See DD#59.
 # H1 boolean test, compact interior
-run_sash 'x=a; if [[a==a]]; then echo y; fi'
+run_sash 'if [[a==a]]; then echo y; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk dp.ws1
 # H2 no space after `if` before `[[`
 run_sash 'x=a; if[[ $x == a ]]; then echo y; fi'

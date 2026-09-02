@@ -1,3 +1,32 @@
+## ════════ STATUS (2026-09-02) — DD#86 Phase 4: dead-variable rejection (SB5050) ════════
+
+**On `hand-parser`.** DD#86 Phase 4 — the dual of DD#62 SB5031: a variable
+assigned but never read is a dead variable (**SB5050**). A global is dead if
+read nowhere in the program; a function-local if read nowhere in its function.
+
+**DG rulings (2026-09-02):** (1) more-specific error wins — dead-var runs LAST,
+after taint/type/transform (moved out of `validate()` to end of the front-end;
+`enforce_transform_diags` now runs for every backend); (2) `read`/`readc`/
+`mapfile` targets and `for` variables ARE checked (for-var no longer exempt);
+(3) `: $v` is the acknowledgment escape hatch (a real read per DD#81 arity).
+
+**Reuses the read-enumerator (DG):** inverted the SB5031 read-traversal via a
+shared `ReadSink` (Flag = SB5031, Collect = dead-var) — one read-recognition,
+so they can't diverge. SB5031-specific opt-outs (`${x:-…}`/`@a`, DD#58 sexpr
+names) live in the sink so Collect still counts them. Added value-fn bare
+operands (`len`/`join`/`keys`) + fixed two enumerator gaps (ArithTest `(( x ))`
+reads, bless array/map operand) that benefit SB5031 too.
+
+**Read-completeness proven:** 65 native breaks (hand-rolled, with FPs) → after
+the enumerator reuse, **every break was genuinely dead — 0 false positives**.
+Rewrote 14 genuinely-dead specs (`: $v`/`: @a`/`bless` to read the var).
+specs scope.sh 86.13–86.20. Full 3-mode sweep vs `30be5f6`: **native 0
+regressions +8, c 0 +8, janet 0 +8**. fmt/clippy clean; lib tests pass;
+complexity gate cleared. journal 228. Filed
+`bare-collection-name-operand-asymmetry` (DG asked).
+
+**Next:** Phase 5 (converter `local`→drop; GUIDE/SUBSET; DD#35 amend).
+
 ## ════════ STATUS (2026-09-01, cont) — DD#86 Phase 3: no shadowing (SB5049) ════════
 
 **On `hand-parser`.** DD#86 Phase 3 — a typed re-declaration

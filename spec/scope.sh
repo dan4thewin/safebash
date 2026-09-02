@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=12
+plan=20
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -80,8 +80,7 @@ bump
 
 # 86.11 a typed declaration of a NEW (non-global) name inside a function is a
 # fresh function-local — not a shadow
-run_sash 'int x = 1
-fn f { int y = 9; /bin/echo "y=$y" }
+run_sash 'fn f { int y = 9; /bin/echo "y=$y" }
 f'
 [[ $rc = 0 && $out = "y=9" && -z $err ]]; chk 86.11
 
@@ -90,6 +89,56 @@ run_sash 'array a = (1 2)
 fn f { array a = (3 4); /bin/echo ${a[0]} }
 f'
 [[ $rc != 0 && -z $out && $err == *SB5049* ]]; chk 86.12
+
+# ── Phase 4: dead-variable rejection (SB5050) ────────────────────
+# The dual of SB5031: a variable assigned but never read is an error.
+
+# 86.13 a global assigned but never read → SB5050
+run_sash 'int n = 5
+/bin/echo hi'
+[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 86.13
+
+# 86.14 a misspelled write target is caught from the write side (the DD#86
+# `coutn` example): the typo'd local is assigned but never read
+run_sash 'str count = "0"
+fn inc { coutn = count }
+inc
+/bin/echo "$count"'
+[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 86.14
+
+# 86.15 a read makes the variable live (no SB5050)
+run_sash 'int n = 5
+/bin/echo "n=$n"'
+[[ $rc = 0 && $out = "n=5" && -z $err ]]; chk 86.15
+
+# 86.16 `: $v` acknowledges a deliberately-unused write (DD#81 idiom) — a read
+run_sash 'int n = 5
+: $n
+/bin/echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 86.16
+
+# 86.17 an unused `for` loop variable is dead (DG: for-vars are ordinary vars)
+run_sash 'for i in 1 2 3; do /bin/echo hi; done'
+[[ $rc != 0 && $err == *SB5050* ]]; chk 86.17
+
+# 86.18 a read `for` loop variable is live
+run_sash 'for i in 1 2 3; do /bin/echo "$i"; done'
+[[ $rc = 0 && $out = $'1\n2\n3' && -z $err ]]; chk 86.18
+
+# 86.19 a global written in one function and read in another is live (the
+# method pattern — a program-wide read counts)
+run_sash 'str state = ""
+fn set_it { state = hi }
+fn show { /bin/echo "$state" }
+set_it
+show'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 86.19
+
+# 86.20 dead-var yields to a more-specific error: a tainted unread copy still
+# reports the taint (SB5020), not SB5050 (DG: more-specific error wins)
+run_sash 'y = $(getenv HOME)
+z = $y'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 86.20
 
 set -e
 tally
