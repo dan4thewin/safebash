@@ -476,7 +476,8 @@ fn bless_lit(e: &Expr) -> Option<&str> {
 /// Recognized flags: `-a ARR` (array target), `-d DELIM` (record delimiter),
 /// `-f SEP` (field separator). A byte flag's value is joined (`-dX`) or split
 /// (`-d X`); an EMPTY value (`-d ''`, or a bare trailing `-d`) means NUL
-/// (`\0`) — the bash `read -d ''` convention. Any other `-flag` is recorded in
+/// (`\0`) — the bash `read -d ''` convention. `-r` (raw) is accepted as an
+/// ignored no-op (sash reads are always raw). Any other `-flag` is recorded in
 /// `unknown_flag` (the transform turns that into SB5015).
 #[derive(Debug, Default)]
 pub struct ReadFlags {
@@ -527,6 +528,10 @@ fn classify_read_word(words: &[String], i: usize, f: &mut ReadFlags) -> usize {
         take_read_byte_flag(rest, words, i, &mut f.delim)
     } else if let Some(rest) = w.strip_prefix("-f") {
         take_read_byte_flag(rest, words, i, &mut f.field_sep)
+    } else if w == "-r" {
+        // sash reads are ALWAYS raw (no backslash processing), so `-r`
+        // requests the default — accept it as an ignored no-op.
+        0
     } else if w.starts_with('-') {
         f.unknown_flag.get_or_insert_with(|| w.clone());
         0

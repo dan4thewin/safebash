@@ -14,6 +14,19 @@ use std::collections::HashMap;
 use super::types::ExternFuncs;
 use crate::ssa::*;
 
+/// Append `params` I64 arguments and `returns` I64 results to `sig`. Every
+/// sash-rt ABI boundary is i64-only, so a runtime import signature is just a
+/// count of I64 slots — this keeps `declare_runtime_functions` free of
+/// repetitive push loops (and its cognitive complexity down).
+fn push_i64s(sig: &mut Signature, params: usize, returns: usize) {
+    for _ in 0..params {
+        sig.params.push(AbiParam::new(I64));
+    }
+    for _ in 0..returns {
+        sig.returns.push(AbiParam::new(I64));
+    }
+}
+
 /// Declare all runtime function signatures and return the ExternFuncs struct.
 ///
 /// TRUST: This is the complete list of runtime capabilities available to
@@ -37,9 +50,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_emsg(seg1_ptr, seg1_len, seg2_ptr, seg2_len) -> () — DD#55
     // abort diagnostic to stderr (no return value).
     let mut emsg_sig = Signature::new(CallConv::SystemV);
-    for _ in 0..4 {
-        emsg_sig.params.push(AbiParam::new(I64));
-    }
+    push_i64s(&mut emsg_sig, 4, 0);
     let emsg_func = module
         .declare_function("sash_emsg", Linkage::Import, &emsg_sig)
         .expect("declare sash_emsg");
@@ -47,9 +58,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_emsg_status(name_ptr, name_len, status) -> () — DD#55
     // status-based abort diagnostic (`command failed (exit N)`, no errno).
     let mut emsg_status_sig = Signature::new(CallConv::SystemV);
-    for _ in 0..3 {
-        emsg_status_sig.params.push(AbiParam::new(I64));
-    }
+    push_i64s(&mut emsg_status_sig, 3, 0);
     let emsg_status_func = module
         .declare_function("sash_emsg_status", Linkage::Import, &emsg_status_sig)
         .expect("declare sash_emsg_status");
@@ -57,9 +66,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_bless_fail(name_ptr, name_len, val_ptr, val_len) -> ! — bless
     // gate failure diagnostic (`<argv0>: bless: <name> = '<val>' failed …`).
     let mut bless_fail_sig = Signature::new(CallConv::SystemV);
-    for _ in 0..4 {
-        bless_fail_sig.params.push(AbiParam::new(I64));
-    }
+    push_i64s(&mut bless_fail_sig, 4, 0);
     let bless_fail_func = module
         .declare_function("sash_bless_fail", Linkage::Import, &bless_fail_sig)
         .expect("declare sash_bless_fail");
@@ -130,10 +137,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_splat_disposition(tbl, word_ptr, word_len, has_word, abort) -> tbl
     // (DD#69 external `@{a:-WORD}` / `@{a:?WORD}` empty-disposition)
     let mut splat_disposition_sig = Signature::new(CallConv::SystemV);
-    for _ in 0..5 {
-        splat_disposition_sig.params.push(AbiParam::new(I64));
-    }
-    splat_disposition_sig.returns.push(AbiParam::new(I64));
+    push_i64s(&mut splat_disposition_sig, 5, 1);
     let splat_disposition_func = module
         .declare_function(
             "sash_splat_disposition",
@@ -409,11 +413,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_regex_match_str(str_ptr, str_len, pat_ptr, pat_len) -> (ptr, len)
     // DD#63: whole-match capture for `$(match S P)`.
     let mut regex_match_str_sig = module.make_signature();
-    for _ in 0..4 {
-        regex_match_str_sig.params.push(AbiParam::new(I64));
-    }
-    regex_match_str_sig.returns.push(AbiParam::new(I64)); // ptr
-    regex_match_str_sig.returns.push(AbiParam::new(I64)); // len
+    push_i64s(&mut regex_match_str_sig, 4, 2); // returns (ptr, len)
     let regex_match_str_func = module
         .declare_function(
             "sash_regex_match_str",
@@ -425,10 +425,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     // sash_regex_match_into(str_ptr, str_len, pat_ptr, pat_len, table) -> i64
     // DD#63: out-array capture form `match S P ARR`.
     let mut regex_match_into_sig = module.make_signature();
-    for _ in 0..5 {
-        regex_match_into_sig.params.push(AbiParam::new(I64));
-    }
-    regex_match_into_sig.returns.push(AbiParam::new(I64));
+    push_i64s(&mut regex_match_into_sig, 5, 1);
     let regex_match_into_func = module
         .declare_function(
             "sash_regex_match_into",
@@ -439,11 +436,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
 
     // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
-    for _ in 0..7 {
-        regex_replace_sig.params.push(AbiParam::new(I64));
-    }
-    regex_replace_sig.returns.push(AbiParam::new(I64)); // ptr
-    regex_replace_sig.returns.push(AbiParam::new(I64)); // len
+    push_i64s(&mut regex_replace_sig, 7, 2); // returns (ptr, len)
     let regex_replace_func = module
         .declare_function("sash_regex_replace", Linkage::Import, &regex_replace_sig)
         .expect("declare sash_regex_replace");
@@ -737,11 +730,12 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_split_field", Linkage::Import, &split_field_sig)
         .expect("declare");
 
-    // sash_split_into_array(ptr, len, delim, table) → void
+    // sash_split_into_array(ptr, len, delim, terminator, table) → void
     let mut split_arr_sig = module.make_signature();
     split_arr_sig.params.push(AbiParam::new(I64)); // ptr
     split_arr_sig.params.push(AbiParam::new(I64)); // len
     split_arr_sig.params.push(AbiParam::new(I64)); // delim
+    split_arr_sig.params.push(AbiParam::new(I64)); // terminator (drop trailing empty)
     split_arr_sig.params.push(AbiParam::new(I64)); // table
     let split_into_array_func = module
         .declare_function("sash_split_into_array", Linkage::Import, &split_arr_sig)

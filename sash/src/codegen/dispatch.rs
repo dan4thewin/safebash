@@ -1091,12 +1091,16 @@ impl SsaInst {
         let data_ptr = builder.inst_results(call)[0];
         let data_len = builder.inst_results(call)[1];
 
-        // Split by delimiter into array
+        // Split by delimiter into array. An explicit `-d` (delim.is_some())
+        // uses terminator semantics (drop a trailing empty); the default
+        // space split keeps separator semantics.
         let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
         let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
-        builder
-            .ins()
-            .call(split_ref, &[data_ptr, data_len, delim_val, table_ptr]);
+        let terminator = builder.ins().iconst(I64, delim.is_some() as i64);
+        builder.ins().call(
+            split_ref,
+            &[data_ptr, data_len, delim_val, terminator, table_ptr],
+        );
         false
     }
 

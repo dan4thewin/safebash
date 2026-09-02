@@ -3320,11 +3320,22 @@ fn itoa_buf(n: i64, buf: &mut [u8; 20]) -> usize {
 
 /// Split a string by a single-byte delimiter and store results into an existing table.
 /// Each token becomes an entry with integer index key (0, 1, 2, ...).
+///
+/// `terminator` selects the delimiter discipline for a trailing delimiter:
+///   * `0` — SEPARATOR: a trailing delimiter yields a trailing empty element
+///     (`a:b:` → `a`,`b`,``). This is the default whitespace-split behavior.
+///   * non-zero — TERMINATOR: a trailing delimiter does NOT create a final
+///     empty element (`a:b:` → `a`,`b`), matching bash `mapfile -d ''` and the
+///     `find -print0` / `xargs -0` convention. Used for an explicit `read -d`.
+/// Interior empty records (`a::b`) are kept in BOTH modes; only a single
+/// trailing empty produced by a final delimiter is dropped under terminator
+/// semantics.
 #[no_mangle]
 pub unsafe extern "C" fn sash_split_into_array(
     ptr: *const u8,
     len: usize,
     delim: i64,
+    terminator: i64,
     table: *mut u8,
 ) {
     if ptr.is_null() || len == 0 {
@@ -3335,22 +3346,29 @@ pub unsafe extern "C" fn sash_split_into_array(
     let mut idx: i64 = 0;
     let mut start = 0;
     for i in 0..=len {
-        let at_delim = if i < len { data[i] == d } else { true };
-        if at_delim {
-            let token_ptr = ptr.add(start);
-            let token_len = i - start;
-            // Key = 8-byte i64 index (same format as IndexedArray)
-            let key_bytes = idx.to_ne_bytes();
-            sash_table_set(
-                table as *mut SashTable,
-                key_bytes.as_ptr(),
-                8_i64,
-                token_ptr,
-                token_len as i64,
-            );
-            idx += 1;
-            start = i + 1;
+        let at_end = i == len;
+        let at_delim = if at_end { true } else { data[i] == d };
+        if !at_delim {
+            continue;
         }
+        // Terminator semantics: the input ended exactly on a delimiter, so the
+        // final record is empty and elided (bash `mapfile -d ''`).
+        if at_end && terminator != 0 && start == len {
+            break;
+        }
+        let token_ptr = ptr.add(start);
+        let token_len = i - start;
+        // Key = 8-byte i64 index (same format as IndexedArray)
+        let key_bytes = idx.to_ne_bytes();
+        sash_table_set(
+            table as *mut SashTable,
+            key_bytes.as_ptr(),
+            8_i64,
+            token_ptr,
+            token_len as i64,
+        );
+        idx += 1;
+        start = i + 1;
     }
 }
 

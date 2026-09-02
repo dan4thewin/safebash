@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=77
+plan=80
 echo "1..$plan" >&3
 
 set +e
@@ -357,6 +357,29 @@ run_sash 'echo hi | read -z x; echo $x'
 # 22.24 same rejection standalone (contract with cov.20)
 run_sash 'read -z x < /etc/hostname'
 [[ $rc != 0 && -z $out && $err == *SB5015* ]]; chk 22.24
+
+# 22.25 `-r` (raw) is accepted as an ignored no-op — sash reads are ALWAYS
+# raw (no backslash processing), so `-r` requests the default. bash scripts
+# use `read -r` ubiquitously; a hand-written `read -r x` must not be an error.
+run_sash 'echo hi | read -r x; echo "[$x]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk 22.25
+
+# 22.26 `-d` uses TERMINATOR semantics: a trailing delimiter does NOT create a
+# trailing empty element (bash `mapfile -d ''` / `find -print0` / `xargs -0`).
+# NUL-terminated input (the sash-getopt idiom) yields only the real fields, so
+# every element is non-empty and a bless-all `[[ -n $x ]]` succeeds. janet lacks
+# custom-delimiter array reads, so gate native,c.
+if in_modes native,c; then
+    run_sash 'array arr=(); printf "x\0y\0" | read -a arr -d ""; bless e in arr [[ -n $e ]]; echo "$(len arr)"'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
+
+    # 22.27 interior empty records are KEPT under terminator semantics; only the
+    # single trailing empty from a final delimiter is dropped (`a::b:` → a,"",b).
+    run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; bless e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
+    [[ $rc = 0 && $out = "3:[]" && -z $err ]]; chk 22.27
+else
+    skip_chk 22.26; skip_chk 22.27
+fi
 
 
 set -e

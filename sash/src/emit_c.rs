@@ -350,7 +350,7 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern sash_pair sash_read_all(i64 fd);").unwrap();
     writeln!(
         out,
-        "extern void sash_split_into_array(const char* p, i64 l, i64 delim, unsigned char* tbl);"
+        "extern void sash_split_into_array(const char* p, i64 l, i64 delim, i64 terminator, unsigned char* tbl);"
     )
     .unwrap();
     writeln!(out).unwrap();
@@ -3744,11 +3744,13 @@ fn emit_read_array(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, types:
     .unwrap();
     writeln!(e.out, "    __test_result = ({t}.len > 0) ? 1 : 0;", t = t).unwrap();
     let d = delim.map(|b| b as i64).unwrap_or(b' ' as i64);
+    let term = i64::from(delim.is_some());
     writeln!(
         e.out,
-        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, {d}, (unsigned char*){tbl});",
+        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, {d}, {term}, (unsigned char*){tbl});",
         t = t,
         d = d,
+        term = term,
         tbl = table_expr
     )
     .unwrap();

@@ -1,3 +1,23 @@
+## ════════ STATUS (2026-09-02) — `read -r` no-op; `read -d` = terminator ════════
+
+**On `hand-parser`.** DG: "we add -r as a no-op and we change -d to be
+terminator not separator" (the two top recommendations from the
+`read-behaviors-not-wired` survey). Both shipped:
+- **`-r`** — accepted as an ignored no-op in `ir::classify_read_flags` (sash
+  reads are always raw; was SB5015). Fixes the hand-written `read -r x` tax.
+  Bundled `-rd ''` still unsupported (sash bundles no flags).
+- **`-d`** — now **terminator** semantics: an explicit `read -d` drops the
+  trailing empty from a final delimiter (bash `mapfile -d ''` / `find
+  -print0`). Threaded a `terminator` arg to `sash_split_into_array`, set iff
+  `delim.is_some()`. Interior empties (`a::b`) kept; the **default** space
+  split (no `-d`) keeps separator semantics (DG scoped to `-d`). The getopt
+  idiom is now clean — `sash-getopt … | read -a opts -d ''` has no trailing
+  `[]`, and `bless e in opts [[ -n $e ]]` passes.
+
+specs wordsplit.sh 22.25–22.27 (plan 77→80). 3-mode sweep vs `562fc36`:
+native 0 regressions, c 0, janet 0 (+3/+3/+1). journal 233. Survey task marked
+done; remaining `-n`/`-N`/`-u`/interactive flags stay unimplemented.
+
 ## ════════ STATUS (2026-09-02) — read-flag parsers unified; `read -d ''` = NUL ════════
 
 **On `hand-parser`.** DG: "unify them, support -d '', call out other read
