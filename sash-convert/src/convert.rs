@@ -220,17 +220,13 @@ fn convert_declaration(
     let is_declare = keyword_text == "declare" || keyword_text == "typeset";
     let is_readonly = keyword_text == "readonly";
 
-    if is_local {
-        parts.push("local");
-    }
+    // DD#86: `local` is removed from sash — scope is structural (a name first
+    // assigned in a function is auto-local). Drop the keyword; the type
+    // keywords (int/array/map/const) from the flags stay.
 
     if is_readonly || flags.contains(&"-r".to_string()) {
         parts.push("const");
     }
-
-    let has_type_flag = flags.contains(&"-i".to_string())
-        || flags.contains(&"-a".to_string())
-        || flags.contains(&"-A".to_string());
 
     if flags.contains(&"-i".to_string()) {
         parts.push("int");
@@ -241,8 +237,9 @@ fn convert_declaration(
         parts.push("array");
     }
 
-    // For bare `declare x=5` or `typeset x=5` with no flags → bare assignment
-    let needs_conversion = is_declare || is_readonly || (is_local && has_type_flag);
+    // For bare `declare x=5` / `typeset x=5` / `local x=5` (no flags) → a bare
+    // assignment (DD#86: `local` stripped, the keyword-less form is auto-local).
+    let needs_conversion = is_declare || is_readonly || is_local;
 
     if !needs_conversion {
         return;

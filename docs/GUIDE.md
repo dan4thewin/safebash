@@ -255,7 +255,7 @@ Also drives `emit_source.rs` for `--emit-source` output.
 `declare -i` stickiness. Cross-type assignment without conversion
 is a compile-time error.
 
-- `declare int x=5` / `local int x` / `declare -i x` — int variables
+- `int x=5` / `declare int x=5` / `declare -i x` — int variables
 - `fn name() -> int { }` — int-returning functions
 - `$#`, `$?`, `$((...))` — intrinsically int
 

@@ -98,14 +98,16 @@ fn coerce_let_to_arith() {
 }
 
 #[test]
-fn coerce_local_i_to_local_int() {
+fn coerce_local_i_to_int() {
+    // DD#86: `local` is removed — `local -i x=5` converts to `int x=5`
+    // (the keyword is dropped; scope is structural / auto-local).
     let out = convert(
         "coerce_local_int",
         "#!/bin/bash\nf() { local -i x=5; echo $x; }\nf",
     );
     assert!(
-        out.contains("local int x=5"),
-        "expected 'local int', got:\n{}",
+        out.contains("int x=5") && !out.contains("local"),
+        "expected 'int x=5' without 'local', got:\n{}",
         out
     );
 }

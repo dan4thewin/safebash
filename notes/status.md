@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-09-02) — DD#86 Phase 5: converter drops `local`; docs. DD#86 COMPLETE ════════
+
+**On `hand-parser`.** DD#86 Phase 5 (migration/cleanup) — the converter no
+longer emits `local` (it produced uncompilable sash): bare `local x=5` → `x=5`
+(auto-local), `local -i x=5` → `int x=5`, `local -r` → `const`. Round-trip
+verified; 18 sash-convert tests pass (`coerce_local_i_to_int` updated). Docs:
+GUIDE dropped the `local int x` example; DD#35 amended (lifetime axis retired,
+`str` added). Shadow-rename refinement filed (`converter-shadowing-local-
+rename`). journal 229.
+
+**DD#86 is COMPLETE (phases 1–5):** 1 `str` keyword; 2 drop `local`/`local fn` +
+structural scope; 3 no-shadow (SB5049); 4 dead-variable rejection (SB5050);
+5 converter + docs. No `local`, no shadowing, structural scope, use-before-and-
+after (SB5031 + SB5050).
+
 ## ════════ STATUS (2026-09-02) — DD#86 Phase 4: dead-variable rejection (SB5050) ════════
 
 **On `hand-parser`.** DD#86 Phase 4 — the dual of DD#62 SB5031: a variable

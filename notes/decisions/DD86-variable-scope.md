@@ -112,5 +112,9 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    acknowledgment escape hatch (a real read, per DD#81 arity). Filed
    `bare-collection-name-operand-asymmetry` (builtin bare-name vs user-fn
    splat).**
-5. Retire `local fn`; converter; specs; GUIDE/SUBSET. **— `local fn` done in
-   Phase 2; remaining: converter `local`→drop, GUIDE/SUBSET, DD#35 amend.**
+5. Retire `local fn`; converter; specs; GUIDE/SUBSET. **— shipped (journal
+   229). `local fn` retired in Phase 2; the converter now drops `local`
+   (bare `local x=5` → `x=5`, `local -i x=5` → `int x=5`); GUIDE + DD#35
+   amended (lifetime axis retired, `str` added). Remaining refinement: the
+   converter does not yet detect+rename a bash local that *shadowed* a global
+   (flag-for-review) — filed follow-up.**
