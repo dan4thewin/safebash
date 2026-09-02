@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=97
+plan=100
 echo "1..$plan" >&3
 
 set +e
@@ -107,6 +107,16 @@ run_sash 'x=$(/bin/false); bless x [[ -n $x ]]'
 # scan — closed 2026-08-19 by the multi-statement-cmdsub taint fix.)
 run_sash 'x=$(- /bin/echo hello); bless x [[ -n $x ]]; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 55.9
+
+# 55.9b x=$(- cmd) does NOT abort when the captured command FAILS (55.9 only
+# tested a succeeding /bin/echo). DD#55: `-` discards the exit status, so a
+# failed `$(- /bin/false)` yields empty output and continues — mirroring the
+# statement-position `- /bin/false` (55.4). native,c: janet's `$(- cmd)`
+# capture is a separate TODO.
+if in_modes native,c; then
+    run_sash 'x=$(- /bin/false); bless x [[ -z $x ]]; echo "survived[$x]"'
+    [[ $rc = 0 && $out = "survived[]" && -z $err ]]; chk 55.9b
+else skip_chk 55.9b; fi
 
 # 55.10 pipefail always on
 run_sash '/bin/false | /bin/true'
@@ -378,6 +388,14 @@ run_sash '! x=foo'
 # br6 a typed declaration is also a value binding
 run_sash 'if int x=5; then echo t; fi'
 [[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br6
+# br8 a *capturing* assignment gets honest advice: sequencing a `$(…)` can't
+# reproduce capture+branch (a failed capture aborts first), so the message says
+# so — NOT the generic "sequence it" that misleads for this case.
+run_sash 'if ! out=$(printf x) { echo b }'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* && $err == *"isn't currently supported"* ]]; chk e.br8
+# br9 the literal (non-capture) case keeps the plain "sequence it" advice
+run_sash 'x=hi && echo $x'
+[[ $rc != 0 && -z $out && $err == *'SB4025'* && $err == *'sequence it'* ]]; chk e.br9
 # br7 (positive) a real status producer is still a valid condition
 run_sash 'if true; then echo t; fi'
 [[ $rc = 0 && $out = "t" && -z $err ]]; chk e.br7

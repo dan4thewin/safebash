@@ -272,9 +272,11 @@ pub(super) fn lower_value(
         SsaValue::CmdSubst {
             argv: argv_values,
             redirects,
+            suppressed,
         } => handle_cmdsub(
             argv_values,
             redirects,
+            *suppressed,
             builder,
             module,
             vars,

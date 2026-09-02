@@ -458,10 +458,14 @@ pub enum SsaValue {
         args: Vec<SsaValue>,
     },
     /// Runtime command substitution: fork/exec, capture stdout.
-    /// Carries the command name and arguments as expressions.
+    /// Carries the command name and arguments as expressions. `suppressed` is
+    /// set for `$(- cmd)` (DD#55): the captured command's exit status is
+    /// discarded and a nonzero exit does NOT abort (mirrors statement-position
+    /// `- cmd`).
     CmdSubst {
         argv: Vec<SsaValue>,
         redirects: Vec<crate::ir::Redirect>,
+        suppressed: bool,
     },
     /// A **multi-statement / pipeline** command substitution body
     /// (`$(x=1; echo $x)`, `$(a | b)`). A transform-only intermediate: it is

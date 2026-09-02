@@ -1,3 +1,28 @@
+## ════════ STATUS (2026-09-02) — `if ! out=$(cmd)`: decision filed + 2 bug fixes ════════
+
+**On `hand-parser`.** DG asked whether SB4025's "sequence it" advice works for
+`if ! out=$(cmd) { echo bang }`. It doesn't — capture stdout AND branch on a
+command's status has no working sash form. DG: "capture this as a decision
+task; then address only the existing bugs, but not new features" + "I consider
+the bad sequencing advice a bug too."
+- **Decision (feature, deferred):** filed `multi-assignment-and-capture-trio`
+  — general multi-value `return` + external capture as `(stdout, status,
+  stderr)`; crux rule = *binding the status toggles catch vs. abort*; owns the
+  SB4025↔DD#55 conflict resolution. No impl until DG settles the axes.
+- **Bug 1 (fixed):** SB4025's "sequence it" advice was wrong for a `$(…)`
+  capture (a failed capture aborts before any follow-up check). Made
+  `nonstatus_in_condition_diag` RHS-aware (`value_is_capture`): capture → honest
+  advice (`if ! cmd { }`; capture+branch unsupported); literal → keeps "sequence
+  it". specs e.br8/e.br9.
+- **Bug 2 (fixed):** `x=$(- /bin/false)` aborted, but DD#55 says `-` discards
+  the status (no abort) — spec 55.9 only tested a succeeding `$(- /bin/echo)`.
+  The single-command capture fast-path dropped the `-` suppression; `CmdSubst`
+  gains `suppressed`, detected in `handle_command_substitution`, gating the
+  abort in native + c. spec 55.9b.
+
+3-mode sweep vs HEAD: native 0 regressions, c 0, janet 0 (+1/+1 55.9b;
+e.br8/e.br9 all modes). journal 235.
+
 ## ════════ STATUS (2026-09-02) — bugfix: positional `${N:OP}` == `${args[N-1]:OP}` ════════
 
 **On `hand-parser`.** DG hit a spurious **SB5042** on a function using `${2:~}`

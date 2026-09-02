@@ -468,6 +468,7 @@ pub(crate) fn emit_case_conversion(
 pub(super) fn handle_cmdsub(
     argv_values: &[SsaValue],
     redirects: &[crate::ir::Redirect],
+    suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -492,6 +493,7 @@ pub(super) fn handle_cmdsub(
     emit_cmdsub_exec(
         argv_values,
         redirects,
+        suppressed,
         builder,
         module,
         vars,
@@ -770,6 +772,7 @@ pub(super) fn int_intrinsic_i64(
 fn emit_cmdsub_exec(
     argv_values: &[SsaValue],
     redirects: &[crate::ir::Redirect],
+    suppressed: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,
@@ -906,33 +909,14 @@ fn emit_cmdsub_exec(
     let wait_call = builder.ins().call(wait_ref, &[pid]);
     let cmd_status = builder.inst_results(wait_call)[0];
 
-    // DD#55: store exit status and check — abort if nonzero
+    // DD#55: store exit status and check — abort if nonzero. `$(- cmd)`
+    // (suppressed) discards the status and does NOT abort (mirrors a
+    // statement-position `- cmd`); the captured stdout is still returned.
     if let Some(esv) = exit_status_var {
         builder.def_var(esv, cmd_status);
-
-        let zero_s = builder.ins().iconst(I64, 0);
-        let failed = builder.ins().icmp(IntCC::NotEqual, cmd_status, zero_s);
-        let abort_block = builder.create_block();
-        let cont_block = builder.create_block();
-        builder
-            .ins()
-            .brif(failed, abort_block, &[], cont_block, &[]);
-
-        builder.switch_to_block(abort_block);
-        builder.seal_block(abort_block);
-        // DD#55 diagnostic: `<argv0>: <name>: command failed (exit N)`.
-        if let Some(SsaValue::Literal(name)) = argv_values.first() {
-            let (np, nl) = super::inst_handlers::diag_static_seg(name, literals, module, builder);
-            let emsg_status_ref = module.declare_func_in_func(externs.emsg_status, builder.func);
-            builder.ins().call(emsg_status_ref, &[np, nl, cmd_status]);
+        if !suppressed {
+            emit_cmdsub_abort_check(cmd_status, argv_values, builder, module, literals, externs);
         }
-        // TODO: DD#56 — route to END block for cmdsub abort
-        let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
-        builder.ins().call(exit_ref, &[cmd_status]);
-        builder.ins().trap(TrapCode::user(1).unwrap());
-
-        builder.switch_to_block(cont_block);
-        builder.seal_block(cont_block);
     }
 
     // Strip trailing newline (shell convention for $(...))
@@ -957,4 +941,42 @@ fn emit_cmdsub_exec(
     let result_len = builder.ins().select(is_empty, zero_total, result_len);
 
     (buf_ptr, result_len)
+}
+
+/// DD#55: a failed non-suppressed `$(cmd)` capture aborts — print
+/// `<argv0>: <name>: command failed (exit N)` and `sash_exit(status)`. Emitted
+/// only when the capture is unsuppressed (extracted from `emit_cmdsub_exec` so
+/// the suppression guard stays a single branch).
+#[allow(clippy::too_many_arguments)]
+fn emit_cmdsub_abort_check(
+    cmd_status: cranelift_codegen::ir::Value,
+    argv_values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+) {
+    let zero_s = builder.ins().iconst(I64, 0);
+    let failed = builder.ins().icmp(IntCC::NotEqual, cmd_status, zero_s);
+    let abort_block = builder.create_block();
+    let cont_block = builder.create_block();
+    builder
+        .ins()
+        .brif(failed, abort_block, &[], cont_block, &[]);
+
+    builder.switch_to_block(abort_block);
+    builder.seal_block(abort_block);
+    // DD#55 diagnostic: `<argv0>: <name>: command failed (exit N)`.
+    if let Some(SsaValue::Literal(name)) = argv_values.first() {
+        let (np, nl) = super::inst_handlers::diag_static_seg(name, literals, module, builder);
+        let emsg_status_ref = module.declare_func_in_func(externs.emsg_status, builder.func);
+        builder.ins().call(emsg_status_ref, &[np, nl, cmd_status]);
+    }
+    // TODO: DD#56 — route to END block for cmdsub abort
+    let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
+    builder.ins().call(exit_ref, &[cmd_status]);
+    builder.ins().trap(TrapCode::user(1).unwrap());
+
+    builder.switch_to_block(cont_block);
+    builder.seal_block(cont_block);
 }

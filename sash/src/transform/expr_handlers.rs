@@ -29,7 +29,25 @@ pub(super) fn handle_command_substitution(expr: &Expr, state: &VersionState) -> 
         StmtKind::Redirected(r) => r.redirects.clone(),
         _ => vec![],
     };
-    SsaValue::CmdSubst { argv, redirects }
+    // DD#55: `$(- cmd)` suppresses the captured command's exit check (no abort
+    // on failure), mirroring statement-position `- cmd`. `single_command_subst`
+    // peeled the `Suppressed` wrapper to reach the command, so detect it here.
+    let suppressed = subst_is_suppressed(&stmt.kind);
+    SsaValue::CmdSubst {
+        argv,
+        redirects,
+        suppressed,
+    }
+}
+
+/// True when a `$(…)` single-command body carries a `- ` suppression prefix
+/// (`$(- cmd)`, `$(- cmd >f)`) — peels `Redirected` wrappers to find it.
+fn subst_is_suppressed(kind: &StmtKind) -> bool {
+    match kind {
+        StmtKind::Redirected(r) => subst_is_suppressed(&r.body.kind),
+        StmtKind::Suppressed(_) => true,
+        _ => false,
+    }
 }
 
 /// Resolve a single-command `$(name …)`: a **defined-so-far** function → capture
@@ -585,6 +603,7 @@ fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
         "getppid" | "argc" | "random" | "signum" | "epochseconds" => Some(SsaValue::CmdSubst {
             argv: vec![SsaValue::Literal(name.to_string())],
             redirects: vec![],
+            suppressed: false,
         }),
         // `(x)` on a plain variable is arithmetic GROUPING, not a call: the
         // arith parser emits `FuncCall` for every `(name)` and defers the

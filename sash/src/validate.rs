@@ -355,7 +355,12 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
             // DD#70/#71: a typed declaration is a value binding, not a
             // boolean/exit-status — it cannot be a condition.
             if in_condition {
-                diags.push(nonstatus_in_condition_diag(stmt.span, "a declaration"));
+                let is_capture = d.assignments.iter().any(|a| value_is_capture(&a.value));
+                diags.push(nonstatus_in_condition_diag(
+                    stmt.span,
+                    "a declaration",
+                    is_capture,
+                ));
             }
             validate_declaration(d, stmt.span, diags)
         }
@@ -445,22 +450,47 @@ fn validate_assignment_stmt(
     } else if in_condition {
         // DD#70/#71: a (non-arith) assignment is a value binding, not a
         // boolean/exit-status — it cannot be a condition.
-        diags.push(nonstatus_in_condition_diag(span, "an assignment"));
+        diags.push(nonstatus_in_condition_diag(
+            span,
+            "an assignment",
+            value_is_capture(&a.value),
+        ));
     }
 }
 
 /// DD#70/#71 dual (SB4025): a value binding (assignment / declaration) used
 /// where a boolean or exit status is consumed (an `if`/`while`/`until`
-/// condition, the left of `&&`/`||`, or the operand of `!`).
-fn nonstatus_in_condition_diag(span: Span, what: &str) -> Diagnostic {
-    Diagnostic::error_span(
-        span,
-        "SB4025",
+/// condition, the left of `&&`/`||`, or the operand of `!`). When the bound
+/// value is a command substitution the generic "sequence it" advice is wrong
+/// (a failed `$(…)` aborts before any follow-up check), so give honest,
+/// capture-specific guidance instead.
+fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diagnostic {
+    let advice = if is_capture {
+        format!(
+            "{what} binds the captured output, not the command's exit status — and sequencing \
+             won't help (a failed `$(…)` aborts before any check). To branch on the command, run \
+             it in the condition without capturing: `if ! cmd {{ … }}`. Capturing output *and* \
+             branching on that command's status isn't currently supported."
+        )
+    } else {
         format!(
             "{what} is a value binding, not a boolean or exit status — it cannot be used as a \
              condition; sequence it instead (e.g. `x=foo; if …`)"
-        ),
-    )
+        )
+    };
+    Diagnostic::error_span(span, "SB4025", advice)
+}
+
+/// True when an assignment/declaration value is (or contains) a command
+/// substitution — `out=$(cmd)`, `out="$(cmd)"`, etc.
+fn value_is_capture(expr: &Expr) -> bool {
+    let mut found = false;
+    crate::ir::walk_expr_tree(expr, &mut |e| {
+        if matches!(e.kind, ExprKind::CommandSubstitution(_)) {
+            found = true;
+        }
+    });
+    found
 }
 
 fn validate_if(i: &If, diags: &mut Vec<Diagnostic>) {

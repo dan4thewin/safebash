@@ -1140,7 +1140,9 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // Phase 3: $(...) → handle_cmdsub
         // (codegen/value_handlers.rs:691). Tries native intrinsics
         // first; external exec is deferred to Phase 4.
-        SsaValue::CmdSubst { argv, .. } => emit_cmdsub(e, argv, types),
+        SsaValue::CmdSubst {
+            argv, suppressed, ..
+        } => emit_cmdsub(e, argv, *suppressed, types),
         // Concat in value position (assignment RHS, subscript-assign value):
         // left-fold the parts through sash_concat, mirroring native
         // lower_concat_value (codegen/values.rs:314).
@@ -2696,12 +2698,12 @@ fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
 /// Tries native intrinsics first (getenv, epochseconds, etc.); on
 /// non-intrinsic name, falls through to a TODO that defers to
 /// Phase 4's external-exec path.
-fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
+fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTypes) -> CStr {
     if let Some(SsaValue::Literal(name)) = argv.first() {
         if let Some(result) = try_native_intrinsic_c(e, name, argv, types) {
             return result;
         }
-        return emit_cmdsub_exec_c(e, name, &argv[1..], types);
+        return emit_cmdsub_exec_c(e, name, &argv[1..], suppressed, types);
     }
     writeln!(e.out, "    /* TODO cmdsub: non-literal cmd (Phase 4) */").unwrap();
     ("\"\"".to_string(), "0".to_string())
@@ -2709,10 +2711,16 @@ fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], types: &VarTypes) -> CStr {
 
 /// External `$(cmd args…)` capture: build argv, fork/exec and capture stdout
 /// via `sash_capture_status`, set `$?`, and abort on nonzero — mirrors native
-/// `emit_cmdsub_exec` (value_handlers.rs:915), which aborts unconditionally on
-/// a failed cmdsub. The captured (ptr, len) is returned (trailing newline
-/// already stripped by the runtime).
-fn emit_cmdsub_exec_c(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes) -> CStr {
+/// `emit_cmdsub_exec` (value_handlers.rs). `suppressed` (`$(- cmd)`, DD#55)
+/// discards the status and skips the abort; the captured (ptr, len) is returned
+/// (trailing newline already stripped by the runtime).
+fn emit_cmdsub_exec_c(
+    e: &mut Emit,
+    name: &str,
+    args: &[SsaValue],
+    suppressed: bool,
+    types: &VarTypes,
+) -> CStr {
     let argv = emit_argv(e, name, args, types, "    ");
     let t = e.fresh();
     writeln!(
@@ -2728,7 +2736,9 @@ fn emit_cmdsub_exec_c(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTy
         t = t
     )
     .unwrap();
-    writeln!(e.out, "    if ({t}_st != 0) sash_exit({t}_st);", t = t).unwrap();
+    if !suppressed {
+        writeln!(e.out, "    if ({t}_st != 0) sash_exit({t}_st);", t = t).unwrap();
+    }
     (format!("{}_p", t), format!("{}_l", t))
 }
 
