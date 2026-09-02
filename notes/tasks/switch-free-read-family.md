@@ -15,9 +15,16 @@ gates:
 > avoids. The sanctioned getopt idiom is instead **NUL-splitting**: vendor a
 > patched `sash-getopt` (util-linux getopt, defaulting to NUL field separation +
 > no quoting) piped into a NUL-delimited `read`. `readc` and all its cooked
-> machinery were removed (journal 230). This task's remaining open question is
-> now just the broader read-family surface (`readr`? drop `-a`/`-f`/`-d`; the
-> NUL-read surface `read -z` vs a distinct form; the two `parse_read_flags`).
+> machinery were removed (journal 230). `sash-getopt` is vendored + building +
+> tested (journal 231, `sash-getopt/sash-getopt.c`).
+>
+> **OPEN — the NUL-read consumer surface.** The runtime is ready
+> (`sash_split_into_array` is length-based / NUL-safe; `read -a arr` splits on
+> `flags.delim`), so only the *surface* for requesting a NUL delimiter is
+> undecided: `read -z` (currently REJECTED, SB5015 / spec cov.20), `read -d ''`
+> (bash's NUL convention; `consume_byte_flag` would need empty → 0), a distinct
+> command, or the `@arr` splat. This is the concrete next decision for this
+> task.
 
 # Switch-free builtins — the `readr`/`readc` question
 

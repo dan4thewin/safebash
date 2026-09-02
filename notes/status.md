@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-09-02) — `sash-getopt` vendored (NUL/unquoted) ════════
+
+**On `hand-parser`.** Second half of the readc-drop directive: vendored
+`sash-getopt` from `~/contrib/util-linux/misc-utils/getopt.c` (Frodo Looijaard,
+GPL-2+; header preserved). Stripped the util-linux deps (nls/xalloc/strutils/
+closestream → small inline helpers), kept the getopt(3)/getopt_long core +
+`-o`/`-l`/`-n`/`-a`/`-q`/`-Q`/`-T`/`-U`. **Patched the output to NUL-separated,
+unquoted fields, no trailing newline** — `emit(s)` writes `s\0`; `print_normalized`
+(shell-quoting) removed; `-s`/`-u` accepted-and-ignored. `sash-getopt -o ab: --
+-a -b val 'has space'` → `-a\0-b\0val\0--\0has space\0` (space-bearing arg is one
+field). Build: `target/release/sash-getopt` (`cc -O2`) in mkfile `build`;
+`sash-getopt-test` in `test`; `contrib/test-getopt.sh` (5 checks, all pass).
+journal 231.
+
+**OPEN — the NUL-read consumer.** The runtime split is already NUL-safe
+(`sash_split_into_array` length-based; `read -a` splits on `flags.delim`); only
+the *surface* for a NUL delimiter is undecided (`read -z` is rejected today,
+SB5015/cov.20). Flagged in `switch-free-read-family` for a DG decision.
+
 ## ════════ STATUS (2026-09-02) — `readc` DROPPED (getopt-NUL route) ════════
 
 **On `hand-parser`.** DG dropped `readc` (cooked read, shipped `0445fe1`) after

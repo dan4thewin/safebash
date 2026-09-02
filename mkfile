@@ -3,7 +3,7 @@ SASH=sash
 CONVERT=sash-convert
 CSRC=`ls sash-rt/csrc/*.c sash-rt/csrc/*.S sash-rt/csrc/*.h | tr '\n' ' '`
 
-build:V: $RT/target/release/libsash_rt.a target/release/sash-regex
+build:V: $RT/target/release/libsash_rt.a target/release/sash-regex target/release/sash-getopt
 	(cd $SASH && cargo build --release)
 	(cd $CONVERT && cargo build --release)
 
@@ -11,10 +11,14 @@ target/release/sash-regex: sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash
 	mkdir -p target/release
 	cc -O2 -o target/release/sash-regex sash-rt/csrc/sash-regex.c sash-rt/csrc/regcomp.c sash-rt/csrc/regexec.c sash-rt/csrc/regaux.c -I sash-rt/csrc
 
+target/release/sash-getopt: sash-getopt/sash-getopt.c
+	mkdir -p target/release
+	cc -O2 -o target/release/sash-getopt sash-getopt/sash-getopt.c
+
 $RT/target/release/libsash_rt.a: $RT/src/lib.rs $CSRC
 	(cd $RT && cargo clean -p sash-rt 2>/dev/null; cargo build --release)
 
-test:V: build regex-test sash-grep-test status
+test:V: build regex-test sash-grep-test sash-getopt-test status
 	(cd $SASH && cargo test --release)
 	(cd $CONVERT && cargo test --release)
 	(cd sash-expand && cargo test --release)
@@ -25,6 +29,9 @@ regex-test:V:
 
 sash-grep-test:V: build
 	PATH=target/release:$$PATH bash contrib/test-regex.sh
+
+sash-getopt-test:V: target/release/sash-getopt
+	bash contrib/test-getopt.sh
 
 spec:V: build
 	bash spec/run.sh
