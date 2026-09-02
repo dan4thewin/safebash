@@ -322,11 +322,15 @@ fn pe_operand_string(pe: &ParameterExpansion) -> String {
 }
 
 /// The subject of a `${…:OP}` disposition: a scalar var read, or the cell read
-/// when the expansion carries an array/map index (`${a[i]:OP}`).
+/// when the expansion carries an array/map index (`${a[i]:OP}`). A positional
+/// name (`${N:OP}`, `${N}`) reads the current function's `args[N-1]` cell — NOT
+/// a scalar variable named "N" (which would always be empty, so every `${N:-}`
+/// defaulted and every `${N:~}` elided regardless of the argument).
 fn pe_source_value(pe: &ParameterExpansion, state: &VersionState) -> SsaValue {
     match &pe.index {
         Some(index) => subscript_to_value(&pe.name, index, state),
-        None => SsaValue::Var(state.lookup(&pe.name)),
+        None => positional_to_value(&pe.name, state)
+            .unwrap_or_else(|| SsaValue::Var(state.lookup(&pe.name))),
     }
 }
 

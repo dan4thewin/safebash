@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-09-02) — bugfix: positional `${N:OP}` == `${args[N-1]:OP}` ════════
+
+**On `hand-parser`.** DG hit a spurious **SB5042** on a function using `${2:~}`
+called with one arg. Root cause = two coupled bugs (the positional `${N:OP}`
+disposition form was never tested — all DD#84 specs used `${args[k]:OP}`):
+1. **Arity** (`sig_scan_pexp`): a positional `${N:-}`/`${N:~}` was marked
+   REQUIRED (fell through to `sig_record_name`, ignoring the operator), so
+   `${2:~}` demanded 2 args → SB5042. Now classified optional like the
+   `args[k]` path.
+2. **Value** (`pe_source_value`): a no-index `${N:OP}` read `Var(lookup("N"))`
+   — a scalar var literally named "N" that never exists — so `:-` always
+   defaulted and `:~` always elided even when `$N` was present. Now routed
+   through `positional_to_value` → `args[N-1]`.
+
+`${N:?}` stays required (compile-time SB5042, like `${args[N-1]:?}`); SB5047
+mixing / SB5048 trailing now fire for positionals too. specs
+`optional_args.sh` 84.19–84.24 (plan 18→24). 3-mode sweep vs HEAD: native 0
+regressions, c 0, janet 0 (+6/+6/0). DD#84 addendum; journal 234.
+
 ## ════════ STATUS (2026-09-02) — `read -r` no-op; `read -d` = terminator ════════
 
 **On `hand-parser`.** DG: "we add -r as a no-op and we change -d to be

@@ -441,23 +441,46 @@ fn sig_scan_expr(expr: &Expr, sig: &mut ArgSig) {
 }
 
 /// `${args[k]:OP}` is an indexed cell; `@args` / `${#args}` (no cell index) is
-/// whole-args → variadic. `${N}`/`${#}` behave like `$N`/`$#`.
+/// whole-args → variadic. `${N}`/`${#}` behave like `$N`/`$#` — and a positional
+/// `${N:-}`/`${N:~}` reads index N-1 *optionally* (DD#84), exactly like
+/// `${args[N-1]:-}`.
 fn sig_scan_pexp(pe: &ParameterExpansion, sig: &mut ArgSig) {
+    sig_record_pexp_subject(pe, sig);
+    if let Some(op) = &pe.operand {
+        sig_scan_expr(op, sig);
+    }
+}
+
+/// Record the subject of a `${…}` expansion into the arg signature: an
+/// `args[i]` cell, a positional `${N}`, whole-args (`${args[@]}` → variadic),
+/// or an ordinary name (not an arg → ignored).
+fn sig_record_pexp_subject(pe: &ParameterExpansion, sig: &mut ArgSig) {
+    // DD#84: `:-` / `:~` make the read optional; any other disposition — or
+    // none — is a required read.
+    let optional = matches!(pe.operator.as_deref(), Some(":-") | Some(":~"));
     if pe.name == "args" {
         match &pe.index {
-            // DD#84: `${args[i]:-}` / `${args[i]:~}` reads index i *optionally*;
-            // any other disposition (`:?`, substring, …) is a required read.
-            Some(idx) => {
-                let optional = matches!(pe.operator.as_deref(), Some(":-") | Some(":~"));
-                sig_record_index(idx, sig, optional);
-            }
+            Some(idx) => sig_record_index(idx, sig, optional),
             None => sig.variadic = true,
         }
+    } else if let Some(n) = positional_index_1_9(&pe.name) {
+        sig_record_positional(n, optional, sig);
     } else {
         sig_record_name(&pe.name, sig);
     }
-    if let Some(op) = &pe.operand {
-        sig_scan_expr(op, sig);
+}
+
+/// A positional name `"1".."9"` → its 1-based value; any other name → `None`.
+fn positional_index_1_9(name: &str) -> Option<usize> {
+    name.parse::<usize>().ok().filter(|n| (1..=9).contains(n))
+}
+
+/// Record a positional `$N` (1..=9 → 0-based index N-1) as optional or required.
+fn sig_record_positional(n: usize, optional: bool, sig: &mut ArgSig) {
+    if optional {
+        sig.optional.insert(n - 1);
+    } else {
+        sig.required.insert(n - 1);
     }
 }
 

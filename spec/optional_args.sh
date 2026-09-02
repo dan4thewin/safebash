@@ -8,7 +8,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=18
+plan=24
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -124,6 +124,52 @@ if in_modes native,c; then
 f a b'
     [[ $rc != 0 && $err == *SB5048* ]]; chk 84.18
 else skip_chk 84.18; fi
+
+# ── Positional `${N:OP}` == `${args[N-1]:OP}` (regression: `${N:~}`/`${N:-}`
+# were mis-analyzed as REQUIRED, giving a spurious SB5042, and lowered as a
+# scalar var "N" so they always elided/defaulted even when $N was present). ──
+
+# 84.19 `${2:~}`, called with 1 arg → $2 elided, NO spurious SB5042 (the bug)
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo A $1 ${2:~} B }
+f one'
+    [[ $rc = 0 && $out = "A one B" && -z $err ]]; chk 84.19
+else skip_chk 84.19; fi
+
+# 84.20 `${2:~}`, called with 2 args → $2 KEPT (value actually read)
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo A $1 ${2:~} B }
+f one two'
+    [[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.20
+else skip_chk 84.20; fi
+
+# 84.21 `${2:-D}`, called with 1 arg → the default fires
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
+f one'
+    [[ $rc = 0 && $out = "A one D B" && -z $err ]]; chk 84.21
+else skip_chk 84.21; fi
+
+# 84.22 `${2:-D}`, called with 2 args → $2 read (not the default)
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
+f one two'
+    [[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.22
+else skip_chk 84.22; fi
+
+# 84.23 positional `${2:?}` is REQUIRED (like `${args[1]:?}`): too few → SB5042
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo $1 ${2:?need} }
+f one'
+    [[ $rc != 0 && $err == *SB5042* ]]; chk 84.23
+else skip_chk 84.23; fi
+
+# 84.24 positional mixing: bare `$2` AND `${2:~}` → SB5047 (one or the other)
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo $1 $2 ${2:~} }
+f a b'
+    [[ $rc != 0 && $err == *SB5047* ]]; chk 84.24
+else skip_chk 84.24; fi
 
 set -e
 tally

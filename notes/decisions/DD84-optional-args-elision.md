@@ -154,3 +154,26 @@ the first implementation (2026-08-31) elides on empty *string* (length 0), so an
 int cell holding `0` stringifies to `"0"` and is not elided. The elision subject
 is a string in every current use (args, string arrays); the int case is a rare
 refinement. janet is deferred entirely (`janet-optional-args-elision`).
+
+## Addendum (2026-09-02) — positional `${N:OP}` reached parity with `${args[N-1]:OP}`
+
+DG hit a spurious **SB5042** on a function using `${2:~}` and called with one
+arg. Two implementation bugs (the design always intended `$N` ≡ `${args[N-1]}`
+— see §(a) "read even once as a bare `${args[i]}` / `$N`"):
+
+1. **Arity mis-analysis** (`transform/functions.rs::sig_scan_pexp`). The
+   `args[k]` path checked the operator for `:-`/`:~` (→ optional), but the
+   positional `${N:OP}` path fell through to `sig_record_name`, which marked
+   `$N` **required** unconditionally. So `${2:~}` demanded 2 args → SB5042.
+   Fixed by classifying a positional `${N:-}`/`${N:~}` as optional (mirroring
+   the `args[k]` rule) via `sig_record_positional`.
+2. **Wrong disposition subject** (`transform/expressions.rs::pe_source_value`).
+   For a no-index expansion it read `SsaValue::Var(lookup("N"))` — a scalar
+   variable literally named "N", which never exists — so **every** `${N:-D}`
+   defaulted and every `${N:~}` elided even when `$N` was present. Fixed by
+   routing a positional name through `positional_to_value` (→ `args[N-1]`).
+
+`${N:?}` stays **required** (consistent with `${args[N-1]:?}`): too few args →
+SB5042 at compile time rather than a runtime require-abort. Mixing bare `$N`
+with `${N:~}` → SB5047, as for the `args` form. Specs: `optional_args.sh`
+84.19–84.24. journal 234.
