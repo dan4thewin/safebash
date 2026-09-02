@@ -1,3 +1,16 @@
+## ════════ STATUS (2026-09-02) — `readc` DROPPED (getopt-NUL route) ════════
+
+**On `hand-parser`.** DG dropped `readc` (cooked read, shipped `0445fe1`) after
+an ICE on `… | readc -a out`. Cooked-read parsing of getopt's shell-quoting was
+judged too fragile; the sanctioned getopt idiom is **NUL-splitting** — a patched
+`sash-getopt` (NUL field separation, no quoting) piped into a NUL-delimited
+`read`. Removed all readc + cooked machinery (runtime `sash_split_first_word_
+cooked`/`sash_deescape`; the `cooked` SSA field + all plumbing; native/c codegen
+cooked paths; readc recognition in BUILTINS/taint/type_check/lastpipe/janet).
+Kept the independent `insert_read_target_types` c-fix. `readc` → SB5011; the ICE
+command is now a clean error. 3-mode sweep vs `8a67e69`: 0 regressions. journal
+230. **Next: vendor `sash-getopt`.**
+
 ## ════════ STATUS (2026-09-02) — DD#86 Phase 5: converter drops `local`; docs. DD#86 COMPLETE ════════
 
 **On `hand-parser`.** DD#86 Phase 5 (migration/cleanup) — the converter no
@@ -21,8 +34,7 @@ read nowhere in the program; a function-local if read nowhere in its function.
 
 **DG rulings (2026-09-02):** (1) more-specific error wins — dead-var runs LAST,
 after taint/type/transform (moved out of `validate()` to end of the front-end;
-`enforce_transform_diags` now runs for every backend); (2) `read`/`readc`/
-`mapfile` targets and `for` variables ARE checked (for-var no longer exempt);
+`enforce_transform_diags` now runs for every backend); (2) `read`/`mapfile` targets and `for` variables ARE checked (for-var no longer exempt);
 (3) `: $v` is the acknowledgment escape hatch (a real read per DD#81 arity).
 
 **Reuses the read-enumerator (DG):** inverted the SB5031 read-traversal via a

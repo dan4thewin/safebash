@@ -72,7 +72,7 @@ fn try_builtin(
             name, c, stmt, ssa, state, *block,
         )),
         BuiltinCmd::Read => Some(super::cmd_handlers::handle_read(
-            name, c, stmt, ssa, state, *block,
+            c, stmt, ssa, state, *block,
         )),
         _ => None,
     }
@@ -568,7 +568,7 @@ fn is_lastpipe_read_last(last: &Statement) -> bool {
         StmtKind::Command(c) => {
             let n = expr_to_string(&c.name);
             let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-            (n == "read" || n == "readc") && !args.iter().any(|a| a == "-a")
+            n == "read" && !args.iter().any(|a| a == "-a")
         }
         _ => false,
     }
@@ -735,7 +735,6 @@ fn handle_lastpipe_read(
     });
     if let StmtKind::Command(c) = &last.kind {
         let (var_names, delim, field_sep) = parse_read_flags(&c.args);
-        let cooked = expr_to_string(&c.name) == "readc";
         if var_names.len() == 1 {
             let target = state.define(&var_names[0]);
             ssa.block_mut(block).insts.push(SsaInst::ReadLine {
@@ -744,7 +743,6 @@ fn handle_lastpipe_read(
                 delim,
                 redirects: vec![],
                 clean_pipe: true,
-                cooked,
             });
         } else if var_names.len() > 1 {
             let targets: Vec<VarRef> = var_names.iter().map(|n| state.define(n)).collect();
@@ -755,7 +753,6 @@ fn handle_lastpipe_read(
                 redirects: vec![],
                 clean_pipe: true,
                 field_sep,
-                cooked,
             });
         }
     }

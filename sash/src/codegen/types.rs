@@ -106,8 +106,6 @@ pub(super) struct ExternFuncs {
     pub(super) capture_start: cranelift_module::FuncId,
     pub(super) capture_end: cranelift_module::FuncId,
     pub(super) split_first_word: cranelift_module::FuncId,
-    pub(super) split_first_word_cooked: cranelift_module::FuncId,
-    pub(super) deescape: cranelift_module::FuncId,
     pub(super) split_field: cranelift_module::FuncId,
     pub(super) split_into_array: cranelift_module::FuncId,
     pub(super) read_all: cranelift_module::FuncId,

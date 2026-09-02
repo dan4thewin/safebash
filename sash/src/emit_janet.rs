@@ -699,7 +699,7 @@ fn match_while_read(w: &While) -> Option<&Command> {
         return None;
     };
     let n = expr_to_literal(&c.name);
-    if n == "read" || n == "readc" {
+    if n == "read" {
         Some(c)
     } else {
         None

@@ -107,8 +107,7 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    shared `ReadSink`: Flag mode = SB5031, Collect mode = dead-var) so the two
    never disagree on what a read is; value-fn bare operands (`len`/`join`/
    `keys`) added on top. DG rulings (2026-09-02): (a) more-specific error wins
-   — dead-var runs LAST, after taint/type/transform; (b) `read`/`readc`/
-   `mapfile` targets and `for` variables ARE checked; (c) `: $v` is the
+   — dead-var runs LAST, after taint/type/transform; (b) `read`/`mapfile` targets and `for` variables ARE checked; (c) `: $v` is the
    acknowledgment escape hatch (a real read, per DD#81 arity). Filed
    `bare-collection-name-operand-asymmetry` (builtin bare-name vs user-fn
    splat).**

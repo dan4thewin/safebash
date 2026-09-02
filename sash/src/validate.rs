@@ -1545,7 +1545,6 @@ const BUILTINS: &[&str] = &[
     "continue",
     // Input
     "read",
-    "readc",
     "mapfile",
     // Taint
     "bless",
@@ -2783,15 +2782,21 @@ fn taint_stmt_no_read_taint(
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
-        if name == "read" || name == "readc" || name == "mapfile" {
-            check_expr_taint(&c.name, tainted, diags);
-            for arg in &c.args {
-                check_expr_taint(arg, tainted, diags);
-            }
+        if name == "read" || name == "mapfile" {
+            check_clean_read_taint(c, tainted, diags);
             return;
         }
     }
     taint_stmt(stmt, tainted, diags);
+}
+
+/// `read`/`mapfile` from a clean pipe source: check the name+args for taint but
+/// do not taint the read targets.
+fn check_clean_read_taint(c: &Command, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    check_expr_taint(&c.name, tainted, diags);
+    for arg in &c.args {
+        check_expr_taint(arg, tainted, diags);
+    }
 }
 
 /// Check if a pipeline stage is an external source (execs).
@@ -3115,7 +3120,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if name == "read" || name == "readc" || name == "mapfile" || name == "argv" {
+    if name == "read" || name == "mapfile" || name == "argv" {
         taint_read_target(c, tainted);
     } else if name == "bless" {
         taint_bless(c, span, tainted, diags);
@@ -3517,7 +3522,7 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
-        "read" | "readc" | "mapfile" | "readarray" => {
+        "read" | "mapfile" | "readarray" => {
             for arg in &c.args {
                 insert_read_target_arg(arg, set);
             }
@@ -3592,7 +3597,7 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
 // is dead if it is read nowhere within its function. This is the safety net
 // for a misspelled write target (a stray local stranded on the write side).
 //
-// A `for` loop variable and a `read`/`readc`/`mapfile` target are ordinary
+// A `for` loop variable and a `read`/`mapfile` target are ordinary
 // writes and ARE checked (DG 2026-09-02): an unused loop variable or a
 // discarded read field is dead. Reads are recognised by the SB5031 enumerator
 // (`ReadSink::Collect`) plus the value-fn bare operands, so the check never

@@ -123,11 +123,9 @@ impl SsaInst {
                 fd,
                 delim,
                 redirects,
-                cooked,
                 ..
             } => {
-                return self
-                    .emit_readline(target, fd, delim, redirects, *cooked, builder, module, ctx);
+                return self.emit_readline(target, fd, delim, redirects, builder, module, ctx);
             }
             SsaInst::ReadLineMulti {
                 targets,
@@ -135,11 +133,10 @@ impl SsaInst {
                 delim,
                 redirects,
                 field_sep,
-                cooked,
                 ..
             } => {
                 return self.emit_readline_multi(
-                    targets, fd, delim, redirects, field_sep, *cooked, builder, module, ctx,
+                    targets, fd, delim, redirects, field_sep, builder, module, ctx,
                 );
             }
             SsaInst::Pipeline {
@@ -422,7 +419,6 @@ impl SsaInst {
         delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
         field_sep: &Option<u8>,
-        cooked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -456,9 +452,7 @@ impl SsaInst {
 
         let refs = ReadSplitRefs {
             word: module.declare_func_in_func(externs.split_first_word, builder.func),
-            word_cooked: module.declare_func_in_func(externs.split_first_word_cooked, builder.func),
             field: module.declare_func_in_func(externs.split_field, builder.func),
-            deescape: module.declare_func_in_func(externs.deescape, builder.func),
         };
         let mut cur = (line_ptr, line_len);
         let last = targets.len() - 1;
@@ -468,9 +462,9 @@ impl SsaInst {
                 (sv.str_ptr(), sv.str_len())
             };
             if i == last {
-                emit_read_last_var(builder, &refs, sp, sl, cur, cooked);
+                emit_read_last_var(builder, sp, sl, cur);
             } else {
-                cur = emit_read_field_split(builder, &refs, sp, sl, cur, field_sep, cooked);
+                cur = emit_read_field_split(builder, &refs, sp, sl, cur, field_sep);
             }
         }
         emit_restore(saved, builder, module, externs);
@@ -868,7 +862,6 @@ impl SsaInst {
         fd: &i64,
         delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
-        cooked: bool,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
@@ -896,14 +889,6 @@ impl SsaInst {
             builder.ins().iconst(I64, *fd)
         };
         let (ptr, len) = emit_read_line_call(builder, module, externs, fd_val, delim);
-        // readc: cooked read de-escapes the whole line (backslashes honored).
-        let (ptr, len) = if cooked {
-            let deescape_ref = module.declare_func_in_func(externs.deescape, builder.func);
-            let call = builder.ins().call(deescape_ref, &[ptr, len]);
-            (builder.inst_results(call)[0], builder.inst_results(call)[1])
-        } else {
-            (ptr, len)
-        };
         let sv = &vars[&target.display()];
         builder.def_var(sv.str_ptr(), ptr);
         builder.def_var(sv.str_len(), len);
@@ -1176,40 +1161,28 @@ fn emit_read_line_call(
     }
 }
 
-/// Cranelift `FuncRef`s for the four read-split runtime entry points,
-/// declared once per `emit_readline_multi` and reused per target.
+/// Cranelift `FuncRef`s for the read-split runtime entry points, declared
+/// once per `emit_readline_multi` and reused per target.
 struct ReadSplitRefs {
     word: cranelift_codegen::ir::FuncRef,
-    word_cooked: cranelift_codegen::ir::FuncRef,
     field: cranelift_codegen::ir::FuncRef,
-    deescape: cranelift_codegen::ir::FuncRef,
 }
 
-/// Assign the whole remaining cursor to the last read target,
-/// de-escaping it first when `cooked` (`readc`, switch-free-read-family).
+/// Assign the whole remaining cursor to the last read target.
 fn emit_read_last_var(
     builder: &mut FunctionBuilder,
-    refs: &ReadSplitRefs,
     str_ptr: cranelift_frontend::Variable,
     str_len: cranelift_frontend::Variable,
     cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
-    cooked: bool,
 ) {
     let (cur_ptr, cur_len) = cur;
-    let (p, l) = if cooked {
-        let call = builder.ins().call(refs.deescape, &[cur_ptr, cur_len]);
-        (builder.inst_results(call)[0], builder.inst_results(call)[1])
-    } else {
-        (cur_ptr, cur_len)
-    };
-    builder.def_var(str_ptr, p);
-    builder.def_var(str_len, l);
+    builder.def_var(str_ptr, cur_ptr);
+    builder.def_var(str_len, cur_len);
 }
 
 /// Split one field off the `cur` cursor into a non-last read target and
 /// return the new `(cur_ptr, cur_len)` cursor over the remainder. Uses
-/// `field_sep` when set, else a whitespace word (cooked-aware: `readc`
-/// honors `\`-escaped spaces; readc cooked read).
+/// `field_sep` when set, else a whitespace word.
 fn emit_read_field_split(
     builder: &mut FunctionBuilder,
     refs: &ReadSplitRefs,
@@ -1217,7 +1190,6 @@ fn emit_read_field_split(
     str_len: cranelift_frontend::Variable,
     cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
     field_sep: &Option<u8>,
-    cooked: bool,
 ) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
     let (cur_ptr, cur_len) = cur;
     let rest_ptr_slot =
@@ -1234,10 +1206,9 @@ fn emit_read_field_split(
         );
         (builder.inst_results(call)[0], builder.inst_results(call)[1])
     } else {
-        let f = if cooked { refs.word_cooked } else { refs.word };
         let call = builder
             .ins()
-            .call(f, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
+            .call(refs.word, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
         (builder.inst_results(call)[0], builder.inst_results(call)[1])
     };
     builder.def_var(str_ptr, word_ptr);

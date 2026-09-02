@@ -9,6 +9,16 @@ gates:
   - "the two inconsistent `parse_read_flags` are unified or deleted; the -r three-way inconsistency is resolved"
 ---
 
+> **UPDATE (DG, 2026-09-02): `readc` was DROPPED.** The cooked-read approach
+> (parse getopt's shell-quoting with a backslash-honoring read) was retired as
+> too fragile — parsing a program's quoting is the eval-adjacent thing sash
+> avoids. The sanctioned getopt idiom is instead **NUL-splitting**: vendor a
+> patched `sash-getopt` (util-linux getopt, defaulting to NUL field separation +
+> no quoting) piped into a NUL-delimited `read`. `readc` and all its cooked
+> machinery were removed (journal 230). This task's remaining open question is
+> now just the broader read-family surface (`readr`? drop `-a`/`-f`/`-d`; the
+> NUL-read surface `read -z` vs a distinct form; the two `parse_read_flags`).
+
 # Switch-free builtins — the `readr`/`readc` question
 
 DG (2026-09-01): "I don't like the switches (how robust even is our switch

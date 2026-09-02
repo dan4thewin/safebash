@@ -9,7 +9,6 @@ use crate::ssa::*;
 
 /// Handle `read` command — emit ReadLine/ReadLineMulti instructions.
 pub(super) fn handle_read(
-    name: &str,
     c: &Command,
     stmt: &Statement,
     ssa: &mut SsaProgram,
@@ -27,9 +26,7 @@ pub(super) fn handle_read(
         ));
         return block;
     }
-    // DD#86: `readc` is the cooked read (honors `\` escapes); `read` is raw.
-    let cooked = name == "readc";
-    emit_read_inst(&flags, cooked, ssa, state, block);
+    emit_read_inst(&flags, ssa, state, block);
     block
 }
 
@@ -109,10 +106,8 @@ fn consume_byte_flag(arg: &str, slot: &mut Option<u8>, args: &[String], i: usize
 
 /// Emit the right `Read*` SSA instruction for the parsed flags.
 /// `-a` → `ReadArray`; one var → `ReadLine`; many vars → `ReadLineMulti`.
-/// `cooked` (DD#86 `readc`) honors backslash escapes in the value/split.
 fn emit_read_inst(
     flags: &ReadFlags,
-    cooked: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -138,7 +133,6 @@ fn emit_read_inst(
                 delim: flags.delim,
                 redirects: vec![],
                 clean_pipe: false,
-                cooked,
             });
         }
         _ => {
@@ -150,7 +144,6 @@ fn emit_read_inst(
                 redirects: vec![],
                 clean_pipe: false,
                 field_sep: flags.field_sep,
-                cooked,
             });
         }
     }
