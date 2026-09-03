@@ -94,6 +94,25 @@ fn is_resolvable_external(name: &str, funcs: &HashSet<String>) -> bool {
     matches!(BuiltinCmd::from_name(name), BuiltinCmd::Other)
 }
 
+/// A command head that is (or resolves to) an EXTERNAL program — i.e. NOT a
+/// sash intrinsic and NOT a language builtin. An absolute path (`/bin/x`) or a
+/// bare name that is neither an intrinsic nor a builtin qualifies. Unlike
+/// [`is_resolvable_external`] this does NOT consult the function table, so a
+/// user function's bare name also passes here — callers that must exclude user
+/// functions (which have the function table) do so themselves. Used by the
+/// capture-condition check (DD#88), which runs in `validate` BEFORE resolution
+/// (names are still bare) and defers the user-function exclusion to the
+/// transform.
+pub(crate) fn is_external_looking(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+    if name.contains('/') {
+        return true;
+    }
+    !INTRINSICS.contains(&name) && matches!(BuiltinCmd::from_name(name), BuiltinCmd::Other)
+}
+
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
     for stmt in stmts {
         if let StmtKind::Function(f) = &stmt.kind {

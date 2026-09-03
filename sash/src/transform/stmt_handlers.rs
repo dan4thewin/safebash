@@ -1029,15 +1029,8 @@ fn handle_plain_assign(
     mut block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
-    // Capture-condition: in a boolean context (`if x=$(cmd)` / `while x=$(cmd)`),
-    // a single external `$(cmd)` RHS is the CONDITION — capture its stdout into
-    // `x` (tainted) but branch on the command's exit status (no abort). Only a
-    // `CmdSubst` (single external command) qualifies; a literal/concat RHS is
-    // still a value binding and stays SB4025 (validate).
-    if state.in_condition > 0 {
-        if let Some(b) = try_capture_condition(&a.name, &val, state, ssa, block) {
-            return b;
-        }
+    if let Some(b) = maybe_capture_condition(a, &val, state, ssa, block) {
+        return b;
     }
     if let SsaValue::FuncCall { name: fname, .. } = &val {
         // A string function's result is its stdout; inline-capture it.
@@ -1054,6 +1047,33 @@ fn handle_plain_assign(
         .insts
         .push(SsaInst::Assign { target, value: val });
     block
+}
+
+/// DD#88 capture-condition dispatch for `handle_plain_assign`. In a boolean
+/// context (`if x=$(cmd)` / `while x=$(cmd)`), a single external `$(cmd)` (or
+/// external pipeline) RHS is the CONDITION — capture its stdout into `x`
+/// (tainted) but branch on the command's exit status (no abort). Returns
+/// `Some(block)` when it consumed the assignment. Guarded on a
+/// command-substitution source expr so an arithmetic mutation `x=1` inside
+/// `(( … ))` — also lowered via `handle_plain_assign` with `in_condition` set —
+/// is untouched. A `$(user_fn)` RHS (which `validate` couldn't exclude
+/// pre-resolution) is rejected with SB4025; returns `None` so the caller still
+/// produces a well-formed `Assign` (compilation fails on the diagnostic).
+fn maybe_capture_condition(
+    a: &Assignment,
+    val: &SsaValue,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
+    if state.in_condition == 0 || !matches!(&a.value.kind, ExprKind::CommandSubstitution(_)) {
+        return None;
+    }
+    if let Some(b) = try_capture_condition(&a.name, val, state, ssa, block) {
+        return Some(b);
+    }
+    reject_nonexternal_capture_condition(a, state);
+    None
 }
 
 /// Capture-condition lowering (`if x=$(cmd)` / `while x=$(cmd)`): bind the
@@ -1108,6 +1128,21 @@ fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId) {
     ssa.block_mut(block)
         .insts
         .push(SsaInst::sigil(BuiltinCmd::SetTestFromStatus, vec![], true));
+}
+
+/// DD#88: an assignment-in-condition that `validate` let through as an
+/// external-looking `$(…)` but did NOT lower to an external capture — i.e. a
+/// `$(user_fn)` capture. A function conveys status via `return`, not a captured
+/// value, so this is not a capture-condition. Emit SB4025 (compilation fails via
+/// `enforce_transform_diags`).
+fn reject_nonexternal_capture_condition(a: &Assignment, state: &mut VersionState) {
+    let sp = a.value.span;
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4025] capturing a function's output is not a condition — a function \
+         conveys status via `return` (use it as a predicate: `if f {{ … }}`), or capture then \
+         test (`{}=$(f); if [[ … ]]`)",
+        sp.line, sp.col, a.name
+    ));
 }
 
 /// True when a `$(…)` body is exactly one pipeline (`$(a | b)`) — the only

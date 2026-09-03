@@ -76,12 +76,17 @@ the implementation is mostly wiring, not new machinery:
 - **codegen**: native (`emit_set_test_from_status`) and c (`__test_result =
   (__exit_status == 0) ? 1 : 0`). Pipelines honor `state.suppressed` for their
   `checked` flag (`handle_regular_pipeline`).
-- **validate** (`is_capture_condition_rhs`): the SB4025 carve-out uses a
-  structural signal — post-resolution an external command's head is an absolute
-  path (`/`), while functions / intrinsics / builtins stay bare — so it matches
-  the transform's `CmdSubst`/pipeline shape without a function table. The
+- **validate** (`is_capture_condition_rhs`): the SB4025 carve-out. `validate`
+  runs BEFORE command resolution, so the command head is still bare — the
+  external test is `resolve::is_external_looking` (excludes intrinsics +
+  builtins), NOT a post-resolution `/` check. It cannot consult the function
+  table, so a bare user-function name also passes here; the **transform**
+  rejects the residual `$(user_fn)` capture-condition (SB4025, via
+  `reject_nonexternal_capture_condition`) since it has the function table. The
   capture-condition also registers as a `$?`-provider in the SB5012 state
-  machine.
+  machine. The transform path is guarded on a `CommandSubstitution` source expr
+  so an arithmetic mutation `x=1` inside `(( … ))` (also lowered with
+  `in_condition` set) is untouched.
 - **janet**: not implemented — janet emits from the IR (not the SSA sigils) and
   its `$(cmd)` capture is a stub. Positive-behavior specs are gated `native,c`;
   filed `janet-capture-condition`. The rejects (SB4025/SB5050/SB5020) are

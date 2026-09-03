@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=16
+plan=17
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -86,6 +86,15 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "else 7" && -z $err ]]; chk 88.16
 else skip_chk 88.16; fi
 
+# 88.17 a BARE external command name (`printf`, not `/usr/bin/printf`) is a
+# capture-condition too — the external test must not require a `/`. (Regression:
+# `validate` runs before command resolution, so the head is still bare; the
+# external test excludes intrinsics/builtins/functions, not "no slash".)
+if in_modes native,c; then
+    run_sash 'if out=$(printf foo) { bless out [[ -n $out ]]; /bin/echo "y $out" }'
+    [[ $rc = 0 && $out = "y foo" && -z $err ]]; chk 88.17
+else skip_chk 88.17; fi
+
 # ── Taint + rejects (backend-independent: validate / taint) ──
 
 # 88.9 the captured target is TAINTED (external output) — using it unblessed is
@@ -99,7 +108,9 @@ run_sash 'if x=$(/bin/echo hi) { /bin/echo unrelated }'
 [[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 88.10
 
 # 88.11 exclusion: a user-function capture `$(f)` is NOT a capture-condition
-# (functions convey status via `return`) → stays SB4025
+# (functions convey status via `return`) → SB4025. `validate` runs before
+# resolution and can't see the function table, so this rejection comes from the
+# transform (a bare `f` is external-looking until then); still SB4025, all modes.
 run_sash 'fn f { return 0 }; if x=$(f) { /bin/echo $x }'
 [[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.11
 

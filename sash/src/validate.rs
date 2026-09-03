@@ -494,10 +494,14 @@ fn is_capture_condition_rhs(value: &Expr) -> bool {
     }
 }
 
-/// A command whose resolved head is an external path (post-resolution the name
-/// contains `/`; functions / intrinsics / builtins stay bare).
+/// A command whose head is (or resolves to) an external program. `validate`
+/// runs BEFORE command resolution, so the name is still bare — use the
+/// resolution-time external test (excludes intrinsics + builtins) rather than a
+/// post-resolution `/` check. A user function's bare name also passes here (the
+/// function table isn't available in `validate`); the transform rejects the
+/// `$(user_fn)` capture-condition case (DD#88).
 fn is_external_command_head(c: &crate::ir::Command) -> bool {
-    matches!(&c.name.kind, ExprKind::Literal(n) if n.contains('/'))
+    matches!(&c.name.kind, ExprKind::Literal(n) if crate::resolve::is_external_looking(n))
 }
 
 /// A pipeline stage (peeling `-`/`!`) that is a single external command.
