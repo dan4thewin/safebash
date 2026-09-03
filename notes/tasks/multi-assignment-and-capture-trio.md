@@ -6,7 +6,15 @@ kind: decision
 depends: []
 gates:
   - "DG decides the design of general multiple-value return + multi-target binding, and the external-capture trio (stdout/status/stderr) that reuses it — see the axes below. Blocks any implementation; capture the resolution of the SB4025/DD#55 conflict here too."
+  - "PARTIAL (2026-09-02, DD#88): the external-command capture-CONDITION subset shipped — `if x=$(cmd)` / `while x=$(cmd)` (and `$(a|b)` pipeline) bind stdout + branch on the command's status. This resolves the SB4025/DD#55 conflict for the condition case. The GENERAL multi-value return + the (stdout, status, stderr) trio remain open (axes below)."
 ---
+
+> **Update 2026-09-02:** the narrow capture-**condition** case (`if ! out=$(cmd)`)
+> shipped as **DD#88** (`notes/decisions/DD88-capture-condition.md`,
+> `spec/capture_cond.sh`, journal 236): an external `$(cmd)`/`$(a|b)` RHS in a
+> boolean context branches on the command's status and captures stdout. The
+> general multiple-value `return` / multi-target binding / full trio below is
+> still deferred to DG.
 
 # Multiple assignment via `return`; capture a command's stdout/status/stderr
 

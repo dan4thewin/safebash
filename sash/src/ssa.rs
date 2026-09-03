@@ -72,6 +72,12 @@ pub enum BuiltinCmd {
     // ─── Compiler-internal sigils (transform → codegen protocol) ───
     /// Flip test_result_var and exit_status_var (post-`!`).
     NegateTestResult,
+    /// Set test_result_var from the current exit status (`test = $? == 0`).
+    /// Emitted after a capture-condition (`if x=$(cmd)`): the suppressed
+    /// capture leaves the command's status in `$?` but does not set the branch
+    /// truth value, so this syncs it (mirrors how a plain command condition
+    /// sets `test_result` from its own status).
+    SetTestFromStatus,
     /// Run a `let` expression for side-effects, propagate non-zero
     /// exit per DD#55.
     LetExit,
@@ -153,6 +159,7 @@ impl BuiltinCmd {
     pub fn from_name(name: &str) -> Self {
         match name {
             "__negate_test_result" => Self::NegateTestResult,
+            "__set_test_from_status" => Self::SetTestFromStatus,
             "__let_exit" => Self::LetExit,
             "__subshell" => Self::SubshellStart,
             "__redirect_push" => Self::RedirectPush,
@@ -197,6 +204,7 @@ impl BuiltinCmd {
     pub fn sigil_str(self) -> Option<&'static str> {
         Some(match self {
             Self::NegateTestResult => "__negate_test_result",
+            Self::SetTestFromStatus => "__set_test_from_status",
             Self::LetExit => "__let_exit",
             Self::SubshellStart => "__subshell",
             Self::RedirectPush => "__redirect_push",

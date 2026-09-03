@@ -1785,6 +1785,11 @@ fn emit_command_body(
             writeln!(e.out, "    __test_result = 1 - __test_result;").unwrap();
             writeln!(e.out, "    __exit_status = (__exit_status == 0) ? 1 : 0;").unwrap();
         }
+        // Capture-condition (`if x=$(cmd)`): sync the branch truth value from
+        // $? after the suppressed capture (mirrors native emit_set_test_from_status).
+        BuiltinCmd::SetTestFromStatus => {
+            writeln!(e.out, "    __test_result = (__exit_status == 0) ? 1 : 0;").unwrap();
+        }
         // Phase 6: __let_exit — convert (( … )) result to status.
         // Mirrors emit_let_exit (codegen/dispatch.rs:978). Reads
         // first arg as int; if zero → status=1, test_result=0; else

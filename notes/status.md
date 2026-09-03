@@ -1,3 +1,29 @@
+## ════════ STATUS (2026-09-02) — capture-condition `if x=$(cmd)` shipped (DD#88) ════════
+
+**On `hand-parser`.** DG: "what would it take to enable `if ! x=$(cmd) {`" +
+"the actual exit status of the cmd is wanted, and the stdout need only survive
+if the cmd succeeded." That narrowing made a shippable subset of the
+`multi-assignment-and-capture-trio` decision — DG chose to implement now.
+
+**DD#88 capture-condition:** in a boolean context, an assignment whose RHS is a
+single **external** `$(cmd)` (or pipeline `$(a|b)`) branches on the command's
+**actual exit status** (no abort) and captures its stdout into the target
+(tainted, bless before use). `$?` is available as the first branch action
+(DD#55), so `if x=$(cmd) { use $x } else { echo "failed $?" }` reads the real
+code. `!`/`else`/`$?` are uniform with a plain command condition (negated form
+loses `$?` magnitude, like `if ! cmd`). Untyped only; `while` included; a
+truly-unused captured target is SB5050 (use the non-capturing `if ! cmd`).
+
+Mostly wiring (union of `x=$(- cmd)` + `while read x`): new sigil
+`SetTestFromStatus`; `try_capture_condition` in transform; pipeline `checked`
+honors `state.suppressed`; validate SB4025 carve-out via the structural
+external-path signal + `$?`-provider registration. native + c; **janet gated**
+(emits from IR not the sigil; `$(cmd)` capture is a stub — filed
+`janet-capture-condition`). Rejects backend-independent. `spec/capture_cond.sh`
+88.1–88.14. 3-mode sweep vs HEAD: native 0 regressions, c 0, janet 0
+(+14/+14/+6). DD#88; journal 236. The general multi-value return / trio stays
+deferred (`multi-assignment-and-capture-trio`).
+
 ## ════════ STATUS (2026-09-02) — `if ! out=$(cmd)`: decision filed + 2 bug fixes ════════
 
 **On `hand-parser`.** DG asked whether SB4025's "sequence it" advice works for

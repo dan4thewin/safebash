@@ -738,34 +738,57 @@ fn handle_regular_pipeline(
     let mut suppressed = vec![];
     let mut negated = vec![];
     for (idx, cmd) in p.commands.iter().enumerate() {
-        // DD#55: a `-`-suppressed segment still RUNS (real pipe stage); only
-        // its exit status is excluded from the aggregate. DD#70: a `!`-negated
-        // stage also runs, but its status is inverted before the aggregate.
-        // Peel the wrapper and record the mask, rather than dropping the stage.
-        let (unwrapped, is_suppressed, is_negated) = match &cmd.kind {
-            StmtKind::Suppressed(inner) => (inner.as_ref(), true, false),
-            StmtKind::Negated(inner) => (inner.as_ref(), false, true),
-            _ => (cmd, false, false),
-        };
-        let stages_before = stages.len();
-        lower_one_pipeline_stage(unwrapped, idx, ssa, state, block, &mut stages);
-        // push_command_stage may add >1 stage (function inlining); mark each.
-        suppressed.resize(stages.len(), false);
-        negated.resize(stages.len(), false);
-        if is_suppressed {
-            suppressed[stages_before..].fill(true);
-        }
-        if is_negated {
-            negated[stages_before..].fill(true);
-        }
+        push_pipeline_stage(
+            cmd,
+            idx,
+            ssa,
+            state,
+            block,
+            &mut stages,
+            &mut suppressed,
+            &mut negated,
+        );
     }
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: false,
-        checked: true,
+        // DD#55: a `-`-suppressed pipeline (and a capture-condition pipeline,
+        // `if x=$(a|b)`) runs unchecked — its aggregate status is consumed, not
+        // aborted on. `state.suppressed` is bumped only by `- cmd` lowering and
+        // the capture-condition capture.
+        checked: state.suppressed == 0,
         suppressed,
         negated,
     });
+}
+
+/// Lower one pipeline stage `cmd` and extend the `stages`/`suppressed`/`negated`
+/// masks. DD#55: a `-`-suppressed stage still RUNS (real pipe stage) — only its
+/// status is excluded from the aggregate. DD#70: a `!`-negated stage runs with
+/// its status inverted. One source stage may lower to several SSA stages
+/// (function inlining), so each added stage inherits the mask.
+#[allow(clippy::too_many_arguments)]
+fn push_pipeline_stage(
+    cmd: &Statement,
+    idx: usize,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    stages: &mut Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
+    suppressed: &mut Vec<bool>,
+    negated: &mut Vec<bool>,
+) {
+    let (unwrapped, is_suppressed, is_negated) = match &cmd.kind {
+        StmtKind::Suppressed(inner) => (inner.as_ref(), true, false),
+        StmtKind::Negated(inner) => (inner.as_ref(), false, true),
+        _ => (cmd, false, false),
+    };
+    let stages_before = stages.len();
+    lower_one_pipeline_stage(unwrapped, idx, ssa, state, block, stages);
+    suppressed.resize(stages.len(), false);
+    negated.resize(stages.len(), false);
+    suppressed[stages_before..].fill(is_suppressed);
+    negated[stages_before..].fill(is_negated);
 }
 
 /// Lower a single (already Suppressed-peeled) pipeline stage into `stages`:
@@ -1006,6 +1029,16 @@ fn handle_plain_assign(
     mut block: BlockId,
 ) -> BlockId {
     let val = expr_to_value(&a.value, state);
+    // Capture-condition: in a boolean context (`if x=$(cmd)` / `while x=$(cmd)`),
+    // a single external `$(cmd)` RHS is the CONDITION — capture its stdout into
+    // `x` (tainted) but branch on the command's exit status (no abort). Only a
+    // `CmdSubst` (single external command) qualifies; a literal/concat RHS is
+    // still a value binding and stays SB4025 (validate).
+    if state.in_condition > 0 {
+        if let Some(b) = try_capture_condition(&a.name, &val, state, ssa, block) {
+            return b;
+        }
+    }
     if let SsaValue::FuncCall { name: fname, .. } = &val {
         // A string function's result is its stdout; inline-capture it.
         // (An `-> int` function is an IntFuncCall here, not a FuncCall — it
@@ -1021,6 +1054,66 @@ fn handle_plain_assign(
         .insts
         .push(SsaInst::Assign { target, value: val });
     block
+}
+
+/// Capture-condition lowering (`if x=$(cmd)` / `while x=$(cmd)`): bind the
+/// command's captured stdout into `name` (tainted, via the `CmdSubst` value)
+/// while making the command's exit status the branch truth value. The capture
+/// is SUPPRESSED — a nonzero exit does not abort (the status is consumed by the
+/// condition, per DD#55's "binding the status" rule) — and `SetTestFromStatus`
+/// syncs `test_result` from `$?`. Returns `None` for a non-`CmdSubst` RHS (a
+/// literal/concat/user-fn value binding), which stays a validate-level SB4025.
+fn try_capture_condition(
+    name: &str,
+    val: &SsaValue,
+    state: &mut VersionState,
+    ssa: &mut SsaProgram,
+    block: BlockId,
+) -> Option<BlockId> {
+    match val {
+        // Single external `$(cmd)` → a suppressed capture value, then sync
+        // test_result from $?.
+        SsaValue::CmdSubst {
+            argv, redirects, ..
+        } => {
+            let target = state.define(name);
+            ssa.block_mut(block).insts.push(SsaInst::Assign {
+                target,
+                value: SsaValue::CmdSubst {
+                    argv: argv.clone(),
+                    redirects: redirects.clone(),
+                    suppressed: true,
+                },
+            });
+            push_set_test_from_status(ssa, block);
+            Some(block)
+        }
+        // Pipeline `$(a | b)` → capture the body with the inner pipeline
+        // unchecked (state.suppressed), which sets $? to the aggregate status;
+        // then sync test_result. Only a single pipeline qualifies (validate
+        // restricts the RHS shape; a multi-statement body is not a condition).
+        SsaValue::CmdSubstBody { body, .. } if is_single_pipeline(body) => {
+            state.suppressed += 1;
+            let after = capture_body_into(name, body, state, ssa, block);
+            state.suppressed -= 1;
+            push_set_test_from_status(ssa, after);
+            Some(after)
+        }
+        _ => None,
+    }
+}
+
+/// `test_result = ($? == 0)` — the capture-condition status sync sigil.
+fn push_set_test_from_status(ssa: &mut SsaProgram, block: BlockId) {
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::sigil(BuiltinCmd::SetTestFromStatus, vec![], true));
+}
+
+/// True when a `$(…)` body is exactly one pipeline (`$(a | b)`) — the only
+/// multi-command capture-condition shape (a multi-statement `$(a; b)` is not).
+fn is_single_pipeline(body: &[Statement]) -> bool {
+    matches!(body, [stmt] if matches!(&stmt.kind, StmtKind::Pipeline(_)))
 }
 
 /// Inline a function-substitution `$(fname args...)` so its output

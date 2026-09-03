@@ -447,15 +447,66 @@ fn validate_assignment_stmt(
                 a.name
             ),
         ));
-    } else if in_condition {
+    } else if in_condition && !is_capture_condition_rhs(&a.value) {
         // DD#70/#71: a (non-arith) assignment is a value binding, not a
-        // boolean/exit-status — it cannot be a condition.
+        // boolean/exit-status — it cannot be a condition. EXCEPTION: a single
+        // external `$(cmd)` RHS is the capture-condition form (`if x=$(cmd)`) —
+        // the command's status is the condition, its stdout captured into the
+        // target (handled in transform::try_capture_condition).
         diags.push(nonstatus_in_condition_diag(
             span,
             "an assignment",
             value_is_capture(&a.value),
         ));
     }
+}
+
+/// True when an assignment RHS is a single external `$(cmd)` command
+/// substitution — the capture-condition form (`if x=$(cmd)` / `while x=$(cmd)`),
+/// where the command's exit status is the condition and its stdout is captured
+/// into the target. Post-resolution an external command's name is an absolute
+/// path (contains `/`); a user function / intrinsic / builtin stays a bare
+/// name, so this structurally excludes `$(user_fn)` / `$(getenv X)` (which are
+/// NOT capture-conditions). A pipeline / multi-statement / concat RHS is also
+/// excluded (a single external command only).
+fn is_capture_condition_rhs(value: &Expr) -> bool {
+    let ExprKind::CommandSubstitution(stmts) = &value.kind else {
+        return false;
+    };
+    let [stmt] = stmts.as_slice() else {
+        return false;
+    };
+    let mut kind = &stmt.kind;
+    loop {
+        match kind {
+            StmtKind::Redirected(r) => kind = &r.body.kind,
+            StmtKind::Suppressed(inner) => kind = &inner.kind,
+            _ => break,
+        }
+    }
+    match kind {
+        StmtKind::Command(c) => is_external_command_head(c),
+        // `$(a | b)` — every stage must be an external command.
+        StmtKind::Pipeline(p) => {
+            p.commands.len() > 1 && p.commands.iter().all(stmt_is_external_command)
+        }
+        _ => false,
+    }
+}
+
+/// A command whose resolved head is an external path (post-resolution the name
+/// contains `/`; functions / intrinsics / builtins stay bare).
+fn is_external_command_head(c: &crate::ir::Command) -> bool {
+    matches!(&c.name.kind, ExprKind::Literal(n) if n.contains('/'))
+}
+
+/// A pipeline stage (peeling `-`/`!`) that is a single external command.
+fn stmt_is_external_command(stmt: &Statement) -> bool {
+    let mut kind = &stmt.kind;
+    while let StmtKind::Suppressed(inner) | StmtKind::Negated(inner) = kind {
+        kind = &inner.kind;
+    }
+    matches!(kind, StmtKind::Command(c) if is_external_command_head(c))
 }
 
 /// DD#70/#71 dual (SB4025): a value binding (assignment / declaration) used
@@ -1470,9 +1521,19 @@ fn check_dq_leaf(stmt: &Statement, state: &mut StatusState, diags: &mut Vec<Diag
     }
     if is_suppressed(stmt) {
         *state = StatusState::Undefined;
-    } else if is_command_like(stmt) || is_assignment_from_arith(stmt) {
+    } else if is_command_like(stmt)
+        || is_assignment_from_arith(stmt)
+        || is_capture_condition_stmt(stmt)
+    {
         *state = StatusState::Available;
     }
+}
+
+/// A capture-condition assignment (`x=$(external cmd)`) runs a command and sets
+/// `$?`, so — like a plain command — it makes the status available as the first
+/// expression of a handling branch (`if x=$(cmd) { … } else { echo $? }`).
+fn is_capture_condition_stmt(stmt: &Statement) -> bool {
+    matches!(&stmt.kind, StmtKind::Assignment(a) if is_capture_condition_rhs(&a.value))
 }
 
 /// Emit an SB5012 at every `$?` / `$(status)` in `stmt` — the status is

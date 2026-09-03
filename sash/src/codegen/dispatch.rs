@@ -210,6 +210,7 @@ impl SsaInst {
                 builder.def_var(ctx.test_result_var, one);
             }
             BuiltinCmd::NegateTestResult => self.emit_negate_test_result(builder, ctx),
+            BuiltinCmd::SetTestFromStatus => self.emit_set_test_from_status(builder, ctx),
             BuiltinCmd::LetExit => return self.emit_let_exit(args, builder, module, ctx),
             BuiltinCmd::SubshellStart => self.emit_subshell_start(builder, module, ctx),
             BuiltinCmd::RedirectPush => self.emit_redirect_push(redirects, builder, module, ctx),
@@ -252,6 +253,20 @@ impl SsaInst {
         let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
         let new_es = builder.ins().select(is_zero, one, zero);
         builder.def_var(exit_status_var, new_es);
+    }
+
+    /// `test_result = (exit_status == 0)` — sync the branch truth value from
+    /// `$?` after a capture-condition (`if x=$(cmd)`), whose suppressed capture
+    /// set the status but not the test result.
+    fn emit_set_test_from_status(&self, builder: &mut FunctionBuilder, ctx: &mut InstCtx) {
+        let test_result_var = ctx.test_result_var;
+        let exit_status_var = ctx.exit_status_var;
+        let cur_es = builder.use_var(exit_status_var);
+        let zero = builder.ins().iconst(I64, 0);
+        let one = builder.ins().iconst(I64, 1);
+        let is_zero = builder.ins().icmp(IntCC::Equal, cur_es, zero);
+        let result = builder.ins().select(is_zero, one, zero);
+        builder.def_var(test_result_var, result);
     }
 
     fn emit_subshell_start(
