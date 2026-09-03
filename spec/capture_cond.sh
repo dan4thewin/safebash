@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=14
+plan=16
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -64,6 +64,27 @@ if in_modes native,c; then
     run_sash 'while x=$(/bin/echo one) { bless x [[ -n $x ]]; /bin/echo "[$x]"; break }'
     [[ $rc = 0 && $out = "[one]" && -z $err ]]; chk 88.8
 else skip_chk 88.8; fi
+
+# ── `!` vs `else`: `$?` magnitude under negation (uniform with a plain command
+# condition — `!` = NegateTestResult collapses the stored status to 0/1; the
+# capture does NOT change this). This is the DD#88 negation contrast. ──
+
+# 88.15 negated `if ! x=$(cmd)` on a FAILING command: the bang-branch is taken,
+# and `$?` there is the NEGATED boolean (0), NOT the command's real code — `!`
+# collapses the magnitude, exactly like `if ! cmd`. (x is read after the if.)
+if in_modes native,c; then
+    run_sash 'if ! x=$(/bin/sh -c "/bin/echo o; exit 7") { /bin/echo "neg $?" }
+bless x [[ -n $x ]]; /bin/echo "x=[$x]"'
+    [[ $rc = 0 && $out = $'neg 0\nx=[o]' && -z $err ]]; chk 88.15
+else skip_chk 88.15; fi
+
+# 88.16 the SAME failing command via the non-negated `else` form: `$?` in the
+# else branch is the command's REAL exit code (7). Use this spelling to read the
+# numeric status in-branch.
+if in_modes native,c; then
+    run_sash 'if x=$(/bin/sh -c "/bin/echo o; exit 7") { bless x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo "else $?" }'
+    [[ $rc = 0 && $out = "else 7" && -z $err ]]; chk 88.16
+else skip_chk 88.16; fi
 
 # ── Taint + rejects (backend-independent: validate / taint) ──
 
