@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=100
+plan=98
 echo "1..$plan" >&3
 
 set +e
@@ -388,14 +388,6 @@ run_sash '! x=foo'
 # br6 a typed declaration is also a value binding
 run_sash 'if int x=5; then echo t; fi'
 [[ $rc != 0 && -z $out && $err == *'SB4025'* ]]; chk e.br6
-# br8 a *capturing* assignment gets honest advice: sequencing a `$(…)` can't
-# reproduce capture+branch (a failed capture aborts first), so the message says
-# so — NOT the generic "sequence it" that misleads for this case.
-run_sash 'if ! out=$(printf x) { echo b }'
-[[ $rc != 0 && -z $out && $err == *'SB4025'* && $err == *"isn't currently supported"* ]]; chk e.br8
-# br9 the literal (non-capture) case keeps the plain "sequence it" advice
-run_sash 'x=hi && echo $x'
-[[ $rc != 0 && -z $out && $err == *'SB4025'* && $err == *'sequence it'* ]]; chk e.br9
 # br7 (positive) a real status producer is still a valid condition
 run_sash 'if true; then echo t; fi'
 [[ $rc = 0 && $out = "t" && -z $err ]]; chk e.br7

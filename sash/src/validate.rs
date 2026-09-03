@@ -521,11 +521,15 @@ fn stmt_is_external_command(stmt: &Statement) -> bool {
 /// capture-specific guidance instead.
 fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diagnostic {
     let advice = if is_capture {
+        // DD#88: a capture-condition IS supported, but only for a single
+        // EXTERNAL `$(cmd)` / pipeline. This RHS captures something else — an
+        // intrinsic/builtin (which can't fail) or a concatenation — so there is
+        // no single external status to branch on.
         format!(
-            "{what} binds the captured output, not the command's exit status — and sequencing \
-             won't help (a failed `$(…)` aborts before any check). To branch on the command, run \
-             it in the condition without capturing: `if ! cmd {{ … }}`. Capturing output *and* \
-             branching on that command's status isn't currently supported."
+            "{what} captures a value, but a capture-condition branches on a single external \
+             command's exit status (`if x=$(cmd) {{ … }}`). This RHS isn't one — it captures a \
+             sash intrinsic/builtin (which can't fail), or concatenates `$(…)` with other text. \
+             Bind it, then test: `x=…; if [[ … ]]`."
         )
     } else {
         format!(

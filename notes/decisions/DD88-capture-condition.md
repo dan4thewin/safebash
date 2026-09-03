@@ -98,16 +98,27 @@ No new codes. Reuses SB4025 (non-capture value binding in boolean context),
 SB5050 (dead captured target), SB5020 (tainted target used without bless),
 SB5012 (`$?` outside a handling position).
 
+The SB4025 message is context-aware: a plain value binding (`if x=hi`) gets the
+"value binding — sequence it" advice; a `$(…)` capture that ISN'T a single
+external command (a concatenation, or an intrinsic/builtin capture that can't
+fail) gets a Group-B message that names the working form ("a capture-condition
+branches on a single external command's exit status") rather than claiming the
+feature is unsupported. A `$(user_fn)` capture gets its own transform message.
+
 ## Tests
 
-`spec/capture_cond.sh` 88.1–88.14: success/failure branches, `$?`-in-else real
+`spec/capture_cond.sh` 88.1–88.18: success/failure branches, `$?`-in-else real
 code, negated form, `$?`-first-in-then, pipeline + pipefail status, `while`
-form, taint bless (SB5020), dead-var (SB5050), and the exclusions (user-fn /
-concat / intrinsic / literal → SB4025). journal 236.
+form, bare-external head (88.17), taint bless (SB5020), dead-var (SB5050), the
+`!` vs `else` `$?`-magnitude contrast (88.15/16), and the exclusions with their
+messages (user-fn / concat / intrinsic / builtin / literal → SB4025). journal
+236.
 
 ## Deferred
 
 The general feature — multiple-value `return`, multi-target binding, and the
 external `(stdout, status, stderr)` trio — remains in
 `multi-assignment-and-capture-trio`. This DD is the external-command
-capture-condition subset only.
+capture-condition subset only. A related open idea: extending presence-testing
+to the getenv intrinsic (`getenv-presence-handling`) — either as a
+capture-condition or via an optional getenv default argument.

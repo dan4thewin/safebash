@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=17
+plan=18
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -115,13 +115,21 @@ run_sash 'fn f { return 0 }; if x=$(f) { /bin/echo $x }'
 [[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.11
 
 # 88.12 exclusion: a concatenation RHS (`foo$(cmd)`) has no single status → SB4025
+# with the DD#88 Group-B message (a capture-condition needs a single external cmd)
 run_sash 'if x=foo$(/bin/echo bar) { /bin/echo $x }'
-[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.12
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.12
 
 # 88.13 exclusion: an intrinsic capture `$(getenv …)` is not an external command → SB4025
+# (see task getenv-in-condition-presence for a possible future presence-test form)
 run_sash 'if x=$(getenv HOME) { /bin/echo $x }'
-[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.13
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.13
 
-# 88.14 a plain literal RHS in a condition is still a value binding → SB4025
+# 88.14 a plain literal RHS in a condition is a value binding → SB4025 with the
+# "sequence it" advice (Group A — no capture involved, so NOT the Group-B text)
 run_sash 'if x=hi { /bin/echo $x }'
-[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk 88.14
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"sequence it"* ]]; chk 88.14
+
+# 88.18 exclusion: a builtin capture `$(echo …)` (echo can't fail) → SB4025 with
+# the Group-B message. Pins the DD#88 message: capture-conditions are external-only.
+run_sash 'if x=$(echo hi) { /bin/echo $x }'
+[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.18
