@@ -45,3 +45,33 @@ to its external path). Codegen: `codegen/dispatch.rs` `emit_exec` →
 
 **Native-only for now:** the c and janet backends do not yet emit `exec` (c
 emits a no-op TODO; janet errors). See task `c-janet-exec-support`.
+
+## The `close` builtin (amended 2026-09-04, DG)
+
+`close N` closes a file descriptor on the running process — the sanctioned form
+of bash's `exec N>&-`. The `>&`/`<&` redirect target must be a plain fd number
+(SB4048); the close form `N>&-` is **rejected as syntax** and directs to
+`close N` instead (the reject-only decision of 2026-08-29 that closed the
+`bug-redirect-dup-target-unvalidated` silent-degrade hole — a `close` builtin is
+explicit and typed, matching sash's "named builtins over terse punctuation"
+direction). fd **open** (`exec N> file`) and **dup** (`N>&M`) keep their redirect
+syntax; only close is a builtin (DG 2026-09-04: close-only, dup stays on
+`N>&M`).
+
+- **Surface:** `close N`. `N` must be a **literal non-negative fd number** — a
+  variable/expansion or a bad arity is **SB4052** (the same no-dynamic-fd
+  discipline as a `N>&M` dup target).
+- **Semantics:** void; `$?` = 0 on success, 1 on failure. Per DD#55 a **bare**
+  `close` on a failed `close(2)` (e.g. EBADF) **aborts** with
+  `<argv0>: close: <fd>: <reason>`; a **caught** (`if`/`while`/`&&`/`||`) or
+  **`-`-suppressed** close does not abort (its failure is the branch verdict).
+- **Native-only for now** (like `exec`): c no-ops the TODO, janet emits it as an
+  external command. Runtime is `sash_close` (already present; now records the
+  errno via `SASH_LAST_ERRNO` on failure so the abort reason renders). c/janet
+  wiring rides with `c-janet-exec-support`.
+
+Impl: `ssa.rs` (`BuiltinCmd::Close`), `validate.rs` (`close` in `BUILTINS` +
+`check_close_arg` → SB4052), `codegen/dispatch.rs` + `codegen/inst_handlers.rs`
+(`handle_close`, modeled on `handle_cd`), `parse/parser.rs` (SB4048 message
+points at `close`), `sash-rt` (`set_last_errno_raw` in `sash_close`). Specs
+`spec/exec.sh` cl.1–cl.8 (native). SB4052 is a new code.

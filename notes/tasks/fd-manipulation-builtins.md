@@ -1,11 +1,23 @@
 ---
 title: "Consider fd manipulation (dup, close, …) as explicit builtins rather than `>&`/`<&` syntax"
-status: ready
+status: done
 kind: design
 depends: []
 gates:
   - "DG decision on whether fd dup/close is builtin functions vs redirect syntax"
 ---
+
+## Resolved (2026-09-04, DG)
+
+DG hit the gap (`exec 9> foo; exec 9>&-` → SB4048). Decision: a **`close N`
+builtin** (surface A), **close-only** — dup stays on the existing `N>&M` /
+`exec 2>&1` redirect syntax, and open stays on `exec N> file`. No `dup`/`open`
+builtin for now. Implemented native (c/janet ride with `c-janet-exec-support`);
+DD#14 amended (the `close` builtin section); specs `spec/exec.sh` cl.1–cl.8.
+Value-vs-void, DD#55, and taint questions below are answered by that section
+(void; DD#55 abort on a bare failed close; the fd arg is a literal number so no
+taint). The remaining open questions (`dup`/`open` builtins, migrating `N>&M`
+off syntax) are **not pursued** — DG scoped this to close-only.
 
 ## Context
 

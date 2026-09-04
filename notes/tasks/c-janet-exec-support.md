@@ -7,6 +7,7 @@ depends: []
 gates:
   - "c backend: `exec /bin/echo hi` replaces the process (execve) like native — no silent `/* TODO command: exec (Exec) */` no-op"
   - "c backend: `exec > file` applies the fd redirect to the running process"
+  - "c/janet backend: `close N` closes the fd (native works; c no-ops the TODO, janet mis-emits it as an external `os/execute [\"close\"]`)"
   - "janet backend: either implement exec (if the runtime allows execve/dup2) or emit a clean compile-time 'exec unsupported in janet' rather than a runtime error"
   - "spec/exec.sh un-guarded from native-only for whichever backends gain support"
 ---

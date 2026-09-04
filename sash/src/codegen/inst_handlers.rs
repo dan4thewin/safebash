@@ -961,6 +961,71 @@ pub(super) fn handle_cd(
     false
 }
 
+/// `close N` (DD#14 fd-manipulation) — `close(2)` the fd. Void; sets `$?` from
+/// the result (0 ok / 1 fail) and, per DD#55, a bare failed close aborts
+/// (a caught `if/||` or `-`-suppressed close does not). Abort diagnostic:
+/// `<argv0>: close: <fd>: <reason>`.
+pub(super) fn handle_close(
+    args: &[SsaValue],
+    checked: bool,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) -> bool {
+    // Validation guarantees exactly one literal-fd arg; be defensive anyway.
+    let Some(arg) = args.first() else {
+        let zero = builder.ins().iconst(I64, 0);
+        builder.def_var(ctx.exit_status_var, zero);
+        let one = builder.ins().iconst(I64, 1);
+        builder.def_var(ctx.test_result_var, one);
+        return false;
+    };
+    let fd_val = lower_value_as_int(
+        arg,
+        builder,
+        module,
+        ctx.vars,
+        ctx.literals,
+        ctx.externs,
+        Some(ctx.exit_status_var),
+    );
+    let close_ref = module.declare_func_in_func(ctx.externs.close, builder.func);
+    let call = builder.ins().call(close_ref, &[fd_val]);
+    let result = builder.inst_results(call)[0];
+    // sash_close returns 0 on success, -1 on failure → $? = 0 or 1.
+    let zero = builder.ins().iconst(I64, 0);
+    let failed = builder.ins().icmp(IntCC::SignedLessThan, result, zero);
+    let es = builder.ins().uextend(I64, failed);
+    builder.def_var(ctx.exit_status_var, es);
+    let success = builder
+        .ins()
+        .icmp(IntCC::SignedGreaterThanOrEqual, result, zero);
+    let tr = builder.ins().uextend(I64, success);
+    builder.def_var(ctx.test_result_var, tr);
+    // DD#55: diagnostic segments are "close" + the fd number.
+    let (s1p, s1l) = diag_static_seg("close", ctx.literals, module, builder);
+    let (s2p, s2l) = match arg {
+        SsaValue::Literal(s) => diag_static_seg(s, ctx.literals, module, builder),
+        _ => (zero, zero),
+    };
+    let msg = AbortMsg::Errno {
+        seg1_ptr: s1p,
+        seg1_len: s1l,
+        seg2_ptr: s2p,
+        seg2_len: s2l,
+    };
+    emit_status_abort_check(
+        builder,
+        module,
+        ctx.externs,
+        ctx.exit_status_var,
+        ctx.end_cl_block,
+        checked,
+        Some(msg),
+    );
+    false
+}
+
 /// Handle SsaInst::Mapfile.
 pub(super) fn handle_mapfile(
     array: &str,

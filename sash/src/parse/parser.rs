@@ -2338,8 +2338,8 @@ fn reject_nonfd_dup_target(target: &Expr, op: RedirectOp, span: Span) -> Result<
         format!(
             "`{arrow}` needs a file-descriptor number (e.g. `{arrow}2`) — sash \
              doesn't support `{arrow}` with a non-numeric target, trailing text, \
-             or the `-` close form. Redirect to a file with `>`/`<`, or dup a \
-             numbered fd."
+             or the `-` close form. Redirect to a file with `>`/`<`, dup a \
+             numbered fd, or close one with `close N`."
         ),
     ))
 }

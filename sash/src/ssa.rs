@@ -108,6 +108,11 @@ pub enum BuiltinCmd {
     Exec,
     Cd,
     Wait,
+    /// `close N` — close a file descriptor on the running process (DD#14
+    /// fd-manipulation family; the sanctioned form of bash's `N>&-`, which
+    /// sash rejects as redirect syntax — SB4048). Void; a failed close aborts
+    /// per DD#55 unless caught/suppressed.
+    Close,
     /// `bless VAR [[ ... ]]` — recognized at IR level, becomes
     /// `SsaInst::Bless` in SSA. Only appears as a `Command` in
     /// fallback paths (no TestExpr arg).
@@ -175,6 +180,7 @@ impl BuiltinCmd {
             "exec" => Self::Exec,
             "cd" => Self::Cd,
             "wait" => Self::Wait,
+            "close" => Self::Close,
             "bless" => Self::Bless,
             "read" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,

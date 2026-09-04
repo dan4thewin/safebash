@@ -226,6 +226,9 @@ impl SsaInst {
             BuiltinCmd::Cd => {
                 return super::inst_handlers::handle_cd(args, *checked, builder, module, ctx)
             }
+            BuiltinCmd::Close => {
+                return super::inst_handlers::handle_close(args, *checked, builder, module, ctx)
+            }
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
             // All other builtins (read, mapfile, printf, bless, etc.) and
             // external commands / user functions fall through to the general

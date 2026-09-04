@@ -1,3 +1,19 @@
+## ════════ STATUS (2026-09-04) — `close N` builtin: fd close (DD#14; SB4052) ════════
+
+**On `hand-parser`.** DG: "this gives SB4048: exec 9> foo; exec 9>&-". Not a bug
+— `exec` fd-manipulation supports open (`9> foo`) and dup (`N>&M`) but the close
+form `N>&-` was deliberately rejected (2026-08-29 reject-only fix), leaving no
+way to close an fd (pending `fd-manipulation-builtins`). DG chose a **`close N`
+builtin** (close-only; dup stays on `N>&M`). Void; `$?`=0/1; per DD#55 a bare
+failed close aborts (`close: <fd>: <reason>`), caught/`-`-suppressed doesn't. Arg
+must be a literal fd number (else **SB4052**). Modeled on `cd`: `BuiltinCmd::Close`,
+`check_close_arg`, `handle_close` (`lower_value_as_int` → `sash_close` →
+`emit_status_abort_check`). Fixed `sash_close` to record the errno
+(`set_last_errno_raw`) so the abort reason renders (was "error 0"). SB4048
+message now points at `close`. Native-only (like `exec`; c/janet ride
+`c-janet-exec-support`). specs exec.sh cl.1–cl.8 (plan 11→19). 3-mode sweep: 0
+regressions, 8 new. DD#14 amended; `fd-manipulation-builtins` done; journal 240.
+
 ## ════════ STATUS (2026-09-03) — relative external paths rejected (DD#23; SB5051) ════════
 
 **On `hand-parser`.** DG: "look at _tmp/17, I'm getting 2 SSA taint backstop

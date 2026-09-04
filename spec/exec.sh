@@ -17,7 +17,7 @@ set -eu
 . common.sh
 setup exec
 [[ ${SASH_MODE:-native} != native ]] && exit 0
-plan=11
+plan=19
 echo "1..$plan" >&3
 
 set +e
@@ -64,6 +64,39 @@ run_sash 'x=$(getenv HOME); bless x [[ -n $x ]]; exec /bin/echo $x'
 # ex.11 the exec target is recorded in the external manifest
 out=$(sash --manifest -c 'exec grep x /etc/hostname' 2>/dev/null); rc=$?
 [[ $rc = 0 && $out == *'/usr/bin/grep'* ]]; chk ex.11
+
+# --- close N (DD#14 fd-manipulation): the sanctioned fd-close form. Bash's
+# `N>&-` is rejected as redirect syntax (SB4048); `close N` is the builtin. ---
+
+# cl.1 open a numbered fd, write to it, then close it — the file gets the write
+# and the program's own stdout stays empty
+run_sash 'exec 9> cl_fd_out; /bin/echo hi >&9; close 9'
+[[ $rc = 0 && -z $out && -z $err ]] && [[ $(cat cl_fd_out 2>/dev/null) = hi ]]; chk cl.1
+rm -f cl_fd_out
+# cl.2 a bare close of an unopened fd is a failed syscall → DD#55 abort with the
+# errno reason (EBADF), nonzero exit
+run_sash 'close 9'
+[[ $rc != 0 && -z $out && $rerr == *'close: 9: Bad file descriptor'* ]]; chk cl.2
+# cl.3 a caught close (if/…) does not abort — the failure is the condition's
+# verdict, so the else branch runs
+run_sash 'if close 9 { /bin/echo bad } else { /bin/echo caught }'
+[[ $rc = 0 && $out = caught && -z $err ]]; chk cl.3
+# cl.4 a `-`-suppressed close does not abort either
+run_sash '- close 9; /bin/echo ok'
+[[ $rc = 0 && $out = ok && -z $err ]]; chk cl.4
+# cl.5 close with no argument → SB4052
+run_sash 'close'
+[[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk cl.5
+# cl.6 close with a non-fd (variable/word) argument → SB4052
+run_sash 'close foo'
+[[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk cl.6
+# cl.7 close with more than one argument → SB4052
+run_sash 'close 1 2'
+[[ $rc != 0 && -z $out && $err == *SB4052* ]]; chk cl.7
+# cl.8 the bash `N>&-` close-via-redirect form is still rejected (SB4048),
+# directing to `close N`
+run_sash 'exec 9> foo; exec 9>&-'
+[[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cl.8
 
 set -e
 tally

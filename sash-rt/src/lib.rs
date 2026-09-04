@@ -136,6 +136,15 @@ fn set_last_errno(e: rustix::io::Errno) {
     }
 }
 
+/// Record a raw (positive) errno for wrappers that issue the syscall directly
+/// (e.g. `sash_close`) and thus have no `rustix::io::Errno` in hand.
+#[inline]
+fn set_last_errno_raw(errno: i64) {
+    unsafe {
+        SASH_LAST_ERRNO = errno;
+    }
+}
+
 /// Standard message for the common file/IO errnos. Unknown values fall
 /// back to a numeric form in `sash_emsg`.
 fn errno_str(errno: i64) -> Option<&'static [u8]> {
@@ -484,6 +493,9 @@ pub extern "C" fn sash_close(fd: i64) -> i64 {
             lateout("r11") _,
         );
         if result < 0 {
+            // Raw syscall: the negative return is `-errno`. Record it so a
+            // DD#55 `close` abort renders the real reason (e.g. EBADF).
+            set_last_errno_raw(-result);
             -1
         } else {
             0

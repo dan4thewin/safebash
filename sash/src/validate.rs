@@ -1672,6 +1672,7 @@ const BUILTINS: &[&str] = &[
     "signum",
     // Filesystem
     "cd",
+    "close",
     // Introspection
     "status",
     "getpid",
@@ -1861,6 +1862,13 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         check_exec_target(c, diags);
         return;
     }
+    // DD#14 fd-manipulation: `close N` closes a file descriptor. Its single
+    // argument must be a literal non-negative fd number — the same discipline
+    // as a `N>&M` dup target (no dynamic/variable fd, DD#23-style).
+    if name == "close" {
+        check_close_arg(c, diags);
+        return;
+    }
     if name.is_empty() || is_valid_command(name, funcs) {
         return;
     }
@@ -1872,6 +1880,34 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
             name
         ),
     ));
+}
+
+/// DD#14: `close N` — the single argument must be a literal non-negative
+/// file-descriptor number (`close 3`). A variable/expansion fd is a
+/// runtime-chosen descriptor (rejected, like a dynamic exec target), and
+/// zero or multiple args is a misuse. SB4052.
+fn check_close_arg(c: &Command, diags: &mut Vec<Diagnostic>) {
+    if c.args.len() != 1 {
+        diags.push(Diagnostic::error_span(
+            c.name.span,
+            "SB4052",
+            "`close` takes exactly one argument: a file-descriptor number (e.g. `close 3`)"
+                .to_string(),
+        ));
+        return;
+    }
+    let arg = &c.args[0];
+    let is_fd = matches!(&arg.kind,
+        ExprKind::Literal(s) if !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()));
+    if !is_fd {
+        diags.push(Diagnostic::error_span(
+            arg.span,
+            "SB4052",
+            "`close` needs a literal file-descriptor number (e.g. `close 3`) — \
+             not a variable or expression"
+                .to_string(),
+        ));
+    }
 }
 
 /// DD#14: validate the target of `exec CMD args…` (the replace form). `CMD`
