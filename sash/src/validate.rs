@@ -1997,6 +1997,12 @@ fn is_valid_command(name: &str, funcs: &HashSet<String>) -> bool {
     if name.starts_with('/') {
         return true;
     }
+    // Relative path (`./x`, `foo/bar`): not runnable, but let `resolve` own
+    // the DD#23 rejection (SB5051) so every position reports the same
+    // diagnostic — don't preempt it with a generic SB5011 "not found" here.
+    if name.contains('/') {
+        return true;
+    }
     // Builtin
     if BUILTINS.contains(&name) {
         return true;
@@ -3340,7 +3346,12 @@ fn stmt_runs_taint_source(stmt: &Statement) -> bool {
 
 fn command_name_is_taint_source(name_expr: &Expr) -> bool {
     let name = expr_literal_str(name_expr);
-    name == "getenv" || name == "argv" || name == "arg" || name.starts_with('/')
+    // DD#23: a resolved external head is an absolute path (`/…`); intrinsics,
+    // builtins and user functions keep bare names with no slash. So any name
+    // containing a slash is an external exec → tainted output. `contains('/')`
+    // (not `starts_with('/')`) is defense-in-depth: it flags a relative path
+    // too, should one ever slip the DD#23 rejection in `resolve`.
+    name == "getenv" || name == "argv" || name == "arg" || name.contains('/')
 }
 
 /// A command substitution that yields a tainted **scalar** used directly

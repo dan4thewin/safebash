@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=98
+plan=104
 echo "1..$plan" >&3
 
 set +e
@@ -538,6 +538,25 @@ run_sash 'x=/usr/bin/echo; $x hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.1
 run_sash 'const x=/usr/bin/echo; $x hi'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cmdvar.2
+
+# relpath.* DD#23: a relative external path (`./x`, `foo/bar`) is a COMPILE
+# error (SB5051) — a resolved external head must be absolute so it can't bind
+# to the runtime cwd ("no PATH injection, no search ambiguity"). Uniform across
+# positions: a top-level head, inside `$( )`, and a pipeline stage. An absolute
+# path still compiles+runs; a bare unknown name is still "not found" (SB5011),
+# NOT a relative-path error (the two are distinct).
+run_sash 'foo/bar baz'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk relpath.1
+run_sash './tool -a'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk relpath.2
+run_sash 'x=$(./tool -a); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk relpath.3
+run_sash '/bin/echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk relpath.4
+run_sash 'nosuchcmd991 x'
+[[ $rc != 0 && $err == *SB5011* && $err != *SB5051* ]]; chk relpath.5
+run_sash './tool a | /bin/cat'
+[[ $rc != 0 && -z $out && $err == *SB5051* ]]; chk relpath.6
 
 # ── Compound-condition catch (DD#55; DG 2026-08-19). `&&`/`||` operands in a
 # condition are caught (not aborted); a `;` list's non-final member and an

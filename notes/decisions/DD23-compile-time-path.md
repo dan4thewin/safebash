@@ -90,3 +90,38 @@ search.
   See `tighten-cmdsub-taint-execve`.
 - **--sysroot incl. squashfs** is part of resolution (build host default,
   or a target dir / squashfs image root).
+
+## Addendum (2026-09-03) — relative external paths are rejected (SB5051)
+
+DG hit two coupled gaps while running an arg-parser with
+`PATH=.:$PATH ./sash 17` (a `sash-getopt` capture). `sash-getopt` resolved to
+the **relative** path `./sash-getopt` (a `.`-in-PATH match), and:
+
+1. The CST taint pass (`command_name_is_taint_source`) detected externals with
+   `name.starts_with('/')` — **absolute only** — so the relative-path capture
+   was **not** flagged. Only the fail-closed SSA taint backstop (basename-based)
+   caught it, producing an "SSA taint backstop" reject where a clean **SB5020**
+   should have fired. That divergence is the symptom; the root is that a
+   relative external path exists at all, which DD#23 forbids.
+
+**Rule (reaffirming DD#23's "absolute path only / no search ambiguity"):**
+
+- **Resolution never yields a relative path.** `resolve_command_path` searches
+  only **absolute** PATH entries; a relative dir (`.`, `..`, an empty entry =
+  cwd) is skipped. A command found solely via a relative dir is unresolved →
+  **SB5011**.
+- **A source-written relative external head is a compile error — SB5051.** A
+  literal command head that contains `/` but does not start with `/` (`./x`,
+  `../x`, `a/b`) is rejected uniformly in every position (top-level, `$( )`,
+  pipeline stage). An **absolute** `/x` path is unaffected; a bare unknown name
+  is still "not found" (**SB5011**), which is distinct from a relative-path
+  error.
+- **CST taint hardening (defense-in-depth).** `command_name_is_taint_source`
+  now uses `contains('/')` (not `starts_with('/')`), so a relative external
+  would be tainted even if one ever slipped the rejection. The SSA backstop was
+  already fail-closed (basename → tainted unless a known clean builtin/user fn).
+
+Impl: `resolve.rs` (`resolve_command_path` dir-skip; `resolve_command` SB5051;
+`is_valid_command` defers relative heads so `resolve` owns the diagnostic),
+`validate.rs` (`command_name_is_taint_source` → `contains('/')`). Specs
+`errors.sh` relpath.1–6 (×3 modes). SB5051 is a new code.

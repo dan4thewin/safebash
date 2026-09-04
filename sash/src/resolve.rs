@@ -67,18 +67,27 @@ pub(crate) fn resolve_commands(program: &mut Program) -> Vec<Diagnostic> {
 pub(crate) fn resolve_command_path(name: &str) -> Option<String> {
     let sysroot = crate::get_sysroot();
     let path_var = std::env::var("PATH").unwrap_or_default();
-    for dir in path_var.split(':') {
+    // DD#23: only search absolute PATH dirs. A relative dir (`.`, `..`, an
+    // empty entry = cwd) would yield a path that binds to the runtime cwd —
+    // the "search ambiguity" DD#23 forbids. A command found only via such a
+    // dir stays unresolved (→ SB5011).
+    for dir in path_var.split(':').filter(|d| d.starts_with('/')) {
         let target_path = format!("{}/{}", dir, name);
-        let exists = if let Some(ref sr) = sysroot {
-            crate::sysroot_file_exists(sr, &target_path)
-        } else {
-            std::path::Path::new(&target_path).is_file()
-        };
-        if exists {
+        if resolved_path_exists(&sysroot, &target_path) {
             return Some(target_path);
         }
     }
     None
+}
+
+/// Does `target_path` name an existing file — within `--sysroot` (dir or
+/// squashfs image) when set, else on the build host?
+fn resolved_path_exists(sysroot: &Option<String>, target_path: &str) -> bool {
+    if let Some(sr) = sysroot {
+        crate::sysroot_file_exists(sr, target_path)
+    } else {
+        std::path::Path::new(target_path).is_file()
+    }
 }
 
 /// True if `name` is a true external command head that must be resolved to
@@ -190,6 +199,21 @@ fn resolve_command(c: &mut Command, funcs: &HashSet<String>, diags: &mut Vec<Dia
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
+    // DD#23: an external command path must be absolute. A relative path head
+    // (`./x`, `../x`, `a/b`) would bind to the runtime cwd — the "search
+    // ambiguity" DD#23 forbids. Reject it. (An absolute `/x` path contains a
+    // slash too but is left as-is by `is_resolvable_external` below.)
+    if name.contains('/') && !name.starts_with('/') {
+        diags.push(Diagnostic::error_span(
+            c.name.span,
+            "SB5051",
+            format!(
+                "relative external path '{}' — DD#23 requires an absolute path (starting with '/')",
+                name
+            ),
+        ));
+        return;
+    }
     if !is_resolvable_external(name, funcs) {
         return;
     }

@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-09-03) — relative external paths rejected (DD#23; SB5051) ════════
+
+**On `hand-parser`.** DG: "look at _tmp/17, I'm getting 2 SSA taint backstop
+warnings" (a `sash-getopt` arg parser run as `PATH=.:$PATH ./sash 17`). Root
+cause: with `.` in PATH, `sash-getopt` resolved to the **relative** path
+`./sash-getopt`, and the CST taint check (`command_name_is_taint_source`) used
+`starts_with('/')` (absolute-only), so the capture wasn't tainted — only the
+fail-closed SSA backstop caught it (a reject where a clean SB5020 should fire).
+A relative external path violates DD#23 ("absolute path only / no search
+ambiguity"). DG chose **reject** (not absolutize) + CST-taint hardening. Fixes:
+`resolve_command_path` skips non-absolute PATH dirs; a source-written relative
+head (`./x`, `foo/bar`) → **SB5051** uniformly (top-level, `$( )`, pipeline
+stage); `is_valid_command` defers relative heads so `resolve` owns the
+diagnostic; `command_name_is_taint_source` → `contains('/')` (defense-in-depth).
+Now `PATH=$PWD:$PATH` (absolute) gives the correct **SB5020** on the unblessed
+capture. specs errors.sh relpath.1–6 (plan 98→104). 3-mode sweep: 0 regressions,
+18 new passing. SB5051 new. DD#23 addendum; journal 239.
+
 ## ════════ STATUS (2026-09-03) — `exit` accepts any int (DD#89) ════════
 
 **On `hand-parser`.** DG: "bless … any int value/variable/return should work as
