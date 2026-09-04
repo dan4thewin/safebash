@@ -10,8 +10,9 @@ model:
 - **(B) The scalar elision operator `:~`.** `${x:~}` / `${args[i]:~}` **elides**
   the token — it contributes *zero* tokens to a list when its value is the
   identity element — rather than expanding to an empty string. It is the scalar
-  analog of the array-splat elision (`@a` / `@{a:-}` on an empty array → zero
-  args, DD#69/#75).
+  analog of the array-splat elision `@{a:~}` (an empty array → zero args,
+  DD#69). (Bare `@a` on an empty array also contributes zero args, but a bare
+  `@a` to an external command is SB5032 — a disposition is required.)
 
 Amends DD#75 §5 (positional `args` model) and DD#81 Part B (arity from `args`).
 
@@ -26,9 +27,12 @@ the argument optional — arity (DD#81) still required it (SB5042), so the defau
 could fire only from a caller passing an explicit empty string, making `:-` on
 `args` nearly inert.
 
-Arrays already had the missing capability: a bare `@a` (or `@{a:-}`) on an empty
-array contributes zero args. `:~` brings the same "empty → disappears" to a
-scalar, and `:-`/`:~` on a trailing `args[i]` make it genuinely optional.
+`:~` is the missing "empty → disappears". It applies uniformly to scalars and to
+the array-splat disposition (`@{a:~}`): `:-` always yields exactly one token
+(empty string / one empty arg), `:~` yields zero. (Earlier drafts of this DD
+claimed a bare `@{a:-}` already elided to zero args — that was inconsistent with
+the scalar `${x:-}` and with bash `"${a[@]:-}"`; corrected 2026-09-04 so
+`@{a:-}` → one empty arg and `@{a:~}` is the sole array elide. See the addendum.)
 
 ## (A) Optional trailing arguments
 
@@ -178,14 +182,30 @@ SB5042 at compile time rather than a runtime require-abort. Mixing bare `$N`
 with `${N:~}` → SB5047, as for the `args` form. Specs: `optional_args.sh`
 84.19–84.24. journal 234.
 
-## Addendum (2026-09-04) — `:~` on an external array splat
+## Addendum (2026-09-04) — `:~` on an external array splat, and `@{a:-}` fix
 
 DG: "for array splat to command, we allow `:-` and `:?`; `:~` should work too."
-The array-splat disposition (DD#69) now accepts `@{a:~}` alongside `@{a:-WORD}`
-/ `@{a:?WORD}`. `@{a:~}` **elides** — empty → zero args — identical to a bare
-`@{a:-}` / `@a`, and (like the scalar `${x:~}`) takes **no word** (`@{a:~WORD}`
-→ SB5033). It is encoded as a wordless `arrvals_default`, so it flows through
-validate/transform/all three backends exactly as `@{a:-}` does. This closes the
-inconsistency where the elide operator worked for scalars but not array splats.
-Impl: `parse/expr.rs::parse_at_brace_disposition`. Specs `glob_splat.sh`
-gs.20–24. journal 241.
+Then, on review: "I thought `@{a:-}` produced an empty element in a command."
+
+Two coupled changes, landing together:
+
+1. The array-splat disposition (DD#69) now accepts **`@{a:~}`** alongside
+   `@{a:-WORD}` / `@{a:?WORD}`. `@{a:~}` **elides** — empty array → zero args —
+   and (like the scalar `${x:~}`) takes **no word** (`@{a:~WORD}` → SB5033).
+2. **`@{a:-}` (bare, empty word) now yields one EMPTY arg**, not zero. This
+   matches the scalar `${x:-}` (always exactly one token — an empty string) and
+   bash `"${a[@]:-}"`, and resolves this DD's own internal contradiction (it
+   stated the "`:-` = exactly one token" principle, then claimed `@{a:-}` → zero
+   args). So `:-` (one element) and `:~` (zero / elide) are now genuinely
+   distinct and uniform across scalar and array.
+
+Verified identical in all three backends (empty: `@{a:-}` → `[PRE][]`, `@{a:~}`
+→ `[PRE]`). Parser-only change: the encoding is `has_word = operand.is_some()`,
+so `:-` now always carries an operand (empty word → `Some("")` → one empty
+element) and `:~` carries none (`None` → zero args); the transform/runtime/janet
+paths already mapped `Some`→one-element and `None`→zero, so nothing downstream
+changed. The "drop-if-empty" idiom migrates from `@{a:-}` to `@{a:~}` (e.g.
+`cat @{e:~}` to read stdin on an empty array — wordsplit 22.18).
+
+Impl: `parse/expr.rs::parse_splat_op`. Specs `glob_splat.sh` gs.4 (now one empty
+arg), gs.20–24; `wordsplit.sh` 22.18 (migrated to `:~`). journal 241.

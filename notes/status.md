@@ -1,15 +1,29 @@
+## ════════ STATUS (2026-09-04) — array `@{a:-}` = one empty element; `@{a:~}` = elide (DD#69/#84) ════════
+
+**On `hand-parser`.** DG: "I thought `@{a:-}` produced an empty element in a
+command." He was right — a latent inconsistency: scalar `${x:-}` empty → one
+empty arg (bash parity), but array `@{a:-}` empty → **zero args** (diverged from
+bash `"${a[@]:-}"` and from its own scalar `:-`). This also made the just-added
+`@{a:~}` redundant with `@{a:-}`. DG chose (A): **`@{a:-}` → one empty element**,
+**`@{a:~}` → the sole elide (zero args)** — uniform with `${x:-}`/`${x:~}` and
+bash, and resolving DD#84's internal "`:-` = exactly one token" contradiction.
+Parser-only (`parse_splat_op`): `:-` now always carries an operand (empty word →
+`Some("")` → one empty element via has_word=1), `:~` carries none (zero args);
+transform/runtime/janet already mapped Some→one-element / None→zero, so nothing
+downstream changed. Verified identical in all 3 backends. Drop-if-empty idiom
+migrates `@{a:-}`→`@{a:~}` (wordsplit 22.18: `cat @{e:~}`). specs gs.4 (one empty
+arg now, disambiguated), gs.20 (zero args). 3-mode sweep: 0 regressions. DD#69/#84
+corrected; journal 241. No new SB code.
+
 ## ════════ STATUS (2026-09-04) — `@{a:~}` elide disposition for array splats (DD#69/#84) ════════
 
 **On `hand-parser`.** DG: "for array splat to command, we allow `:-` and `:?`; I
 think `:~` should work too." DD#84's `:~` (elide) worked for scalars (`${x:~}`)
 but the array-splat parser rejected `@{a:~}` (SB5033) — the exact array form the
-scalar operator was modeled on. Now accepted: `@{a:~}` elides (empty → zero args,
-non-empty → splat), identical to bare `@{a:-}`/`@a`, and takes no word
-(`@{a:~WORD}` → SB5033). One-line-ish parser change
-(`parse_at_brace_disposition` gains a `:~` branch encoding a wordless
-`arrvals_default`) → flows through validate/transform/all 3 backends with no new
-wiring. specs glob_splat.sh gs.20–24 (plan 19→24). 3-mode sweep: 0 regressions,
-15 new. DD#69/#84 amended; journal 241. No new SB code.
+scalar operator was modeled on. Now accepted: `@{a:~}` elides. **(Superseded
+same day** — the follow-up entry above corrects `@{a:-}` to one empty element and
+makes `@{a:~}` the *sole* elide, so `:~` is no longer "identical to `@{a:-}`".**)**
+specs glob_splat.sh gs.20–24 (plan 19→24). journal 241.
 
 ## ════════ STATUS (2026-09-04) — `close N` builtin: fd close (DD#14; SB4052) ════════
 

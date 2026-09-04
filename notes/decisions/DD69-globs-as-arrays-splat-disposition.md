@@ -41,18 +41,22 @@ empty), so the rule lives on the **splat site**, not on globs.
 command** is a compile error. The splat must carry an empty-disposition:
 
 - `@{a:-WORD}` — when `a` is empty, the splat is the single arg `WORD`;
-  bare `@{a:-}` yields zero args (empty is explicitly fine).
+  bare `@{a:-}` yields **one empty arg** (empty-word default — bash
+  `"${a[@]:-}"` parity, and consistent with the scalar `${x:-}`; corrected
+  2026-09-04, was "zero args").
 - `@{a:?WORD}` — when `a` is empty, **abort** at runtime with `WORD` on
   stderr. The explicit, local replacement for failglob.
 - `@{a:~}` — **elide** (DD#84): when `a` is empty, the splat contributes
-  zero args, exactly like a bare `@{a:-}`. It is the explicit spelling of
-  empty→nothing (the array analog of the scalar `${x:~}`) and, like the
-  scalar form, takes **no word** (`@{a:~WORD}` is SB5033). Added 2026-09-04
-  (DG: "for array splat to command, we allow `:-` and `:?`; `:~` should work
-  too") for uniformity with the scalar elide operator.
+  **zero args** — the sole drop-if-empty disposition (the array analog of the
+  scalar `${x:~}`). Like the scalar form it takes **no word** (`@{a:~WORD}` is
+  SB5033). Added 2026-09-04 (DG: "for array splat to command, we allow `:-`
+  and `:?`; `:~` should work too") — and the same day `@{a:-}` was corrected
+  to one empty arg, so `:-` (one element) and `:~` (zero) are now distinct,
+  uniform with the scalar `${x:-}`/`${x:~}` pair.
 
 A non-empty array splats to one verbatim arg per element. These forms map
-1-to-1 onto bash `"${a[@]:-WORD}"` / `"${a[@]:?WORD}"` (DD#67 sugar).
+1-to-1 onto bash `"${a[@]:-WORD}"` / `"${a[@]:?WORD}"` (DD#67 sugar) — incl.
+bare `@{a:-}` ≡ `"${a[@]:-}"` → one empty arg.
 
 ## Scope (deliberately minimal)
 
@@ -125,11 +129,12 @@ Part 2 (external-splat empty-disposition) are both done.
 
 Part 2 (`glob-splat-disposition-word`): a bare `@a` into an external command
 (post-DD#23 resolution, a `/`-prefixed head) is **SB5032**; `@{a:-WORD}`
-(empty → the single arg WORD; bare `@{a:-}` → zero args) and `@{a:?WORD}`
-(empty → abort, exit 1, `<progname>: WORD`) carry the disposition. Only
-`:-`/`:?` (SB5033 otherwise). WORD is a `${x:-WORD}`-style interpolating
-word, substituted as ONE element. The argv-splicing constructs (echo still
-SB5030), user functions, value functions (join/len/…), and for-in are exempt.
+(empty → the single arg WORD; bare `@{a:-}` → one empty arg), `@{a:?WORD}`
+(empty → abort, exit 1, `<progname>: WORD`), and `@{a:~}` (empty → zero args,
+elide) carry the disposition. Only `:-`/`:?`/`:~` (SB5033 otherwise). WORD is a
+`${x:-WORD}`-style interpolating word, substituted as ONE element. The
+argv-splicing constructs (echo still SB5030), user functions, value functions
+(join/len/…), and for-in are exempt.
 
 Lexer scans `@{…}` into one Word (`scan_at_brace`); parser decodes it
 (`parse_at_brace_disposition` → `arrvals_default`/`arrvals_abort`);

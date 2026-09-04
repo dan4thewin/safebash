@@ -58,3 +58,23 @@ reversible internal choice — reported for the record.)
 - `cargo fmt`/`clippy` clean.
 
 DD#69 disposition list + DD#84 gained addenda. No new SB code (reuses SB5033).
+
+## Correction (same day) — `@{a:-}` was itself wrong
+
+DG, on review: "I thought `@{a:-}` produced an empty element in a command." He
+was right, and the framing above ("`@{a:~}` … identical to bare `@{a:-}`") was
+built on a latent bug. Empirically (leading-`PRE` probe, all 3 backends):
+
+- scalar `${x:-}` empty → **one empty arg** (bash parity) ✓
+- array `@{a:-}` empty → **zero args** ✗ (diverged from bash `"${a[@]:-}"` and
+  from its own scalar `:-`)
+
+So `@{a:-}` was the odd one out, and my `@{a:~}` was redundant with it. DG chose
+(A): **`@{a:-}` → one empty element**, **`@{a:~}` → the sole elide (zero args)**
+— uniform with `${x:-}`/`${x:~}` and bash. Parser-only: `:-` now always carries
+an operand (empty word → `Some("")` → one empty element via has_word=1), `:~`
+carries none (zero args); transform/runtime/janet already mapped Some→one /
+None→zero, so no downstream change. The drop-if-empty idiom moves from `@{a:-}`
+to `@{a:~}` (wordsplit 22.18: `cat @{e:~}`). Specs gs.4 (one empty arg now),
+gs.20 (zero args, disambiguated). DD#69/#84 corrected (DD#84's internal
+"`:-` = exactly one token" contradiction resolved). 3-mode sweep: 0 regressions.

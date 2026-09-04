@@ -2,10 +2,11 @@
 # spec/glob_splat.sh — DD#69 Part 2: external-splat empty-disposition.
 # A bare `@a` splat into an EXTERNAL command is a compile error (SB5032);
 # it must carry an empty-disposition `@{a:-WORD}` (empty → the single arg
-# WORD; bare `@{a:-}` → zero args), `@{a:?WORD}` (empty → runtime abort
-# `<progname>: WORD`), or `@{a:~}` (elide: empty → zero args, no word — DD#84).
-# Builtins (echo/…) and for-in are EXEMPT. Non-empty arrays splat per-element.
-# Only `:-`/`:?`/`:~` are valid after `@{a`.
+# WORD; bare `@{a:-}` → one EMPTY arg, bash `"${a[@]:-}"` parity), `@{a:?WORD}`
+# (empty → runtime abort `<progname>: WORD`), or `@{a:~}` (elide: empty → ZERO
+# args, no word — DD#84; the sole drop-if-empty form). Builtins (echo/…) and
+# for-in are EXEMPT. Non-empty arrays splat per-element. Only `:-`/`:?`/`:~`
+# are valid after `@{a`.
 set -eu
 . common.sh
 setup glob_splat
@@ -27,9 +28,12 @@ run_sash 'array a=(x y); /bin/echo @{a:-def}'
 run_sash 'array a=(); /bin/echo @{a:-def}'
 [[ $rc = 0 && $out = "def" && -z $err ]]; chk gs.3
 
-# gs.4 bare `@{a:-}` empty → zero args (echo prints just a newline)
-run_sash 'array a=(); /bin/echo @{a:-}'
-[[ $rc = 0 && $out = "" && -z $err ]]; chk gs.4
+# gs.4 bare `@{a:-}` empty → ONE empty element (bash `"${a[@]:-}"` parity, and
+#       consistent with the scalar `${x:-}`; DD#69/#84 2026-09-04). Probe with a
+#       leading fixed arg so zero-args vs one-empty-arg is distinguishable:
+#       `[PRE]` alone = zero args; `[PRE]` then `[]` = one empty element.
+run_sash 'array a=(); /usr/bin/printf "[%s]\n" PRE @{a:-}'
+[[ $rc = 0 && $out = $'[PRE]\n[]' && -z $err ]]; chk gs.4
 
 # gs.5 `@{a:?WORD}` non-empty → the array splats per-element
 run_sash 'array a=(x y); /bin/echo @{a:?oops}'
@@ -110,10 +114,11 @@ run_sash 'array a=(x y); for f in @{a:?}; do /bin/echo "$f"; done'
 run_sash 'array a=(x y); : @a; echo "@a"'
 [[ $rc = 0 && $out = "@a" && -z $err ]]; chk gs.19
 
-# gs.20 DD#84: `@{a:~}` (elide) empty → zero args, exactly like a bare `@{a:-}`
-#       (the explicit elide spelling; the array form of the scalar `${x:~}`).
-run_sash 'array a=(); /bin/echo s @{a:~} e'
-[[ $rc = 0 && $out = "s e" && -z $err ]]; chk gs.20
+# gs.20 DD#84: `@{a:~}` (elide) empty → ZERO args — the sole zero-args
+#       disposition (contrast gs.4: `@{a:-}` empty → one EMPTY arg). Same
+#       leading-`PRE` probe: `[PRE]` alone confirms nothing followed.
+run_sash 'array a=(); /usr/bin/printf "[%s]\n" PRE @{a:~}'
+[[ $rc = 0 && $out = "[PRE]" && -z $err ]]; chk gs.20
 
 # gs.21 `@{a:~}` non-empty → the array splats per-element
 run_sash 'array a=(x y); /bin/echo @{a:~}'

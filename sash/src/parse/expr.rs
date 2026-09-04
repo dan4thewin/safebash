@@ -246,17 +246,10 @@ fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
         .find(':')
         .ok_or_else(|| splat_disposition_malformed(span))?;
     let name = &inner[..colon];
-    let (op, word) = parse_splat_op(&inner[colon + 1..], name, span)?;
+    let (op, operand) = parse_splat_op(&inner[colon + 1..], name, span)?;
     if !is_identifier(name) {
         return Err(splat_disposition_malformed(span));
     }
-    // Empty WORD (`@{a:-}` / `@{a:~}`) → no operand → zero args on empty; a
-    // present WORD → a single substituted arg. `:?` always aborts on empty.
-    let operand = if word.is_empty() {
-        None
-    } else {
-        Some(parse_default_word(word, span))
-    };
     Ok(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
@@ -274,43 +267,71 @@ fn splat_disposition_malformed(span: Span) -> Diagnostic {
         span,
         "SB5033",
         "`@{…}` splat disposition must be `@{a:-WORD}` (empty → the single \
-         arg WORD), `@{a:?WORD}` (empty → abort with WORD), or `@{a:~}` \
-         (empty → drop the splat) — only `:-`, `:?`, and `:~` are valid"
+         arg WORD; bare `@{a:-}` → one empty arg), `@{a:?WORD}` (empty → abort \
+         with WORD), or `@{a:~}` (empty → drop the splat) — only `:-`, `:?`, \
+         and `:~` are valid"
             .to_string(),
     )
 }
 
-/// Parse the `OP[WORD]` after the `:` in `@{name:OP…}` → (operator, WORD).
-/// `:-`/`:?` take a (possibly empty) WORD; `:~` (DD#84 elide) is the explicit
-/// spelling of the empty→zero-args behaviour a bare `@{a:-}` / `@a` already has
-/// (the array analog of the scalar `${x:~}`) and, like it, takes NO word — so
-/// `@{a:~WORD}` is a syntax error. `:~` encodes as a wordless `arrvals_default`.
-fn parse_splat_op<'a>(
-    after: &'a str,
+/// Parse the `OP[WORD]` after the `:` in `@{name:OP…}` → (operator, operand).
+/// The operand encodes the empty-array behaviour (has_word = operand.is_some()):
+///
+/// - `:-` → `arrvals_default`, **always an operand** — one element on empty:
+///   WORD, or an empty element for bare `@{a:-}` (matches scalar `${x:-}` and
+///   bash `"${a[@]:-}"`; DD#69/#84 addendum 2026-09-04).
+/// - `:?` → `arrvals_abort`; bare `@{a:?}` aborts with no message (operand
+///   `None`), `@{a:?WORD}` with WORD.
+/// - `:~` (DD#84 elide) → `arrvals_default` with **no operand** — the sole
+///   zero-args disposition: on an empty array the splat contributes nothing.
+///   Like the scalar `${x:~}` it takes NO word, so `@{a:~WORD}` is an error.
+fn parse_splat_op(
+    after: &str,
     name: &str,
     span: Span,
-) -> Result<(&'static str, &'a str), Diagnostic> {
+) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
     if let Some(rest) = after.strip_prefix('-') {
-        return Ok(("arrvals_default", rest));
+        return Ok(("arrvals_default", Some(parse_default_word(rest, span))));
     }
     if let Some(rest) = after.strip_prefix('?') {
-        return Ok(("arrvals_abort", rest));
+        return Ok(("arrvals_abort", optional_splat_word(rest, span)));
     }
     if let Some(rest) = after.strip_prefix('~') {
-        if !rest.is_empty() {
-            return Err(parse_error(
-                span,
-                "SB5033",
-                format!(
-                    "`@{{{name}:~}}` (elide) takes no word — `:~` drops the splat \
-                     when `{name}` is empty; use `@{{{name}:-WORD}}` to substitute \
-                     a word instead"
-                ),
-            ));
-        }
-        return Ok(("arrvals_default", rest));
+        return parse_elide_splat_op(rest, name, span);
     }
     Err(splat_disposition_malformed(span))
+}
+
+/// `@{a:?[WORD]}` operand: the WORD if present, else `None` (bare `@{a:?}`
+/// aborts with no message word).
+fn optional_splat_word(rest: &str, span: Span) -> Option<Box<Expr>> {
+    if rest.is_empty() {
+        None
+    } else {
+        Some(parse_default_word(rest, span))
+    }
+}
+
+/// `@{a:~}` (DD#84 elide) → a wordless `arrvals_default` (has_word=0 → zero args
+/// on an empty array). Like the scalar `${x:~}` it takes NO word, so
+/// `@{a:~WORD}` is a syntax error.
+fn parse_elide_splat_op(
+    rest: &str,
+    name: &str,
+    span: Span,
+) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
+    if !rest.is_empty() {
+        return Err(parse_error(
+            span,
+            "SB5033",
+            format!(
+                "`@{{{name}:~}}` (elide) takes no word — `:~` drops the splat \
+                 when `{name}` is empty; use `@{{{name}:-WORD}}` to substitute \
+                 a word, or `@{{{name}:-}}` for a single empty arg"
+            ),
+        ));
+    }
+    Ok(("arrvals_default", None))
 }
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.

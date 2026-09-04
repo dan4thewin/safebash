@@ -261,9 +261,10 @@ run_sash 'array a=(x y); /usr/bin/printf "%s|" pre @{a:?empty} post'
 run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @{a:?e} @{b:?e}'
 [[ $rc = 0 && $out = "x|y|z|" && -z $err ]]; chk 22.17
 
-# 22.18 empty array → ZERO args via the `@{e:-}` disposition (cat reads
-# stdin, not an empty-name file).
-run_sash 'array e=(); /usr/bin/printf STDIN | cat @{e:-}'
+# 22.18 empty array → ZERO args via the `@{e:~}` elide disposition (cat reads
+# stdin, not an empty-name file). (`@{e:-}` now yields one EMPTY arg — bash
+# `"${a[@]:-}"` parity, DD#69/#84 2026-09-04 — so `:~` is the drop form.)
+run_sash 'array e=(); /usr/bin/printf STDIN | cat @{e:~}'
 [[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
 
 # 22.19 splat in a pipeline stage (janet pipe plumbing fixed: os/pipe :WR)
