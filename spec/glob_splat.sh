@@ -2,13 +2,14 @@
 # spec/glob_splat.sh — DD#69 Part 2: external-splat empty-disposition.
 # A bare `@a` splat into an EXTERNAL command is a compile error (SB5032);
 # it must carry an empty-disposition `@{a:-WORD}` (empty → the single arg
-# WORD; bare `@{a:-}` → zero args) or `@{a:?WORD}` (empty → runtime abort
-# `<progname>: WORD`). Builtins (echo/…) and for-in are EXEMPT. Non-empty
-# arrays splat per-element. Only `:-`/`:?` are valid after `@{a`.
+# WORD; bare `@{a:-}` → zero args), `@{a:?WORD}` (empty → runtime abort
+# `<progname>: WORD`), or `@{a:~}` (elide: empty → zero args, no word — DD#84).
+# Builtins (echo/…) and for-in are EXEMPT. Non-empty arrays splat per-element.
+# Only `:-`/`:?`/`:~` are valid after `@{a`.
 set -eu
 . common.sh
 setup glob_splat
-plan=19
+plan=24
 echo "1..$plan" >&3
 
 set +e
@@ -108,6 +109,30 @@ run_sash 'array a=(x y); for f in @{a:?}; do /bin/echo "$f"; done'
 #       the literal `@a` (the native splat is the UNQUOTED `@a`). Not rejected.
 run_sash 'array a=(x y); : @a; echo "@a"'
 [[ $rc = 0 && $out = "@a" && -z $err ]]; chk gs.19
+
+# gs.20 DD#84: `@{a:~}` (elide) empty → zero args, exactly like a bare `@{a:-}`
+#       (the explicit elide spelling; the array form of the scalar `${x:~}`).
+run_sash 'array a=(); /bin/echo s @{a:~} e'
+[[ $rc = 0 && $out = "s e" && -z $err ]]; chk gs.20
+
+# gs.21 `@{a:~}` non-empty → the array splats per-element
+run_sash 'array a=(x y); /bin/echo @{a:~}'
+[[ $rc = 0 && $out = "x y" && -z $err ]]; chk gs.21
+
+# gs.22 `:~` (elide) takes NO word, like the scalar `${x:~}` — `@{a:~WORD}` is
+#       a compile error (SB5033).
+run_sash 'array a=(); /bin/echo @{a:~foo}'
+[[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk gs.22
+
+# gs.23 `@{a:~}` to the `echo` BUILTIN is the same flatten hazard as `@{a:-}` →
+#       SB5030 (external-only disposition; builtin splat is rejected).
+run_sash 'array a=(x y); echo @{a:~}'
+[[ $rc != 0 && $err == *SB5030* ]]; chk gs.23
+
+# gs.24 the `@{a:~}` disposition is command-argument-only — a for-in source is
+#       the bare `@a`, so `for f in @{a:~}` → SB5034, like `@{a:?}` (gs.18).
+run_sash 'array a=(x y); for f in @{a:~}; do /bin/echo "$f"; done'
+[[ $rc != 0 && $err == *SB5034* ]]; chk gs.24
 
 set -e
 tally

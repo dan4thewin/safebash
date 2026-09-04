@@ -227,43 +227,31 @@ fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, 
     })
 }
 
-/// DD#69: `@{a:-WORD}` / `@{a:?WORD}` external-splat disposition. The array
-/// splats per-element when non-empty; when empty, `:-` substitutes WORD as a
-/// single argument (bare `@{a:-}` → zero args) and `:?` aborts at runtime
-/// with WORD. WORD is a full interpolating word (like the scalar
-/// `${x:-WORD}` default). Only `:-` and `:?` are valid (no `:=`/`:+`).
-/// Encoded as a `ParameterExpansion` with operator `arrvals_default` /
-/// `arrvals_abort` and the WORD as its operand.
+/// DD#69/#84: `@{a:-WORD}` / `@{a:?WORD}` / `@{a:~}` external-splat disposition.
+/// The array splats per-element when non-empty; when empty, `:-` substitutes
+/// WORD as a single argument (bare `@{a:-}` → zero args), `:?` aborts at runtime
+/// with WORD, and `:~` (elide) drops the splat entirely (zero args) — the
+/// explicit spelling of the empty→nothing behaviour a bare `@{a:-}` / `@a`
+/// already has (the array analog of the scalar `${x:~}`, DD#84). WORD is a full
+/// interpolating word (like the scalar `${x:-WORD}` default); `:~` takes no
+/// word. `:=`/`:+` are invalid. Encoded as a `ParameterExpansion` with operator
+/// `arrvals_default` / `arrvals_abort` and the WORD as its operand (`:~` ≡ a
+/// wordless `arrvals_default`).
 fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
-    let malformed = || {
-        parse_error(
-            span,
-            "SB5033",
-            "`@{…}` splat disposition must be `@{a:-WORD}` (empty → the single \
-             arg WORD) or `@{a:?WORD}` (empty → abort with WORD) — only `:-` \
-             and `:?` are valid"
-                .to_string(),
-        )
-    };
     let inner = w
         .strip_prefix("@{")
         .and_then(|s| s.strip_suffix('}'))
-        .ok_or_else(malformed)?;
-    let colon = inner.find(':').ok_or_else(malformed)?;
+        .ok_or_else(|| splat_disposition_malformed(span))?;
+    let colon = inner
+        .find(':')
+        .ok_or_else(|| splat_disposition_malformed(span))?;
     let name = &inner[..colon];
-    let after = &inner[colon + 1..];
-    let (op, word) = if let Some(rest) = after.strip_prefix('-') {
-        ("arrvals_default", rest)
-    } else if let Some(rest) = after.strip_prefix('?') {
-        ("arrvals_abort", rest)
-    } else {
-        return Err(malformed());
-    };
+    let (op, word) = parse_splat_op(&inner[colon + 1..], name, span)?;
     if !is_identifier(name) {
-        return Err(malformed());
+        return Err(splat_disposition_malformed(span));
     }
-    // Empty WORD (`@{a:-}`) → no operand → zero args on empty; a present
-    // WORD → a single substituted arg. `:?` always aborts on empty.
+    // Empty WORD (`@{a:-}` / `@{a:~}`) → no operand → zero args on empty; a
+    // present WORD → a single substituted arg. `:?` always aborts on empty.
     let operand = if word.is_empty() {
         None
     } else {
@@ -278,6 +266,51 @@ fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
         }),
         span,
     })
+}
+
+/// The SB5033 "malformed `@{…}` disposition" diagnostic.
+fn splat_disposition_malformed(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB5033",
+        "`@{…}` splat disposition must be `@{a:-WORD}` (empty → the single \
+         arg WORD), `@{a:?WORD}` (empty → abort with WORD), or `@{a:~}` \
+         (empty → drop the splat) — only `:-`, `:?`, and `:~` are valid"
+            .to_string(),
+    )
+}
+
+/// Parse the `OP[WORD]` after the `:` in `@{name:OP…}` → (operator, WORD).
+/// `:-`/`:?` take a (possibly empty) WORD; `:~` (DD#84 elide) is the explicit
+/// spelling of the empty→zero-args behaviour a bare `@{a:-}` / `@a` already has
+/// (the array analog of the scalar `${x:~}`) and, like it, takes NO word — so
+/// `@{a:~WORD}` is a syntax error. `:~` encodes as a wordless `arrvals_default`.
+fn parse_splat_op<'a>(
+    after: &'a str,
+    name: &str,
+    span: Span,
+) -> Result<(&'static str, &'a str), Diagnostic> {
+    if let Some(rest) = after.strip_prefix('-') {
+        return Ok(("arrvals_default", rest));
+    }
+    if let Some(rest) = after.strip_prefix('?') {
+        return Ok(("arrvals_abort", rest));
+    }
+    if let Some(rest) = after.strip_prefix('~') {
+        if !rest.is_empty() {
+            return Err(parse_error(
+                span,
+                "SB5033",
+                format!(
+                    "`@{{{name}:~}}` (elide) takes no word — `:~` drops the splat \
+                     when `{name}` is empty; use `@{{{name}:-WORD}}` to substitute \
+                     a word instead"
+                ),
+            ));
+        }
+        return Ok(("arrvals_default", rest));
+    }
+    Err(splat_disposition_malformed(span))
 }
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.

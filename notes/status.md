@@ -1,3 +1,16 @@
+## ════════ STATUS (2026-09-04) — `@{a:~}` elide disposition for array splats (DD#69/#84) ════════
+
+**On `hand-parser`.** DG: "for array splat to command, we allow `:-` and `:?`; I
+think `:~` should work too." DD#84's `:~` (elide) worked for scalars (`${x:~}`)
+but the array-splat parser rejected `@{a:~}` (SB5033) — the exact array form the
+scalar operator was modeled on. Now accepted: `@{a:~}` elides (empty → zero args,
+non-empty → splat), identical to bare `@{a:-}`/`@a`, and takes no word
+(`@{a:~WORD}` → SB5033). One-line-ish parser change
+(`parse_at_brace_disposition` gains a `:~` branch encoding a wordless
+`arrvals_default`) → flows through validate/transform/all 3 backends with no new
+wiring. specs glob_splat.sh gs.20–24 (plan 19→24). 3-mode sweep: 0 regressions,
+15 new. DD#69/#84 amended; journal 241. No new SB code.
+
 ## ════════ STATUS (2026-09-04) — `close N` builtin: fd close (DD#14; SB4052) ════════
 
 **On `hand-parser`.** DG: "this gives SB4048: exec 9> foo; exec 9>&-". Not a bug

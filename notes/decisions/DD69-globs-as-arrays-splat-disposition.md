@@ -44,6 +44,12 @@ command** is a compile error. The splat must carry an empty-disposition:
   bare `@{a:-}` yields zero args (empty is explicitly fine).
 - `@{a:?WORD}` — when `a` is empty, **abort** at runtime with `WORD` on
   stderr. The explicit, local replacement for failglob.
+- `@{a:~}` — **elide** (DD#84): when `a` is empty, the splat contributes
+  zero args, exactly like a bare `@{a:-}`. It is the explicit spelling of
+  empty→nothing (the array analog of the scalar `${x:~}`) and, like the
+  scalar form, takes **no word** (`@{a:~WORD}` is SB5033). Added 2026-09-04
+  (DG: "for array splat to command, we allow `:-` and `:?`; `:~` should work
+  too") for uniformity with the scalar elide operator.
 
 A non-empty array splats to one verbatim arg per element. These forms map
 1-to-1 onto bash `"${a[@]:-WORD}"` / `"${a[@]:?WORD}"` (DD#67 sugar).

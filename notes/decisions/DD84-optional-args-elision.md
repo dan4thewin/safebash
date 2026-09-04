@@ -177,3 +177,15 @@ arg. Two implementation bugs (the design always intended `$N` ≡ `${args[N-1]}`
 SB5042 at compile time rather than a runtime require-abort. Mixing bare `$N`
 with `${N:~}` → SB5047, as for the `args` form. Specs: `optional_args.sh`
 84.19–84.24. journal 234.
+
+## Addendum (2026-09-04) — `:~` on an external array splat
+
+DG: "for array splat to command, we allow `:-` and `:?`; `:~` should work too."
+The array-splat disposition (DD#69) now accepts `@{a:~}` alongside `@{a:-WORD}`
+/ `@{a:?WORD}`. `@{a:~}` **elides** — empty → zero args — identical to a bare
+`@{a:-}` / `@a`, and (like the scalar `${x:~}`) takes **no word** (`@{a:~WORD}`
+→ SB5033). It is encoded as a wordless `arrvals_default`, so it flows through
+validate/transform/all three backends exactly as `@{a:-}` does. This closes the
+inconsistency where the elide operator worked for scalars but not array splats.
+Impl: `parse/expr.rs::parse_at_brace_disposition`. Specs `glob_splat.sh`
+gs.20–24. journal 241.
