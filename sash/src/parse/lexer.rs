@@ -663,29 +663,7 @@ impl Scanner {
                 self.pos += 1; // skip '
                 self.scan_ansi_c_quoted(start)
             }
-            b'(' => {
-                if self.pos + 1 < self.source.len() && self.source[self.pos + 1] == b'(' {
-                    // $((
-                    self.pos += 2;
-                    SpannedToken {
-                        token: Tok::DollarDblParen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                } else {
-                    // $(
-                    self.pos += 1;
-                    SpannedToken {
-                        token: Tok::DollarParen,
-                        span: LexSpan {
-                            start,
-                            end: self.pos,
-                        },
-                    }
-                }
-            }
+            b'(' => self.scan_dollar_paren(start),
             b'{' => {
                 // ${...}
                 self.pos += 1; // skip {
@@ -694,42 +672,19 @@ impl Scanner {
             b'@' | b'*' | b'#' | b'?' | b'!' | b'$' | b'0' => {
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                SpannedToken {
-                    token: Tok::Dollar(var),
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
+                self.plain_dollar(start, var)
             }
             b'1'..=b'9' => {
                 // Positional param — could be multi-digit in rare cases but bash only does single
                 let var = (self.source[self.pos] as char).to_string();
                 self.pos += 1;
-                SpannedToken {
-                    token: Tok::Dollar(var),
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
+                self.dollar_or_braceless_disposition(start, var)
             }
             c if c.is_ascii_alphabetic() || c == b'_' => {
-                let name_start = self.pos;
-                while self.pos < self.source.len()
-                    && (self.source[self.pos].is_ascii_alphanumeric()
-                        || self.source[self.pos] == b'_')
-                {
-                    self.pos += 1;
-                }
-                let name = String::from_utf8_lossy(&self.source[name_start..self.pos]).to_string();
-                SpannedToken {
-                    token: Tok::Dollar(name),
-                    span: LexSpan {
-                        start,
-                        end: self.pos,
-                    },
-                }
+                let name_end = scan_ident_end(&self.source, self.pos).unwrap_or(self.pos);
+                let name = String::from_utf8_lossy(&self.source[self.pos..name_end]).to_string();
+                self.pos = name_end;
+                self.dollar_or_braceless_disposition(start, name)
             }
             _ => {
                 // Bare $ — treat as literal
@@ -741,6 +696,158 @@ impl Scanner {
                     },
                 }
             }
+        }
+    }
+
+    /// `$(` / `$((` — command / arithmetic substitution opener. `self.pos` is
+    /// at the `(`.
+    fn scan_dollar_paren(&mut self, start: usize) -> SpannedToken {
+        let dbl = self.source.get(self.pos + 1) == Some(&b'(');
+        self.pos += if dbl { 2 } else { 1 };
+        let token = if dbl {
+            Tok::DollarDblParen
+        } else {
+            Tok::DollarParen
+        };
+        SpannedToken {
+            token,
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
+    /// A plain `$var` token (no brace-less disposition), spanning `start..pos`.
+    fn plain_dollar(&self, start: usize, var: String) -> SpannedToken {
+        SpannedToken {
+            token: Tok::Dollar(var),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        }
+    }
+
+    /// After a bare `$name` / `$N` (with `self.pos` just past the name), emit
+    /// either a plain `Dollar(name)` or — if a brace-less disposition follows —
+    /// a synthesized `DollarBrace("name:OP…")` so the whole `$x:-foo` / `$x:~`
+    /// desugars to the braced form and reuses every downstream path
+    /// (DD#65/#69/#84; DG 2026-09-04). Only `:-`, `:?`, `:~` immediately after
+    /// the name open a disposition; any other `:X` stays literal concatenation
+    /// (so `$x:/bin`, `$x:3` are unaffected). Inside `"…"` this path is not
+    /// reached (the double-quote scanner keeps braces mandatory — clarity).
+    fn dollar_or_braceless_disposition(&mut self, start: usize, name: String) -> SpannedToken {
+        if let Some((op, operand, end)) = self.try_braceless_disposition(self.pos) {
+            self.pos = end;
+            return SpannedToken {
+                token: Tok::DollarBrace(format!("{}:{}{}", name, op, operand)),
+                span: LexSpan {
+                    start,
+                    end: self.pos,
+                },
+            };
+        }
+        self.plain_dollar(start, name)
+    }
+
+    /// If `src[pos..]` opens a brace-less disposition, return `(op, operand,
+    /// end)` where `op` is `'-'`, `'?'`, or `'~'` and `end` is just past the
+    /// consumed text. `:~` (elide) takes no operand. `:-`/`:?` scan the operand
+    /// to the word boundary; returns `None` (→ caller falls back to the plain
+    /// form) when the operand would contain a `$( )` / `$(( ))` / `` `…` ``
+    /// substitution, which must use braces.
+    fn try_braceless_disposition(&self, pos: usize) -> Option<(char, String, usize)> {
+        if self.source.get(pos) != Some(&b':') {
+            return None;
+        }
+        match self.source.get(pos + 1) {
+            Some(b'~') => Some(('~', String::new(), pos + 2)),
+            Some(b'-') => self
+                .scan_braceless_operand(pos + 2)
+                .map(|(o, e)| ('-', o, e)),
+            Some(b'?') => self
+                .scan_braceless_operand(pos + 2)
+                .map(|(o, e)| ('?', o, e)),
+            _ => None,
+        }
+    }
+
+    /// Scan a brace-less disposition operand from `from` to the word boundary.
+    /// Literal bytes and `$name` / `${…}` interpolation are consumed (quotes are
+    /// ordinary literal bytes, DD#65); an unnested whitespace or word-terminator
+    /// (`;|&()<>{}#`) ends it. Returns `None` for a `$( )` / `$(( ))` / backtick
+    /// operand (those require braces).
+    fn scan_braceless_operand(&self, from: usize) -> Option<(String, usize)> {
+        let s = &self.source;
+        let mut p = from;
+        while p < s.len() {
+            match s[p] {
+                b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>' | b'{'
+                | b'}' | b'#' => break,
+                b'`' => return None,
+                b'$' => p = self.braceless_operand_after_dollar(p)?,
+                _ => p += 1,
+            }
+        }
+        Some((String::from_utf8_lossy(&s[from..p]).to_string(), p))
+    }
+
+    /// Consume the `$…` at `p` inside a brace-less operand: `${…}` (to its
+    /// close), a `$name` / `$N` / `$@`-style var, or a bare `$`. Returns the
+    /// position just past the run, or `None` for a `$( )` / `$(( ))`
+    /// substitution (which requires braces).
+    fn braceless_operand_after_dollar(&self, p: usize) -> Option<usize> {
+        match self.source.get(p + 1) {
+            Some(b'{') => self.skip_braced_to_close(p + 2),
+            Some(b'(') => None,
+            _ => {
+                let end = self.skip_dollar_var(p + 1);
+                Some(if end > p + 1 { end } else { p + 1 })
+            }
+        }
+    }
+
+    /// Skip a `${…}` from `p` (just past the opening `{`) to just past the
+    /// matching `}`. `None` if unterminated (→ operand scan fails, braces).
+    fn skip_braced_to_close(&self, mut p: usize) -> Option<usize> {
+        let s = &self.source;
+        let mut depth = 1i32;
+        while p < s.len() {
+            match s[p] {
+                b'{' => depth += 1,
+                b'}' => {
+                    depth -= 1;
+                    if depth == 0 {
+                        return Some(p + 1);
+                    }
+                }
+                _ => {}
+            }
+            p += 1;
+        }
+        None
+    }
+
+    /// Skip a `$`-suffix variable at `p` (the byte after `$`): a single-char
+    /// special (`@ * # ? ! $` or a positional digit) or an identifier run.
+    /// Returns the position just past it (or `p` if there is no variable).
+    fn skip_dollar_var(&self, p: usize) -> usize {
+        let s = &self.source;
+        match s.get(p) {
+            Some(&c)
+                if matches!(c, b'@' | b'*' | b'#' | b'?' | b'!' | b'$') || c.is_ascii_digit() =>
+            {
+                p + 1
+            }
+            Some(&c) if c.is_ascii_alphabetic() || c == b'_' => {
+                let mut q = p + 1;
+                while q < s.len() && (s[q].is_ascii_alphanumeric() || s[q] == b'_') {
+                    q += 1;
+                }
+                q
+            }
+            _ => p,
         }
     }
 
@@ -1224,12 +1331,13 @@ impl Scanner {
     /// Accumulates bytes until a word-breaking character, then checks
     /// the result against the keyword table.
     fn scan_word(&mut self, start: usize) -> SpannedToken {
-        // DD#69: a leading `@{…}` is a splat-disposition — scan it whole so
-        // `parse_word_arm` decodes it (a bare `@{` never reaches here except
-        // as `@` + `{`, which the byte dispatcher already routes).
-        if self.source.get(self.pos) == Some(&b'@') && self.source.get(self.pos + 1) == Some(&b'{')
-        {
-            return self.scan_at_brace(start);
+        // A leading `@{…}` (DD#69 braced splat) or `@name:-/?/~` (DD#90
+        // brace-less splat disposition) is scanned whole into an `@{…}` Word so
+        // `parse_word_arm` decodes it.
+        if self.source.get(self.pos) == Some(&b'@') {
+            if let Some(tok) = self.try_scan_at_word(start) {
+                return tok;
+            }
         }
         let mut word = String::new();
 
@@ -1251,6 +1359,37 @@ impl Scanner {
                 end: self.pos,
             },
         }
+    }
+
+    /// Scan an `@`-led word form at `self.pos` (the `@`): `@{…}` (braced splat)
+    /// or `@name:-/?/~` (brace-less disposition). Returns the synthesized
+    /// `@{…}` Word, or `None` when this `@` is neither (caller does the normal
+    /// word scan — bare `@a`, `@a.b`, etc.).
+    fn try_scan_at_word(&mut self, start: usize) -> Option<SpannedToken> {
+        if self.source.get(self.pos + 1) == Some(&b'{') {
+            return Some(self.scan_at_brace(start));
+        }
+        self.try_scan_braceless_at_disposition(start)
+    }
+
+    /// `@name:-foo` / `@name:?msg` / `@name:~` (brace-less array-splat
+    /// disposition) → a synthesized `Word("@{name:…}")` identical to what
+    /// `scan_at_brace` produces for the braced spelling. `self.pos` is at the
+    /// `@`. Returns `None` (caller falls back to the normal word scan) when the
+    /// `@name` is not immediately followed by a `:-`/`:?`/`:~` disposition.
+    fn try_scan_braceless_at_disposition(&mut self, start: usize) -> Option<SpannedToken> {
+        let name_start = self.pos + 1;
+        let name_end = scan_ident_end(&self.source, name_start)?;
+        let (op, operand, end) = self.try_braceless_disposition(name_end)?;
+        let name = String::from_utf8_lossy(&self.source[name_start..name_end]).to_string();
+        self.pos = end;
+        Some(SpannedToken {
+            token: Tok::Word(format!("@{{{}:{}{}}}", name, op, operand)),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        })
     }
 
     /// Scan word body bytes into `word`. Returns `Some(token)` if a bare `=`

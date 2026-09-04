@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=57
+plan=69
 echo "1..$plan" >&3
 
 set +e
@@ -186,6 +186,56 @@ run_sash 'x=5; echo "${x.y}"'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un3
 run_sash 'x=5; echo "${x:}"'
 [[ $rc != 0 && -z $out && $err == *SB4047* ]]; chk vm.un4
+
+# ── Brace-less dispositions (DG 2026-09-04): `$x:-foo` / `$x:?msg` / `$x:~`
+# desugar to the braced form. Only `:-`/`:?`/`:~` immediately after `$name`
+# open a disposition; any other `:X` stays literal concatenation. Braces stay
+# required for trailing concat, whitespace in the word, and inside `"…"`. ──
+# vm.bl1 brace-less `:-` default, value present → the value
+run_sash 'str x=hi; /bin/echo $x:-foo'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.bl1
+# vm.bl2 brace-less `:-` default, empty → the default word
+run_sash 'str x=""; /bin/echo $x:-foo'
+[[ $rc = 0 && $out = "foo" && -z $err ]]; chk vm.bl2
+# vm.bl3 positional `$N:-` brace-less, empty → default
+run_sash 'fn f { /bin/echo $1:-DEF }; f'
+[[ $rc = 0 && $out = "DEF" && -z $err ]]; chk vm.bl3
+# vm.bl4 positional `$N:-` brace-less, present → the arg. native,c: janet has a
+# pre-existing positional-default bug — braced `${1:-DEF}` with an arg present
+# ALSO returns DEF (identical janet output), so gate this to the correct
+# backends (task janet-positional-default-present).
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo $1:-DEF }; f VAL'
+    [[ $rc = 0 && $out = "VAL" && -z $err ]]; chk vm.bl4
+else
+    skip_chk vm.bl4
+fi
+# vm.bl5 brace-less `:~` elide, value present → the value
+run_sash 'str x=hi; /bin/echo $x:~'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.bl5
+# vm.bl6 brace-less `:?` present → the value (no abort)
+run_sash 'str x=hi; /bin/echo $x:?boom'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.bl6
+# vm.bl7 operand interpolation: `$1:-$y` uses `$y` as the default
+run_sash 'fn f { str y=YY; /bin/echo $1:-$y }; f'
+[[ $rc = 0 && $out = "YY" && -z $err ]]; chk vm.bl7
+# vm.bl8 brace-less ≡ braced (same result side by side)
+run_sash 'str x=hi; /bin/echo $x:-foo ${x:-foo}'
+[[ $rc = 0 && $out = "hi hi" && -z $err ]]; chk vm.bl8
+# vm.bl9 DISAMBIGUATION: `:X` that is not `:-`/`:?`/`:~` stays literal colon
+# concatenation (path-like `$x:/bin`, `$x:3`) — unchanged by the sugar.
+run_sash 'str x=hi; /bin/echo $x:/bin'
+[[ $rc = 0 && $out = "hi:/bin" && -z $err ]]; chk vm.bl9
+run_sash 'str x=hi; /bin/echo $x:3'
+[[ $rc = 0 && $out = "hi:3" && -z $err ]]; chk vm.bl10
+# vm.bl11 INTERPOLATION keeps braces mandatory (clarity): inside `"…"` a bare
+# `$x:-foo` is `$x` + the literal `:-foo`, NOT a disposition.
+run_sash 'str x=hi; /bin/echo "$x:-foo"'
+[[ $rc = 0 && $out = "hi:-foo" && -z $err ]]; chk vm.bl11
+# vm.bl12 whitespace in the word ends the brace-less operand: `$x:-a b` is
+# default `a` then a separate word `b` (use braces for a spaced default).
+run_sash 'str x=""; /bin/echo $x:-a b'
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk vm.bl12
 
 set -e
 tally

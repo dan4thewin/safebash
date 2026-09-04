@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=24
+plan=30
 echo "1..$plan" >&3
 
 set +e
@@ -138,6 +138,29 @@ run_sash 'array a=(x y); echo @{a:~}'
 #       the bare `@a`, so `for f in @{a:~}` → SB5034, like `@{a:?}` (gs.18).
 run_sash 'array a=(x y); for f in @{a:~}; do /bin/echo "$f"; done'
 [[ $rc != 0 && $err == *SB5034* ]]; chk gs.24
+
+# gs.25-30 brace-less array-splat dispositions (DG 2026-09-04): `@a:-` / `@a:?`
+# / `@a:~` desugar to `@{a:…}`, exactly like the scalar `$x:…` sugar. Only
+# `:-`/`:?`/`:~` after `@name` trigger; behaviour is identical to the braced
+# form (gs.2–gs.24).
+# gs.25 `@a:-WORD` empty → the single arg WORD
+run_sash 'array a=(); /bin/echo @a:-none'
+[[ $rc = 0 && $out = "none" && -z $err ]]; chk gs.25
+# gs.26 `@a:-` (bare) empty → one EMPTY arg (parity with `@{a:-}` / gs.4)
+run_sash 'array a=(); /usr/bin/printf "[%s]\n" PRE @a:-'
+[[ $rc = 0 && $out = $'[PRE]\n[]' && -z $err ]]; chk gs.26
+# gs.27 `@a:~` empty → ZERO args (the elide; parity with gs.20)
+run_sash 'array a=(); /usr/bin/printf "[%s]\n" PRE @a:~'
+[[ $rc = 0 && $out = "[PRE]" && -z $err ]]; chk gs.27
+# gs.28 `@a:~` non-empty → the array splats per-element
+run_sash 'array a=(x y); /bin/echo @a:~'
+[[ $rc = 0 && $out = "x y" && -z $err ]]; chk gs.28
+# gs.29 `@a:?` non-empty → splat (no abort)
+run_sash 'array a=(one two); /usr/bin/printf "[%s]" @a:?e'
+[[ $rc = 0 && $out = "[one][two]" && -z $err ]]; chk gs.29
+# gs.30 brace-less ≡ braced: `@a:-none` and `@{a:-none}` agree
+run_sash 'array a=(); /bin/echo @a:-none @{a:-none}'
+[[ $rc = 0 && $out = "none none" && -z $err ]]; chk gs.30
 
 set -e
 tally

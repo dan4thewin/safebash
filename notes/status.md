@@ -1,3 +1,24 @@
+## ════════ STATUS (2026-09-04) — brace-less dispositions `$x:-foo` / `@a:~` (DD#90) ════════
+
+**On `hand-parser`.** DG: "the `{ }` in `${x:-foo}`, `@{a:~}`, etc are
+unnecessary — only needed for trailing concat, unquoted whitespace in the
+default/error, and perhaps interpolation." Settled the design first (decision
+authority): **disposition family only** (`:-`/`:?`/`:~`), scalar + array;
+disambiguation = only those three open a disposition (every other `:X` stays
+literal concat, so `$x:/bin`→`hi:/bin`, `$x:3`→`hi:3` preserved); braces still
+required for trailing concat, whitespace, embedded `}`, `$(…)`/backtick operands,
+and **inside `"…"`** (DG: clarity). Substring `:off:len`/regex `:s/` stay braced.
+Pure lexer desugar: `$x:-foo`→`DollarBrace("x:-foo")`, `@a:~`→`Word("@{a:~}")` —
+so validate/transform/codegen/all 3 backends and every rule (SB5020 taint,
+SB5046 elide-in-concat, SB5042/SB5048 arity, `@{a:-}`=one-empty per DD#69/#84)
+are byte-identical to braced. `$x:-foo` reinterprets from literal `hi:-foo` to
+the default (accepted narrow change; `${x}:-foo`/quoting restores literal).
+Surfaced (not caused) a pre-existing janet positional-default bug (braced
+`${1:-DEF}` w/ arg also returns DEF) → gated vm.bl4 native,c, filed
+`janet-positional-default-present`. specs var_modifiers.sh vm.bl1–12 (plan 57→69),
+glob_splat.sh gs.25–30 (24→30). 3-mode sweep: 0 regressions, 54 new. DD#90;
+journal 242. No new SB code.
+
 ## ════════ STATUS (2026-09-04) — array `@{a:-}` = one empty element; `@{a:~}` = elide (DD#69/#84) ════════
 
 **On `hand-parser`.** DG: "I thought `@{a:-}` produced an empty element in a
