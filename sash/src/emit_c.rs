@@ -1892,7 +1892,7 @@ fn emit_argv(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTypes, ind:
     let argv = format!("{}_argv", t);
     if args
         .iter()
-        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty(_)))
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty { .. }))
     {
         emit_argv_splat(e, name, args, types, ind, &t, &argv);
     } else {
@@ -1970,7 +1970,7 @@ fn emit_argv_splat(
                  {argv}[{t}_w++] = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); }}"
             )
             .unwrap();
-        } else if let SsaValue::ElideEmpty(inner) = arg {
+        } else if let SsaValue::ElideEmpty { source: inner, .. } = arg {
             // DD#84: store only when non-empty — an identity value is elided.
             // lower_value_as_str returns already-evaluated ptr/len (temps for
             // complex reads), so the guard evaluates them once.
@@ -3289,7 +3289,7 @@ fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CSt
     writeln!(e.out, "    i64 {t}_w = 0;", t = t).unwrap();
     for val_ssa in elems {
         let (inner, guard) = match val_ssa {
-            SsaValue::ElideEmpty(inner) => (inner.as_ref(), true),
+            SsaValue::ElideEmpty { source: inner, .. } => (inner.as_ref(), true),
             other => (other, false),
         };
         let (val_ptr, val_len) = lower_value_as_str(e, inner, types);

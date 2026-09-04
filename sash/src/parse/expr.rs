@@ -299,6 +299,11 @@ fn parse_splat_op(
     if let Some(rest) = after.strip_prefix('~') {
         return parse_elide_splat_op(rest, name, span);
     }
+    if let Some(rest) = after.strip_prefix('!') {
+        // DD#91: `@a:!` — elide + taint-off (a trusted splat). Wordless like
+        // `:~`; the taint bypass is applied via the `arrvals_trust` operator.
+        return parse_trust_splat_op(rest, name, span);
+    }
     Err(splat_disposition_malformed(span))
 }
 
@@ -332,6 +337,27 @@ fn parse_elide_splat_op(
         ));
     }
     Ok(("arrvals_default", None))
+}
+
+/// `@{a:!}` (DD#91) — elide + taint-off: a trusted splat. Wordless like `:~`
+/// (`@{a:!WORD}` is a syntax error); encodes as the `arrvals_trust` operator.
+fn parse_trust_splat_op(
+    rest: &str,
+    name: &str,
+    span: Span,
+) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
+    if !rest.is_empty() {
+        return Err(parse_error(
+            span,
+            "SB5033",
+            format!(
+                "`@{{{name}:!}}` (trust) takes no word — `:!` drops the splat when \
+                 `{name}` is empty and trusts the elements clean; it takes no \
+                 argument"
+            ),
+        ));
+    }
+    Ok(("arrvals_trust", None))
 }
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.
@@ -1185,7 +1211,7 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     // Two-char ops first (`:-` before `-`, `##` before `#`, …) so the longer
     // operator wins. Both tiers share `match_leading_operator`.
     let two_char_ops = &[
-        ":-", ":=", ":+", ":?", ":~", "##", "%%", "//", "/#", "/%", "^^", ",,",
+        ":-", ":=", ":+", ":?", ":~", ":!", "##", "%%", "//", "/#", "/%", "^^", ",,",
     ];
     let one_char_ops = &["%", "#", "/", "^", ",", "-", "+", "=", "?"];
     match_leading_operator(s, two_char_ops)

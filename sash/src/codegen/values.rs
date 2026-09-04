@@ -96,7 +96,7 @@ pub(super) fn lower_value(
                 array
             );
         }
-        SsaValue::ElideEmpty(_) => {
+        SsaValue::ElideEmpty { .. } => {
             // DD#84: `:~` is only valid in an elidable list position, where the
             // argv / array-literal builder intercepts it. Reaching a scalar
             // lower_value means validate's SB5046 guard was bypassed.
@@ -976,7 +976,7 @@ fn lower_indexed_array_value(
     builder.def_var(widx, zero0);
     for val_ssa in elems {
         match val_ssa {
-            SsaValue::ElideEmpty(inner) => {
+            SsaValue::ElideEmpty { source: inner, .. } => {
                 let (val_ptr, val_len) = lower_value(
                     inner,
                     builder,

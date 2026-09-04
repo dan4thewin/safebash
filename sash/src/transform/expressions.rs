@@ -56,9 +56,12 @@ fn splat_disposition(
     pe: &ParameterExpansion,
     state: &VersionState,
 ) -> Option<crate::ssa::ArraySplatDisposition> {
-    let abort = match pe.operator.as_deref() {
-        Some("arrvals_default") => false,
-        Some("arrvals_abort") => true,
+    // DD#91: `arrvals_trust` (`@a:!`) is elide (like a wordless `arrvals_default`)
+    // + taint-off — the splat is trusted clean.
+    let (abort, taint_off) = match pe.operator.as_deref() {
+        Some("arrvals_default") => (false, false),
+        Some("arrvals_abort") => (true, false),
+        Some("arrvals_trust") => (false, true),
         _ => return None,
     };
     let has_word = pe.operand.is_some();
@@ -71,6 +74,7 @@ fn splat_disposition(
         word: Box::new(word),
         has_word,
         abort,
+        taint_off,
     })
 }
 
@@ -280,7 +284,15 @@ fn source_carrying_value(
         // DD#84: `${x:~}` / `${a[i]:~}` (elide) — carry the subject; the argv /
         // array-literal builders drop it when empty. Rejected outside an
         // elidable position at validate (SB5046), so it only reaches a list.
-        ":~" => Some(SsaValue::ElideEmpty(Box::new(source))),
+        // DD#91: `:!` is `:~` + taint-off (the value is trusted clean).
+        ":~" => Some(SsaValue::ElideEmpty {
+            source: Box::new(source),
+            taint_off: false,
+        }),
+        ":!" => Some(SsaValue::ElideEmpty {
+            source: Box::new(source),
+            taint_off: true,
+        }),
         // The scalar `${s:o:l}` (no index) keeps the `ParamExpansion` path.
         "substring" if pe.index.is_some() => Some(SsaValue::Substring {
             source: Box::new(source),

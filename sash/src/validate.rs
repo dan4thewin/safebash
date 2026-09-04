@@ -2192,16 +2192,17 @@ fn check_elide_pexp(
     elidable: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
-    if pe.operator.as_deref() == Some(":~") && !elidable {
+    if matches!(pe.operator.as_deref(), Some(":~") | Some(":!")) && !elidable {
+        let sigil = pe.operator.as_deref().unwrap_or(":~");
         diags.push(Diagnostic::error_span(
             span,
             "SB5046",
             format!(
-                "`${{{}:~}}` (elide) is only valid in a list position — a command \
+                "`${{{}{}}}` (elide) is only valid in a list position — a command \
                  argument or an array literal element — where the token can \
                  disappear. Here a value is required; use `${{{}:-DEFAULT}}` for \
                  an empty/default value.",
-                pe.name, pe.name
+                pe.name, sigil, pe.name
             ),
         ));
     }
@@ -2719,12 +2720,13 @@ fn named_splat_scalar_diag(span: Span) -> Diagnostic {
     )
 }
 
-/// A dispositioned array splat `@{a:-WORD}` / `@{a:?WORD}` (operator
-/// `arrvals_default` / `arrvals_abort`) — distinct from the bare `@a`
-/// (`arrvals`), which is a valid for-in source.
+/// A dispositioned array splat `@{a:-WORD}` / `@{a:?WORD}` / `@{a:!}` (operator
+/// `arrvals_default` / `arrvals_abort` / `arrvals_trust`) — distinct from the
+/// bare `@a` (`arrvals`), which is a valid for-in source.
 fn is_disposition_splat(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::ParameterExpansion(pe)
-        if matches!(pe.operator.as_deref(), Some("arrvals_default") | Some("arrvals_abort")))
+        if matches!(pe.operator.as_deref(),
+            Some("arrvals_default") | Some("arrvals_abort") | Some("arrvals_trust")))
 }
 
 /// SB5034 for a `@{a:…}` empty-disposition used outside a command argument
@@ -3412,6 +3414,11 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
         ExprKind::ParameterExpansion(pe) => {
+            // DD#91: `${x:!}` / `@a:!` (arrvals_trust) is a per-use taint bypass
+            // — its value is trusted clean, so it does NOT propagate taint.
+            if matches!(pe.operator.as_deref(), Some(":!") | Some("arrvals_trust")) {
+                return false;
+            }
             // DD#78: a `:-` default is part of the expansion's value, so a
             // tainted read inside it taints the result too (correct
             // propagation — without this, `z=${x:-$tainted}` left `z` clean).
@@ -3511,6 +3518,12 @@ fn check_param_expansion_taint(
     tainted: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
+    // DD#91: `${x:!}` (scalar) and `@a:!` (`arrvals_trust`) are sanctioned
+    // per-use taint bypasses — the subject is trusted clean (a predicate-less
+    // bless), so its read is not a violation.
+    if matches!(pe.operator.as_deref(), Some(":!") | Some("arrvals_trust")) {
+        return;
+    }
     push_taint_use(
         tainted,
         &pe.name,

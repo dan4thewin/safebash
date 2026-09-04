@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=118
+plan=129
 echo "1..$plan" >&3
 
 set +e
@@ -617,6 +617,59 @@ else
     skip_chk bfb.1; skip_chk bfb.2; skip_chk bfb.3
     skip_chk bfb.4; skip_chk bfb.5; skip_chk bfb.6
 fi
+
+# ── DD#91: the `:!` taint-off operator (= `:~` elide + taint guard disabled) ──
+# A sanctioned per-use bypass — use a tainted value without a bless predicate
+# (the middle ground between `bless` and `--no-taint`).
+# 91.1 tainted `${x:!}` compiles & runs (the bypass). native,c: janet lacks
+# `getenv` (pre-existing gap — it runs `getenv` as an external), so the
+# runtime-executing getenv tests are gated (the compile-time bypass is checked
+# uniformly by 91.2's control and the argv-based 91.5/91.6).
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.1
+else
+    skip_chk 91.1
+fi
+# 91.2 control: `${x:~}` on the SAME tainted value is rejected (SB5020) — a
+# compile-time check, so it holds in every backend.
+run_sash 'x=$(getenv HOME); /bin/echo ${x:~}'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.2
+# 91.3 brace-less `$x:!` bypasses too (native,c — runs getenv)
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME); /bin/echo $x:!'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.3
+else
+    skip_chk 91.3
+fi
+# 91.4 the `:!` value propagates CLEAN into an array literal (native,c — getenv)
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.4
+else
+    skip_chk 91.4
+fi
+# 91.5 tainted array splat `@a:!` bypasses bless-all
+run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!' HELLO
+[[ $rc = 0 && $out = "HELLO" && -z $err ]]; chk 91.5
+# 91.6 braced `@{a:!}` likewise
+run_sash 'argv 1 a; /usr/bin/printf "%s" @{a:!}' HI
+[[ $rc = 0 && $out = "HI" && -z $err ]]; chk 91.6
+# 91.7 control: tainted `@a:?e` (no trust) is rejected (SB5020)
+run_sash 'argv 1 a; /bin/echo @a:?e' X
+[[ $rc != 0 && $err == *SB5020* ]]; chk 91.7
+# 91.8 `:!` takes no word — `${x:!foo}` is SB4051 (scalar)
+run_sash 'x=hi; /bin/echo ${x:!foo}'
+[[ $rc != 0 && -z $out && $err == *SB4051* ]]; chk 91.8
+# 91.9 `@{a:!WORD}` takes no word — SB5033 (array)
+run_sash 'array a=(); /bin/echo @{a:!x}'
+[[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk 91.9
+# 91.10 `:!` is elidable-position-only like `:~` — a scalar assignment is SB5046
+run_sash 'x=hi; z=${x:!}; /bin/echo $z'
+[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk 91.10
+# 91.11 `:!` on a CLEAN var is a harmless no-op taint-off (just the value)
+run_sash 'x=hi; /bin/echo ${x:!}'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.11
 
 set -e
 tally

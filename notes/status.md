@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-09-04) — `:!` taint-off operator + `$( )` brace-less operands (DD#91) ════════
+
+**On `hand-parser`.** DG: "yes, `$( )` too [in brace-less operands]; and a new
+operand `$foo:!` = `:~` but also disables the taint guard — a compromise between
+bless and `--no-taint`." Two parts: (1) the DD#90 brace-less operand scanner now
+handles `$( )`/`$(( ))`/backtick operands (balanced-depth scan, quotes skipped)
+— `$1:-$(getpid)` works, external captures still SB5020. (2) **`:!`** — a
+per-use bless-without-predicate: `${x:!}`/`$x:!`/`@a:!`/`@{a:!}` use a tainted
+value without a bless predicate (clean + propagating, elidable-position-only
+like `:~`, wordless → SB4051/SB5033, SB5046 outside a list). Scalar +array,
+braced +brace-less, all 3 backends. Design settled with DG first
+(security-sensitive validator bypass). Dual-pass: `ElideEmpty{taint_off}` +
+`ArraySplatDisposition.taint_off` (op `arrvals_trust`), honored by the CST gate
+(authoritative) and the SSA backstop (forward-compatible; backstop doesn't check
+these positions yet). Verified `--no-taint-cst` no-ICE. specs taint.sh 91.1–91.11
+(getenv ones gated native,c — janet lacks getenv), var_modifiers.sh vm.bl13–15.
+3-mode sweep: 0 regressions, 42 new. DD#91; journal 243. Filed
+`audit-taint-bypass-report` (DG: a broader bless/taint audit report). No new SB.
+
 ## ════════ STATUS (2026-09-04) — brace-less dispositions `$x:-foo` / `@a:~` (DD#90) ════════
 
 **On `hand-parser`.** DG: "the `{ }` in `${x:-foo}`, `@{a:~}`, etc are

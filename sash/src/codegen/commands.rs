@@ -240,7 +240,7 @@ pub(super) fn build_argv_values(
 ) -> cranelift_codegen::ir::Value {
     if values
         .iter()
-        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty(_)))
+        .any(|a| matches!(a, SsaValue::ArraySplat { .. } | SsaValue::ElideEmpty { .. }))
     {
         build_argv_runtime(
             values,
@@ -355,7 +355,7 @@ fn build_argv_runtime(
             // an identity value contributes zero args. argv is over-allocated
             // (each elide counted as 1 above), so a skipped store just leaves a
             // spare slot; the NUL terminates at the real count (widx).
-            SsaValue::ElideEmpty(inner) => {
+            SsaValue::ElideEmpty { source: inner, .. } => {
                 let (ptr, len) = lower_value(
                     inner,
                     builder,

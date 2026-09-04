@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=69
+plan=72
 echo "1..$plan" >&3
 
 set +e
@@ -236,6 +236,23 @@ run_sash 'str x=hi; /bin/echo "$x:-foo"'
 # default `a` then a separate word `b` (use braces for a spaced default).
 run_sash 'str x=""; /bin/echo $x:-a b'
 [[ $rc = 0 && $out = "a b" && -z $err ]]; chk vm.bl12
+# vm.bl13 DD#91 follow-up: a `$( )` command substitution IS a valid brace-less
+# operand now (DG 2026-09-04) — a clean builtin cmdsub default. native,c: janet
+# has the pre-existing positional-default bug (janet-positional-default-present),
+# so a positional with a cmdsub default is gated like vm.bl4.
+if in_modes native,c; then
+    run_sash 'fn f { /bin/echo $1:-$(getpid) }; f RUN'
+    [[ $rc = 0 && $out = "RUN" && -z $err ]]; chk vm.bl13
+else
+    skip_chk vm.bl13
+fi
+# vm.bl14 `$(( ))` arithmetic operand brace-less
+run_sash 'fn f { /bin/echo $1:-$((2 + 3)) }; f'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk vm.bl14
+# vm.bl15 a `$( )` operand with an EXTERNAL capture is tainted → SB5020, exactly
+# like the braced `${1:-$(ext)}` (the sugar changes only the spelling).
+run_sash 'fn f { /bin/echo $1:-$(/bin/echo Z) }; f'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk vm.bl15
 
 set -e
 tally

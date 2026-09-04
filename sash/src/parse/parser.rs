@@ -2534,6 +2534,24 @@ fn simple_rejected_operator_diag(
     None
 }
 
+/// DD#84/#91: `:~` (elide) and `:!` (elide + taint-off) never take a word —
+/// `${x:~foo}` / `${x:!foo}` are syntax errors (SB4051). For a value/default,
+/// use `:-`.
+fn elide_takes_no_word_diag(op: &str, pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
+    if !matches!(op, ":~" | ":!") || pe.operand.is_none() {
+        return None;
+    }
+    Some(parse_error(
+        span,
+        "SB4051",
+        format!(
+            "`${{{}{}}}` takes no word — `{}` only removes the token when its \
+             value is empty. For a default value use `${{{}:-WORD}}`.",
+            pe.name, op, op, pe.name
+        ),
+    ))
+}
+
 /// The reject diagnostic for a rejected `${var:OP}` operator, or `None`. The
 /// operator is a single value, so at most one applies: indirect `${!x}`
 /// (SB4003), `@`-transforms (SB4015), and the DD#65 pruned modifier family
@@ -2543,18 +2561,8 @@ fn rejected_param_operator_diag(pe: &ParameterExpansion, span: Span) -> Option<D
     if op == "unrecognized" {
         return unrecognized_operator_diag(pe, span);
     }
-    // DD#84: `:~` (elide) never takes a word — `${x:~foo}` is a syntax error.
-    // If you want a value/default, that is `:-`.
-    if op == ":~" && pe.operand.is_some() {
-        return Some(parse_error(
-            span,
-            "SB4051",
-            format!(
-                "`${{{}:~}}` (elide) takes no word — `:~` only removes the token \
-                 when its value is empty. For a default value use `${{{}:-WORD}}`.",
-                pe.name, pe.name
-            ),
-        ));
+    if let Some(d) = elide_takes_no_word_diag(op, pe, span) {
+        return Some(d);
     }
     if let Some(d) = simple_rejected_operator_diag(op, pe, span) {
         return Some(d);

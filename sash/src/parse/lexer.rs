@@ -763,6 +763,7 @@ impl Scanner {
         }
         match self.source.get(pos + 1) {
             Some(b'~') => Some(('~', String::new(), pos + 2)),
+            Some(b'!') => Some(('!', String::new(), pos + 2)),
             Some(b'-') => self
                 .scan_braceless_operand(pos + 2)
                 .map(|(o, e)| ('-', o, e)),
@@ -785,7 +786,7 @@ impl Scanner {
             match s[p] {
                 b' ' | b'\t' | b'\n' | b';' | b'|' | b'&' | b'(' | b')' | b'<' | b'>' | b'{'
                 | b'}' | b'#' => break,
-                b'`' => return None,
+                b'`' => p = self.skip_backtick_to_close(p)?,
                 b'$' => p = self.braceless_operand_after_dollar(p)?,
                 _ => p += 1,
             }
@@ -794,18 +795,76 @@ impl Scanner {
     }
 
     /// Consume the `$…` at `p` inside a brace-less operand: `${…}` (to its
-    /// close), a `$name` / `$N` / `$@`-style var, or a bare `$`. Returns the
-    /// position just past the run, or `None` for a `$( )` / `$(( ))`
-    /// substitution (which requires braces).
+    /// close), a `$( )` / `$(( ))` command / arithmetic substitution (to the
+    /// matching close), a `$name` / `$N` / `$@`-style var, or a bare `$`.
+    /// Returns the position just past the run (`None` if a substitution is
+    /// unterminated → operand scan fails, use braces).
     fn braceless_operand_after_dollar(&self, p: usize) -> Option<usize> {
         match self.source.get(p + 1) {
             Some(b'{') => self.skip_braced_to_close(p + 2),
-            Some(b'(') => None,
+            Some(b'(') => self.skip_paren_to_close(p + 1),
             _ => {
                 let end = self.skip_dollar_var(p + 1);
                 Some(if end > p + 1 { end } else { p + 1 })
             }
         }
+    }
+
+    /// Skip a `$( … )` / `$(( … ))` from the opening `(` at `from` to just past
+    /// the matching close, by paren depth (quoted regions are skipped so a `)`
+    /// inside `'…'`/`"…"` does not miscount). `None` if unterminated.
+    fn skip_paren_to_close(&self, from: usize) -> Option<usize> {
+        let s = &self.source;
+        let mut p = from;
+        let mut depth = 0i32;
+        while p < s.len() {
+            match s[p] {
+                b'(' => {
+                    depth += 1;
+                    p += 1;
+                }
+                b')' => {
+                    depth -= 1;
+                    p += 1;
+                    if depth == 0 {
+                        return Some(p);
+                    }
+                }
+                b'\'' | b'"' => p = self.skip_simple_quote(p)?,
+                _ => p += 1,
+            }
+        }
+        None
+    }
+
+    /// Skip a `'…'` / `"…"` from the opening quote at `p` to just past the
+    /// close (no escape processing — matches DD#65's literal-byte view enough
+    /// for the paren scan). `None` if unterminated.
+    fn skip_simple_quote(&self, p: usize) -> Option<usize> {
+        let s = &self.source;
+        let q = s[p];
+        let mut i = p + 1;
+        while i < s.len() {
+            if s[i] == q {
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Skip a `` `…` `` backtick substitution from the opening backtick at `p`
+    /// to just past the close. `None` if unterminated.
+    fn skip_backtick_to_close(&self, p: usize) -> Option<usize> {
+        let s = &self.source;
+        let mut i = p + 1;
+        while i < s.len() {
+            if s[i] == b'`' {
+                return Some(i + 1);
+            }
+            i += 1;
+        }
+        None
     }
 
     /// Skip a `${…}` from `p` (just past the opening `{`) to just past the

@@ -562,7 +562,15 @@ pub enum SsaValue {
     /// token (the value) otherwise. Only valid where a token is one of a
     /// sequence; a non-elidable position is rejected at validate (SB5046), so
     /// this never reaches a scalar `lower_value`.
-    ElideEmpty(Box<SsaValue>),
+    ///
+    /// DD#91: `taint_off` is set for the `:!` spelling — the elide behaviour is
+    /// identical, but the value is treated as **clean** (a predicate-less bless,
+    /// a sanctioned per-use taint bypass). Only the taint passes read the flag;
+    /// codegen/backends ignore it.
+    ElideEmpty {
+        source: Box<SsaValue>,
+        taint_off: bool,
+    },
     /// `${a[i]:off:len}` — substring of a value `source` (a `Subscript` cell
     /// read; the scalar `${s:o:l}` uses `ParamExpansion` "substring"). `spec` is
     /// the `off` / `off:len` operand. Mirrors `DefaultValue`'s source carrying,
@@ -635,6 +643,11 @@ pub struct ArraySplatDisposition {
     /// `:?` — on empty, abort (exit 1, `<progname>: WORD`) instead of
     /// substituting.
     pub abort: bool,
+    /// DD#91: `@a:!` (`arrvals_trust`) — elide + taint-off: the splatted
+    /// elements are trusted clean (a per-use bless-all bypass). Only the taint
+    /// passes read this; codegen ignores it (the runtime splat is identical to
+    /// a wordless `arrvals_default`).
+    pub taint_off: bool,
 }
 
 impl SsaValue {
@@ -668,7 +681,7 @@ impl SsaValue {
             SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::DefaultValue { source, default } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
-            SsaValue::ElideEmpty(inner) => vec![inner],
+            SsaValue::ElideEmpty { source, .. } => vec![source],
             SsaValue::Substring { source, .. } => vec![source],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {

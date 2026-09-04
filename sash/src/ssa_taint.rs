@@ -292,18 +292,6 @@ fn taint_of_name(taint: &HashMap<String, Taint>, name: &str) -> Taint {
     best.map(|(_, t)| t).unwrap_or(Taint::Clean)
 }
 
-/// `${var:-default}` taint — tainted if the var or the default could be.
-/// `${…:-default}` yields either the source (a scalar var or a cell read) or
-/// the default, so it is tainted if either could be.
-fn default_value_taint(
-    source: &SsaValue,
-    default: &SsaValue,
-    taint: &HashMap<String, Taint>,
-    user_functions: &std::collections::HashSet<String>,
-) -> Taint {
-    any_tainted([source, default], taint, user_functions)
-}
-
 fn value_is_tainted(
     value: &SsaValue,
     taint: &HashMap<String, Taint>,
@@ -322,8 +310,17 @@ fn value_is_tainted(
         // so we consult the latest classified version of that name.
         SsaValue::Subscript { array, .. }
         | SsaValue::TableValue { array, .. }
-        | SsaValue::TableKey { array, .. }
-        | SsaValue::ArraySplat { array, .. } => taint_of_name(taint, array),
+        | SsaValue::TableKey { array, .. } => taint_of_name(taint, array),
+
+        // DD#91: `${x:~}` carries the source's taint; the `:!` spelling
+        // (taint_off) is a sanctioned per-use bypass → always Clean.
+        SsaValue::ElideEmpty { source, taint_off } => {
+            elide_taint(source, *taint_off, taint, user_functions)
+        }
+        // DD#91: `@a:!` (`arrvals_trust`, disposition.taint_off) is a sanctioned
+        // per-use bless-all bypass → Clean; any other splat inherits the array's
+        // taint.
+        SsaValue::ArraySplat { array, disposition } => splat_taint(array, disposition, taint),
 
         // Always-tainted: program argv is external input by construction; a
         // multi-statement/pipeline `$(…)` body captures external output.
@@ -334,22 +331,19 @@ fn value_is_tainted(
         | SsaValue::ArithExpr { var: vref, .. }
         | SsaValue::ParamExpansion { var: vref, .. } => taint_of_var(taint, vref),
 
-        // Any-tainted collections: taint if any subvalue is tainted.
-        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
-            any_tainted(parts.iter(), taint, user_functions)
-        }
-        SsaValue::AssocArray(pairs) => {
-            any_tainted(pairs.iter().map(|(_, v)| v), taint, user_functions)
-        }
-        SsaValue::ArithBinOp { left, right, .. } => {
-            any_tainted([left.as_ref(), right.as_ref()], taint, user_functions)
-        }
-        // Operand-derived: taint if any owned sub-value is tainted — DD#63
-        // regex replace/match, DD#65 case-convert, and the ternary.
-        SsaValue::RegexReplace { .. }
+        // Any-tainted composites: tainted iff any owned sub-value is tainted.
+        // `child_values()` yields exactly the taint-carrying operands, so the
+        // array/assoc/arith/regex/case/ternary and DD#65 `:-` default all reduce
+        // to the same rule (`default_value_taint` is `any_tainted([src,def])`).
+        SsaValue::Concat(_)
+        | SsaValue::IndexedArray(_)
+        | SsaValue::AssocArray(_)
+        | SsaValue::ArithBinOp { .. }
+        | SsaValue::RegexReplace { .. }
         | SsaValue::RegexMatch { .. }
         | SsaValue::CaseConvert { .. }
-        | SsaValue::Ternary { .. } => any_tainted(value.child_values(), taint, user_functions),
+        | SsaValue::Ternary { .. }
+        | SsaValue::DefaultValue { .. } => any_tainted(value.child_values(), taint, user_functions),
 
         // Wrapped-value taint: an int cell's taint is its wrapped value's
         // (DD#76), and `${…:?msg}` yields the source (the message only prints on
@@ -357,20 +351,44 @@ fn value_is_tainted(
         // the source being a plain var (scalar) or a cell read (`${a[i]:?…}`).
         SsaValue::IntCell(inner)
         | SsaValue::RequireValue { source: inner, .. }
-        | SsaValue::ElideEmpty(inner)
         | SsaValue::Substring { source: inner, .. } => {
             value_is_tainted(inner, taint, user_functions)
-        }
-        // DD#65: `${var:-default}` yields either the var or the default, so it
-        // is tainted if either could be.
-        SsaValue::DefaultValue { source, default } => {
-            default_value_taint(source, default, taint, user_functions)
         }
 
         // Command substitution: the only variant whose taint
         // depends on the callee (builtins are clean, externals
         // tainted, user fns clean by DD#24).
         SsaValue::CmdSubst { argv, .. } => cmd_subst_taint(argv, taint, user_functions),
+    }
+}
+
+/// DD#84/#91: taint of `${x:~}` / `${x:!}`. The `:!` spelling (`taint_off`) is a
+/// sanctioned per-use bypass → Clean; `:~` carries the source's taint.
+fn elide_taint(
+    source: &SsaValue,
+    taint_off: bool,
+    taint: &HashMap<String, Taint>,
+    user_functions: &std::collections::HashSet<String>,
+) -> Taint {
+    if taint_off {
+        Taint::Clean
+    } else {
+        value_is_tainted(source, taint, user_functions)
+    }
+}
+
+/// DD#61/#91: taint of an `@array` splat. `@a:!` (`disposition.taint_off`) is a
+/// sanctioned per-use bless-all bypass → Clean; any other splat inherits the
+/// array's taint.
+fn splat_taint(
+    array: &str,
+    disposition: &Option<crate::ssa::ArraySplatDisposition>,
+    taint: &HashMap<String, Taint>,
+) -> Taint {
+    if disposition.as_ref().is_some_and(|d| d.taint_off) {
+        Taint::Clean
+    } else {
+        taint_of_name(taint, array)
     }
 }
 
