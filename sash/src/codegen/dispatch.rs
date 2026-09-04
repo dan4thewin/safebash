@@ -1046,29 +1046,37 @@ impl SsaInst {
     ) -> bool {
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        let end_cl_block = ctx.end_cl_block;
         let saved_end_status_var = ctx.saved_end_status_var;
-        let program = ctx.program;
-        let ssa_id = ctx.ssa_id;
-        // exit N — get the exit code from first arg, default 0
-        let code = if let Some(SsaValue::Literal(s)) = args.first() {
-            s.parse::<i64>().unwrap_or(0)
-        } else {
-            0
+        // exit CODE — evaluate the argument as an integer. DD#89: ANY int
+        // value / variable / return is a valid `exit` argument (not just a
+        // literal). An out-of-range value is carried as a full i64 (readable in
+        // the END block via `$?`) and truncated to 8 bits only at the final
+        // `exit_group`. No argument → 0.
+        let code_val = match args.first() {
+            Some(arg) => super::values::lower_value_as_int(
+                arg,
+                builder,
+                module,
+                ctx.vars,
+                ctx.literals,
+                externs,
+                Some(exit_status_var),
+            ),
+            None => builder.ins().iconst(I64, 0),
         };
-        let code_val = builder.ins().iconst(I64, code);
-        // DD#56: if END block exists and we're NOT inside it, jump to END
-        if let Some(end_cl) = end_cl_block {
-            if let Some(end_id) = program.end_block {
-                if ssa_id < end_id {
-                    builder.def_var(exit_status_var, code_val);
-                    builder.ins().jump(end_cl, &[]);
-                    return true;
-                }
-            }
+        // DD#56: from the main body (not inside END), route a bare `exit` to the
+        // END block carrying the code; inside END (or with no END) exit directly.
+        let route_to_end = ctx
+            .end_cl_block
+            .zip(ctx.program.end_block)
+            .filter(|(_, end_id)| ctx.ssa_id < *end_id);
+        if let Some((end_cl, _)) = route_to_end {
+            builder.def_var(exit_status_var, code_val);
+            builder.ins().jump(end_cl, &[]);
+            return true;
         }
-        // Direct exit (no END block, or inside END block)
-        // Inside END: also update saved_end_status_var so Return uses it
+        // Direct exit (no END block, or inside END block). Inside END: also
+        // update saved_end_status_var so Return uses it.
         builder.def_var(saved_end_status_var, code_val);
         let exit_ref = module.declare_func_in_func(externs.exit, builder.func);
         builder.ins().call(exit_ref, &[code_val]);

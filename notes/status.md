@@ -1,3 +1,18 @@
+## ════════ STATUS (2026-09-03) — `exit` accepts any int (DD#89) ════════
+
+**On `hand-parser`.** DG: "bless … any int value/variable/return should work as
+argument to exit, and a DD/specs … but I don't intend to dictate [tagging] vs. a
+global — it's up to them." `exit`'s argument is now an ordinary int sink — a
+literal, variable, `$((…))`, or `-> int` function return — no compile-time range
+limit. Two gaps closed: native `emit_exit` only handled a literal (non-literal →
+0; c already used `lower_value_as_int`); type_check rejected `exit $intvar`
+(removed). Full i64 internally (readable in END via `$?`), truncated to 8 bits
+only at `exit_group` (`exit 300` → END sees 300, process exits 44). DD#89 blesses
+the mechanism, NOT an idiom (out-of-range-tag vs plain global = programmer's
+choice). `emit_exit` routing flattened (cog 8→2). specs exit_arg.sh 89.1–89.8
+(89.8 native — the c exit-skips-END gap). journal 238. 3-mode sweep: 0
+regressions.
+
 ## ════════ STATUS (2026-09-03) — `$?` readable in the END block (DD#56) ════════
 
 **On `hand-parser`.** DG: reading `$?` as the first action of `END { }` gave

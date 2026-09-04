@@ -1012,7 +1012,6 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     // not a scalar (the front-end analogue of the transform's auto-declare).
     match expr_to_name(&c.name).as_str() {
         "unset" => check_unset_args(c, span, env, errors),
-        "exit" => check_exit_arg(c, span, env, errors),
         "bless" => check_bless_form(c, span, env, errors),
         "argv" => register_argv_target(c, env),
         "mapfile" | "readarray" => register_bulk_read_target(c, env),
@@ -1151,28 +1150,6 @@ fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Typ
             span,
         });
     }
-}
-
-/// `exit $intvar` is rejected because exit codes are bounded 0..255
-/// and an int value may exceed that range. Suggest a clamping form.
-fn check_exit_arg(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    let Some(arg) = c.args.first() else {
-        return;
-    };
-    if expr_type(arg, env) != VarType::Int {
-        return;
-    }
-    let ExprKind::SimpleExpansion(var) = &arg.kind else {
-        return;
-    };
-    errors.push(TypeError {
-        message: format!(
-            "exit with int variable `${}` — value may exceed 0-255. \
-             Use `exit $(({}<256?{}:1))`",
-            var, var, var,
-        ),
-        span,
-    });
 }
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
