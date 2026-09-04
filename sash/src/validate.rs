@@ -1446,10 +1446,18 @@ fn check_dq_list(l: &crate::ir::List, state: &mut StatusState, diags: &mut Vec<D
     *state = StatusState::Undefined;
 }
 
-/// A function body is checked in a fresh `Undefined` status
-/// context (the caller's $? state does not flow in).
+/// A function body is checked in a fresh status context (the caller's $? state
+/// does not flow in) — EXCEPT the `END { }` block (parsed as the `__sash_end__`
+/// function, DD#56), which is ENTERED because of a triggering status (an
+/// abort's exit code, `exit N`, a signal `128+n`, or the last command's status
+/// on normal exit). That status is available as the block's FIRST action, like
+/// a handling branch — so `END { echo "exited $?" }` is valid.
 fn check_dq_function(f: &crate::ir::Function, diags: &mut Vec<Diagnostic>) {
-    let mut fn_state = StatusState::Undefined;
+    let mut fn_state = if f.name == "__sash_end__" {
+        StatusState::Available
+    } else {
+        StatusState::Undefined
+    };
     for s in &f.body {
         check_dq_stmt(s, &mut fn_state, diags);
     }

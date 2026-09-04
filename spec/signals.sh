@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=19
+plan=23
 setup signals
 
 set +e
@@ -121,6 +121,41 @@ run_sash 'trap "echo cleanup" EXIT; echo hi'
 # 56.15 `trap "" SIG` / `trap - SIG` (ignore/reset) → SB4043 too
 run_sash 'trap "" SIGINT; echo hi'
 [[ $rc != 0 && -z $out && $err == *SB4043* ]]; chk 56.15
+
+# --- DD#56: `$?` in the END block is the TRIGGERING status (first action) ---
+# The END block is entered because of a status — an abort's failing code, an
+# `exit N`, or the last command's status on normal exit — so that status is
+# available as its FIRST action, like a handling branch. (janet's END block is
+# a separate pre-existing gap — 56.1/56.4 already fail there — so native,c.)
+
+# 56.30 abort (failed command) → `$?` in END is the failing exit code
+if in_modes native,c; then
+    run_sash 'END { /bin/echo "s=$?" }
+/bin/false'
+    [[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk 56.30
+else skip_chk 56.30; fi
+
+# 56.31 `exit N` → `$?` in END is N (the requested exit code). native only: the
+# c backend's `exit N` in the main body skips the END block (a pre-existing DD#56
+# gap — filed bug-emit-c-exit-skips-end); native routes it through END.
+if in_modes native; then
+    run_sash 'END { /bin/echo "s=$?" }
+exit 5'
+    [[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk 56.31
+else skip_chk 56.31; fi
+
+# 56.32 normal exit → `$?` in END is the last command's status (0 here)
+if in_modes native,c; then
+    run_sash 'END { /bin/echo "s=$?" }
+/bin/echo hi'
+    [[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.32
+else skip_chk 56.32; fi
+
+# 56.33 guard: the END-entry status does NOT leak into a regular function — a
+# `$?` as the first action of an ordinary function is still SB5012 (all modes).
+run_sash 'fn f { /bin/echo "$?" }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5012* ]]; chk 56.33
 
 # --- converter ---
 

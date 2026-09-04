@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-09-03) — `$?` readable in the END block (DD#56) ════════
+
+**On `hand-parser`.** DG: reading `$?` as the first action of `END { }` gave
+SB5012, but an abort/`exit N` jumps to END with a triggering status — so it
+should be readable. DD#56 already designed this ("In END: the status that
+triggered END"); the runtime already carries it (`__end_status = __exit_status`
+at END entry, `__exit_status` not reset). Validator-only fix: `check_dq_function`
+starts the `__sash_end__` body (the END block) in the `Available` `$?` state —
+first-action readable like a handling branch; other functions stay `Undefined`
+(no leak). `$?` is a full i64 — works in `(( $? > 255 ))`, `int code=$?`.
+Behavior: abort → `$?`=failing code; `exit N` → N; normal → last status.
+
+specs signals.sh 56.30–56.33 (plan 19→23; 56.33 guards no function leak). Found
++ filed a pre-existing **c bug** (`emit_c::emit_exit` `goto __exit` skips END for
+a main-body `exit N`; native routes through it) — `bug-emit-c-exit-skips-end`;
+56.31 gated `native`. janet END is a separate pre-existing gap. 3-mode sweep: 0
+regressions. DD#56 amended; journal 237.
+
 ## ════════ STATUS (2026-09-02) — capture-condition `if x=$(cmd)` shipped (DD#88) ════════
 
 **On `hand-parser`.** DG: "what would it take to enable `if ! x=$(cmd) {`" +

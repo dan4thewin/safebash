@@ -54,6 +54,12 @@ block, `return`, or `exit N` all terminate the process.
 - `exit N` within END overrides the process exit status.
 - Without explicit `exit N`, the process exits with the status that
   triggered END.
+- **`$?` inside END is that triggering status**, available as the block's
+  FIRST action (an abort's failing code, an `exit N`, a signal's `128+n`, or
+  the last command's status on normal exit) — the same handling-position rule
+  as an `if`/`while` branch. `$?` after a command in END reads that command's
+  status, as usual. (Validator: the `__sash_end__` function starts its `$?`
+  state machine `Available`; other functions start fresh — no leak.)
 
 ## signum keyword
 
