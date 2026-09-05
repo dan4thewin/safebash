@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-09-05) — bare `@args` external splat implies min arity ≥1 (DD#92) ════════
+
+**On `hand-parser`.** DG: "forego the SB5032 or `@args:?` modifier for args in a
+command within a function when the arity check knows there's always ≥1 argument …
+treat `fn f { tool @args }` as if `fn f { : $1; tool @args }`." A bare `@args`
+splat to an EXTERNAL command now records a **required index 0** in the arity
+(→ variadic `floor ≥ 1`) and is **exempt from SB5032**. Soundness is DG's insight:
+raising the arity (not just waiving the check) makes the splat provably non-empty
+and a 0-arg call SB5042 — merely waiving would let the external run with 0 args.
+Scope: `@args` only (general `@a` keeps SB5032, DD#69); external only (for-in /
+builtin `@args` impose no floor); dispositions (`@{args:-}`/`@{args:?}`) still
+mean "accept 0 args". validate `check_external_splat` (+ `bare_arrvals_splat_name`)
+skips SB5032 for `@args`; transform `sig_scan_stmt` (+ `is_external_head` /
+`is_bare_args_splat`) inserts required 0 — both key on the same resolved-head
+predicate. specs glob_splat.sh gs.31–35 (gs.31/34/35 native,c — janet `@args`
+splat unimplemented, pre-existing). 3-mode sweep: 0 regressions, 15 new. DD#92;
+journal 245. Filed `bug-bless-all-args-array-ice` (pre-existing `bless x in args`
+ICE, separate).
+
 ## ════════ STATUS (2026-09-04) — bugfixes: builtin-echo elide ICE + fresh-array lastpipe read segfault ════════
 
 **On `hand-parser`.** DG hit `echo -n $ckd:! | read -d '' -a norm` → ICE

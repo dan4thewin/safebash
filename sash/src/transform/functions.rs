@@ -413,6 +413,16 @@ fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
     match &stmt.kind {
         StmtKind::Command(c) => {
             sig_scan_expr(&c.name, sig);
+            // A bare `@args` splat into an EXTERNAL command implies the function
+            // takes ≥1 argument (DG 2026-09-05): `tool @args` is treated like
+            // `: $1; tool @args`, recording a required index 0 → min arity ≥1.
+            // That makes `@args` provably non-empty (SB5032 waived in validate)
+            // and forces callers to pass ≥1 (SB5042). External-only: for-in /
+            // builtin `@args` handle emptiness themselves, so they impose no
+            // floor.
+            if is_external_head(&c.name) && c.args.iter().any(is_bare_args_splat) {
+                sig.required.insert(0);
+            }
             sig_scan_exprs(&c.args, sig);
         }
         StmtKind::Assignment(a) => sig_scan_expr(&a.value, sig),
@@ -429,6 +439,24 @@ fn sig_scan_stmt(stmt: &Statement, sig: &mut ArgSig) {
         // condition are missed and a variadic function looks fixed).
         StmtKind::ArithTest(a) => sig_scan_arith(a, sig),
         _ => sig_scan_child_bodies(stmt, sig),
+    }
+}
+
+/// An external command head: post-DD#23 resolution it is an absolute path
+/// (`/usr/bin/tool`). Builtins, intrinsics, and user functions keep bare names.
+fn is_external_head(name: &Expr) -> bool {
+    matches!(&name.kind, ExprKind::Literal(s) if s.starts_with('/'))
+}
+
+/// A bare `@args` splat (operator `arrvals`, name `args`) — the whole-args
+/// splat, unquoted or as a single-part `"${args[@]}"`.
+fn is_bare_args_splat(arg: &Expr) -> bool {
+    match &arg.kind {
+        ExprKind::ParameterExpansion(pe) => {
+            pe.operator.as_deref() == Some("arrvals") && pe.name == "args"
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_bare_args_splat(&parts[0]),
+        _ => false,
     }
 }
 

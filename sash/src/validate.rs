@@ -2616,18 +2616,35 @@ fn check_external_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
         return;
     }
     for arg in &c.args {
-        if is_bare_arrvals_splat(&arg.kind) {
-            diags.push(Diagnostic::error_span(
-                arg.span,
-                "SB5032",
-                "a bare `@a` array splat into an external command is unsafe — an \
-                 empty array would run it with too few arguments. State the empty \
-                 case: `@{a:-WORD}` (empty → the single arg WORD) or `@{a:?WORD}` \
-                 (empty → abort with WORD)"
-                    .to_string(),
-            ));
+        if let Some(d) = external_splat_diag(arg) {
+            diags.push(d);
         }
     }
+}
+
+/// SB5032 for a bare `@a` splat into an external command, or `None` when the arg
+/// is not such a splat or is the exempt `@args` (DD#92: arity-guaranteed ≥1).
+fn external_splat_diag(arg: &Expr) -> Option<Diagnostic> {
+    if !is_bare_arrvals_splat(&arg.kind) {
+        return None;
+    }
+    // A bare `@args` splat is allowed: it implies the function takes ≥1 argument
+    // (the arity analysis records a required index 0, so a 0-arg call is SB5042
+    // and the splat is provably non-empty). Only `@args` (the function args)
+    // earns this; a general `@a` keeps SB5032 — DD#69 has no static-non-empty
+    // exemption, and only `args` carries an arity guarantee.
+    if bare_arrvals_splat_name(&arg.kind) == Some("args") {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        arg.span,
+        "SB5032",
+        "a bare `@a` array splat into an external command is unsafe — an \
+         empty array would run it with too few arguments. State the empty \
+         case: `@{a:-WORD}` (empty → the single arg WORD) or `@{a:?WORD}` \
+         (empty → abort with WORD)"
+            .to_string(),
+    ))
 }
 
 /// A bare `@a` / single-part `"${a[@]}"` splat (operator `arrvals`), i.e.
@@ -2637,6 +2654,21 @@ fn is_bare_arrvals_splat(kind: &ExprKind) -> bool {
         ExprKind::ParameterExpansion(pe) => pe.operator.as_deref() == Some("arrvals"),
         ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_bare_arrvals_splat(&parts[0].kind),
         _ => false,
+    }
+}
+
+/// The array name behind a bare `@a` / single-part `"${a[@]}"` splat (operator
+/// `arrvals`), or `None`. Used to single out `@args` (the function args, which
+/// carries an arity guarantee) from a general `@a`.
+fn bare_arrvals_splat_name(kind: &ExprKind) -> Option<&str> {
+    match kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            Some(pe.name.as_str())
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => {
+            bare_arrvals_splat_name(&parts[0].kind)
+        }
+        _ => None,
     }
 }
 

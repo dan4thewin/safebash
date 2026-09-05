@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=30
+plan=35
 echo "1..$plan" >&3
 
 set +e
@@ -161,6 +161,37 @@ run_sash 'array a=(one two); /usr/bin/printf "[%s]" @a:?e'
 # gs.30 brace-less ≡ braced: `@a:-none` and `@{a:-none}` agree
 run_sash 'array a=(); /bin/echo @a:-none @{a:-none}'
 [[ $rc = 0 && $out = "none none" && -z $err ]]; chk gs.30
+
+# gs.31-35 DD#92: a bare `@args` splat to an EXTERNAL command is valid without a
+# disposition — it implies the function takes ≥1 arg (the arity records a
+# required index 0, so `tool @args` ≈ `: $1; tool @args`). A 0-arg call is
+# SB5042; a general `@a` still needs a disposition (SB5032); for-in / `@{args:-}`
+# keep their empty-safe behaviour. The runtime `@args`-splat cases are native,c:
+# janet's function-args splat is unimplemented ("unknown symbol args" — a
+# PRE-EXISTING gap; `@{args:?}` fails there too).
+# gs.32 a 0-arg call to such a function is too few args → SB5042 (compile-time,
+# all backends). The arity floor makes the splat provably non-empty (no SB5032).
+run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f'
+[[ $rc != 0 && -z $out && $err == *SB5042* ]]; chk gs.32
+# gs.33 the exemption is `@args`-only: a general `@a` still requires a
+# disposition (SB5032) — DD#69 has no static-non-empty exemption. (compile-time)
+run_sash 'fn f { array a=(x); /usr/bin/printf "[%s]" @a }; f a'
+[[ $rc != 0 && -z $out && $err == *SB5032* ]]; chk gs.33
+if in_modes native,c; then
+    # gs.31 bare `@args` to external, called with args → splats them (no disposition)
+    run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f a b'
+    [[ $rc = 0 && $out = "[a][b]" && -z $err ]]; chk gs.31
+    # gs.34 for-in over `@args` imposes NO floor (0 iterations on empty) — a
+    # for-in-only function is still 0-arg callable.
+    run_sash 'fn f { for w in @args; do /bin/echo x$w; done }; f'
+    [[ $rc = 0 && -z $out && -z $err ]]; chk gs.34
+    # gs.35 `@{args:-}` still accepts 0 args (empty → zero args), unlike the bare
+    # `@args` floor — the disposition is the opt-in to 0-arg calls.
+    run_sash 'fn f { /usr/bin/printf "%s" @{args:-} }; f'
+    [[ $rc = 0 && -z $out && -z $err ]]; chk gs.35
+else
+    skip_chk gs.31; skip_chk gs.34; skip_chk gs.35
+fi
 
 set -e
 tally
