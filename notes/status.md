@@ -1,3 +1,22 @@
+## ════════ STATUS (2026-09-04) — bugfixes: builtin-echo elide ICE + fresh-array lastpipe read segfault ════════
+
+**On `hand-parser`.** DG hit `echo -n $ckd:! | read -d '' -a norm` → ICE
+(`ElideEmpty must be expanded by a list builder`). Two pre-existing bugs (both
+reproduce with `:~` and even with no elide — the `:!` line just surfaced them):
+**(1)** builtin `echo` didn't handle an elide (`:~`/`:!`) arg — native ICE'd,
+c/janet double-spaced (`a  b`). Fixed: builtin echo writes an elide arg's
+separator+value only when non-empty (native `echo_write_elide_arg` via `brif`; c
+`emit_echo_elide_arg`; janet gap filed `janet-echo-flags-and-elide`). **(2)** a
+FRESH `read -a`/`mapfile` target inside a *called* function segfaulted (null
+array table): the function body is lowered twice (dead `fn_` template + inline),
+and the template's `autodeclare_bulk_target` registration leaked into the inline
+via `state.collections`, so the inline skipped the table `Assign` → null table.
+Same class as DD#86's `readonly_vars` scoping — fixed by also snapshotting
+`collections`/`assoc_arrays` in `enter/exit_fn_body_scope`. Pre-declaring the
+array already worked. specs wordsplit.sh 22.28–22.31 (native,c; janet gated for
+read-array/echo gaps). 3-mode sweep: 0 regressions, 12 new. Rust e2e/taint_spec
+at baseline. journal 244. Filed `janet-echo-flags-and-elide`.
+
 ## ════════ STATUS (2026-09-04) — `:!` taint-off operator + `$( )` brace-less operands (DD#91) ════════
 
 **On `hand-parser`.** DG: "yes, `$( )` too [in brace-less operands]; and a new

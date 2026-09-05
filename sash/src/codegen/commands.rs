@@ -8,7 +8,7 @@
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::I64;
 use cranelift_codegen::ir::MemFlags;
-use cranelift_codegen::ir::{InstBuilder, StackSlotData, StackSlotKind};
+use cranelift_codegen::ir::{instructions::BlockArg, InstBuilder, StackSlotData, StackSlotKind};
 use cranelift_frontend::{FunctionBuilder, Variable};
 use cranelift_module::Module;
 use cranelift_object::ObjectModule;
@@ -70,6 +70,27 @@ fn echo_write_one_arg(
     exit_status_var: Option<Variable>,
     mut failed: cranelift_codegen::ir::Value,
 ) -> cranelift_codegen::ir::Value {
+    // DD#84/#91: an elide arg (`${x:~}` / `${x:!}`) contributes its *(space +
+    // value)* only when non-empty, so an identity value writes nothing —
+    // matching the argv builder. `:~`/`:!` only appear as a WHOLE arg (SB5046
+    // forbids them inside a concatenation), so handling the arg-level case
+    // covers it; a scalar `lower_value` of `ElideEmpty` would ICE.
+    if let SsaValue::ElideEmpty { source, .. } = arg {
+        return echo_write_elide_arg(
+            builder,
+            module,
+            write_ref,
+            fd,
+            source,
+            is_first,
+            vars,
+            literals,
+            externs,
+            space_id,
+            exit_status_var,
+            failed,
+        );
+    }
     if !is_first {
         let sp_gv = module.declare_data_in_func(space_id, builder.func);
         let sp_ptr = builder.ins().global_value(I64, sp_gv);
@@ -93,6 +114,63 @@ fn echo_write_one_arg(
         failed = echo_write_tracked(builder, write_ref, fd, ptr, len, failed);
     }
     failed
+}
+
+/// DD#84/#91: write an elide (`:~`/`:!`) echo arg — the leading space (when not
+/// first) and the value are written only when the value is non-empty, so an
+/// identity value contributes nothing. Threads `failed` through both edges via
+/// a block parameter.
+#[allow(clippy::too_many_arguments)]
+fn echo_write_elide_arg(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    write_ref: cranelift_codegen::ir::FuncRef,
+    fd: cranelift_codegen::ir::Value,
+    source: &SsaValue,
+    is_first: bool,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    space_id: cranelift_module::DataId,
+    exit_status_var: Option<Variable>,
+    failed: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let (ptr, len) = lower_value(
+        source,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let write_blk = builder.create_block();
+    let cont_blk = builder.create_block();
+    builder.append_block_param(cont_blk, I64); // carries `failed`
+    let is_empty = builder.ins().icmp_imm(IntCC::Equal, len, 0);
+    builder.ins().brif(
+        is_empty,
+        cont_blk,
+        &[BlockArg::Value(failed)],
+        write_blk,
+        &[],
+    );
+
+    builder.switch_to_block(write_blk);
+    builder.seal_block(write_blk);
+    let mut f = failed;
+    if !is_first {
+        let sp_gv = module.declare_data_in_func(space_id, builder.func);
+        let sp_ptr = builder.ins().global_value(I64, sp_gv);
+        let sp_len = builder.ins().iconst(I64, 1);
+        f = echo_write_tracked(builder, write_ref, fd, sp_ptr, sp_len, f);
+    }
+    f = echo_write_tracked(builder, write_ref, fd, ptr, len, f);
+    builder.ins().jump(cont_blk, &[BlockArg::Value(f)]);
+
+    builder.switch_to_block(cont_blk);
+    builder.seal_block(cont_blk);
+    builder.block_params(cont_blk)[0]
 }
 
 /// Lower `echo`. Returns the write-failure status (0 = OK, 1 = some

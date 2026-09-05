@@ -2045,6 +2045,43 @@ fn emit_splat_disposition_c(
 /// With `-n` flag (first arg): suppress trailing newline.
 /// Emit the write(2)s for one echo argument (a Concat writes each part), OR-ing
 /// any failure into `{t}_wf`. Split out to keep emit_echo under the gate.
+/// DD#84/#91: emit one `echo` arg — a `sep` (leading space, when not first) plus
+/// the value. An elide arg (`${x:~}`/`${x:!}`) writes its separator + value only
+/// when non-empty (matching the argv builder); it only appears as a whole arg
+/// (SB5046 forbids it in a concat).
+fn emit_echo_arg(e: &mut Emit, t: &str, arg: &SsaValue, sep: bool, types: &VarTypes) {
+    if let SsaValue::ElideEmpty { source, .. } = arg {
+        emit_echo_elide_arg(e, t, source, sep, types);
+        return;
+    }
+    if sep {
+        writeln!(e.out, "    {t}_wf |= (sash_write(1, \" \", 1) < 0);", t = t).unwrap();
+    }
+    emit_echo_write_arg(e, t, arg, types);
+}
+
+/// DD#84/#91: write an elide (`:~`/`:!`) echo arg in C — the (separator + value)
+/// is emitted only when the value is non-empty.
+fn emit_echo_elide_arg(e: &mut Emit, t: &str, source: &SsaValue, sep: bool, types: &VarTypes) {
+    let (ptr, len) = lower_value_as_str(e, source, types);
+    writeln!(e.out, "    if ({len} > 0) {{", len = len).unwrap();
+    if sep {
+        writeln!(
+            e.out,
+            "        {t}_wf |= (sash_write(1, \" \", 1) < 0);",
+            t = t
+        )
+        .unwrap();
+    }
+    writeln!(
+        e.out,
+        "        {t}_wf |= (sash_write(1, {ptr}, {len}) < 0);",
+        t = t
+    )
+    .unwrap();
+    writeln!(e.out, "    }}").unwrap();
+}
+
 fn emit_echo_write_arg(e: &mut Emit, t: &str, arg: &SsaValue, types: &VarTypes) {
     let parts: Vec<&SsaValue> = match arg {
         SsaValue::Concat(ps) => ps.iter().collect(),
@@ -2073,10 +2110,7 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     let t = e.fresh();
     writeln!(e.out, "    i64 {t}_wf = 0;", t = t).unwrap();
     for (i, arg) in print_args.iter().enumerate() {
-        if i > 0 {
-            writeln!(e.out, "    {t}_wf |= (sash_write(1, \" \", 1) < 0);", t = t).unwrap();
-        }
-        emit_echo_write_arg(e, &t, arg, types);
+        emit_echo_arg(e, &t, arg, i > 0, types);
     }
 
     if !suppress_newline {

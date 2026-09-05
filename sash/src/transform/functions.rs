@@ -49,15 +49,32 @@ pub(super) fn restore_caller_args(saved: String, state: &mut VersionState) {
 /// restored set, so global-const enforcement is preserved; a fn-local const
 /// is dropped, so re-lowering the same declaration doesn't trip the readonly
 /// backstop.
-pub(super) fn enter_fn_body_scope(state: &VersionState) -> std::collections::HashSet<String> {
-    state.readonly_vars.clone()
+///
+/// The same double-lowering hazard applies to the collection sets: an
+/// autodeclared bulk-read target (`read -a`/`mapfile`/`argv`) inside a function
+/// is registered in `collections`/`assoc_arrays`, which drive
+/// `autodeclare_bulk_target`'s dedup. If the template's registration leaked into
+/// the inlined call, the inline would skip the table-allocating `Assign` and the
+/// runtime read would fill a NULL table (segfault). Snapshot those too so each
+/// lowering re-allocates its own table.
+pub(super) struct FnBodyScope {
+    readonly_vars: std::collections::HashSet<String>,
+    collections: std::collections::HashSet<String>,
+    assoc_arrays: std::collections::HashSet<String>,
 }
 
-pub(super) fn exit_fn_body_scope(
-    state: &mut VersionState,
-    saved: std::collections::HashSet<String>,
-) {
-    state.readonly_vars = saved;
+pub(super) fn enter_fn_body_scope(state: &VersionState) -> FnBodyScope {
+    FnBodyScope {
+        readonly_vars: state.readonly_vars.clone(),
+        collections: state.collections.clone(),
+        assoc_arrays: state.assoc_arrays.clone(),
+    }
+}
+
+pub(super) fn exit_fn_body_scope(state: &mut VersionState, saved: FnBodyScope) {
+    state.readonly_vars = saved.readonly_vars;
+    state.collections = saved.collections;
+    state.assoc_arrays = saved.assoc_arrays;
 }
 
 pub(super) fn lift_int_func_calls(

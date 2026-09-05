@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=80
+plan=84
 echo "1..$plan" >&3
 
 set +e
@@ -380,6 +380,35 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "3:[]" && -z $err ]]; chk 22.27
 else
     skip_chk 22.26; skip_chk 22.27
+fi
+
+# ── read -a / builtin-echo elide bug fixes (DG 2026-09-04, journal 244) ──
+# 22.28 a FRESH `read -a` target inside a called function no longer segfaults.
+# The function is lowered twice (dead template + inline); the autodeclared array
+# table registration used to leak from the template into the inline, so the
+# inline skipped the table `Assign` and the runtime read filled a NULL table.
+# native,c (janet splits the trailing newline differently — pre-existing).
+if in_modes native,c; then
+    run_sash 'fn f { echo hi | read -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+    [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
+
+    # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!}`) — an empty value
+    # contributes NOTHING (no value, no separator), matching the external argv
+    # builder. Previously ICE'd (native) / double-spaced (c). native,c: janet's
+    # builtin echo lacks `-n`/elide (task janet-echo-flags-and-elide).
+    run_sash 'fn f { x=""; echo a $x:~ b }; f'
+    [[ $rc = 0 && $out = "a b" && -z $err ]]; chk 22.29
+
+    # 22.30 a non-empty elide arg is written normally
+    run_sash 'fn f { x=hi; echo a $x:~ b }; f'
+    [[ $rc = 0 && $out = "a hi b" && -z $err ]]; chk 22.30
+
+    # 22.31 the reported line: `echo -n $x:! | read -d '' -a norm` (builtin echo
+    # of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
+    run_sash 'fn f { x=hi; echo -n $x:! | read -d "" -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+    [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
+else
+    skip_chk 22.28; skip_chk 22.29; skip_chk 22.30; skip_chk 22.31
 fi
 
 
