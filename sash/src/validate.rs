@@ -2608,6 +2608,98 @@ fn check_argv_splat_body(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 /// EXTERNAL command is SB5032 — an empty array would silently run the
 /// command with too few args. Require `@{a:-WORD}` / `@{a:?WORD}`. Builtins
 /// and for-in are exempt (this only runs for external command statements).
+/// DD#92 addendum (DG 2026-09-05): reject every write to the immutable, always-
+/// clean function-argument array `args` (SB5052). Run as its own pass over the
+/// program (and the END block), like the other `check_*` gates.
+pub fn check_args_immutable(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        check_args_immutable_stmt(stmt, &mut diags);
+    }
+    diags
+}
+
+/// DD#92 addendum (DG 2026-09-05): the function-argument array `args` is
+/// **immutable and always clean**. A tainted value can never be *passed* as an
+/// argument (passing is a use-site read → SB5020), so the args a function
+/// receives are unconditionally clean; to keep that a true invariant, `args`
+/// cannot be written. Reject every write to it — an assignment (`args=…` /
+/// `args[i]=…`), a bulk fill (`read -a args` / `argv … args` / `mapfile args`),
+/// a declaration (`array args=…`), or a bless-all (`bless … in args`, which is
+/// meaningless since `args` can't be tainted). SB5052. Use a local array.
+fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) if a.name == "args" => push_args_write(stmt.span, diags),
+        StmtKind::Declaration(d) if d.assignments.iter().any(|a| a.name == "args") => {
+            push_args_write(stmt.span, diags)
+        }
+        StmtKind::Command(c) if command_writes_args(c) => push_args_write(stmt.span, diags),
+        _ => {}
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_args_immutable_stmt(s, diags);
+        }
+    }
+}
+
+/// True if `c` is a builtin that writes the `args` array: `read -a args`,
+/// `argv … args`, `mapfile/readarray args`, or `bless … in args`.
+fn command_writes_args(c: &Command) -> bool {
+    match expr_literal_str(&c.name) {
+        "read" => {
+            crate::ir::classify_read_flags(&c.args)
+                .array_name
+                .as_deref()
+                == Some("args")
+        }
+        "argv" => argv_target_name(&c.args) == Some("args"),
+        "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
+        "bless" => bless_array_target(&c.args) == Some("args"),
+        _ => false,
+    }
+}
+
+/// The target array of `argv [N] a` — the last positional (non-flag) arg.
+fn argv_target_name(args: &[Expr]) -> Option<&str> {
+    args.iter()
+        .map(expr_literal_str)
+        .rfind(|s| !s.starts_with('-'))
+}
+
+/// The target array of `mapfile [-flags] a` — the first positional (non-flag) arg.
+fn mapfile_target_name(args: &[Expr]) -> Option<&str> {
+    args.iter()
+        .map(expr_literal_str)
+        .find(|s| !s.starts_with('-'))
+}
+
+/// The array/map name of a `bless x in a` / `bless k v in m` (the taint-clearing
+/// subject), or `None` for the scalar `bless v` form.
+fn bless_array_target(args: &[Expr]) -> Option<&str> {
+    match classify_bless(args)?.0 {
+        BlessForm::Indexed { array, .. } => Some(array),
+        BlessForm::Map { map, .. } => Some(map),
+        BlessForm::Scalar { .. } => None,
+    }
+}
+
+fn push_args_write(span: Span, diags: &mut Vec<Diagnostic>) {
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5052",
+        "`args` is the function's immutable argument array — it can't be written \
+         (assigned, filled via read/argv/mapfile, declared, or blessed). Function \
+         args are always clean: a tainted value can't be passed as an argument \
+         (passing is a read). Use a differently named local array."
+            .to_string(),
+    ))
+}
+
 fn check_external_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
     // Post-resolution (DD#23) an external command's head is an absolute path;
     // builtins, user functions and intrinsics keep bare names and are exempt

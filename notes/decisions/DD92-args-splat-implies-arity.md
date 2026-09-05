@@ -82,3 +82,29 @@ Specs `glob_splat.sh` (gs.31+). No new SB code (reuses SB5042 / SB5032 / SB5024)
 - DD#81 / DD#84 — the arity model (required/optional/variadic, floor, SB5042).
 - DD#23 — compile-time external resolution (the absolute-path head both passes
   key on).
+
+## Addendum (2026-09-05) — `args` is immutable and always clean (SB5052)
+
+DG: "could I ever pass a tainted arg to a function — I don't think so; passing
+the arg counts as a read of the value." Correct, and confirmed: a value passed to
+a function is read at the call site, so a **tainted** one is SB5020 unless blessed
+first — even a tainted *default* (`${1:-$(getenv HOME)}`) is caught. So the args a
+function **receives** are unconditionally clean; the SSA backstop already relies
+on this (it seeds `$1..$9`/`$@`/`$*` as Clean "by DD#24", `ssa_taint.rs`).
+
+To make "args is always clean" a *true whole-lifetime invariant* (not just "as
+received"), DG chose (2026-09-05) to make the `args` array **immutable**: every
+write to it is rejected with **SB5052** —
+
+- assignment / subscript-assign: `args=…`, `args[i]=…`
+- bulk fill: `read -a args`, `argv … args`, `mapfile args`
+- declaration: `array args=…` / `map args=…`
+- **`bless … in args`** — now a clean SB5052 rejection (it was a codegen ICE,
+  `bug-bless-all-args-array-ice`), and meaningless anyway: `args` can't be
+  tainted, so there is nothing to bless.
+
+Use a differently-named local array. Reading `args` (`@args`, `${args[i]}`, `$1`,
+`$#`, …) is of course unaffected. Impl: `validate.rs`
+`check_args_immutable_stmt` (+ `command_writes_args` / `argv_target_name` /
+`mapfile_target_name` / `bless_array_target`). Specs `optional_args.sh`
+84.25–84.30. SB5052 is a new code.

@@ -1,3 +1,21 @@
+## ════════ STATUS (2026-09-05) — the `args` array is immutable + always clean (DD#92 addendum; SB5052) ════════
+
+**On `hand-parser`.** DG: "could I ever pass a tainted arg to a function — I don't
+think so; passing the arg counts as a read." Confirmed: passing a value is a
+call-site read, so a tainted one is SB5020 unless blessed (even a tainted default
+`${1:-$(getenv HOME)}` is caught) → received args are unconditionally clean, and
+the SSA backstop already relies on it (seeds `$1..$9`/`$@`/`$*` Clean by DD#24).
+The one nuance (args could be *locally* re-filled tainted via `argv 1 args` /
+tainted `read -a args`) → DG chose to make **`args` immutable**: every write is
+**SB5052** — `args=…`/`args[i]=…`, `read -a`/`argv`/`mapfile` into args,
+`array args=…`, and `bless … in args` (now a clean rejection, was the
+`bug-bless-all-args-array-ice` codegen ICE — meaningless anyway since args can't
+be tainted). Reading args (`@args`, `${args[i]}`, `$1`, `$#`, `len args`) is
+unaffected; use a differently-named local array. validate `check_args_immutable_stmt`
+(+ `command_writes_args`/`argv_target_name`/`mapfile_target_name`/`bless_array_target`).
+specs optional_args.sh 84.25–30 (84.30 native,c — janet read-array gap). 3-mode
+sweep: 0 regressions, 18 new. DD#92 addendum; journal 246; ICE task resolved. SB5052 new.
+
 ## ════════ STATUS (2026-09-05) — bare `@args` external splat implies min arity ≥1 (DD#92) ════════
 
 **On `hand-parser`.** DG: "forego the SB5032 or `@args:?` modifier for args in a

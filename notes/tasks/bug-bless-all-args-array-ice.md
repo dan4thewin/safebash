@@ -1,6 +1,6 @@
 ---
 title: "bless-all on the function `args` array ICEs (codegen/types.rs:188)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -8,6 +8,19 @@ gates:
   - "`fn f { bless x in args [[ -n $x ]]; echo $1 }; f a` compiles and runs (no panic)"
   - "the fix covers `@args` splat after the bless too"
 ---
+
+## Resolved (2026-09-05) — rejected, not fixed
+
+DG decided the `args` array is immutable and always clean (DD#92 addendum): a
+tainted value can never be passed as an argument (passing is a read → SB5020), so
+`bless … in args` is meaningless (there is nothing to bless). The ICE is now a
+clean **SB5052** rejection ("`args` is the function's immutable argument array —
+… blessed …") alongside every other write to `args` (assignment, `read -a`/`argv`/
+`mapfile` fill, declaration). See `validate.rs::check_args_immutable_stmt`, specs
+`optional_args.sh` 84.25–84.30, journal 246. No codegen change needed — the
+ICE path is now unreachable from valid input.
+
+## Original report
 
 ## Found
 

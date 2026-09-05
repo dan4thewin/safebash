@@ -226,6 +226,7 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_join_arity(program));
     tdiags.extend(validate::check_disposition_defaults(program));
     tdiags.extend(validate::check_elide_positions(program));
+    tdiags.extend(validate::check_args_immutable(program));
     if !tdiags.is_empty() {
         print_diags(input, &tdiags);
         std::process::exit(1);
