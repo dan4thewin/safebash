@@ -29,7 +29,7 @@ run_sash 'echo "a:b:c" | read -f: a b c; echo $a $b $c'
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk 22.5
 
 # 22.6 mapfile -t reads lines into array
-run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; bless x in arr [[ -n $x ]]; echo ${arr[1]}'
+run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; attest x in arr [[ -n $x ]]; echo ${arr[1]}'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read
@@ -101,15 +101,15 @@ run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
 # --- DD#22 mapfile -m ---
 
 # 22.8 mapfile -m reads KEY=VALUE into map
-run_sash 'map m; printf "name=Alice\nage=30\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[name]} ${m[age]}'
+run_sash 'map m; printf "name=Alice\nage=30\n" | mapfile -m m; attest k v in m [[ -n $k && -n $v ]]; echo ${m[name]} ${m[age]}'
 [[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
 
 # 22.9 mapfile -m skips blank lines
-run_sash 'map m; printf "a=1\n\nb=2\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[a]} ${m[b]}'
+run_sash 'map m; printf "a=1\n\nb=2\n" | mapfile -m m; attest k v in m [[ -n $k && -n $v ]]; echo ${m[a]} ${m[b]}'
 [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
 
 # 22.10 mapfile -m splits on first = only
-run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; bless k v in m [[ -n $k && -n $v ]]; echo ${m[key]}'
+run_sash 'map m; printf "key=val=ue\n" | mapfile -m m; attest k v in m [[ -n $k && -n $v ]]; echo ${m[key]}'
 [[ $rc = 0 && $out = "val=ue" && -z $err ]]; chk 22.10
 
 # 22.11 mapfile -m result is tainted
@@ -338,13 +338,13 @@ run_sash 'echo x | readc a'
 # the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`. janet lacks
 # custom-delimiter array reads, so gate native,c.
 if in_modes native,c; then
-    run_sash 'printf "a\0b c\0d" > f22_21; read -a arr -d "" < f22_21; bless x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
+    run_sash 'printf "a\0b c\0d" > f22_21; read -a arr -d "" < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
     [[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
 
     # 22.22 a `-d` delimiter VALUE (`:`) is not mistaken for a target variable
     # (the shared classifier skips flag values — previously a dead-var false
     # positive on `:`). `-d :` reads one record up to the first `:`.
-    run_sash 'printf "a:b" | read -d : x; bless x [[ -n $x ]]; echo "[$x]"'
+    run_sash 'printf "a:b" | read -d : x; attest x [[ -n $x ]]; echo "[$x]"'
     [[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.22
 else
     skip_chk 22.21; skip_chk 22.22
@@ -368,15 +368,15 @@ run_sash 'echo hi | read -r x; echo "[$x]"'
 # 22.26 `-d` uses TERMINATOR semantics: a trailing delimiter does NOT create a
 # trailing empty element (bash `mapfile -d ''` / `find -print0` / `xargs -0`).
 # NUL-terminated input (the sash-getopt idiom) yields only the real fields, so
-# every element is non-empty and a bless-all `[[ -n $x ]]` succeeds. janet lacks
+# every element is non-empty and a attest-all `[[ -n $x ]]` succeeds. janet lacks
 # custom-delimiter array reads, so gate native,c.
 if in_modes native,c; then
-    run_sash 'array arr=(); printf "x\0y\0" | read -a arr -d ""; bless e in arr [[ -n $e ]]; echo "$(len arr)"'
+    run_sash 'array arr=(); printf "x\0y\0" | read -a arr -d ""; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
     [[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
 
     # 22.27 interior empty records are KEPT under terminator semantics; only the
     # single trailing empty from a final delimiter is dropped (`a::b:` → a,"",b).
-    run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; bless e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
+    run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
     [[ $rc = 0 && $out = "3:[]" && -z $err ]]; chk 22.27
 else
     skip_chk 22.26; skip_chk 22.27

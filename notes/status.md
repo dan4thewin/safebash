@@ -1,3 +1,30 @@
+## ════════ STATUS (2026-09-06) — DD#93 attest ergonomics: Stage 1, bless → attest rename ════════
+
+**On `hand-parser`.** DG opened on bless ergonomics ("assigning an int var
+rather than using a `-i` test could save a step, e.g. `bless numstr (( myint =
+numstr ))`"). The thread produced **DD#93**, a four-part bundle. Pivotal: DG
+rejected my "make every arith result clean" (Option A) — "makes the audit trail
+harder to follow"; declassification must stay explicit/named/greppable. His own
+spelling keeps the keyword, so it saves the step without erasing the trail.
+Parts: **(A)** rename `bless`→**`attest`** (a reviewer balked at the *word*;
+"attest" = certify a checkable property, and leaves "trust" free for the
+*unchecked* bypasses `:!`/`--no-taint`); **(B)** unary shorthand `attest VAR OP`
+≡ `attest VAR [[ OP $VAR ]]` (+ attest-all); **(C)** content-shape tests
+`i?`/`p?`/`g?` (rename `-i`→`i?`; general operators; non-empty; ASCII-only);
+**(D)** `attest numstr (( myint = numstr ))` — int-assign IS the predicate,
+cleans both, distinct names, scalar only.
+
+**Stage 1 (this commit) — the rename.** Hard, no alias: `bless` is no longer a
+keyword (degrades to unknown command → SB5011). Renamed the live surface —
+code (incl. `sash_attest_fail` runtime symbol + janet prelude), converter,
+specs, Rust tests, current-state docs (README/GUIDE/REVIEW + one AGENTS line);
+**left historical records** (journal, prior DDs, TIMELINE, audit,
+run-compiler-tasks task-name refs). specs taint.sh 93.1–93.3 (93.2 native,c).
+**3-mode sweep: 0 regressions** (native/c/janet); native+c taint 132/132.
+fmt+clippy clean. DD#93 + journal 247 + task tracker.
+
+**Next:** Stage 2 (`i?`/`p?`/`g?`), then S3 shorthand, S4 arith-assign form.
+
 ## ════════ STATUS (2026-09-05) — the `args` array is immutable + always clean (DD#92 addendum; SB5052) ════════
 
 **On `hand-parser`.** DG: "could I ever pass a tainted arg to a function — I don't

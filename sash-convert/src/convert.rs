@@ -1,7 +1,7 @@
 /// sash-convert conversion engine.
 ///
 /// Walks the tree-sitter CST, collects source patches (mechanical conversions,
-/// MANUAL annotations, CHECK hints, BLESS hints), and applies them to produce
+/// MANUAL annotations, CHECK hints, ATTEST hints), and applies them to produce
 /// sash-native source.
 use crate::known_externals;
 use crate::ScFinding;
@@ -58,13 +58,13 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         annotate,
     );
 
-    // Inject bless hints for command substitution assignments
-    inject_bless_hints(tree.root_node(), src, &mut prefix_lines);
+    // Inject attest hints for command substitution assignments
+    inject_attest_hints(tree.root_node(), src, &mut prefix_lines);
 
     // Add CHECK hints from shellcheck SC2086 findings
     add_sc2086_hints(sc_findings, &mut prefix_lines);
 
-    // Collect prefix lines from patches (e.g., env var getenv+bless)
+    // Collect prefix lines from patches (e.g., env var getenv+attest)
     for patch in &patches {
         if let Some(ref pl) = patch.prefix_line {
             // Insert before the line where the patch starts
@@ -634,7 +634,7 @@ fn strip_dollar(s: &str) -> &str {
 
 /// DD#53: bash tilde expansion. `~` and `~/path` expand to `$HOME`, which the
 /// sash compiler rejects (SB4036, expr.rs). Rewrite the safe home forms to a
-/// hoisted `$(getenv HOME)` + bless — mirroring the `$HOME` env-var conversion
+/// hoisted `$(getenv HOME)` + attest — mirroring the `$HOME` env-var conversion
 /// — and leave the forms we cannot mechanically resolve unchanged with a
 /// MANUAL note, so the SB4036 compile error forces a human to review them:
 ///   - `~user` / `~user/…`  (needs a passwd lookup sash does not do; the
@@ -675,20 +675,20 @@ fn convert_tilde_word(
         prefix_lines.push((
             line,
             "# MANUAL: tilde form (~user / multi-tilde) not mechanically \
-             resolvable — rewrite to an explicit $(getenv …) + bless"
+             resolvable — rewrite to an explicit $(getenv …) + attest"
                 .into(),
         ));
         return;
     }
 
-    // Mirror the $HOME env-var hoist: home=$(getenv HOME); bless home [[ … ]].
+    // Mirror the $HOME env-var hoist: home=$(getenv HOME); attest home [[ … ]].
     let env = known_externals::lookup_env_var("HOME").expect("HOME is a known env var");
     patches.push(Patch {
         start: node.start_byte(),
         end: node.end_byte(),
         replacement: format!("$home{}", &w[1..]),
         prefix_line: Some(format!(
-            "home=$(getenv HOME); bless home [[ $home =~ {} ]]",
+            "home=$(getenv HOME); attest home [[ $home =~ {} ]]",
             env.pattern
         )),
         original: None,
@@ -712,17 +712,17 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                         patches.push(Patch::replace_node(node, replacement, None));
                     }
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
-                    // Known env var: $HOME → $(getenv HOME) + bless
+                    // Known env var: $HOME → $(getenv HOME) + attest
                     let var = name.to_lowercase();
                     let _line = node.start_position().row + 1;
                     let _getenv = format!("$(getenv {})", name);
-                    // Emit: var=$(getenv NAME); bless var [[ $var =~ pattern ]]
+                    // Emit: var=$(getenv NAME); attest var [[ $var =~ pattern ]]
                     patches.push(Patch {
                         start: node.start_byte(),
                         end: node.end_byte(),
                         replacement: format!("${}", var),
                         prefix_line: Some(format!(
-                            "{}=$(getenv {}); bless {} [[ ${} =~ {} ]]",
+                            "{}=$(getenv {}); attest {} [[ ${} =~ {} ]]",
                             var, name, var, var, env.pattern
                         )),
                         original: None,
@@ -913,11 +913,11 @@ fn contains_arith_assignment(expr: &str) -> bool {
     false
 }
 
-// ── Bless injection ───────────────────────────────────────────
+// ── Attest injection ───────────────────────────────────────────
 
-/// Scan for variable assignments from command substitution and inject bless hints.
+/// Scan for variable assignments from command substitution and inject attest hints.
 /// Called after the main walk — examines assignment nodes.
-fn inject_bless_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, String)>) {
+fn inject_attest_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, String)>) {
     if node.kind() == "variable_assignment" {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
@@ -940,18 +940,18 @@ fn inject_bless_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, 
                     let args = extract_command_args(*child, source);
                     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
                     if let Some(known) = known_externals::lookup_command(&cmd_name, &arg_refs) {
-                        // Known external → real bless line
+                        // Known external → real attest line
                         prefix_lines.push((
                             line + 1,
                             format!(
-                                "bless {} [[ ${} =~ {} ]]  # auto: {}",
+                                "attest {} [[ ${} =~ {} ]]  # auto: {}",
                                 var, var, known.pattern, known.description
                             ),
                         ));
                     } else {
                         // Unknown external → hint
                         prefix_lines.push((line + 1, format!(
-                            "# BLESS: {} is assigned from '{}' — add a bless with appropriate pattern",
+                            "# ATTEST: {} is assigned from '{}' — add a attest with appropriate pattern",
                             var, cmd_name
                         )));
                     }
@@ -975,7 +975,7 @@ fn inject_bless_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, 
                         if !t.starts_with('-') && t.chars().all(|c| c.is_alphanumeric() || c == '_')
                         {
                             prefix_lines.push((line + 1, format!(
-                                "# BLESS: {} is read from input — add a bless with appropriate pattern", t
+                                "# ATTEST: {} is read from input — add a attest with appropriate pattern", t
                             )));
                         }
                     }
@@ -987,7 +987,7 @@ fn inject_bless_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize, 
     // Recurse
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        inject_bless_hints(child, source, prefix_lines);
+        inject_attest_hints(child, source, prefix_lines);
     }
 }
 

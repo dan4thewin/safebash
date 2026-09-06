@@ -192,7 +192,7 @@ fn literal_token_text(tok: &Tok, mode: AbsorbMode) -> Option<String> {
         | Tok::Const
         | Tok::Array
         | Tok::Map
-        | Tok::Bless
+        | Tok::Attest
         | Tok::End => Some(keyword_to_str(tok).to_string()),
         _ => absorb_text(tok, mode).map(str::to_string),
     }
@@ -211,7 +211,7 @@ fn parse_word_arm(scanner: &mut Scanner, w: String, span: Span) -> Result<Expr, 
             span,
             "SB4036",
             "unquoted leading `~` is not expanded — use $(getenv HOME) (with \
-             a bless), or quote it (`'~'` / `\"~\"`) for a literal tilde"
+             a attest), or quote it (`'~'` / `\"~\"`) for a literal tilde"
                 .to_string(),
         ));
     }
@@ -1553,7 +1553,7 @@ fn keyword_to_str(tok: &Tok) -> &'static str {
         Tok::Const => "const",
         Tok::Array => "array",
         Tok::Map => "map",
-        Tok::Bless => "bless",
+        Tok::Attest => "attest",
         Tok::End => "END",
         _ => "",
     }

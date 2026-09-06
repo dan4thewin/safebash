@@ -113,10 +113,10 @@ pub enum BuiltinCmd {
     /// sash rejects as redirect syntax — SB4048). Void; a failed close aborts
     /// per DD#55 unless caught/suppressed.
     Close,
-    /// `bless VAR [[ ... ]]` — recognized at IR level, becomes
-    /// `SsaInst::Bless` in SSA. Only appears as a `Command` in
+    /// `attest VAR [[ ... ]]` — recognized at IR level, becomes
+    /// `SsaInst::Attest` in SSA. Only appears as a `Command` in
     /// fallback paths (no TestExpr arg).
-    Bless,
+    Attest,
     Read,
     /// `mapfile` / `readarray` (same builtin).
     Mapfile,
@@ -181,7 +181,7 @@ impl BuiltinCmd {
             "cd" => Self::Cd,
             "wait" => Self::Wait,
             "close" => Self::Close,
-            "bless" => Self::Bless,
+            "attest" => Self::Attest,
             "read" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
@@ -330,21 +330,21 @@ pub enum SsaInst {
         /// negated (enforced at parse). Empty ⇒ none.
         negated: Vec<bool>,
     },
-    /// bless VAR [[ test_expr ]] — runtime validation of tainted data.
+    /// attest VAR [[ test_expr ]] — runtime validation of tainted data.
     /// If the test fails, abort with nonzero exit.
-    Bless {
+    Attest {
         target: VarRef,
         source: VarRef,
         test: SsaTest,
     },
-    /// DD#61: `bless x in a [[…]]` / `bless k v in m [[…]]` — validate
+    /// DD#61: `attest x in a [[…]]` / `attest k v in m [[…]]` — validate
     /// every element of an array/map against a per-element predicate.
     /// Binds each element (indexed: `[value_binder]`; map: `[key, value]`)
     /// and evaluates `test`. Sets the test-result var to the all-passed
     /// boolean (vacuously true for an empty collection). When `if_form`
     /// is false (statement form) a failing element aborts with exit 1
     /// instead; when true the boolean is left for a surrounding branch.
-    BlessAll {
+    AttestAll {
         source: VarRef,
         /// Versioned, globally-unique loop-binder refs (indexed: `[value]`;
         /// map: `[key, value]`). Transform assigns fresh versions so the
@@ -355,10 +355,10 @@ pub enum SsaInst {
         is_map: bool,
         if_form: bool,
     },
-    /// DD#61: retag an array/map as clean after a successful `BlessAll` —
+    /// DD#61: retag an array/map as clean after a successful `AttestAll` —
     /// copies the source slot (the collection's backing table) to a new
-    /// clean SSA version. No runtime validation (already done by BlessAll).
-    BlessRetag { target: VarRef, source: VarRef },
+    /// clean SSA version. No runtime validation (already done by AttestAll).
+    AttestRetag { target: VarRef, source: VarRef },
 }
 
 impl SsaInst {
@@ -564,7 +564,7 @@ pub enum SsaValue {
     /// this never reaches a scalar `lower_value`.
     ///
     /// DD#91: `taint_off` is set for the `:!` spelling — the elide behaviour is
-    /// identical, but the value is treated as **clean** (a predicate-less bless,
+    /// identical, but the value is treated as **clean** (a predicate-less attest,
     /// a sanctioned per-use taint bypass). Only the taint passes read the flag;
     /// codegen/backends ignore it.
     ElideEmpty {
@@ -644,7 +644,7 @@ pub struct ArraySplatDisposition {
     /// substituting.
     pub abort: bool,
     /// DD#91: `@a:!` (`arrvals_trust`) — elide + taint-off: the splatted
-    /// elements are trusted clean (a per-use bless-all bypass). Only the taint
+    /// elements are trusted clean (a per-use attest-all bypass). Only the taint
     /// passes read this; codegen ignores it (the runtime splat is identical to
     /// a wordless `arrvals_default`).
     pub taint_off: bool,

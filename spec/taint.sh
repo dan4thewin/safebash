@@ -1,9 +1,9 @@
 #!/bin/bash
-# spec/taint.sh — taint tracking tests (DD#24, DD#50, DD#51, DD#53, DD#61)
+# spec/taint.sh — taint tracking tests (DD#24, DD#50, DD#51, DD#53, DD#61, DD#93)
 set -eu
 . common.sh
 setup taint
-plan=129
+plan=132
 echo "1..$plan" >&3
 
 set +e
@@ -43,41 +43,41 @@ echo $x'
 run_sash 'x=$(getenv PATH); /bin/ls $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.8
 
-# 24.9 bless makes var clean
+# 24.9 attest makes var clean
 run_sash 'x=$(getenv HOME)
-bless x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
+attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 echo $x'
 [[ $rc = 0 && -z $err ]]; chk 24.9
 
-# 24.10 bless requires $VAR in test expression
+# 24.10 attest requires $VAR in test expression
 run_sash 'x=$(getenv HOME)
-bless x [[ 1 -eq 1 ]]
+attest x [[ 1 -eq 1 ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.10
 
-# 24.11 bless requires $VAR on LHS
+# 24.11 attest requires $VAR on LHS
 run_sash 'x=$(getenv HOME)
-bless x [[ "foo" = $x ]]
+attest x [[ "foo" = $x ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.11
 
-# 24.12 bless failure (unconditional) aborts at runtime
+# 24.12 attest failure (unconditional) aborts at runtime
 run_sash 'x=$(getenv HOME)
-bless x [[ $x =~ ^NEVER_MATCH$ ]]
+attest x [[ $x =~ ^NEVER_MATCH$ ]]
 echo $x'
-# bless fails at runtime → exits 1, no stdout
+# attest fails at runtime → exits 1, no stdout
 [[ $rc != 0 && -z $out ]]; chk 24.12
 
-# 24.13 if bless failure → takes false branch, var still tainted
+# 24.13 if attest failure → takes false branch, var still tainted
 run_sash 'x=$(getenv HOME)
-if bless x [[ $x =~ ^NEVER$ ]]; then
+if attest x [[ $x =~ ^NEVER$ ]]; then
   echo $x
 fi'
 [[ $rc = 0 && -z $err ]]; chk 24.13
 
 # 24.14 re-assignment from tainted source re-taints
 run_sash 'x=$(getenv HOME)
-bless x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
+attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 x=$(getenv USER)
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.14
@@ -86,21 +86,21 @@ echo $x'
 run_sash 'x="hello"; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.15
 
-# 24.16 bless test SHALL NOT allow external commands or arithmetic
+# 24.16 attest test SHALL NOT allow external commands or arithmetic
 run_sash 'x=$(getenv HOME)
-bless x [[ $(echo yes) = yes ]]
+attest x [[ $(echo yes) = yes ]]
 echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.16
 
-# 24.17 compiler SHALL NOT auto-bless known external output
+# 24.17 compiler SHALL NOT auto-attest known external output
 run_sash 'd=$(/bin/date +%Y-%m-%d); echo $d'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.17
 
-# 24.18 known hostname — still tainted without explicit bless
+# 24.18 known hostname — still tainted without explicit attest
 run_sash 'h=$(/bin/hostname); echo $h'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.18
 
-# 24.19 getenv without bless — tainted
+# 24.19 getenv without attest — tainted
 run_sash 'x=$(getenv HOME); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.19
 
@@ -119,7 +119,7 @@ run_sash 'echo $HOME'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 53.1
 
 # 53.2 only way to read env is getenv
-run_sash 'x=$(getenv HOME); bless x [[ $x =~ ^/ ]]; echo $x'
+run_sash 'x=$(getenv HOME); attest x [[ $x =~ ^/ ]]; echo $x'
 [[ $rc = 0 && -z $err ]]; chk 53.2
 
 # 53.3 getenv result is tainted
@@ -154,11 +154,11 @@ run_sash 'echo $BASH_VERSION'
 run_sash 'echo $PATH'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 53.9
 
-# ── DD#61: array taint construction restriction + bless-all ──────────
+# ── DD#61: array taint construction restriction + attest-all ──────────
 #
-# Construction-restriction and bless-form checks are front-end (validate /
+# Construction-restriction and attest-form checks are front-end (validate /
 # type_check) and fire in every backend, so they run cross-mode. The
-# bless-all *runtime* tests need mapfile + bless enforcement, which the
+# attest-all *runtime* tests need mapfile + attest enforcement, which the
 # janet (IR) and c (SSA) oracles elide; those are guarded to native.
 
 # --- Cross-mode: construction restriction (a tainted value may not enter
@@ -172,9 +172,9 @@ run_sash 'array a=( $(getenv HOME) ); echo ${a[0]}'
 run_sash 'array a=( $(getenv HOME) $(getenv PATH) ); echo ${a[1]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.2
 
-# 60.3 the reported bug WITH a scalar bless present must STILL reject
+# 60.3 the reported bug WITH a scalar attest present must STILL reject
 run_sash 'array a=( $(getenv HOME) $(getenv PATH) )
-bless a [[ $a[0] =~ ^\S*$ ]]
+attest a [[ $a[0] =~ ^\S*$ ]]
 echo $a[1]'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.3
 
@@ -198,7 +198,7 @@ run_sash 'map m=( [k]=$(getenv HOME) ); echo ${m[k]}'
 run_sash 'array a=( "pre$(getenv HOME)" ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.8
 
-# 60.13 mapfile from a file → tainted; use without bless rejected
+# 60.13 mapfile from a file → tainted; use without attest rejected
 run_sash 'array a=(); mapfile -t a < d60a.txt; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.13
 
@@ -207,73 +207,73 @@ run_sash 'array a=(); read -a a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.14
 
 # ad.4 an AUTO-declared mapfile array (no prior `array a=()`) is still tainted —
-#      an element read without bless rejects (the front-end auto-declare
+#      an element read without attest rejects (the front-end auto-declare
 #      registers the collection but must NOT clear the taint).
 run_sash 'mapfile -t a < d60a.txt; echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ad.4
 
-# 60.32 tainted array iterated without bless-all → reject (negative for 60.25)
+# 60.32 tainted array iterated without attest-all → reject (negative for 60.25)
 run_sash 'array a=(); mapfile -t a < d60b.txt; for x in @a; do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
 
-# 60.33 tainted array joined without bless-all → reject (cmdsub-arg use site)
+# 60.33 tainted array joined without attest-all → reject (cmdsub-arg use site)
 run_sash 'array a=(); mapfile -t a < d60b.txt; echo $(join @a)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
-# 60.34 tainted map (mapfile -m) subscripted without bless-all → reject
-# (negative for the blessed map subscript 60.29; mirrors the array 60.13)
+# 60.34 tainted map (mapfile -m) subscripted without attest-all → reject
+# (negative for the attested map subscript 60.29; mirrors the array 60.13)
 run_sash 'map m=(); mapfile -m m < d60m.txt; echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.34
 
-# 60.35 keys of a tainted (mapfile -m) map without bless-all → reject.
+# 60.35 keys of a tainted (mapfile -m) map without attest-all → reject.
 # keys exposes the file-derived keys; a use site like ${m[…]} (60.34).
 run_sash 'map m=(); mapfile -m m < d60m.txt; for k in $(keys m); do echo "$k"; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.35
 
-# 60.19 bless-all binder must be on the LHS (anti-tautology)
+# 60.19 attest-all binder must be on the LHS (anti-tautology)
 run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ "foo" = $x ]]
+attest x in a [[ "foo" = $x ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.19
 
-# 60.20 bless-all predicate must reference the binder
+# 60.20 attest-all predicate must reference the binder
 run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ 1 -eq 1 ]]
+attest x in a [[ 1 -eq 1 ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.20
 
-# 60.24 re-reading from a tainted source after bless-all re-taints
+# 60.24 re-reading from a tainted source after attest-all re-taints
 run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 mapfile -t a < d60b.txt
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.24
 
-# 60.26 scalar bless applied to a (tainted) array → type error
+# 60.26 scalar attest applied to a (tainted) array → type error
 run_sash 'array a=(); mapfile -t a < d60b.txt
-bless a [[ ${a[0]} =~ ^[a-z]+$ ]]
+attest a [[ ${a[0]} =~ ^[a-z]+$ ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.26
 
-# 60.27 bless-all (1 binder) applied to a scalar → type error
-run_sash 'x=$(getenv HOME); bless y in x [[ $y =~ ^/ ]]; echo $x'
+# 60.27 attest-all (1 binder) applied to a scalar → type error
+run_sash 'x=$(getenv HOME); attest y in x [[ $y =~ ^/ ]]; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.27
 
-# 60.28 1-binder bless-all on a map → type error (needs two binders)
+# 60.28 1-binder attest-all on a map → type error (needs two binders)
 run_sash 'map m=(); mapfile -m m < d60m.txt
-bless v in m [[ $v =~ ^[A-Za-z]+$ ]]
+attest v in m [[ $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.28
 
-# 60.30 map bless-all: both binders must be validated (value omitted) → reject
+# 60.30 map attest-all: both binders must be validated (value omitted) → reject
 run_sash 'map m=(); mapfile -m m < d60m.txt
-bless k v in m [[ $k =~ ^[A-Z]+$ ]]
+attest k v in m [[ $k =~ ^[A-Z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.30
 
-# --- native+c: clean-construction + bless-all runtime semantics.
-#     The c oracle now implements mapfile + RedirectPush/Pop + BlessAll
-#     (2026-08-20). janet still elides bless enforcement / lacks mapfile, so
+# --- native+c: clean-construction + attest-all runtime semantics.
+#     The c oracle now implements mapfile + RedirectPush/Pop + AttestAll
+#     (2026-08-20). janet still elides attest enforcement / lacks mapfile, so
 #     it stays skipped (janet deferred). ---
 if in_modes native,c; then
     printf 'alpha\nbeta\n' > d60a.txt
@@ -287,9 +287,9 @@ if in_modes native,c; then
     run_sash 'array a=( one two ); echo ${a[0]}'
     [[ $rc = 0 && $out = "one" && -z $err ]]; chk 60.9
 
-    # 60.10 escape hatch: array built from a blessed scalar
+    # 60.10 escape hatch: array built from a attested scalar
     run_sash 'h=$(getenv HOME)
-bless h [[ $h =~ ^/ ]]
+attest h [[ $h =~ ^/ ]]
 array a=( "$h" ); echo ${a[0]}'
     [[ $rc = 0 && -n $out && -z $err ]]; chk 60.10
 
@@ -301,69 +301,69 @@ array a=( "$h" ); echo ${a[0]}'
     run_sash 'array a=(one two); a[0]=zero; echo ${a[0]}'
     [[ $rc = 0 && $out = "zero" && -z $err ]]; chk 60.12
 
-    # 60.15 bless-all clears taint; element readable (runtime pass)
+    # 60.15 attest-all clears taint; element readable (runtime pass)
     run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[1]}'
     [[ $rc = 0 && $out = "beta" && -z $err ]]; chk 60.15
 
-    # 60.16 bless-all then read a different element
+    # 60.16 attest-all then read a different element
     run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[2]}'
     [[ $rc = 0 && $out = "gamma" && -z $err ]]; chk 60.16
 
-    # 60.17 bless-all runtime failure: one element fails → exit 1, no stdout
+    # 60.17 attest-all runtime failure: one element fails → exit 1, no stdout
     run_sash 'array a=(); mapfile -t a < d60c.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[0]}'
     [[ $rc != 0 && -z $out ]]; chk 60.17
 
-    # 60.18 if-form bless-all failure → false branch, no abort
+    # 60.18 if-form attest-all failure → false branch, no abort
     run_sash 'array a=(); mapfile -t a < d60c.txt
-if bless x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
+if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
 
     # 60.21 empty array → vacuous pass (∀ over ∅ is true)
     run_sash 'array a=(); mapfile -t a < d60empty.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.21
 
     # 60.22 binder shadows outer var; outer untouched afterward
     run_sash 'x=outer; array a=(); mapfile -t a < d60b.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo $x'
     [[ $rc = 0 && $out = "outer" && -z $err ]]; chk 60.22
 
-    # 60.23 bless-all with a unary predicate on the binder
+    # 60.23 attest-all with a unary predicate on the binder
     run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ -n $x ]]
+attest x in a [[ -n $x ]]
 echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk 60.23
 
-    # 60.25 bless-all enables iteration over the cleaned array
+    # 60.25 attest-all enables iteration over the cleaned array
     run_sash 'array a=(); mapfile -t a < d60b.txt
-bless x in a [[ $x =~ ^[a-z]+$ ]]
+attest x in a [[ $x =~ ^[a-z]+$ ]]
 for w in @a; do echo $w; done'
     [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
 
-    # 60.29 map bless-all clears, value readable (runtime pass)
+    # 60.29 map attest-all clears, value readable (runtime pass)
     run_sash 'map m=(); mapfile -m m < d60m.txt
-bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
+attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
 
-    # 60.36 blessed map: keys + dynamic subscript idiom iterates pairs
+    # 60.36 attested map: keys + dynamic subscript idiom iterates pairs
     run_sash 'map m=(); mapfile -m m < d60m.txt
-bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
+attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 for k in $(keys m); do echo "$k=${m[$k]}"; done'
     [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
 
-    # 60.31 map bless-all runtime failure: a value fails its predicate → exit 1
+    # 60.31 map attest-all runtime failure: a value fails its predicate → exit 1
     run_sash 'map m=(); mapfile -m m < d60m2.txt
-bless k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
+attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc != 0 && -z $out ]]; chk 60.31
 
@@ -375,10 +375,10 @@ echo ${m[NAME]}'
     # ad.2 same for `read -a` into an undeclared array
     run_sash 'read -a a < d60a.txt; echo $(len a)'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
-    # ad.3 bless-all + element read on an AUTO-declared mapfile array (the
-    #      front-end must register the target as a collection, else `bless e in
+    # ad.3 attest-all + element read on an AUTO-declared mapfile array (the
+    #      front-end must register the target as a collection, else `attest e in
     #      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
-    run_sash 'mapfile -t a < d60a.txt; bless e in a [[ -n $e ]]; echo ${a[0]}'
+    run_sash 'mapfile -t a < d60a.txt; attest e in a [[ -n $e ]]; echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
@@ -398,14 +398,14 @@ run_sash 'echo ~/x'
 run_sash "echo '~' \"~\" a~b"
 [[ $rc = 0 && $out = "~ ~ a~b" && -z $err ]]; chk tilde.3
 
-# 24.20 a failed bless names the variable and shows its value (native only —
+# 24.20 a failed attest names the variable and shows its value (native only —
 #       the c/janet harnesses discard runtime stderr). Regression for the
-#       terse `bless: validation failed`.
+#       terse `attest: validation failed`.
 if in_modes native,c; then
     run_sash 'x=$(getenv HOME)
-bless x [[ $x =~ ^NEVER$ ]]
+attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
-    [[ $rc = 1 && $rerr == *"bless: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
+    [[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
 else
     skip_chk 24.20
 fi
@@ -439,7 +439,7 @@ run_sash 'y=$(getenv HOME); z=${x:-$y}; echo $z'
 # ── DD#24 no propagation (journal 036 `x=$1` is a compile error): reading a
 # stored tainted variable in a scalar assignment RHS is a rejected read, uniform
 # with every other read site. Assignment *from a source* is the only way in;
-# bless at the source, not on a copy. Regression: scalar assignment used to
+# attest at the source, not on a copy. Regression: scalar assignment used to
 # silently PROPAGATE taint (caught only at a later sink). ──
 # np.1 z=$y (y tainted) is a rejected read, not a silent propagate
 run_sash 'y=$(getenv HOME); z=$y'
@@ -453,17 +453,17 @@ run_sash 'y=$(getenv HOME); z="pre${y}post"'
 # np.4 string `+=` append of a tainted read is rejected
 run_sash 'y=$(getenv HOME); s=clean; s+=$y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.4
-# np.5 bless at the SOURCE, then the copy is a clean read (the DD#24 idiom).
+# np.5 attest at the SOURCE, then the copy is a clean read (the DD#24 idiom).
 # native,c — janet fakes runtime getenv (janet-getpid-class-intrinsics).
 if in_modes native,c; then
-    run_sash 'y=$(getenv HOME); bless y [[ -n $y ]]; z=$y; echo "$z"'
+    run_sash 'y=$(getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
     [[ $rc = 0 && -z $err ]]; chk np.5
 else
     skip_chk np.5
 fi
 # np.6 assignment straight from a source is allowed (taints the target). native,c.
 if in_modes native,c; then
-    run_sash 'z=$(getenv HOME); bless z [[ -n $z ]]; echo "$z"'
+    run_sash 'z=$(getenv HOME); attest z [[ -n $z ]]; echo "$z"'
     [[ $rc = 0 && -z $err ]]; chk np.6
 else
     skip_chk np.6
@@ -489,9 +489,9 @@ if in_modes native,c; then
 else
     skip_chk mcs.3
 fi
-# mcs.4 blessing the tainted pipeline capture makes it usable (native+c)
+# mcs.4 attesting the tainted pipeline capture makes it usable (native+c)
 if in_modes native,c; then
-    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
+    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
     [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
 else
     skip_chk mcs.4
@@ -499,7 +499,7 @@ fi
 
 # ── DD#24: a `$( )` that READS already-tainted data is a use-site in EVERY
 # value position, not just argument position (a laundering-bypass class). A
-# tainted `argv 1` snapshot joined without bless-all must be rejected (SB5020)
+# tainted `argv 1` snapshot joined without attest-all must be rejected (SB5020)
 # wherever the `$(join …)` appears. Previously only argument/for-word position
 # was checked; assignment RHS / subscript / array-literal / test / redirect /
 # nested all silently compiled and leaked the args at runtime.
@@ -524,10 +524,10 @@ run_sash 'x=$(getenv HOME); [[ $x = y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.44
 run_sash 'x=$(getenv HOME); echo hi > $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
-# 60.46 control: a blessed-all snapshot joined is clean and runs (native+c;
+# 60.46 control: a attested-all snapshot joined is clean and runs (native+c;
 # janet's _args model doesn't expose the named-array join at runtime)
 if in_modes native,c; then
-    run_sash 'argv 1 a; bless x in a [[ -n $x ]]; echo $(join a)' one two
+    run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
     [[ $rc = 0 && $out = "one two" && -z $err ]]; chk 60.46
 else
     skip_chk 60.46
@@ -571,46 +571,46 @@ fi
 run_sash 'x=hello; [[ $x = hello ]] && echo yes'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 60.55
 
-# ── bless-fallback: `bless V [[t]] || V=DEFAULT` (DG 2026-09-01) ──────────
-# A bless as the left operand of `&&`/`||` is a *caught* gate (like `if bless`),
-# not a bare abort. `bless V [[t]] || V=dflt` = "V validated, else the default"
+# ── attest-fallback: `attest V [[t]] || V=DEFAULT` (DG 2026-09-01) ──────────
+# A attest as the left operand of `&&`/`||` is a *caught* gate (like `if attest`),
+# not a bare abort. `attest V [[t]] || V=dflt` = "V validated, else the default"
 # — a clean, usable value either way. The fallback is trusted, not re-validated
-# (caveat programmer). native,c: bless is a native/c runtime construct.
+# (caveat programmer). native,c: attest is a native/c runtime construct.
 if in_modes native,c; then
     # bfb.1 valid input passes the gate → V keeps its value (was wrongly the
     #       default before the fix)
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' 5000
     [[ $rc = 0 && $out = "5000" && -z $rerr ]]; chk bfb.1
 
     # bfb.2 invalid input fails the gate → the default (no abort)
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' abc
     [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.2
 
     # bfb.3 empty input fails the gate → the default
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' ""
     [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.3
 
     # bfb.4 V is clean and reusable after the fallback (both branches clean)
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] || v=8080
+attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v $v"' abc
     [[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
 
-    # bfb.5 `bless && X` runs X only on pass
+    # bfb.5 `attest && X` runs X only on pass
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 /bin/echo done' 42
     [[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
 
-    # bfb.6 `bless && X` on fail: X skipped, execution continues (caught, no abort)
+    # bfb.6 `attest && X` on fail: X skipped, execution continues (caught, no abort)
     run_sash 'v=$(arg 1)
-bless v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
+attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 /bin/echo reached' abc
     [[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
 else
@@ -619,8 +619,8 @@ else
 fi
 
 # ── DD#91: the `:!` taint-off operator (= `:~` elide + taint guard disabled) ──
-# A sanctioned per-use bypass — use a tainted value without a bless predicate
-# (the middle ground between `bless` and `--no-taint`).
+# A sanctioned per-use bypass — use a tainted value without a attest predicate
+# (the middle ground between `attest` and `--no-taint`).
 # 91.1 tainted `${x:!}` compiles & runs (the bypass). native,c: janet lacks
 # `getenv` (pre-existing gap — it runs `getenv` as an external), so the
 # runtime-executing getenv tests are gated (the compile-time bypass is checked
@@ -649,7 +649,7 @@ if in_modes native,c; then
 else
     skip_chk 91.4
 fi
-# 91.5 tainted array splat `@a:!` bypasses bless-all
+# 91.5 tainted array splat `@a:!` bypasses attest-all
 run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!' HELLO
 [[ $rc = 0 && $out = "HELLO" && -z $err ]]; chk 91.5
 # 91.6 braced `@{a:!}` likewise
@@ -670,6 +670,24 @@ run_sash 'x=hi; z=${x:!}; /bin/echo $z'
 # 91.11 `:!` on a CLEAN var is a harmless no-op taint-off (just the value)
 run_sash 'x=hi; /bin/echo ${x:!}'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.11
+
+# ── DD#93 Part A: `bless` renamed to `attest` (hard rename, no alias) ──
+# 93.1 `bless` is no longer a keyword — it is just an unknown command now
+run_sash 'x=hi; bless x'
+[[ $rc != 0 && $err == *SB5011* ]]; chk 93.1
+# 93.2 `attest` clears taint end-to-end (the renamed primitive works). native,c
+# (janet elides attest validation and lacks getenv — see janet gaps).
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME)
+attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
+/bin/echo $x'
+    [[ $rc = 0 && -z $err ]]; chk 93.2
+else
+    skip_chk 93.2
+fi
+# 93.3 diagnostic wording follows the rename ("without attest")
+run_sash 'x=$(getenv HOME); /bin/echo $x'
+[[ $rc != 0 && $err == *"without attest"* ]]; chk 93.3
 
 set -e
 tally

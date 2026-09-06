@@ -1,11 +1,11 @@
 // Taint model spec tests — DD#24 amendment 2 + DD#46
 //
 // TDD: tests written against the spec. Some pass today (CST analyzer),
-// some require the SSA taint pass or bless runtime enforcement.
+// some require the SSA taint pass or attest runtime enforcement.
 // Each test is tagged:
 //   [NOW]  — expected to pass with current implementation
 //   [SSA]  — requires SSA taint pass
-//   [RT]   — requires bless runtime enforcement
+//   [RT]   — requires attest runtime enforcement
 //   [DD46] — requires DD#46 (top-level positional rejection/coercion)
 
 use std::process::Command;
@@ -108,7 +108,7 @@ fn compile_and_run_with_env(name: &str, script: &str, env: &[(&str, &str)]) -> S
 }
 
 // ===================================================================
-// Rejection tests — tainted reads without bless → SB4020
+// Rejection tests — tainted reads without attest → SB4020
 // ===================================================================
 
 #[test] // [NOW]
@@ -236,11 +236,11 @@ echo "${lines[0]}"
 }
 
 #[test] // [SSA]
-fn taint_retaint_after_bless() {
-    // Re-assignment from tainted source after bless re-taints
+fn taint_retaint_after_attest() {
+    // Re-assignment from tainted source after attest re-taints
     let script = r#"#!/bin/bash
 x=$(getenv A)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 x=$(getenv B)
 echo "$x"
 "#;
@@ -301,14 +301,14 @@ foo "only-one"
 // ===================================================================
 
 #[test] // [NOW]
-fn clean_bless_then_use() {
+fn clean_attest_then_use() {
     let script = r#"#!/bin/bash
 x=$(getenv MY_CUSTOM_VAR)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo "$x"
 "#;
     // Just check it compiles and runs
-    compile_and_run("bless_use", script);
+    compile_and_run("attest_use", script);
 }
 
 #[test] // [NOW]
@@ -344,101 +344,101 @@ EOF
 }
 
 #[test] // [NOW]
-fn clean_tainted_inside_bless_expr() {
-    // The one legal read: inside bless test expression
+fn clean_tainted_inside_attest_expr() {
+    // The one legal read: inside attest test expression
     let script = r#"#!/bin/bash
 x=$(getenv MY_CUSTOM_VAR)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo ok
 "#;
-    let output = compile_and_run_with_env("bless_expr", script, &[("MY_CUSTOM_VAR", "something")]);
+    let output = compile_and_run_with_env("attest_expr", script, &[("MY_CUSTOM_VAR", "something")]);
     assert_eq!(output, "ok\n");
 }
 
 // ===================================================================
-// Bless runtime enforcement — pattern mismatch must abort
+// Attest runtime enforcement — pattern mismatch must abort
 // ===================================================================
 
 #[test] // [RT]
-fn bless_regex_mismatch_aborts() {
-    // bless with regex that doesn't match → runtime abort (nonzero exit)
+fn attest_regex_mismatch_aborts() {
+    // attest with regex that doesn't match → runtime abort (nonzero exit)
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ $x =~ ^[0-9]+$ ]]
+attest x [[ $x =~ ^[0-9]+$ ]]
 echo "$x"
 "#;
     let code = compile_and_exit_code(
-        "bless_mismatch_re",
+        "attest_mismatch_re",
         script,
         &[("TAINT_VAL", "not-a-number")],
     );
     assert_ne!(
         code, 0,
-        "bless with failing regex should abort, but exited 0"
+        "attest with failing regex should abort, but exited 0"
     );
 }
 
 #[test] // [RT]
-fn bless_string_mismatch_aborts() {
-    // bless with -n test on empty string → runtime abort
+fn attest_string_mismatch_aborts() {
+    // attest with -n test on empty string → runtime abort
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_n", script, &[("TAINT_VAL", "")]);
-    assert_ne!(code, 0, "bless with failing -n should abort, but exited 0");
+    let code = compile_and_exit_code("attest_mismatch_n", script, &[("TAINT_VAL", "")]);
+    assert_ne!(code, 0, "attest with failing -n should abort, but exited 0");
 }
 
 #[test] // [RT]
-fn bless_file_mismatch_aborts() {
-    // bless with -f test on nonexistent file → runtime abort
+fn attest_file_mismatch_aborts() {
+    // attest with -f test on nonexistent file → runtime abort
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ -f $x ]]
+attest x [[ -f $x ]]
 echo "$x"
 "#;
     let code = compile_and_exit_code(
-        "bless_mismatch_f",
+        "attest_mismatch_f",
         script,
         &[("TAINT_VAL", "/nonexistent/path/zzz")],
     );
-    assert_ne!(code, 0, "bless with failing -f should abort, but exited 0");
+    assert_ne!(code, 0, "attest with failing -f should abort, but exited 0");
 }
 
 #[test] // [RT]
-fn bless_dir_mismatch_aborts() {
-    // bless with -d test on a file → runtime abort
+fn attest_dir_mismatch_aborts() {
+    // attest with -d test on a file → runtime abort
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ -d $x ]]
+attest x [[ -d $x ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_d", script, &[("TAINT_VAL", "/etc/passwd")]);
-    assert_ne!(code, 0, "bless with failing -d should abort, but exited 0");
+    let code = compile_and_exit_code("attest_mismatch_d", script, &[("TAINT_VAL", "/etc/passwd")]);
+    assert_ne!(code, 0, "attest with failing -d should abort, but exited 0");
 }
 
 #[test] // [RT]
-fn bless_eq_mismatch_aborts() {
-    // bless with == that doesn't match → runtime abort
+fn attest_eq_mismatch_aborts() {
+    // attest with == that doesn't match → runtime abort
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ $x == "oranges" ]]
+attest x [[ $x == "oranges" ]]
 echo "$x"
 "#;
-    let code = compile_and_exit_code("bless_mismatch_eq", script, &[("TAINT_VAL", "apples")]);
-    assert_ne!(code, 0, "bless with failing == should abort, but exited 0");
+    let code = compile_and_exit_code("attest_mismatch_eq", script, &[("TAINT_VAL", "apples")]);
+    assert_ne!(code, 0, "attest with failing == should abort, but exited 0");
 }
 
 #[test] // [RT]
-fn bless_match_succeeds() {
-    // bless with matching pattern → exit 0, output printed
+fn attest_match_succeeds() {
+    // attest with matching pattern → exit 0, output printed
     let script = r#"#!/bin/bash
 x=$(getenv TAINT_VAL)
-bless x [[ $x =~ ^[0-9]+$ ]]
+attest x [[ $x =~ ^[0-9]+$ ]]
 echo "$x"
 "#;
-    let output = compile_and_run_with_env("bless_match_ok", script, &[("TAINT_VAL", "42")]);
+    let output = compile_and_run_with_env("attest_match_ok", script, &[("TAINT_VAL", "42")]);
     assert_eq!(output, "42\n");
 }
 
@@ -467,13 +467,13 @@ fn t1_heredoc_tainted_expansion_rejected() {
     common::expect_diag(&stderr, "SB4020");
 }
 
-// --- T2: tautological bless (test doesn't reference blessed var) ---
+// --- T2: tautological attest (test doesn't reference attested var) ---
 
 #[test]
-fn t2_bless_tautology_rejected() {
+fn t2_attest_tautology_rejected() {
     let script = r#"#!/bin/bash
 x=$(getenv MALICIOUS)
-bless x [[ 1 == 1 ]]
+attest x [[ 1 == 1 ]]
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t2_tautology", script);
@@ -485,11 +485,11 @@ echo "$x"
 }
 
 #[test]
-fn t2_bless_wrong_var_rejected() {
+fn t2_attest_wrong_var_rejected() {
     let script = r#"#!/bin/bash
 x=$(getenv MALICIOUS)
 y="safe"
-bless x [[ -n $y ]]
+attest x [[ -n $y ]]
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t2_wrong_var", script);
@@ -500,34 +500,34 @@ echo "$x"
     );
 }
 
-// --- T3: bless without valid test expression ---
+// --- T3: attest without valid test expression ---
 
 #[test]
-fn t3_bless_no_test_rejected() {
+fn t3_attest_no_test_rejected() {
     let script = r#"#!/bin/bash
 x=$(getenv SECRET)
-bless x nope
+attest x nope
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t3_no_test", script);
     assert!(
-        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
-        "expected invalid bless diagnostic, got: {}",
+        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("attest"),
+        "expected invalid attest diagnostic, got: {}",
         stderr
     );
 }
 
 #[test]
-fn t3_bless_missing_brackets_rejected() {
+fn t3_attest_missing_brackets_rejected() {
     let script = r#"#!/bin/bash
 x=$(getenv SECRET)
-bless x -n "$x"
+attest x -n "$x"
 echo "$x"
 "#;
     let stderr = compile_expect_fail("t3_no_brackets", script);
     assert!(
-        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("bless"),
-        "expected invalid bless diagnostic, got: {}",
+        stderr.contains("SB4013") || stderr.contains("SB4010") || stderr.contains("attest"),
+        "expected invalid attest diagnostic, got: {}",
         stderr
     );
 }

@@ -765,7 +765,7 @@ add_echo a b c
 fn for_dollar_at() {
     // DD#46/DD#60: top-level positionals use $(argv N); $@ is function-local.
     let src = r#"for arg in $(argv 1); do
-    bless arg [[ $arg =~ . ]]
+    attest arg [[ $arg =~ . ]]
     echo "$arg"
 done
 "#;
@@ -776,7 +776,7 @@ done
 #[test]
 fn for_dollar_at_empty() {
     let src = r#"for arg in $(argv 1); do
-    bless arg [[ $arg =~ . ]]
+    attest arg [[ $arg =~ . ]]
     echo "$arg"
 done
 echo "done"
@@ -2943,7 +2943,7 @@ echo $x"#;
 #[test]
 fn argv_basic() {
     let src = r#"name=$(arg 1)
-bless name [[ -n $name ]]
+attest name [[ -n $name ]]
 echo "hello $name""#;
     let (out, _) = run_bash_native(src, &["world"]);
     assert_eq!(out.trim(), "hello world");
@@ -2952,9 +2952,9 @@ echo "hello $name""#;
 #[test]
 fn argv_multiple() {
     let src = r#"a=$(arg 1)
-bless a [[ -n $a ]]
+attest a [[ -n $a ]]
 b=$(arg 2)
-bless b [[ -n $b ]]
+attest b [[ -n $b ]]
 echo "$a $b""#;
     let (out, _) = run_bash_native(src, &["foo", "bar"]);
     assert_eq!(out.trim(), "foo bar");
@@ -2964,7 +2964,7 @@ echo "$a $b""#;
 fn argv_bounds_checked() {
     // DD#60: out-of-range $(arg N) aborts at runtime (no silent fallback).
     let src = r#"x=$(arg 5)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo $x"#;
     let (_out, code) = run_bash_native(src, &["a", "b"]);
     assert_ne!(code, 0);
@@ -2973,7 +2973,7 @@ echo $x"#;
 #[test]
 fn argv_exact_boundary() {
     let src = r#"x=$(arg 2)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo "[$x]""#;
     let (out, _) = run_bash_native(src, &["one", "two"]);
     assert_eq!(out.trim(), "[two]");

@@ -166,7 +166,7 @@ fn apply_and_check_flags(flags: &[&str]) {
 
 /// Run the front-end diagnostic gates that apply to every backend:
 /// structural validation, taint analysis, and type checking (incl. the
-/// DD#61 bless-form rules). Exits the process on the first failing gate.
+/// DD#61 attest-form rules). Exits the process on the first failing gate.
 /// Structural validation rules (DD-level rejections of unsupported bash
 /// constructs: heredocs, export/declare, flat map literals, …). Runs
 /// before command resolution so a rejected construct surfaces its own

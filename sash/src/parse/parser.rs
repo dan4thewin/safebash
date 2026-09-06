@@ -146,7 +146,7 @@ fn dispatch_statement(
         Tok::Dash => parse_suppressed(scanner),
         Tok::Word(ref w) if w == "-" => parse_suppressed(scanner),
         Tok::DblBracketOpen => parse_test_command(scanner),
-        Tok::Bless => parse_bless(scanner),
+        Tok::Attest => parse_attest(scanner),
         Tok::Word(ref w) if w == "return" => parse_return(scanner),
         Tok::Word(_) if is_paren_function(scanner) => parse_paren_function(scanner),
         _ => parse_simple_or_assignment(scanner),
@@ -1451,27 +1451,27 @@ fn is_binary_test_op(op: &str) -> bool {
     )
 }
 
-// ── bless ────────────────────────────────────────────────────
+// ── attest ────────────────────────────────────────────────────
 
-fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
+fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
-    scanner.next(); // consume 'bless'
+    scanner.next(); // consume 'attest'
 
-    // First identifier: a scalar variable, or the first bless-all binder.
-    let first = expect_word(scanner, span, "expected variable name after 'bless'")?;
+    // First identifier: a scalar variable, or the first attest-all binder.
+    let first = expect_word(scanner, span, "expected variable name after 'attest'")?;
 
     let lit = |s: String| Expr {
         kind: ExprKind::Literal(s),
         span,
     };
 
-    // Scalar form `bless VAR [[…]]` is just the var; bless-all forms
-    // (`bless BINDER… in ARRAY [[…]]`) collect binders then the array.
+    // Scalar form `attest VAR [[…]]` is just the var; attest-all forms
+    // (`attest BINDER… in ARRAY [[…]]`) collect binders then the array.
     let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen) {
         vec![lit(first)]
     } else {
-        parse_bless_all_lead(scanner, first, span)?
+        parse_attest_all_lead(scanner, first, span)?
     };
 
     // Expect [[ test_expr ]]
@@ -1482,7 +1482,7 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
             scanner,
             &Tok::DblBracketClose,
             span,
-            "expected ']]' in bless",
+            "expected ']]' in attest",
         )?;
         args.push(Expr {
             kind: ExprKind::Test(test_expr),
@@ -1493,7 +1493,7 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     Ok(Some(Statement {
         kind: StmtKind::Command(Command {
             name: Expr {
-                kind: ExprKind::Literal("bless".to_string()),
+                kind: ExprKind::Literal("attest".to_string()),
                 span,
             },
             args,
@@ -1502,10 +1502,10 @@ fn parse_bless(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> {
     }))
 }
 
-/// DD#61 bless-all lead: `BINDER… in ARRAY`. Returns the binder literals
+/// DD#61 attest-all lead: `BINDER… in ARRAY`. Returns the binder literals
 /// followed by the array literal (the trailing `[[ test ]]` is parsed by
 /// the caller).
-fn parse_bless_all_lead(
+fn parse_attest_all_lead(
     scanner: &mut Scanner,
     first: String,
     span: Span,
@@ -1516,13 +1516,17 @@ fn parse_bless_all_lead(
             return Err(parse_error(
                 span,
                 "SB4014",
-                "expected 'in' in bless-all (bless x in a [[ … ]])".to_string(),
+                "expected 'in' in attest-all (attest x in a [[ … ]])".to_string(),
             ));
         };
-        binders.push(expect_word(scanner, span, "expected binder name in bless")?);
+        binders.push(expect_word(
+            scanner,
+            span,
+            "expected binder name in attest",
+        )?);
     }
     scanner.next(); // consume 'in'
-    let array = expect_word(scanner, span, "expected array name after 'in' in bless")?;
+    let array = expect_word(scanner, span, "expected array name after 'in' in attest")?;
     binders.push(array);
     Ok(binders
         .into_iter()

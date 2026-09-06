@@ -40,7 +40,7 @@ Three dimensions:
 2. **Data-level safety.** Taint quarantine (DD#24, DD#42–44). All
    externally-sourced data (env vars, positional params, read input,
    external command output) is tainted. Tainted data cannot be used
-   at all until validated via `bless VAR EXPR`. Environment variables
+   at all until validated via `attest VAR EXPR`. Environment variables
    are accessed via `$(getenv NAME)`, positional params via `$(argv N)`.
    No "variables just appearing" — every value has a visible origin.
 
@@ -62,7 +62,7 @@ The toolchain splits concerns between two binaries:
   type-checks, and compiles to static ELF. Never transforms source.
 - **sash-convert** — the converter. Accepts Bash and produces sash-native
   source with mechanical coercions, MANUAL annotations for constructs
-  needing human review, and CHECK/BLESS hints.
+  needing human review, and CHECK/ATTEST hints.
 
 The split enforces a clean boundary: sash-convert is a best-effort
 transformation tool; sash is a sound compiler. A script that compiles
@@ -99,7 +99,7 @@ safebash/
 │   │   ├── emit_janet.rs  — Janet backend
 │   │   ├── emit_source.rs — Source emission modes
 │   │   ├── printer.rs     — Source printer
-│   │   └── known_externals.rs — Auto-bless patterns
+│   │   └── known_externals.rs — Auto-attest patterns
 │   └── tests/
 │       ├── codegen_tests.rs  — codegen correctness
 │       ├── e2e_tests.rs      — end-to-end compilation and execution
@@ -125,7 +125,7 @@ safebash/
 
 The tree-sitter grammar lives externally at
 `~/src/tree-sitter-bash-safebash` — a fork of tree-sitter-bash with
-sash extensions (int, const, array, map, bless, fn,
+sash extensions (int, const, array, map, attest, fn,
 `${var:s/re/str/}`).
 
 ---
@@ -200,7 +200,7 @@ strings (`$'\x65\x76\x61\x6c'`) are decoded before comparison.
 ### Phase 3: Taint
 
 Flow-sensitive taint analysis (DD#24, DD#42–44). Walks the program
-sequentially, tracking each variable as `Tainted`, `Blessed`, or
+sequentially, tracking each variable as `Tainted`, `Attested`, or
 `Clean`.
 
 **Taint sources:** `$(argv N)` (program arguments), `read`
@@ -212,29 +212,29 @@ Top-level `$1`–`$N` are compile errors (DD#46: use `$(argv N)`).
 **Clean sources:** literals, arithmetic from clean operands, `$0`,
 `$#`, `$?`, `$$`, variables assigned from clean expressions.
 
-**Auto-bless:** `known_externals.rs` provides auto-bless patterns
+**Auto-attest:** `known_externals.rs` provides auto-attest patterns
 for 26 environment variables and 25 commands.
 
-**`bless VAR EXPR`** — evaluates EXPR (tainted VAR readable inside
+**`attest VAR EXPR`** — evaluates EXPR (tainted VAR readable inside
 the expression). If truthy, marks VAR clean. If falsy:
-- Bare `bless` → fatal exit
-- `if bless` → false branch taken
+- Bare `attest` → fatal exit
+- `if attest` → false branch taken
 
 ```bash
 port=$(argv 1) || { echo "usage: $0 port"; exit 1; }
-bless port [[ $port =~ ^[0-9]+$ ]]
-echo $port   # clean — blessed above
+attest port [[ $port =~ ^[0-9]+$ ]]
+echo $port   # clean — attested above
 ```
 
 **The rule:** you can write tainted data into a variable but cannot
-read it except inside `bless`. Diagnostic: SB4020.
+read it except inside `attest`. Diagnostic: SB4020.
 
 **Containers (DD#61):** a tainted value cannot enter an array/map via a
 literal, `+=` append, or `a[i]=` subscript (SB5021); tainted arrays come
-only from bulk reads (`read -a`, `mapfile`). Collections are blessed
-per-element with bless-all — `bless x in a [[ … ]]` (indexed, binds each
-value) or `bless k v in m [[ … ]]` (map, binds key and value). A failing
-element aborts; an empty collection passes vacuously. Scalar `bless` on
+only from bulk reads (`read -a`, `mapfile`). Collections are attested
+per-element with attest-all — `attest x in a [[ … ]]` (indexed, binds each
+value) or `attest k v in m [[ … ]]` (map, binds key and value). A failing
+element aborts; an empty collection passes vacuously. Scalar `attest` on
 a collection is a type error.
 
 ### Phase 4: Lower
@@ -302,7 +302,7 @@ Defined in `ssa.rs`.
 
 - **SsaProgram** — functions, each containing `Vec<BasicBlock>`
 - **SsaInst** — Assign, Command, Pipeline, Test, ReadLine,
-  ReadLineMulti, CaptureStart/End, Export, Bless, Trap, etc.
+  ReadLineMulti, CaptureStart/End, Export, Attest, Trap, etc.
 - **SsaValue** — Literal, Var, ParamExpansion, ArithExpr,
   ArithBinOp, Concat, DoubleQuoted, etc.
 - **VarRef** — `{ name, version }`
@@ -412,10 +412,10 @@ Test files in `sash/tests/`:
 | File | What it tests |
 |------|---------------|
 | `codegen_tests.rs` | Compile bash snippets to native, run, check output |
-| `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-bless |
+| `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-attest |
 | `janet_tests.rs` | Compile to Janet, run both bash and Janet, compare output |
 | `oracle_tests.rs` | Additional validation tests |
-| `taint_spec_tests.rs` | Taint model: rejection of tainted reads, bless runtime enforcement, DD#46 positionals |
+| `taint_spec_tests.rs` | Taint model: rejection of tainted reads, attest runtime enforcement, DD#46 positionals |
 | `brush_compat_tests.rs` | Brush shell compatibility |
 
 Build and run: `mk test` (Plan 9 mk, not make).
@@ -436,7 +436,7 @@ architecturally significant:
 | 33 | Unified hash table | SashTable for indexed + associative arrays |
 | 34 | Minimize unsafe in sash-rt | Audit surface reduction |
 | 39 | Star-only glob + regex mutation | `${var:s/re/str/flags}` |
-| 43 | Bless semantics | Validation-gated declassification |
+| 43 | Attest semantics | Validation-gated declassification |
 | 44 | Full taint quarantine | Read-blocked, not just command-blocked |
 | 45 | Source emitter architecture | Four-axis declarations, const, export-as-error |
 

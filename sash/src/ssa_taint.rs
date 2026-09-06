@@ -12,7 +12,7 @@
 //! A reviewer should verify:
 //! 1. Every SsaInst that USES a value checks taint (not just the ones that define)
 //! 2. The taint propagation rules match the CST analyzer's rules
-//! 3. `bless` is the ONLY way to move from Tainted → Clean
+//! 3. `attest` is the ONLY way to move from Tainted → Clean
 
 use crate::ssa::*;
 /// tainted value reaching a use site, that's a bug in the CST analyzer.
@@ -21,7 +21,7 @@ use crate::ssa::*;
 /// as tainted or clean based on how it was defined:
 ///   - getenv, argv, read, external cmdsub → tainted
 ///   - literal, user func, known-safe builtin → clean
-///   - bless target → clean (bless source stays tainted)
+///   - attest target → clean (attest source stays tainted)
 ///   - phi → tainted if any incoming is tainted (conservative)
 ///   - copy of tainted → tainted
 ///   - arithmetic on tainted → tainted
@@ -123,12 +123,12 @@ fn classify_inst_def(
             let t = value_is_tainted(value, taint, user_functions);
             taint.insert(var_key(target), t);
         }
-        SsaInst::Bless { target, .. } => {
-            // Bless produces a clean version.
+        SsaInst::Attest { target, .. } => {
+            // Attest produces a clean version.
             taint.insert(var_key(target), Taint::Clean);
         }
-        SsaInst::BlessRetag { target, .. } => {
-            // DD#61: bless-all produces a clean version of the array/map.
+        SsaInst::AttestRetag { target, .. } => {
+            // DD#61: attest-all produces a clean version of the array/map.
             taint.insert(var_key(target), Taint::Clean);
         }
         SsaInst::ReadLine {
@@ -175,7 +175,7 @@ fn classify_inst_def(
         | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
         | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
         | SsaInst::CaptureStart
-        | SsaInst::BlessAll { .. } // validates in place; BlessRetag defines the clean version
+        | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
         | SsaInst::Pipeline { .. } => {}
     }
 }
@@ -205,8 +205,8 @@ fn check_block_uses(block: &BasicBlock, taint: &HashMap<String, Taint>, errors: 
 fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut Vec<String>) {
     match inst {
         SsaInst::Command { name, args, .. } => {
-            // `bless` is the one operator allowed to receive tainted args.
-            if name == "bless" {
+            // `attest` is the one operator allowed to receive tainted args.
+            if name == "attest" {
                 return;
             }
             for arg in args {
@@ -258,7 +258,7 @@ fn check_inst_uses(inst: &SsaInst, taint: &HashMap<String, Taint>, errors: &mut 
             );
         }
 
-        // Assign, Bless, ReadLine, etc. — definitions, not uses
+        // Assign, Attest, ReadLine, etc. — definitions, not uses
         _ => {}
     }
 }
@@ -318,7 +318,7 @@ fn value_is_tainted(
             elide_taint(source, *taint_off, taint, user_functions)
         }
         // DD#91: `@a:!` (`arrvals_trust`, disposition.taint_off) is a sanctioned
-        // per-use bless-all bypass → Clean; any other splat inherits the array's
+        // per-use attest-all bypass → Clean; any other splat inherits the array's
         // taint.
         SsaValue::ArraySplat { array, disposition } => splat_taint(array, disposition, taint),
 
@@ -378,7 +378,7 @@ fn elide_taint(
 }
 
 /// DD#61/#91: taint of an `@array` splat. `@a:!` (`disposition.taint_off`) is a
-/// sanctioned per-use bless-all bypass → Clean; any other splat inherits the
+/// sanctioned per-use attest-all bypass → Clean; any other splat inherits the
 /// array's taint.
 fn splat_taint(
     array: &str,
@@ -506,7 +506,7 @@ fn check_tainted_var(
 ) {
     if is_tainted(taint, vref) {
         errors.push(format!(
-            "tainted variable {}_{} used{} as {} without bless (SSA taint backstop)",
+            "tainted variable {}_{} used{} as {} without attest (SSA taint backstop)",
             vref.name, vref.version, where_, context
         ));
     }
@@ -521,7 +521,7 @@ fn check_tainted_array(
 ) {
     if taint_of_name(taint, array) == Taint::Tainted {
         errors.push(format!(
-            "tainted array {}[...] used as {} without bless (SSA taint backstop)",
+            "tainted array {}[...] used as {} without attest (SSA taint backstop)",
             array, context
         ));
     }

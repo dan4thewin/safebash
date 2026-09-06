@@ -4,10 +4,10 @@
 # Reads stdin, prints lines matching pattern.
 
 pat=$(argv 1)
-bless pat [[ $pat =~ ^.+$ ]]
+attest pat [[ $pat =~ ^.+$ ]]
 
 while read line; do
-  bless line [[ $line =~ ^.*$ ]]
+  attest line [[ $line =~ ^.*$ ]]
   if [[ $line =~ $pat ]]; then
     echo $line
   fi

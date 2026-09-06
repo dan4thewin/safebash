@@ -22,84 +22,84 @@ run_sash 'echo $(argc)'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk av.t2
 
 # av.t3 $(arg 0) is the program name (non-empty; exact value invocation-dependent)
-run_sash 'x=$(arg 0); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(arg 0); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk av.t3
 
 # av.t4 $(arg 1) is the first user arg
-run_sash 'x=$(arg 1); bless x [[ -n $x ]]; echo "$x"' alpha
+run_sash 'x=$(arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.t4
 
 # av.t5 $(arg 2) is the second user arg
-run_sash 'x=$(arg 2); bless x [[ -n $x ]]; echo "$x"' alpha beta
+run_sash 'x=$(arg 2); attest x [[ -n $x ]]; echo "$x"' alpha beta
 [[ $rc = 0 && $out = "beta" && -z $err ]]; chk av.t5
 
 # av.t6 $(arg N) for N >= argc aborts at runtime (no silent empty)
-run_sash 'x=$(arg 5); bless x [[ -n $x ]]; echo "$x"' one two
+run_sash 'x=$(arg 5); attest x [[ -n $x ]]; echo "$x"' one two
 [[ $rc != 0 && -z $out ]]; chk av.t6
 
-# av.t7 negative index is a compile-time error (DD#60, SB5038) — blessed so the
-# ONLY error is the negative index, not a downstream unblessed-read taint check
-run_sash 'x=$(arg -1); bless x [[ -n $x ]]; echo "$x"'
+# av.t7 negative index is a compile-time error (DD#60, SB5038) — attested so the
+# ONLY error is the negative index, not a downstream unattested-read taint check
+run_sash 'x=$(arg -1); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t7
 # av.t7b the DEFAULT form `$(arg -N D)` also rejects the negative literal
-run_sash 'x=$(arg -1 fallback); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(arg -1 fallback); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err = *SB5038* ]]; chk av.t7b
 
 # ── DD#60 addendum: $(arg N DEFAULT) opt-in default ──────────────
 
 # av.d1 $(arg N DEFAULT) returns argv[N] when in range
-run_sash 'x=$(arg 1 fallback); bless x [[ -n $x ]]; echo "$x"' hello
+run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"' hello
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk av.d1
 
 # av.d2 $(arg N DEFAULT) returns the default when N is out of range
-run_sash 'x=$(arg 1 fallback); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && $out = "fallback" && -z $err ]]; chk av.d2
 
 # av.d3 the default fires for a high OOB index too (no abort, unlike bare arg)
-run_sash 'x=$(arg 5 mydef); bless x [[ -n $x ]]; echo "$x"' one two
+run_sash 'x=$(arg 5 mydef); attest x [[ -n $x ]]; echo "$x"' one two
 [[ $rc = 0 && $out = "mydef" && -z $err ]]; chk av.d3
 
 # av.d4 a clean intrinsic default (quoted) is accepted and used on OOB. native,c
 # (janet exec's $(getcwd) as a fake external command — janet-getpid-class-intrinsics).
 if in_modes native,c; then
-    run_sash 'x=$(arg 9 "$(getcwd)"); bless x [[ -n $x ]]; echo "$x"'
+    run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
     [[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
 else
     skip_chk av.d4
 fi
 
 # av.d5 DD#78: a tainted default is rejected (a read must not sneak through)
-run_sash 'y=$(getenv HOME); x=$(arg 1 $y); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'y=$(getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.d5
 
 # av.d6 arity: more than an index + default is a compile error
-run_sash 'x=$(arg 1 2 3); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(arg 1 2 3); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5036* ]]; chk av.d6
 
 # av.d7 DD#78: a $(random) default is a side effect under eager eval → reject
-run_sash 'x=$(arg 1 "$(random)"); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(arg 1 "$(random)"); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5035* ]]; chk av.d7
 
 # ── Slice / splat semantics ──────────────────────────────────────
 
 # av.s1 $(argv) iterates the whole array from index 0 (includes program name)
-run_sash 'for x in $(argv); do bless x [[ -n $x ]]; echo "$x"; done' a b c
+run_sash 'for x in $(argv); do attest x [[ -n $x ]]; echo "$x"; done' a b c
 [[ $rc = 0 && $out == *$'\na\nb\nc' ]]; chk av.s1
 
 # av.s2 $(argv 1) iterates the user-arg slice (index 1..)
-run_sash 'for x in $(argv 1); do bless x [[ -n $x ]]; echo "$x"; done' a b c
+run_sash 'for x in $(argv 1); do attest x [[ -n $x ]]; echo "$x"; done' a b c
 [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk av.s2
 
 # av.s3 $(argv N) with N >= argc yields zero iterations (NOT an abort)
-run_sash 'for x in $(argv 99); do bless x [[ -n $x ]]; echo iter; done' a b c
+run_sash 'for x in $(argv 99); do attest x [[ -n $x ]]; echo iter; done' a b c
 [[ $rc = 0 && -z $out && -z $err ]]; chk av.s3
 
 # av.s4 $(argv 0) is identical to $(argv)
-run_sash 'for x in $(argv 0); do bless x [[ -n $x ]]; echo "$x"; done' a b c
+run_sash 'for x in $(argv 0); do attest x [[ -n $x ]]; echo "$x"; done' a b c
 [[ $rc = 0 && $out == *$'\na\nb\nc' ]]; chk av.s4
 
-# av.s5 unblessed use of an argv-splat loop var is a clean error, not an ICE
-# (the loop binds tainted argv elements — body must bless before use).
+# av.s5 unattested use of an argv-splat loop var is a clean error, not an ICE
+# (the loop binds tainted argv elements — body must attest before use).
 run_sash 'for x in $(argv 1); do echo "$x"; done' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.s5
 
@@ -107,13 +107,13 @@ run_sash 'for x in $(argv 1); do echo "$x"; done' a b c
 # `argv a` fills array a with all program args; `argv N a` fills the
 # argv[N:] slice (array last, like read -a / mapfile / match S P arr).
 # Auto-declares `a` (DG 2026-07-08) — no prior `array a=()` needed. The
-# filled array is tainted (DD#61): bless-all before reading.
+# filled array is tainted (DD#61): attest-all before reading.
 
-# av.n1 `argv a` fills the whole array; bless-all then iterate @a
-run_sash 'argv a; bless x in a [[ -n $x ]]; for x in @a; do echo "$x"; done' a b c
+# av.n1 `argv a` fills the whole array; attest-all then iterate @a
+run_sash 'argv a; attest x in a [[ -n $x ]]; for x in @a; do echo "$x"; done' a b c
 [[ $rc = 0 && $out == *$'\na\nb\nc' ]]; chk av.n1
 
-# av.n2 len of an argv-slice snapshot (count needs no bless)
+# av.n2 len of an argv-slice snapshot (count needs no attest)
 run_sash 'argv 1 a; echo $(len a)' a b c
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk av.n2
 
@@ -121,32 +121,32 @@ run_sash 'argv 1 a; echo $(len a)' a b c
 run_sash 'argv 1 a; argv b; echo $(len a) $(len b)' a b
 [[ $rc = 0 && $out = "2 3" && -z $err ]]; chk av.n3
 
-# av.n4 join over a blessed snapshot (DD#41 collection builtin)
-run_sash 'argv 1 a; bless x in a [[ -n $x ]]; echo $(join @a)' a b c
+# av.n4 join over a attested snapshot (DD#41 collection builtin)
+run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join @a)' a b c
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk av.n4
 
-# av.n5 iterating a tainted snapshot @a without bless-all is a clean error,
-# not an ICE — DD#61 requires bless-all the array before reading it.
+# av.n5 iterating a tainted snapshot @a without attest-all is a clean error,
+# not an ICE — DD#61 requires attest-all the array before reading it.
 run_sash 'argv 1 a; for x in @a; do echo "$x"; done' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n5
 
-# av.n6 joining a tainted snapshot @a without bless-all is a clean error
+# av.n6 joining a tainted snapshot @a without attest-all is a clean error
 # (negative for av.n4) — the cmdsub arg `@a` is a use site of tainted data.
 run_sash 'argv 1 a; echo $(join @a)' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n6
 
-# av.n7 subscripting a tainted snapshot without bless-all is a clean error
-# (negative for av.x5) — reading $a[0] exposes an element, needs bless-all.
+# av.n7 subscripting a tainted snapshot without attest-all is a clean error
+# (negative for av.x5) — reading $a[0] exposes an element, needs attest-all.
 run_sash 'argv a; echo $a[0]' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n7
 
 # ── Taint rules ──────────────────────────────────────────────────
 
-# av.x1 bare $(arg 0) used without bless is rejected (SB5020)
+# av.x1 bare $(arg 0) used without attest is rejected (SB5020)
 run_sash 'echo $(arg 0)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.x1
 
-# av.x2 bare $(arg 1) used without bless is rejected (SB5020)
+# av.x2 bare $(arg 1) used without attest is rejected (SB5020)
 run_sash 'echo $(arg 1)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.x2
 
@@ -154,16 +154,16 @@ run_sash 'echo $(arg 1)'
 run_sash 'echo $(argv)'
 [[ $rc != 0 && -z $out && -n $err ]]; chk av.x3
 
-# av.x4 scalar arg, blessed, then used — accepted
-run_sash 'x=$(arg 1); bless x [[ -n $x ]]; echo "$x"' alpha
+# av.x4 scalar arg, attested, then used — accepted
+run_sash 'x=$(arg 1); attest x [[ -n $x ]]; echo "$x"' alpha
 [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk av.x4
 
-# av.x5 snapshot array, bless-all, then read an element — accepted
-run_sash 'argv a; bless x in a [[ -n $x ]]; echo $a[0]' a b c
+# av.x5 snapshot array, attest-all, then read an element — accepted
+run_sash 'argv a; attest x in a [[ -n $x ]]; echo $a[0]' a b c
 [[ $rc = 0 && -n $out && -z $err ]]; chk av.x5
 
-# av.x6 splat for-in with per-iteration body-bless, then use — accepted
-run_sash 'for x in $(argv 1); do bless x [[ $x =~ . ]]; echo "got:$x"; done' a b
+# av.x6 splat for-in with per-iteration body-attest, then use — accepted
+run_sash 'for x in $(argv 1); do attest x [[ $x =~ . ]]; echo "got:$x"; done' a b
 [[ $rc = 0 && $out = $'got:a\ngot:b' && -z $err ]]; chk av.x6
 
 # av.x7 scalar assignment of the array-splat form is rejected

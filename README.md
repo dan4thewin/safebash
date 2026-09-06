@@ -11,7 +11,7 @@ The toolchain has two binaries:
 - **sash** — the compiler. Validates, type-checks, and compiles
   sash-native source to static ELF binaries.
 - **sash-convert** — the converter. Transforms existing Bash scripts
-  into sash-native source (mechanical coercions, annotations, bless hints).
+  into sash-native source (mechanical coercions, annotations, attest hints).
 
 The compiler is also a specification. What sash accepts defines the
 safe subset. What it rejects gets a diagnostic with a code,
@@ -90,7 +90,7 @@ echo `uname`                 # SC2006: no backticks — use $(uname)
 [ -f "$path" ]               # SC2292: no single-bracket — use [[ ]]
 export FOO=bar               # SB5001: no export — declare at point of use
 echo ${!ref}                 # SB4003: no indirect expansion
-x=$UNTRUSTED_VAR             # SB4020: tainted — bless or validate first
+x=$UNTRUSTED_VAR             # SB4020: tainted — attest or validate first
 ```
 
 Each diagnostic includes a code, explanation, and suggested fix.
@@ -106,12 +106,12 @@ validator rules (SB4001, SB4020, SB5001, SB5002, and others).
 
 ### Taint Tracking
 All external input — environment variables, command output, argv — is
-tainted until validated with `bless`. The compiler tracks taint through
+tainted until validated with `attest`. The compiler tracks taint through
 assignments and rejects use of tainted values in sensitive positions.
 
 ### Known Externals
 26 well-known environment variables (HOME, USER, PATH, ...) and
-25 commands (hostname, whoami, date, ...) are auto-blessed.
+25 commands (hostname, whoami, date, ...) are auto-attested.
 
 ### Type System
 `int`, `array`, `map` keywords. `const` for immutable scalars.

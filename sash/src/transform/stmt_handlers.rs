@@ -11,11 +11,11 @@ use super::statements::{lower_one, lower_stmts, spill_scalar_redirect_targets};
 use crate::ir::*;
 use crate::ssa::*;
 
-/// Handle StmtKind::Command — command execution, function inlining, bless, regex.
+/// Handle StmtKind::Command — command execution, function inlining, attest, regex.
 ///
 /// This is the largest arm because commands can be:
 /// - User-defined function calls (inlined at the call site)
-/// - Bless statements (runtime taint validation)
+/// - Attest statements (runtime taint validation)
 /// - Regex mutation (var =~ s/re/str/flags)
 /// - External commands (emitted as SsaInst::Command)
 pub(super) fn handle_command(
@@ -59,7 +59,7 @@ fn try_builtin(
     block: &mut BlockId,
 ) -> Option<BlockId> {
     match kind {
-        BuiltinCmd::Bless => Some(handle_bless_stmt(name, c, ssa, state, *block)),
+        BuiltinCmd::Attest => Some(handle_attest_stmt(name, c, ssa, state, *block)),
         BuiltinCmd::Test => try_test_arg_capture(c, ssa, state, *block),
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
@@ -171,34 +171,34 @@ fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut Ve
     state.diagnostics.push(diag);
 }
 
-fn handle_bless_stmt(
+fn handle_attest_stmt(
     name: &str,
     c: &Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    // DD#24 scalar / DD#61 array & map bless forms.
-    if let Some((form, test)) = classify_bless(&c.args) {
+    // DD#24 scalar / DD#61 array & map attest forms.
+    if let Some((form, test)) = classify_attest(&c.args) {
         let test = test.clone();
         match form {
-            BlessForm::Scalar { var } => {
+            AttestForm::Scalar { var } => {
                 let var = var.to_string();
                 let source = state.lookup(&var);
                 // Resolve the predicate's operands BEFORE defining the target
                 // version, so `$var` in the test binds to the source (the
-                // value being blessed). emit_bless evaluates the test before
-                // the target slot exists. See dispatch.rs::emit_bless.
+                // value being attested). emit_attest evaluates the test before
+                // the target slot exists. See dispatch.rs::emit_attest.
                 let ssa_test = test_to_ssa(&test, state);
                 let target = state.define(&var);
-                ssa.block_mut(block).insts.push(SsaInst::Bless {
+                ssa.block_mut(block).insts.push(SsaInst::Attest {
                     target,
                     source,
                     test: ssa_test,
                 });
             }
-            BlessForm::Indexed { binder, array } => {
-                push_bless_all(
+            AttestForm::Indexed { binder, array } => {
+                push_attest_all(
                     ssa,
                     state,
                     block,
@@ -208,9 +208,9 @@ fn handle_bless_stmt(
                     false,
                 );
             }
-            BlessForm::Map { key, val, map } => {
+            AttestForm::Map { key, val, map } => {
                 let binders = vec![key.to_string(), val.to_string()];
-                push_bless_all(ssa, state, block, map, binders, test, true);
+                push_attest_all(ssa, state, block, map, binders, test, true);
             }
         }
         return block;
@@ -224,9 +224,9 @@ fn handle_bless_stmt(
     block
 }
 
-/// DD#61: emit a statement-form bless-all — `BlessAll` (exits on a failing
-/// element) followed by `BlessRetag` (produces the clean version).
-fn push_bless_all(
+/// DD#61: emit a statement-form attest-all — `AttestAll` (exits on a failing
+/// element) followed by `AttestRetag` (produces the clean version).
+fn push_attest_all(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -240,12 +240,12 @@ fn push_bless_all(
     // resolve the predicate against them, then restore current versions so
     // the binders stay loop-local (DD#61 shadow semantics). The version
     // counter is not rewound by restore, so the binder versions remain
-    // unique and match the slots emit_bless_all creates for them.
+    // unique and match the slots emit_attest_all creates for them.
     let snap = state.snapshot();
     let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
     let ssa_test = test_to_ssa(&test, state);
     state.restore(&snap);
-    ssa.block_mut(block).insts.push(SsaInst::BlessAll {
+    ssa.block_mut(block).insts.push(SsaInst::AttestAll {
         source: source.clone(),
         binders: binder_refs,
         test: ssa_test,
@@ -255,7 +255,7 @@ fn push_bless_all(
     let target = state.define(array);
     ssa.block_mut(block)
         .insts
-        .push(SsaInst::BlessRetag { target, source });
+        .push(SsaInst::AttestRetag { target, source });
 }
 
 fn handle_break_stmt(

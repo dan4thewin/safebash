@@ -172,7 +172,7 @@ int main() {
     check(++id, "^(\\d+)\\-(\\d+)$", "123-456", 1);
     check(++id, "^(\\d+)\\-(\\d+)$", "123+456", 0);
 
-    /* === Compound patterns (real-world bless patterns) === */
+    /* === Compound patterns (real-world attest patterns) === */
     check(++id, "^[\\w.\\-]+$", "my-server-01.local", 1);
     check(++id, "^[\\w.\\-]+$", "ROVE", 1);
     check(++id, "^[\\w.\\-]+$", "has space", 0);

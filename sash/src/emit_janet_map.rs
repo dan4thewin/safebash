@@ -6,7 +6,7 @@
 //! command vs a caught condition) is made visible: `sash/run` vs `sash/ok?`.
 //!
 //! STAGE 1: assignments, echo, `:`, external commands, if/while, `[[ ]]` string
-//! tests, `$(…)` single-external capture, bless.
+//! tests, `$(…)` single-external capture, attest.
 //! STAGE 2: typed declarations (`int n=5` → number), user functions
 //! (`sash/defn`), user-function calls (distinct from externals, `sash/true?`
 //! in a condition), `return`, function parameters (`$1`→`(sash/param 1)`,
@@ -293,7 +293,7 @@ fn render_cmd(c: &Command, ctx: Ctx, env: &Env) -> String {
         Some("echo") => format!("(sash/echo{})", render_args(&c.args)),
         Some(":") => "(sash/noop)".to_string(),
         Some("[[") => render_test_cmd(&c.args),
-        Some("bless") => render_bless(&c.args, ctx),
+        Some("attest") => render_attest(&c.args, ctx),
         Some("return") => render_return(&c.args),
         Some(n) => render_named_cmd(n, &c.args, ctx, env),
         None => format!("(sash/TODO dynamic-command {})", render_expr(&c.name)),
@@ -355,8 +355,8 @@ fn render_code_arg(a: &Expr) -> String {
     render_expr(a)
 }
 
-fn render_bless(args: &[Expr], ctx: Ctx) -> String {
-    // `bless VAR TEST` — find the test (a `[[ ]]` shows up as a Test expr).
+fn render_attest(args: &[Expr], ctx: Ctx) -> String {
+    // `attest VAR TEST` — find the test (a `[[ ]]` shows up as a Test expr).
     let test = args
         .iter()
         .find_map(|a| match &a.kind {
@@ -365,9 +365,9 @@ fn render_bless(args: &[Expr], ctx: Ctx) -> String {
         })
         .unwrap_or_else(|| "true".to_string());
     if ctx == Ctx::Cond {
-        format!("(sash/bless {})", test)
+        format!("(sash/attest {})", test)
     } else {
-        format!("(sash/bless-checked {})", test)
+        format!("(sash/attest-checked {})", test)
     }
 }
 

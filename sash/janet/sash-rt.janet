@@ -5,7 +5,7 @@
 # below, so the emitted program reads as a direct transliteration of how the
 # compiler parsed the source (DD#15, amended 2026-08-20). Semantics live
 # here; the emitted map stays structural. Taint is compile-time only — a
-# `bless` gate runs and aborts/branches, but no clean/tainted flag is carried.
+# `attest` gate runs and aborts/branches, but no clean/tainted flag is carried.
 # ═══════════════════════════════════════════════════════════════════════
 
 (var *status* 0)   # $?  — last command's exit status
@@ -66,14 +66,14 @@
 (defn sash/-n [a] (verdict (> (length (string a)) 0)))
 (defn sash/-z [a] (verdict (= 0 (length (string a)))))
 
-# ── bless — run the gate; taint is compile-time so no flag is carried ──────
+# ── attest — run the gate; taint is compile-time so no flag is carried ──────
 # Checked (bare) form: a failed gate aborts (like a failed syscall).
-(defn sash/bless-checked [test]
-  (unless test (eprintf "%s: bless: failed the gate" ((dyn :args) 0)) (os/exit 1))
+(defn sash/attest-checked [test]
+  (unless test (eprintf "%s: attest: failed the gate" ((dyn :args) 0)) (os/exit 1))
   (set *status* 0)
   0)
-# Condition form (`if bless …`): returns the gate result, never aborts.
-(defn sash/bless [test] (verdict test))
+# Condition form (`if attest …`): returns the gate result, never aborts.
+(defn sash/attest [test] (verdict test))
 
 # ── control flow — thin macros: emit_janet_map still supplies the structure,
 #    these only give it a readable, sash-hugging name (independence kept) ──
@@ -109,7 +109,7 @@
 (defn sash/params [] (dyn :sash-argv))                        # $@ (spliced at use)
 
 # ── process argv ($(arg N) / $(argc) / $(argv)) ────────────────────────────
-# The script's command line — TAINTED input (needs `bless`), and a DIFFERENT
+# The script's command line — TAINTED input (needs `attest`), and a DIFFERENT
 # thing from the function parameters above. Indices are 0-based; index 0 is the
 # program name, so $(arg 1) is the first user argument.
 (defn sash/argc [] (length (dyn :args)))   # C argc (program slot + user args)

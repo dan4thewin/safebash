@@ -263,14 +263,14 @@ pub extern "C" fn sash_exit(status: i64) -> ! {
     rustix::runtime::exit_group(status as i32)
 }
 
-/// Bless-gate failure diagnostic, then exit(1):
-///   `<argv0>: bless: <name> = '<val>' failed the gate\n`
-/// The ` = '<val>'` clause is omitted when `val_len == 0` (e.g. a bless-all
+/// Attest-gate failure diagnostic, then exit(1):
+///   `<argv0>: attest: <name> = '<val>' failed the gate\n`
+/// The ` = '<val>'` clause is omitted when `val_len == 0` (e.g. a attest-all
 /// over a collection, where there is no single scalar value). Naming the
 /// variable and showing its value tells the user *which* gate failed and
 /// *why* (the value that did not satisfy the predicate).
 #[no_mangle]
-pub extern "C" fn sash_bless_fail(
+pub extern "C" fn sash_attest_fail(
     name_ptr: *const u8,
     name_len: i64,
     val_ptr: *const u8,
@@ -284,7 +284,7 @@ pub extern "C" fn sash_bless_fail(
             sash_write(2, a0, l as i64);
         }
     }
-    let head: &[u8] = b": bless: ";
+    let head: &[u8] = b": attest: ";
     sash_write(2, head.as_ptr(), head.len() as i64);
     if !name_ptr.is_null() && name_len > 0 {
         sash_write(2, name_ptr, name_len);

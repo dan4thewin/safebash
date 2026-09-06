@@ -1,8 +1,8 @@
 //! Known-safe external values — env vars and commands with predictable output shapes.
 //!
 //! When the converter sees a command substitution that matches a known entry,
-//! it emits a `bless` line with the associated regex pattern.
-//! For unknown externals, it emits a `# BLESS:` hint comment.
+//! it emits a `attest` line with the associated regex pattern.
+//! For unknown externals, it emits a `# ATTEST:` hint comment.
 
 /// A known environment variable with its validation pattern.
 pub struct KnownEnvVar {

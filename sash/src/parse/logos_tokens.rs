@@ -66,8 +66,8 @@ pub enum LogosTok {
     Array,
     #[token("map")]
     Map,
-    #[token("bless")]
-    Bless,
+    #[token("attest")]
+    Attest,
     #[token("END")]
     End,
 
@@ -152,7 +152,7 @@ pub fn to_tok(t: LogosTok) -> Option<super::lexer::Tok> {
         LogosTok::Const => Tok::Const,
         LogosTok::Array => Tok::Array,
         LogosTok::Map => Tok::Map,
-        LogosTok::Bless => Tok::Bless,
+        LogosTok::Attest => Tok::Attest,
         LogosTok::End => Tok::End,
         LogosTok::AndAnd => Tok::AndAnd,
         LogosTok::OrOr => Tok::OrOr,

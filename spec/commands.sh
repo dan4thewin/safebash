@@ -18,15 +18,15 @@ run_sash 'x=$(echo hello); echo $x'
 
 # 14.2b command substitution of an EXTERNAL command (printf resolves to
 #        /usr/bin/printf via DD#23) has TAINTED capture — execve output is
-#        tainted, so using it needs a bless (SB5020). Compile-time, all modes.
+#        tainted, so using it needs a attest (SB5020). Compile-time, all modes.
 run_sash 'x=$(printf hi); echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.2b
 
-# 14.2c blessed, the external capture is usable. native only: the C cmdsub
+# 14.2c attested, the external capture is usable. native only: the C cmdsub
 #        exec is a Phase-4 TODO and the Janet os/spawn capture pipe is racy
 #        (janet-pipeline-eagain-flaky).
 if in_modes native,c; then
-    run_sash 'x=$(printf hi); bless x [[ -n $x ]]; echo "$x"'
+    run_sash 'x=$(printf hi); attest x [[ -n $x ]]; echo "$x"'
     [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
 else
     skip_chk 14.2c
@@ -51,19 +51,19 @@ else
     skip_chk 14.3b
 fi
 # 14.3c a pipeline body with an external stage captures TAINTED output — using
-#       it without a bless is SB5020 (compile-time, all modes). Closes the
+#       it without a attest is SB5020 (compile-time, all modes). Closes the
 #       silent `$(...)` placeholder bug.
 run_sash 'echo $(echo hi | tr h H)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3c
-# 14.3d blessed, the pipeline capture is usable (native)
+# 14.3d attested, the pipeline capture is usable (native)
 if in_modes native,c; then
-    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); bless x [[ -n $x ]]; echo $x'
+    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
     [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk 14.3d
 else
     skip_chk 14.3d
 fi
 # 14.3e the `$(- cmd)` suppression wrapper no longer hides an external from the
-#       taint scan (a closed hole) — its capture is tainted, needs bless
+#       taint scan (a closed hole) — its capture is tainted, needs attest
 run_sash 'x=$(- /bin/echo hi); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3e
 
@@ -155,15 +155,15 @@ run_sash 'if [[ "yes" = "yes" ]]; then echo hello; fi > /tmp/sash_test_redir2'
 # split of DblParenClose outside arith mode: the SB5020 below can only fire if
 # the inner `$( )` was recognized as a cmdsub. But it is a TAINT ERROR — the
 # inner `$(/bin/echo hi)` is external (tainted) and its result is *read* to
-# become an argument to the outer command, and `bless x` covers only the outer
+# become an argument to the outer command, and `attest x` covers only the outer
 # assignment, not that inner read. So a tainted nested cmdsub is rejected.
 # (Ids are 14.17+ to avoid the pre-existing collision with wordsplit.sh, which
 # owns 14.4-14.9; see bug-commands-wordsplit-14x-chk-collision.)
-run_sash 'x=$(/bin/echo $(/bin/echo hi)); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(/bin/echo $(/bin/echo hi)); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.17
 # 14.18 triple-nested bare cmdsub (`)))` splits into three closes) — parses, and
 # the tainted inner reads are likewise rejected (SB5020).
-run_sash 'x=$(/bin/echo $(/bin/echo $(/bin/echo deep))); bless x [[ -n $x ]]; echo "$x"'
+run_sash 'x=$(/bin/echo $(/bin/echo $(/bin/echo deep))); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.18
 
 # --- bug #4: a redirect may only attach to a command (SB4046) ---

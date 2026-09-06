@@ -338,15 +338,15 @@ fn janet_continue_not_external() {
 }
 
 #[test]
-fn janet_bless_emitted() {
-    // Use unknown command to taint x, then bless it
+fn janet_attest_emitted() {
+    // Use unknown command to taint x, then attest it
     let janet = to_janet(
-        "bless",
-        "#!/bin/bash\nx=$(/usr/bin/curl http://example.com)\nbless x [[ -n $x ]]\necho $x",
+        "attest",
+        "#!/bin/bash\nx=$(/usr/bin/curl http://example.com)\nattest x [[ -n $x ]]\necho $x",
     );
     assert!(
-        janet.contains("# bless x"),
-        "expected bless comment: {}",
+        janet.contains("# attest x"),
+        "expected attest comment: {}",
         janet
     );
 }

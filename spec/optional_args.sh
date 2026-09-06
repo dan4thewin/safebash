@@ -175,7 +175,7 @@ else skip_chk 84.24; fi
 # tainted value can never be passed as an argument (passing is a read → SB5020),
 # so `args` is unconditionally clean, and writing it is rejected (SB5052). The
 # write forms: assignment, subscript-assign, read -a / argv / mapfile fill,
-# declaration, and the (now meaningless) `bless … in args`. Compile-time, all
+# declaration, and the (now meaningless) `attest … in args`. Compile-time, all
 # backends.
 run_sash 'fn f { args[0]=x; /bin/echo y }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.25
@@ -185,7 +185,7 @@ run_sash 'fn f { argv 1 args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.27
 run_sash 'fn f { echo hi | mapfile args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.28
-run_sash 'fn f { bless w in args [[ -n $w ]]; /bin/echo z }; f'
+run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.29
 # 84.30 control: a differently-named local array is fine (only `args` is
 # reserved) — reading `@args` is never a write, so it stays valid. native,c:

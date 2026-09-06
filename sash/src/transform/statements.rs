@@ -778,32 +778,32 @@ fn track_collection_kind(name: &str, val: &SsaValue, state: &mut VersionState) {
     }
 }
 
-/// A `bless VAR [[ … ]]` command as an `&&`/`||` operand — detected so
-/// `lower_list_stmt` can route it through the if-bless catch machinery.
-fn is_bless_left(stmt: &Statement) -> bool {
+/// A `attest VAR [[ … ]]` command as an `&&`/`||` operand — detected so
+/// `lower_list_stmt` can route it through the if-attest catch machinery.
+fn is_attest_left(stmt: &Statement) -> bool {
     matches!(&stmt.kind, StmtKind::Command(c)
-        if expr_to_string(&c.name) == "bless" && c.args.len() >= 2)
+        if expr_to_string(&c.name) == "attest" && c.args.len() >= 2)
 }
 
-/// DD#24/#47: a `bless` as the left operand of `&&`/`||` is a *caught* gate, not
+/// DD#24/#47: a `attest` as the left operand of `&&`/`||` is a *caught* gate, not
 /// a bare abort — its pass/fail must feed the short-circuit exactly like `if
-/// bless`. Rewrite to the if-bless form so it reuses `lower_if_bless` (branch on
+/// attest`. Rewrite to the if-attest form so it reuses `lower_if_attest` (branch on
 /// the test, retag clean on pass):
-///   `bless V [[t]] || X`  →  `if bless V [[t]] { } else { X }`  (X on fail)
-///   `bless V [[t]] && X`  →  `if bless V [[t]] { X }`           (X on pass)
-/// Without this the bless lowers as the abort form and the `||` never catches it
+///   `attest V [[t]] || X`  →  `if attest V [[t]] { } else { X }`  (X on fail)
+///   `attest V [[t]] && X`  →  `if attest V [[t]] { X }`           (X on pass)
+/// Without this the attest lowers as the abort form and the `||` never catches it
 /// — it aborts on failure, and on *success* the branch reads a stale status and
-/// wrongly runs the right side (`bless … || v=dflt` gave the default even for
+/// wrongly runs the right side (`attest … || v=dflt` gave the default even for
 /// valid input). The fallback is trusted, not re-validated (DG 2026-09-01).
 /// Returns `None` (fall through to the normal list lowering) unless the left is
-/// a bless and the op is `&&`/`||`.
-fn try_lower_bless_list(
+/// a attest and the op is `&&`/`||`.
+fn try_lower_attest_list(
     l: &List,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> Option<BlockId> {
-    if !matches!(l.op, ListOp::And | ListOp::Or) || !is_bless_left(&l.left) {
+    if !matches!(l.op, ListOp::And | ListOp::Or) || !is_attest_left(&l.left) {
         return None;
     }
     let cond = vec![l.left.as_ref().clone()];
@@ -855,7 +855,7 @@ fn lower_list_stmt(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    if let Some(done) = try_lower_bless_list(l, ssa, state, block) {
+    if let Some(done) = try_lower_attest_list(l, ssa, state, block) {
         return done;
     }
     // DD#55: in a *caught* position — an `if`/`while` condition, or the left

@@ -201,11 +201,11 @@ fn manual_case_removed() {
 
 #[test]
 fn tilde_bare_home() {
-    // `~` → hoisted $(getenv HOME) + bless, referenced as $home.
+    // `~` → hoisted $(getenv HOME) + attest, referenced as $home.
     let out = convert("tilde_bare", "#!/bin/bash\necho ~\n");
     assert!(
         out.contains("home=$(getenv HOME)")
-            && out.contains("bless home")
+            && out.contains("attest home")
             && out.contains("echo $home"),
         "expected ~ → $home hoist, got:\n{}",
         out

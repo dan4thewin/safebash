@@ -65,7 +65,7 @@ outer'
 
 # 42.1 $(getenv VAR) reads env var
 run_sash 'x=$(getenv HOME)
-bless x [[ $x =~ ^/ ]]
+attest x [[ $x =~ ^/ ]]
 echo $x'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 42.1
 
@@ -75,11 +75,11 @@ run_sash 'x=$(getenv HOME); echo $x'
 
 # 42.3 $(arg N) reads program arg
 run_sash 'x=$(arg 1)
-bless x [[ $x =~ ^[a-z]+$ ]]
+attest x [[ $x =~ ^[a-z]+$ ]]
 echo $x' hello
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 42.3
 
-# 42.4 $(arg N) result is tainted (rejected without bless)
+# 42.4 $(arg N) result is tainted (rejected without attest)
 run_sash 'x=$(arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 42.4
 
@@ -88,11 +88,11 @@ run_sash 'echo $(argc)' a b c
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk 42.5
 
 # 42.6 out-of-range $(arg N) aborts at runtime
-run_sash 'x=$(arg 99); bless x [[ -n $x ]]; echo $x' hello
+run_sash 'x=$(arg 99); attest x [[ -n $x ]]; echo $x' hello
 [[ $rc != 0 && -z $out ]]; chk 42.6
 
 # 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
-#      without a bless). native,c only: janet lacks the getpid-class.
+#      without a attest). native,c only: janet lacks the getpid-class.
 if in_modes native,c; then
     run_sash 'x=$(getpid); [[ $x =~ ^[0-9]+$ ]] && echo Y || echo N'
     [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7

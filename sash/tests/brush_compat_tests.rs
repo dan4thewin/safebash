@@ -509,11 +509,11 @@ ls -d /"#;
 }
 
 #[test]
-fn brush_native_getenv_bless() {
-    // Original uses env var without bless → SB4020
-    // Native: getenv + bless
+fn brush_native_getenv_attest() {
+    // Original uses env var without attest → SB4020
+    // Native: getenv + attest
     let native = r#"x=$(getenv MY_VAR)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo "value: $x""#;
     let sash_out = compile_and_run_env("native_getenv", native, &[("MY_VAR", "hello")]);
     assert_eq!(sash_out, "value: hello\n");

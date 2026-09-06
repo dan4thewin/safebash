@@ -1008,11 +1008,11 @@ fn check_int_collection_elements(
 
 fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     // DD#60/DD#61: argv/mapfile/read auto-declare their target collection —
-    // register it so a later bless-all / len / element read sees a collection,
+    // register it so a later attest-all / len / element read sees a collection,
     // not a scalar (the front-end analogue of the transform's auto-declare).
     match expr_to_name(&c.name).as_str() {
         "unset" => check_unset_args(c, span, env, errors),
-        "bless" => check_bless_form(c, span, env, errors),
+        "attest" => check_attest_form(c, span, env, errors),
         "argv" => register_argv_target(c, env),
         "mapfile" | "readarray" => register_bulk_read_target(c, env),
         "read" => register_read_array_target(c, env),
@@ -1044,7 +1044,7 @@ fn register_read_array_target(c: &Command, env: &mut TypeEnv) {
 /// Register a `mapfile`/`readarray` target as a collection (indexed array, or
 /// an assoc array for `-m`) — the type-check analogue of the transform's
 /// `autodeclare_bulk_target`. Without this, an auto-declared bulk-read array
-/// (no prior `array a=()`) is seen as a scalar by bless-all / len / element
+/// (no prior `array a=()`) is seen as a scalar by attest-all / len / element
 /// reads (SB4030), while `argv` — which does register — works.
 fn register_bulk_read_target(c: &Command, env: &mut TypeEnv) {
     let args: Vec<String> = c.args.iter().map(expr_to_name).collect();
@@ -1057,30 +1057,30 @@ fn register_bulk_read_target(c: &Command, env: &mut TypeEnv) {
     }
 }
 
-/// DD#61: the bless form must match the blessed entity's kind.
-/// - scalar `bless v [[…]]` requires a scalar (arrays/maps need bless-all);
-/// - one-binder `bless x in a [[…]]` requires an indexed array;
-/// - two-binder `bless k v in m [[…]]` requires a map.
-fn check_bless_form(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    let Some((form, _)) = classify_bless(&c.args) else {
+/// DD#61: the attest form must match the attested entity's kind.
+/// - scalar `attest v [[…]]` requires a scalar (arrays/maps need attest-all);
+/// - one-binder `attest x in a [[…]]` requires an indexed array;
+/// - two-binder `attest k v in m [[…]]` requires a map.
+fn check_attest_form(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let Some((form, _)) = classify_attest(&c.args) else {
         return;
     };
-    if let Some(message) = bless_form_error(&form, env) {
+    if let Some(message) = attest_form_error(&form, env) {
         errors.push(TypeError { message, span });
     }
 }
 
-/// Returns the form/kind-mismatch error message for a bless, or `None`
+/// Returns the form/kind-mismatch error message for a attest, or `None`
 /// when the form matches the entity's declared kind.
-fn bless_form_error(form: &BlessForm, env: &TypeEnv) -> Option<String> {
+fn attest_form_error(form: &AttestForm, env: &TypeEnv) -> Option<String> {
     match form {
-        BlessForm::Scalar { var } => bless_scalar_form_error(var, env),
-        BlessForm::Indexed { binder, array } => bless_indexed_form_error(binder, array, env),
-        BlessForm::Map { key, val, map } => bless_map_form_error(key, val, map, env),
+        AttestForm::Scalar { var } => attest_scalar_form_error(var, env),
+        AttestForm::Indexed { binder, array } => attest_indexed_form_error(binder, array, env),
+        AttestForm::Map { key, val, map } => attest_map_form_error(key, val, map, env),
     }
 }
 
-fn bless_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
+fn attest_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
     if !env.collections.contains(var) {
         return None;
     }
@@ -1090,37 +1090,37 @@ fn bless_scalar_form_error(var: &str, env: &TypeEnv) -> Option<String> {
         ("array", "x")
     };
     Some(format!(
-        "scalar bless on {kind} '{var}' — use bless-all: `bless {binders} in {var} [[ … ]]`"
+        "scalar attest on {kind} '{var}' — use attest-all: `attest {binders} in {var} [[ … ]]`"
     ))
 }
 
-fn bless_indexed_form_error(binder: &str, array: &str, env: &TypeEnv) -> Option<String> {
+fn attest_indexed_form_error(binder: &str, array: &str, env: &TypeEnv) -> Option<String> {
     if !env.collections.contains(array) {
         Some(format!(
-            "`bless {binder} in {array}` requires an array or map — '{array}' is a scalar; \
-             use scalar bless `bless {array} [[ … ]]`"
+            "`attest {binder} in {array}` requires an array or map — '{array}' is a scalar; \
+             use scalar attest `attest {array} [[ … ]]`"
         ))
     } else if env.assoc_arrays.contains(array) {
         Some(format!(
-            "'{array}' is a map — bless-all needs two binders: `bless {binder} v in {array} [[ … ]]`"
+            "'{array}' is a map — attest-all needs two binders: `attest {binder} v in {array} [[ … ]]`"
         ))
     } else {
         None
     }
 }
 
-fn bless_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Option<String> {
+fn attest_map_form_error(key: &str, val: &str, map: &str, env: &TypeEnv) -> Option<String> {
     if env.assoc_arrays.contains(map) {
         return None;
     }
     let what = if env.collections.contains(map) {
         "an indexed array — use one binder"
     } else {
-        "a scalar — use scalar bless"
+        "a scalar — use scalar attest"
     };
     Some(format!(
-        "`bless {key} {val} in {map}` requires a map — '{map}' is {what}: \
-         `bless {key} in {map} [[ … ]]`"
+        "`attest {key} {val} in {map}` requires a map — '{map}' is {what}: \
+         `attest {key} in {map} [[ … ]]`"
     ))
 }
 

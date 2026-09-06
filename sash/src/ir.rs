@@ -439,16 +439,16 @@ pub struct Command {
     pub args: Vec<Expr>,
 }
 
-/// DD#61: the parsed form of a `bless` command. The parser encodes the
-/// form positionally in `Command::args`; `classify_bless` decodes it.
+/// DD#61: the parsed form of a `attest` command. The parser encodes the
+/// form positionally in `Command::args`; `classify_attest` decodes it.
 ///
 /// | args (excluding trailing Test) | form                          |
 /// |--------------------------------|-------------------------------|
-/// | `[var]`                        | `Scalar` — `bless v [[…]]`    |
-/// | `[binder, array]`              | `Indexed` — `bless x in a …` |
-/// | `[key, val, map]`              | `Map` — `bless k v in m …`   |
+/// | `[var]`                        | `Scalar` — `attest v [[…]]`    |
+/// | `[binder, array]`              | `Indexed` — `attest x in a …` |
+/// | `[key, val, map]`              | `Map` — `attest k v in m …`   |
 #[derive(Debug, Clone, PartialEq)]
-pub enum BlessForm<'a> {
+pub enum AttestForm<'a> {
     Scalar {
         var: &'a str,
     },
@@ -463,7 +463,7 @@ pub enum BlessForm<'a> {
     },
 }
 
-fn bless_lit(e: &Expr) -> Option<&str> {
+fn attest_lit(e: &Expr) -> Option<&str> {
     match &e.kind {
         ExprKind::Literal(s) => Some(s.as_str()),
         _ => None,
@@ -568,27 +568,27 @@ fn take_read_byte_flag(joined: &str, words: &[String], i: usize, slot: &mut Opti
     }
 }
 
-/// Decode the args of a `bless` command into a [`BlessForm`] plus the
-/// `[[ ]]` test. Returns `None` if the args don't match any bless shape
+/// Decode the args of a `attest` command into a [`AttestForm`] plus the
+/// `[[ ]]` test. Returns `None` if the args don't match any attest shape
 /// (e.g. missing test, unexpected arity).
-pub fn classify_bless(args: &[Expr]) -> Option<(BlessForm<'_>, &TestExpr)> {
+pub fn classify_attest(args: &[Expr]) -> Option<(AttestForm<'_>, &TestExpr)> {
     let (last, lead) = args.split_last()?;
     let test = match &last.kind {
         ExprKind::Test(t) => t,
         _ => return None,
     };
     let form = match lead.len() {
-        1 => BlessForm::Scalar {
-            var: bless_lit(&lead[0])?,
+        1 => AttestForm::Scalar {
+            var: attest_lit(&lead[0])?,
         },
-        2 => BlessForm::Indexed {
-            binder: bless_lit(&lead[0])?,
-            array: bless_lit(&lead[1])?,
+        2 => AttestForm::Indexed {
+            binder: attest_lit(&lead[0])?,
+            array: attest_lit(&lead[1])?,
         },
-        3 => BlessForm::Map {
-            key: bless_lit(&lead[0])?,
-            val: bless_lit(&lead[1])?,
-            map: bless_lit(&lead[2])?,
+        3 => AttestForm::Map {
+            key: attest_lit(&lead[0])?,
+            val: attest_lit(&lead[1])?,
+            map: attest_lit(&lead[2])?,
         },
         _ => return None,
     };

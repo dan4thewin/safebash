@@ -11,11 +11,11 @@
 //!      SB5019 (numeric test ops), SB5023 (regex validation)
 //!   2. **Taint tracking** (`check_taint`) — forward dataflow:
 //!      sources (getenv, argv, external commands, stdin read) →
-//!      propagation → use-site rejection → bless removes taint
+//!      propagation → use-site rejection → attest removes taint
 //!
 //! SECURITY: This module + parse/ are the complete validation surface.
 //! Together they guarantee: no tainted data reaches execution without
-//! bless, no dynamic dispatch, no unknown commands, no rejected vars.
+//! attest, no dynamic dispatch, no unknown commands, no rejected vars.
 //!
 //! Trust model:
 //!   - Parser guarantees: only recognized syntax reaches IR
@@ -1654,7 +1654,7 @@ const BUILTINS: &[&str] = &[
     "read",
     "mapfile",
     // Taint
-    "bless",
+    "attest",
     "getenv",
     // Positional/args
     "argv",
@@ -2080,7 +2080,7 @@ fn resolve_on_path(name: &str) -> bool {
 //   - assigned from literals, arithmetic, clean variables
 //   - read from a clean pipe (<-) — data came from another sash function
 //   - function parameters ($1-$9) inside function bodies
-//   - bless explicitly removes taint after validation
+//   - attest explicitly removes taint after validation
 //
 // SECURITY: This is definition-based, NOT name-based. There is no
 // "clean list" of variable names. Taint flows through assignment.
@@ -2088,7 +2088,7 @@ fn resolve_on_path(name: &str) -> bool {
 use std::collections::HashSet;
 
 /// Run taint analysis: track which variables hold tainted data,
-/// reject any use of tainted variables outside bless expressions.
+/// reject any use of tainted variables outside attest expressions.
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
     let mut diags = Vec::new();
@@ -2629,7 +2629,7 @@ pub fn check_args_immutable(program: &Program) -> Vec<Diagnostic> {
 /// receives are unconditionally clean; to keep that a true invariant, `args`
 /// cannot be written. Reject every write to it — an assignment (`args=…` /
 /// `args[i]=…`), a bulk fill (`read -a args` / `argv … args` / `mapfile args`),
-/// a declaration (`array args=…`), or a bless-all (`bless … in args`, which is
+/// a declaration (`array args=…`), or a attest-all (`attest … in args`, which is
 /// meaningless since `args` can't be tainted). SB5052. Use a local array.
 fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     match &stmt.kind {
@@ -2648,7 +2648,7 @@ fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 /// True if `c` is a builtin that writes the `args` array: `read -a args`,
-/// `argv … args`, `mapfile/readarray args`, or `bless … in args`.
+/// `argv … args`, `mapfile/readarray args`, or `attest … in args`.
 fn command_writes_args(c: &Command) -> bool {
     match expr_literal_str(&c.name) {
         "read" => {
@@ -2659,7 +2659,7 @@ fn command_writes_args(c: &Command) -> bool {
         }
         "argv" => argv_target_name(&c.args) == Some("args"),
         "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
-        "bless" => bless_array_target(&c.args) == Some("args"),
+        "attest" => attest_array_target(&c.args) == Some("args"),
         _ => false,
     }
 }
@@ -2678,13 +2678,13 @@ fn mapfile_target_name(args: &[Expr]) -> Option<&str> {
         .find(|s| !s.starts_with('-'))
 }
 
-/// The array/map name of a `bless x in a` / `bless k v in m` (the taint-clearing
-/// subject), or `None` for the scalar `bless v` form.
-fn bless_array_target(args: &[Expr]) -> Option<&str> {
-    match classify_bless(args)?.0 {
-        BlessForm::Indexed { array, .. } => Some(array),
-        BlessForm::Map { map, .. } => Some(map),
-        BlessForm::Scalar { .. } => None,
+/// The array/map name of a `attest x in a` / `attest k v in m` (the taint-clearing
+/// subject), or `None` for the scalar `attest v` form.
+fn attest_array_target(args: &[Expr]) -> Option<&str> {
+    match classify_attest(args)?.0 {
+        AttestForm::Indexed { array, .. } => Some(array),
+        AttestForm::Map { map, .. } => Some(map),
+        AttestForm::Scalar { .. } => None,
     }
 }
 
@@ -2693,7 +2693,7 @@ fn push_args_write(span: Span, diags: &mut Vec<Diagnostic>) {
         span,
         "SB5052",
         "`args` is the function's immutable argument array — it can't be written \
-         (assigned, filled via read/argv/mapfile, declared, or blessed). Function \
+         (assigned, filled via read/argv/mapfile, declared, or attested). Function \
          args are always clean: a tainted value can't be passed as an argument \
          (passing is a read). Use a differently named local array."
             .to_string(),
@@ -3122,19 +3122,19 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
 ///
 /// - A direct tainted **source** splat (`for x in $(argv)`) binds each
 ///   element to the loop var *from the source* — assignment-from-source, so
-///   the loop var is tainted and a per-iteration body `bless x` is valid
-///   (DD#60 Q5). Seeding the taint here makes an unblessed body use a clean
+///   the loop var is tainted and a per-iteration body `attest x` is valid
+///   (DD#60 Q5). Seeding the taint here makes an unattested body use a clean
 ///   SB5020 instead of an SSA-backstop ICE.
 /// - Iterating a stored tainted **array** (`for x in @a` where `a` is
 ///   tainted) is a read of a stored variable — DD#61 rejects it; the array
-///   must be bless-all'd first. Emitted as SB5020 directing to bless-all.
+///   must be attest-all'd first. Emitted as SB5020 directing to attest-all.
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
 fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
     for w in &f.words {
         reject_tainted_array_iter(w, tainted, diags);
         // `for k in $(keys m)` etc.: a tainted read *inside* the iterated
-        // command substitution is a use site (e.g. keys of an unblessed map).
+        // command substitution is a use site (e.g. keys of an unattested map).
         if let ExprKind::CommandSubstitution(stmts) = &w.kind {
             check_cmdsub_use_taint(stmts, w.span, tainted, diags);
         }
@@ -3150,7 +3150,7 @@ fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>
 }
 
 /// DD#61: `for x in @a` where `a` is a stored tainted array is a read of a
-/// stored variable — rejected; the array must be bless-all'd first.
+/// stored variable — rejected; the array must be attest-all'd first.
 fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
     let Some(arr) = splat_array_name(w) else {
         return;
@@ -3160,8 +3160,8 @@ fn reject_tainted_array_iter(w: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             w.span,
             "SB5020",
             format!(
-                "iterating tainted array '{arr}' without bless — bless-all \
-                 it first: `bless x in {arr} [[ … ]]`"
+                "iterating tainted array '{arr}' without attest — attest-all \
+                 it first: `attest x in {arr} [[ … ]]`"
             ),
         ));
     }
@@ -3224,7 +3224,7 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             expr.span,
             format!(
                 "tainted variable ${var} can't be copied — DD#24 has no taint \
-                 propagation; `bless {var} [[ … ]]` at the source, then read it"
+                 propagation; `attest {var} [[ … ]]` at the source, then read it"
             ),
             diags,
         ),
@@ -3239,7 +3239,7 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
             expr.span,
             format!(
                 "tainted array ${{{name}[…]}} can't be copied — DD#24 has no \
-                 taint propagation; bless it first"
+                 taint propagation; attest it first"
             ),
             diags,
         ),
@@ -3321,7 +3321,7 @@ fn reject_tainted_into_array(
             "SB5021",
             format!(
                 "tainted value cannot be placed in array '{}' — external data enters \
-                 arrays via read/mapfile; or bless a scalar first and assign the clean value",
+                 arrays via read/mapfile; or attest a scalar first and assign the clean value",
                 name
             ),
         ));
@@ -3386,7 +3386,7 @@ fn taint_case_arms(
     }
 }
 
-/// Taint analysis for a command statement: read/mapfile/bless + general taint checking.
+/// Taint analysis for a command statement: read/mapfile/attest + general taint checking.
 fn taint_command(
     c: &Command,
     span: Span,
@@ -3397,9 +3397,9 @@ fn taint_command(
 
     if name == "read" || name == "mapfile" || name == "argv" {
         taint_read_target(c, tainted);
-    } else if name == "bless" {
-        taint_bless(c, span, tainted, diags);
-        return; // Don't check args of bless for taint
+    } else if name == "attest" {
+        taint_attest(c, span, tainted, diags);
+        return; // Don't check args of attest for taint
     }
 
     // Check all command arguments for tainted variable use
@@ -3421,42 +3421,42 @@ fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
     }
 }
 
-/// `bless` taint handling for all three forms (DD#24 scalar, DD#61
-/// indexed array and map). Removes taint from the blessed entity if the
+/// `attest` taint handling for all three forms (DD#24 scalar, DD#61
+/// indexed array and map). Removes taint from the attested entity if the
 /// predicate validates the required name(s); otherwise emits SB5020.
 ///
-/// - Scalar `bless v [[…]]`: predicate must reference `$v` (on the LHS).
-/// - Indexed `bless x in a [[…]]`: predicate must reference the binder
+/// - Scalar `attest v [[…]]`: predicate must reference `$v` (on the LHS).
+/// - Indexed `attest x in a [[…]]`: predicate must reference the binder
 ///   `$x`; clears taint on `a`.
-/// - Map `bless k v in m [[…]]`: predicate must reference BOTH binders
+/// - Map `attest k v in m [[…]]`: predicate must reference BOTH binders
 ///   `$k` and `$v` (a key escaping unvalidated would be unsound); clears
 ///   taint on `m`.
-fn taint_bless(
+fn taint_attest(
     c: &Command,
     span: Span,
     tainted: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let Some((form, test)) = classify_bless(&c.args) else {
+    let Some((form, test)) = classify_attest(&c.args) else {
         return;
     };
     // Each form reduces to: the binder name(s) the predicate must validate,
     // the name whose taint clears on success, and the diagnostic otherwise.
     let (binders, clear, msg): (Vec<&str>, &str, String) = match form {
-        BlessForm::Scalar { var } => (
+        AttestForm::Scalar { var } => (
             vec![var],
             var,
-            format!("bless condition must validate ${var} — condition doesn't reference the variable"),
+            format!("attest condition must validate ${var} — condition doesn't reference the variable"),
         ),
-        BlessForm::Indexed { binder, array } => (
+        AttestForm::Indexed { binder, array } => (
             vec![binder],
             array,
-            format!("bless-all condition must validate each element ${binder} on the left of the test"),
+            format!("attest-all condition must validate each element ${binder} on the left of the test"),
         ),
-        BlessForm::Map { key, val, map } => (
+        AttestForm::Map { key, val, map } => (
             vec![key, val],
             map,
-            format!("map bless-all must validate both the key ${key} and value ${val} on the left of a test"),
+            format!("map attest-all must validate both the key ${key} and value ${val} on the left of a test"),
         ),
     };
     if binders.iter().all(|b| test_references_var(test, b)) {
@@ -3519,7 +3519,7 @@ fn command_name_is_taint_source(name_expr: &Expr) -> bool {
 /// A command substitution that yields a tainted **scalar** used directly
 /// at a read site (command argument, quoted interpolation) is rejected by
 /// the use-site taint check — DD#24 admits only assignment-from-source or
-/// a `bless` predicate. This covers `$(getenv …)`, `$(arg N)`, and
+/// a `attest` predicate. This covers `$(getenv …)`, `$(arg N)`, and
 /// external `$(/abs …)`. `$(argv …)` is deliberately excluded: it is an
 /// array splat governed by the splat-context check (SB5025), not a scalar.
 fn cmdsub_is_scalar_taint_source(stmts: &[Statement]) -> bool {
@@ -3568,7 +3568,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
             tainted,
             var,
             expr.span,
-            format!("tainted variable ${} used without bless", var),
+            format!("tainted variable ${} used without attest", var),
             diags,
         ),
         ExprKind::ParameterExpansion(pe) => {
@@ -3578,7 +3578,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
             tainted,
             name,
             expr.span,
-            format!("tainted array ${{{}[...]}} used without bless", name),
+            format!("tainted array ${{{}[...]}} used without attest", name),
             diags,
         ),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => {
@@ -3588,7 +3588,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
         }
         // DD#24: a command substitution at a read site is checked two ways:
         //   1. a bare scalar source ($(getenv …)/$(arg N)) used directly is
-        //      a use of external data without bless — rejected.
+        //      a use of external data without attest — rejected.
         //   2. reads *inside* the substitution (e.g. `$(join @a)` where `a`
         //      is tainted) are themselves use-sites — recurse into the inner
         //      command args. Without this, `echo $(join @a)` slips through
@@ -3597,7 +3597,7 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
             check_cmdsub_use_taint(stmts, expr.span, tainted, diags)
         }
         // `[[ … ]]` test operands are read positions — a tainted variable or a
-        // tainted read inside a `$( )` operand is a use without bless. These
+        // tainted read inside a `$( )` operand is a use without attest. These
         // were previously unchecked (the arm was missing).
         ExprKind::Test(t) => check_test_taint(t, tainted, diags),
         _ => {}
@@ -3634,7 +3634,7 @@ fn push_taint_use(
 
 /// Taint-check a parameter expansion: the var itself, plus (DD#78) a `:-`
 /// default's operand, which is a read position — a tainted read there is a use
-/// without bless, like `echo $tainted`. (`:?` and the pattern operators carry a
+/// without attest, like `echo $tainted`. (`:?` and the pattern operators carry a
 /// *literal* operand, DD#65, which is clean by construction.)
 fn check_param_expansion_taint(
     pe: &ParameterExpansion,
@@ -3644,7 +3644,7 @@ fn check_param_expansion_taint(
 ) {
     // DD#91: `${x:!}` (scalar) and `@a:!` (`arrvals_trust`) are sanctioned
     // per-use taint bypasses — the subject is trusted clean (a predicate-less
-    // bless), so its read is not a violation.
+    // attest), so its read is not a violation.
     if matches!(pe.operator.as_deref(), Some(":!") | Some("arrvals_trust")) {
         return;
     }
@@ -3652,7 +3652,7 @@ fn check_param_expansion_taint(
         tainted,
         &pe.name,
         span,
-        format!("tainted variable ${{{} ...}} used without bless", pe.name),
+        format!("tainted variable ${{{} ...}} used without attest", pe.name),
         diags,
     );
     if pe.operator.as_deref() == Some(":-") {
@@ -3719,8 +3719,8 @@ fn check_value_cmdsub_reads(expr: &Expr, tainted: &HashSet<String>, diags: &mut 
 /// A collection reader that exposes tainted *element data* via a bare
 /// argument literal: `keys m` (a map's keys) or `join a` (the joined element
 /// values). Per DD#24 these are reads of tainted elements — if the collection
-/// is tainted (e.g. an `argv`/`mapfile` snapshot without bless-all) this is a
-/// use without bless (SB5020). The name is a bare literal, so the generic
+/// is tainted (e.g. an `argv`/`mapfile` snapshot without attest-all) this is a
+/// use without attest (SB5020). The name is a bare literal, so the generic
 /// `check_expr_taint` path (which only flags variable-expansion reads like
 /// `@a`/`${a[i]}`) doesn't catch it. `len` is exempt — it exposes only
 /// cardinality, not element data.
@@ -3740,12 +3740,12 @@ fn check_collection_reader_taint(
     };
     let msg = match cmd.as_str() {
         "join" => format!(
-            "join of tainted collection '{name}' without bless — bless-all \
-             it first: `bless … in {name} [[ … ]]`"
+            "join of tainted collection '{name}' without attest — attest-all \
+             it first: `attest … in {name} [[ … ]]`"
         ),
         "keys" => format!(
-            "keys of tainted map '{name}' without bless — bless-all \
-             it first: `bless k v in {name} [[ … ]]`"
+            "keys of tainted map '{name}' without attest — attest-all \
+             it first: `attest k v in {name} [[ … ]]`"
         ),
         _ => return,
     };
@@ -3757,8 +3757,8 @@ fn check_bare_cmdsub_taint(stmts: &[Statement], span: Span, diags: &mut Vec<Diag
         diags.push(Diagnostic::error_span(
             span,
             "SB5020",
-            "tainted command substitution used without bless — assign it \
-             to a variable and bless before use"
+            "tainted command substitution used without attest — assign it \
+             to a variable and attest before use"
                 .to_string(),
         ));
     }
@@ -4326,9 +4326,9 @@ fn check_reads_in_scope(stmts: &[Statement], known: &HashSet<String>, sink: &mut
     for stmt in stmts {
         match &stmt.kind {
             StmtKind::Function(f) => check_function_scope(f, known, sink),
-            // `bless` with a decodable form is handled specially (below);
-            // a non-bless / malformed one falls through to the default arm.
-            StmtKind::Command(c) if try_check_bless_stmt(c, known, sink) => {}
+            // `attest` with a decodable form is handled specially (below);
+            // a non-attest / malformed one falls through to the default arm.
+            StmtKind::Command(c) if try_check_attest_stmt(c, known, sink) => {}
             _ => check_stmt_exprs_and_bodies(stmt, known, sink),
         }
     }
@@ -4348,33 +4348,33 @@ fn check_function_scope(f: &Function, known: &HashSet<String>, sink: &mut ReadSi
     check_reads_in_scope(&f.body, &fn_known, sink);
 }
 
-/// `bless ARR in VAR [[ …$VAR… ]]` (and the map form) introduce
+/// `attest ARR in VAR [[ …$VAR… ]]` (and the map form) introduce
 /// predicate-local binder variable(s): check the test with them added,
 /// and don't treat the binder/array literals as reads. Returns `true`
-/// when the statement was a decodable bless (and has been checked).
-fn try_check_bless_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSink) -> bool {
-    if expr_literal_str(&c.name) != "bless" {
+/// when the statement was a decodable attest (and has been checked).
+fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSink) -> bool {
+    if expr_literal_str(&c.name) != "attest" {
         return false;
     }
-    let Some((form, test)) = crate::ir::classify_bless(&c.args) else {
+    let Some((form, test)) = crate::ir::classify_attest(&c.args) else {
         return false;
     };
-    let mut bless_known = known.clone();
+    let mut attest_known = known.clone();
     match form {
-        crate::ir::BlessForm::Indexed { binder, array } => {
-            bless_known.insert(binder.to_string());
-            // The array being blessed is read (bless iterates it) — count it for
-            // dead-var; SB5031 handles an undeclared bless array elsewhere.
+        crate::ir::AttestForm::Indexed { binder, array } => {
+            attest_known.insert(binder.to_string());
+            // The array being attested is read (attest iterates it) — count it for
+            // dead-var; SB5031 handles an undeclared attest array elsewhere.
             sink.collect_only(array);
         }
-        crate::ir::BlessForm::Map { key, val, map } => {
-            bless_known.insert(key.to_string());
-            bless_known.insert(val.to_string());
+        crate::ir::AttestForm::Map { key, val, map } => {
+            attest_known.insert(key.to_string());
+            attest_known.insert(val.to_string());
             sink.collect_only(map);
         }
-        crate::ir::BlessForm::Scalar { .. } => {}
+        crate::ir::AttestForm::Scalar { .. } => {}
     }
-    check_test_reads(test, &bless_known, sink);
+    check_test_reads(test, &attest_known, sink);
     true
 }
 

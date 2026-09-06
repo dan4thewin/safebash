@@ -92,20 +92,20 @@ run_sash 'x=$?'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 55.6
 
 # 55.7 x=$(cmd) checks exit status: a failing cmdsub aborts before the read
-# (DD#86: `local` removed; x is read via bless so it isn't a dead variable)
-run_sash 'fn f { x=$(/bin/false); bless x [[ -n $x ]]; echo $x }; f'
+# (DD#86: `local` removed; x is read via attest so it isn't a dead variable)
+run_sash 'fn f { x=$(/bin/false); attest x [[ -n $x ]]; echo $x }; f'
 [[ $rc != 0 && -z $err ]]; chk 55.7
 
 # 55.8 x=$(cmd) where cmd fails aborts (taint orthogonal — don't reference x)
-run_sash 'x=$(/bin/false); bless x [[ -n $x ]]'
+run_sash 'x=$(/bin/false); attest x [[ -n $x ]]'
 [[ $rc != 0 && -z $err ]] \
   && { ! in_modes native || [[ $rerr == *"/bin/false: command failed (exit 1)"* ]]; }; chk 55.8
 
 # 55.9 x=$(- cmd) captures output (discards exit). The output is external →
-# tainted, so it must be blessed before use. (Was a pre-existing taint hole:
+# tainted, so it must be attested before use. (Was a pre-existing taint hole:
 # the `-` suppression wrapper hid the external from the first-stmt-only taint
 # scan — closed 2026-08-19 by the multi-statement-cmdsub taint fix.)
-run_sash 'x=$(- /bin/echo hello); bless x [[ -n $x ]]; echo $x'
+run_sash 'x=$(- /bin/echo hello); attest x [[ -n $x ]]; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 55.9
 
 # 55.9b x=$(- cmd) does NOT abort when the captured command FAILS (55.9 only
@@ -114,7 +114,7 @@ run_sash 'x=$(- /bin/echo hello); bless x [[ -n $x ]]; echo $x'
 # statement-position `- /bin/false` (55.4). native,c: janet's `$(- cmd)`
 # capture is a separate TODO.
 if in_modes native,c; then
-    run_sash 'x=$(- /bin/false); bless x [[ -z $x ]]; echo "survived[$x]"'
+    run_sash 'x=$(- /bin/false); attest x [[ -z $x ]]; echo "survived[$x]"'
     [[ $rc = 0 && $out = "survived[]" && -z $err ]]; chk 55.9b
 else skip_chk 55.9b; fi
 

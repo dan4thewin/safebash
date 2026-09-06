@@ -35,16 +35,16 @@ pub(super) fn flatten_elif(i: &If) -> If {
     }
 }
 
-/// DD#24: if bless VAR [[ test ]]; then ... fi
-/// Non-fatal bless: test branch gets clean var, else branch keeps tainted.
-fn lower_if_bless(
+/// DD#24: if attest VAR [[ test ]]; then ... fi
+/// Non-fatal attest: test branch gets clean var, else branch keeps tainted.
+fn lower_if_attest(
     i: &If,
     c: &crate::ir::Command,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let Some((form, test)) = crate::ir::classify_bless(&c.args) else {
+    let Some((form, test)) = crate::ir::classify_attest(&c.args) else {
         return block;
     };
     let test = test.clone();
@@ -59,20 +59,20 @@ fn lower_if_bless(
         },
     }
     let kind = match form {
-        BlessForm::Scalar { var } => Kind::Scalar(var.to_string()),
-        BlessForm::Indexed { binder, array } => Kind::Coll {
+        AttestForm::Scalar { var } => Kind::Scalar(var.to_string()),
+        AttestForm::Indexed { binder, array } => Kind::Coll {
             array: array.to_string(),
             binders: vec![binder.to_string()],
             is_map: false,
         },
-        BlessForm::Map { key, val, map } => Kind::Coll {
+        AttestForm::Map { key, val, map } => Kind::Coll {
             array: map.to_string(),
             binders: vec![key.to_string(), val.to_string()],
             is_map: true,
         },
     };
 
-    // Emit the bless check into `block`, leaving pass/fail in the
+    // Emit the attest check into `block`, leaving pass/fail in the
     // test-result var for the branch below.
     match &kind {
         Kind::Scalar(_) => {
@@ -86,13 +86,13 @@ fn lower_if_bless(
             is_map,
         } => {
             let source = state.lookup(array);
-            // Fresh, unique binder versions (see push_bless_all); restore so
+            // Fresh, unique binder versions (see push_attest_all); restore so
             // the binders stay loop-local.
             let snap = state.snapshot();
             let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
             let ssa_test = test_to_ssa(&test, state);
             state.restore(&snap);
-            ssa.block_mut(block).insts.push(SsaInst::BlessAll {
+            ssa.block_mut(block).insts.push(SsaInst::AttestAll {
                 source,
                 binders: binder_refs,
                 test: ssa_test,
@@ -102,8 +102,8 @@ fn lower_if_bless(
         }
     }
 
-    let then_block = ssa.new_block("if_bless.then");
-    let merge_block = ssa.new_block("if_bless.merge");
+    let then_block = ssa.new_block("if_attest.then");
+    let merge_block = ssa.new_block("if_attest.merge");
 
     let pre_state = state.snapshot();
 
@@ -111,19 +111,19 @@ fn lower_if_bless(
     ssa.block_mut(block).terminator = Terminator::Branch {
         true_block: then_block,
         false_block: merge_block,
-        condition: "bless".to_string(),
+        condition: "attest".to_string(),
     };
 
-    // Then branch: retag the blessed entity clean (only reached on pass).
+    // Then branch: retag the attested entity clean (only reached on pass).
     match &kind {
         Kind::Scalar(var) => {
             let source_ref = state.lookup(var);
             // Resolve the predicate before defining the target version so
-            // `$var` binds to the source (emit_bless evaluates the test
-            // before the target slot exists). See dispatch.rs::emit_bless.
+            // `$var` binds to the source (emit_attest evaluates the test
+            // before the target slot exists). See dispatch.rs::emit_attest.
             let ssa_test = test_to_ssa(&test, state);
             let target_ref = state.define(var);
-            ssa.block_mut(then_block).insts.push(SsaInst::Bless {
+            ssa.block_mut(then_block).insts.push(SsaInst::Attest {
                 target: target_ref,
                 source: source_ref,
                 test: ssa_test,
@@ -132,7 +132,7 @@ fn lower_if_bless(
         Kind::Coll { array, .. } => {
             let source_ref = state.lookup(array);
             let target_ref = state.define(array);
-            ssa.block_mut(then_block).insts.push(SsaInst::BlessRetag {
+            ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
                 target: target_ref,
                 source: source_ref,
             });
@@ -143,7 +143,7 @@ fn lower_if_bless(
     let _then_snap = state.snapshot();
 
     if let Some(else_body) = &i.else_body {
-        let else_block = ssa.new_block("if_bless.else");
+        let else_block = ssa.new_block("if_attest.else");
         if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
             *false_block = else_block;
         }
@@ -166,11 +166,11 @@ pub(super) fn lower_if(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // DD#24: detect if-bless conditional form
+    // DD#24: detect if-attest conditional form
     if i.condition.len() == 1 {
         if let StmtKind::Command(c) = &i.condition[0].kind {
-            if expr_to_string(&c.name) == "bless" && c.args.len() >= 2 {
-                return lower_if_bless(i, c, ssa, state, block);
+            if expr_to_string(&c.name) == "attest" && c.args.len() >= 2 {
+                return lower_if_attest(i, c, ssa, state, block);
             }
         }
     }

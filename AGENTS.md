@@ -231,7 +231,7 @@ Tests live in `sash/tests/`:
 - `oracle_tests.rs` (59) — compare output against Bash
 - `janet_tests.rs` (38) — Janet backend
 - `brush_compat_tests.rs` (52) — Brush compatibility
-- `taint_spec_tests.rs` (42) — taint/bless scenarios
+- `taint_spec_tests.rs` (42) — taint/attest scenarios
 
 ## Code index
 

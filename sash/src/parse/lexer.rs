@@ -5,7 +5,7 @@
 //!
 //! Design:
 //!   - Tokens are designed for sash-native (not bash): int, const, array, map,
-//!     bless, signal, END, fn, local fn are first-class keywords.
+//!     attest, signal, END, fn, local fn are first-class keywords.
 //!   - Heredocs are rejected at the scanner level (emits __HEREDOC__ sentinel).
 //!   - Backticks are rejected (emits `backtick` sentinel for error reporting).
 //!   - Single brackets `[` are NOT operators — they appear only inside words
@@ -60,7 +60,7 @@ pub enum Tok {
     Const,
     Array,
     Map,
-    Bless,
+    Attest,
     End,
 
     // Operators
@@ -1557,7 +1557,7 @@ fn classify_word_token(word: String) -> Tok {
         "const" => Tok::Const,
         "array" => Tok::Array,
         "map" => Tok::Map,
-        "bless" => Tok::Bless,
+        "attest" => Tok::Attest,
         "signal" => Tok::Word("signal".to_string()),
         "END" => Tok::End,
         "return" => Tok::Word("return".to_string()),

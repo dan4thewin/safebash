@@ -302,27 +302,27 @@ x=hello
 echo $x'
 [[ $rc = 0 && $out == *'echo $x'* && $out != *'echo "$x"'* && -z $err ]]; chk 57.34
 
-# --- DD#57: BLESS annotations ---
+# --- DD#57: ATTEST annotations ---
 
-# 57.50a known external → bless line
+# 57.50a known external → attest line
 run_convert '#!/bin/bash
 today=$(date +%Y-%m-%d)'
-[[ $rc = 0 && $out == *'bless today'* && $out == *'today=$(date +%Y-%m-%d)'* && -z $err ]]; chk 57.35a
+[[ $rc = 0 && $out == *'attest today'* && $out == *'today=$(date +%Y-%m-%d)'* && -z $err ]]; chk 57.35a
 
-# 57.50b known external → bless line
+# 57.50b known external → attest line
 run_convert '#!/bin/bash
 host=$(hostname)'
-[[ $rc = 0 && $out == *'bless host'* && $out == *'host=$(hostname)'* && -z $err ]]; chk 57.35b
+[[ $rc = 0 && $out == *'attest host'* && $out == *'host=$(hostname)'* && -z $err ]]; chk 57.35b
 
-# 57.51 unknown external → BLESS hint
+# 57.51 unknown external → ATTEST hint
 run_convert '#!/bin/bash
 result=$(some_unknown_command arg1)'
-[[ $rc = 0 && $out == *'# BLESS:'*'some_unknown_command'* && $out == *'result=$(some_unknown_command arg1)'* && -z $err ]]; chk 57.36
+[[ $rc = 0 && $out == *'# ATTEST:'*'some_unknown_command'* && $out == *'result=$(some_unknown_command arg1)'* && -z $err ]]; chk 57.36
 
-# 57.52 read → BLESS hint
+# 57.52 read → ATTEST hint
 run_convert '#!/bin/bash
 read -r line'
-[[ $rc = 0 && $out == *'# BLESS:'*'line'*'read'* && $out == *'read -r line'* && -z $err ]]; chk 57.37
+[[ $rc = 0 && $out == *'# ATTEST:'*'line'*'read'* && $out == *'read -r line'* && -z $err ]]; chk 57.37
 
 # --- DD#57: I/O ---
 
@@ -389,10 +389,10 @@ unset x'
 
 # --- DD#53 tilde expansion (~, ~/path) — converter side (compiler side: taint.sh 53.x) ---
 
-# 57.47 bare ~ → hoisted $(getenv HOME) + bless, use $home
+# 57.47 bare ~ → hoisted $(getenv HOME) + attest, use $home
 run_convert '#!/bin/bash
 echo ~'
-[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'bless home'* && $out == *'echo $home'* && -z $err ]]; chk 57.47
+[[ $rc = 0 && $out == *'home=$(getenv HOME)'* && $out == *'attest home'* && $out == *'echo $home'* && -z $err ]]; chk 57.47
 
 # 57.48 ~/path → $home/path
 run_convert '#!/bin/bash

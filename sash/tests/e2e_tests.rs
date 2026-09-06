@@ -429,7 +429,7 @@ fn neg_tainted_env_inside_function_body() {
     // DD#24: external data is quarantined at the boundary, regardless
     // of whether it appears at the top level or inside a function body.
     // getenv inside a function body must still produce a tainted value
-    // and reject downstream unblessed use.
+    // and reject downstream unattested use.
     let script =
         "#!/bin/bash\nfoo() {\n  local x\n  x=$(getenv USER_INPUT)\n  echo \"$x\"\n}\nfoo\n";
     let stderr = compile_expect_fail("taint_in_fn_body", script);
@@ -751,31 +751,31 @@ done
 }
 
 // ═══════════════════════════════════════════════════════════════
-// BLESS / TAINT FLOW TESTS
+// ATTEST / TAINT FLOW TESTS
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn pos_bless_clears_taint() {
+fn pos_attest_clears_taint() {
     let script = r#"#!/bin/bash
 x=$(getenv MY_VAL)
-bless x [[ $x =~ ^[0-9]+$ ]]
+attest x [[ $x =~ ^[0-9]+$ ]]
 echo $x
 "#;
     assert_eq!(
-        compile_and_run_env("bless_ok", script, &[("MY_VAL", "42")]),
+        compile_and_run_env("attest_ok", script, &[("MY_VAL", "42")]),
         "42\n"
     );
 }
 
 #[test]
-fn pos_bless_with_default() {
+fn pos_attest_with_default() {
     let script = r#"#!/bin/bash
 x=$(getenv MY_VAL)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo $x
 "#;
     assert_eq!(
-        compile_and_run_env("bless_default", script, &[("MY_VAL", "hello")]),
+        compile_and_run_env("attest_default", script, &[("MY_VAL", "hello")]),
         "hello\n"
     );
 }
@@ -789,10 +789,10 @@ fn neg_cmdsub_tainted() {
 
 #[test]
 fn neg_tainted_after_reassign() {
-    // Even if a var was blessed, reassignment from unknown cmdsub re-taints it
+    // Even if a var was attested, reassignment from unknown cmdsub re-taints it
     let script = r#"#!/bin/bash
 x=$(curl http://example.com)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 x=$(curl http://other.com)
 echo $x
 "#;
@@ -805,24 +805,24 @@ echo $x
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn pos_cmdsub_blessed() {
+fn pos_cmdsub_attested() {
     let script = r#"#!/bin/bash
 x=$(getenv MY_VAL)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo $x
 "#;
     assert_eq!(
-        compile_and_run_env("cmdsub_bless", script, &[("MY_VAL", "hello world")]),
+        compile_and_run_env("cmdsub_attest", script, &[("MY_VAL", "hello world")]),
         "hello world\n"
     );
 }
 
 #[test]
 fn pos_cmdsub_in_arithmetic() {
-    // Command substitution result used in arithmetic after bless
+    // Command substitution result used in arithmetic after attest
     let script = r#"#!/bin/bash
 n=$(getenv MY_VAL)
-bless n [[ $n =~ ^[0-9]+$ ]]
+attest n [[ $n =~ ^[0-9]+$ ]]
 echo $(( n + 10 ))
 "#;
     assert_eq!(
@@ -923,10 +923,10 @@ fn neg_heredoc_cmdsub() {
 }
 
 #[test]
-fn pos_heredoc_blessed_var() {
-    // cat /etc/hostname is auto-blessed via known_externals
+fn pos_heredoc_attested_var() {
+    // cat /etc/hostname is auto-attested via known_externals
     let script = "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\n/bin/cat <<EOF\nhello $h\nEOF";
-    let output = compile_and_run("hd_blessed", script);
+    let output = compile_and_run("hd_attested", script);
     assert!(
         output.starts_with("hello "),
         "expected 'hello <hostname>', got: {}",
@@ -945,52 +945,53 @@ fn pos_herestring_read_multi() {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// BLESS EDGE CASES
+// ATTEST EDGE CASES
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn pos_bless_regex_validation() {
-    // Explicit bless required — no auto-bless in compiler
+fn pos_attest_regex_validation() {
+    // Explicit attest required — no auto-attest in compiler
     let script = r#"#!/bin/bash
 n=$(/bin/cat /etc/hostname)
-bless n [[ $n =~ ^[a-zA-Z0-9]+$ ]]
+attest n [[ $n =~ ^[a-zA-Z0-9]+$ ]]
 echo $n
 "#;
-    let output = compile_and_run("bless_regex", script);
+    let output = compile_and_run("attest_regex", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
-fn pos_bless_numeric_check() {
-    let script = "#!/bin/bash\nx=$(getenv MY_VAL)\nbless x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
+fn pos_attest_numeric_check() {
+    let script =
+        "#!/bin/bash\nx=$(getenv MY_VAL)\nattest x [[ $x =~ ^[0-9]+$ ]]\necho $(( x + 8 ))";
     assert_eq!(
-        compile_and_run_env("bless_num", script, &[("MY_VAL", "42")]),
+        compile_and_run_env("attest_num", script, &[("MY_VAL", "42")]),
         "50\n"
     );
 }
 
 // ═══════════════════════════════════════════════════════════════
-// AUTO-BLESS (known_externals)
+// AUTO-ATTEST (known_externals)
 // ═══════════════════════════════════════════════════════════════
 
 #[test]
-fn pos_auto_bless_hostname() {
-    // Explicit bless required — no auto-bless in compiler
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
+fn pos_auto_attest_hostname() {
+    // Explicit attest required — no auto-attest in compiler
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nattest h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_hostname", script);
     assert!(!output.is_empty(), "expected hostname output");
 }
 
 #[test]
-fn pos_auto_bless_whoami() {
-    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho $u";
+fn pos_auto_attest_whoami() {
+    let script = "#!/bin/bash\nu=$(/usr/bin/whoami)\nattest u [[ $u =~ ^[\\w\\-]+$ ]]\necho $u";
     let output = compile_and_run("auto_whoami", script);
     assert!(!output.is_empty(), "expected username output");
 }
 
 #[test]
-fn pos_auto_bless_date() {
-    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nbless d [[ $d =~ ^\\d\\d\\d\\d\\-\\d\\d\\-\\d\\d$ ]]\necho $d";
+fn pos_auto_attest_date() {
+    let script = "#!/bin/bash\nd=$(/bin/date +%Y-%m-%d)\nattest d [[ $d =~ ^\\d\\d\\d\\d\\-\\d\\d\\-\\d\\d$ ]]\necho $d";
     let output = compile_and_run("auto_date", script);
     assert!(
         output.trim().len() == 10,
@@ -1000,24 +1001,24 @@ fn pos_auto_bless_date() {
 }
 
 #[test]
-fn pos_auto_bless_nproc() {
-    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\nbless n [[ $n =~ ^[0-9]+$ ]]\necho $n";
+fn pos_auto_attest_nproc() {
+    let script = "#!/bin/bash\nn=$(/usr/bin/nproc)\nattest n [[ $n =~ ^[0-9]+$ ]]\necho $n";
     let output = compile_and_run("auto_nproc", script);
     let n: u32 = output.trim().parse().expect("expected numeric nproc");
     assert!(n > 0, "expected positive nproc");
 }
 
 #[test]
-fn pos_auto_bless_cat_hostname() {
+fn pos_auto_attest_cat_hostname() {
     let script =
-        "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
+        "#!/bin/bash\nh=$(/bin/cat /etc/hostname)\nattest h [[ $h =~ ^[\\w\\-]+$ ]]\necho $h";
     let output = compile_and_run("auto_cat_hostname", script);
     assert!(!output.is_empty(), "expected hostname from /etc/hostname");
 }
 
 #[test]
-fn pos_auto_bless_multiple() {
-    let script = "#!/bin/bash\nh=$(/bin/hostname)\nbless h [[ $h =~ ^[\\w\\-]+$ ]]\nu=$(/usr/bin/whoami)\nbless u [[ $u =~ ^[\\w\\-]+$ ]]\necho \"$h $u\"";
+fn pos_auto_attest_multiple() {
+    let script = "#!/bin/bash\nh=$(/bin/hostname)\nattest h [[ $h =~ ^[\\w\\-]+$ ]]\nu=$(/usr/bin/whoami)\nattest u [[ $u =~ ^[\\w\\-]+$ ]]\necho \"$h $u\"";
     let output = compile_and_run("auto_multi", script);
     assert!(
         output.contains(' '),
@@ -1085,7 +1086,7 @@ fn brush_let_clean() {
 #[test]
 fn brush_home_clean() {
     // $HOME requires getenv — no implicit env access (DD#53)
-    let script = "#!/bin/bash\nx=$(getenv HOME)\nbless x [[ -n $x ]]\necho $x";
+    let script = "#!/bin/bash\nx=$(getenv HOME)\nattest x [[ -n $x ]]\necho $x";
     let sash_out = compile_and_run("brush_home_clean", script);
     let bash_out = bash_output("echo $HOME");
     assert_eq!(sash_out, bash_out);
@@ -1094,7 +1095,7 @@ fn brush_home_clean() {
 #[test]
 fn brush_pwd_clean() {
     // $PWD requires getenv — no implicit env access (DD#53)
-    let script = "#!/bin/bash\nx=$(getenv PWD)\nbless x [[ $x =~ ^/ ]]\necho $x";
+    let script = "#!/bin/bash\nx=$(getenv PWD)\nattest x [[ $x =~ ^/ ]]\necho $x";
     let sash_out = compile_and_run("brush_pwd_clean", script);
     assert!(!sash_out.is_empty(), "PWD should produce output");
 }
@@ -1104,7 +1105,7 @@ fn brush_path_check() {
     // $PATH requires getenv — no implicit env access (DD#53)
     let script = r#"#!/bin/bash
 x=$(getenv PATH)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 if [[ -z "$x" ]]; then
   echo "PATH is not set or is empty"
 else
@@ -1124,20 +1125,20 @@ fn brush_cd_pwd() {
 }
 
 #[test]
-fn brush_getenv_bless_native() {
-    // Original: getenv produces tainted var — needs bless
-    // Step 1: without bless, fails
+fn brush_getenv_attest_native() {
+    // Original: getenv produces tainted var — needs attest
+    // Step 1: without attest, fails
     let raw = "#!/bin/bash\nx=$(getenv MY_VAR)\necho $x";
     let stderr = compile_expect_fail("brush_getenv_raw", raw);
     common::expect_diag(&stderr, "SB4020");
 
-    // Step 2: with bless, compiles and output matches
-    let blessed = r#"#!/bin/bash
+    // Step 2: with attest, compiles and output matches
+    let attested = r#"#!/bin/bash
 x=$(getenv MY_VAR)
-bless x [[ -n $x ]]
+attest x [[ -n $x ]]
 echo $x
 "#;
-    let sash_out = compile_and_run_env("brush_getenv_blessed", blessed, &[("MY_VAR", "hello")]);
+    let sash_out = compile_and_run_env("brush_getenv_attested", attested, &[("MY_VAR", "hello")]);
     assert_eq!(sash_out, "hello\n");
 }
 
@@ -1326,7 +1327,7 @@ fn manifest(name: &str, script: &str) -> Vec<String> {
 fn manifest_includes_command_substitution_external() {
     let deps = manifest(
         "cmdsub",
-        "x=$(date +%s); bless x [[ -n $x ]]; echo \"$x\"\n",
+        "x=$(date +%s); attest x [[ -n $x ]]; echo \"$x\"\n",
     );
     assert!(
         deps.iter().any(|d| d.ends_with("/date")),

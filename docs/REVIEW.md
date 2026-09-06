@@ -6,7 +6,7 @@
 
 A compiled sash binary:
 1. Executes only commands visible in the source (no eval, no dynamic dispatch)
-2. Cannot use external data without explicit validation (`bless`)
+2. Cannot use external data without explicit validation (`attest`)
 3. Contains no implicit environment fallbacks ($HOME "just working")
 4. Runs external commands via direct execve (no shell interpretation)
 5. Has its source embedded in `.sash_source` for reproducibility
@@ -42,7 +42,7 @@ If a construct isn't explicitly handled, compilation fails.
 | `src/ssa_taint.rs` | SSA-level taint verification |
 
 **Key question:** Can tainted data reach a sensitive position (command
-name, file path) without passing through `bless`?
+name, file path) without passing through `attest`?
 
 Sources of taint (must ALL be tracked):
 - `$(getenv NAME)` — environment variables
@@ -115,7 +115,7 @@ Can any input reach codegen without passing through validation?
 Can tainted data reach command execution?
 - Check: `lower_exec` in `codegen.rs` — where does the command name come from?
 - Check: pipeline stages — are names always from SSA (which was validated)?
-- Check: `bless` — does it actually gate usage or just mark?
+- Check: `attest` — does it actually gate usage or just mark?
 
 ### 3. Environment injection
 Can environment variables influence compiled binary behavior?
@@ -156,7 +156,7 @@ ssa_printer.rs   287 lines  — SSA pretty-printing (debug only)
 | DD#12 | String representation | Ptr+len prevents buffer overflows |
 | DD#14 | Pipeline primitives | Fork/exec only, no shell interpretation |
 | DD#23 | Command resolution | Compile-time PATH, no runtime lookup |
-| DD#24 | Taint/bless model | All external data tracked |
+| DD#24 | Taint/attest model | All external data tracked |
 | DD#42-44 | getenv/argv/argc | Explicit data entry points |
 | DD#53 | Env/var separation | No implicit env-var mirroring |
 | DD#55 | Exit checks | Nonzero exit aborts (fail-closed) |

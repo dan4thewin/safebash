@@ -1159,7 +1159,7 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
         BuiltinCmd::Return => emit_janet_return(out, ctx, c),
         BuiltinCmd::Read => emit_janet_read(out, ctx, c),
         BuiltinCmd::Argv => emit_janet_argv(out, ctx, c),
-        BuiltinCmd::Bless => emit_janet_bless(out, c),
+        BuiltinCmd::Attest => emit_janet_attest(out, c),
         BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
         // `cat` is not a builtin — special-cased so we can shortcut
         // stdin-only invocations to (file/read stdin :all).
@@ -1185,7 +1185,7 @@ fn janet_cmd_defaults_success(kind: &BuiltinCmd, cmd_name: &str) -> bool {
     }
     matches!(
         kind,
-        BuiltinCmd::Echo | BuiltinCmd::Read | BuiltinCmd::Unset | BuiltinCmd::Bless
+        BuiltinCmd::Echo | BuiltinCmd::Read | BuiltinCmd::Unset | BuiltinCmd::Attest
     )
 }
 
@@ -1277,12 +1277,12 @@ fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     }
 }
 
-/// `bless var [[ … ]]` — type/range/regex assertion. Janet emits a
+/// `attest var [[ … ]]` — type/range/regex assertion. Janet emits a
 /// comment only; the runtime check is elided in the Janet backend.
-fn emit_janet_bless(out: &mut String, c: &Command) {
+fn emit_janet_attest(out: &mut String, c: &Command) {
     if !c.args.is_empty() {
         let var_name = expr_to_literal(&c.args[0]);
-        writeln!(out, "# bless {} (validation elided in janet)", var_name).unwrap();
+        writeln!(out, "# attest {} (validation elided in janet)", var_name).unwrap();
     }
 }
 

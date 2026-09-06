@@ -157,26 +157,26 @@ impl SsaInst {
                     ctx,
                 );
             }
-            SsaInst::Bless {
+            SsaInst::Attest {
                 source,
                 target,
                 test,
             } => {
-                return self.emit_bless(source, target, test, builder, module, ctx);
+                return self.emit_attest(source, target, test, builder, module, ctx);
             }
-            SsaInst::BlessAll {
+            SsaInst::AttestAll {
                 source,
                 binders,
                 test,
                 is_map,
                 if_form,
             } => {
-                return self.emit_bless_all(
+                return self.emit_attest_all(
                     source, binders, test, *is_map, *if_form, builder, module, ctx,
                 );
             }
-            SsaInst::BlessRetag { source, target } => {
-                return self.emit_bless_retag(source, target, builder, module, ctx);
+            SsaInst::AttestRetag { source, target } => {
+                return self.emit_attest_retag(source, target, builder, module, ctx);
             }
         }
         false // block not terminated
@@ -230,7 +230,7 @@ impl SsaInst {
                 return super::inst_handlers::handle_close(args, *checked, builder, module, ctx)
             }
             BuiltinCmd::Wait => return self.emit_wait(args, builder, module, ctx),
-            // All other builtins (read, mapfile, printf, bless, etc.) and
+            // All other builtins (read, mapfile, printf, attest, etc.) and
             // external commands / user functions fall through to the general
             // command handler, which dispatches on `name` for the remaining
             // cases (printf, len/keys/join intrinsics, exec lookup, …).
@@ -489,8 +489,8 @@ impl SsaInst {
         false
     }
 
-    /// TRUST: bless is the ONLY mechanism to move tainted → clean.
-    fn emit_bless(
+    /// TRUST: attest is the ONLY mechanism to move tainted → clean.
+    fn emit_attest(
         &self,
         source: &VarRef,
         target: &VarRef,
@@ -503,7 +503,7 @@ impl SsaInst {
         let literals = ctx.literals;
         let externs = ctx.externs;
         let exit_status_var = ctx.exit_status_var;
-        // Runtime bless enforcement: evaluate test on source, abort if false.
+        // Runtime attest enforcement: evaluate test on source, abort if false.
         // On pass, copy source value to target (new clean SSA version).
         let result = lower_test_expr(
             test,
@@ -524,7 +524,7 @@ impl SsaInst {
 
         builder.switch_to_block(fail_block);
         builder.seal_block(fail_block);
-        // bless failed: `<argv0>: bless: <name> = '<val>' failed the gate`,
+        // attest failed: `<argv0>: attest: <name> = '<val>' failed the gate`,
         // exit(1). Name + value tell the user which gate failed and why.
         let name_id = literals[source.name.as_str()];
         let name_gv = module.declare_data_in_func(name_id, builder.func);
@@ -542,10 +542,10 @@ impl SsaInst {
                 (z, z)
             }
         };
-        let bless_fail_ref = module.declare_func_in_func(externs.bless_fail, builder.func);
+        let attest_fail_ref = module.declare_func_in_func(externs.attest_fail, builder.func);
         builder
             .ins()
-            .call(bless_fail_ref, &[name_ptr, name_len, val_ptr, val_len]);
+            .call(attest_fail_ref, &[name_ptr, name_len, val_ptr, val_len]);
         builder
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -578,10 +578,10 @@ impl SsaInst {
         false
     }
 
-    /// DD#61: retag an array/map clean after a successful `BlessAll`.
+    /// DD#61: retag an array/map clean after a successful `AttestAll`.
     /// Copies the source slot (the collection's backing table pointer)
     /// to a new clean SSA version. No runtime validation.
-    fn emit_bless_retag(
+    fn emit_attest_retag(
         &self,
         source: &VarRef,
         target: &VarRef,
@@ -620,18 +620,18 @@ impl SsaInst {
         false
     }
 
-    /// DD#61: `bless x in a [[…]]` / `bless k v in m [[…]]` — validate every
+    /// DD#61: `attest x in a [[…]]` / `attest k v in m [[…]]` — validate every
     /// element of the array/map against the per-element `test`. Iterates the
     /// backing table, binding the element value (and key, for maps) to fresh
     /// codegen slots so the predicate can read them, and evaluates `test`.
     ///
     /// Statement form (`if_form == false`): a failing element writes the
-    /// bless error and exits 1; reaching the end sets the test-result var to
+    /// attest error and exits 1; reaching the end sets the test-result var to
     /// true. If form: AND-accumulates each result and leaves the boolean in
     /// the test-result var for the surrounding branch. An empty collection
     /// is vacuously true.
     #[allow(clippy::too_many_arguments)]
-    fn emit_bless_all(
+    fn emit_attest_all(
         &self,
         source: &VarRef,
         binders: &[VarRef],
@@ -648,7 +648,7 @@ impl SsaInst {
 
         // Backing table pointer (tables live in `_0` slots).
         let table_ptr = {
-            let sv = find_array_slot(ctx.vars, &source.name, "bless-all array");
+            let sv = find_array_slot(ctx.vars, &source.name, "attest-all array");
             builder.use_var(sv.str_ptr())
         };
         let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
@@ -667,7 +667,7 @@ impl SsaInst {
         // so the predicate's pre-lowered operand refs resolve to exactly
         // these slots. Removed after the loop so the outer scope is
         // unaffected (DD#61 shadow semantics).
-        let (binder_keys, binder_ptrs, binder_lens) = declare_bless_binders(binders, ctx, builder);
+        let (binder_keys, binder_ptrs, binder_lens) = declare_attest_binders(binders, ctx, builder);
 
         let header = builder.create_block();
         let body = builder.create_block();
@@ -717,10 +717,10 @@ impl SsaInst {
             let cont = builder.create_block();
             let fail = builder.create_block();
             builder.ins().brif(result, cont, &[], fail, &[]);
-            // fail: "bless: validation failed" → stderr, exit(1)
+            // fail: "attest: validation failed" → stderr, exit(1)
             builder.switch_to_block(fail);
             builder.seal_block(fail);
-            self.emit_bless_fail(&source.name, builder, module, ctx.literals, externs);
+            self.emit_attest_fail(&source.name, builder, module, ctx.literals, externs);
             // cont: counter++ ; loop
             builder.switch_to_block(cont);
             builder.seal_block(cont);
@@ -747,11 +747,11 @@ impl SsaInst {
         false
     }
 
-    /// Emit the bless failure path: `<argv0>: bless: <name> failed the gate`
-    /// to stderr, then exit(1). Shared by the statement-form `BlessAll`
+    /// Emit the attest failure path: `<argv0>: attest: <name> failed the gate`
+    /// to stderr, then exit(1). Shared by the statement-form `AttestAll`
     /// (no single scalar value — the value clause is omitted). Scalar
-    /// `Bless` emits its own call inline (it also passes the value).
-    fn emit_bless_fail(
+    /// `Attest` emits its own call inline (it also passes the value).
+    fn emit_attest_fail(
         &self,
         name: &str,
         builder: &mut FunctionBuilder,
@@ -764,10 +764,10 @@ impl SsaInst {
         let name_ptr = builder.ins().global_value(I64, name_gv);
         let name_len = builder.ins().iconst(I64, name.len() as i64);
         let zero = builder.ins().iconst(I64, 0);
-        let bless_fail_ref = module.declare_func_in_func(externs.bless_fail, builder.func);
+        let attest_fail_ref = module.declare_func_in_func(externs.attest_fail, builder.func);
         builder
             .ins()
-            .call(bless_fail_ref, &[name_ptr, name_len, zero, zero]);
+            .call(attest_fail_ref, &[name_ptr, name_len, zero, zero]);
         builder
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
@@ -1338,12 +1338,12 @@ fn finalize_exec(
 
 /// Call `sash_table_value` / `sash_table_key` `(table, index)` and return
 /// the `(ptr, len)` pair, using a fresh stack slot for the out-length.
-/// DD#61: declare per-binder `(ptr,len)` slots for a bless-all predicate and
+/// DD#61: declare per-binder `(ptr,len)` slots for a attest-all predicate and
 /// register them in `ctx.vars` under the binders' globally-unique SSA keys
 /// (so the pre-lowered predicate operands resolve to exactly these slots).
 /// Returns `(keys, ptrs, lens)` for the caller to bind and later remove.
 #[allow(clippy::type_complexity)]
-fn declare_bless_binders(
+fn declare_attest_binders(
     binders: &[VarRef],
     ctx: &mut InstCtx,
     builder: &mut FunctionBuilder,

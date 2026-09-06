@@ -208,7 +208,7 @@ fn is_catching_construct_exit(label: &str) -> bool {
     matches!(
         label,
         "if.merge"
-            | "if_bless.merge"
+            | "if_attest.merge"
             | "while.exit"
             | "for.exit"
             | "for_cmd.exit"

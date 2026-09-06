@@ -63,13 +63,13 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_emsg_status", Linkage::Import, &emsg_status_sig)
         .expect("declare sash_emsg_status");
 
-    // sash_bless_fail(name_ptr, name_len, val_ptr, val_len) -> ! — bless
-    // gate failure diagnostic (`<argv0>: bless: <name> = '<val>' failed …`).
-    let mut bless_fail_sig = Signature::new(CallConv::SystemV);
-    push_i64s(&mut bless_fail_sig, 4, 0);
-    let bless_fail_func = module
-        .declare_function("sash_bless_fail", Linkage::Import, &bless_fail_sig)
-        .expect("declare sash_bless_fail");
+    // sash_attest_fail(name_ptr, name_len, val_ptr, val_len) -> ! — attest
+    // gate failure diagnostic (`<argv0>: attest: <name> = '<val>' failed …`).
+    let mut attest_fail_sig = Signature::new(CallConv::SystemV);
+    push_i64s(&mut attest_fail_sig, 4, 0);
+    let attest_fail_func = module
+        .declare_function("sash_attest_fail", Linkage::Import, &attest_fail_sig)
+        .expect("declare sash_attest_fail");
 
     // sash_arith_overflow() -> ! — DD#25 overflow trap (no params/returns).
     let arith_overflow_sig = Signature::new(CallConv::SystemV);
@@ -755,7 +755,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         exit: exit_func,
         emsg: emsg_func,
         emsg_status: emsg_status_func,
-        bless_fail: bless_fail_func,
+        attest_fail: attest_fail_func,
         arith_overflow: arith_overflow_func,
         run: run_func,
         getenv: getenv_func,
@@ -1020,11 +1020,11 @@ impl<'a> Interner<'a> {
             SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
-            SsaInst::Bless { test, source, .. } => {
+            SsaInst::Attest { test, source, .. } => {
                 self.intern_test_expr(test);
                 self.intern(&source.name);
             }
-            SsaInst::BlessAll { test, source, .. } => {
+            SsaInst::AttestAll { test, source, .. } => {
                 self.intern_test_expr(test);
                 self.intern(&source.name);
             }

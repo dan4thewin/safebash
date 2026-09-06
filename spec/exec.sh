@@ -10,7 +10,7 @@
 #
 # The target CMD is resolved and constrained exactly like a command head
 # (DD#23): a literal, compile-time-resolvable external path; a variable /
-# expansion target is rejected (SB5011), as are tainted args without bless
+# expansion target is rejected (SB5011), as are tainted args without attest
 # (DD#24). `exec` is native-only for now (the c/janet backends emit no exec —
 # task c-janet-exec-support), so this suite runs only in native mode.
 set -eu
@@ -55,11 +55,11 @@ run_sash 'x=/bin/echo; exec $x hi'
 # ex.8 an unresolvable bare target → SB5011 (not found)
 run_sash 'exec totallyboguscmd_zzz'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk ex.8
-# ex.9 a tainted arg to exec is rejected without bless (DD#24), like any command
+# ex.9 a tainted arg to exec is rejected without attest (DD#24), like any command
 run_sash 'x=$(getenv HOME); exec /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ex.9
-# ex.10 a blessed tainted arg is accepted
-run_sash 'x=$(getenv HOME); bless x [[ -n $x ]]; exec /bin/echo $x'
+# ex.10 a attested tainted arg is accepted
+run_sash 'x=$(getenv HOME); attest x [[ -n $x ]]; exec /bin/echo $x'
 [[ $rc = 0 && -n $out && -z $err ]]; chk ex.10
 # ex.11 the exec target is recorded in the external manifest
 out=$(sash --manifest -c 'exec grep x /etc/hostname' 2>/dev/null); rc=$?
