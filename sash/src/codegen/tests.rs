@@ -178,23 +178,37 @@ fn lower_test_unary(
         // Implicit -n (bare word in [[ ]]) shares the -n path.
         "-n" | "?" => emit_len_cmp(builder, len, IntCC::SignedGreaterThan),
         "-z" => emit_len_cmp(builder, len, IntCC::Equal),
-        // DD#77: `-i` — true iff the operand's value is a strict integer.
-        "-i" => {
-            let is_int_ref = module.declare_func_in_func(externs.is_int, builder.func);
-            let call = builder.ins().call(is_int_ref, &[ptr, len]);
-            builder.inst_results(call)[0]
-        }
+        // DD#93 Part C: content-shape tests — each is one runtime validator
+        // with the same (ptr, len) -> 0/1 shape, so a further class (`a?`,
+        // `d?`, …) is one arm here plus one extern.
+        "i?" => emit_shape_test(builder, module, externs.is_int, ptr, len),
+        "p?" => emit_shape_test(builder, module, externs.is_print, ptr, len),
+        "g?" => emit_shape_test(builder, module, externs.is_graph, ptr, len),
         "-t" => emit_isatty_test(builder, module, externs, ptr, len),
         // INVARIANT: the parser's is_unary_test_op gates which operators reach
-        // here; each one it accepts is either handled above (-n/-z/-i/-t) or is
-        // a file test below, except -v/-o/-R which validate rejects (SB5028,
-        // unsupported_unary_test_hint). A None here means a parser/codegen
-        // drift, not user input.
+        // here; each one it accepts is either handled above (-n/-z/i?/p?/g?/-t)
+        // or is a file test below, except -v/-o/-R which validate rejects
+        // (SB5028, unsupported_unary_test_hint). A None here means a
+        // parser/codegen drift, not user input.
         other => match file_test_op_code(other) {
             Some(code) => emit_file_test(builder, module, externs, ptr, len, code),
             None => panic!("ICE: unimplemented unary test operator: {}", other),
         },
     }
+}
+
+/// DD#93 Part C: call a runtime content-shape validator — `sash_is_int` /
+/// `sash_is_print` / `sash_is_graph`, all `(ptr, len) -> 0/1`.
+fn emit_shape_test(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    func: cranelift_module::FuncId,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+) -> cranelift_codegen::ir::Value {
+    let func_ref = module.declare_func_in_func(func, builder.func);
+    let call = builder.ins().call(func_ref, &[ptr, len]);
+    builder.inst_results(call)[0]
 }
 
 /// 1 if `len <cc> 0`, else 0. Used for -n, -z, and implicit-? bare-word.

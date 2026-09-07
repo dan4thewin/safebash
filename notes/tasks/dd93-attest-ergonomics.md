@@ -12,9 +12,15 @@ Bundle from the 2026-09-06 bless-ergonomics thread. See
 - [x] **S1 rename** `bless` → `attest` (hard, no alias). Lexer keyword,
   identifiers/strings, diagnostics, converter emit, specs, Rust tests,
   current-state docs. 0 regressions (native/c/janet). Journal 247.
-- [ ] **S2 shape tests** `i?`/`p?`/`g?`. Runtime `is_print`/`is_graph`;
-  `-i`→`i?` rename; parser `?`-suffix recognizer; native/c/janet dispatch;
-  migrate `types.sh` 77.x + add p?/g? specs. General operators.
+- [x] **S2 shape tests** `i?`/`p?`/`g?`. Runtime `is_print_inner`/
+  `is_graph_inner` (shared `all_bytes_match` helper) + `sash_is_print`/
+  `sash_is_graph`; `-i`→`i?` hard rename; parser `?`-suffix recognizer
+  (`try_parse_leading_unary` gate broadened past `starts_with('-')`);
+  native/c/janet dispatch (+ the two C `extern` prototypes); `types.sh` 77.x
+  migrated, specs 93.10–93.19 added. General operators. 0 regressions,
+  30 new passing (native/c/janet). Journal 248. Found+filed
+  `janet-compound-if-condition-ignored` (P1) and fixed a missing
+  `cargo:rerun-if-changed` in `sash-rt-tests/build.rs`.
 - [ ] **S3 unary shorthand** `attest VAR OP` (scalar + attest-all).
 - [ ] **S4 arith-assign form** `attest numstr (( myint = numstr ))`. Both
   clean, distinct names, scalar only, SB4030 exemption.

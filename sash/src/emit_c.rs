@@ -135,6 +135,9 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(out, "extern i64 sash_atoi(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_is_int(const char* p, i64 n);").unwrap();
+    // DD#93 Part C content-shape validators (`p?` / `g?`).
+    writeln!(out, "extern i64 sash_is_print(const char* p, i64 n);").unwrap();
+    writeln!(out, "extern i64 sash_is_graph(const char* p, i64 n);").unwrap();
     writeln!(out, "extern i64 sash_atoi_or(const char* p, i64 n, i64 d);").unwrap();
     writeln!(
         out,
@@ -2268,8 +2271,11 @@ fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes
     match op {
         "-n" | "?" => format!("(({}) > 0 ? 1 : 0)", len),
         "-z" => format!("(({}) == 0 ? 1 : 0)", len),
-        // DD#77: `-i` — strict integer-validity of the operand's value.
-        "-i" => format!("sash_is_int({}, {})", ptr, len),
+        // DD#93 Part C: content-shape tests — one runtime validator each,
+        // all with the same (ptr, len) -> 0/1 shape.
+        "i?" => format!("sash_is_int({}, {})", ptr, len),
+        "p?" => format!("sash_is_print({}, {})", ptr, len),
+        "g?" => format!("sash_is_graph({}, {})", ptr, len),
         _ => {
             writeln!(e.out, "    /* TODO test unary op: {} */", op).unwrap();
             "0".to_string()

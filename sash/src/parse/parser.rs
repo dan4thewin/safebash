@@ -1249,7 +1249,12 @@ fn try_parse_leading_unary(
     span: Span,
 ) -> Result<Option<TestExpr>, Diagnostic> {
     if let Tok::Word(ref w) = scanner.peek().token {
-        if w.starts_with('-') && w.len() >= 2 && is_unary_test_op(w) {
+        // Either a `-X` file/emptiness test, or a DD#93 content-shape test
+        // (`i?`/`p?`/`g?`) — those carry a `?` suffix instead of a `-` prefix,
+        // so the shape check has to admit both. `len() >= 2` keeps the bare
+        // `?` (implicit `-n`) out of this path.
+        let looks_like_op = w.len() >= 2 && (w.starts_with('-') || w.ends_with('?'));
+        if looks_like_op && is_unary_test_op(w) {
             let op = w.clone();
             scanner.next();
             let operand = parse_test_operand(scanner, span)?;
@@ -1428,7 +1433,12 @@ fn is_unary_test_op(op: &str) -> bool {
             | "-h"
             | "-n"
             | "-z"
-            | "-i"
+            // DD#93 Part C: content-shape tests. The `?` suffix keeps them out
+            // of bash's saturated `-X` namespace and reserves room for the
+            // remaining POSIX classes (`a?`, `d?`, `l?`, `s?`, …) later.
+            | "i?" // strict, i64-representable integer (renamed from `-i`)
+            | "p?" // non-empty, all bytes ASCII printable (0x20–0x7E)
+            | "g?" // non-empty, all bytes ASCII graph (0x21–0x7E)
             | "-b"
             | "-c"
             | "-p"

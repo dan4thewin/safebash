@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=134
+plan=144
 echo "1..$plan" >&3
 
 set +e
@@ -624,43 +624,88 @@ run_sash 'fn f { echo $(len bogus); }
 f'
 [[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.30
 
-# ── DD#77 `[[ -i EXPR ]]` — strict integer-validity test ──
+# ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
 # a 0x/0o/0b prefix with valid digits; empty/unset → false). Lets an author
 # validate/branch before converting. All backends (sash_is_int / janet _isint).
+# DD#93 Part C renamed this operator from `-i` to `i?` (hard, no alias).
 # 77.1 literal integer → true
-run_sash 'if [[ -i 42 ]]; then echo yes; else echo no; fi'
+run_sash 'if [[ i? 42 ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.1
 # 77.2 non-numeric → false
-run_sash 'if [[ -i abc ]]; then echo yes; else echo no; fi'
+run_sash 'if [[ i? abc ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.2
 # 77.3 a set numeric string var → true
-run_sash 's=42; if [[ -i $s ]]; then echo yes; else echo no; fi'
+run_sash 's=42; if [[ i? $s ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.3
 # 77.4 partial-numeric (trailing junk) → false (strict, no partial parse)
-run_sash 's=42abc; if [[ -i $s ]]; then echo yes; else echo no; fi'
+run_sash 's=42abc; if [[ i? $s ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.4
 # 77.5 negative and radix-prefixed → true
-run_sash 's=-7; if [[ -i $s ]] && [[ -i 0xff ]]; then echo yes; else echo no; fi'
+run_sash 's=-7; if [[ i? $s ]] && [[ i? 0xff ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 77.5
 # 77.6 empty → false
-run_sash 's=; if [[ -i $s ]]; then echo yes; else echo no; fi'
+run_sash 's=; if [[ i? $s ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 77.6
 # 77.7 DG's example: validate-or-sanitize, then use (composes with =~ s///g)
-run_sash 's=42abc; [[ -i $s ]] || s =~ s/\D//g; echo $s'
+run_sash 's=42abc; [[ i? $s ]] || s =~ s/\D//g; echo $s'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 77.7
 # 77.8 range-checked: i64::MAX is valid, MAX+1 is not (DD#77, DG). All backends.
-run_sash 'if [[ -i 9223372036854775807 ]] && ! [[ -i 9223372036854775808 ]]; then echo ok; else echo no; fi'
+run_sash 'if [[ i? 9223372036854775807 ]] && ! [[ i? 9223372036854775808 ]]; then echo ok; else echo no; fi'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 77.8
-# 77.9 a validated value converts safely; `-i` guarantees no overflow trap.
+# 77.9 a validated value converts safely; `i?` guarantees no overflow trap.
 # native,c — janet's arith VALUE path misreads an embedded ${…}
 # (janet-arith-subscript-read).
 if in_modes native,c; then
-    run_sash 's=100; [[ -i $s ]] && echo $(( ${s:-0} * 2 ))'
+    run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
     [[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
 else
     skip_chk 77.9
 fi
+
+# ── DD#93 Part C: content-shape tests `p?` / `g?` ──
+# Sibling shape tests to `i?`, spelled with the same `?` suffix (kept out of
+# bash's saturated `-X` namespace). Each is "non-empty AND every byte in an
+# ASCII class": `p?` printable (0x20–0x7E), `g?` graph (0x21–0x7E, printable
+# non-space). General operators — valid anywhere a unary test is, not only in
+# `attest`. All backends (sash_is_print/sash_is_graph / janet _isprint/_isgraph).
+# 93.10 p? on printable text → true
+run_sash 'if [[ p? hello ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 93.10
+# 93.11 p? admits the space (0x20) — that is the whole difference from g?
+run_sash 's="a b"; if [[ p? $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 93.11
+# 93.12 p? on empty → false (non-empty is required, as for i?)
+run_sash 's=; if [[ p? $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.12
+# 93.13 g? on printable non-space → true (punctuation/digits included)
+run_sash 's=/usr/bin:42; if [[ g? $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 93.13
+# 93.14 g? rejects an embedded space
+run_sash 's="a b"; if [[ g? $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.14
+# 93.15 g? on empty → false
+run_sash 's=; if [[ g? $s ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.15
+# 93.16 ASCII-only: high bytes (≥ 0x80) are rejected by both. A UTF-8-aware
+# variant would get a distinct spelling (DD#93); ambiguous non-ASCII is part
+# of what a shape test screens out. NB: the `||` is written *inside* the
+# `[[ ]]` — a compound `if` condition (`[[ … ]] || [[ … ]]`) is silently
+# emitted as `(if true …)` by the janet backend
+# (task janet-compound-if-condition-ignored), which would make this pass
+# vacuously there.
+run_sash 'if [[ p? café || g? café ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.16
+# 93.17 general operators: compose with ! and && like any unary test
+run_sash 's=abc; if ! [[ i? $s ]] && [[ g? $s ]]; then echo ok; else echo no; fi'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 93.17
+# 93.18 …and drive a while loop (not attest-only)
+run_sash 'n=3; while [[ i? $n ]]; do echo $n; n=; done'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 93.18
+# 93.19 the `-i` → `i?` rename is hard: `-i` is no longer an operator, so it
+# is a bare word and the test no longer parses (DD#93 Part C, no alias).
+run_sash 'if [[ -i 42 ]]; then echo yes; else echo no; fi'
+[[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 93.19
 
 set -e
 tally

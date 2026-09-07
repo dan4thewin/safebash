@@ -345,6 +345,27 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_is_int", Linkage::Import, &is_int_sig)
         .expect("declare sash_is_int");
 
+    // DD#93 Part C content-shape tests. Same (s_ptr, s_len) -> 0/1 shape as
+    // sash_is_int; adding a further class is one declaration here plus one
+    // dispatch arm.
+    // sash_is_print(s_ptr, s_len) -> i64 — `p?`, ASCII printable 0x20–0x7E
+    let mut is_print_sig = Signature::new(CallConv::SystemV);
+    is_print_sig.params.push(AbiParam::new(I64)); // s_ptr
+    is_print_sig.params.push(AbiParam::new(I64)); // s_len
+    is_print_sig.returns.push(AbiParam::new(I64)); // 0/1
+    let is_print_func = module
+        .declare_function("sash_is_print", Linkage::Import, &is_print_sig)
+        .expect("declare sash_is_print");
+
+    // sash_is_graph(s_ptr, s_len) -> i64 — `g?`, ASCII graph 0x21–0x7E
+    let mut is_graph_sig = Signature::new(CallConv::SystemV);
+    is_graph_sig.params.push(AbiParam::new(I64)); // s_ptr
+    is_graph_sig.params.push(AbiParam::new(I64)); // s_len
+    is_graph_sig.returns.push(AbiParam::new(I64)); // 0/1
+    let is_graph_func = module
+        .declare_function("sash_is_graph", Linkage::Import, &is_graph_sig)
+        .expect("declare sash_is_graph");
+
     // sash_atoi_or(s_ptr, s_len, default) -> i64 — DD#77 arith `${s:-N}`
     let mut atoi_or_sig = Signature::new(CallConv::SystemV);
     atoi_or_sig.params.push(AbiParam::new(I64)); // s_ptr
@@ -776,6 +797,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         concat: concat_func,
         atoi: atoi_func,
         is_int: is_int_func,
+        is_print: is_print_func,
+        is_graph: is_graph_func,
         atoi_or: atoi_or_func,
         atoi_or_abort: atoi_or_abort_func,
         itoa: itoa_func,

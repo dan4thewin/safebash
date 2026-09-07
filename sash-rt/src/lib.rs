@@ -1084,6 +1084,29 @@ pub unsafe extern "C" fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64 {
     is_int_inner(bytes) as i64
 }
 
+/// DD#93 Part C: `p?` — 1 if the string is non-empty and every byte is ASCII
+/// printable (0x20–0x7E), else 0. Empty → 0 (false). See `is_print_inner`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_is_print(s_ptr: *const u8, s_len: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    is_print_inner(bytes) as i64
+}
+
+/// DD#93 Part C: `g?` — 1 if the string is non-empty and every byte is ASCII
+/// graph (0x21–0x7E, printable non-space), else 0. Empty → 0 (false).
+/// See `is_graph_inner`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_is_graph(s_ptr: *const u8, s_len: i64) -> i64 {
+    if s_len <= 0 || s_ptr.is_null() {
+        return 0;
+    }
+    let bytes = core::slice::from_raw_parts(s_ptr, s_len as usize);
+    is_graph_inner(bytes) as i64
+}
+
 /// DD#77 arith `:-` disposition: `${s:-N}` in arithmetic. The i64 value of `s`
 /// when it is a valid, representable integer; otherwise `default` (the numeric
 /// literal N). Not-a-valid-integer unifies unset/empty/non-numeric/out-of-range.

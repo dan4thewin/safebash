@@ -73,6 +73,29 @@ pub fn is_int_inner(bytes: &[u8]) -> bool {
     parse_strict_i64(bytes).is_some()
 }
 
+/// True iff `bytes` is **non-empty** and every byte satisfies `pred`. Shared
+/// by the DD#93 content-shape tests, which are all of the form "non-empty and
+/// all bytes in a class" — adding a further class (`a?`, `d?`, `l?`, `s?`, …)
+/// is one line here plus one dispatch arm per backend.
+fn all_bytes_match(bytes: &[u8], pred: fn(u8) -> bool) -> bool {
+    !bytes.is_empty() && bytes.iter().copied().all(pred)
+}
+
+/// DD#93 Part C: `p?` — true iff the value is non-empty and every byte is
+/// ASCII **printable** (0x20–0x7E, space through `~`). High bytes (≥ 0x80)
+/// are rejected: ambiguous non-ASCII is part of what a shape test screens
+/// out (a UTF-8-aware variant would get a distinct spelling).
+pub fn is_print_inner(bytes: &[u8]) -> bool {
+    all_bytes_match(bytes, |b| (0x20..=0x7E).contains(&b))
+}
+
+/// DD#93 Part C: `g?` — true iff the value is non-empty and every byte is
+/// ASCII **graph** (0x21–0x7E), i.e. printable non-space. Differs from
+/// `is_print_inner` only in excluding 0x20.
+pub fn is_graph_inner(bytes: &[u8]) -> bool {
+    all_bytes_match(bytes, |b| (0x21..=0x7E).contains(&b))
+}
+
 /// Strict, range-checked parse of a complete integer: optional `+`/`-` sign,
 /// then a `0x`/`0o`/`0b` prefix with ≥1 valid digit or ≥1 decimal digit, whole
 /// slice, no surrounding whitespace or trailing junk. Returns the i64 value, or

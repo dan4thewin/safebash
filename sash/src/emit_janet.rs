@@ -73,6 +73,23 @@ n (or r 0)] (if neg (- n) n))))"
 (not (nil? (peg/match ~(* (? (set \"+-\")) \"0\" (set \"oObB\")) s))))))"
     )
     .unwrap();
+    // DD#93 Part C: `_isprint`/`_isgraph` — the `p?`/`g?` content-shape
+    // predicates. Non-empty, and every byte in the ASCII class (printable
+    // 0x20–0x7E; graph 0x21–0x7E, i.e. printable non-space). High bytes
+    // (≥ 0x80) fall outside both ranges and are rejected, matching the
+    // runtime's is_print_inner/is_graph_inner.
+    writeln!(
+        out,
+        "(defn _isprint [v] (def s (string v)) (and (> (length s) 0) \
+(all (fn [b] (and (>= b 0x20) (<= b 0x7e))) s)))"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "(defn _isgraph [v] (def s (string v)) (and (> (length s) 0) \
+(all (fn [b] (and (>= b 0x21) (<= b 0x7e))) s)))"
+    )
+    .unwrap();
     for stmt in &program.statements {
         emit_stmt(&mut out, &mut ctx, stmt, 0);
     }
@@ -1638,8 +1655,12 @@ fn emit_unary_test(op: &str, operand: &Expr, ctx: &EmitCtx) -> String {
         "-e" => format!("(not (nil? (os/stat {} :mode)))", val),
         "-n" => format!("(not (or (nil? {0}) (empty? {0})))", val),
         "-z" => format!("(or (nil? {0}) (empty? {0}))", val),
-        // DD#77: `-i` — strict integer-validity of the operand's value.
-        "-i" => format!("(_isint {})", val),
+        // DD#93 Part C: content-shape tests — `i?` strict integer, `p?` ASCII
+        // printable (0x20–0x7E), `g?` ASCII graph (0x21–0x7E). All require a
+        // non-empty value and reject high bytes.
+        "i?" => format!("(_isint {})", val),
+        "p?" => format!("(_isprint {})", val),
+        "g?" => format!("(_isgraph {})", val),
         _ => format!("(truthy? {} {})", op, val),
     }
 }

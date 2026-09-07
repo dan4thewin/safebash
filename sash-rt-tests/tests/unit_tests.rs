@@ -6,6 +6,8 @@
 extern "C" {
     fn sash_atoi(s_ptr: *const u8, s_len: i64) -> i64;
     fn sash_is_int(s_ptr: *const u8, s_len: i64) -> i64;
+    fn sash_is_print(s_ptr: *const u8, s_len: i64) -> i64;
+    fn sash_is_graph(s_ptr: *const u8, s_len: i64) -> i64;
     fn sash_itoa(val: i64, out_len: *mut i64) -> *mut u8;
     fn sash_default_value(s_len: i64) -> i64;
 
@@ -77,6 +79,59 @@ fn is_int_strict() {
         assert_eq!(t(b"-9223372036854775808"), 1); // i64::MIN (asymmetry)
         assert_eq!(t(b"-9223372036854775809"), 0); // MIN - 1 → out of range
         assert_eq!(t(b"99999999999999999999999999"), 0); // wildly out of range
+    }
+}
+
+/// DD#93 Part C: `p?` — non-empty and every byte ASCII printable (0x20–0x7E).
+#[test]
+fn is_print_shape() {
+    unsafe {
+        let t = |s: &[u8]| sash_is_print(s.as_ptr(), s.len() as i64);
+        // printable: letters, digits, punctuation, and the space itself
+        assert_eq!(t(b"hello"), 1);
+        assert_eq!(t(b"hello world"), 1); // 0x20 is printable
+        assert_eq!(t(b" "), 1); // a lone space is non-empty and printable
+        assert_eq!(t(b"!"), 1); // 0x21, low edge of graph
+        assert_eq!(t(b"~"), 1); // 0x7E, high edge
+        assert_eq!(t(b"/path/to:file-42"), 1);
+        // empty is false (one-token sanitizer: "non-empty AND all in class")
+        assert_eq!(t(b""), 0);
+        // control characters are not printable
+        assert_eq!(t(b"a\tb"), 0); // 0x09
+        assert_eq!(t(b"a\nb"), 0); // 0x0A
+        assert_eq!(t(b"\x00"), 0);
+        assert_eq!(t(b"\x1f"), 0); // just below the range
+        assert_eq!(t(b"\x7f"), 0); // DEL, just above
+        // ASCII-only: high bytes are rejected (UTF-8 "café")
+        assert_eq!(t(b"caf\xc3\xa9"), 0);
+        assert_eq!(t(b"\x80"), 0);
+        assert_eq!(t(b"\xff"), 0);
+        // one bad byte anywhere poisons the whole value
+        assert_eq!(t(b"good\x07bad"), 0);
+    }
+}
+
+/// DD#93 Part C: `g?` — non-empty and every byte ASCII graph (0x21–0x7E),
+/// i.e. printable *non-space*.
+#[test]
+fn is_graph_shape() {
+    unsafe {
+        let t = |s: &[u8]| sash_is_graph(s.as_ptr(), s.len() as i64);
+        assert_eq!(t(b"hello"), 1);
+        assert_eq!(t(b"!"), 1); // 0x21, low edge
+        assert_eq!(t(b"~"), 1); // 0x7E, high edge
+        assert_eq!(t(b"/path/to:file-42"), 1);
+        // the space is the whole difference from p?
+        assert_eq!(t(b"hello world"), 0);
+        assert_eq!(t(b" "), 0);
+        assert_eq!(t(b"trailing "), 0);
+        // empty, controls, high bytes — same as p?
+        assert_eq!(t(b""), 0);
+        assert_eq!(t(b"a\tb"), 0);
+        assert_eq!(t(b"a\nb"), 0);
+        assert_eq!(t(b"\x7f"), 0);
+        assert_eq!(t(b"caf\xc3\xa9"), 0);
+        assert_eq!(t(b"\xff"), 0);
     }
 }
 

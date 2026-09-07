@@ -67,6 +67,85 @@ mod test {
         assert_eq!(p.statements.len(), 1);
         assert!(matches!(p.statements[0].kind, StmtKind::Pipeline(_)));
     }
+    // ── DD#93 Part C: content-shape tests `i?` / `p?` / `g?` ──────────────
+    // General unary test operators (usable anywhere a unary test is), spelled
+    // with a `?` suffix to stay out of bash's saturated `-X` namespace.
+
+    /// The `TestExpr` of a bare `[[ … ]]` statement, or None if it did not
+    /// parse into one.
+    fn parse_bare_test(source: &str) -> Option<TestExpr> {
+        let (program, _diags) = parse(source).ok()?;
+        match &program.statements.first()?.kind {
+            StmtKind::Command(c) => match &c.args.first()?.kind {
+                ExprKind::Test(t) => Some(t.clone()),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn test_shape_ops_are_unary_test_ops() {
+        for op in ["i?", "p?", "g?"] {
+            let src = format!("[[ {} $x ]]\n", op);
+            match parse_bare_test(&src) {
+                Some(TestExpr::Unary { op: got, operand }) => {
+                    assert_eq!(got, op, "op mismatch for {}", op);
+                    assert!(
+                        matches!(operand.kind, ExprKind::SimpleExpansion(ref n) if n == "x"),
+                        "operand for {}: {:?}",
+                        op,
+                        operand.kind
+                    );
+                }
+                other => panic!("{} did not parse as a unary test: {:?}", op, other),
+            }
+        }
+    }
+
+    #[test]
+    fn test_shape_ops_accept_literal_and_quoted_operands() {
+        for src in ["[[ i? 42 ]]\n", "[[ p? \"a b\" ]]\n", "[[ g? 'x' ]]\n"] {
+            assert!(
+                matches!(parse_bare_test(src), Some(TestExpr::Unary { .. })),
+                "did not parse as a unary test: {}",
+                src
+            );
+        }
+    }
+
+    #[test]
+    fn test_shape_ops_compose_with_not_and_and() {
+        assert!(matches!(
+            parse_bare_test("[[ ! i? $x ]]\n"),
+            Some(TestExpr::Not(_))
+        ));
+        match parse_bare_test("[[ i? $x && p? $y ]]\n") {
+            Some(TestExpr::And(l, r)) => {
+                assert!(matches!(*l, TestExpr::Unary { ref op, .. } if op == "i?"));
+                assert!(matches!(*r, TestExpr::Unary { ref op, .. } if op == "p?"));
+            }
+            other => panic!("expected And of two unary tests, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_shape_ops_are_general_operators() {
+        // Not attest-only: valid wherever a unary test is (DD#93 Part C).
+        parse_ok("if [[ p? $x ]]; then echo yes; fi\n");
+        parse_ok("while [[ g? $x ]]; do echo y; done\n");
+    }
+
+    /// DD#93 Part C renamed `-i` to `i?` — hard, no alias.
+    #[test]
+    fn test_dash_i_no_longer_a_unary_test_op() {
+        let got = parse_bare_test("[[ -i 42 ]]\n");
+        assert!(
+            !matches!(got, Some(TestExpr::Unary { ref op, .. }) if op == "-i"),
+            "`-i` should no longer parse as a unary test op, got {:?}",
+            got
+        );
+    }
 }
 
 // ── Logos prototype equivalence tests ────────────────────────────────
