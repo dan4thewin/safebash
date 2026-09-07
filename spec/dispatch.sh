@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup dispatch
-plan=49
+plan=58
 echo "1..$plan" >&3
 
 set +e
@@ -162,6 +162,65 @@ run_sash 'x=abc; [[ $x=~b { echo yes } || { echo no } ]]'
 # I8 nested dispatch (compact) inside loop
 run_sash 'for x in a b c; do [[ $x==b { echo "$x"; break } || { :; } ]]; done'
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk dp.co8
+
+# ── DD#94: line breaks and comments inside `[[ ]]` ──
+# Package A (DG 2026-09-07): newlines and comments are trivia inside the
+# brackets, so a multi-arm dispatch can be laid out one arm per line instead of
+# one long line. Arm BODIES are ordinary statement lists, where newlines still
+# separate statements.
+# 94.20 arms on separate lines
+run_sash 'x=bar
+[[ $x == foo { echo a; }
+   bar { echo b; }
+   || { echo c; } ]]'
+[[ $rc = 0 && $out = "b" && -z $err ]]; chk 94.20
+# 94.21 comments between arms
+run_sash 'x=zzz
+[[ $x == foo { echo a; }   # the foo case
+   # anything else falls through to the default
+   || { echo c; } ]]'
+[[ $rc = 0 && $out = "c" && -z $err ]]; chk 94.21
+# 94.22 a newline may also sit between the pattern and its `{`
+run_sash 'x=foo
+[[ $x == foo
+   { echo a; } ]]'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 94.22
+# 94.23 …and after the `==`, and before the closing `]]`
+run_sash 'x=foo
+[[ $x ==
+   foo { echo a; }
+]]'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 94.23
+# 94.24 a newline ENDS one arm's pattern list, so the next word starts a new
+# arm rather than being another pattern of the previous one. That is what keeps
+# a multi-line arm list unambiguous.
+run_sash 'x=bar
+[[ $x == foo { echo a; }
+   bar baz { echo b; } ]]'
+[[ $rc = 0 && $out = "b" && -z $err ]]; chk 94.24
+# 94.25 arm bodies still treat newlines as statement separators
+run_sash 'x=foo
+[[ $x == foo {
+     echo one
+     echo two
+   } ]]'
+[[ $rc = 0 && $out = "one
+two" && -z $err ]]; chk 94.25
+# 94.26 the `[[ ]]` TEST form spans lines too (`&&` at end of line)
+run_sash 'x=a; y=b
+if [[ -n $x &&
+      -n $y ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 94.26
+# 94.27 …and with the operator leading the continued line
+run_sash 'x=a; y=
+if [[ -n $x
+      && -n $y ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 94.27
+# 94.28 a comment inside a spanned test
+run_sash 'x=a; y=b
+if [[ -n $x &&   # host set
+      -n $y ]]; then echo yes; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 94.28
 
 set -e
 tally

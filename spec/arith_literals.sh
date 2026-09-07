@@ -65,7 +65,9 @@ run_sash 'echo $((0b2))'
 # empty prefix (no digits)
 run_sash 'echo $((0x))'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk nl.r9
-# a bare stray '#' in arith is a clean error, not a silent skip
+# a bare stray '#' in arith is a clean error, not a silent skip. Since DD#94 a
+# whitespace-preceded `#` is a COMMENT inside arithmetic, so this one eats the
+# closing `))` and the error is the unterminated-arithmetic one.
 run_sash 'echo $((5 # 3))'
 [[ $rc != 0 && -z $out && -n $err ]]; chk nl.r10
 

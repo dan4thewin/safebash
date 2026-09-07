@@ -1,6 +1,6 @@
 ---
 title: "`(( ))` internals: multi-line separator semantics + comments inside arithmetic"
-status: deferred
+status: done
 priority: P3
 kind: decision
 depends: []
@@ -11,7 +11,20 @@ gates:
   - "If any 'allow': implement in the arith re-lexer + comma loop (and/or arith_hash_word), add specs, note the divergence in DD#72 / a new DD"
 ---
 
-# `(( ))` internals — separators and comments (needs a DG decision)
+# `(( ))` internals — separators and comments (DECIDED, implemented)
+
+> **Resolved 2026-09-07 → DD#94.** DG chose the full permissive package after
+> reviewing worked examples: **1b** (newline ≡ comma, with the continuation
+> rule), **2b** (`;` ≡ `,` in a standalone `(( ))`), **3b** (whitespace-preceded
+> `#…EOL` comments), plus his addition — line breaks and comments inside a
+> **dispatch block**, and multi-line `[[ ]]` tests. Implemented in journal 251;
+> specs `arithmetic.sh` 94.1–94.10 and `dispatch.sh` 94.20–94.28. The
+> "also fix regardless" note below is moot: the confusing SB4035/SB4020
+> messages are gone because the constructs are now accepted. A separate silent
+> truncation was found and fixed on the way — an unterminated `(( ))` was
+> accepted at EOF and is now a hard error.
+
+## Original write-up (kept for the reasoning)
 
 Surfaced by DG (2026-08-31) while reviewing DD#85 (comments-are-trivia). Two
 linked questions about what is allowed *inside* `(( ))` / `$(( ))`. Both are

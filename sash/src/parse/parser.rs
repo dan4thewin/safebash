@@ -497,7 +497,7 @@ fn parse_c_style_for(scanner: &mut Scanner, span: Span) -> Result<Option<Stateme
     scanner.next(); // consume ((
 
     // Collect raw content for init; cond; update — split on ;
-    let content = collect_arith_content_raw(scanner)?;
+    let content = collect_arith_content_raw(scanner, span)?;
 
     // Split on ';' — should give us 3 parts
     let parts: Vec<&str> = content.splitn(3, ';').collect();
@@ -1123,6 +1123,57 @@ fn collect_arm_patterns(
 /// test); the cursor is at the first arm's `{`. Grammar:
 /// `PATTERN { group }` (repeated) then an optional `|| { group }` default,
 /// closed by `]]`. Lowers to `ir::Case` carrying the `==`/`=~` op.
+/// DD#94: inside `[[ … ]]` a newline is trivia, not a terminator — the
+/// construct is delimited by `]]`, so an arm list or a spanned test can be laid
+/// out over several lines. Called at the parser's structural points rather than
+/// in the scanner, because an arm BODY is an ordinary statement list where
+/// newlines still separate statements.
+fn skip_test_newlines(scanner: &mut Scanner) {
+    while matches!(scanner.peek().token, Tok::Newline) {
+        scanner.next();
+    }
+}
+
+/// The remaining arms of a dispatch, after the first. Stops at `]]`, or at the
+/// `|| { … }` default arm (which must be last). DD#94: newlines between arms
+/// are trivia.
+fn parse_dispatch_arms(
+    scanner: &mut Scanner,
+    span: Span,
+    op: &str,
+    items: &mut Vec<CaseItem>,
+) -> Result<(), Diagnostic> {
+    loop {
+        skip_test_newlines(scanner);
+        match scanner.peek().token {
+            Tok::OrOr => {
+                // `|| { group }` — the default arm (must be last). No synthetic
+                // `*` pattern: DD#71 makes `*` an ordinary literal, so the
+                // default is flagged instead.
+                scanner.next();
+                skip_test_newlines(scanner);
+                items.push(CaseItem {
+                    patterns: vec![],
+                    body: parse_brace_block(scanner, span)?,
+                    is_default: true,
+                });
+                return Ok(());
+            }
+            Tok::DblBracketClose => return Ok(()),
+            _ => {
+                let first = parse_operand_word(scanner)?;
+                let pats = collect_arm_patterns(scanner, vec![first], op)?;
+                skip_test_newlines(scanner);
+                items.push(CaseItem {
+                    patterns: pats,
+                    body: parse_brace_block(scanner, span)?,
+                    is_default: false,
+                });
+            }
+        }
+    }
+}
+
 fn parse_dispatch(
     scanner: &mut Scanner,
     span: Span,
@@ -1145,38 +1196,14 @@ fn parse_dispatch(
 
     let value = *left;
     let first_pats = collect_arm_patterns(scanner, vec![*right], &op)?;
+    skip_test_newlines(scanner);
     let mut items = vec![CaseItem {
         patterns: first_pats,
         body: parse_brace_block(scanner, span)?,
         is_default: false,
     }];
 
-    loop {
-        match scanner.peek().token {
-            Tok::OrOr => {
-                // `|| { group }` — the default arm (must be last). No synthetic
-                // `*` pattern: DD#71 makes `*` an ordinary literal, so the
-                // default is flagged instead.
-                scanner.next();
-                items.push(CaseItem {
-                    patterns: vec![],
-                    body: parse_brace_block(scanner, span)?,
-                    is_default: true,
-                });
-                break;
-            }
-            Tok::DblBracketClose => break,
-            _ => {
-                let first = parse_operand_word(scanner)?;
-                let pats = collect_arm_patterns(scanner, vec![first], &op)?;
-                items.push(CaseItem {
-                    patterns: pats,
-                    body: parse_brace_block(scanner, span)?,
-                    is_default: false,
-                });
-            }
-        }
-    }
+    parse_dispatch_arms(scanner, span, &op, &mut items)?;
 
     expect(scanner, &Tok::DblBracketClose, span, "expected ']]'")?;
 
@@ -1188,14 +1215,18 @@ fn parse_dispatch(
 
 /// Parse a test expression inside [[ ]].
 fn parse_test_expr(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
+    skip_test_newlines(scanner);
     parse_test_or(scanner, span)
 }
 
 fn parse_test_or(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
     let mut left = parse_test_and(scanner, span)?;
+    skip_test_newlines(scanner);
     while matches!(scanner.peek().token, Tok::OrOr) {
         scanner.next();
+        skip_test_newlines(scanner);
         let right = parse_test_and(scanner, span)?;
+        skip_test_newlines(scanner);
         left = TestExpr::Or(Box::new(left), Box::new(right));
     }
     Ok(left)
@@ -1203,9 +1234,12 @@ fn parse_test_or(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnost
 
 fn parse_test_and(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
     let mut left = parse_test_not(scanner, span)?;
+    skip_test_newlines(scanner);
     while matches!(scanner.peek().token, Tok::AndAnd) {
         scanner.next();
+        skip_test_newlines(scanner);
         let right = parse_test_not(scanner, span)?;
+        skip_test_newlines(scanner);
         left = TestExpr::And(Box::new(left), Box::new(right));
     }
     Ok(left)
@@ -1383,6 +1417,10 @@ fn parse_binary_rhs(
     scanner: &mut Scanner,
     span: Span,
 ) -> Result<TestExpr, Diagnostic> {
+    // DD#94: the operator has been consumed and an operand is owed, so a
+    // newline here continues the test rather than ending it — the same
+    // pending-operator rule the arithmetic separators use.
+    skip_test_newlines(scanner);
     let right = if op == "=~" {
         // DD#71: the `=~` RHS is an operand word (metachars literal, quote/
         // $-aware, absorbed to the next whitespace/`]]`). No bespoke regex

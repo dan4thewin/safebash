@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=174
+plan=184
 echo "1..$plan" >&3
 
 set +e
@@ -887,6 +887,75 @@ run_sash 'int a=0; (( 1 + a++ ))'
 run_sash 'int a=1; int b=0; (( a ? (b=2) : 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.36
 
+# ── DD#94: newlines / `;` / comments inside `(( ))` ──
+# Package A (DG 2026-09-07): a standalone `(( ))` is a sequence block — newline
+# and `;` sequence exactly like `,` (value = last). A newline is a separator
+# only after a COMPLETE sub-expression; with an operator pending it stays a
+# continuation. Whitespace-preceded `#…EOL` is a comment. Deliberate divergence
+# from bash, which rejects all three.
+# 94.1 newline sequences like a comma
+run_sash 'int a; int b
+(( a = 1
+   b = 2 ))
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 94.1
+# 94.2 …and a later line may use a name bound on an earlier one
+run_sash 'int a; int b; int c
+(( a = 2
+   b = a * 3
+   c = b + 1 ))
+echo "$a $b $c"'
+[[ $rc = 0 && $out = "2 6 7" && -z $err ]]; chk 94.2
+# 94.3 the continuation rule is preserved: a pending binary operator means the
+# newline continues the expression rather than separating (this is 3, not 1).
+run_sash 'x=$(( 1 +
+2 ))
+echo $x'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 94.3
+# 94.4 `;` sequences too, equal to `,`
+run_sash 'int a; int b
+(( a = 1; b = 2 ))
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 94.4
+# 94.5 mixed separators in one block
+run_sash 'int a; int b; int c
+(( a = 1, b = 2; c = 3 ))
+echo "$a$b$c"'
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk 94.5
+# 94.6 leading/trailing separators are harmless
+run_sash 'int a
+((
+   a = 5
+))
+echo $a'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 94.6
+# 94.7 an end-of-line comment inside a spanned `(( ))`
+run_sash 'int a; int b
+(( a = 1   # first
+   b = a + 1  # second
+))
+echo "$a$b"'
+[[ $rc = 0 && $out = "12" && -z $err ]]; chk 94.7
+# 94.8 …and inside a `$(( ))` value
+run_sash 'x=$(( 1 + 2   # sum
+))
+echo $x'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 94.8
+# 94.9 a `#` immediately after an alnum is STILL the DD#72 base-literal reject —
+# `16#ff` must stay a loud error, never a silently truncated 16.
+run_sash 'echo $(( 16#ff ))'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 94.9
+# 94.10 the C-style for-header is unaffected: `;` still delimits its three
+# slots, and `,` sequences within a slot. native,c — janet does not implement a
+# comma-sequenced for-init (janet-for-init-comma-sequence), pre-existing.
+if in_modes native,c; then
+    run_sash 'for (( i = 0, j = 10; i < 3; i++ )); do echo $i$j; done'
+    [[ $rc = 0 && $out = "010
+110
+210" && -z $err ]]; chk 94.10
+else
+    skip_chk 94.10
+fi
 
 set -e
 tally

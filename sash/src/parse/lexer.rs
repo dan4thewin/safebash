@@ -376,22 +376,31 @@ impl Scanner {
         }
     }
 
-    /// DD#72: inside `$(( ))` (`arith_depth > 0`), `#` is NOT a comment — emit
-    /// it as a single-char word so the arith re-lexer sees (and rejects)
-    /// `base#digits` instead of the scanner truncating at the `#`. `None` when
-    /// not in arith mode or the byte is not `#`.
+    /// DD#72/DD#94: inside `$(( ))` (`arith_depth > 0`), a `#` **immediately
+    /// after an alnum** is the base-literal marker — emit it as a single-char
+    /// word so the arith re-lexer sees (and rejects) `base#digits` instead of
+    /// the scanner truncating at the `#`. A `#` that is *not* alnum-adjacent is
+    /// an ordinary comment (DD#94 package A): it falls through to the normal
+    /// comment path, so `(( a = 1  # note` works like a comment anywhere else.
+    /// `None` when not in arith mode or the byte is not `#`.
     fn arith_hash_word(&mut self, start: usize) -> Option<SpannedToken> {
-        if self.arith_depth > 0 && self.source[self.pos] == b'#' {
-            self.pos += 1;
-            return Some(SpannedToken {
-                token: Tok::Word("#".to_string()),
-                span: LexSpan {
-                    start,
-                    end: self.pos,
-                },
-            });
+        if self.arith_depth == 0 || self.source[self.pos] != b'#' {
+            return None;
         }
-        None
+        // `16#ff` — the loud DD#72 reject. Without this the `#` would start a
+        // comment and silently truncate the literal to `16`.
+        let prev_is_alnum = self.pos > 0 && self.source[self.pos - 1].is_ascii_alphanumeric();
+        if !prev_is_alnum {
+            return None;
+        }
+        self.pos += 1;
+        Some(SpannedToken {
+            token: Tok::Word("#".to_string()),
+            span: LexSpan {
+                start,
+                end: self.pos,
+            },
+        })
     }
 
     /// `))` lexes as one `DblParenClose`, but that token is only meaningful

@@ -72,7 +72,7 @@ fn arith_bad_literal_error(span: Span, literal: &str) -> Diagnostic {
 /// Parse arithmetic expansion: content between $(( and ))
 /// Returns an Expr with Arithmetic kind.
 pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
-    let content = collect_arith_content(scanner)?;
+    let content = collect_arith_content(scanner, span)?;
     let expr = parse_arith_str(&content, span)?;
     // SB5007: reject mutations inside $(( ))
     reject_prefix_incdec(&expr, span)?;
@@ -98,7 +98,7 @@ pub fn parse_arith_expansion(scanner: &mut Scanner, span: Span) -> Result<Expr, 
 /// Parse an arithmetic command: (( expr )) as a statement.
 /// Returns a structured ArithExpr for the caller to classify and lower.
 pub fn parse_arith_command(scanner: &mut Scanner, span: Span) -> Result<ArithExpr, Diagnostic> {
-    let content = collect_arith_content(scanner)?;
+    let content = collect_arith_content(scanner, span)?;
     let expr = parse_arith_str(&content, span)?;
     // SB5007: reject prefix ++/-- at parse time
     reject_prefix_incdec(&expr, span)?;
@@ -211,17 +211,7 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
         span,
     };
     let expr = parser.parse_expr(0)?;
-    // Handle comma operator at top level
-    let result = if parser.peek() == Some(&ATok::Comma) {
-        let mut exprs = vec![expr];
-        while parser.peek() == Some(&ATok::Comma) {
-            parser.advance();
-            exprs.push(parser.parse_expr(0)?);
-        }
-        ArithExpr::Comma(exprs)
-    } else {
-        expr
-    };
+    let result = parser.fold_sequence(expr)?;
     reject_trailing_token(&parser, span)?;
     Ok(result)
 }
@@ -414,6 +404,9 @@ enum ATok {
     Question,
     Colon,
     Comma,
+    /// DD#94: a sequence separator — a newline (after a complete
+    /// sub-expression) or a `;`. Equivalent to `,` at the top level.
+    Sep,
     LParen,
     RParen,
 }
@@ -423,20 +416,34 @@ fn tokenize_arith(input: &str) -> Vec<ATok> {
     let mut tokens = Vec::new();
     let mut i = 0;
     while i < bytes.len() {
-        if bytes[i].is_ascii_whitespace() {
-            i += 1;
-        } else if let Some((tok, ni)) = next_arith_token(input, bytes, i) {
-            tokens.push(tok);
-            i = ni;
-        } else {
-            // Unknown byte (DD#72): a hard error, not a silent skip. Emit a
-            // BadLit spanning the byte so the parser rejects it (SB4035).
-            let ch = input[i..].chars().next().unwrap_or('?');
-            tokens.push(ATok::BadLit(ch.to_string()));
-            i += ch.len_utf8();
-        }
+        i = push_arith_token(input, bytes, i, &mut tokens);
     }
     tokens
+}
+
+/// One step of [`tokenize_arith`]: push at most one token and return the index
+/// just past what was consumed.
+fn push_arith_token(input: &str, bytes: &[u8], i: usize, tokens: &mut Vec<ATok>) -> usize {
+    // DD#94: a newline or `;` is a sequence separator. Whether it actually
+    // separates or merely continues the expression is settled in the parser —
+    // an operand position skips separators (so `1 +` ⏎ `2` is one expression),
+    // while a complete sub-expression ends at one.
+    if bytes[i] == b'\n' || bytes[i] == b';' {
+        tokens.push(ATok::Sep);
+        return i + 1;
+    }
+    if bytes[i].is_ascii_whitespace() {
+        return i + 1;
+    }
+    if let Some((tok, ni)) = next_arith_token(input, bytes, i) {
+        tokens.push(tok);
+        return ni;
+    }
+    // Unknown byte (DD#72): a hard error, not a silent skip. Emit a BadLit
+    // spanning the byte so the parser rejects it (SB4035).
+    let ch = input[i..].chars().next().unwrap_or('?');
+    tokens.push(ATok::BadLit(ch.to_string()));
+    i + ch.len_utf8()
 }
 
 /// Recognise one non-whitespace token starting at `bytes[i]`. Returns
@@ -925,7 +932,41 @@ impl ArithParser {
     }
 
     /// Parse prefix expressions and atoms.
+    /// DD#94: consume a run of sequence separators (`,` / `;` / newline).
+    fn skip_separators(&mut self) {
+        while matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
+            self.advance();
+        }
+    }
+
+    /// DD#94: fold a run of separator-delimited expressions into a sequence
+    /// (value = last), generalising the old comma-only fold. A separator is
+    /// *required* between expressions, so `(( 1 2 ))` stays the "unexpected
+    /// token" error it is today rather than silently becoming a sequence. A
+    /// trailing separator (`(( a=1 ⏎ ))`) simply ends the block.
+    fn fold_sequence(&mut self, first: ArithExpr) -> Result<ArithExpr, Diagnostic> {
+        if !matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
+            return Ok(first);
+        }
+        let mut exprs = vec![first];
+        while matches!(self.peek(), Some(ATok::Sep) | Some(ATok::Comma)) {
+            self.skip_separators();
+            if self.peek().is_none() {
+                break; // trailing separator
+            }
+            exprs.push(self.parse_expr(0)?);
+        }
+        Ok(if exprs.len() == 1 {
+            exprs.pop().unwrap()
+        } else {
+            ArithExpr::Comma(exprs)
+        })
+    }
+
     fn parse_prefix(&mut self) -> Result<ArithExpr, Diagnostic> {
+        // DD#94: an operand is still owed here — a binary operator or `=` is
+        // pending — so a separator is a line continuation, not a break.
+        self.skip_separators();
         match self.peek().cloned() {
             Some(ATok::PlusPlus) => self.parse_pre_incdec(true),
             Some(ATok::MinusMinus) => self.parse_pre_incdec(false),
@@ -1274,13 +1315,13 @@ fn lower_arith_test_structured(expr: &ArithExpr, span: Span) -> Statement {
 
 /// Collect raw arithmetic content as a string (for C-style for loops
 /// where we need to split on `;` before parsing).
-pub fn collect_arith_content_raw(scanner: &mut Scanner) -> Result<String, Diagnostic> {
-    collect_arith_content(scanner)
+pub fn collect_arith_content_raw(scanner: &mut Scanner, span: Span) -> Result<String, Diagnostic> {
+    collect_arith_content(scanner, span)
 }
 
 /// Collect raw content between the opening (( or $(( and closing )).
 /// Respects nesting of (( )) and ( ).
-fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
+fn collect_arith_content(scanner: &mut Scanner, span: Span) -> Result<String, Diagnostic> {
     let mut content = String::new();
     // Depth is a count of INDIVIDUAL open parens still needing a close, starting
     // at 2 for the already-consumed `((` / `$((`. Each `(` is +1 and each `)` is
@@ -1304,6 +1345,18 @@ fn collect_arith_content(scanner: &mut Scanner) -> Result<String, Diagnostic> {
     }
     scanner.exit_arith();
 
+    // DD#94: running out of input with parens still open is a hard error, never
+    // a silent truncation of the expression (the DD#72 principle). Since a `#`
+    // comment now runs to end of line inside arithmetic, the usual cause is a
+    // closing `))` sitting on a commented line, so say so.
+    if depth > 0 {
+        return Err(arith_error(
+            span,
+            "unterminated arithmetic — expected `))`. Note a `#` comment runs to \
+             the end of its line, so a `))` after one is part of the comment"
+                .to_string(),
+        ));
+    }
     Ok(content)
 }
 
@@ -1428,7 +1481,9 @@ fn tok_to_text(tok: &Tok) -> String {
         Tok::Gt => ">".to_string(),
         Tok::DblGt => ">>".to_string(),
         Tok::Semi => ";".to_string(),
-        Tok::Newline => " ".to_string(),
+        // DD#94: newlines are separators inside `(( ))`, so the raw
+        // collector must preserve them for the arith re-lexer.
+        Tok::Newline => "\n".to_string(),
         Tok::SingleQuoted(s) => format!("'{}'", s),
         Tok::DoubleQuoted(_) => "\"...\"".to_string(),
         Tok::LParen => "(".to_string(),
