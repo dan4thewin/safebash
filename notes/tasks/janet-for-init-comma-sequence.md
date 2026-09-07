@@ -6,6 +6,7 @@ kind: bug
 depends: []
 gates:
   - "janet: `for (( i = 0, j = 10; i < 3; i++ )); do echo $i$j; done` prints 010/110/210 (matches native/c)"
+  - "janet: control_flow.sh cf.f9 passes (`for (( i=0, j=10; i < 3; i++, j-- ))` — comma in BOTH the init and step slots)"
 ---
 
 ## Found
@@ -27,6 +28,17 @@ A single-assignment init is fine — `for (( i = 0; i < 3; i++ ))` works — so 
 gap is specifically an init slot holding a comma sequence: janet emits nothing
 that binds either name, and the loop condition then references an unknown
 symbol.
+
+## Also covered
+
+This is the same gap as the pre-existing failure **`janet:cf.f9`**
+(`control_flow.sh:145`), "C-style for with multiple init/update":
+
+    for (( i=0, j=10; i < 3; i++, j-- )); do echo "$i $j"; done
+
+which confirms the suspicion below — the **step** slot is affected as well as
+the init, so both want the same treatment. Fixing this task should un-fail
+cf.f9 and let 94.10 drop its `native,c` gate.
 
 ## Fix sketch
 
