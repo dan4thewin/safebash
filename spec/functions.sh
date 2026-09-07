@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=68
+plan=76
 echo "1..$plan" >&3
 
 set +e
@@ -464,6 +464,53 @@ f a b'
 run_sash 'fn f { echo "${*}"; }
 f a b'
 [[ $rc != 0 && -z $out && $err == *SB5045* ]]; chk 81.16
+
+# ── DD#74 addendum (DG 2026-09-07): the TAIL of an `&&`/`||` statement is not
+# a predicate ──
+# A function is a predicate when something branches on its status. In a bare
+# `A || B` statement the FINAL clause's status is just the statement's status —
+# nothing branches on it — so it is no more a predicate than a bare `f` is. The
+# earlier clauses still are (they decide whether the next one runs), and inside
+# an `if`/`while` CONDITION the whole list is a predicate, last clause included.
+# 74.30 the reported case: a user function as the tail of `[[ ]] ||`
+run_sash 'fn f { echo fallback; }
+x=
+[[ -n $x ]] || f'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 74.30
+# 74.31 …and as the tail of `[[ ]] &&`
+run_sash 'fn f { echo ran; }
+x=y
+[[ -n $x ]] && f'
+[[ $rc = 0 && $out = "ran" && -z $err ]]; chk 74.31
+# 74.32 …and after an ordinary command
+run_sash 'fn f { echo fallback; }
+false || f'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 74.32
+# 74.33 the LEFT operand still is a predicate — its status decides whether the
+# right side runs.
+run_sash 'fn f { echo hi; }
+f && echo yes'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.33
+# 74.34 …including a middle clause, which decides the one after it
+run_sash 'fn f { echo hi; }
+true && f && echo x'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.34
+# 74.35 inside an `if` CONDITION the whole list is a predicate — the last clause
+# included (DG 2026-09-07).
+run_sash 'fn f { echo hi; }
+if true && f; then echo yes; fi'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.35
+# 74.36 …same for a `while` condition
+run_sash 'fn f { echo hi; }
+while true && f; do echo x; done'
+[[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk 74.36
+# 74.37 the strongest form of the tail case: a BRANCHING function with no
+# `return` on any path — exactly what SB4037 exists to reject in a predicate,
+# and exactly what is fine as a tail.
+run_sash 'fn f { if true; then echo a; else echo b; fi; }
+x=
+[[ -n $x ]] || f'
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk 74.37
 
 set -e
 tally

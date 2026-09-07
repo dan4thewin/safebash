@@ -1884,8 +1884,18 @@ fn collect_predicate_uses_stmt(
         }
         StmtKind::While(w) => mark_condition_predicate(&w.condition, funcs, out),
         StmtKind::List(l) if matches!(l.op, ListOp::And | ListOp::Or) => {
+            // Only the LEFT operand is a predicate: its status decides whether
+            // the right side runs. The final clause's status is simply the
+            // statement's own status — nothing branches on it — so it is no
+            // more a predicate than a bare `f` statement is (DG 2026-09-07).
+            //
+            // `&&`/`||` are left-associative, so in `a && b && c` the left
+            // operand is the nested list `(a && b)`, and `mark_predicate_operand`
+            // marks both of ITS operands — correctly, since `b`'s status decides
+            // whether `c` runs. Inside an `if`/`while` condition the whole list
+            // is a predicate (via `mark_condition_predicate`), last clause
+            // included.
             mark_predicate_operand(&l.left, funcs, out);
-            mark_predicate_operand(&l.right, funcs, out);
         }
         StmtKind::Pipeline(p) if p.negated => {
             for c in &p.commands {

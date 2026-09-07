@@ -16,6 +16,31 @@ Boolean contexts (DD#70 dual / `reject-nonstatus-in-boolean-context`):
 `if f`, `elif`, `while f`, `until f`, `! f`, and `f` as an operand of
 `&&`/`||`.
 
+**Addendum (DG, 2026-09-07): the TAIL of an `&&`/`||` *statement* is not a
+boolean context.** A function is a predicate when something branches on its
+status. In a bare `A || B` statement the final clause's status is simply the
+statement's own status — nothing branches on it — so it is no more a predicate
+than a bare `f` statement is, and requiring `return` there was wrong:
+
+    [[ -n $x ]] || warn      # `warn` needs no `return`
+
+Everything else is unchanged, and deliberately so:
+
+- the **left** operand is still a predicate (its status decides whether the
+  right side runs);
+- so is a **middle** clause — `&&`/`||` are left-associative, so in
+  `a && b && c` the left operand is the nested list `(a && b)`, and `b`'s
+  status decides whether `c` runs;
+- inside an `if`/`while` **condition** the whole list is a predicate, **last
+  clause included** (DG: "an `if a && b && c { }` should probably still require
+  `c` to be a predicate") — a condition is consumed as a boolean, so its final
+  status decides the branch.
+
+The distinction falls out of where the marking happens: a condition goes
+through `mark_condition_predicate` → `mark_predicate_operand`, which recurses
+into *both* operands of a list, while a bare list statement marks only its
+left.
+
 A predicate's status comes **only** from an explicit `return`. There is **no
 implicit trailing status**: a bare trailing `grep` / `[[ … ]]` / `(( … ))` as
 a function's last statement is an ordinary statement — subject to DD#55
