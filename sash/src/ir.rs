@@ -470,6 +470,38 @@ fn attest_lit(e: &Expr) -> Option<&str> {
     }
 }
 
+/// What justifies an `attest` — the thing the author offers as evidence.
+///
+/// Normally a `[[ ]]` predicate. DD#93 Part D adds a second kind: an
+/// int-assignment whose success *is* the validation, `attest numstr
+/// (( myint = numstr ))` — the conversion can only succeed on a valid,
+/// representable i64, so performing it proves the property.
+#[derive(Debug, Clone, PartialEq)]
+pub enum AttestPredicate<'a> {
+    Test(&'a TestExpr),
+    /// `target` is the int name bound clean to the converted value.
+    ArithConvert {
+        target: &'a str,
+    },
+}
+
+/// DD#93 Part D: decode `(( TARGET = SOURCE ))` as an attest predicate, but
+/// only in exactly that shape and only when `SOURCE` is the attested name.
+/// A wider expression (`(( t = s * 2 ))`) is deliberately not this form — the
+/// predicate must be the plain conversion, or it proves nothing about `s`.
+/// `validate` reports the near-misses; here they are simply not the form.
+fn attest_arith_convert<'a>(a: &'a ArithExpr, attested: &str) -> Option<&'a str> {
+    let ArithExpr::Assign { var, value } = a else {
+        return None;
+    };
+    // `numstr` and `$numstr` are the same read in arithmetic.
+    let source = match value.as_ref() {
+        ArithExpr::Var(s) | ArithExpr::DollarVar(s) => s.as_str(),
+        _ => return None,
+    };
+    (source == attested).then_some(var.as_str())
+}
+
 /// Decoded `read` command flags — the SINGLE source of truth for how a
 /// `read`'s argument words are classified, shared by the transform (SSA
 /// lowering), validation (target collection + taint), and type checking.
@@ -569,15 +601,39 @@ fn take_read_byte_flag(joined: &str, words: &[String], i: usize, slot: &mut Opti
 }
 
 /// Decode the args of a `attest` command into a [`AttestForm`] plus the
-/// `[[ ]]` test. Returns `None` if the args don't match any attest shape
-/// (e.g. missing test, unexpected arity).
-pub fn classify_attest(args: &[Expr]) -> Option<(AttestForm<'_>, &TestExpr)> {
+/// predicate that justifies it. Returns `None` if the args don't match any
+/// attest shape (e.g. missing predicate, unexpected arity).
+pub fn classify_attest(args: &[Expr]) -> Option<(AttestForm<'_>, AttestPredicate<'_>)> {
     let (last, lead) = args.split_last()?;
-    let test = match &last.kind {
-        ExprKind::Test(t) => t,
-        _ => return None,
+    match &last.kind {
+        // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))`.
+        ExprKind::Arithmetic(a) => classify_attest_convert(lead, a),
+        ExprKind::Test(t) => Some((attest_form_from_lead(lead)?, AttestPredicate::Test(t))),
+        _ => None,
+    }
+}
+
+/// DD#93 Part D: the scalar-only conversion form. The lead is a single name,
+/// and the assignment's source must be that same name.
+fn classify_attest_convert<'a>(
+    lead: &'a [Expr],
+    a: &'a ArithExpr,
+) -> Option<(AttestForm<'a>, AttestPredicate<'a>)> {
+    let [only] = lead else {
+        return None;
     };
-    let form = match lead.len() {
+    let var = attest_lit(only)?;
+    let target = attest_arith_convert(a, var)?;
+    Some((
+        AttestForm::Scalar { var },
+        AttestPredicate::ArithConvert { target },
+    ))
+}
+
+/// The attest form implied by the names before the predicate: one is a scalar,
+/// two an indexed array, three a map (DD#61).
+fn attest_form_from_lead(lead: &[Expr]) -> Option<AttestForm<'_>> {
+    Some(match lead.len() {
         1 => AttestForm::Scalar {
             var: attest_lit(&lead[0])?,
         },
@@ -591,8 +647,7 @@ pub fn classify_attest(args: &[Expr]) -> Option<(AttestForm<'_>, &TestExpr)> {
             map: attest_lit(&lead[2])?,
         },
         _ => return None,
-    };
-    Some((form, test))
+    })
 }
 
 #[derive(Debug, Clone, PartialEq)]

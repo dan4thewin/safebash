@@ -60,24 +60,22 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     // SB5049 (DD#86): no shadowing — a typed declaration inside a function of a
     // top-level global name is a redeclaration error.
     check_no_shadow(program, &mut diags);
-    // SB4045: a fixed-arity value-intrinsic (`sub`, `len`, …) called via `$( )`
-    // with the wrong number of arguments.
     for &block in &blocks {
-        for stmt in block {
-            walk_all_exprs(stmt, &mut |expr| {
-                check_cmdsub_arity(expr, &mut diags);
-                // SB4020 (bug #3): an assignment / `++` / `--` inside a
-                // `$(( … ))` value can't take effect (the value path has no
-                // side effects) — direct to a standalone `(( … ))` statement.
-                check_arith_value_mutation(expr, &mut diags);
-            });
-            // SB4020 (bug #3): a `(( … ))` statement / condition whose embedded
-            // mutation the transform can't hoist (`++`/`--`, `a[i]`, or under
-            // `&&`/`||`/`?:`).
-            check_arith_test_placement(stmt, &mut diags);
-        }
+        check_block_value_rules(block, &mut diags);
     }
     diags
+}
+
+/// SB4045 (a fixed-arity value-intrinsic called via `$( )` with the wrong
+/// number of arguments) and the two SB4020 rules, over one block.
+fn check_block_value_rules(block: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in block {
+        check_stmt_value_rules(stmt, diags);
+        // SB4020 (bug #3): a `(( … ))` statement / condition whose embedded
+        // mutation the transform can't hoist (`++`/`--`, `a[i]`, or under
+        // `&&`/`||`/`?:`).
+        check_arith_test_placement(stmt, diags);
+    }
 }
 
 /// SB4044: a `const`/`readonly` variable cannot be reassigned. Flat model,
@@ -650,7 +648,33 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_dynexec(name, span, diags);
     check_trap(name, span, diags);
     check_test_constructs(name, c, span, diags);
+    check_attest_convert_names(name, c, span, diags);
     check_inline_glob(c, diags);
+}
+
+/// SB5053 (DD#93 Part D): `attest SOURCE (( TARGET = SOURCE ))` requires
+/// distinct names. Same-name in-place retype (`attest s (( s = s ))`) is
+/// deliberately deferred — the source is a string and the target an int, and
+/// collapsing them would retype a live name mid-statement.
+fn check_attest_convert_names(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    if name != "attest" {
+        return;
+    }
+    let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target })) =
+        classify_attest(&c.args)
+    else {
+        return;
+    };
+    if var == target {
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5053",
+            format!(
+                "attest `(( {target} = {var} ))` needs distinct names — the source is \
+                 a string and the target an int; use a different target name"
+            ),
+        ));
+    }
 }
 
 /// DD#69 (globs are array sugar): an unquoted `*` glob in command-argument
@@ -1202,6 +1226,72 @@ fn validate_arith_as_statement(
             ),
         ));
     }
+}
+
+/// DD#93 Part D: the int name an `attest SOURCE (( TARGET = SOURCE ))` binds,
+/// if the command is that form. The attest introduces TARGET, so scope
+/// collection must see it.
+pub fn attest_convert_target(c: &Command) -> Option<&str> {
+    if expr_literal_str(&c.name) != "attest" {
+        return None;
+    }
+    match classify_attest(&c.args)? {
+        (_, AttestPredicate::ArithConvert { target }) => Some(target),
+        _ => None,
+    }
+}
+
+/// DD#93 Part D: the `(( TARGET = SOURCE ))` an attest carries as its
+/// predicate, if it has one. Rules written for `$(( … ))` **rvalues** must
+/// skip it — it is a deliberate assignment whose store the transform emits,
+/// not a side-effect-free value expansion.
+pub fn attest_arith_predicate(stmt: &Statement) -> Option<&Expr> {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return None;
+    };
+    if expr_literal_str(&c.name) != "attest" {
+        return None;
+    }
+    let last = c.args.last()?;
+    matches!(&last.kind, ExprKind::Arithmetic(_)).then_some(last)
+}
+
+/// Every attest arith predicate anywhere in `stmt`, including nested bodies
+/// and conditions — `if attest n (( c = n ))` puts one inside an `If`, and the
+/// expression walkers reach it there, so the exemption has to as well.
+pub fn attest_arith_predicates(stmt: &Statement) -> Vec<*const Expr> {
+    let mut out = Vec::new();
+    collect_attest_arith_predicates(stmt, &mut out);
+    out
+}
+
+fn collect_attest_arith_predicates(stmt: &Statement, out: &mut Vec<*const Expr>) {
+    if let Some(p) = attest_arith_predicate(stmt) {
+        out.push(p as *const Expr);
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            collect_attest_arith_predicates(s, out);
+        }
+    }
+}
+
+/// Per-statement expression rules: `$( )` intrinsic arity (SB4045) and the
+/// `$(( … ))` value-mutation rule (SB4020).
+///
+/// DD#93 Part D: an attest's `(( TARGET = SOURCE ))` predicate is an
+/// assignment by design — the conversion IS the validation, and the transform
+/// emits the store — so it is not a `$(( … ))` rvalue and SB4020 must not see
+/// it. Collected recursively, since `if attest n (( c = n ))` nests one inside
+/// an `If`.
+fn check_stmt_value_rules(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let attest_preds = attest_arith_predicates(stmt);
+    walk_all_exprs(stmt, &mut |expr| {
+        check_cmdsub_arity(expr, diags);
+        if !attest_preds.contains(&(expr as *const Expr)) {
+            check_arith_value_mutation(expr, diags);
+        }
+    });
 }
 
 /// SB4020 (bug #3): an arithmetic mutation inside a `$(( … ))` **value** can't
@@ -3440,7 +3530,19 @@ fn taint_attest(
     tainted: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let Some((form, test)) = classify_attest(&c.args) else {
+    let Some((form, pred)) = classify_attest(&c.args) else {
+        return;
+    };
+    // DD#93 Part D: the conversion IS the predicate. It validates the source by
+    // construction (it can only succeed on a valid, representable i64), so
+    // there is no reference check to make — and it declassifies BOTH the
+    // source string and the int it binds.
+    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) = (&form, &pred) {
+        tainted.remove(*var);
+        tainted.remove(*target);
+        return;
+    }
+    let AttestPredicate::Test(test) = pred else {
         return;
     };
     // Each form reduces to: the binder name(s) the predicate must validate,
@@ -3791,7 +3893,14 @@ fn collect_scope_names(stmts: &[Statement], set: &mut HashSet<String>) {
                 set.insert(f.variable.clone());
                 collect_scope_names(&f.body, set);
             }
-            StmtKind::Command(c) => collect_read_targets(c, set),
+            StmtKind::Command(c) => {
+                collect_read_targets(c, set);
+                // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` introduces
+                // TARGET — the attest binds it to the converted value.
+                if let Some(target) = attest_convert_target(c) {
+                    set.insert(target.to_string());
+                }
+            }
             StmtKind::Function(_) => {} // separate scope — do not collect
             _ => collect_child_scope_names(stmt, set),
         }
@@ -4359,7 +4468,7 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
     if expr_literal_str(&c.name) != "attest" {
         return false;
     }
-    let Some((form, test)) = crate::ir::classify_attest(&c.args) else {
+    let Some((form, pred)) = crate::ir::classify_attest(&c.args) else {
         return false;
     };
     let mut attest_known = known.clone();
@@ -4377,7 +4486,16 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
         }
         crate::ir::AttestForm::Scalar { .. } => {}
     }
-    check_test_reads(test, &attest_known, sink);
+    match pred {
+        crate::ir::AttestPredicate::Test(test) => check_test_reads(test, &attest_known, sink),
+        // DD#93 Part D: the conversion reads the attested source; its target is
+        // a definition, introduced by the attest itself.
+        crate::ir::AttestPredicate::ArithConvert { .. } => {
+            if let crate::ir::AttestForm::Scalar { var } = form {
+                sink.collect_only(var);
+            }
+        }
+    }
     true
 }
 

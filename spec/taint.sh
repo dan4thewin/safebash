@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=140
+plan=149
 echo "1..$plan" >&3
 
 set +e
@@ -768,6 +768,75 @@ run_sash 'x=$(getenv HOME)
 attest x [[ -o $x ]]
 /bin/echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 93.26
+
+# ── DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` ──
+# The int-assignment IS the predicate: the conversion can only succeed on a
+# valid, representable i64, so performing it proves the property. On success it
+# declassifies BOTH names — the source string and the int it binds.
+# 93.30 the conversion binds the target, and the target is usable as an int
+run_sash 's=42
+attest s (( c = s ))
+echo $(( c + 1 ))'
+[[ $rc = 0 && $out = "43" && -z $err ]]; chk 93.30
+# 93.31 a value that is not a valid i64 aborts, like a failed [[ ]] predicate
+run_sash 's=abc
+attest s (( c = s ))
+echo $(( c ))'
+[[ $rc != 0 && -z $out ]]; chk 93.31
+# 93.31b …with the same attest-fail message the [[ ]] forms produce. native,c —
+# the janet harness discards runtime stderr (no `rerr`), though janet does
+# print the identical message.
+if in_modes native,c; then
+    run_sash 's=abc
+attest s (( c = s ))
+echo $(( c ))'
+    [[ $rc != 0 && $rerr == *"attest: s = 'abc' failed the gate"* ]]; chk 93.31b
+else
+    skip_chk 93.31b
+fi
+# 93.32 both names are declassified: the tainted SOURCE (here `$(arg 1)`) is
+# usable afterwards too, not just the bound int it was converted into.
+run_sash 'n=$(arg 1)
+attest n (( c = n ))
+/bin/echo $n $(( c ))' 42
+[[ $rc = 0 && $out = "42 42" && -z $err ]]; chk 93.32
+# 93.33 the `if` form branches instead of aborting (DG 2026-09-07).
+# native,c — janet emits `if attest` as an external command
+# (janet-if-attest-emitted-as-command).
+if in_modes native,c; then
+    run_sash 's=abc
+if attest s (( c = s )); then echo "ok $(( c ))"; else echo "not an int"; fi'
+    [[ $rc = 0 && $out = "not an int" && -z $err ]]; chk 93.33
+else
+    skip_chk 93.33
+fi
+# 93.34 …and on the else path the target is declared but unassigned, reading as
+# `0` — what a declared-but-unassigned int reads as everywhere else in sash.
+if in_modes native,c; then
+    run_sash 's=abc
+if attest s (( c = s )); then echo "ok"; else echo "c=[$(( c ))] [$c]"; fi'
+    [[ $rc = 0 && $out = "c=[0] [0]" && -z $err ]]; chk 93.34
+else
+    skip_chk 93.34
+fi
+# 93.35 distinct names are required — same-name in-place retype is deferred
+run_sash 's=42
+attest s (( s = s ))
+echo $(( s ))'
+[[ $rc != 0 && -z $out && $err == *SB5053* ]]; chk 93.35
+# 93.36 the bare source inside the `(( ))` is exempt from the DD#77 D1
+# disposition rule (SB4030) — the `attest` supplies the accountability, which
+# is the whole point of the form. The same expression outside an attest is
+# still rejected.
+run_sash 's=42
+echo $(( s + 1 ))'
+[[ $rc != 0 && $err == *SB4030* ]]; chk 93.36
+# 93.37 …and the attest's assignment is not a `$(( … ))` rvalue, so the
+# "assignment can't take effect" rule (SB4020) does not apply to it either.
+run_sash 's=7
+attest s (( c = s ))
+echo $(( c ))'
+[[ $rc = 0 && $out = "7" && -z $err ]]; chk 93.37
 
 set -e
 tally

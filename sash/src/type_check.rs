@@ -144,20 +144,48 @@ fn is_int_returning_intrinsic(name: &str) -> bool {
 /// `-> int` function); a string producer there is a type error — it belongs in
 /// a `$()` capture. Walks every `$(( ))` expr and bare `(( ))` test in the
 /// statement (and its nested bodies).
-fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+/// Every `$(( … ))` expression in `stmt`, checked with the DD#93 Part D
+/// attest predicates exempted from the disposition rule.
+fn check_stmt_arith_exprs(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let attest_preds = crate::validate::attest_arith_predicates(stmt);
     walk_all_exprs(stmt, &mut |e| {
         if let ExprKind::Arithmetic(a) = &e.kind {
-            check_arith_sexpr(a, e.span, env, errors);
-            check_arith_string_operands(a, e.span, env, errors);
-            check_arith_default_literals(a, errors);
-            check_arith_bare_map_subscript(a, e.span, env, errors);
+            let exempt = attest_preds.contains(&(e as *const Expr));
+            check_arith_expr_rules(a, e.span, exempt, env, errors);
         }
     });
+}
+
+/// The arithmetic rules that apply to one `$(( … ))` / `(( … ))` tree.
+///
+/// `disposition_exempt` skips the DD#77 D1 bare-string rule for a DD#93 Part D
+/// attest predicate: the bare source needs no `${s:-N}` / `${s:?msg}` there
+/// precisely because the `attest` supplies the accountability — that is the
+/// whole point of the form, and the conversion is gated on `i?`.
+fn check_arith_expr_rules(
+    a: &ArithExpr,
+    span: Span,
+    disposition_exempt: bool,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    check_arith_sexpr(a, span, env, errors);
+    if !disposition_exempt {
+        check_arith_string_operands(a, span, env, errors);
+    }
+    check_arith_default_literals(a, errors);
+    check_arith_bare_map_subscript(a, span, env, errors);
+}
+
+fn check_sexpr_string_producers(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    // DD#93 Part D: an attest's `(( TARGET = SOURCE ))` predicate is exempt
+    // from the DD#77 D1 disposition rule. The bare source needs no `${s:-N}` /
+    // `${s:?msg}` precisely because the `attest` supplies the accountability —
+    // that is the whole point of the form, and the conversion is gated on `i?`
+    // so it cannot misread or overflow.
+    check_stmt_arith_exprs(stmt, env, errors);
     if let StmtKind::ArithTest(a) = &stmt.kind {
-        check_arith_sexpr(a, stmt.span, env, errors);
-        check_arith_string_operands(a, stmt.span, env, errors);
-        check_arith_default_literals(a, errors);
-        check_arith_bare_map_subscript(a, stmt.span, env, errors);
+        check_arith_expr_rules(a, stmt.span, false, env, errors);
     }
     // arith-subscript model B: `(( m[k] = … ))` lowers to an assignment with an
     // *arithmetic* index; a map target there is the bare-`m[k]` write form.

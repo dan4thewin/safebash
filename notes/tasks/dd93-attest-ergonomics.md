@@ -29,8 +29,18 @@ Bundle from the 2026-09-06 bless-ergonomics thread. See
   Fixed a pre-existing user-reachable ICE on the way: attest predicates
   bypassed SB5028 (`check_test_constructs` gated on `[[` only), so
   `attest x [[ -v $x ]]` panicked in codegen.
-- [ ] **S4 arith-assign form** `attest numstr (( myint = numstr ))`. Both
-  clean, distinct names, scalar only, SB4030 exemption.
+- [x] **S4 arith-assign form** `attest numstr (( myint = numstr ))`. Both
+  clean, distinct names (SB5053), scalar only, SB4030 exemption (plus SB4020
+  and SB5031, which also had to learn the form). `AttestPredicate` enum beside
+  `AttestForm` — the form stays `Scalar`, only the justification differs.
+  Lowered onto existing SSA (an `i?`-gated `Attest` + an int assign), so no
+  backend learned a new form; janet emits it in full (eliding it left the
+  target undefined). `if` form supported, target declared-but-unassigned (`0`)
+  on the else path (DG 2026-09-07). specs taint.sh 93.30–93.37. 0 regressions,
+  24 new passing. Journal 250. Filed `janet-if-attest-emitted-as-command`
+  (janet doesn't implement `if attest` in ANY form — pre-existing).
+
+**DD#93 is complete** — all four stages landed.
 
 ## Follow-ups (not this bundle)
 

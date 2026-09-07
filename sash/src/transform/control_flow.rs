@@ -37,50 +37,131 @@ pub(super) fn flatten_elif(i: &If) -> If {
 
 /// DD#24: if attest VAR [[ test ]]; then ... fi
 /// Non-fatal attest: test branch gets clean var, else branch keeps tainted.
-fn lower_if_attest(
+/// Owned decode of an attest form, so the borrow of `c.args` ends before the
+/// version state is mutated.
+enum AttestKind {
+    Scalar(String),
+    Coll {
+        array: String,
+        binders: Vec<String>,
+        is_map: bool,
+    },
+}
+
+impl AttestKind {
+    fn of(form: &AttestForm) -> Self {
+        match form {
+            AttestForm::Scalar { var } => Self::Scalar(var.to_string()),
+            AttestForm::Indexed { binder, array } => Self::Coll {
+                array: array.to_string(),
+                binders: vec![binder.to_string()],
+                is_map: false,
+            },
+            AttestForm::Map { key, val, map } => Self::Coll {
+                array: map.to_string(),
+                binders: vec![key.to_string(), val.to_string()],
+                is_map: true,
+            },
+        }
+    }
+}
+
+/// DD#93 Part D in the `if` position: `if attest SOURCE (( TARGET = SOURCE ))`.
+///
+/// The conversion is the condition — `i?` on the source decides the branch,
+/// with no abort (that is what distinguishes the `if` form from the statement
+/// form). The target is declared before the branch so it exists on every path
+/// (defaulted, DG 2026-09-07) and bound to the converted value only in the
+/// then-branch, alongside the clean retag of the source.
+fn lower_if_attest_convert(
     i: &If,
-    c: &crate::ir::Command,
+    source_name: &str,
+    target_name: &str,
+    span: Span,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    let Some((form, test)) = crate::ir::classify_attest(&c.args) else {
-        return block;
-    };
-    let test = test.clone();
+    // Declared-but-unassigned (DG 2026-09-07): define the target before the
+    // branch so a read on the else path (or after the `if`) finds the name.
+    // `0` is what a declared-but-unassigned int reads as everywhere else in
+    // sash (`int x; echo "$x $(( x ))"` → `0 0`), so the else path agrees with
+    // the rest of the language rather than yielding an empty arithmetic value.
+    let declared = state.define(target_name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target: declared,
+        value: SsaValue::Literal("0".to_string()),
+    });
 
-    // Owned decode so the borrow of `c.args` ends before we mutate state.
-    enum Kind {
-        Scalar(String),
-        Coll {
-            array: String,
-            binders: Vec<String>,
-            is_map: bool,
-        },
+    let source = state.lookup(source_name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Test(SsaTest::Unary {
+            op: "i?".to_string(),
+            operand: SsaValue::Var(source.clone()),
+        }));
+
+    let then_block = ssa.new_block("if_attest_convert.then");
+    let merge_block = ssa.new_block("if_attest_convert.merge");
+    let pre_state = state.snapshot();
+
+    ssa.block_mut(block).terminator = Terminator::Branch {
+        true_block: then_block,
+        false_block: merge_block,
+        condition: "attest".to_string(),
+    };
+
+    // Then: the conversion succeeded — retag the source clean and bind the
+    // target to its value.
+    let source_ref = state.lookup(source_name);
+    let clean_source = state.define(source_name);
+    ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {
+        target: clean_source,
+        source: source_ref,
+    });
+    super::stmt_handlers::push_attest_convert_bind(
+        ssa,
+        state,
+        then_block,
+        source_name,
+        target_name,
+        span,
+    );
+
+    let then_exit = lower_stmts(&i.then_body, ssa, state, then_block);
+    ssa.block_mut(then_exit).terminator = Terminator::Goto(merge_block);
+
+    if let Some(else_body) = &i.else_body {
+        let else_block = ssa.new_block("if_attest_convert.else");
+        if let Terminator::Branch { false_block, .. } = &mut ssa.block_mut(block).terminator {
+            *false_block = else_block;
+        }
+        state.restore(&pre_state);
+        let else_exit = lower_stmts(else_body, ssa, state, else_block);
+        ssa.block_mut(else_exit).terminator = Terminator::Goto(merge_block);
+    } else {
+        state.restore(&pre_state);
     }
-    let kind = match form {
-        AttestForm::Scalar { var } => Kind::Scalar(var.to_string()),
-        AttestForm::Indexed { binder, array } => Kind::Coll {
-            array: array.to_string(),
-            binders: vec![binder.to_string()],
-            is_map: false,
-        },
-        AttestForm::Map { key, val, map } => Kind::Coll {
-            array: map.to_string(),
-            binders: vec![key.to_string(), val.to_string()],
-            is_map: true,
-        },
-    };
 
-    // Emit the attest check into `block`, leaving pass/fail in the
-    // test-result var for the branch below.
-    match &kind {
-        Kind::Scalar(_) => {
+    merge_block
+}
+
+/// Emit the attest check into the condition block, leaving pass/fail in the
+/// test-result var for the branch that follows.
+fn push_if_attest_condition(
+    kind: &AttestKind,
+    test: &TestExpr,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) {
+    match kind {
+        AttestKind::Scalar(_) => {
             ssa.block_mut(block)
                 .insts
-                .push(SsaInst::Test(test_to_ssa(&test, state)));
+                .push(SsaInst::Test(test_to_ssa(test, state)));
         }
-        Kind::Coll {
+        AttestKind::Coll {
             array,
             binders,
             is_map,
@@ -90,7 +171,7 @@ fn lower_if_attest(
             // the binders stay loop-local.
             let snap = state.snapshot();
             let binder_refs: Vec<VarRef> = binders.iter().map(|b| state.define(b)).collect();
-            let ssa_test = test_to_ssa(&test, state);
+            let ssa_test = test_to_ssa(test, state);
             state.restore(&snap);
             ssa.block_mut(block).insts.push(SsaInst::AttestAll {
                 source,
@@ -101,6 +182,35 @@ fn lower_if_attest(
             });
         }
     }
+}
+
+fn lower_if_attest(
+    i: &If,
+    c: &crate::ir::Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let Some((form, pred)) = crate::ir::classify_attest(&c.args) else {
+        return block;
+    };
+    // DD#93 Part D in the `if` position: the conversion is the condition.
+    // The target is *declared* before the branch (so it exists, defaulted, on
+    // the else path — DG 2026-09-07) and *assigned* only in the then-branch,
+    // where the conversion is known to have succeeded.
+    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) = (&form, &pred) {
+        let (var, target) = (var.to_string(), target.to_string());
+        let span = c.args.last().map(|a| a.span).unwrap_or_default();
+        return lower_if_attest_convert(i, &var, &target, span, ssa, state, block);
+    }
+    let AttestPredicate::Test(test) = pred else {
+        return block;
+    };
+    let test = test.clone();
+
+    let kind = AttestKind::of(&form);
+
+    push_if_attest_condition(&kind, &test, ssa, state, block);
 
     let then_block = ssa.new_block("if_attest.then");
     let merge_block = ssa.new_block("if_attest.merge");
@@ -116,7 +226,7 @@ fn lower_if_attest(
 
     // Then branch: retag the attested entity clean (only reached on pass).
     match &kind {
-        Kind::Scalar(var) => {
+        AttestKind::Scalar(var) => {
             let source_ref = state.lookup(var);
             // Resolve the predicate before defining the target version so
             // `$var` binds to the source (emit_attest evaluates the test
@@ -129,7 +239,7 @@ fn lower_if_attest(
                 test: ssa_test,
             });
         }
-        Kind::Coll { array, .. } => {
+        AttestKind::Coll { array, .. } => {
             let source_ref = state.lookup(array);
             let target_ref = state.define(array);
             ssa.block_mut(then_block).insts.push(SsaInst::AttestRetag {

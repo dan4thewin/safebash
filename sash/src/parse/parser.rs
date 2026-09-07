@@ -1480,8 +1480,9 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
     // (`attest BINDER… in ARRAY [[…]]`) collect binders then the array.
     // A bare unary operator (the DD#93 Part B shorthand, `attest VAR OP`)
     // also ends the lead — without this the operator would be swallowed as
-    // another binder and fail looking for `in`.
-    let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen)
+    // another binder and fail looking for `in`. So does `((` (DD#93 Part D,
+    // `attest SOURCE (( TARGET = SOURCE ))`), which is scalar-only.
+    let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen | Tok::DblParen)
         || peek_unary_test_op(scanner).is_some()
     {
         vec![lit(first)]
@@ -1501,6 +1502,16 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
         )?;
         args.push(Expr {
             kind: ExprKind::Test(test_expr),
+            span,
+        });
+    } else if matches!(scanner.peek().token, Tok::DblParen) {
+        // DD#93 Part D: the int-assignment is the predicate. Parsed as an
+        // attest predicate, never as a free arithmetic statement — which is
+        // why the bare source needs no DD#77 disposition here.
+        scanner.next();
+        let arith = parse_arith_command(scanner, span)?;
+        args.push(Expr {
+            kind: ExprKind::Arithmetic(Box::new(arith)),
             span,
         });
     } else if let Some(op) = peek_unary_test_op(scanner) {

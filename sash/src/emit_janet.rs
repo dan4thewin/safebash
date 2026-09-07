@@ -1162,33 +1162,73 @@ fn emit_command(out: &mut String, ctx: &mut EmitCtx, c: &Command, _stmt: &Statem
     let kind = BuiltinCmd::from_name(&cmd_name);
     let defaults_success = janet_cmd_defaults_success(&kind, &cmd_name);
     indent(out, depth);
-    match kind {
-        BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
-        // `:` no-op — succeeds silently (the canonical `|| :` discard).
-        BuiltinCmd::Noop => emit_janet_const_bool(out, true),
-        BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
-        BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
-        BuiltinCmd::Match => emit_janet_match(out, ctx, c),
-        BuiltinCmd::Break | BuiltinCmd::Continue => {
-            // Janet's (each) doesn't support continue; use (break) as approximation
-            writeln!(out, "(break)").unwrap();
-        }
-        BuiltinCmd::Return => emit_janet_return(out, ctx, c),
-        BuiltinCmd::Read => emit_janet_read(out, ctx, c),
-        BuiltinCmd::Argv => emit_janet_argv(out, ctx, c),
-        BuiltinCmd::Attest => emit_janet_attest(out, c),
-        BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
-        // `cat` is not a builtin — special-cased so we can shortcut
-        // stdin-only invocations to (file/read stdin :all).
-        _ if cmd_name == "cat" => emit_janet_cat(out, ctx, c),
-        _ => emit_janet_general_command(out, ctx, c, &cmd_name),
-    }
+    emit_command_body(out, ctx, c, &kind, &cmd_name);
     // DD#55/&&-||: every command must leave `__last_exit` set. The
     // success-builtins get an unconditional 0 here; true/false/`:`, test,
     // match and general commands set their own.
     if defaults_success {
         indent(out, depth);
         writeln!(out, "(set __last_exit 0)").unwrap();
+    }
+}
+
+/// The builtin dispatch for `emit_command`, split in two so neither half is a
+/// wide match: control-flow transfers first, then the value/IO commands.
+fn emit_command_body(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    c: &Command,
+    kind: &BuiltinCmd,
+    cmd_name: &str,
+) {
+    if emit_control_builtin(out, ctx, c, kind) {
+        return;
+    }
+    emit_value_builtin(out, ctx, c, kind, cmd_name);
+}
+
+/// Builtins that transfer control or produce only a status. Returns `false`
+/// if `kind` is not one of them.
+fn emit_control_builtin(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    c: &Command,
+    kind: &BuiltinCmd,
+) -> bool {
+    match kind {
+        // `:` no-op — succeeds silently (the canonical `|| :` discard).
+        BuiltinCmd::Noop => emit_janet_const_bool(out, true),
+        BuiltinCmd::Exit => emit_janet_exit(out, ctx, c),
+        BuiltinCmd::Return => emit_janet_return(out, ctx, c),
+        BuiltinCmd::Break | BuiltinCmd::Continue => {
+            // Janet's (each) doesn't support continue; use (break) as approximation
+            writeln!(out, "(break)").unwrap();
+        }
+        _ => return false,
+    }
+    true
+}
+
+/// Builtins that read, write or evaluate — plus the external fallback.
+fn emit_value_builtin(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    c: &Command,
+    kind: &BuiltinCmd,
+    cmd_name: &str,
+) {
+    match kind {
+        BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
+        BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
+        BuiltinCmd::Match => emit_janet_match(out, ctx, c),
+        BuiltinCmd::Read => emit_janet_read(out, ctx, c),
+        BuiltinCmd::Argv => emit_janet_argv(out, ctx, c),
+        BuiltinCmd::Attest => emit_janet_attest(out, ctx, c),
+        BuiltinCmd::Unset => emit_janet_unset(out, ctx, c),
+        // `cat` is not a builtin — special-cased so we can shortcut
+        // stdin-only invocations to (file/read stdin :all).
+        _ if cmd_name == "cat" => emit_janet_cat(out, ctx, c),
+        _ => emit_janet_general_command(out, ctx, c, cmd_name),
     }
 }
 
@@ -1296,11 +1336,50 @@ fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 
 /// `attest var [[ … ]]` — type/range/regex assertion. Janet emits a
 /// comment only; the runtime check is elided in the Janet backend.
-fn emit_janet_attest(out: &mut String, c: &Command) {
+///
+/// The DD#93 Part D form is the exception: `attest SOURCE (( TARGET = SOURCE ))`
+/// is not a predicate to elide but a *conversion that binds a value*, so
+/// dropping it would leave TARGET undefined (a janet compile error). It is
+/// emitted in full — the int gate, the same abort message native/c produce,
+/// and the binding.
+fn emit_janet_attest(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target })) =
+        classify_attest(&c.args)
+    {
+        emit_janet_attest_convert(out, ctx, var, target);
+        return;
+    }
     if !c.args.is_empty() {
         let var_name = expr_to_literal(&c.args[0]);
         writeln!(out, "# attest {} (validation elided in janet)", var_name).unwrap();
     }
+}
+
+/// DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` — the int gate, the
+/// abort message native/c produce, and the binding.
+fn emit_janet_attest_convert(out: &mut String, ctx: &mut EmitCtx, var: &str, target: &str) {
+    let src = if ctx.is_declared(var) {
+        var.to_string()
+    } else {
+        format!("(or (os/getenv \"{}\") \"\")", var)
+    };
+    let keyword = if ctx.is_declared(target) {
+        "set"
+    } else {
+        "var"
+    };
+    writeln!(
+        out,
+        "({kw} {t} (let [_s {s}] (if (_isint _s) (_num _s) \
+(do (eprint (get (dyn :args) 0) \": attest: {v} = '\" _s \"' failed the gate\") \
+(os/exit 1)))))",
+        kw = keyword,
+        t = target,
+        s = src,
+        v = var
+    )
+    .unwrap();
+    ctx.declare(target);
 }
 
 /// `unset var…` — set each declared variable to nil.

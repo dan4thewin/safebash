@@ -112,12 +112,21 @@ Constraints (DG, 2026-09-06):
   deferred) — a compile error otherwise.
 - **Scalar only** for now (the array analogue `attest e in a (( … ))` is a
   follow-up; the existing `attest e in a [[ … ]]` covers arrays meanwhile).
+- The **`if` form is supported** (DG, 2026-09-07): `if attest numstr
+  (( myint = numstr ))` branches instead of aborting, and `myint` is
+  *declared but not assigned* on the else path — it reads as `0`, which is
+  what a declared-but-unassigned int reads as everywhere else in sash.
+- Same-name (`attest s (( s = s ))`) is **SB5053**.
 
 The bare `numstr` inside the `(( ))` is **exempt from SB4030** (DD#77 D1's
 "bare string in arith needs a disposition") precisely because the `attest`
 supplies the accountability — the whole point of the form. It is parsed as an
 attest predicate, never lowered as a free arithmetic statement, so SB4030 never
-applies. This *completes* DD#77's `-i`/disposition split: `i?` validates-and-
+applies. Two sibling rules written for `$(( … ))` *rvalues* needed the same
+narrow exemption once the form existed: **SB4020** (an assignment inside
+`$(( … ))` can't take effect — here it is an assignment by design, and the
+transform emits the store) and **SB5031** (assigned nowhere — the attest
+*introduces* the target). This *completes* DD#77's `-i`/disposition split: `i?` validates-and-
 branches (keeps the string); the disposition converts inline; and now
 `attest … (( n = s ))` validates-converts-declassifies in one accountable step.
 

@@ -171,6 +171,64 @@ fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut Ve
     state.diagnostics.push(diag);
 }
 
+/// DD#93 Part D: lower `attest SOURCE (( TARGET = SOURCE ))`.
+///
+/// Two steps onto existing instructions, so no backend learns a new form:
+///  1. an `Attest` gated on `i?` — the same strict-i64 grammar the conversion
+///     needs, so a failure aborts with the usual attest-fail message, and a
+///     pass yields a clean version of the source;
+///  2. an ordinary int assignment of the (now validated) source to the target,
+///     exactly what `(( TARGET = SOURCE ))` would have emitted on its own.
+///
+/// The `i?` gate is what makes step 2 safe: `sash_atoi` cannot overflow on a
+/// value that has already been range-checked.
+pub(super) fn push_attest_arith_convert(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    source_name: &str,
+    target_name: &str,
+    span: crate::ir::Span,
+) {
+    let source = state.lookup(source_name);
+    let test = SsaTest::Unary {
+        op: "i?".to_string(),
+        operand: SsaValue::Var(source.clone()),
+    };
+    let clean_source = state.define(source_name);
+    ssa.block_mut(block).insts.push(SsaInst::Attest {
+        target: clean_source,
+        source,
+        test,
+    });
+    push_attest_convert_bind(ssa, state, block, source_name, target_name, span);
+}
+
+/// The binding half of the DD#93 Part D form: `TARGET = $(( SOURCE ))` against
+/// the current (post-gate, clean) version of the source.
+pub(super) fn push_attest_convert_bind(
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+    source_name: &str,
+    target_name: &str,
+    span: crate::ir::Span,
+) {
+    let value = expr_to_value(
+        &Expr {
+            kind: ExprKind::Arithmetic(Box::new(crate::ir::ArithExpr::Var(
+                source_name.to_string(),
+            ))),
+            span,
+        },
+        state,
+    );
+    let target = state.define(target_name);
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::Assign { target, value });
+}
+
 fn handle_attest_stmt(
     name: &str,
     c: &Command,
@@ -179,7 +237,19 @@ fn handle_attest_stmt(
     mut block: BlockId,
 ) -> BlockId {
     // DD#24 scalar / DD#61 array & map attest forms.
-    if let Some((form, test)) = classify_attest(&c.args) {
+    if let Some((form, pred)) = classify_attest(&c.args) {
+        // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))`.
+        if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) =
+            (&form, &pred)
+        {
+            let (var, target) = (var.to_string(), target.to_string());
+            let span = c.args.last().map(|a| a.span).unwrap_or_default();
+            push_attest_arith_convert(ssa, state, block, &var, &target, span);
+            return block;
+        }
+        let AttestPredicate::Test(test) = pred else {
+            return block;
+        };
         let test = test.clone();
         match form {
             AttestForm::Scalar { var } => {

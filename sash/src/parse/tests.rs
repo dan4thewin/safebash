@@ -163,6 +163,15 @@ mod test {
         }
     }
 
+    /// The `[[ ]]` predicate of an attest — the DD#93 Part D conversion form
+    /// carries no `TestExpr`.
+    fn attest_test<'a>(pred: &'a AttestPredicate<'a>) -> &'a TestExpr {
+        match pred {
+            AttestPredicate::Test(t) => t,
+            other => panic!("expected a [[ ]] predicate, got {:?}", other),
+        }
+    }
+
     /// A `TestExpr::Unary` as (op, operand variable name).
     fn unary_of(t: &TestExpr) -> (String, String) {
         match t {
@@ -177,9 +186,12 @@ mod test {
     #[test]
     fn test_attest_scalar_shorthand() {
         let args = attest_args("attest x i?\n");
-        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        let (form, pred) = classify_attest(&args).expect("should classify as attest");
         assert_eq!(form, AttestForm::Scalar { var: "x" });
-        assert_eq!(unary_of(test), ("i?".to_string(), "x".to_string()));
+        assert_eq!(
+            unary_of(attest_test(&pred)),
+            ("i?".to_string(), "x".to_string())
+        );
     }
 
     #[test]
@@ -190,12 +202,12 @@ mod test {
             ("attest e in a p?\n", "attest e in a [[ p? $e ]]\n"),
         ] {
             let (sa, fa) = (attest_args(short), attest_args(full));
-            let (sform, stest) = classify_attest(&sa).expect(short);
-            let (fform, ftest) = classify_attest(&fa).expect(full);
+            let (sform, spred) = classify_attest(&sa).expect(short);
+            let (fform, fpred) = classify_attest(&fa).expect(full);
             assert_eq!(sform, fform, "form differs: {} vs {}", short, full);
             assert_eq!(
-                unary_of(stest),
-                unary_of(ftest),
+                unary_of(attest_test(&spred)),
+                unary_of(attest_test(&fpred)),
                 "predicate differs: {} vs {}",
                 short,
                 full
@@ -206,7 +218,7 @@ mod test {
     #[test]
     fn test_attest_all_shorthand_binds_the_element_binder() {
         let args = attest_args("attest e in a i?\n");
-        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        let (form, pred) = classify_attest(&args).expect("should classify as attest");
         assert_eq!(
             form,
             AttestForm::Indexed {
@@ -214,7 +226,10 @@ mod test {
                 array: "a"
             }
         );
-        assert_eq!(unary_of(test), ("i?".to_string(), "e".to_string()));
+        assert_eq!(
+            unary_of(attest_test(&pred)),
+            ("i?".to_string(), "e".to_string())
+        );
     }
 
     #[test]
@@ -223,7 +238,7 @@ mod test {
         // map form already requires a predicate to reference BOTH binders
         // (SB5020), so binding only one would make the shorthand unusable.
         let args = attest_args("attest k v in m p?\n");
-        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        let (form, pred) = classify_attest(&args).expect("should classify as attest");
         assert_eq!(
             form,
             AttestForm::Map {
@@ -232,7 +247,7 @@ mod test {
                 map: "m"
             }
         );
-        match test {
+        match attest_test(&pred) {
             TestExpr::And(l, r) => {
                 assert_eq!(unary_of(l), ("p?".to_string(), "k".to_string()));
                 assert_eq!(unary_of(r), ("p?".to_string(), "v".to_string()));
@@ -252,6 +267,45 @@ mod test {
             assert!(
                 classify_attest(&args).is_some(),
                 "did not classify: {}",
+                src
+            );
+        }
+    }
+
+    // ── DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` ───────────────
+    // The int-assignment is the predicate: the conversion can only succeed on
+    // a valid, representable i64, so performing it proves the property.
+
+    #[test]
+    fn test_attest_arith_convert_form() {
+        let args = attest_args("attest numstr (( myint = numstr ))\n");
+        let (form, pred) = classify_attest(&args).expect("should classify as attest");
+        assert_eq!(form, AttestForm::Scalar { var: "numstr" });
+        assert_eq!(pred, AttestPredicate::ArithConvert { target: "myint" });
+    }
+
+    #[test]
+    fn test_attest_arith_convert_accepts_dollar_source() {
+        // `numstr` and `$numstr` are the same read in arithmetic.
+        let args = attest_args("attest numstr (( myint = $numstr ))\n");
+        let (_, pred) = classify_attest(&args).expect("should classify as attest");
+        assert_eq!(pred, AttestPredicate::ArithConvert { target: "myint" });
+    }
+
+    #[test]
+    fn test_attest_arith_convert_rejects_other_shapes() {
+        // Only the plain conversion is the predicate: a wider expression
+        // proves nothing about the source, and a different source proves
+        // nothing about the attested name.
+        for src in [
+            "attest s (( t = s * 2 ))\n",
+            "attest s (( t = other ))\n",
+            "attest s (( s ))\n",
+        ] {
+            let args = attest_args(src);
+            assert!(
+                classify_attest(&args).is_none(),
+                "should not classify as an attest form: {}",
                 src
             );
         }
