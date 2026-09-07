@@ -41,6 +41,16 @@ link is repaired, and they are exactly the removed/renamed tests (`48.2`'s
 "Compiler SHALL track cumulative shift count", the `57.x` convert clauses, …);
 those 6 are gone, leaving **0 orphans**.
 
+**DG on the end goal (2026-09-07):** *"there will ultimately be a specification
+document, presumably with a logical ordering and id scheme, built from the DD
+and spec work."* Filed as `specification-document` — not to start it, but so
+nearby work stops optimising for the wrong shape. It is the missing consumer the
+clause text points at, and it means the current clause **keying is provisional**
+(spec ids are DD-numbered by *chronology*, not logic, so expect a re-keying).
+The load-bearing constraint is `SUBSET.md`'s failure: a normative document not
+mechanically tied to the DDs and specs drifts, and a drifted spec is worse than
+none — DG deleted SUBSET.md as "worse than useless" for exactly that.
+
 Residual, filed as `spec-db-clause-text` (P3): **1255 clause ids / 3703 tests**
 have no requirement text. Not simply "DD#59 onward" — 21 of the 38 *seeded* DDs
 are only partially covered, and the named suites (`cov.*` 92 ids, `vm.*` 67,

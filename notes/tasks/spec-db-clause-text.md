@@ -5,8 +5,9 @@ priority: P3
 kind: effort
 depends: []
 gates:
-  - "DECIDE: is clause text worth authoring at all — nothing reads the `clauses` table today"
-  - "If yes, FIRST: export the existing 231 clauses to a version-controlled `spec/clauses.sql` seed (today the text exists only inside the binary spec.db)"
+  - "The consumer is the eventual specification document (`specification-document`, DG 2026-09-07) — so the text is wanted, but its KEYING is provisional"
+  - "DECIDE: author against today's chronological ids and re-key later, or wait for the document's logical id scheme"
+  - "FIRST (independent of the above): export the existing 231 clauses to a version-controlled `spec/clauses.sql` seed (today the text exists only inside the binary spec.db)"
   - "DECIDE: what `dd` value the named suites (`cov.*`, `vm.*`, `dp.*`, …) get — they are not DD-numbered but most map to a governing DD"
   - "Each slice: clause rows added, `SELECT COUNT(*) FROM tests WHERE NOT EXISTS (…clause…)` drops, `PRAGMA foreign_key_check` shrinks"
 ---
@@ -36,20 +37,24 @@ Two things this makes clear:
 Entirely unseeded DD families: 0, 26, 27, 60, 62, 64, 67, 74, 75, 77, 80, 81,
 84, 86, 88, 89, 91, 93, 94.
 
-## Do it at all? (gate 1)
+## The consumer (was gate 1, now answered)
 
-**Nothing reads `clauses` today.** No script, no report, no `mk` target — the
-only consumers of spec.db are `run.sh`'s summary and ad-hoc queries, and both
-use `test_status`. So 1255 hand-written requirement sentences would currently
-buy nothing.
+**Nothing reads `clauses` today** — no script, no report, no `mk` target; the
+only consumers of spec.db use `test_status`. That made "is this worth writing?"
+the first question.
 
-The argument *for* is traceability: "which DD clause does this test discharge?"
-and its inverse "which clauses have no test?" — the second is the valuable one,
-since it finds untested requirements. That only pays off with something that
-reports it (a `mk clauses` coverage query, or a column in the status block).
+DG answered it (2026-09-07): *"there will ultimately be a specification
+document, presumably with a logical ordering and id scheme, built from the DD
+and spec work."* The clause text is an **input** to that document — see
+`specification-document`. Its most valuable direction is the inverse query,
+"which clauses have no test?", i.e. untested requirements.
 
-Recommend deciding the consumer first; if there is none, close this as
-won't-do rather than authoring text nothing reads.
+**What that changes here:** the text is wanted, but the **keying is
+provisional**. Clause ids today mirror spec test ids, which are DD-numbered by
+*chronology*, not logic; the document will have its own scheme, so expect a
+re-keying step. Practical consequence — author text freely, but do not build
+tooling that assumes `clause_id == test id` permanently, and keep the text in a
+form that survives re-keying (which is exactly what the seed file below gives).
 
 ## Fragility to fix regardless (gate 2)
 
@@ -83,6 +88,9 @@ in the same commit (DD#93 and DD#94 would have been ~47 ids between them). The
 in-repo seed file from gate 2 is what makes that a one-line addition per spec.
 
 ## Related
+
+`specification-document` — the eventual consumer, and the source of the final
+id scheme.
 
 The residual is *not* an integrity fault — FKs are unenforced
 (`PRAGMA foreign_keys = 0`), so an unbacked `clause_id` is inert. The
