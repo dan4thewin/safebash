@@ -21,7 +21,14 @@ Bundle from the 2026-09-06 bless-ergonomics thread. See
   30 new passing (native/c/janet). Journal 248. Found+filed
   `janet-compound-if-condition-ignored` (P1) and fixed a missing
   `cargo:rerun-if-changed` in `sash-rt-tests/build.rs`.
-- [ ] **S3 unary shorthand** `attest VAR OP` (scalar + attest-all).
+- [x] **S3 unary shorthand** `attest VAR OP` (scalar + attest-all). Pure
+  parser sugar in `parse_attest` (+ `peek_unary_test_op` /
+  `attest_shorthand_test`); scalar and array bind the first name, the map form
+  binds both (`[[ OP $k && OP $v ]]`, DG 2026-09-07 — recorded in DD#93).
+  specs taint.sh 93.20–93.26. 0 regressions, 18 new passing. Journal 249.
+  Fixed a pre-existing user-reachable ICE on the way: attest predicates
+  bypassed SB5028 (`check_test_constructs` gated on `[[` only), so
+  `attest x [[ -v $x ]]` panicked in codegen.
 - [ ] **S4 arith-assign form** `attest numstr (( myint = numstr ))`. Both
   clean, distinct names, scalar only, SB4030 exemption.
 

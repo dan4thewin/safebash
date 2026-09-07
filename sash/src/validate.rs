@@ -751,7 +751,12 @@ fn check_trap(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
 
 /// SB5019/SB5023: numeric test ops + literal regex validation inside `[[ ]]`.
 fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
-    if name != "[[" {
+    // `attest` carries its predicate as a `Test` arg exactly like `[[ ]]`, so
+    // the same operator rules have to apply to both. Without `attest` here,
+    // `attest x [[ -v $x ]]` (and the DD#93 Part B shorthand `attest x -v`)
+    // slipped past SB5028 and reached codegen, which has no lowering for
+    // -v/-o/-R and panics — a user-reachable ICE.
+    if name != "[[" && name != "attest" {
         return;
     }
     for arg in &c.args {

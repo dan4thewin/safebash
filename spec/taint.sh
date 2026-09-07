@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=132
+plan=140
 echo "1..$plan" >&3
 
 set +e
@@ -688,6 +688,86 @@ fi
 # 93.3 diagnostic wording follows the rename ("without attest")
 run_sash 'x=$(getenv HOME); /bin/echo $x'
 [[ $rc != 0 && $err == *"without attest"* ]]; chk 93.3
+
+# ── DD#93 Part B: `attest VAR OP` unary shorthand ──
+# `attest x OP` ≡ `attest x [[ OP $x ]]`. The operator binds the attested name
+# by construction, so a wrong-var predicate (SB5020) cannot be written in this
+# form — strictly safer than the full form, and still greppable.
+# 93.20 the scalar shorthand declassifies, exactly like the full predicate.
+# native,c — janet elides attest validation and lacks getenv.
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME)
+attest x -n
+/bin/echo $x'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk 93.20
+else
+    skip_chk 93.20
+fi
+# 93.21 …and is exactly equivalent to spelling the predicate out
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME)
+attest x [[ -n $x ]]
+/bin/echo $x'
+    short=$out
+    run_sash 'x=$(getenv HOME)
+attest x -n
+/bin/echo $x'
+    [[ $rc = 0 && $out = "$short" && -z $err ]]; chk 93.21
+else
+    skip_chk 93.21
+fi
+# 93.22 attest-all (array): the operator binds the element binder
+if in_modes native,c; then
+    run_sash 'array a=(1 2 3)
+attest e in a i?
+/bin/echo @{a:?empty}'
+    [[ $rc = 0 && $out = "1 2 3" && -z $err ]]; chk 93.22
+else
+    skip_chk 93.22
+fi
+# 93.22b …and the shorthand really is checked per element: one non-integer
+# element aborts the attest-all at runtime.
+if in_modes native,c; then
+    run_sash 'array a=(1 x 3)
+attest e in a i?
+/bin/echo @{a:?empty}'
+    [[ $rc != 0 && -z $out ]]; chk 93.22b
+else
+    skip_chk 93.22b
+fi
+# 93.23 the map form binds BOTH binders — `attest k v in m OP` is
+# `[[ OP $k && OP $v ]]` (DG 2026-09-07), since a map predicate that references
+# only one binder is SB5020.
+if in_modes native,c; then
+    run_sash 'map m
+m[K]=V
+attest k v in m g?
+/bin/echo ${m[K]}'
+    [[ $rc = 0 && $out = "V" && -z $err ]]; chk 93.23
+else
+    skip_chk 93.23
+fi
+# 93.24 a shorthand whose predicate fails aborts at runtime, like the full form
+if in_modes native,c; then
+    run_sash 'x=$(getenv SASH_SPEC_UNSET_VAR)
+attest x -n
+/bin/echo $x'
+    [[ $rc != 0 && -z $out ]]; chk 93.24
+else
+    skip_chk 93.24
+fi
+# 93.25 `-v`/`-o`/`-R` stay SB5028-rejected in the shorthand (DD#93). These
+# reach codegen otherwise, which has no lowering for them and ICEs.
+run_sash 'x=$(getenv HOME)
+attest x -v
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 93.25
+# 93.26 …and in the full predicate form too. `attest` carries its predicate as
+# a Test arg exactly like `[[ ]]`, so the same operator rules apply to both.
+run_sash 'x=$(getenv HOME)
+attest x [[ -o $x ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5028* ]]; chk 93.26
 
 set -e
 tally

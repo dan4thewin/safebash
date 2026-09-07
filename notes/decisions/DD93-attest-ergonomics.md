@@ -51,6 +51,16 @@ binder:
 
     attest e in a i?       ≡  attest e in a [[ i? $e ]]
 
+The two-binder **map** form applies the operator to **both** binders
+(DG, 2026-09-07):
+
+    attest k v in m i?     ≡  attest k v in m [[ i? $k && i? $v ]]
+
+which follows from the existing rule that a map predicate must reference both
+the key and the value (SB5020, `taint_attest`) — binding only one would make
+the shorthand unusable for maps, and declassify a name the predicate never
+checked.
+
 Because the operator binds the attested var/binder *by construction*, the
 shorthand makes a wrong-var predicate (SB5020) impossible to write — strictly
 safer than the full form, and still greppable (`attest` remains). Sugar only:
@@ -121,6 +131,12 @@ branches (keeps the string); the disposition converts inline; and now
 - DD#77 dispositions and the strict-int grammar (`parse_strict_i64`) — `i?`
   reuses it verbatim; `p?`/`g?` add sibling `is_print`/`is_graph` validators.
 - `-o` / `-v` / `-R` stay SB5028-rejected in every form (full and shorthand).
+  Implementing Stage 3 exposed that this was **not** in fact true: SB5028 was
+  only applied to `[[ ]]` *commands*, so an `attest` predicate carrying one of
+  them (`attest x [[ -v $x ]]`) escaped validation and reached codegen, which
+  has no lowering for it and panicked — a user-reachable ICE. `attest` now
+  goes through the same `check_test_constructs` gate as `[[ ]]` (which also
+  brings the DD#39/#63 regex-literal checks to attest predicates).
 
 ## Staging
 

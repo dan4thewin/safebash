@@ -146,6 +146,116 @@ mod test {
             got
         );
     }
+
+    // ── DD#93 Part B: `attest VAR OP` unary shorthand ─────────────────────
+    // `attest x OP` ≡ `attest x [[ OP $x ]]`. Because the operator binds the
+    // attested name by construction, a wrong-var predicate is unwriteable.
+
+    /// The args of an `attest` statement.
+    fn attest_args(source: &str) -> Vec<Expr> {
+        let p = parse_ok(source);
+        match &p.statements[0].kind {
+            StmtKind::Command(c) => {
+                assert!(matches!(&c.name.kind, ExprKind::Literal(n) if n == "attest"));
+                c.args.clone()
+            }
+            other => panic!("expected an attest command, got {:?}", other),
+        }
+    }
+
+    /// A `TestExpr::Unary` as (op, operand variable name).
+    fn unary_of(t: &TestExpr) -> (String, String) {
+        match t {
+            TestExpr::Unary { op, operand } => match &operand.kind {
+                ExprKind::SimpleExpansion(n) => (op.clone(), n.clone()),
+                other => panic!("expected a $var operand, got {:?}", other),
+            },
+            other => panic!("expected a unary test, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_attest_scalar_shorthand() {
+        let args = attest_args("attest x i?\n");
+        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        assert_eq!(form, AttestForm::Scalar { var: "x" });
+        assert_eq!(unary_of(test), ("i?".to_string(), "x".to_string()));
+    }
+
+    #[test]
+    fn test_attest_shorthand_is_sugar_for_the_full_form() {
+        for (short, full) in [
+            ("attest x i?\n", "attest x [[ i? $x ]]\n"),
+            ("attest x -n\n", "attest x [[ -n $x ]]\n"),
+            ("attest e in a p?\n", "attest e in a [[ p? $e ]]\n"),
+        ] {
+            let (sa, fa) = (attest_args(short), attest_args(full));
+            let (sform, stest) = classify_attest(&sa).expect(short);
+            let (fform, ftest) = classify_attest(&fa).expect(full);
+            assert_eq!(sform, fform, "form differs: {} vs {}", short, full);
+            assert_eq!(
+                unary_of(stest),
+                unary_of(ftest),
+                "predicate differs: {} vs {}",
+                short,
+                full
+            );
+        }
+    }
+
+    #[test]
+    fn test_attest_all_shorthand_binds_the_element_binder() {
+        let args = attest_args("attest e in a i?\n");
+        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        assert_eq!(
+            form,
+            AttestForm::Indexed {
+                binder: "e",
+                array: "a"
+            }
+        );
+        assert_eq!(unary_of(test), ("i?".to_string(), "e".to_string()));
+    }
+
+    #[test]
+    fn test_attest_map_shorthand_binds_both_binders() {
+        // DG 2026-09-07: `attest k v in m OP` ≡ `[[ OP $k && OP $v ]]`. The
+        // map form already requires a predicate to reference BOTH binders
+        // (SB5020), so binding only one would make the shorthand unusable.
+        let args = attest_args("attest k v in m p?\n");
+        let (form, test) = classify_attest(&args).expect("should classify as attest");
+        assert_eq!(
+            form,
+            AttestForm::Map {
+                key: "k",
+                val: "v",
+                map: "m"
+            }
+        );
+        match test {
+            TestExpr::And(l, r) => {
+                assert_eq!(unary_of(l), ("p?".to_string(), "k".to_string()));
+                assert_eq!(unary_of(r), ("p?".to_string(), "v".to_string()));
+            }
+            other => panic!("expected `OP $k && OP $v`, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_attest_full_forms_still_parse() {
+        for src in [
+            "attest x [[ i? $x ]]\n",
+            "attest e in a [[ -n $e ]]\n",
+            "attest k v in m [[ -n $k && -n $v ]]\n",
+        ] {
+            let args = attest_args(src);
+            assert!(
+                classify_attest(&args).is_some(),
+                "did not classify: {}",
+                src
+            );
+        }
+    }
 }
 
 // ── Logos prototype equivalence tests ────────────────────────────────

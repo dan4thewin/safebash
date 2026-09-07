@@ -1478,7 +1478,12 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
 
     // Scalar form `attest VAR [[…]]` is just the var; attest-all forms
     // (`attest BINDER… in ARRAY [[…]]`) collect binders then the array.
-    let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen) {
+    // A bare unary operator (the DD#93 Part B shorthand, `attest VAR OP`)
+    // also ends the lead — without this the operator would be swallowed as
+    // another binder and fail looking for `in`.
+    let mut args: Vec<Expr> = if matches!(scanner.peek().token, Tok::DblBracketOpen)
+        || peek_unary_test_op(scanner).is_some()
+    {
         vec![lit(first)]
     } else {
         parse_attest_all_lead(scanner, first, span)?
@@ -1498,6 +1503,13 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
             kind: ExprKind::Test(test_expr),
             span,
         });
+    } else if let Some(op) = peek_unary_test_op(scanner) {
+        // DD#93 Part B: `attest VAR OP` ≡ `attest VAR [[ OP $VAR ]]`.
+        scanner.next();
+        args.push(Expr {
+            kind: ExprKind::Test(attest_shorthand_test(&op, &args, span)),
+            span,
+        });
     }
 
     Ok(Some(Statement {
@@ -1510,6 +1522,47 @@ fn parse_attest(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic> 
         }),
         span,
     }))
+}
+
+/// A bare word that is a unary test operator (`-n`, `-f`, `i?`, …). Same
+/// shape check as `try_parse_leading_unary`: `-X`, or a DD#93 `?`-suffixed
+/// content-shape test, with `len() >= 2` excluding the bare `?`.
+fn peek_unary_test_op(scanner: &mut Scanner) -> Option<String> {
+    let Tok::Word(ref w) = scanner.peek().token else {
+        return None;
+    };
+    let looks_like_op = w.len() >= 2 && (w.starts_with('-') || w.ends_with('?'));
+    (looks_like_op && is_unary_test_op(w)).then(|| w.clone())
+}
+
+/// DD#93 Part B: build the predicate the shorthand stands for, applying `op`
+/// to the name(s) the attest binds. The operator binds them by construction,
+/// so a wrong-var predicate (SB5020) cannot be written in this form.
+///
+/// `lead` is the args collected so far — the same shapes `classify_attest`
+/// decodes: `[var]`, `[binder, array]`, `[key, val, map]`.
+fn attest_shorthand_test(op: &str, lead: &[Expr], span: Span) -> TestExpr {
+    let unary = |name: &str| TestExpr::Unary {
+        op: op.to_string(),
+        operand: Box::new(Expr {
+            kind: ExprKind::SimpleExpansion(name.to_string()),
+            span,
+        }),
+    };
+    let name_at = |i: usize| match lead.get(i).map(|e| &e.kind) {
+        Some(ExprKind::Literal(s)) => s.clone(),
+        // Unreachable via parse_attest (the lead is always literals); a
+        // wrong name here would be caught by taint_attest's SB5020.
+        _ => String::new(),
+    };
+    match lead.len() {
+        // `attest k v in m OP` — the map form's predicate must validate BOTH
+        // binders (SB5020), so the operator applies to each (DG 2026-09-07).
+        3 => TestExpr::And(Box::new(unary(&name_at(0))), Box::new(unary(&name_at(1)))),
+        // `attest x OP` (scalar) and `attest e in a OP` (attest-all) both
+        // bind the first name — the variable, or the element binder.
+        _ => unary(&name_at(0)),
+    }
 }
 
 /// DD#61 attest-all lead: `BINDER… in ARRAY`. Returns the binder literals
