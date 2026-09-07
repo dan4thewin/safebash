@@ -594,10 +594,10 @@ fn sig_scan_arith(a: &ArithExpr, sig: &mut ArgSig) {
     match a {
         ArithExpr::Var(name) | ArithExpr::DollarVar(name) => sig_record_name(name, sig),
         ArithExpr::Expansion(e) => sig_scan_expr(e, sig),
-        ArithExpr::Subscript { name, index } | ArithExpr::SubscriptAssign { name, index, .. } => {
-            if name == "args" {
-                sig_record_arith_index(index, sig);
-            }
+        ArithExpr::Subscript { name, index } | ArithExpr::SubscriptAssign { name, index, .. }
+            if name == "args" =>
+        {
+            sig_record_arith_index(index, sig);
         }
         _ => {}
     }

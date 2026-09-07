@@ -859,15 +859,13 @@ fn validate_expr(expr: &Expr, _parent_span: Span, diags: &mut Vec<Diagnostic>) {
         ExprKind::ParameterExpansion(pe) => {
             validate_var_name(&pe.name, expr.span, diags);
         }
-        ExprKind::Literal(s) => {
-            // SB5006: ** globstar is always rejected (even quoted, it's never valid)
-            if s.contains("**") {
-                diags.push(Diagnostic::error_span(
-                    expr.span,
-                    "SB5006",
-                    format!("sash has only `*` globs — `**` is omitted: {}", s),
-                ));
-            }
+        // SB5006: ** globstar is always rejected (even quoted, it's never valid)
+        ExprKind::Literal(s) if s.contains("**") => {
+            diags.push(Diagnostic::error_span(
+                expr.span,
+                "SB5006",
+                format!("sash has only `*` globs — `**` is omitted: {}", s),
+            ));
         }
         _ => {}
     }
