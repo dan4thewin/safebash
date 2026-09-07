@@ -29,10 +29,15 @@ if [[ -s $tsv ]]; then
 CREATE TEMP TABLE _import(test_id TEXT, status TEXT, ts TEXT);
 .import $tsv _import
 
--- Auto-register tests (clause_id = test_id with trailing letters stripped)
+-- Auto-register tests. The clause_id is the test id with the MODE: prefix and
+-- any sub-test letter suffix stripped ('native:56.12a' -> '56.12'), which is
+-- the scheme the clauses table is keyed by. Deriving it from the full prefixed
+-- id (as this did before 2026-09-07) pointed every test at a clause that could
+-- not exist, silently breaking DD traceability for all three modes.
 INSERT OR IGNORE INTO tests(id, clause_id, description, kind)
 SELECT test_id,
-       rtrim(test_id, 'abcdefghijklmnopqrstuvwxyz'),
+       rtrim(substr(test_id, instr(test_id, ':') + 1),
+             'abcdefghijklmnopqrstuvwxyz'),
        '',
        'spec'
 FROM _import

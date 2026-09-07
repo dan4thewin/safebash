@@ -25,12 +25,27 @@ and a full 3-mode sweep afterwards reproduces exactly 4034/33/390 with no row
 resurrected (`run.sh` auto-registers unknown test ids, so a re-added test simply
 re-registers).
 
-**Two pre-existing oddities left alone** (reported, not touched): every test has
-a dangling `clause_id` (the import derives one by rtrim but never inserts the
-clause), so `foreign_key_check` reports ~4457 violations — cosmetic, FKs are not
-enforced (`PRAGMA foreign_keys = 0`), and the prune *reduced* the count. And 237
-`clauses` rows are now unreferenced remnants of the old bare-id scheme; they
-still hold DD clause text, so removing them is DG's call.
+**Then DG said "fix both" — and the first one turned out to be a real bug that
+made the second a trap.** The `clauses` table holds **DD requirement text**
+("Strings SHALL carry both a pointer and a length", dd 12) keyed by the *bare*
+id scheme. When the harness added the `MODE:` prefix, `run.sh` kept deriving
+`clause_id` from the full prefixed id, so every test pointed at a clause that
+could not exist — DD traceability had been silently broken for all three
+backends ever since. Fixed by deriving through the prefix
+(`native:56.12a` → `56.12`), in `run.sh` and as a backfill: **231 of 237 clauses
+relink, 754 tests regain their DD text**.
+
+That is why pruning the "237 orphans" as asked would have been wrong — it would
+have deleted 231 valid DD clauses. Only **6** are genuinely orphaned once the
+link is repaired, and they are exactly the removed/renamed tests (`48.2`'s
+"Compiler SHALL track cumulative shift count", the `57.x` convert clauses, …);
+those 6 are gone, leaving **0 orphans**.
+
+Residual, reported not fixed: `clauses` only ever covered **DD#5–58** (38 DDs),
+so 3703 tests (DD#60+ and the named suites `cov.*`/`vm.*`/`dp.*`/`cf.*`/…) still
+have a clause_id with no row behind it. That is a data-completeness gap — the
+table was seeded once and never kept up — not an integrity fault; FKs are
+unenforced (`PRAGMA foreign_keys = 0`).
 
 ## ════════ STATUS (2026-09-07) — DD#94: newlines/`;`/comments are trivia inside `(( ))` and `[[ ]]` ════════
 
