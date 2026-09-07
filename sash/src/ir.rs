@@ -470,6 +470,55 @@ fn attest_lit(e: &Expr) -> Option<&str> {
     }
 }
 
+/// DD#77 D1: invoke `f(name)` for each bare variable *read* (`x` / `$x`) in an
+/// `ArithExpr` tree. Does NOT descend into `Expansion` (a `${…}` disposition or
+/// subscript is not a bare operand) and does NOT visit assignment/inc-dec
+/// targets (those are mutation lvalues, tracked as arith-native ints).
+pub fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match a {
+        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => f(name),
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_var_reads(left, f);
+            walk_arith_var_reads(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_var_reads(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_var_reads(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_var_reads(cond, f);
+            walk_arith_var_reads(true_val, f);
+            walk_arith_var_reads(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_var_reads(e, f);
+            }
+        }
+        // Descend into a bare subscript's *index* (and a subscript-assign's
+        // index/value): the index is itself an arithmetic operand, so a bare
+        // string used there (`a[s]`) is the same string→int crossing (DD#77 D1).
+        // The array *name* is handled by the bare-subscript cell check, not
+        // here.
+        ArithExpr::Subscript { index, .. } => walk_arith_var_reads(index, f),
+        ArithExpr::SubscriptAssign { index, value, .. } => {
+            walk_arith_var_reads(index, f);
+            walk_arith_var_reads(value, f);
+        }
+        // NOT descended: `FuncCall` args (e.g. `${#s}` = `len(s)` passes the
+        // *name*, not an int operand — flagging it would be a false positive);
+        // `Expansion` (a `${…}` disposition/subscript); `Literal` /
+        // Pre/PostIncDec (no bare read to flag).
+        _ => {}
+    }
+}
+
 /// What justifies an `attest` — the thing the author offers as evidence.
 ///
 /// Normally a `[[ ]]` predicate. DD#93 Part D adds a second kind: an
@@ -479,27 +528,39 @@ fn attest_lit(e: &Expr) -> Option<&str> {
 #[derive(Debug, Clone, PartialEq)]
 pub enum AttestPredicate<'a> {
     Test(&'a TestExpr),
-    /// `target` is the int name bound clean to the converted value.
+    /// `target` is the int name bound clean to `value`'s result. `value` may be
+    /// any expression that **references** the attested name (DG 2026-09-07):
+    /// a wider RHS still requires the conversion to succeed, so the `i?` gate
+    /// proves exactly as much as it does for the plain `(( t = s ))`.
     ArithConvert {
         target: &'a str,
+        value: &'a ArithExpr,
     },
 }
 
-/// DD#93 Part D: decode `(( TARGET = SOURCE ))` as an attest predicate, but
-/// only in exactly that shape and only when `SOURCE` is the attested name.
-/// A wider expression (`(( t = s * 2 ))`) is deliberately not this form — the
-/// predicate must be the plain conversion, or it proves nothing about `s`.
-/// `validate` reports the near-misses; here they are simply not the form.
-fn attest_arith_convert<'a>(a: &'a ArithExpr, attested: &str) -> Option<&'a str> {
+/// DD#93 Part D: decode `(( TARGET = EXPR ))` as an attest predicate. `EXPR`
+/// must **reference** the attested name — computing it requires converting that
+/// name, so the `i?` gate proves the same thing whether the RHS is the bare
+/// source (`(( t = s ))`) or a wider expression (`(( t = s * 2 ))`).
+///
+/// An RHS that never mentions the attested name proves nothing about it, and is
+/// not this form; `validate` reports those (SB5054).
+fn attest_arith_convert<'a>(a: &'a ArithExpr, attested: &str) -> Option<(&'a str, &'a ArithExpr)> {
     let ArithExpr::Assign { var, value } = a else {
         return None;
     };
-    // `numstr` and `$numstr` are the same read in arithmetic.
-    let source = match value.as_ref() {
-        ArithExpr::Var(s) | ArithExpr::DollarVar(s) => s.as_str(),
-        _ => return None,
-    };
-    (source == attested).then_some(var.as_str())
+    arith_references_var(value, attested).then(|| (var.as_str(), value.as_ref()))
+}
+
+/// True if `a` reads `name` (`name` or `$name`) anywhere.
+pub fn arith_references_var(a: &ArithExpr, name: &str) -> bool {
+    let mut found = false;
+    walk_arith_var_reads(a, &mut |n| {
+        if n == name {
+            found = true;
+        }
+    });
+    found
 }
 
 /// Decoded `read` command flags — the SINGLE source of truth for how a
@@ -623,10 +684,10 @@ fn classify_attest_convert<'a>(
         return None;
     };
     let var = attest_lit(only)?;
-    let target = attest_arith_convert(a, var)?;
+    let (target, value) = attest_arith_convert(a, var)?;
     Some((
         AttestForm::Scalar { var },
-        AttestPredicate::ArithConvert { target },
+        AttestPredicate::ArithConvert { target, value },
     ))
 }
 

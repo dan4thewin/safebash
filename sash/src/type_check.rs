@@ -358,55 +358,6 @@ fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str)) {
     }
 }
 
-/// DD#77 D1: invoke `f(name)` for each bare variable *read* (`x` / `$x`) in an
-/// `ArithExpr` tree. Does NOT descend into `Expansion` (a `${…}` disposition or
-/// subscript is not a bare operand) and does NOT visit assignment/inc-dec
-/// targets (those are mutation lvalues, tracked as arith-native ints).
-fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
-    match a {
-        ArithExpr::Var(name) | ArithExpr::DollarVar(name) => f(name),
-        ArithExpr::BinOp { left, right, .. } => {
-            walk_arith_var_reads(left, f);
-            walk_arith_var_reads(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            walk_arith_var_reads(operand, f)
-        }
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            walk_arith_var_reads(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            walk_arith_var_reads(cond, f);
-            walk_arith_var_reads(true_val, f);
-            walk_arith_var_reads(false_val, f);
-        }
-        ArithExpr::Comma(exprs) => {
-            for e in exprs {
-                walk_arith_var_reads(e, f);
-            }
-        }
-        // Descend into a bare subscript's *index* (and a subscript-assign's
-        // index/value): the index is itself an arithmetic operand, so a bare
-        // string used there (`a[s]`) is the same string→int crossing (DD#77 D1).
-        // The array *name* is handled by the bare-subscript cell check, not
-        // here.
-        ArithExpr::Subscript { index, .. } => walk_arith_var_reads(index, f),
-        ArithExpr::SubscriptAssign { index, value, .. } => {
-            walk_arith_var_reads(index, f);
-            walk_arith_var_reads(value, f);
-        }
-        // NOT descended: `FuncCall` args (e.g. `${#s}` = `len(s)` passes the
-        // *name*, not an int operand — flagging it would be a false positive);
-        // `Expansion` (a `${…}` disposition/subscript); `Literal` /
-        // Pre/PostIncDec (no bare read to flag).
-        _ => {}
-    }
-}
-
 /// DD#77 D1: a bare string-typed variable used as an arithmetic operand is a
 /// compile error — the string→int crossing must carry a disposition
 /// (`${s:-N}` default / `${s:?msg}` abort). Only KNOWN-string vars are flagged;
@@ -418,7 +369,7 @@ fn check_arith_string_operands(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    walk_arith_var_reads(a, &mut |name| {
+    crate::ir::walk_arith_var_reads(a, &mut |name| {
         if env.vars.contains_key(name) && env.var_type(name) == VarType::String {
             errors.push(TypeError {
                 message: format!(

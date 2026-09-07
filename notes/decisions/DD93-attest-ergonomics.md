@@ -106,10 +106,41 @@ predicate). On success it declassifies **both** names —
   named-var model), and
 - `myint` is **bound clean** to the i64 value of `numstr`.
 
+### Addendum — wider RHS, and predicate reads (DG, 2026-09-07)
+
+DG hit `attest x (( y = x*2 ))` and it ICE'd. Two rules came out of it.
+
+**The RHS may be any expression that REFERENCES the attested name.** Computing
+a wider RHS still requires the conversion to succeed, so the `i?` gate proves
+exactly what it proves for the plain `(( t = s ))`; the target simply binds the
+computed value instead of the bare conversion:
+
+    attest n (( bytes = n * 1024 ))
+
+An RHS that never mentions the attested name proves nothing about it and is
+**SB5054**, as is a `(( … ))` that is not an assignment at all.
+
+**A predicate may not read another TAINTED name.** The attested name is tainted
+by definition — vouching for it is the point — but every *other* read must be
+clean. This matters most here because an arith predicate yields a **value**
+that is bound to the clean target, so an unchecked read would launder tainted
+data outright:
+
+    z=$(getenv PATH)
+    attest x (( y = 0*x + z ))    # SB5020 — z would be laundered into clean y
+
+DG extended the same rule to the `[[ ]]` forms (2026-09-07), where only a
+boolean escapes and the leak is bounded to influence over the gate: *even one
+bit of influence over a declassification should not be free.* Previously
+`attest x [[ $x == $z ]]` with a tainted `z` was accepted.
+
+The SB4030 exemption narrows accordingly — it covers the attested name, not
+every bare string in the predicate.
+
 Constraints (DG, 2026-09-06):
 - **Both clean** (source and target).
 - **Distinct names** required: `myint` ≠ `numstr` (same-name in-place retype is
-  deferred) — a compile error otherwise.
+  deferred) — **SB5053** otherwise.
 - **Scalar only** for now (the array analogue `attest e in a (( … ))` is a
   follow-up; the existing `attest e in a [[ … ]]` covers arrays meanwhile).
 - The **`if` form is supported** (DG, 2026-09-07): `if attest numstr

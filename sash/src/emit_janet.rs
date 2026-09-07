@@ -1343,10 +1343,10 @@ fn emit_janet_return(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 /// emitted in full — the int gate, the same abort message native/c produce,
 /// and the binding.
 fn emit_janet_attest(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
-    if let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target })) =
+    if let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value })) =
         classify_attest(&c.args)
     {
-        emit_janet_attest_convert(out, ctx, var, target);
+        emit_janet_attest_convert(out, ctx, var, target, value);
         return;
     }
     if !c.args.is_empty() {
@@ -1355,9 +1355,15 @@ fn emit_janet_attest(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     }
 }
 
-/// DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))` — the int gate, the
-/// abort message native/c produce, and the binding.
-fn emit_janet_attest_convert(out: &mut String, ctx: &mut EmitCtx, var: &str, target: &str) {
+/// DD#93 Part D: `attest SOURCE (( TARGET = EXPR ))` — the int gate on SOURCE,
+/// the abort message native/c produce, and the binding of TARGET to EXPR.
+fn emit_janet_attest_convert(
+    out: &mut String,
+    ctx: &mut EmitCtx,
+    var: &str,
+    target: &str,
+    value: &crate::ir::ArithExpr,
+) {
     let src = if ctx.is_declared(var) {
         var.to_string()
     } else {
@@ -1368,14 +1374,17 @@ fn emit_janet_attest_convert(out: &mut String, ctx: &mut EmitCtx, var: &str, tar
     } else {
         "var"
     };
+    // `_s` only carries the value into the failure message; the bound
+    // expression reads the source variable by name like any other arithmetic.
     writeln!(
         out,
-        "({kw} {t} (let [_s {s}] (if (_isint _s) (_num _s) \
+        "({kw} {t} (let [_s {s}] (if (_isint _s) {e} \
 (do (eprint (get (dyn :args) 0) \": attest: {v} = '\" _s \"' failed the gate\") \
 (os/exit 1)))))",
         kw = keyword,
         t = target,
         s = src,
+        e = arith_expr_to_janet(value, ctx),
         v = var
     )
     .unwrap();

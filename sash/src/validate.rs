@@ -652,17 +652,35 @@ fn validate_command(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     check_inline_glob(c, diags);
 }
 
-/// SB5053 (DD#93 Part D): `attest SOURCE (( TARGET = SOURCE ))` requires
-/// distinct names. Same-name in-place retype (`attest s (( s = s ))`) is
-/// deliberately deferred — the source is a string and the target an int, and
-/// collapsing them would retype a live name mid-statement.
+/// SB5053/SB5054 (DD#93 Part D): the shape rules for an arith attest predicate.
+///
+/// SB5054 — a `(( … ))` an attest carries must be `(( TARGET = EXPR ))` with
+/// `EXPR` referencing the attested name. A near-miss used to fall through to
+/// the generic command path and reach the value lowering as a mutation, which
+/// panicked (`unreachable!` in `expr_handlers`); it is a clean error now.
+///
+/// SB5053 — the names must be distinct. Same-name in-place retype
+/// (`attest s (( s = s ))`) is deliberately deferred: the source is a string
+/// and the target an int, and collapsing them would retype a live name
+/// mid-statement.
 fn check_attest_convert_names(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     if name != "attest" {
         return;
     }
-    let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target })) =
+    let Some((AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, .. })) =
         classify_attest(&c.args)
     else {
+        // Carries a `(( … ))` but does not decode as the form.
+        if let Some(attested) = attest_arith_near_miss(c) {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5054",
+                format!(
+                    "attest's `(( … ))` must be `(( TARGET = EXPR ))` where EXPR reads \
+                     ${attested} — otherwise the attest proves nothing about it"
+                ),
+            ));
+        }
         return;
     };
     if var == target {
@@ -1236,7 +1254,27 @@ pub fn attest_convert_target(c: &Command) -> Option<&str> {
         return None;
     }
     match classify_attest(&c.args)? {
-        (_, AttestPredicate::ArithConvert { target }) => Some(target),
+        (_, AttestPredicate::ArithConvert { target, .. }) => Some(target),
+        _ => None,
+    }
+}
+
+/// An `attest NAME (( … ))` whose arithmetic does not decode as the DD#93
+/// Part D form. Returns the attested name, for the diagnostic.
+fn attest_arith_near_miss(c: &Command) -> Option<&str> {
+    let last = c.args.last()?;
+    if !matches!(&last.kind, ExprKind::Arithmetic(_)) {
+        return None;
+    }
+    if classify_attest(&c.args).is_some() {
+        return None;
+    }
+    // Scalar lead only — `attest x (( … ))`; anything else is a different error.
+    let [only] = &c.args[..c.args.len() - 1] else {
+        return None;
+    };
+    match &only.kind {
+        ExprKind::Literal(s) => Some(s.as_str()),
         _ => None,
     }
 }
@@ -1250,6 +1288,15 @@ pub fn attest_arith_predicate(stmt: &Statement) -> Option<&Expr> {
         return None;
     };
     if expr_literal_str(&c.name) != "attest" {
+        return None;
+    }
+    // Only a predicate that actually DECODES earns the exemption. Exempting a
+    // near-miss as well is what let it slip past SB4020 into the value path and
+    // panic there; it is SB5054 now.
+    if !matches!(
+        classify_attest(&c.args),
+        Some((_, AttestPredicate::ArithConvert { .. }))
+    ) {
         return None;
     }
     let last = c.args.last()?;
@@ -3514,6 +3561,73 @@ fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
     }
 }
 
+/// The names a predicate may read while still tainted: the attested
+/// variable, or the attest-all binders.
+fn attest_exempt_names<'a>(form: &AttestForm<'a>) -> Vec<&'a str> {
+    match form {
+        AttestForm::Scalar { var } => vec![var],
+        AttestForm::Indexed { binder, .. } => vec![binder],
+        AttestForm::Map { key, val, .. } => vec![key, val],
+    }
+}
+
+/// SB5020 (DG 2026-09-07): a predicate may read the attested name(s) — they are
+/// tainted by definition, that is exactly what is being vouched for — but every
+/// OTHER read must be clean.
+///
+/// For a `[[ ]]` predicate only a boolean escapes, so an unvouched read is
+/// merely influence over the gate; for the DD#93 Part D arith form the
+/// predicate's *value* is bound to the clean target, so an unchecked read would
+/// launder tainted data outright. Both are rejected: a declassification should
+/// not turn on data the author has not vouched for.
+fn check_attest_predicate_reads(
+    form: &AttestForm,
+    pred: &AttestPredicate,
+    span: Span,
+    tainted: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut others = tainted.clone();
+    for name in attest_exempt_names(form) {
+        others.remove(name);
+    }
+    if others.is_empty() {
+        return;
+    }
+    match pred {
+        AttestPredicate::Test(test) => {
+            walk_test_operands(test, &mut |e| check_expr_taint(e, &others, diags))
+        }
+        AttestPredicate::ArithConvert { value, .. } => {
+            crate::ir::walk_arith_var_reads(value, &mut |name| {
+                if others.contains(name) {
+                    diags.push(Diagnostic::error_span(
+                        span,
+                        "SB5020",
+                        format!("tainted variable ${name} used without attest"),
+                    ));
+                }
+            })
+        }
+    }
+}
+
+/// Visit every operand expression of a test tree.
+fn walk_test_operands(test: &TestExpr, f: &mut impl FnMut(&Expr)) {
+    match test {
+        TestExpr::Unary { operand, .. } => f(operand),
+        TestExpr::Binary { left, right, .. } => {
+            f(left);
+            f(right);
+        }
+        TestExpr::Not(inner) => walk_test_operands(inner, f),
+        TestExpr::And(l, r) | TestExpr::Or(l, r) => {
+            walk_test_operands(l, f);
+            walk_test_operands(r, f);
+        }
+    }
+}
+
 /// `attest` taint handling for all three forms (DD#24 scalar, DD#61
 /// indexed array and map). Removes taint from the attested entity if the
 /// predicate validates the required name(s); otherwise emits SB5020.
@@ -3533,11 +3647,16 @@ fn taint_attest(
     let Some((form, pred)) = classify_attest(&c.args) else {
         return;
     };
+    // The attested name(s) are tainted by definition — vouching for them is the
+    // point — but any OTHER tainted read in the predicate is rejected.
+    check_attest_predicate_reads(&form, &pred, span, tainted, diags);
     // DD#93 Part D: the conversion IS the predicate. It validates the source by
     // construction (it can only succeed on a valid, representable i64), so
     // there is no reference check to make — and it declassifies BOTH the
     // source string and the int it binds.
-    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) = (&form, &pred) {
+    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, .. }) =
+        (&form, &pred)
+    {
         tainted.remove(*var);
         tainted.remove(*target);
         return;
@@ -4488,12 +4607,15 @@ fn try_check_attest_stmt(c: &Command, known: &HashSet<String>, sink: &mut ReadSi
     }
     match pred {
         crate::ir::AttestPredicate::Test(test) => check_test_reads(test, &attest_known, sink),
-        // DD#93 Part D: the conversion reads the attested source; its target is
-        // a definition, introduced by the attest itself.
-        crate::ir::AttestPredicate::ArithConvert { .. } => {
+        // DD#93 Part D: the conversion reads the attested source and every other
+        // name its RHS mentions (`(( y = x + k ))` reads `k` too, or `k` would
+        // look like a dead variable). The target is a definition, introduced by
+        // the attest itself.
+        crate::ir::AttestPredicate::ArithConvert { value, .. } => {
             if let crate::ir::AttestForm::Scalar { var } = form {
                 sink.collect_only(var);
             }
+            crate::ir::walk_arith_var_reads(value, &mut |name| sink.collect_only(name));
         }
     }
     true

@@ -182,12 +182,14 @@ fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut Ve
 ///
 /// The `i?` gate is what makes step 2 safe: `sash_atoi` cannot overflow on a
 /// value that has already been range-checked.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn push_attest_arith_convert(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
     source_name: &str,
     target_name: &str,
+    value: &crate::ir::ArithExpr,
     span: crate::ir::Span,
 ) {
     let source = state.lookup(source_name);
@@ -201,24 +203,24 @@ pub(super) fn push_attest_arith_convert(
         source,
         test,
     });
-    push_attest_convert_bind(ssa, state, block, source_name, target_name, span);
+    push_attest_convert_bind(ssa, state, block, target_name, value, span);
 }
 
-/// The binding half of the DD#93 Part D form: `TARGET = $(( SOURCE ))` against
-/// the current (post-gate, clean) version of the source.
+/// The binding half of the DD#93 Part D form: `TARGET = $(( EXPR ))` evaluated
+/// against the current (post-gate, clean) version of the source. `EXPR` is the
+/// predicate's own right-hand side, so a wider RHS (`(( t = s * 2 ))`) binds the
+/// computed value rather than the bare conversion.
 pub(super) fn push_attest_convert_bind(
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
-    source_name: &str,
     target_name: &str,
+    value: &crate::ir::ArithExpr,
     span: crate::ir::Span,
 ) {
     let value = expr_to_value(
         &Expr {
-            kind: ExprKind::Arithmetic(Box::new(crate::ir::ArithExpr::Var(
-                source_name.to_string(),
-            ))),
+            kind: ExprKind::Arithmetic(Box::new(value.clone())),
             span,
         },
         state,
@@ -239,12 +241,13 @@ fn handle_attest_stmt(
     // DD#24 scalar / DD#61 array & map attest forms.
     if let Some((form, pred)) = classify_attest(&c.args) {
         // DD#93 Part D: `attest SOURCE (( TARGET = SOURCE ))`.
-        if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) =
+        if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value }) =
             (&form, &pred)
         {
             let (var, target) = (var.to_string(), target.to_string());
+            let value = (*value).clone();
             let span = c.args.last().map(|a| a.span).unwrap_or_default();
-            push_attest_arith_convert(ssa, state, block, &var, &target, span);
+            push_attest_arith_convert(ssa, state, block, &var, &target, &value, span);
             return block;
         }
         let AttestPredicate::Test(test) = pred else {

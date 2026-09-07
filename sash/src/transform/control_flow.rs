@@ -73,10 +73,12 @@ impl AttestKind {
 /// form). The target is declared before the branch so it exists on every path
 /// (defaulted, DG 2026-09-07) and bound to the converted value only in the
 /// then-branch, alongside the clean retag of the source.
+#[allow(clippy::too_many_arguments)]
 fn lower_if_attest_convert(
     i: &If,
     source_name: &str,
     target_name: &str,
+    value: &ArithExpr,
     span: Span,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
@@ -123,8 +125,8 @@ fn lower_if_attest_convert(
         ssa,
         state,
         then_block,
-        source_name,
         target_name,
+        value,
         span,
     );
 
@@ -198,10 +200,13 @@ fn lower_if_attest(
     // The target is *declared* before the branch (so it exists, defaulted, on
     // the else path — DG 2026-09-07) and *assigned* only in the then-branch,
     // where the conversion is known to have succeeded.
-    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target }) = (&form, &pred) {
+    if let (AttestForm::Scalar { var }, AttestPredicate::ArithConvert { target, value }) =
+        (&form, &pred)
+    {
         let (var, target) = (var.to_string(), target.to_string());
+        let value = (*value).clone();
         let span = c.args.last().map(|a| a.span).unwrap_or_default();
-        return lower_if_attest_convert(i, &var, &target, span, ssa, state, block);
+        return lower_if_attest_convert(i, &var, &target, &value, span, ssa, state, block);
     }
     let AttestPredicate::Test(test) = pred else {
         return block;

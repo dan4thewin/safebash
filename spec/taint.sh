@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=149
+plan=158
 echo "1..$plan" >&3
 
 set +e
@@ -837,6 +837,72 @@ run_sash 's=7
 attest s (( c = s ))
 echo $(( c ))'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 93.37
+
+# ── DD#93 Part D addendum: wider arith RHS + predicate taint (DG 2026-09-07) ──
+# The conversion still has to succeed for a wider RHS to be computable, so the
+# gate (`i?` on the attested name) proves just as much — the RHS may therefore
+# be any expression that REFERENCES the attested variable. Because that RHS
+# yields a VALUE (unlike a `[[ ]]` predicate, which yields only a boolean), any
+# other name it reads must be clean, or a tainted value would be laundered into
+# the clean target.
+# 93.40 a wider RHS binds the computed value
+run_sash 'x=$(printf 123)
+attest x (( y = x * 2 ))
+echo $(( y ))'
+[[ $rc = 0 && $out = "246" && -z $err ]]; chk 93.40
+# 93.41 …and still declassifies the source
+run_sash 'x=$(printf 123)
+attest x (( y = x * 2 ))
+/bin/echo $x'
+[[ $rc = 0 && $out = "123" && -z $err ]]; chk 93.41
+# 93.42 the RHS must REFERENCE the attested variable — otherwise the attest
+# proves nothing about it.
+run_sash 'x=$(printf 123)
+attest x (( y = 5 ))
+echo $(( y ))'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.42
+# 93.43 …and the predicate must be an assignment at all
+run_sash 'x=$(printf 123)
+attest x (( x ))
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5054* ]]; chk 93.43
+# 93.44 a CLEAN extra operand is fine
+run_sash 'int k=10
+x=$(printf 123)
+attest x (( y = x + k ))
+echo $(( y ))'
+[[ $rc = 0 && $out = "133" && -z $err ]]; chk 93.44
+# 93.45 a TAINTED extra operand is rejected — the value would be laundered into
+# the clean target. native,c — janet lacks getenv.
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME)
+z=$(getenv PATH)
+attest x (( y = x + z ))
+echo $(( y ))'
+    [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 93.45
+else
+    skip_chk 93.45
+fi
+# 93.46 an attest `[[ ]]` predicate may not read another TAINTED name either
+# (DG 2026-09-07): even a boolean gate should not be influenced by data the
+# author has not vouched for. The attested name itself is tainted by
+# definition and stays exempt.
+run_sash 'x=$(printf 5)
+z=$(printf 5)
+attest x [[ $x == $z ]]
+/bin/echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 93.46
+# 93.47 …while a clean operand in a predicate is still fine
+run_sash 'z=5
+x=$(printf 5)
+attest x [[ $x == $z ]]
+/bin/echo $x'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 93.47
+# 93.48 DG's report verbatim (2026-09-07): this ICE'd in codegen — the SB4020
+# exemption did not check that the predicate actually classified, so a
+# near-miss reached the value path and panicked.
+run_sash 'x=$(printf 123); attest x ((y=x*2)); echo $y'
+[[ $rc = 0 && $out = "246" && -z $err ]]; chk 93.48
 
 set -e
 tally

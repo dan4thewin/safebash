@@ -163,6 +163,14 @@ mod test {
         }
     }
 
+    /// The target name of a DD#93 Part D conversion predicate.
+    fn convert_target<'a>(pred: &AttestPredicate<'a>) -> &'a str {
+        match pred {
+            AttestPredicate::ArithConvert { target, .. } => target,
+            other => panic!("expected a conversion predicate, got {:?}", other),
+        }
+    }
+
     /// The `[[ ]]` predicate of an attest — the DD#93 Part D conversion form
     /// carries no `TestExpr`.
     fn attest_test<'a>(pred: &'a AttestPredicate<'a>) -> &'a TestExpr {
@@ -281,7 +289,7 @@ mod test {
         let args = attest_args("attest numstr (( myint = numstr ))\n");
         let (form, pred) = classify_attest(&args).expect("should classify as attest");
         assert_eq!(form, AttestForm::Scalar { var: "numstr" });
-        assert_eq!(pred, AttestPredicate::ArithConvert { target: "myint" });
+        assert_eq!(convert_target(&pred), "myint");
     }
 
     #[test]
@@ -289,17 +297,33 @@ mod test {
         // `numstr` and `$numstr` are the same read in arithmetic.
         let args = attest_args("attest numstr (( myint = $numstr ))\n");
         let (_, pred) = classify_attest(&args).expect("should classify as attest");
-        assert_eq!(pred, AttestPredicate::ArithConvert { target: "myint" });
+        assert_eq!(convert_target(&pred), "myint");
+    }
+
+    #[test]
+    fn test_attest_arith_convert_accepts_a_wider_rhs() {
+        // DG 2026-09-07: computing a wider RHS still requires the conversion to
+        // succeed, so the `i?` gate proves the same thing — the RHS only has to
+        // REFERENCE the attested name.
+        for src in [
+            "attest s (( t = s * 2 ))\n",
+            "attest s (( t = s + k ))\n",
+            "attest s (( t = (s - 1) / 2 ))\n",
+        ] {
+            let args = attest_args(src);
+            let (_, pred) = classify_attest(&args).unwrap_or_else(|| panic!("{}", src));
+            assert_eq!(convert_target(&pred), "t", "for {}", src);
+        }
     }
 
     #[test]
     fn test_attest_arith_convert_rejects_other_shapes() {
-        // Only the plain conversion is the predicate: a wider expression
-        // proves nothing about the source, and a different source proves
-        // nothing about the attested name.
+        // An RHS that never mentions the attested name proves nothing about it,
+        // and a non-assignment is not the form at all. validate reports these
+        // as SB5054.
         for src in [
-            "attest s (( t = s * 2 ))\n",
             "attest s (( t = other ))\n",
+            "attest s (( t = 5 ))\n",
             "attest s (( s ))\n",
         ] {
             let args = attest_args(src);
