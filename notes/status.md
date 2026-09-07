@@ -41,11 +41,17 @@ link is repaired, and they are exactly the removed/renamed tests (`48.2`'s
 "Compiler SHALL track cumulative shift count", the `57.x` convert clauses, …);
 those 6 are gone, leaving **0 orphans**.
 
-Residual, reported not fixed: `clauses` only ever covered **DD#5–58** (38 DDs),
-so 3703 tests (DD#60+ and the named suites `cov.*`/`vm.*`/`dp.*`/`cf.*`/…) still
-have a clause_id with no row behind it. That is a data-completeness gap — the
-table was seeded once and never kept up — not an integrity fault; FKs are
-unenforced (`PRAGMA foreign_keys = 0`).
+Residual, filed as `spec-db-clause-text` (P3): **1255 clause ids / 3703 tests**
+have no requirement text. Not simply "DD#59 onward" — 21 of the 38 *seeded* DDs
+are only partially covered, and the named suites (`cov.*` 92 ids, `vm.*` 67,
+`dp.*` 44, …) are the larger half. Not an integrity fault; FKs are unenforced.
+The task gates on a prior question — **nothing reads `clauses` today**, so the
+text would buy nothing without a consumer (the valuable direction being "which
+clauses have no test?"). It also flags a fragility worth fixing regardless: the
+231 existing clause texts exist **only inside the 68 MB binary spec.db**, with
+no seed file or insert script anywhere in the repo, so a rebuild would lose
+them — `spec/clauses.sql` + an idempotent `INSERT OR IGNORE` would make them
+diffable and restorable.
 
 ## ════════ STATUS (2026-09-07) — DD#94: newlines/`;`/comments are trivia inside `(( ))` and `[[ ]]` ════════
 
