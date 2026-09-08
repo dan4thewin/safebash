@@ -10,9 +10,17 @@ on top of.
 ## The separator answers itself
 
 I laid out five candidates. Comma won on one argument: sash *already* uses `,`
-for sequencing — array literals, argument lists, and as of DD#94 the inside of
-`(( ))`. Every other candidate would have introduced a separator that means
-one thing here and something else three lines up. Juxtaposition was the
+for sequencing inside `(( ))`, as of DD#94. Every other candidate would have
+introduced a separator that means one thing here and something else three
+lines up.
+
+*(Correction, next day: I first wrote that array literals and argument lists
+sequence with commas too. They don't — `array f=(a b c)`, `map m=([a]=1 [b]=2)`
+and `g a b c` are all space-separated. I asserted a "consistent with everything"
+argument without checking it, and it was consistent with exactly one thing. The
+conclusion survives, because `(( ))` is the precedent the line-break rule is
+actually borrowed from — but the reasoning was inflated, and inflated reasoning
+is how a wrong decision would have slipped through.)* Juxtaposition was the
 tempting one (it's what sed-adjacent DSLs often do) and the worst one: with no
 visible separator, a typo'd `/` turns two edits into one long broken edit with
 no diagnostic.

@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup undeclared
-plan=21
+plan=29
 echo "1..$plan" >&3
 
 set +e
@@ -120,6 +120,50 @@ run_sash 'echo ${z[k]}'
 # ud.21 the bare dollar-subscript cell read `$z[0]` likewise
 run_sash 'echo $z[0]'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk ud.21
+
+# ---------------------------------------------------------------- DD#97
+# A parenthesized (collection) value requires an `array`/`map` declaration.
+# A bare `f=(...)` used to compile and half-work: element reads and `for-in`
+# were fine, but the name was never registered as a collection, so `len` read
+# a table as a string (0), `join`/`unset` raised SB4030, and `f+=(...)` on an
+# undeclared name was a codegen ICE.
+
+# ud.22 a bare array literal is rejected — declare it `array`
+run_sash 'f=(a b c); echo $(len f)'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk ud.22
+
+# ud.23 the glob form likewise (a glob IS an array literal, DD#69)
+run_sash 'f=(*); echo $(len f)'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk ud.23
+
+# ud.24 the empty literal likewise
+run_sash 'f=(); echo $(len f)'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk ud.24
+
+# ud.25 `f+=(d)` on a nowhere-declared name is SB5055, NOT a codegen ICE
+# ("ICE: undefined array" panic) — the ud.19 lesson, on the write side.
+run_sash 'f+=(d); echo $(len f)'
+[[ $rc != 0 && -z $out && $err == *SB5055* && $err != *ICE* ]]; chk ud.25
+
+# ud.26 the diagnostic names the variable and prescribes the keyword form
+run_sash 'items=(a b c)'
+[[ $rc != 0 && $err == *SB5055* && $err == *items* && $err == *array* ]]; chk ud.26
+
+# ud.27 appending a literal to a declared SCALAR is the same reject
+run_sash 'x=hi; x+=(a)'
+[[ $rc != 0 && $err == *SB5055* ]]; chk ud.27
+
+# ud.28 re-assigning a DECLARED collection stays legal (the reject is about
+# introducing a collection without the keyword, not about the `=(...)` form)
+run_sash 'array f=(a b c); f=(x y); echo $(len f)'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk ud.28
+
+# ud.29 …and so does appending to one. (Fails in janet: the emitter renders
+# `f+=(d)` on an array as STRING concatenation — see the task
+# janet-array-append-string-concat. Left failing, not skipped, so it stays
+# visible; it is independent of DD#97, as janet emits from the AST.)
+run_sash 'array f=(a b c); f+=(d); echo $(len f)'
+[[ $rc = 0 && $out = "4" && -z $err ]]; chk ud.29
 
 set -e
 tally

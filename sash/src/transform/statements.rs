@@ -716,6 +716,17 @@ fn compute_declaration_value(
     state: &mut VersionState,
     block: &mut BlockId,
 ) -> SsaValue {
+    // DD#41: the `array`/`map` KEYWORD is what makes a name a collection, so
+    // register it from the declaration rather than inferring from the lowered
+    // value. A glob literal (`array a=(*)`) lowers to a `glob` ParamExpansion,
+    // not an IndexedArray, so shape-inference alone missed it — `join` saw
+    // every element while `len` read the table as a string and answered 0.
+    if is_array || is_assoc {
+        state.collections.insert(a.name.clone());
+        if is_assoc {
+            state.assoc_arrays.insert(a.name.clone());
+        }
+    }
     // Empty init like `array arr` / `array arr=()` / `map m` / `map m=()`
     // — an empty table of the declared kind.
     if is_empty_collection_init(a, is_array, is_assoc) {

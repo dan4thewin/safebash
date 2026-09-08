@@ -955,6 +955,7 @@ pub(super) fn handle_assignment(
     block: BlockId,
 ) -> BlockId {
     check_var_func_collision(&a.name, stmt, state);
+    check_bare_collection_literal(a, stmt, state);
     if let Some(ref idx) = a.index {
         return handle_subscript_assign(a, idx, state, ssa, block);
     }
@@ -962,6 +963,28 @@ pub(super) fn handle_assignment(
         return handle_append_assign(a, state, ssa, block);
     }
     handle_plain_assign(a, state, ssa, block)
+}
+
+/// DD#97: a collection is introduced by the `array`/`map` keyword. A bare
+/// `f=(…)`/`f+=(…)` on a name that is not already a collection used to compile
+/// and only half-work: element reads and `for-in` were fine, but the name was
+/// never registered, so `len` read the table as a string (0), `join`/`unset`
+/// raised SB4030, and the append form reached codegen as an ICE ("undefined
+/// array"). Re-assigning an already-declared collection stays legal — the rule
+/// is about *introducing* one without the keyword.
+fn check_bare_collection_literal(a: &Assignment, stmt: &Statement, state: &mut VersionState) {
+    if a.index.is_some() || !matches!(a.value.kind, ExprKind::Array(_)) {
+        return;
+    }
+    if state.collections.contains(&a.name) {
+        return;
+    }
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB5055] `{}` is given a collection value without a \
+         collection declaration — declare it `array {}=(…)` (or `map {}=(…)` \
+         for string keys); the keyword is what makes it a collection",
+        stmt.span.line, stmt.span.col, a.name, a.name, a.name
+    ));
 }
 
 /// DD#58: emit SB4019 if a variable name collides with a known function.

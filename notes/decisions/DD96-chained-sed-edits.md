@@ -36,9 +36,15 @@ at the newline. A trailing comma with nothing after it is an error, not a no-op.
 
 ## Why comma
 
-`,` is already sash's sequencing separator — array literals, argument lists,
-and (since DD#94) `(( a=1, b=2 ))`. Reusing it costs no new syntax and no new
-rule to learn. The alternatives all had a specific defect:
+`,` is already sash's sequencing separator inside `(( ))` — `(( a=1, b=2 ))`
+and `(( i=0, j=10; i<3; i++ ))` (DD#94). Reusing it costs no new syntax and no
+new rule to learn. (Correction, 2026-09-08: an earlier draft of this section
+also claimed array literals and argument lists sequence with `,`. They do not
+— array and map literals are space-separated, `array f=(a b c)` /
+`map m=([a]=1 [b]=2)`, and calls are shell-style `g a b c`. `(( ))` is the
+sole precedent, which is narrower than stated but is still the precedent the
+line-break rule below is taken from.) The alternatives all had a specific
+defect:
 
 | candidate | defect |
 |---|---|

@@ -1,3 +1,50 @@
+## ════════ STATUS (2026-09-08) — DD#97: the `array`/`map` keyword introduces a collection ════════
+
+**On `hand-parser`.** DG: *"when I do `f=(*)` I see `$(len f)` return 0 despite
+the array having elements."* One symptom, **two** independent defects, meeting
+at the transform's `state.collections` registry — the thing that decides
+whether a length is `arrlen` (elements) or `strlen` (bytes of the slot). An
+unregistered collection gets `strlen` on a table, which reads 0.
+
+**1. A glob array was never registered — even with the keyword.**
+`track_collection_kind` inferred collection-ness from the *lowered value* and
+matched only `IndexedArray`/`AssocArray`; a glob lowers to
+`ParamExpansion{operator:"glob"}` and fell through. So `array f=(*.txt)` had
+`join` listing all three paths while `len` said 0 — two intrinsics disagreeing
+about one variable. Now registered from the **declaration keyword**, which is
+what the user wrote and can't be defeated by how the value happens to lower.
+
+**2. A bare `f=(…)` registered nothing at all**, and half-worked: `${f[1]}` and
+`for x in @f` were fine, but `len`→0, `join`/`unset`→SB4030, and `f+=(d)` on an
+undeclared name was a **codegen ICE**.
+
+**DG's call on the second:** reject it. **A collection is introduced by the
+`array`/`map` keyword** — `f=(a b c)`, `f=(*)`, `f=()`, `f+=(d)` are all
+**SB5055**. Re-assigning a *declared* collection stays legal (`array f=(a b c);
+f=(x y)`). Grounds: DD#41 already made `array arr=(…)` *the* declaration form,
+DD#75 says the keyword form is canonical, and `f=(a b c)` reads as a scalar
+assignment while silently producing a table. Migration cost was zero — nothing
+in spec/ or contrib/ used the bare form. **The ICE is gone as a side effect.**
+
+**Also fixed a doc error of mine:** DD#96 claimed comma is "already sash's
+sequencing separator — array literals, argument lists, and `(( ))`". Only
+`(( ))` is true; array/map literals are space-separated and calls are
+shell-style. The decision stands (the `(( ))` precedent is the one the
+line-break rule borrows), but the justification was inflated. Corrected in
+DD96, journal 255, and the entry below.
+
+**Specs:** `undeclared.sh` ud.22–ud.29, `glob.sh` g.7–g.9. Sweep **4182 passing
+/ 34 failing / 394 skipped, 0 regressions** (+29 passing).
+
+**One new failure, filed not hidden:** `janet:ud.29` — janet emits array append
+as *string* concatenation (`(set f (string f @["d"]))` → prints `44`).
+Pre-existing and independent (janet renders from the AST, not the SSA), task
+`janet-array-append-string-concat`. Left failing rather than `skip_chk`'d so it
+stays visible.
+
+**Next up:** the P1 follow-ups — `bug-fn-capture-in-test-operand-ice` (`$(f)` as
+a `[[ ]]` operand ICEs) and `janet-compound-if-condition-ignored`.
+
 ## ════════ STATUS (2026-09-08) — DD#96: sed edits chain with `,` ════════
 
 **On `hand-parser`.** DG asked to chain the sed-like edits — `$foo =~ s/a/b/
@@ -11,8 +58,10 @@ v =~ s/one/1/,               # and across a line break
      s/two/2/
 ```
 
-Comma won because sash **already** sequences with `,` — array literals, argument
-lists, and (DD#94, two days ago) the inside of `(( ))`. Juxtaposition was the
+Comma won because sash **already** sequences with `,` inside `(( ))` (DD#94).
+*(Correction: the DD#96 entry first claimed array literals and argument lists
+did too — they don't; those are space-separated. Fixed in DD96/journal 255.)*
+Juxtaposition was the
 tempting alternative and the worst one: no visible separator means a typo'd `/`
 silently fuses two edits into one. The multi-line behaviour was **not a second
 decision** — DD#94's rule ("a separator continues while an operand is owed; a

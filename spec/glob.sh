@@ -13,7 +13,7 @@
 set -eu
 . common.sh
 setup glob
-plan=6
+plan=9
 echo "1..$plan" >&3
 
 set +e
@@ -72,6 +72,33 @@ if in_modes native,c; then
     [[ $rc = 0 && $out == *"$cwd/g6a.pp"* && $out == *"$cwd/g6b.pp"* ]]; chk g.6
 else
     skip_chk g.6
+fi
+
+# g.7 a glob array's `len` agrees with its contents. The glob literal lowers
+# to a `glob` value rather than an array literal, so it used to skip
+# collection registration entirely — `join` saw every element while `len`
+# read the table as a string and answered 0, with the `array` keyword present.
+if in_modes native,c; then
+    run_sash '/usr/bin/touch g7a.g7x g7b.g7x g7c.g7x; array a=(*.g7x); echo $(len a)'
+    [[ $rc = 0 && $out = "3" && -z $err ]]; chk g.7
+else
+    skip_chk g.7
+fi
+
+# g.8 `len` and `join` agree about the same glob array
+if in_modes native,c; then
+    run_sash '/usr/bin/touch g8a.g8x g8b.g8x; array a=(*.g8x); echo $(len a); echo $(join a)'
+    [[ $rc = 0 && $out == "2"* && $out == *g8a.g8x* && $out == *g8b.g8x* && -z $err ]]; chk g.8
+else
+    skip_chk g.8
+fi
+
+# g.9 a zero-match glob is a real EMPTY array — len 0, and still a collection
+if in_modes native,c; then
+    run_sash 'array a=(*.nomatchZZ); echo $(len a)'
+    [[ $rc = 0 && $out = "0" && -z $err ]]; chk g.9
+else
+    skip_chk g.9
 fi
 
 set -e
