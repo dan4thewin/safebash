@@ -1220,29 +1220,53 @@ fn parse_test_expr(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagno
 }
 
 fn parse_test_or(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
-    let mut left = parse_test_and(scanner, span)?;
+    let (mut left, mut any_and) = parse_test_and_tracked(scanner, span)?;
     skip_test_newlines(scanner);
+    let mut any_or = false;
     while matches!(scanner.peek().token, Tok::OrOr) {
+        any_or = true;
         scanner.next();
         skip_test_newlines(scanner);
-        let right = parse_test_and(scanner, span)?;
+        let (right, right_and) = parse_test_and_tracked(scanner, span)?;
+        any_and |= right_and;
         skip_test_newlines(scanner);
         left = TestExpr::Or(Box::new(left), Box::new(right));
+    }
+    // DD#95: `&&` and `||` in one test group differently inside and outside
+    // `[[ ]]`, so sash refuses to choose — say which you meant with `( )`.
+    // A parenthesised operand is a *primary* here, so its own `&&`/`||` are
+    // checked independently and never count as mixing at this level.
+    if any_or && any_and {
+        return Err(parse_error(
+            span,
+            "SB4053",
+            "`&&` and `||` in one `[[ ]]` test are ambiguous — sash does not pick \
+             a grouping. Use parentheses to say which you mean: \
+             `[[ ( a || b ) && c ]]` or `[[ a || ( b && c ) ]]`"
+                .to_string(),
+        ));
     }
     Ok(left)
 }
 
-fn parse_test_and(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
+/// A `&&` chain, plus whether it actually combined one at this level (DD#95:
+/// `false` for a lone primary, including a parenthesised group).
+fn parse_test_and_tracked(
+    scanner: &mut Scanner,
+    span: Span,
+) -> Result<(TestExpr, bool), Diagnostic> {
     let mut left = parse_test_not(scanner, span)?;
     skip_test_newlines(scanner);
+    let mut had_and = false;
     while matches!(scanner.peek().token, Tok::AndAnd) {
+        had_and = true;
         scanner.next();
         skip_test_newlines(scanner);
         let right = parse_test_not(scanner, span)?;
         skip_test_newlines(scanner);
         left = TestExpr::And(Box::new(left), Box::new(right));
     }
-    Ok(left)
+    Ok((left, had_and))
 }
 
 fn parse_test_not(scanner: &mut Scanner, span: Span) -> Result<TestExpr, Diagnostic> {
@@ -2270,6 +2294,22 @@ fn reject_pipeline_and_or_postfix(commands: &[Statement], span: Span) -> Result<
     Ok(())
 }
 
+/// SB4053 (DD#95): `&&` and `||` mixed in one command list. The advice differs
+/// from the `[[ ]]` case: there is no grouping construct out here, and none is
+/// wanted — a command list that needs a grouping is asking to be an `if` or a
+/// dispatch.
+fn mixed_list_error(span: Span) -> Diagnostic {
+    parse_error(
+        span,
+        "SB4053",
+        "`&&` and `||` in one list are ambiguous — sash does not pick a grouping. \
+         `a && b || c` could mean `(a && b) || c` or `a && (b || c)`. Use \
+         `if a && b { … } else { … }`, or the `[[ … { … } || { … } ]]` dispatch \
+         form"
+            .to_string(),
+    )
+}
+
 /// If `&&`, `||`, or `&` follows, wrap `stmt` in a `List` with the
 /// matching `ListOp`. `&` produces `Background` with a synthetic
 /// `true` right-hand side; the binary ops parse one more statement
@@ -2280,6 +2320,13 @@ fn parse_trailing_list_op(
 ) -> Result<Statement, Diagnostic> {
     // `&&` / `||` are equal-precedence and LEFT-associative:
     // `A && B || C` is `(A && B) || C`. Loop, folding left.
+    //
+    // DD#95: a chain must not MIX the two. Inside `[[ ]]` the same text groups
+    // as `A || (B && C)` (`&&` binds tighter, as in C/Go/Rust/Python); out here
+    // it is `(A || B) && C` (equal precedence, as in POSIX shell). Rather than
+    // let one text mean two things, sash rejects the mixture — and out here
+    // there is nothing to group with, because the answer is `if` or dispatch.
+    let mut chain_op: Option<ListOp> = None;
     loop {
         let op = match scanner.peek().token {
             Tok::AndAnd => ListOp::And,
@@ -2287,6 +2334,11 @@ fn parse_trailing_list_op(
             Tok::Amp => return Ok(background_list_op(scanner, left)),
             _ => return Ok(left),
         };
+        match &chain_op {
+            Some(prev) if *prev != op => return Err(mixed_list_error(left.span)),
+            Some(_) => {}
+            None => chain_op = Some(op.clone()),
+        }
         let span = left.span;
         scanner.next(); // consume && / ||
         skip_terminators(scanner);

@@ -393,7 +393,7 @@ run_sash 'echo $(( 16#ff ))'
 # cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test) — native,c only
 # (janet has no `-t`). Captured stdout in the harness is not a tty → notty.
 if in_modes native,c; then
-    run_sash '[[ -t 1 ]] && echo tty || echo notty'
+    run_sash 'if [[ -t 1 ]] { echo tty } else { echo notty }'
     [[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
 else
     skip_chk cov.89

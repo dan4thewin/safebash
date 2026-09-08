@@ -203,19 +203,23 @@ run_sash 'if [[ -R x ]]; then echo y; fi'
 run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
 [[ $rc = 0 && $out = y && -z $err ]]; chk 62.6
 
-# 62.7 && / || are left-associative: (false && A) || B runs B
+# 62.7 SUPERSEDED by DD#95 (2026-09-08). This used to pin the shell rule that
+# `&&`/`||` are equal-precedence and left-associative, so `false && A || B` ran
+# B. That is exactly the text which groups differently inside `[[ ]]`, so sash
+# now rejects the mixture rather than have one spelling mean two things.
 run_sash 'false && echo A || echo B'
-[[ $rc = 0 && $out = B && -z $err ]]; chk 62.7
+[[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.7
 
 # 62.8-62.10 nested && / || chains. Now correct in all three backends
 # (bug-andor-backend-chain-status fixed): janet/c branch on exit status,
 # not language value-truthiness, and every command sets the status var.
-run_sash '[[ 1 = 1 ]] && echo A || echo B'
+# 62.9/62.10 are likewise superseded by DD#95 — both mix the two operators.
+run_sash 'if [[ 1 = 1 ]] { echo A } else { echo B }'
 [[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
 run_sash 'false && echo A || echo B && echo C'
-[[ $rc = 0 && $out = $'B\nC' && -z $err ]]; chk 62.9
+[[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.9
 run_sash 'true || echo A && echo B'
-[[ $rc = 0 && $out = B && -z $err ]]; chk 62.10
+[[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.10
 # 62.30 per-command status pin: a successful echo must leave status 0 so a
 # following `&& cmd` runs (the c/janet regression this fix closes).
 run_sash 'echo A && echo B && echo C'

@@ -26,7 +26,7 @@ run_sash 'echo $(toupper aB3_z)'
 run_sash 'echo $(toupper foo)-$(tolower BAR)'
 [[ $rc = 0 && $out = "FOO-bar" && -z $err ]]; chk vm.tu6
 # vm.tu7 the case-insensitive match idiom (DD#65: regex has no `i` flag)
-run_sash 'x=HeLLo; pat=hello; match $(tolower $x) $(tolower $pat) && echo same || echo diff'
+run_sash 'x=HeLLo; pat=hello; if match $(tolower $x) $(tolower $pat) { echo same } else { echo diff }'
 [[ $rc = 0 && $out = "same" && -z $err ]]; chk vm.tu7
 
 # ── basename / dirname sugar (DD#65 — rewritten to a fixed-pattern sub) ──

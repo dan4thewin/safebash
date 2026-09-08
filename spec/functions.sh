@@ -94,21 +94,21 @@ run_sash 'x=$(arg 99); attest x [[ -n $x ]]; echo $x' hello
 # 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
 #      without a attest). native,c only: janet lacks the getpid-class.
 if in_modes native,c; then
-    run_sash 'x=$(getpid); [[ $x =~ ^[0-9]+$ ]] && echo Y || echo N'
+    run_sash 'x=$(getpid); if [[ $x =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
     [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7
 else
     skip_chk 42.7
 fi
 # 42.8 $(random) — non-negative i64 (0..i64::MAX), clean capture
 if in_modes native,c; then
-    run_sash 'a=$(random); [[ $a =~ ^[0-9]+$ ]] && echo Y || echo N'
+    run_sash 'a=$(random); if [[ $a =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
     [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.8
 else
     skip_chk 42.8
 fi
 # 42.9 two $(random) draws differ (distinct entropy)
 if in_modes native,c; then
-    run_sash 'a=$(random); b=$(random); [[ $a != $b ]] && echo Y || echo N'
+    run_sash 'a=$(random); b=$(random); if [[ $a != $b ]] { echo Y } else { echo N }'
     [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.9
 else
     skip_chk 42.9

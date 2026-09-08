@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=104
+plan=116
 echo "1..$plan" >&3
 
 set +e
@@ -593,6 +593,61 @@ run_sash 'a=x; echo $(len a b)'
 # 55.45 a correct-arity call still compiles + runs
 run_sash 's=hello; echo $(len s)'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk 55.45
+
+# ── DD#95: mixing `&&` and `||` in one list is ambiguous ──
+# The two contexts grouped the same text differently — inside `[[ ]]` `&&` binds
+# tighter (as in C/Go/Rust/Python), outside they are equal-precedence and
+# left-associative (as in POSIX shell). Rather than pick a winner, sash rejects
+# the mixture, so no text means two things depending on where it sits. Pure
+# chains are unaffected (they group the same either way). Ada does the same;
+# C's own -Wall warns on the identical shape.
+# 95.1 inside `[[ ]]`: mixed is rejected, and the advice is parentheses
+run_sash 'a=x; b=; c=
+if [[ -n $a || -n $b && -n $c ]]; then echo T; else echo F; fi'
+[[ $rc != 0 && -z $out && $err == *SB4053* && $err == *parenthes* ]]; chk 95.1
+# 95.2 …explicit grouping resolves it, both ways
+run_sash 'a=x; b=; c=
+if [[ ( -n $a || -n $b ) && -n $c ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "F" && -z $err ]]; chk 95.2
+run_sash 'a=x; b=; c=
+if [[ -n $a || ( -n $b && -n $c ) ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 95.3
+# 95.4 outside `[[ ]]`: mixed is rejected, and the advice is `if` / dispatch
+run_sash 'a=x; b=; c=
+[[ -n $a ]] || [[ -n $b ]] && [[ -n $c ]]'
+[[ $rc != 0 && -z $out && $err == *SB4053* && $err == *if* ]]; chk 95.4
+# 95.5 …including in an `if` condition, which is still outside the brackets
+run_sash 'a=x; b=; c=
+if [[ -n $a ]] || [[ -n $b ]] && [[ -n $c ]]; then echo T; fi'
+[[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 95.5
+# 95.6 the classic ternary idiom is the motivating case
+run_sash 'x=b
+[[ $x =~ ^b$ ]] && echo Y || echo N'
+[[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 95.6
+# 95.7 …and both replacements work
+run_sash 'x=b
+if [[ $x =~ ^b$ ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 95.7
+run_sash 'x=q
+[[ $x =~ ^b$ { echo Y; } || { echo N; } ]]'
+[[ $rc = 0 && $out = "N" && -z $err ]]; chk 95.8
+# 95.9 PURE chains stay legal in both contexts — they group the same either way
+run_sash 'a=x; b=x
+if [[ -n $a && -n $b ]]; then echo T; fi
+[[ -n $a ]] && [[ -n $b ]] && echo chain'
+[[ $rc = 0 && $out = "T
+chain" && -z $err ]]; chk 95.9
+run_sash 'a=; b=
+[[ -n $a ]] || [[ -n $b ]] || echo none'
+[[ $rc = 0 && $out = "none" && -z $err ]]; chk 95.10
+# 95.11 the error-handling idiom is untouched
+run_sash 'true || echo unreached
+false || echo handled'
+[[ $rc = 0 && $out = "handled" && -z $err ]]; chk 95.11
+# 95.12 `!` is unaffected — it is unary and binds tightest in both contexts
+run_sash 'a=; b=x
+if [[ ! -n $a && -n $b ]]; then echo T; else echo F; fi'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk 95.12
 
 set -e
 tally
