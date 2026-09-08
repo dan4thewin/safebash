@@ -1,0 +1,473 @@
+.\" sash.1 - DRAFT man page for every switch-taking surface in safebash.
+.\" Every behavior below was verified empirically against
+.\" target/release/sash on 2026-09-08, not read off the source comments.
+.TH SASH 1 "2026-09-08" "safebash" "General Commands Manual"
+.
+.SH NAME
+sash \- compile a safe subset of bash to a static native binary
+.
+.SH SYNOPSIS
+.B sash
+.RI [ options ]
+.I script.sh
+.RB [ \-o
+.IR output ]
+.br
+.B sash
+.B \-c
+.I 'script'
+.RB [ \-o
+.IR output ]
+.br
+.B sash
+.B \-\-extract
+.I binary
+.
+.SH DESCRIPTION
+.B sash
+compiles a script written in the safe subset of bash to a static ELF
+binary. Output is byte-identical to what
+.BR bash (1)
+produces for the same script.
+.PP
+This page documents every surface in safebash that takes a switch: the
+compiler driver, the three builtins that accept flags
+.RB ( read ,
+.BR mapfile ,
+.BR echo ),
+the
+.RB \[dq] [[ \ ]] \[dq]
+test operators that share the same
+.BI \- X
+namespace, and
+.BR sash\-convert (1).
+.
+.SH OPTIONS
+.SS Input and output
+.TP
+.BI \-c \ script
+Compile
+.I script
+given inline instead of reading a file.
+.TP
+.BI \-o \ output
+Write the binary to
+.IR output .
+.
+.SS Alternative backends
+Each writes to standard output and exits; no binary is produced.
+.TP
+.B \-\-janet
+Emit Janet source.
+.TP
+.B \-\-janet\-map
+Emit the structural Janet map, with the
+.B sash\-rt.janet
+primitive library prepended so the result is self-contained.
+.TP
+.B \-\-emit\-c
+Emit C source. Link against
+.B libsash_rt.a
+.RB ( SASH_RT_LIB ).
+.TP
+.B \-\-manifest
+Emit the manifest (external dependencies).
+.
+.SS Inspection
+.TP
+.BI \-\-extract \ binary
+Dump the
+.B .sash_source
+ELF section of a compiled
+.IR binary .
+The binary must follow the flag directly
+.RB ( sash \ \-\-extract \ BIN );
+it is read positionally.
+.TP
+.B \-\-trace
+Enable tracing in the emitted binary.
+.
+.SS Taint bypasses
+See DD#82. These weaken the guarantee that
+.B sash
+exists to provide; use them deliberately.
+.TP
+.B \-\-no\-taint\-cst
+Disable the front-end (CST) taint pass only. The SSA taint backstop still
+runs, which is how the backstop is exercised in isolation.
+.TP
+.B \-\-no\-taint
+Disable both taint passes.
+.
+.SS Environment
+.TP
+.BI \-\-sysroot= path
+Set the sysroot used for command resolution (DD#23).
+.
+.SS Rejected here, accepted by sash\-convert
+.B \-\-emit\-source ,
+.B \-\-annotate ,
+and
+.B \-\-nolint
+are rejected with a message directing you to
+.BR sash\-convert (1).
+Source transformation belongs to the converter, not the compiler (DD#57).
+.
+.SH BUILTINS THAT TAKE FLAGS
+.SS read
+.B read
+.RB [ \-a
+.IR array ]
+.RB [ \-d
+.IR delim ]
+.RB [ \-f
+.IR sep ]
+.RB [ \-r ]
+.RI [ name ...]
+.PP
+A byte-valued flag may be joined
+.RB ( \-d: )
+or split
+.RB ( \-d\ : ).
+An empty value
+.RB ( \-d\ '' ,
+or a bare trailing
+.BR \-d )
+means NUL, following the bash
+.B read -d ''
+convention.
+.TP
+.BI \-a \ array
+Read into
+.IR array .
+See BUGS: the split here uses
+.BR \-d ,
+not
+.BR \-f .
+.TP
+.BI \-d \ delim
+Record delimiter \(em the byte that
+.B terminates the line.
+Reading stops there. This is
+.B not
+the field separator.
+.TP
+.BI \-f \ sep
+Field separator \(em the byte that separates fields
+.I within
+the line. This is bash's
+.B IFS
+for a single command.
+.TP
+.B \-r
+Accepted and ignored. sash reads are always raw, so
+.B \-r
+requests the default.
+.PP
+Any other
+.BI \- flag
+is rejected with
+.BR SB5015 .
+.PP
+With one target, the whole line is assigned. With several, each target but
+the last takes one field and
+.B the last takes the remainder:
+.PP
+.RS
+.EX
+echo "a b c d" | read x y      # x=a  y="b c d"
+echo "a:b:c:d" | read -f: x y  # x=a  y="b:c:d"
+echo "a:b:c:d" | read -d: x y  # x=a  y=""      (line ends at the first ':')
+.EE
+.RE
+.PP
+.B read
+targets are tainted (DD#24); reading one requires
+.BR attest .
+Use
+.B _
+to bind and discard a field you do not want (DD#98).
+.
+.SS mapfile
+.B mapfile
+.RB [ \-m ]
+.RB [ \-f c ]
+.RB [ \-t ]
+.I target
+.TP
+.B \-m
+Map mode: read
+.IB key sep value
+lines into a map rather than an array.
+.TP
+.BI \-f c
+The map key/value separator, default
+.BR = .
+Joined
+.RB ( \-f: )
+or split
+.RB ( \-f\ : ).
+.TP
+.B \-t
+Accepted and ignored. sash always strips the trailing newline.
+.PP
+.B readarray
+is
+.B not
+supported \(em it is rejected by command resolution
+.RB ( SB5011 ).
+Use
+.BR mapfile .
+.PP
+Unknown flags are
+.B silently ignored
+here. See BUGS.
+.
+.SS echo
+.B echo
+.RB [ \-n ]
+.RI [ arg ...]
+.TP
+.B \-n
+Suppress the trailing newline. Recognized
+.B only as the first argument;
+elsewhere
+.B \-n
+is an ordinary word and is printed.
+.PP
+There is no
+.BR \-e .
+sash does not interpret backslash escapes in
+.BR echo ;
+.B \-e
+is printed literally, as is the text after it.
+.
+.SH TEST OPERATORS
+The
+.RB \[dq] [[ \ ]] \[dq]
+operators occupy the same
+.BI \- X
+namespace as the flags above but are
+.B operators, not switches.
+This is the most common source of confusion \(em see BUGS.
+.SS Unary
+.TP
+.B \-e \-f \-d \-s \-r \-w \-x \-h \-L \-b \-c \-p \-S \-t \-O \-G \-N \-a
+File and descriptor tests, as in
+.BR bash (1).
+.TP
+.B \-n \-z
+Non-empty / empty string.
+.TP
+.B \-v \-o \-R
+Parsed but
+.B rejected
+.RB ( SB5028 ),
+each with a hint:
+.B \-v
+\(em use
+.B \-n
+instead, since under DD#62 an unset or empty variable is just the empty
+string;
+.B \-o
+\(em sash has no shell options;
+.B \-R
+\(em sash has no namerefs.
+.SS Content shape (DD#93)
+.TP
+.B i? p? g?
+Integer-representable / all-printable / all-graph. These are
+.B prefix
+operators and carry no dash:
+.RB \[dq] [[\ i?\ $x\ ]] \[dq].
+They also have an
+.B attest
+shorthand:
+.RB \[dq] attest\ x\ p? \[dq].
+The
+.B ?
+suffix keeps them out of bash's saturated
+.BI \- X
+namespace.
+.SS Numeric comparison
+.B \-eq \-ne \-lt \-le \-gt \-ge
+are
+.B rejected
+.RB ( SB5019 ).
+Arithmetic comparison belongs in
+.RB \[dq] ((\ )) \[dq]:
+write
+.RB \[dq] ((\ a\ ==\ b\ )) \[dq],
+not
+.RB \[dq] [[\ $a\ \-eq\ $b\ ]] \[dq].
+.
+.SH SASH-CONVERT
+.B sash\-convert
+.RB [ \-\-annotate ]
+.RB [ \-o
+.IR output ]
+.RI [ input.sh ]
+.PP
+Converts a bash script to sash-native source. Reads standard input when no
+input file is given.
+.TP
+.B \-\-annotate
+Annotate the output.
+.TP
+.BI \-o \ output
+Write to
+.IR output .
+.TP
+.BR \-h ", " \-\-help
+Print usage and exit.
+.PP
+Unlike
+.BR sash ,
+.B sash\-convert
+rejects an unknown flag.
+.
+.SH BUGS
+.SS The \-d / \-f collision
+One spelling means three different things depending on where it sits. This
+is the confusion this page was written for:
+.PP
+.RS
+.TS
+l l l l.
+spelling	in read	in mapfile	in [[ ]]
+_
+\-d	record delimiter	(not a flag)	is a directory
+\-f	field separator	key/value separator	is a regular file
+\-a	array target	(not a flag)	file exists
+\-t	(not a flag)	accepted no-op	is a terminal
+\-n	(not a flag)	(not a flag)	string is non-empty
+.TE
+.RE
+.PP
+Choosing
+.B \-d
+when you meant
+.B \-f
+fails silently \(em the read stops at the first delimiter and the trailing
+targets are left empty, with no diagnostic.
+.SS read \-a ignores \-f
+With
+.BR \-a ,
+splitting uses the
+.B record delimiter
+.RB ( \-d ),
+and
+.B \-f is silently ignored:
+.PP
+.RS
+.EX
+echo "a:b:c" | read -a arr -d:   # 3 elements
+echo "a:b:c" | read -a arr -f:   # 1 element; -f discarded
+.EE
+.RE
+.PP
+The
+.B \-d
+behavior is deliberate (it is what makes the
+.BR sash\-getopt (1)
+NUL-splitting idiom work, spec 22.26/22.27). The silent discard of
+.B \-f
+is not spec'd. bash splits an array read on
+.BR IFS ,
+i.e. on the field separator.
+.SS Standalone and pipeline read disagree
+.B read
+is lowered by two different paths, and they do not enforce the same rules:
+.PP
+.RS
+.EX
+read -f: x                 # SB5016 (field separator needs several targets)
+echo "a:b" | read -f: x    # accepted; x gets the whole line
+.EE
+.RE
+.PP
+The same divergence affects the DD#86 acknowledgment
+.RB \[dq] :\ $v \[dq],
+which is accepted after a pipeline
+.B read
+but rejected after a standalone one \(em and rejected by the SSA taint
+backstop, with no
+.B SB
+code at all. See
+.BR notes/tasks/read\-taint\-backstop\-no\-sb\-code.md .
+.SS Unknown flags are handled three different ways
+.RS
+.TP
+.B read
+rejects \(em
+.BR SB5015 .
+.TP
+.B mapfile
+silently ignores.
+.TP
+.B sash
+(the driver) silently ignores:
+.B sash --bogus script.sh
+compiles and exits 0.
+.TP
+.B sash\-convert
+rejects.
+.RE
+.PP
+See
+.B notes/tasks/switch\-free\-read\-family.md
+\(em an open decision on whether these flags should become distinct commands
+and sigils instead.
+.SS Three disagreeing usage strings
+.B sash
+with no arguments, with an unrecognized long flag, and on the
+.B \-\-extract
+path each print a different usage line, and none lists every flag.
+.
+.SH DIAGNOSTICS
+Every rejection carries an
+.B SB
+code. Those referenced here:
+.RS
+.TP
+.B SB5011
+command resolution failed (e.g.
+.BR readarray ).
+.TP
+.B SB5015
+.BR read :
+unknown flag.
+.TP
+.B SB5016
+.BR read \ \-f
+with a single target and no array \(em
+.B standalone shape only,
+see BUGS.
+.TP
+.B SB5019
+numeric operator in
+.RB \[dq] [[\ ]] \[dq];
+use
+.RB \[dq] ((\ )) \[dq].
+.TP
+.B SB5020
+tainted value used without
+.BR attest .
+.TP
+.B SB5050
+variable assigned but never read.
+.TP
+.B SB5056
+read of the don't-care binder
+.BR _ .
+.RE
+.
+.SH SEE ALSO
+.BR bash (1),
+.BR sash\-convert (1),
+.BR sash\-getopt (1)
+.PP
+.B docs/GUIDE.md
+for architecture;
+.B notes/decisions/
+for the design decisions that define the safe subset.

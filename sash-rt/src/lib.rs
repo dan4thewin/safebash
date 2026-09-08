@@ -3391,15 +3391,22 @@ pub unsafe extern "C" fn sash_split_into_array(
         if at_end && terminator != 0 && start == len {
             break;
         }
-        let token_ptr = ptr.add(start);
         let token_len = i - start;
+        // DD#87 invariant: an element must be NUL-terminated AT ITS OWN LENGTH
+        // so it can cross the execve boundary as a C string. A borrowed slice
+        // into the source buffer is terminated only where the *buffer* ends,
+        // so an external command read past the element to the end of the
+        // buffer (`read -a x -d:` on "a:b:c" passed "a:b:c" as element 0).
+        // Copy each token into its own NUL-terminated allocation.
+        let token_ptr = alloc_cstr(token_len);
+        core::ptr::copy_nonoverlapping(ptr.add(start), token_ptr, token_len);
         // Key = 8-byte i64 index (same format as IndexedArray)
         let key_bytes = idx.to_ne_bytes();
         sash_table_set(
             table as *mut SashTable,
             key_bytes.as_ptr(),
             8_i64,
-            token_ptr,
+            token_ptr as *const u8,
             token_len as i64,
         );
         idx += 1;

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=84
+plan=88
 echo "1..$plan" >&3
 
 set +e
@@ -415,6 +415,56 @@ else
     skip_chk 22.28; skip_chk 22.29; skip_chk 22.30; skip_chk 22.31
 fi
 
+
+
+# ── DD#87: read -a elements must survive the execve boundary ──────────────
+# `sash_split_into_array` stored each element as a BORROWED (ptr,len) slice
+# into the source buffer, with no NUL at its own length. Length-based
+# consumers (len/join/subscript/builtin echo) were correct, but an EXTERNAL
+# command reads argv as C strings, so it read past the element to the end of
+# the buffer — `read -a x -d:` on "a:b:c" passed "a:b:c" as element 0.
+# Only NUL-delimited input happened to work (the buffer already had NULs),
+# which is exactly the case spec 22.26 covered.
+
+# 22.40 an element passed to an EXTERNAL command is the element, not a suffix
+if in_modes native,c; then
+    run_sash 'array x=(); printf "a:b:c" | read -a x -d:
+attest e in x [[ $e = $e ]]
+/usr/bin/printf "[%s]" ${x[0]}'
+    [[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.40
+else
+    skip_chk 22.40
+fi
+
+# 22.41 …for every element, via a for-in splat
+if in_modes native,c; then
+    run_sash 'array x=(); printf "a:b:c" | read -a x -d:
+attest e in x [[ $e = $e ]]
+for v in @x { /usr/bin/printf "[%s]" $v }'
+    [[ $rc = 0 && $out = "[a][b][c]" && -z $err ]]; chk 22.41
+else
+    skip_chk 22.41
+fi
+
+# 22.42 whitespace-split elements likewise
+if in_modes native,c; then
+    run_sash 'array x=(); printf "a b c" | read -a x
+attest e in x [[ $e = $e ]]
+/usr/bin/printf "[%s]" ${x[1]}'
+    [[ $rc = 0 && $out = "[b]" && -z $err ]]; chk 22.42
+else
+    skip_chk 22.42
+fi
+
+# 22.43 the length-based consumers stay correct (no regression from the copy)
+if in_modes native,c; then
+    run_sash 'array x=(); printf "a:b:c" | read -a x -d:
+attest e in x [[ $e = $e ]]
+echo "$(len x)|$(join x)|${x[2]}"'
+    [[ $rc = 0 && $out = "3|a b c|c" && -z $err ]]; chk 22.43
+else
+    skip_chk 22.43
+fi
 
 set -e
 tally

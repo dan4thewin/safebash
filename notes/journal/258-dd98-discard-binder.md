@@ -123,3 +123,45 @@ The documentation described the design. The binaries described the language.
 ## Sweep
 
 4270 passing / 39 failing / 394 skipped. 0 regressions, +45, no new failures.
+
+---
+
+## Addendum — a DD#87 violation found while surveying the flags
+
+Writing the switch man page (DG: *"make a draft of a man page for anything
+that takes a switch"*) meant verifying every flag empirically rather than
+reading it off the source comments. That found four documentation errors — and
+one real bug.
+
+`read -a x -d:` on `a:b:c` reported `len 3` and `join` gave `a b c`, but
+
+```sh
+for v in @x { /usr/bin/printf "[%s]" $v }   # [a:b:c][b:c][c]
+```
+
+Suffixes, not elements.
+
+The bug is neither in `read -a` nor in `for-in`. It is at the **execve
+boundary**. `sash_split_into_array` stored each element as a *borrowed*
+`(ptr,len)` slice into the source buffer, so an element was NUL-terminated only
+where the whole buffer ended. Length-based consumers — `len`, `join`,
+subscripts, builtin `echo` — were all correct. An external command reads argv
+as C strings, so it ran past the element.
+
+That is a documented invariant, violated: **DD#87** — *"every sash string
+buffer is NUL-terminated at `[len]`, so a sash string can cross into an
+execve/C-string boundary directly."* `sash_substring` even carries a comment
+recording the identical fix ("a partial `${s:0:2}` otherwise reads on"). One
+call site kept the borrowed slice.
+
+Fixed by copying each token into its own `alloc_cstr` allocation.
+
+**Why it survived.** The only spec'd `read -a` case with a custom delimiter is
+NUL-delimited (22.26, the sash-getopt idiom) — and NUL input *accidentally
+satisfies the invariant*, because the buffer already contains the terminators.
+The one covered case was the one case that could not fail. Specs 22.40–22.43
+now cover the external-command boundary directly, with 22.43 pinning the
+length-based consumers so the copy cannot regress them.
+
+Same shape as the session's other finds, one layer down: not a missing check,
+but a **silently narrower guarantee than the invariant claimed**.
