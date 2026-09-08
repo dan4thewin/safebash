@@ -1,3 +1,48 @@
+## ════════ STATUS (2026-09-08) — DD#96: sed edits chain with `,` ════════
+
+**On `hand-parser`.** DG asked to chain the sed-like edits — `$foo =~ s/a/b/
+s/c/d/` "or with some other syntax" — and asked what would be *consistent and
+logical*. His call after the survey: **comma, both forms, only `s///`.**
+
+```sh
+v =~ s/a/1/, s/b/2/          # statement form
+w = ${v:s/a/1/,s/b/2/}       # expansion form
+v =~ s/one/1/,               # and across a line break
+     s/two/2/
+```
+
+Comma won because sash **already** sequences with `,` — array literals, argument
+lists, and (DD#94, two days ago) the inside of `(( ))`. Juxtaposition was the
+tempting alternative and the worst one: no visible separator means a typo'd `/`
+silently fuses two edits into one. The multi-line behaviour was **not a second
+decision** — DD#94's rule ("a separator continues while an operand is owed; a
+complete item ends at the newline") already settled it. The second feature cost
+less than the first.
+
+**It fixed a silent-drop bug underneath.** `split_operator` swept everything
+after an edit's closing `/` into the *flags* slot unvalidated, so
+`${v:s/a/1/,s/b/2/g}` dropped the second edit **and** turned the first into a
+gsub (the dropped text contained a `g`). Wrong output, no diagnostic. The chain
+work and the fix are the same change: `split_sed_edit` now returns the
+unconsumed rest explicitly, the folder consumes it, and a rest that isn't a
+`,`-led edit is SB4032.
+
+That is the **third** instance this week of one shape — journal 252's ICEs,
+DD#95's mixed chains, this — all paths that *accepted* what they should have
+rejected, all invisible because no spec pinned the rejection.
+
+**Only `s///` chains**, on DG's practical grounds: substitution is the edit
+people repeat, and a general rule would first have to settle what
+`${x:1:3,:-y}` means. Left open, not foreclosed.
+
+**Specs:** `spec/var_modifiers.sh` 96.1–96.11. Sweep **4153 passing / 33 failing
+/ 391 skipped, 0 regressions** (+33 = 11 × 3 modes); all 33 failures remain
+janet-only and pre-existing.
+
+**Next up:** the P1 follow-ups — `bug-fn-capture-in-test-operand-ice` (`$(f)` as
+a `[[ ]]` operand ICEs) and `janet-compound-if-condition-ignored` (janet emits
+`(if true …)` for any compound `if` condition).
+
 ## ════════ STATUS (2026-09-08) — DD#95: mixing `&&` and `||` is rejected ════════
 
 **On `hand-parser`.** DG asked whether `!`/`&&`/`||` behave identically inside

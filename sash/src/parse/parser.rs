@@ -1974,7 +1974,14 @@ fn parse_regex_mutation(
 fn reconstruct_sed_raw(scanner: &mut Scanner) -> String {
     let mut raw = String::new();
     while !scanner.at_eof() {
-        if !raw.is_empty() && !scanner.next_is_adjacent() {
+        // DD#96: while an edit is still owed — the text so far ends with the
+        // `,` separator — the chain continues past whitespace AND past a
+        // newline. Same pending-separator continuation rule DD#94 gave
+        // `(( ))`, so `v =~ s/a/1/,` ⏎ `s/b/2/` reads as one chain. (The
+        // newline is *adjacent* to the comma, so it has to be matched below
+        // rather than caught by the adjacency guard.)
+        let edit_owed = raw.trim_end().ends_with(',');
+        if !raw.is_empty() && !scanner.next_is_adjacent() && !edit_owed {
             break;
         }
         match &scanner.peek().token {
@@ -1984,6 +1991,10 @@ fn reconstruct_sed_raw(scanner: &mut Scanner) -> String {
                 raw.push_str(v);
             }
             Tok::DollarBrace(c) => raw.push_str(&format!("${{{}}}", c)),
+            Tok::Newline if edit_owed => {
+                scanner.next();
+                continue;
+            }
             _ => break,
         }
         scanner.next();

@@ -1031,10 +1031,31 @@ fn quoted_var_expr(name: &str, span: Span) -> Expr {
 /// its three fields. Returns `None` when either mandatory `/` delimiter is
 /// absent (a malformed substitution).
 pub(crate) fn split_sed_fields(body: &str) -> Option<(&str, &str, &str)> {
+    let (re, sub, flags, _) = split_sed_edit(body)?;
+    Some((re, sub, flags))
+}
+
+/// Split ONE edit off the front of a chain body: `RE/SUB/FLAGS` plus whatever
+/// follows it. Flags are the leading run of letters; `rest` is everything
+/// after them — empty for a lone edit, or a `,`-introduced continuation
+/// (DD#96). Anything else there is malformed, which is what stops the old
+/// silent drop: the tail used to be swallowed whole as "flags" and only
+/// scanned for `g`, so `${x:s/a/b/:anything}` quietly applied just the first
+/// edit (and `…/,s/c/d/g` even turned the FIRST edit into a gsub).
+fn split_sed_edit(body: &str) -> Option<(&str, &str, &str, &str)> {
     let re_end = body.find('/')?;
     let rest = &body[re_end + 1..];
     let sub_end = rest.find('/')?;
-    Some((&body[..re_end], &rest[..sub_end], &rest[sub_end + 1..]))
+    let after = &rest[sub_end + 1..];
+    let flag_end = after
+        .find(|c: char| !c.is_ascii_alphabetic())
+        .unwrap_or(after.len());
+    Some((
+        &body[..re_end],
+        &rest[..sub_end],
+        &after[..flag_end],
+        &after[flag_end..],
+    ))
 }
 
 /// Build `$(sub|gsub SUBJECT RE SUB)` from an `RE/SUB/flags` payload. RE/SUB
@@ -1042,7 +1063,25 @@ pub(crate) fn split_sed_fields(body: &str) -> Option<(&str, &str, &str)> {
 /// metacharacters are ordinary literal bytes. `g` in the flags selects
 /// `gsub`. Returns `None` for a malformed (missing-delimiter) payload.
 pub(crate) fn build_sed_sub(body: &str, subject: Expr, span: Span) -> Option<Expr> {
-    let (re, sub, flags) = split_sed_fields(body)?;
+    let mut value = subject;
+    let mut rest = body;
+    loop {
+        let (re, sub, flags, after) = split_sed_edit(rest)?;
+        value = build_one_sed_sub(re, sub, flags, value, span);
+        // DD#96: `,` chains edits, applied left to right — the next edit's
+        // subject is this one's result. Only `s///` chains.
+        let after = after.trim_start();
+        if after.is_empty() {
+            return Some(value);
+        }
+        rest = after.strip_prefix(',')?.trim_start().strip_prefix("s/")?;
+    }
+}
+
+/// One `$(sub|gsub SUBJECT RE SUB)` call. RE/SUB become interpolating
+/// double-quoted words (`$x` expands); `g` in this edit's own flags selects
+/// `gsub`, so a flag binds to its edit rather than the whole chain.
+fn build_one_sed_sub(re: &str, sub: &str, flags: &str, subject: Expr, span: Span) -> Expr {
     let cmd_name = if flags.contains('g') { "gsub" } else { "sub" };
     let re_expr = *parse_default_word(re, span);
     let sub_expr = *parse_default_word(sub, span);
@@ -1056,10 +1095,10 @@ pub(crate) fn build_sed_sub(body: &str, subject: Expr, span: Span) -> Option<Exp
         }),
         span,
     };
-    Some(Expr {
+    Expr {
         kind: ExprKind::CommandSubstitution(vec![cmd]),
         span,
-    })
+    }
 }
 
 /// `${var:offset}` / `${var:offset:length}` — substring.
