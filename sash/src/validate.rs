@@ -3742,7 +3742,12 @@ fn taint_attest(
             format!("map attest-all must validate both the key ${key} and value ${val} on the left of a test"),
         ),
     };
-    if binders.iter().all(|b| test_references_var(test, b)) {
+    // DD#98: a `_` binder is discarded, so there is nothing to validate about
+    // it — that is the whole point of writing `_` instead of a name.
+    if binders
+        .iter()
+        .all(|b| crate::ir::is_discard_binder(b) || test_references_var(test, b))
+    {
         tainted.remove(clear);
     } else {
         diags.push(Diagnostic::error_span(span, "SB5020", msg));
@@ -4244,6 +4249,10 @@ fn report_dead(
 ) {
     let mut reported: HashSet<String> = HashSet::new();
     for (name, span) in writes {
+        // DD#98: `_` is bound to be discarded — being unread is the point.
+        if crate::ir::is_discard_binder(name) {
+            continue;
+        }
         if is_dead(name) && reported.insert(name.clone()) {
             diags.push(dead_var_diag(*span, name));
         }
@@ -5124,4 +5133,95 @@ fn cmdsub_head_is(e: &Expr, name: &str) -> bool {
         return false;
     };
     expr_literal_str(&c.name) == name
+}
+
+// ── SB5056 (DD#98): `_` is write-only — every read of it is rejected ──
+//
+// This is what makes the taint exemption safe rather than a laundering hole:
+// if `_` were both taint-exempt and readable, `read _ x; y=$_` would move a
+// tainted value into a clean one. Nothing can observe `_`, so nothing needs to
+// attest it.
+
+/// SB5056: reject any read of the don't-care binder `_`.
+pub fn check_discard_reads(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        for stmt in block {
+            check_discard_reads_stmt(stmt, &mut diags);
+        }
+    }
+    diags
+}
+
+/// Expansion reads (`$_`, `${_}`, `${_[0]}`, `@_`) plus arithmetic reads. A
+/// bare `_` in `(( … ))` is an `ArithExpr::Var`, not an expansion, so the
+/// expression walkers never surface it — it reached the taint backstop instead
+/// of this check's diagnostic.
+fn check_discard_reads_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_all_exprs(stmt, &mut |e| flag_discard_read(e, diags));
+    check_discard_arith_stmt(stmt, diags);
+}
+
+/// Bare `_` operands in every arithmetic tree owned by `stmt` or its children.
+fn check_discard_arith_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        flag_discard_arith(a, stmt.span, diags);
+    }
+    stmt.direct_exprs(&mut |e| {
+        crate::ir::walk_expr_tree(e, &mut |sub| flag_discard_arith_expr(sub, diags))
+    });
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_discard_arith_stmt(s, diags);
+        }
+    }
+}
+
+/// A `$(( … ))` in value position.
+fn flag_discard_arith_expr(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    if let ExprKind::Arithmetic(a) = &expr.kind {
+        flag_discard_arith(a, expr.span, diags);
+    }
+}
+
+/// Each bare variable read in an arithmetic tree.
+fn flag_discard_arith(a: &crate::ir::ArithExpr, span: Span, diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_arith_var_reads(a, &mut |name| {
+        if crate::ir::is_discard_binder(name) {
+            diags.push(discard_read_diag(span, name));
+        }
+    });
+}
+
+/// One expression: flag it when it reads `_` in any spelling.
+fn flag_discard_read(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let Some(name) = discard_read_name(expr) else {
+        return;
+    };
+    diags.push(discard_read_diag(expr.span, name));
+}
+
+/// The SB5056 diagnostic, shared by the expansion and arithmetic paths.
+fn discard_read_diag(span: Span, name: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5056",
+        format!(
+            "`{name}` is the don't-care binder — its value cannot be read. It \
+             exists to bind and discard (so it is exempt from the dead-variable \
+             gate and needs no attest); if you need the value, bind it to a \
+             named variable instead"
+        ),
+    )
+}
+
+/// The name read by `expr`, when that read is of the discard binder.
+fn discard_read_name(expr: &Expr) -> Option<&str> {
+    let name = match &expr.kind {
+        ExprKind::SimpleExpansion(v) => v.as_str(),
+        ExprKind::ParameterExpansion(pe) => pe.name.as_str(),
+        ExprKind::Subscript { name, .. } => name.as_str(),
+        _ => return None,
+    };
+    crate::ir::is_discard_binder(name).then_some(name)
 }

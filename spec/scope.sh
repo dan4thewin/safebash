@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=20
+plan=35
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -139,6 +139,103 @@ show'
 run_sash 'y = $(getenv HOME)
 z = $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 86.20
+
+
+# ═══════════════ DD#98: `_` is the don't-care binder ═══════════════
+# Discarding a value used to require satisfying two rules at once — DD#86's
+# dead-variable gate (SB5050: every variable must be read) and DD#24 taint (a
+# read target is tainted, so any use needs attest). The documented escape
+# hatch `: $v` is itself a *use*, so on a standalone `read` it hit the SSA
+# taint backstop; the only thing that compiled was `attest a p?` — asserting a
+# property of a value you are explicitly throwing away.
+# `_` is write-only: exempt from SB5050, unobservable (so taint-safe by
+# construction), repeatable, and reading it in ANY form is SB5056.
+
+# dc.1 a `_` read target needs no acknowledgment and no attest
+run_sash '/usr/bin/printf "xx yy\n" | read _ b
+attest b p?
+echo "b=$b"'
+[[ $rc = 0 && $out = "b=yy" && -z $err ]]; chk dc.1
+
+# dc.2 `_` still BINDS — it consumes its field, it does not vanish
+run_sash 'echo "aa bb cc" | read _ b
+echo "b=$b"'
+[[ $rc = 0 && $out = "b=bb cc" && -z $err ]]; chk dc.2
+
+# dc.3 `_` may repeat within one binder list
+run_sash 'echo "aa bb cc" | read _ b _
+echo "b=$b"'
+[[ $rc = 0 && $out = "b=bb" && -z $err ]]; chk dc.3
+
+# dc.4 reading `$_` is an error — this is what makes the taint exemption safe
+# rather than a laundering hole (`read _ x; y=$_` must not work)
+run_sash 'echo "aa bb" | read _ b
+echo "$_ $b"'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.4
+
+# dc.5 …in the braced form too
+run_sash 'echo "aa bb" | read _ b
+echo "${_} $b"'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.5
+
+# dc.6 …as a subscript cell
+run_sash 'echo "aa" | read _
+echo "${_[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.6
+
+# dc.7 …and as a splat
+run_sash 'array _=(a b)
+/bin/echo @_'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.7
+
+# dc.8 an unused `for` variable named `_` is not dead
+run_sash 'for _ in a b { echo hi }'
+[[ $rc = 0 && $out = "hi
+hi" && -z $err ]]; chk dc.8
+
+# dc.9 a plain assignment to `_` discards a tainted capture, no attest needed
+run_sash '_=$(/usr/bin/printf "secret")
+echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk dc.9
+
+# dc.10 an `_` attest-all binder is exempt from "validate BOTH key and value" —
+# discarding the key is the point
+run_sash 'map m=([A]=1 [B]=2)
+attest _ v in m [[ -n $v ]]
+echo ${m[A]}'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk dc.10
+
+# dc.11 an ordinary `_`-PREFIXED name is unaffected — still a real variable,
+# still subject to SB5050
+run_sash 'int _n = 5
+/bin/echo ok'
+[[ $rc != 0 && $err == *SB5050* ]]; chk dc.11
+
+# dc.12 …and reads normally when it is read
+run_sash 'int _n = 5
+/bin/echo "n=$_n"'
+[[ $rc = 0 && $out = "n=5" && -z $err ]]; chk dc.12
+
+# dc.13 the SB5056 message names the binder and says why
+run_sash 'echo "a" | read _
+echo "$_"'
+[[ $rc != 0 && $err == *SB5056* && $err == *"cannot be read"* && $err == *"care binder"* ]]; chk dc.13
+
+# dc.14 a BARE `_` in arithmetic is a read too. It is an `ArithExpr::Var`, not
+# an expansion, so the expression walkers never surfaced it — it was caught
+# only by the taint backstop, with no SB code and no explanation.
+run_sash 'echo "1 2" | read _ x
+attest x p?
+(( y = _ ))
+echo "$y $x"'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.14
+
+# dc.15 …and in a value-position `$(( … ))`
+run_sash 'echo "1 2" | read _ x
+attest x p?
+y=$(( _ + 1 ))
+echo "$y $x"'
+[[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.15
 
 set -e
 tally

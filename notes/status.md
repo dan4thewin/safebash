@@ -1,3 +1,57 @@
+## ════════ STATUS (2026-09-08) — DD#98: `_` is the don't-care binder ════════
+
+**On `hand-parser`.** DG asked how discarding unwanted `read` fields was
+addressed — *"was it only the `: $x` mechanism? I'm thinking a 'don't care'
+variable like `_` might have value."*
+
+**Answer: it was worse than `: $x`.** Discarding required satisfying two rules
+that collide — DD#86's dead-variable gate (SB5050: every variable must be read)
+and DD#24 taint (a `read` target is tainted, so any *use* needs attest). `: $v`
+is itself a use, so on a **standalone** `read` it hit the SSA taint backstop.
+The only thing that compiled was `attest a p?` — **asserting a property of a
+value you are explicitly throwing away**. `read` also has no discard of its own:
+the *last* target absorbs the remainder.
+
+**DG's call: add `_` everywhere a binder appears — one uniform rule.** It is
+**write-only**: exempt from SB5050, taint-safe because unobservable, repeatable,
+still binds (so `read _ b` gives `b` field 2), and **every read is SB5056** —
+`$_`, `${_}`, `${_[0]}`, `@_`, and a bare `_` in `(( … ))`.
+
+```sh
+/usr/bin/printf "xx yy\n" | read _ b
+attest b p?; echo "b=$b"        # b=yy — no acknowledgment, no attest
+
+attest _ v in m [[ -n $v ]]     # discard the key; DD#61 normally demands both
+```
+
+**Write-only is not negotiable, not a nicety.** If `_` were taint-exempt *and*
+readable, `read _ x; y=$_` would launder a tainted value into a clean one —
+a validator bypass by punctuation. Rejecting every read closes it and costs
+nothing.
+
+**No lexer or parser change was needed.** `is_plain_identifier` already accepted
+`_`, and a repeated `read _ b _` was already tolerated. The feature is three
+checks: an exemption in `report_dead`, an exemption in the attest-all
+both-binders rule, and the SB5056 reject. `_`-prefixed names (`_n`) are
+untouched; nothing in spec/ or contrib/ used bare `_`.
+
+**Adversarial probing found one hole in my own first cut:** a bare `_` in
+`(( … ))` is an `ArithExpr::Var`, not an expansion, so no expression walker
+surfaced it — `(( y = _ ))` fell through to the taint backstop. Correct outcome,
+useless diagnostic. Closed with `walk_arith_var_reads`, the exact complement.
+**Third instance this week** of a check stopping at the `ArithExpr` boundary
+(cf. DD#97's subscript gap).
+
+**Specs:** `scope.sh` dc.1–dc.15, all 3 modes. Sweep **4270 passing / 39 failing
+/ 394 skipped, 0 regressions** (+45), no new failures.
+
+**Filed:** `read-taint-backstop-no-sb-code` (P2) — standalone and pipeline
+`read` disagree about `: $v`, and the standalone rejection carries **no SB
+code** at all (it comes from the SSA backstop, not the front-end pass).
+
+**Next up:** `janet-compound-if-condition-ignored` (P1),
+`janet-command-substitution-capture-broken` (P1).
+
 ## ════════ STATUS (2026-09-08) — the ICE batch: 6 panics + 2 silent wrong answers ════════
 
 **On `hand-parser`.** DG: *"let's fix the other ICEs still pending."* One task

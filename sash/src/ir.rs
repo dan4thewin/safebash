@@ -271,6 +271,16 @@ fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// DD#98: `_` is the don't-care binder. In any binding position (assignment
+/// LHS, declaration, `for` variable, `read`/`mapfile`/`argv` target, attest
+/// binder) it means "bind this and discard it": exempt from the DD#86
+/// dead-variable gate, and taint-safe because its value can never be observed
+/// — every read of `_` is SB5056. It still *binds*, so `read _ b` consumes a
+/// field and `b` gets the next one.
+pub(crate) fn is_discard_binder(name: &str) -> bool {
+    name == "_"
+}
+
 /// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to
 /// each imported `Expr` (via `walk_expr_tree`).
 pub(crate) fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
