@@ -761,7 +761,13 @@ fn handle_lastpipe_read(
     state: &mut VersionState,
     block: BlockId,
 ) {
-    let stages = build_producer_stages(&p.commands[..p.commands.len() - 1], ssa, state, block);
+    let producers = &p.commands[..p.commands.len() - 1];
+    // DD#24: the read targets are clean only if every producer is
+    // compiler-computed. This was hardcoded `true`, which disabled the SSA
+    // backstop for every lastpipe read — so when the front-end pass also
+    // missed a laundering shape, nothing caught it.
+    let clean_pipe = !producers.iter().any(crate::validate::is_external_source);
+    let stages = build_producer_stages(producers, ssa, state, block);
     ssa.block_mut(block).insts.push(SsaInst::Pipeline {
         stages,
         capture_read_fd: true,
@@ -787,7 +793,7 @@ fn handle_lastpipe_read(
                 fd: -1,
                 delim: flags.delim,
                 redirects: vec![],
-                clean_pipe: true,
+                clean_pipe,
             });
         } else if flags.var_names.len() > 1 {
             let targets: Vec<VarRef> = flags.var_names.iter().map(|n| state.define(n)).collect();
@@ -796,7 +802,7 @@ fn handle_lastpipe_read(
                 fd: -1,
                 delim: flags.delim,
                 redirects: vec![],
-                clean_pipe: true,
+                clean_pipe,
                 field_sep: flags.field_sep,
             });
         }

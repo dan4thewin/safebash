@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup taint_switch
-plan=8
+plan=9
 echo "1..$plan" >&3
 
 set +e
@@ -48,10 +48,18 @@ if in_modes native; then
     # builtin ($(dtoi …)) — cmd_subst_taint propagates operand taint (DD#82)
     run_sash 'y=$(getenv HOME); x=$(dtoi $y); echo $x'
     [[ $rc != 0 && -z $out ]]; chk sw.8
+    # sw.9 the SSA backstop rejects a pipeline laundered through a leading
+    # builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was
+    # hardcoded `true` for every lastpipe read, so the backstop was inert for
+    # this shape and the front-end pass was the only layer — and it missed it.
+    run_sash 'echo ig | /bin/cat /etc/hostname | read x
+echo "$x"'
+    [[ $rc != 0 && -z $out ]]; chk sw.9
 else
     skip_chk sw.4
     skip_chk sw.5
     skip_chk sw.8
+    skip_chk sw.9
 fi
 unset SASH_CFLAGS
 

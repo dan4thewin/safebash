@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=158
+plan=166
 echo "1..$plan" >&3
 
 set +e
@@ -903,6 +903,63 @@ attest x [[ $x == $z ]]
 # near-miss reached the value path and panicked.
 run_sash 'x=$(printf 123); attest x ((y=x*2)); echo $y'
 [[ $rc = 0 && $out = "246" && -z $err ]]; chk 93.48
+
+
+# ═══════ DD#24: an external stage ANYWHERE upstream taints the read ═══════
+# taint_pipeline consulted only the FIRST stage, so prefixing any pipeline
+# with a builtin laundered the whole thing: `echo ig | /bin/cat secret | read x`
+# yielded the file's contents CLEAN. The SSA backstop that should have caught
+# it had `clean_pipe: true` hardcoded for every lastpipe read. Both layers
+# failed. DD#24: any output that passed through execve(2) is tainted, so a read
+# target is clean only when EVERY upstream stage is compiler-computed.
+
+# tl.1 the laundering shape is rejected (scalar read)
+run_sash 'echo ig | /bin/cat /etc/hostname | read x
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.1
+
+# tl.2 …multi-target read
+run_sash 'echo ig | /bin/cat /etc/hostname | read x y
+echo "$x$y"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.2
+
+# tl.3 …array read
+run_sash 'array a=(); echo ig | /bin/cat /etc/hostname | read -a a
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.3
+
+# tl.4 …mapfile
+run_sash 'array a=(); echo ig | /bin/cat /etc/hostname | mapfile a
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.4
+
+# tl.5 …and with the external stage third, not second
+run_sash 'echo ig | /bin/cat | /bin/cat | read x
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.5
+
+# tl.6 attest still admits the value (the reject is not a dead end)
+run_sash 'echo ig | /bin/cat /etc/hostname | read x
+attest x p?
+echo "ok"'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk tl.6
+
+# tl.7 an ALL-builtin pipeline stays clean — no attest needed (no regression)
+run_sash 'echo "a b" | read x y
+echo "$x$y"'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk tl.7
+
+# tl.8 a clean pipeline into an ARRAY read likewise needs no attest — the
+# fix must not over-taint the shapes that were always legitimate.
+# (The SSA-backstop half of this fix is pinned by taint_switch.sh sw.9.)
+# native,c: janet's `read -a` miscounts (3 for "p q") — janet-read-a-element-count.
+if in_modes native,c; then
+    run_sash 'array a=(); echo "p q" | read -a a
+echo "$(len a)"'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk tl.8
+else
+    skip_chk tl.8
+fi
 
 set -e
 tally

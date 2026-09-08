@@ -3273,8 +3273,10 @@ fn check_clean_read_taint(c: &Command, tainted: &mut HashSet<String>, diags: &mu
     }
 }
 
-/// Check if a pipeline stage is an external source (execs).
-fn is_external_source(stmt: &Statement) -> bool {
+/// Check if a pipeline stage is an external source (execs). Shared with the
+/// transform's SSA-backstop `clean_pipe` computation so the two taint layers
+/// classify a stage identically — a divergence here is a laundering hole.
+pub(crate) fn is_external_source(stmt: &Statement) -> bool {
     match &stmt.kind {
         StmtKind::Command(c) => {
             let name = expr_literal_str(&c.name);
@@ -3542,19 +3544,28 @@ fn taint_function_body(body: &[Statement], tainted: &HashSet<String>, diags: &mu
     }
 }
 
-/// Taint a pipeline: if first stage is external, subsequent reads are tainted.
+/// Taint a pipeline: a `read`/`mapfile` stage is exempt from tainting its
+/// targets only when EVERY stage upstream of it is compiler-computed.
+///
+/// This used to consult `p.commands.first()` alone, which made a leading
+/// builtin launder the whole pipeline: `echo ig | /bin/cat secret | read x`
+/// bound the file's contents CLEAN, and the value then flowed into argv and
+/// test operands unchecked. DD#24 is operational — any output that passed
+/// through `execve(2)` is tainted — so the flag must accumulate over the
+/// stages the data actually traversed, not describe only the source.
 fn taint_pipeline(
     p: &crate::ir::Pipeline,
     tainted: &mut HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let first_is_external = p.commands.first().is_some_and(is_external_source);
+    let mut upstream_external = false;
     for (i, s) in p.commands.iter().enumerate() {
-        if i > 0 && !first_is_external {
+        if i > 0 && !upstream_external {
             taint_stmt_no_read_taint(s, tainted, diags);
         } else {
             taint_stmt(s, tainted, diags);
         }
+        upstream_external |= is_external_source(s);
     }
 }
 

@@ -1,3 +1,52 @@
+## ════════ STATUS (2026-09-08) — SECURITY: taint laundering via a leading builtin ════════
+
+**On `hand-parser`.** Found while costing DG's NUL/`tr` design proposal — an
+`echo` prefix laundered a pipeline completely:
+
+```sh
+/bin/cat secret.txt | read x y            # SB5020 — correctly rejected
+echo ig | /bin/cat secret.txt | read x y  # CLEAN. x="SECRET" y="DATA"
+```
+
+The value then flowed into external argv and `[[ ]]` operands unchecked.
+`read`, `read x y`, `read -a` and `mapfile` were all affected (only `while
+read` was safe). **Validator bypass — the class the adversarial audit names its
+highest priority.**
+
+**Both layers failed, and not independently.** The front end
+(`validate.rs:3551`) asked whether the pipeline's *source* was external —
+`p.commands.first()` — but taint is a property of the data's **path**, not its
+origin. The SSA backstop, which exists for exactly this, was **inert**:
+`handle_lastpipe_read` hardcoded `clean_pipe: true` for every lastpipe read,
+while the field's own doc said *"True when read is in a lastpipe position with
+clean producer stages."* The comment described a check nobody wrote. One layer
+had a wrong rule; the other had a hardcoded answer to the same question.
+
+**Fixed:** the front end now accumulates `upstream_external` across stages; the
+backstop computes `clean_pipe` from the producers. And the two layers now call
+**one shared `is_external_source`** — my first draft added a second classifier
+in the transform with subtly different rules, which is the very shape that
+caused the bug. One function, no drift.
+
+**The test that was missing** is the one that matters: `taint_switch.sh` sw.9
+runs the laundering shape under `--no-taint-cst`, i.e. **exercises the backstop
+with the front end switched off**. Nothing did that before, which is why
+`clean_pipe: true` sat there unnoticed.
+
+**Specs:** `taint.sh` tl.1–tl.8, `taint_switch.sh` sw.9. Sweep **4302 passing /
+39 failing / 401 skipped, 0 regressions** (+24), no new failures.
+
+**Process note:** my first clean-control (`echo | echo | read`) was **flaky** —
+1 run in 12, a SIGPIPE race on the middle stage. A flaky spec in a security fix
+trains you to re-run until green; replaced with deterministic ones. The race
+itself is pre-existing and unrelated.
+
+**Also filed:** `janet-read-a-element-count` (P2) — janet's `read -a` counts one
+element too many, surfaced by the new clean control.
+
+**Still open:** DG's design question (NUL-only splitting with an upstream `tr`
+stage) — this was the detour, not the answer.
+
 ## ════════ STATUS (2026-09-08) — DD#98: `_` is the don't-care binder ════════
 
 **On `hand-parser`.** DG asked how discarding unwanted `read` fields was

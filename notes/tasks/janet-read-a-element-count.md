@@ -1,0 +1,35 @@
+---
+title: "janet: `read -a` produces one element too many"
+status: ready
+priority: P2
+kind: bug
+depends: []
+gates:
+  - "janet: `array a=(); echo \"p q\" | read -a a; echo $(len a)` prints `2` (native/c print 2; janet prints 3)"
+  - "spec `taint.sh` tl.8 passes in janet mode (currently gated native,c)"
+---
+
+## Found
+
+2026-09-08, adding the taint-laundering specs (journal 259). The clean-control
+spec `tl.8` passes in native and c and fails in janet:
+
+```sh
+array a=(); echo "p q" | read -a a
+echo "$(len a)"
+```
+
+native/c print `2`. janet prints `3`.
+
+Likely the trailing newline is being counted as a third (empty) record — the
+terminator-semantics elision that `sash_split_into_array` implements for the
+native/c path (spec 22.27: interior empties are kept, the single trailing empty
+from a final delimiter is dropped).
+
+## Note
+
+Independent of the taint fix it was found alongside — it is a plain
+element-count discrepancy on a *clean* pipeline. Related but distinct from the
+already-gated 22.26/22.27, which are skipped in janet for a different reason
+("janet lacks custom-delimiter array reads"); this one uses the default
+whitespace split.
