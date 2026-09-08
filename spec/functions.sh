@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=76
+plan=82
 echo "1..$plan" >&3
 
 set +e
@@ -511,6 +511,46 @@ run_sash 'fn f { if true; then echo a; else echo b; fi; }
 x=
 [[ -n $x ]] || f'
 [[ $rc = 0 && $out = "a" && -z $err ]]; chk 74.37
+
+# ------------------------------------------------- capture in a [[ ]] operand
+# A `$(f)` capture used as a test operand reached codegen as a bare FuncCall
+# and PANICKED ("ICE: FuncCall should have been lifted during transform").
+# The assignment path lifts captures into a temp; the test path never did.
+# DG: make it work, consistent with `v=$(f)`.
+
+# ice.1 a string function's capture as a test operand
+run_sash 'fn f() { echo x }
+if [[ $(f) = x ]] { echo T } else { echo F }'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.1
+
+# ice.2 …and it really compares the captured value, not a constant
+run_sash 'fn f() { echo x }
+if [[ $(f) = q ]] { echo T } else { echo F }'
+[[ $rc = 0 && $out = "F" && -z $err ]]; chk ice.2
+
+# ice.3 an `-> int` function's capture (the values.rs:84 sibling arm)
+run_sash 'fn n() -> int { return 7 }
+if [[ $(n) = 7 ]] { echo T } else { echo F }'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.3
+
+# ice.4 a multi-statement `$(…)` body as an operand (the values.rs:90 arm);
+# `v=$(echo a; echo b)` already worked, so the test position must agree
+run_sash 'if [[ $(echo a; echo b) = "a
+b" ]] { echo T } else { echo F }'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.4
+
+# ice.5 a capture in a unary operand, and nested inside `&&`
+run_sash 'fn f() { echo x }
+if [[ -n $(f) && $(f) = x ]] { echo T } else { echo F }'
+[[ $rc = 0 && $out = "T" && -z $err ]]; chk ice.5
+
+# ice.6 the same in a `while` condition (a different lowering site), and the
+# capture is re-evaluated each iteration because it sits in the condition block
+run_sash 'fn f() { echo x }
+int i=0
+while [[ $(f) = x ]] { echo L; (( i = i + 1 )); if (( i > 1 )) { break } }'
+[[ $rc = 0 && $out = "L
+L" && -z $err ]]; chk ice.6
 
 set -e
 tally

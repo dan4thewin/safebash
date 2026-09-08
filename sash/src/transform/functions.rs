@@ -77,6 +77,49 @@ pub(super) fn exit_fn_body_scope(state: &mut VersionState, saved: FnBodyScope) {
     state.assoc_arrays = saved.assoc_arrays;
 }
 
+/// Apply the same capture lifting the assignment and argument paths use to a
+/// `[[ ]]` test's value operands. `test_to_ssa` builds an `SsaTest` from a
+/// `&VersionState` alone — it has no block to emit a capture into — so the lift
+/// runs here, at the one call site that does. Without it a `$(f)` operand
+/// reached codegen as a bare `FuncCall`/`IntFuncCall`/`CmdSubstBody` and
+/// panicked (values.rs:81/85/90) even though `v=$(f)` had always worked.
+/// Returns the block to continue in: a capture may open a new one.
+pub(super) fn lift_test_captures(
+    test: SsaTest,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: &mut BlockId,
+) -> SsaTest {
+    match test {
+        SsaTest::Unary { op, operand } => SsaTest::Unary {
+            op,
+            operand: lift_int_func_calls(operand, ssa, state, block),
+        },
+        SsaTest::Binary { left, op, right } => {
+            let left = lift_int_func_calls(left, ssa, state, block);
+            let right = match right {
+                SsaTestRhs::Value(v) => {
+                    SsaTestRhs::Value(lift_int_func_calls(v, ssa, state, block))
+                }
+                // A `=~` pattern is a comptime string, not a value.
+                pattern => pattern,
+            };
+            SsaTest::Binary { left, op, right }
+        }
+        SsaTest::Not(inner) => {
+            SsaTest::Not(Box::new(lift_test_captures(*inner, ssa, state, block)))
+        }
+        SsaTest::And(a, b) => SsaTest::And(
+            Box::new(lift_test_captures(*a, ssa, state, block)),
+            Box::new(lift_test_captures(*b, ssa, state, block)),
+        ),
+        SsaTest::Or(a, b) => SsaTest::Or(
+            Box::new(lift_test_captures(*a, ssa, state, block)),
+            Box::new(lift_test_captures(*b, ssa, state, block)),
+        ),
+    }
+}
+
 pub(super) fn lift_int_func_calls(
     val: SsaValue,
     ssa: &mut SsaProgram,

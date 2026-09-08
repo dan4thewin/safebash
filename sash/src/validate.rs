@@ -2293,11 +2293,27 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     } else {
         stmt.direct_exprs(&mut |e| check_elide_expr(e, false, diags));
     }
-    for body in stmt.child_bodies() {
-        for s in body {
-            check_elide_stmt(s, diags);
-        }
+    // A bare `(( … ))` holds an `ArithExpr` directly, which `direct_exprs`
+    // cannot surface (same shape as check_positionals_direct).
+    if let StmtKind::ArithTest(a) = &stmt.kind {
+        check_elide_arith(a, diags);
     }
+    check_elide_children(stmt, diags);
+}
+
+/// Recurse into a statement's nested bodies.
+fn check_elide_children(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    for body in stmt.child_bodies() {
+        check_elide_stmt_seq(body, diags);
+    }
+}
+
+/// Arithmetic is a value context: an imported `${…}` there can never be
+/// elided, so every embedded expansion is checked non-elidable. Without this
+/// the walk stopped at the `ArithExpr` boundary and `(( y = ${x:~} ))` reached
+/// codegen, where lowering a scalar `ElideEmpty` panics.
+fn check_elide_arith(a: &crate::ir::ArithExpr, diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_arith_expansions(a, &mut |e| check_elide_expr(e, false, diags));
 }
 
 fn check_elide_expr(expr: &Expr, elidable: bool, diags: &mut Vec<Diagnostic>) {
@@ -2314,6 +2330,8 @@ fn check_elide_expr(expr: &Expr, elidable: bool, diags: &mut Vec<Diagnostic>) {
         // its operands are value positions — reset to non-elidable.
         ExprKind::Test(t) => check_elide_test(t, diags),
         ExprKind::CommandSubstitution(stmts) => check_elide_stmt_seq(stmts, diags),
+        // `$(( … ))` in value position — its operands are value positions too.
+        ExprKind::Arithmetic(a) => check_elide_arith(a, diags),
         _ => {}
     }
 }
@@ -2739,12 +2757,31 @@ fn check_argv_splat_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
             check_external_splat(c, diags);
             stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
         }
+        // A redirect target is a single path, so it is a scalar position. This
+        // was unchecked: `> @a` compiled and then misdirected — with one
+        // element it silently became the target, with two it wrote nowhere.
+        StmtKind::Redirected(r) => {
+            check_redirect_target_splats(r, diags);
+            check_argv_splat_children(stmt, diags);
+        }
         _ => {
             stmt.direct_exprs(&mut |e| check_argv_splat_expr(e, diags));
-            for body in stmt.child_bodies() {
-                check_argv_splat_body(body, diags);
-            }
+            check_argv_splat_children(stmt, diags);
         }
+    }
+}
+
+/// Every redirect target of a redirected statement, in scalar position.
+fn check_redirect_target_splats(r: &crate::ir::Redirected, diags: &mut Vec<Diagnostic>) {
+    for redir in &r.redirects {
+        check_scalar_position_splat(&redir.target, diags);
+    }
+}
+
+/// Recurse into a statement's nested bodies.
+fn check_argv_splat_children(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    for body in stmt.child_bodies() {
+        check_argv_splat_body(body, diags);
     }
 }
 
@@ -3088,12 +3125,24 @@ fn check_argv_splat_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// A scalar position (a `[[ ]]` operand, a redirect target): a named-array
+/// splat there is SB5025, exactly as it is on an assignment RHS. Only the
+/// assignment path used to check this, so the others accepted `@a` and then
+/// did the wrong thing silently.
+fn check_scalar_position_splat(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    if is_named_array_splat(e) {
+        diags.push(named_splat_scalar_diag(e.span));
+    } else {
+        check_argv_splat_expr(e, diags);
+    }
+}
+
 fn check_argv_splat_test(t: &TestExpr, diags: &mut Vec<Diagnostic>) {
     match t {
-        TestExpr::Unary { operand, .. } => check_argv_splat_expr(operand, diags),
+        TestExpr::Unary { operand, .. } => check_scalar_position_splat(operand, diags),
         TestExpr::Binary { left, right, .. } => {
-            check_argv_splat_expr(left, diags);
-            check_argv_splat_expr(right, diags);
+            check_scalar_position_splat(left, diags);
+            check_scalar_position_splat(right, diags);
         }
         TestExpr::Not(inner) => check_argv_splat_test(inner, diags),
         TestExpr::And(l, r) | TestExpr::Or(l, r) => {

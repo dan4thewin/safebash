@@ -646,18 +646,89 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
     // `$(( ))`. Covers the string intrinsics + dtoi/itod (Q2) + user string
     // functions; closes the getenv/arg validator-bypass (they silently compiled
     // to 0 in a sexpr, sidestepping SB5020). bug-arith-sexpr-intrinsics-zero.
-    for stmt in &program.statements {
-        check_sexpr_string_producers(stmt, &env, &mut errors);
-    }
+    run_stmt_pass(program, &env, &mut errors, check_sexpr_string_producers);
 
     // Fourth pass (DG 2026-08-29): a value-context `${int_x:-D}` default must be
     // an int literal (SB4030) — see check_int_value_defaults. Separate from the
     // arith pass, which owns `$(( … ))` defaults.
-    for stmt in &program.statements {
-        check_int_value_defaults(stmt, &env, &mut errors);
-    }
+    run_stmt_pass(program, &env, &mut errors, check_int_value_defaults);
+
+    // Fifth pass: a string operation on an int variable. Codegen asks the slot
+    // for a string pointer and panics on the Int arm (`codegen/types.rs:29`),
+    // whose comment asserts that arm is "not user-reachable input" — it was.
+    run_stmt_pass(program, &env, &mut errors, check_int_string_ops);
 
     errors
+}
+
+/// Run one whole-program check over each top-level statement. Each pass
+/// recurses into nested bodies itself, so this stays a flat loop.
+fn run_stmt_pass(
+    program: &Program,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+    pass: fn(&Statement, &TypeEnv, &mut Vec<TypeError>),
+) {
+    for stmt in &program.statements {
+        pass(stmt, env, errors);
+    }
+}
+
+/// Substring (`${n:1:2}`) is a string operation, so an int-typed subject is a
+/// type error. The other string ops (`${n#…}`, `${n^^}`) are already rejected
+/// at parse (SB4034, DD#65 pruned operators), which is why substring was the
+/// one that reached codegen and panicked.
+fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    crate::ir::walk_all_exprs(stmt, &mut |e| {
+        let ExprKind::ParameterExpansion(pe) = &e.kind else {
+            return;
+        };
+        if pe.operator.as_deref() == Some("substring") && env.var_type(&pe.name) == VarType::Int {
+            errors.push(TypeError {
+                message: format!(
+                    "substring of int variable `{0}` — a substring is a string \
+                     operation. Convert first: `s=\"${{{0}}}\"` then `${{s:1:2}}`",
+                    pe.name
+                ),
+                span: e.span,
+            });
+        }
+    });
+    check_int_redirect_target(stmt, env, errors);
+}
+
+/// A redirect target is a filesystem path, so an int variable there is a type
+/// error rather than a codegen panic.
+fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if let StmtKind::Redirected(r) = &stmt.kind {
+        for redir in &r.redirects {
+            check_one_redirect_target(&redir.target, env, errors);
+        }
+    }
+    for body in stmt.child_bodies() {
+        for s in body {
+            check_int_redirect_target(s, env, errors);
+        }
+    }
+}
+
+/// One redirect target: an int-typed variable is a type error rather than the
+/// codegen panic it used to be.
+fn check_one_redirect_target(target: &Expr, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    let ExprKind::SimpleExpansion(name) = &target.kind else {
+        return;
+    };
+    if env.var_type(name) != VarType::Int {
+        return;
+    }
+    errors.push(TypeError {
+        message: format!(
+            "redirect target `${0}` is an int variable — a target is a path \
+             (string). Convert with `\"${{{0}}}\"`",
+            name
+        ),
+        span: target.span,
+    });
 }
 
 /// DD#33: Check expressions for subscript key type mismatches.

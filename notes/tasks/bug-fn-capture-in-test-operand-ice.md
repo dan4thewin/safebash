@@ -1,6 +1,6 @@
 ---
 title: "ICE: a user-function capture `$(f)` as a `[[ ]]` test operand"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -77,3 +77,19 @@ the same rule as `v=$(f)` (DD#24 user-function capture is clean).
 
 Add specs for both the string and `-> int` function cases, and keep the
 external-cmdsub SB5020 case alongside them so the two paths stay distinguished.
+
+## Resolved
+
+2026-09-08 (journal 257). Fixed by `lift_test_captures`
+(`transform/functions.rs`), applied at the one site that builds an `SsaTest`
+with a block in hand (`try_test_arg_capture`). It reuses `lift_int_func_calls`,
+so all three kinds — `FuncCall`, `IntFuncCall` and `CmdSubstBody` — are hoisted
+into a captured temp exactly as the assignment path does.
+
+DG's call on the open question in the gates: **make it work**, consistent with
+`v=$(f)`, rather than reject.
+
+Specs `functions.sh` ice.1–ice.6 (string fn, `-> int` fn, multi-statement body,
+unary operand, nested inside `&&`, and a `while` condition where the capture
+re-evaluates each iteration). Native and c pass; janet fails on a *separate*
+pre-existing defect, filed as `janet-command-substitution-capture-broken`.

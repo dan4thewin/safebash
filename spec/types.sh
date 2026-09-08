@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=144
+plan=147
 echo "1..$plan" >&3
 
 set +e
@@ -707,6 +707,25 @@ run_sash 'n=3; while [[ i? $n ]]; do echo $n; n=; done'
 run_sash 'if [[ -i 42 ]]; then echo yes; else echo no; fi'
 [[ $rc != 0 && -z $out && $err == *SB4014* ]]; chk 93.19
 
+
+# ------------------------------------------- string operations on an int var
+# Asking an int-typed slot for a string pointer panicked at codegen
+# (`types.rs:29`, "expected string var, got int"). The comment there asserted
+# the Int arm was "not user-reachable input"; it was. `${n#…}`/`${n^^}` are
+# already rejected at parse (SB4034, DD#65 pruned operators), so the live
+# cases were substring and a redirect target.
+
+# ice.11 substring of an int variable is a type error, not a panic
+run_sash 'int n=512; v=${n:1:2}; echo $v'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *ICE* ]]; chk ice.11
+
+# ice.12 …in a command argument too
+run_sash 'int n=512; echo ${n:1:2}'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *ICE* ]]; chk ice.12
+
+# ice.13 an int variable as a redirect target is a type error, not a panic
+run_sash 'int n=5; echo hi > $n'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err != *ICE* ]]; chk ice.13
+
 set -e
 tally
-

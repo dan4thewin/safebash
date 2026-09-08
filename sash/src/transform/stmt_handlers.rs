@@ -118,7 +118,12 @@ fn try_test_arg_capture(
 ) -> Option<BlockId> {
     for arg in &c.args {
         if let ExprKind::Test(test_expr) = &arg.kind {
+            let mut block = block;
             let ssa_test = test_to_ssa(test_expr, state);
+            // A `$(f)` operand must be captured into a temp before the test —
+            // the capture may open a new block, so continue in whichever the
+            // lift leaves us in.
+            let ssa_test = super::functions::lift_test_captures(ssa_test, ssa, state, &mut block);
             ssa.block_mut(block).insts.push(SsaInst::Test(ssa_test));
             return Some(block);
         }

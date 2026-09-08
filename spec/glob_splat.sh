@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup glob_splat
-plan=35
+plan=38
 echo "1..$plan" >&3
 
 set +e
@@ -192,6 +192,24 @@ if in_modes native,c; then
 else
     skip_chk gs.31; skip_chk gs.34; skip_chk gs.35
 fi
+
+
+# --------------------------------- an array splat in a scalar position (DD#69)
+# `v=@a` is SB5025, but a test operand and a redirect target were never
+# checked. They did not panic — they silently did the wrong thing, which is
+# worse: `[[ @a = x ]]` was ALWAYS false, and `> @a` wrote to neither file.
+
+# ice.14 a splat as a test operand is SB5025, not a silent false
+run_sash 'array a=(x y); if [[ @a = x ]] { echo T } else { echo F }'
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk ice.14
+
+# ice.15 …including in a unary test
+run_sash 'array a=(x); if [[ -n @a ]] { echo T }'
+[[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk ice.15
+
+# ice.16 a splat as a redirect target is SB5025, not a silent misdirection
+run_sash 'array a=(o1 o2); echo hi > @a'
+[[ $rc != 0 && $err == *SB5025* ]]; chk ice.16
 
 set -e
 tally

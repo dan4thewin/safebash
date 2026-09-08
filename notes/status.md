@@ -1,3 +1,65 @@
+## ════════ STATUS (2026-09-08) — the ICE batch: 6 panics + 2 silent wrong answers ════════
+
+**On `hand-parser`.** DG: *"let's fix the other ICEs still pending."* One task
+was filed; enumerating the 13 `panic!("ICE: …")` arms in `codegen/` and probing
+each found **four more**, all reachable from input a person would plausibly
+write:
+
+| trigger | site | was filed? |
+|---|---|---|
+| `[[ $(f) = x ]]` (string fn) | `values.rs:81` | yes (P1) |
+| `[[ $(f) = 1 ]]` (`-> int` fn) | `values.rs:85` | yes |
+| `[[ $(echo a; echo b) = x ]]` | `values.rs:90` | **no** |
+| `(( y = ${x:~} ))` | `values.rs:103` | **no** |
+| `int n=512; echo ${n:1:2}` | `types.rs:29` | **no** |
+| `int n=5; echo hi > $n` | `types.rs:29` | **no** |
+
+**Two cases were worse than a panic.** `[[ @a = x ]]` compiled and was *always
+false* — even when `a`'s first element was `x`; `echo hi > @a` wrote to neither
+file. `v=@a` is correctly SB5025; the assignment path was the only one checking.
+Same root cause as the ICEs (a value kind reaching a position whose lowering
+can't handle it), opposite failure mode — a crash is a bug report, a false
+comparison is a wrong result someone builds on. Fixed in the same batch.
+
+**Only one genuine decision.** The rest were settled by rules sash already had
+(elide→SB5046, splat→SB5025, string-op-on-int→SB4030) — applying an existing
+rule to a missed position is finishing a decision, not making one. The capture
+was open, and the filed task said so ("compiles **or** is rejected — never
+panics"). **DG's call: make it work**, consistent with `v=$(f)`. Nearly free:
+`lift_int_func_calls` already handled all three value kinds, so the new
+`lift_test_captures` is 30 lines of recursion over `SsaTest` and no new
+machinery.
+
+**Two comments asserted what wasn't true.** `types.rs:19` — "the Int arm is …
+not user-reachable input"; `values.rs:100` — "reaching a scalar `lower_value`
+means validate's SB5046 guard was bypassed". Both were claims about a *global*
+property, and each was true only of the positions its author had in mind.
+Journal 252's lesson, third session running.
+
+**A gap under the gap:** `walk_arith_expansions` — the shared walker
+`walk_expr_tree`/`walk_all_exprs` use to descend into `$(( … ))` — had no arms
+for `ArithExpr::Subscript`/`SubscriptAssign`, so *every* expr-level check
+silently skipped anything inside `a[…]`. That walker was itself a fix for this
+same class. Closed and spec'd (ice.10).
+
+**Specs:** `functions.sh` ice.1–6, `var_modifiers.sh` ice.7–10, `types.sh`
+ice.11–13, `glob_splat.sh` ice.14–16. Each new diagnostic's suggested
+workaround was **run**, not assumed. Sweep **4225 passing / 39 failing / 394
+skipped, 0 regressions** (+43).
+
+**5 new failures, all janet, all pre-existing:** janet renders a user-function
+capture as `(os/spawn ["f"] …)` and crashes — in the *assignment* form too, so
+unrelated to this work — and truncates a multi-statement `$(…)` to its first
+statement. Filed `janet-command-substitution-capture-broken`, left failing not
+skipped.
+
+**Closed stale:** `cmdsub-followups` gate 1 (unblessed-external ICE) no longer
+reproduces — clean SB5020 now, fixed by `tighten-cmdsub-taint-execve`.
+
+**Next up:** `janet-compound-if-condition-ignored` (P1) and the janet capture
+bug above; `eliminate-ice-arms-via-types` remains the structural follow-up that
+would retire this whole class by construction.
+
 ## ════════ STATUS (2026-09-08) — DD#97: the `array`/`map` keyword introduces a collection ════════
 
 **On `hand-parser`.** DG: *"when I do `f=(*)` I see `$(len f)` return 0 despite

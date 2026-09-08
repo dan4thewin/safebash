@@ -38,6 +38,13 @@ Resolving the cmdsub head (DD#23) made bare-external `$(cat …)` /
    capture (mirror codegen `emit_cmdsub_exec`) so the C oracle matches
    native for `$(external …)`.
 
+## Update 2026-09-08
+
+Gate 1 (the unblessed-external ICE) is **no longer reproducible**:
+`x=$(/bin/cat /etc/hostname); echo $x` now yields a clean **SB5020**, not the
+SSA taint backstop's ICE. Closed by `tighten-cmdsub-taint-execve` (done). The
+remaining live work in this task is the **C cmdsub exec** Phase-4 TODO.
+
 ## Resolved (DG, 2026-06-21) — reframed into three threads
 
 DG corrected the framing: there are no "bare externals" (DD#23 maps every

@@ -273,7 +273,7 @@ fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
 
 /// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to
 /// each imported `Expr` (via `walk_expr_tree`).
-fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
+pub(crate) fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
     match arith {
         ArithExpr::Expansion(inner) => walk_expr_tree(inner, f),
         ArithExpr::BinOp { left, right, .. } => {
@@ -299,6 +299,14 @@ fn walk_arith_expansions(arith: &ArithExpr, f: &mut impl FnMut(&Expr)) {
             for it in items {
                 walk_arith_expansions(it, f);
             }
+        }
+        // A subscript's index (and an assignment's value) are arithmetic
+        // subtrees too — skipping them let every expr-level check inside
+        // `a[…]` go unrun, e.g. `(( y = a[${x:~}] ))`.
+        ArithExpr::Subscript { index, .. } => walk_arith_expansions(index, f),
+        ArithExpr::SubscriptAssign { index, value, .. } => {
+            walk_arith_expansions(index, f);
+            walk_arith_expansions(value, f);
         }
         _ => {}
     }

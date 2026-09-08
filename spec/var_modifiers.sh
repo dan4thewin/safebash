@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=83
+plan=87
 echo "1..$plan" >&3
 
 set +e
@@ -318,6 +318,31 @@ v =~ s/a/b/ junk
 run_sash 'x=aa
 /bin/echo ${x:s/a/b/, u}'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 96.11
+
+
+# ---------------------------------------------- elide (:~) in arithmetic
+# `${x:~}` never yields a value, so an arithmetic operand position has no
+# meaning for it — the same reasoning SB5046 already applies to an assignment
+# RHS. The elide check walked commands, tests and array literals but never
+# descended into an `ArithExpr`, so these reached codegen and PANICKED
+# ("ICE: ElideEmpty (:~) must be expanded by a list builder").
+
+# ice.7 `(( y = ${x:~} ))` — a bare arithmetic statement
+run_sash 'x=hi; (( y = ${x:~} )); echo $y'
+[[ $rc != 0 && -z $out && $err == *SB5046* && $err != *ICE* ]]; chk ice.7
+
+# ice.8 `$(( ${x:~} ))` — arithmetic in value position
+run_sash 'x=hi; v=$(( ${x:~} )); echo $v'
+[[ $rc != 0 && -z $out && $err == *SB5046* && $err != *ICE* ]]; chk ice.8
+
+# ice.9 an arithmetic condition
+run_sash 'x=hi; if (( ${x:~} > 1 )) { echo T }'
+[[ $rc != 0 && -z $out && $err == *SB5046* && $err != *ICE* ]]; chk ice.9
+
+# ice.10 inside an arithmetic subscript index (the arith walker skipped
+# Subscript/SubscriptAssign children entirely)
+run_sash 'int array a=(1 2); x=hi; (( y = a[${x:~}] )); echo $y'
+[[ $rc != 0 && -z $out && $err == *SB5046* && $err != *ICE* ]]; chk ice.10
 
 set -e
 tally
