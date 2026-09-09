@@ -227,6 +227,8 @@ fn emit_stage_redirects(
     }
 }
 
+/// open(2) mode for a stage redirect: 0 = read, 1 = write/truncate, 2 = append.
+/// `Read` falls in the `_` arm deliberately — 0 is its mode.
 fn stage_redirect_flags(op: &crate::ir::RedirectOp) -> i64 {
     match op {
         crate::ir::RedirectOp::Write => 1,
@@ -242,7 +244,16 @@ fn emit_one_stage_redirect(
     ctx: &mut InstCtx,
     pe: &PipelineExterns,
 ) {
-    let fd = builder.ins().iconst(I64, redir.fd.unwrap_or(1) as i64);
+    // The implicit fd depends on the DIRECTION: `< f` is fd 0, `> f` is fd 1.
+    // This hardcoded 1 pointed an input redirect at the stage's STDOUT, so
+    // `cmd < f | consumer` fed the stage nothing — silently, or hanging on a
+    // terminal stdin. Shared with the non-pipeline path so they cannot drift.
+    let fd = builder.ins().iconst(
+        I64,
+        redir
+            .fd
+            .unwrap_or_else(|| super::redirects::default_fd_for_op(&redir.op)) as i64,
+    );
     let flags = builder.ins().iconst(I64, stage_redirect_flags(&redir.op));
     // Literal fast-path: use the interned constant directly.
     if let crate::ir::ExprKind::Literal(s) = &redir.target.kind {

@@ -1,6 +1,6 @@
 ---
 title: "bug: an input redirect on a pipeline STAGE is silently dropped"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -47,3 +47,23 @@ must migrate. The workaround (`cat file | tr … | read arr`) costs an extra
 fork, so the redirect form is the one worth having.
 
 Independent of DD#99: it is a plain redirect bug that predates it.
+
+## Resolution (2026-09-09)
+
+Root cause: `emit_one_stage_redirect` (codegen/inst_handlers.rs) hardcoded the
+implicit fd to **1**, so an input redirect on a stage was applied to that
+stage's *stdout* — the child never got the file on fd 0. It then read whatever
+the pipe or the inherited terminal gave it, which is why the failure looked
+like a hang under an interactive stdin and an empty read under `</dev/null`.
+The `open(2)` mode was already correct (`Read` takes the `_ => 0` arm).
+
+The non-pipeline path had this right all along via `default_fd_for_op`, which
+picks the fd from the redirect's *direction*. The fix makes the stage path call
+that same function, so the two cannot drift apart again.
+
+Specs 14.32-14.36 in `spec/commands.sh` (native + c): a first stage's input
+redirect, a middle stage's, the DD#99 `tr … < f | newread a` idiom, the output
+direction still landing on fd 1, and the non-pipeline case as a control.
+
+Not reproducible in janet mode — `emit_janet` renders pipelines from the AST
+and does not share this path.

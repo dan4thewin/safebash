@@ -98,5 +98,7 @@ run_sash 'close 1 2'
 run_sash 'exec 9> foo; exec 9>&-'
 [[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cl.8
 
+
+
 set -e
 tally

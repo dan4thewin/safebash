@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=54
+plan=59
 echo "1..$plan" >&3
 
 set +e
@@ -365,6 +365,60 @@ write @a'
 # output with a newline and `write` does not; neither takes a flag.
 run_sash 'echo -n "a"'
 [[ $rc != 0 && -z $out && $err == *SB5059* ]]; chk wr.8
+
+
+# ── DD#14: a redirect on a PIPELINE STAGE ─────────────────────────────────
+# `cmd < f | consumer` silently gave the stage nothing: the stage path
+# defaulted every redirect's implicit fd to 1, so an INPUT redirect was
+# applied to the stage's stdout. With stdin on a terminal the program hung
+# waiting on it; with </dev/null it read empty. The non-pipeline path used
+# the direction to pick the fd and so always worked. This is DD#99's
+# canonical idiom (`tr SEP '\0' < f | read arr`).
+
+# 14.32 the first stage's input redirect feeds it
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x\ny\n" > rd1.txt; /bin/cat < rd1.txt | /bin/cat'
+    [[ $rc = 0 && $out = "x
+y" && -z $err ]]; chk 14.32
+else
+    skip_chk 14.32
+fi
+
+# 14.33 …and a middle stage's, overriding what the pipe would have supplied
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "m\n" > rd2.txt; echo ignored | /bin/cat < rd2.txt | /bin/cat'
+    [[ $rc = 0 && $out = "m" && -z $err ]]; chk 14.33
+else
+    skip_chk 14.33
+fi
+
+# 14.34 the DD#99 idiom: turn a separator into NUL upstream, then split
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "a\nb\nc\n" > rd3.txt
+/usr/bin/tr "\n" "\0" < rd3.txt | newread arr
+attest e in arr [[ $e = $e ]]
+echo "$(len arr):${arr[1]}"'
+    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk 14.34
+else
+    skip_chk 14.34
+fi
+
+# 14.35 the OUTPUT direction still lands on fd 1, not fd 0
+if in_modes native,c; then
+    run_sash 'echo captured > rd4.txt | /bin/cat
+/bin/cat rd4.txt'
+    [[ $rc = 0 && $out = "captured" && -z $err ]]; chk 14.35
+else
+    skip_chk 14.35
+fi
+
+# 14.36 a redirect on a NON-pipeline command is unaffected
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "solo\n" > rd5.txt; /bin/cat < rd5.txt'
+    [[ $rc = 0 && $out = "solo" && -z $err ]]; chk 14.36
+else
+    skip_chk 14.36
+fi
 
 set -e
 tally

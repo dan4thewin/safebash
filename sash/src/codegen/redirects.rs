@@ -85,7 +85,7 @@ pub(super) fn emit_redirects_guarded(
 }
 
 /// Bash default fd: stdout for write-ish ops, stdin for read-ish ops.
-fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
+pub(super) fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
