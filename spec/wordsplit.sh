@@ -21,7 +21,7 @@ run_sash 'x="a b c"; for y in $x; do echo $y; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 22.3
 
 # 22.4 read line reads one line
-run_sash 'echo "hello" | read line; echo $line'
+run_sash 'echo "hello" | readline line; echo $line'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 22.4
 
 # 22.5 read -f: splits by field separator
@@ -33,7 +33,7 @@ run_sash 'array arr; printf "a\nb\nc\n" | mapfile -t arr; attest x in arr [[ -n 
 [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read
-run_sash 'echo "hello" | read line; echo $line'
+run_sash 'echo "hello" | readline line; echo $line'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 22.7
 
 # 28.1 for x in $var → compile error
@@ -239,7 +239,7 @@ run_sash 'x="abc123"; [[ $x =~ \w+ ]] && echo yes'
 # 22.12 echo|read is clean (builtin pipe, no exec). `echo | read` is the
 # lastpipe inline-pipe: the read builtin consumes the pipe and sets a PARENT
 # variable, in-process (no fork). Native, c, and janet all support it.
-run_sash 'echo "clean" | read x; echo $x'
+run_sash 'echo "clean" | readline x; echo $x'
 [[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
 
 # 22.13 printf|mapfile is tainted (printf execs)
@@ -342,7 +342,7 @@ run_sash 'echo x | readc a'
 # the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`. janet lacks
 # custom-delimiter array reads, so gate native,c.
 if in_modes native,c; then
-    run_sash 'printf "a\0b c\0d" > f22_21; read -a arr -d "" < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
+    run_sash 'printf "a\0b c\0d" > f22_21; newread arr < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
     [[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
 
     # 22.22 a `-d` delimiter VALUE (`:`) is not mistaken for a target variable
@@ -375,7 +375,7 @@ run_sash 'echo hi | read -r x; echo "[$x]"'
 # every element is non-empty and a attest-all `[[ -n $x ]]` succeeds. janet lacks
 # custom-delimiter array reads, so gate native,c.
 if in_modes native,c; then
-    run_sash 'array arr=(); printf "x\0y\0" | read -a arr -d ""; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
+    run_sash 'printf "x\0y\0" | newread arr; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
     [[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
 
     # 22.27 interior empty records are KEPT under terminator semantics; only the
@@ -393,7 +393,7 @@ fi
 # inline skipped the table `Assign` and the runtime read filled a NULL table.
 # native,c (janet splits the trailing newline differently — pre-existing).
 if in_modes native,c; then
-    run_sash 'fn f { echo hi | read -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+    run_sash 'fn f { echo hi | newread norm; /bin/echo "$(len norm):${norm[0]}" }; f'
     [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
 
     # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
@@ -409,7 +409,7 @@ if in_modes native,c; then
 
     # 22.31 the reported line (DD#99: `echo -n` is now `write`)
     # of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
-    run_sash 'fn f { x=hi; write $x:! | read -d "" -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+    run_sash 'fn f { x=hi; write $x:! | newread norm; /bin/echo "$(len norm):${norm[0]}" }; f'
     [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
 else
     skip_chk 22.28; skip_chk 22.29; skip_chk 22.30; skip_chk 22.31

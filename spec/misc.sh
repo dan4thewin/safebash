@@ -44,7 +44,7 @@ else
 fi
 
 # 20.30 lastpipe always on
-run_sash 'echo hello | read x; echo $x'
+run_sash 'echo hello | readline x; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 20.30
 
 # 20.31 `case` is removed (DD#66) — rejected as a reserved word (this also

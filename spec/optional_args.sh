@@ -179,7 +179,7 @@ else skip_chk 84.24; fi
 # backends.
 run_sash 'fn f { args[0]=x; /bin/echo y }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.25
-run_sash 'fn f { echo hi | read -a args; /bin/echo x }; f'
+run_sash 'fn f { echo hi | newread args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.26
 run_sash 'fn f { argv 1 args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.27
@@ -191,7 +191,7 @@ run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 # reserved) — reading `@args` is never a write, so it stays valid. native,c:
 # janet's read-array-from-pipe / `@a` splat is a pre-existing gap.
 if in_modes native,c; then
-    run_sash 'fn f { echo hi | read -a norm; /bin/echo @{norm:?} }; f'
+    run_sash 'fn f { echo hi | newread norm; /bin/echo @{norm:?} }; f'
     [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
 else skip_chk 84.30; fi
 

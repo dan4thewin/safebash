@@ -73,7 +73,7 @@ f | grep b'
 
 # pf.11 function producer feeding a while-read consumer (build_producer_stages)
 run_sash 'fn f { echo a; echo b }
-f | while read x; do attest x [[ -n $x ]]; echo "got $x"; done'
+f | while readline x; do attest x [[ -n $x ]]; echo "got $x"; done'
 [[ $rc = 0 && $out = $'got a\ngot b' && -z $err ]]; chk pf.11
 
 set -e

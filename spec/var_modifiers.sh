@@ -399,7 +399,7 @@ if in_modes native,c; then
     run_sash 'array f=()
 s=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
-echo $s | read -a f -d ""
+echo $s | newread f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[1]}"'
     [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7

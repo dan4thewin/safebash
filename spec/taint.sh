@@ -17,7 +17,7 @@ run_sash 'x=$(arg 1); echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.2
 
 # 24.3 read produces tainted var
-run_sash 'read -r x; echo $x'
+run_sash 'readline x; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.3
 
 # 24.4 mapfile produces tainted var
@@ -30,7 +30,7 @@ run_sash 'x=$(/bin/date); echo $x'
 
 # 24.6 read from a clean inline pipe → clean (sash has no here-strings — DD#83;
 # `read x <<< "hello"` is written `echo hello | read x`)
-run_sash 'echo hello | read x; echo $x'
+run_sash 'echo hello | readline x; echo $x'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 24.6
 
 # 24.7 user func capture → clean
@@ -203,7 +203,7 @@ run_sash 'array a=(); mapfile -t a < d60a.txt; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.13
 
 # 60.14 read -a → tainted
-run_sash 'array a=(); read -a a; echo ${a[0]}'
+run_sash 'newread a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.14
 
 # ad.4 an AUTO-declared mapfile array (no prior `array a=()`) is still tainted —
@@ -373,7 +373,7 @@ echo ${m[NAME]}'
     run_sash 'mapfile -t a < d60a.txt; echo $(len a)'
     [[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
     # ad.2 same for `read -a` into an undeclared array
-    run_sash 'read -a a < d60a.txt; echo $(len a)'
+    run_sash 'newread a < d60a.txt; echo $(len a)'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
     # ad.3 attest-all + element read on an AUTO-declared mapfile array (the
     #      front-end must register the target as a collection, else `attest e in
@@ -1000,7 +1000,7 @@ run_sash 'x=$(printf 123); attest x ((y=x*2)); echo $y'
 # target is clean only when EVERY upstream stage is compiler-computed.
 
 # tl.1 the laundering shape is rejected (scalar read)
-run_sash 'echo ig | /bin/cat /etc/hostname | read x
+run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.1
 
@@ -1010,7 +1010,7 @@ echo "$x$y"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.2
 
 # tl.3 …array read
-run_sash 'array a=(); echo ig | /bin/cat /etc/hostname | read -a a
+run_sash 'echo ig | /bin/cat /etc/hostname | newread a
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.3
 
@@ -1020,12 +1020,12 @@ echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.4
 
 # tl.5 …and with the external stage third, not second
-run_sash 'echo ig | /bin/cat | /bin/cat | read x
+run_sash 'echo ig | /bin/cat | /bin/cat | readline x
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.5
 
 # tl.6 attest still admits the value (the reject is not a dead end)
-run_sash 'echo ig | /bin/cat /etc/hostname | read x
+run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 attest x p?
 echo "ok"'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk tl.6
@@ -1038,11 +1038,12 @@ echo "$x$y"'
 # tl.8 a clean pipeline into an ARRAY read likewise needs no attest — the
 # fix must not over-taint the shapes that were always legitimate.
 # (The SSA-backstop half of this fix is pinned by taint_switch.sh sw.9.)
-# native,c: janet's `read -a` miscounts (3 for "p q") — janet-read-a-element-count.
+# The split is NUL-only (DD#99), so "p q\n" is ONE field — the subject here is
+# that a clean producer needs no attest, not the field count.
 if in_modes native,c; then
-    run_sash 'array a=(); echo "p q" | read -a a
+    run_sash 'echo "p q" | newread a
 echo "$(len a)"'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk tl.8
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk tl.8
 else
     skip_chk tl.8
 fi

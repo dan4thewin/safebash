@@ -52,7 +52,7 @@ if in_modes native; then
     # builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was
     # hardcoded `true` for every lastpipe read, so the backstop was inert for
     # this shape and the front-end pass was the only layer — and it missed it.
-    run_sash 'echo ig | /bin/cat /etc/hostname | read x
+    run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
     [[ $rc != 0 && -z $out ]]; chk sw.9
 else

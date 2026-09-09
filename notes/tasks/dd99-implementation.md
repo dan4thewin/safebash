@@ -102,3 +102,40 @@ independent.
   - janet renders from the AST, so it never sees the SSA rewrite; filed
     `janet-write-builtin`, specs gated native,c.
 - Stage 5: next — migrate spec/ + contrib/ onto the new spellings (~250 sites)
+
+## Stage 5 progress (2026-09-09) — partial, blocked
+
+Real inventory is **88 sites**, not the ~250 first estimated (that count was
+inflated by prose in comments).
+
+| group | n | status |
+|---|---|---|
+| single-target `read v` → `readline v` | 13 | **done** |
+| `read -a X -d ""` / `read -a X` used as a VEHICLE → `newread X` | 12 | **done** |
+| `read -a`/`-d`/`-r`/`-z`/`-f` where the FLAG is the test's SUBJECT | 14 | deferred to stage 6 (they must become reject-tests, and the rejection does not exist yet) |
+| `mapfile -t` (lines → array) | ~19 | **blocked** |
+| `mapfile -m` (`k=v` lines → map) | ~20 | **blocked** |
+| multi-target `read a b c` | 9 | deferred to stage 6 |
+
+The classification rule used: if the removed spelling is the **subject** of the
+spec it becomes a reject-test in stage 6; if it is merely the **vehicle** for
+testing something else, it migrates now so the original subject stays covered.
+
+### Found while migrating
+
+`newread`/`readline` were not wired into the `args` write-protection —
+`newread args` was accepted where `read -a args` is SB5052. Fixed (spec 84.26
+caught it, because migrating the vehicle turned a passing test red).
+
+### Blocker
+
+`bug-regex-blind-past-interior-nul` (P1, filed). Every regex-backed string op
+reads its subject as a C string and silently ignores the bytes past an interior
+NUL. The `mapfile` replacement is "substitute the separator to NUL, then
+split", so any replacement needing **two** edits — which `mapfile -m` does,
+one for the line separator and one for the first `=` of each record — is
+silently wrong today.
+
+`mapfile -t` is also blocked in practice: the in-process spelling has the same
+shape, and DG's external one-liner `tr '\n' '\0' < f | read arr` only covers
+the cases that read from a file.

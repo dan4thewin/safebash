@@ -203,7 +203,7 @@ run_sash 'const x=1; const x=2'
 [[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.7
 # 35.8 backstop: `read` into a const (a channel the validate walk doesn't
 # enumerate — caught by VersionState::define so it can never panic)
-run_sash 'const x=1; read x'
+run_sash 'const x=1; readline x'
 [[ $rc != 0 && -z $out && $err == *SB4044* ]]; chk 35.8
 # 35.9 no false positive: declaring then reading a const is fine
 run_sash 'const x=1; echo $x'

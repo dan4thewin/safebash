@@ -179,7 +179,7 @@ echo "${_} $b"'
 [[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.5
 
 # dc.6 …as a subscript cell
-run_sash 'echo "aa" | read _
+run_sash 'echo "aa" | readline _
 echo "${_[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.6
 
@@ -217,7 +217,7 @@ run_sash 'int _n = 5
 [[ $rc = 0 && $out = "n=5" && -z $err ]]; chk dc.12
 
 # dc.13 the SB5056 message names the binder and says why
-run_sash 'echo "a" | read _
+run_sash 'echo "a" | readline _
 echo "$_"'
 [[ $rc != 0 && $err == *SB5056* && $err == *"cannot be read"* && $err == *"care binder"* ]]; chk dc.13
 

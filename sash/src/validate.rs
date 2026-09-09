@@ -2868,7 +2868,8 @@ fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 /// True if `c` is a builtin that writes the `args` array: `read -a args`,
-/// `argv … args`, `mapfile/readarray args`, or `attest … in args`.
+/// `newread [SRC] args`, `readline args`, `argv … args`, `mapfile/readarray
+/// args`, or `attest … in args`.
 fn command_writes_args(c: &Command) -> bool {
     match expr_literal_str(&c.name) {
         "read" => {
@@ -2877,6 +2878,9 @@ fn command_writes_args(c: &Command) -> bool {
                 .as_deref()
                 == Some("args")
         }
+        // DD#99: the target is the last argument for both arities
+        // (`newread ARRAY` and `newread SRC ARRAY`), and `readline`'s only one.
+        "newread" | "readline" => c.args.last().map(expr_literal_str) == Some("args"),
         "argv" => argv_target_name(&c.args) == Some("args"),
         "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
