@@ -23,9 +23,8 @@ readline TARGET         # consume one line (terminated by newline)
 - **`readline` stops at a newline; `read` does not.** That is the only
   difference between them.
 - **`readline` binds a scalar.** One record is one value.
-- **`read`'s target kind comes from its declaration**, defaulting to array:
-  an undeclared target auto-declares as an array; a `map` target must be
-  declared, and consumes fields **pairwise** (`k1 NUL v1 NUL k2 NUL v2`).
+- **`read` always produces an array.** No declaration-dependent behaviour, no
+  second target kind. An undeclared target auto-declares (DG, 2026-07-08).
 - **`$SRC`, if given, is a scalar to split** instead of stdin. This is the
   operation that would otherwise be called `split` — DG's observation that it
   is just a two-argument `read`.
@@ -33,9 +32,66 @@ readline TARGET         # consume one line (terminated by newline)
 ```sh
 readline ln                     # one line → scalar
 read a                          # stdin fields → array (auto-declared)
-map m=(); read m                # stdin fields → map, pairwise
 read $ln f                      # split a scalar → array
 ```
+
+## Maps are built by assignment, not by `read`
+
+An earlier draft had `read` consume fields pairwise when its target was a
+declared map. DG rejected it, and rightly: that is **implicit polymorphism** —
+you cannot tell what `read m` does without finding `m`'s declaration elsewhere
+in the file. It is the same defect DD#97 had just removed from bare `f=(*)`.
+
+Maps are made by converting an array:
+
+```sh
+read a                              # always an array
+if (( (len a) % 2 == 0 )) { … }     # optional checkpoint — works today
+map m = @{a:-EXTRA}                 # pairwise: k1 v1 k2 v2 …
+```
+
+The array is consumed **pairwise**: element 0 is a key, element 1 its value,
+and so on. An **odd** count leaves a trailing element with no partner, and the
+splat's disposition says what to do about it.
+
+DG: *"There'd be an opportunity for the user to check if it were even between
+the read and the assign."* Under the rejected one-step form there is no array
+to inspect — so the two-step is what makes checking possible at all.
+
+Array→map is also independently useful: build an array programmatically, then
+convert.
+
+### The disposition is mandatory
+
+As with DD#69's external-command splat, a bare `map m = @a` is a **compile
+error**. The hazard — a silently mis-paired map — is exactly the shape DD#69
+addressed for a silently-empty argument list, so the same rule applies: the
+splat site states its behaviour.
+
+| form | on an odd count |
+|---|---|
+| `map m = @{a:-KEY}` | the trailing element becomes the **value** of `KEY` |
+| `map m = @{a:?MSG}` | abort at runtime with `MSG` |
+| `map m = @{a:~}` | discard the trailing element |
+| `map m = @{a:!}` | discard it **and** disable the taint guard (DD#91) |
+| `map m = @a` | **rejected** — state a disposition |
+
+**`:-` supplies a key, not a value** (DG): *"If I supply the key, I know what
+key has the extra value. If I supply a value, I'd have to iterate to find the
+extra."* So `array a=(k1 v1 k2)` with `@{a:-EXTRA}` yields
+`{k1: v1, EXTRA: k2}`, and the odd element is retrievable at `${m[EXTRA]}` —
+a landmark rather than a needle in the map.
+
+Each disposition keeps the meaning it has everywhere else — `:-` supplies what
+is missing, `:?` aborts with a message, `:~` elides, `:!` elides with the taint
+guard off. Only the definition of *missing* is contextual: an empty array in
+argument position, an unpaired trailing element here.
+
+**The disposition governs odd count only.** An empty array is a valid empty map
+(zero is even; nothing is missing), so DD#69's empty-array reading does not
+apply in this position. Without this, the two rules collide: `@{a:-X}` on an
+empty array would yield one element under DD#69, making the count odd, which
+would then re-trigger the same disposition.
 
 ## Sigils: a value carries one, a binding does not
 
@@ -83,7 +139,7 @@ from that drift. This DD does not invent a rule; it finishes DD#22.
 | `read -r` | always raw; the flag was already a no-op |
 | `read a b c` (multi-target) | `read arr`, or `readline` + `read $ln f` |
 | `mapfile` / `readarray` | `read arr` |
-| `mapfile -m` | `map m=(); read m` |
+| `mapfile -m` | `read a; map m = @{a:DISP}` |
 | `mapfile -f<c>` | pairwise consumption needs no second separator |
 | `mapfile -t` | always trims; the flag was already a no-op |
 
@@ -147,9 +203,10 @@ would not be, which cuts slightly toward the array form. It does not move the
 
 ## Open questions
 
-1. **Odd field count for a map** — a trailing key with no value: reject, or
-   bind an empty value? (Recommendation: reject. Silent pairing loss is the
-   failure mode this project keeps finding.)
+1. **The inverse conversion.** `array a = @m` (map → flattened pairs) also
+   parses today and silently yields an empty array. If array→map exists, does
+   its inverse, and with what disposition family? Deciding both together seems
+   right.
 2. **Interior NUL crossing argv.** A NUL-bearing value passed to an external
    command **silently truncates** (`printf "[%s]" $x` on `a\0b\0c` → `[a]`).
    Pipes, redirects and captures are all byte-transparent; argv alone is not,
