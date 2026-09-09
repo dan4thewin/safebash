@@ -1792,6 +1792,7 @@ const BUILTINS: &[&str] = &[
     "continue",
     // Input
     "read",
+    "readline",
     "mapfile",
     // Taint
     "attest",
@@ -3256,7 +3257,7 @@ fn taint_stmt_no_read_taint(
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
-        if name == "read" || name == "mapfile" {
+        if name == "read" || name == "readline" || name == "mapfile" {
             check_clean_read_taint(c, tainted, diags);
             return;
         }
@@ -3605,7 +3606,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if name == "read" || name == "mapfile" || name == "argv" {
+    if name == "read" || name == "readline" || name == "mapfile" || name == "argv" {
         taint_read_target(c, tainted);
     } else if name == "attest" {
         taint_attest(c, span, tainted, diags);
@@ -4119,7 +4120,7 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
-        "read" => collect_read_flag_targets(&c.args, set),
+        "read" | "readline" => collect_read_flag_targets(&c.args, set),
         "mapfile" | "readarray" => {
             for arg in &c.args {
                 insert_read_target_arg(arg, set);
@@ -5235,4 +5236,74 @@ fn discard_read_name(expr: &Expr) -> Option<&str> {
         _ => return None,
     };
     crate::ir::is_discard_binder(name).then_some(name)
+}
+
+// ── SB5057 (DD#99): `readline` takes exactly one bare target, no flags ──
+//
+// `readline` is the line-terminated scalar read. It is a distinct construct,
+// not a flag surface: the splitting forms are `read` (NUL fields into an
+// array) and `map m = @{a:DISP}`. Keeping it flagless is the point of DD#99.
+
+/// SB5057: reject a `readline` that is not exactly `readline NAME`.
+pub fn check_readline_arity(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_readline_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_readline_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_readline_stmt(stmt, diags);
+    }
+}
+
+fn check_readline_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        if expr_literal_str(&c.name) == "readline" {
+            check_one_readline(c, stmt.span, diags);
+        }
+    }
+    for body in stmt.child_bodies() {
+        check_readline_in(body, diags);
+    }
+}
+
+/// One `readline` command: exactly one argument, a bare identifier.
+fn check_one_readline(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let words: Vec<String> = c
+        .args
+        .iter()
+        .map(expr_literal_str)
+        .map(str::to_string)
+        .collect();
+    if let Some(flag) = words.iter().find(|w| w.starts_with('-')) {
+        diags.push(readline_diag(
+            span,
+            &format!("`readline` takes no flags — got `{flag}`"),
+        ));
+        return;
+    }
+    if words.len() != 1 || !is_plain_identifier(&words[0]) {
+        diags.push(readline_diag(
+            span,
+            &format!(
+                "`readline` takes exactly one target name — got {}",
+                words.len()
+            ),
+        ));
+    }
+}
+
+fn readline_diag(span: Span, what: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5057",
+        format!(
+            "{what}. `readline NAME` reads one line into one scalar; to split \
+             a record use `read ARRAY` (NUL-separated fields), and for a map \
+             `map m = @{{a:DISP}}`"
+        ),
+    )
 }

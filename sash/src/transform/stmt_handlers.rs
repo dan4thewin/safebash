@@ -646,7 +646,7 @@ fn is_lastpipe_read_last(last: &Statement) -> bool {
         StmtKind::Command(c) => {
             let n = expr_to_string(&c.name);
             let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-            n == "read" && !args.iter().any(|a| a == "-a")
+            (n == "read" || n == "readline") && !args.iter().any(|a| a == "-a")
         }
         _ => false,
     }

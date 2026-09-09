@@ -716,7 +716,7 @@ fn match_while_read(w: &While) -> Option<&Command> {
         return None;
     };
     let n = expr_to_literal(&c.name);
-    if n == "read" {
+    if n == "read" || n == "readline" {
         Some(c)
     } else {
         None

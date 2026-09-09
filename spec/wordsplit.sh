@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=88
+plan=98
 echo "1..$plan" >&3
 
 set +e
@@ -465,6 +465,70 @@ echo "$(len x)|$(join x)|${x[2]}"'
 else
     skip_chk 22.43
 fi
+
+
+# ════════ DD#99 stage 1: `readline` — one line into one scalar ════════
+# `readline v` is the line-terminated scalar read. It is today's single-target
+# `read v` under its own name, so that in stage 3 `read` can become the
+# array-only, NUL-split form without the two meanings colliding.
+
+# rl.1 reads one line into a scalar
+run_sash 'echo "hello world" | readline v
+echo "[$v]"'
+[[ $rc = 0 && $out = "[hello world]" && -z $err ]]; chk rl.1
+
+# rl.2 stops at the newline — the second line is not consumed
+run_sash 'printf "one\ntwo\n" | readline v
+attest v p?
+echo "[$v]"'
+[[ $rc = 0 && $out = "[one]" && -z $err ]]; chk rl.2
+
+# rl.3 does NOT split on whitespace: the whole line is one value (DD#22 — the
+# implicit whitespace split is exactly what DD#99 removes)
+run_sash 'echo "a b c d" | readline v
+echo "[$v]"'
+[[ $rc = 0 && $out = "[a b c d]" && -z $err ]]; chk rl.3
+
+# rl.4 auto-declares its target (no prior declaration needed)
+run_sash 'echo hi | readline fresh
+echo "[$fresh]"'
+[[ $rc = 0 && $out = "[hi]" && -z $err ]]; chk rl.4
+
+# rl.5 the target is tainted, like every read target (DD#24)
+run_sash '/bin/cat /etc/hostname | readline v
+echo "[$v]"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk rl.5
+
+# rl.6 …and attest admits it
+run_sash '/bin/cat /etc/hostname | readline v
+attest v p?
+echo ok'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk rl.6
+
+# rl.7 works as a `while` condition, one line per iteration.
+# native only: the identical `while read v` shape also fails in c/janet, so
+# this is a pre-existing backend gap, not a `readline` one.
+if in_modes native; then
+    run_sash 'printf "a\nb\n" | while readline v { attest v p?; echo "[$v]" }'
+    [[ $rc = 0 && $out = "[a]
+[b]" && -z $err ]]; chk rl.7
+else
+    skip_chk rl.7
+fi
+
+# rl.8 takes no flags — it is a distinct construct, not a flag surface
+run_sash 'echo hi | readline -r v
+echo "$v"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk rl.8
+
+# rl.9 takes exactly ONE target — the multi-target split is `read` + `map`
+run_sash 'echo "a b" | readline x y
+echo "$x$y"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk rl.9
+
+# rl.10 …and at least one
+run_sash 'echo hi | readline'
+[[ $rc != 0 && $err == *SB5057* ]]; chk rl.10
 
 set -e
 tally

@@ -1,6 +1,6 @@
 ---
 title: DD#99 — the read family: `read` / `readline`, NUL-only, no flags
-status: proposed
+status: accepted
 ---
 
 Settled with DG over 2026-09-08, from his observation that `read` and `mapfile`
@@ -8,7 +8,8 @@ Settled with DG over 2026-09-08, from his observation that `read` and `mapfile`
 historical/arbitrary"*, and his proposal: **"split only on NUL, terminate read
 on newline"**, with the user converting their separator upstream.
 
-Status is `proposed`, not `accepted`: three questions at the end are open.
+Accepted 2026-09-09 (DG: *"let's implement dd 99"*). Implemented in stages —
+see `notes/tasks/dd99-implementation.md`.
 
 ## The rule
 
