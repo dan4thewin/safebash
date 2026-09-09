@@ -135,12 +135,12 @@ from that drift. This DD does not invent a rule; it finishes DD#22.
 | retired | replacement |
 |---|---|
 | `read -a arr` | `read arr` (kind from the declaration) |
-| `read -f<c>` | convert upstream: `$(gsub $s "<c>" $sep)` or `tr` |
+| `read -f<c>` | convert upstream: `tr '<c>' '\0'`, or in-process `s =~ s/<c>/$sep/g` |
 | `read -d<c>` | `read` (no terminator) or `readline` (newline) |
 | `read -r` | always raw; the flag was already a no-op |
 | `read a b c` (multi-target) | `read arr`, or `readline` + `read $ln f` |
-| `mapfile` / `readarray` | `read arr` |
-| `mapfile -m` | `read a; map m = @{a:DISP}` |
+| `mapfile` / `readarray` | `tr '\n' '\0' < f \| read arr` — NUL is the only separator, so a *line* split states itself |
+| `mapfile -m` | `tr … \| read a; map m = @{a:DISP}` |
 | `mapfile -f<c>` | pairwise consumption needs no second separator |
 | `mapfile -t` | always trims; the flag was already a no-op |
 
