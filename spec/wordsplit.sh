@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=112
+plan=117
 echo "1..$plan" >&3
 
 set +e
@@ -616,7 +616,6 @@ if in_modes native,c; then
 s=a:b:c
 s =~ s/:/$sep/g
 newread $s f
-attest e in f [[ $e = $e ]]
 echo "$(len f):${f[0]}:${f[2]}"'
     [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.9
 else
@@ -627,7 +626,6 @@ fi
 if in_modes native,c; then
     run_sash 's="a b c"
 newread $s f
-attest e in f [[ $e = $e ]]
 echo "$(len f):${f[0]}"'
     [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.10
 else
@@ -668,6 +666,53 @@ run_sash 's="a"
 newread $s @f
 echo "$(len f)"'
 [[ $rc != 0 && -z $out && -n $err ]]; chk nr.14
+
+
+# ── DD#24 x DD#99: a two-arg `newread`'s target inherits the SOURCE ────────
+# The one-arg form reads stdin, so its target is tainted by definition. The
+# two-arg form splits a value that is already in the program: the source is an
+# ordinary READ, checked like any other, and DD#24's "no propagation" then
+# makes the result clean — exactly as `x=$y` does. Tainting the target
+# regardless (what it used to do) made a clean split unusable and pushed the
+# author toward a needless `attest`, which is laundering by habit.
+
+# nr.15 a clean source yields a CLEAN array — no attest required
+if in_modes native,c; then
+    run_sash 's="a b c"
+newread $s f
+echo "$(len f):${f[0]}"'
+    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.15
+else
+    skip_chk nr.15
+fi
+
+# nr.16 …and a TAINTED source is rejected at the source READ, not laundered
+# into the target. DD#24: there is no taint flow inside the program.
+run_sash 'k=$(getenv HOME)
+newread $k f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.16
+
+# nr.17 the one-arg (stdin) form still taints its target — nr.6 covers the
+# rejection; this pins that the two-arg fix did not disarm the one-arg case
+run_sash '/bin/cat /etc/hostname | newread f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.17
+
+# nr.18 an ELIDING disposition in the source slot is rejected, not an ICE.
+# `newread ${u:~} f` used to panic in codegen. Eliding here would not shorten
+# a list — it would drop the source and silently re-read STDIN instead, a
+# different input entirely. DD#91's elidable positions are variadic ones.
+run_sash 'u=""
+newread ${u:~} f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.18
+
+# nr.19 same for `:!`, which is `:~` plus taint-off (DD#91)
+run_sash 'u=""
+newread ${u:!} f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.19
 
 set -e
 tally

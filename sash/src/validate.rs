@@ -2290,8 +2290,16 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     // A command's direct args are elidable; its name is not.
     if let StmtKind::Command(c) = &stmt.kind {
         check_elide_expr(&c.name, false, diags);
+        // DD#91's elidable positions are the VARIADIC ones — argv, an array
+        // literal — where dropping a token just shortens a list. `readline`
+        // and `newread` take fixed positional ROLES, so eliding an argument
+        // does not shorten anything: `newread ${u:~} f` would become
+        // `newread f` and read STDIN instead, a different input source
+        // entirely. That silent switch is the DD#69 hazard, so the slot is
+        // non-elidable. (Before this it reached codegen and panicked.)
+        let elidable = !matches!(expr_literal_str(&c.name), "readline" | "newread");
         for a in &c.args {
-            check_elide_expr(a, true, diags);
+            check_elide_expr(a, elidable, diags);
         }
     } else {
         stmt.direct_exprs(&mut |e| check_elide_expr(e, false, diags));
@@ -2357,6 +2365,22 @@ fn check_elide_stmt_seq(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// What to suggest to an author whose `:~`/`:!` landed in a value position.
+///
+/// The advice tracks the operator: `:~` is reaching for a default, so `:-` is
+/// the answer. `:!` is reaching for taint-off (DD#91), which `:-` does not
+/// provide at all — pointing there would send the author in a circle.
+fn elide_advice(sigil: &str, name: &str) -> String {
+    if sigil == ":!" {
+        return format!(
+            "for a trusted value here, vouch for the subject first \
+             (`attest {name} [[ … ]]`) — `:!` is elide-plus-taint-off, and the \
+             elide half has nowhere to go in this position"
+        );
+    }
+    format!("use `${{{name}:-DEFAULT}}` for an empty/default value")
+}
+
 fn check_elide_pexp(
     pe: &ParameterExpansion,
     span: Span,
@@ -2365,15 +2389,21 @@ fn check_elide_pexp(
 ) {
     if matches!(pe.operator.as_deref(), Some(":~") | Some(":!")) && !elidable {
         let sigil = pe.operator.as_deref().unwrap_or(":~");
+        // Say VARIADIC, not "a command argument". A fixed-arity builtin's
+        // argument is a command argument too, and saying otherwise told an
+        // author whose `newread ${x:!} f` was rejected that the very position
+        // they had used was the valid one.
+        //
+        let advice = elide_advice(sigil, &pe.name);
         diags.push(Diagnostic::error_span(
             span,
             "SB5046",
             format!(
-                "`${{{}{}}}` (elide) is only valid in a list position — a command \
-                 argument or an array literal element — where the token can \
-                 disappear. Here a value is required; use `${{{}:-DEFAULT}}` for \
-                 an empty/default value.",
-                pe.name, sigil, pe.name
+                "`${{{}{}}}` (elide) is only valid in a VARIADIC list position — \
+                 an argument list or an array literal element — where dropping \
+                 the token merely shortens the list. Here a value is required; \
+                 {}.",
+                pe.name, sigil, advice
             ),
         ));
     }
@@ -3608,7 +3638,9 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if matches!(name, "read" | "readline" | "newread" | "mapfile" | "argv") {
+    if matches!(name, "read" | "readline" | "newread" | "mapfile" | "argv")
+        && !is_value_split(name, c)
+    {
         taint_read_target(c, tainted);
     } else if name == "attest" {
         taint_attest(c, span, tainted, diags);
@@ -3624,6 +3656,20 @@ fn taint_command(
 
 /// `read VAR` / `mapfile VAR`: mark the rightmost non-flag argument
 /// as the variable being assigned, so it becomes tainted.
+/// DD#99: does this command split a value that is ALREADY in the program,
+/// rather than reading one in from outside?
+///
+/// `newread ARRAY` reads stdin — external, so its target is tainted by
+/// definition. `newread SRC ARRAY` splits `SRC`, which the program already
+/// holds. The source is an ordinary read, checked like every other read by the
+/// arg walk below; DD#24's "no propagation" then makes the result clean,
+/// exactly as `x=$y` is clean when `y` is. Tainting the target regardless made
+/// a clean split unusable and pushed the author toward a reflexive `attest` —
+/// laundering by habit, which is worse than the taint it worked around.
+fn is_value_split(name: &str, c: &Command) -> bool {
+    name == "newread" && c.args.len() == 2
+}
+
 fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
     for arg in c.args.iter().rev() {
         let s = expr_literal_str(arg);
