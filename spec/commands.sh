@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=53
+plan=54
 echo "1..$plan" >&3
 
 set +e
@@ -359,6 +359,12 @@ write $v'
 run_sash 'array a=(x y)
 write @a'
 [[ $rc != 0 && -z $out && -n $err ]]; chk wr.7
+
+
+# wr.8 `echo -n` is retired — the spelling is `write` (DD#99). `echo` ends its
+# output with a newline and `write` does not; neither takes a flag.
+run_sash 'echo -n "a"'
+[[ $rc != 0 && -z $out && $err == *SB5059* ]]; chk wr.8
 
 set -e
 tally

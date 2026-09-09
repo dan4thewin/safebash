@@ -29,7 +29,7 @@ existing spelling change meaning while code still depends on it. The old
 | 3 | add `map m = @{a:DISP}` (pairwise, disposition mandatory) | — additive |
 | 4 | add `write` (echo without the newline) | — additive |
 | 5 | migrate spec/ + contrib/ onto the new spellings | ~250 sites |
-| 6 | retire `read -a/-f/-d/-r`, `mapfile`, `readarray`, `echo -n`, multi-target read; **rename `newread` → `read`** | — |
+| 6 | retire `read -a/-f/-d/-r`, `mapfile`, `readarray`, multi-target read; **rename `newread` → `read`** (`echo -n` already done in stage 4) | — |
 | 7 | argv interior-NUL runtime guard | — |
 | 8 | `array a = @m` → compile error | — |
 
@@ -94,6 +94,11 @@ independent.
   `BuiltinCmd::Echo` is what stops resolution shelling out to `/usr/bin/write`.
   Specs `commands.sh` wr.1–wr.7. Sweep 4446 passing / 39 failing / 425 skipped,
   0 regressions.
-  - janet renders from the AST, so it never sees the desugar; filed
+  - **`echo -n` is retired now, not in stage 7** — only one live site existed
+    (`wordsplit.sh` 22.31), so leaving two spellings around was not worth it.
+    Source-level `echo -n` is **SB5059**; `-n` survives only as the internal
+    SSA spelling, which is why the check runs with the *structural* pass,
+    before the rewrite that synthesises it.
+  - janet renders from the AST, so it never sees the SSA rewrite; filed
     `janet-write-builtin`, specs gated native,c.
 - Stage 5: next — migrate spec/ + contrib/ onto the new spellings (~250 sites)

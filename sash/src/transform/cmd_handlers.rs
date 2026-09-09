@@ -381,6 +381,12 @@ fn emit_external_command(
     mut block: BlockId,
 ) -> BlockId {
     let raw: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    // DD#99: `write` IS `echo` without the trailing newline. Both lower through
+    // `lower_echo`, which reads the suppression from a leading `-n`, so the
+    // distinction is carried into the SSA here. `-n` is now purely internal —
+    // the source spelling is SB5059.
+    let (name, raw) = rewrite_write_as_echo(name, raw);
+    let name = name.as_str();
     // Option C: `$(f)` / `$((f))` on an `-> int` function is an IntFuncCall;
     // materialize it into a temp so the argv is scalar (unlifted → codegen ICE).
     let args = lift_int_func_args(raw, ssa, state, &mut block);
@@ -417,4 +423,17 @@ fn resolve_exec_target_arg(mut args: Vec<SsaValue>, state: &VersionState) -> Vec
         args[0] = SsaValue::Literal(path);
     }
     args
+}
+
+/// DD#99: `write ARGS` as the SSA-level `echo -n ARGS`. Applied wherever a
+/// command's name+args are built for codegen — the statement path here and
+/// the pipeline-stage builder — so no lowering path sees a bare `write`.
+pub(super) fn rewrite_write_as_echo(name: &str, args: Vec<SsaValue>) -> (String, Vec<SsaValue>) {
+    if name != "write" {
+        return (name.to_string(), args);
+    }
+    let mut out = Vec::with_capacity(args.len() + 1);
+    out.push(SsaValue::Literal("-n".to_string()));
+    out.extend(args);
+    ("echo".to_string(), out)
 }

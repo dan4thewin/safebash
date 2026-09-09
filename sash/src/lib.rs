@@ -175,6 +175,10 @@ fn run_structural_checks(input: &str, program: &crate::ir::Program) {
     let mut vdiags = validate::validate(program);
     vdiags.extend(validate::check_malformed_sed(program));
     vdiags.extend(validate::check_subscript_index(program));
+    // DD#99: a source-level `echo -n` is retired. This is a language-surface
+    // rule, so it runs with the structural checks — crucially BEFORE
+    // `desugar_write`, which synthesises exactly that form internally.
+    vdiags.extend(validate::check_echo_no_flags(program));
     if !vdiags.is_empty() {
         print_diags(input, &vdiags);
         std::process::exit(1);

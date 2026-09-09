@@ -407,9 +407,9 @@ if in_modes native,c; then
     run_sash 'fn f { x=hi; echo a $x:~ b }; f'
     [[ $rc = 0 && $out = "a hi b" && -z $err ]]; chk 22.30
 
-    # 22.31 the reported line: `echo -n $x:! | read -d '' -a norm` (builtin echo
+    # 22.31 the reported line (DD#99: `echo -n` is now `write`)
     # of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
-    run_sash 'fn f { x=hi; echo -n $x:! | read -d "" -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+    run_sash 'fn f { x=hi; write $x:! | read -d "" -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
     [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
 else
     skip_chk 22.28; skip_chk 22.29; skip_chk 22.30; skip_chk 22.31

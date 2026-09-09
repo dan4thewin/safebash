@@ -69,6 +69,8 @@ pub struct PhiNode {
 /// canonical sigil string used in `SsaInst::Command::name`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BuiltinCmd {
+    /// DD#99 `write` — `echo` without the trailing newline.
+    Write,
     // ─── Compiler-internal sigils (transform → codegen protocol) ───
     /// Flip test_result_var and exit_status_var (post-`!`).
     NegateTestResult,
@@ -173,9 +175,9 @@ impl BuiltinCmd {
             "__trap_signal" => Self::TrapSignal,
             "__signal_flag" => Self::SignalFlag,
             "__table_delete" => Self::TableDelete,
-            // DD#99: `write` is `echo` minus the trailing newline; the
-            // transform desugars it to `echo -n`, so it shares the variant.
-            "echo" | "write" => Self::Echo,
+            "echo" => Self::Echo,
+            // DD#99: `write` is `echo` minus the trailing newline.
+            "write" => Self::Write,
             "[[" => Self::Test,
             ":" => Self::Noop,
             "exit" => Self::Exit,

@@ -5417,3 +5417,47 @@ fn map_disposition_diag(span: Span, source: &str, target: &str) -> Diagnostic {
         ),
     )
 }
+
+// ── SB5059 (DD#99): `echo -n` is retired — the spelling is `write` ──
+//
+// `echo` terminates its output, `write` does not; neither takes a flag. This
+// is DD#60/#75's "distinct constructs over flags" applied to the last flag
+// `echo` had. The transform still synthesises `echo -n` when desugaring
+// `write`, which is fine: this check runs on the SOURCE, before the transform.
+
+/// SB5059: reject a source-level `echo -n`.
+pub fn check_echo_no_flags(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_echo_flags_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_echo_flags_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_echo_flags_stmt(stmt, diags);
+    }
+}
+
+fn check_echo_flags_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        if expr_literal_str(&c.name) == "echo" && expr_literal_str_at(&c.args, 0) == "-n" {
+            diags.push(Diagnostic::error_span(
+                stmt.span,
+                "SB5059",
+                "`echo -n` is retired — write `write` instead. `echo` ends its \
+                 output with a newline and `write` does not; neither takes a flag"
+                    .to_string(),
+            ));
+        }
+    }
+    for body in stmt.child_bodies() {
+        check_echo_flags_in(body, diags);
+    }
+}
+
+/// The literal text of `args[i]`, or "" when absent or non-literal.
+fn expr_literal_str_at(args: &[Expr], i: usize) -> &str {
+    args.get(i).map(expr_literal_str).unwrap_or("")
+}
