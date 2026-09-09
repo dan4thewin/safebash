@@ -1,13 +1,14 @@
 ---
-title: "investigate: `$'…'` in the `s///` sugar's replacement slot (sugar is less capable than the function form)"
+title: "investigate: the `s///` sugar silently truncates at any unhandled token — `$'…'`, and the metachars `= # & < > ;`"
 status: ready
-priority: P3
+priority: P2
 kind: decision
 depends: []
 gates:
   - "a decision recorded: either the sugar accepts `$'…'` in RE/SUB, or DD#63's compromise is reaffirmed and the limitation is documented rather than left to be rediscovered"
   - "if accepted: `s =~ s/:/$'\\0'/g` behaves as `$(gsub $s \":\" $'\\0')` does today"
   - "if accepted: the meaning of a decoded delimiter (`$'\\x2f'` → `/`) in the replacement is pinned by a spec, not left to fall out of the implementation"
+  - "`s =~ s/=/-/g` (and `#`, `&`, `<`, `>`, `;` in the RE) either works or is rejected for a *stated* reason — today all give a misleading SB4032 \"malformed … expected three `/` delimiters\" when the payload is well-formed"
 ---
 
 ## The asymmetry
@@ -43,12 +44,43 @@ model **by design**, not by oversight. This task is therefore an
 *investigation*, not a bug report: is there a good solution that does not
 thicken the sugar?
 
+## Addendum 2026-09-08: it is a whole class, not one construct
+
+The same truncation hits ordinary shell metacharacters in the **RE** slot:
+
+| RE | result |
+|---|---|
+| `s =~ s/=/-/g` | **SB4032** |
+| `s =~ s/#/-/g` | **SB4032** |
+| `s =~ s/&/-/g`, `s/<//`, `s/>//`, `s/;//` | **SB4032** |
+| `s =~ s/:/-/g`, `s/a/-/g` | ok |
+| `$(gsub $s "=" "-")` | **ok** — `NAME-sash` |
+
+The diagnostic is actively misleading: *"malformed `=~ s/…` substitution —
+expected s/RE/SUB/[flags] with three `/` delimiters"* when the payload has
+exactly three delimiters and is perfectly well-formed. The real cause is that
+the token stream broke.
+
+**This matters for `switch-free-read-family`.** `k=v` line formats
+(`/etc/os-release`, env files, `passwd`-alikes) are the canonical map source,
+and converting them to a NUL-separated stream is exactly
+`s =~ s/=/$sep/g` — which is one of the broken cases. The function form
+`$(gsub $s "=" $sep)` works, so the redesign is not blocked, but the sugar is
+unusable for the most common map-building step.
+
 ## Mechanism
 
 `reconstruct_sed_raw` (`parse/parser.rs`) rebuilds the payload from tokens and
 accepts `Tok::Word`, `Tok::Dollar`, `Tok::DollarBrace` and (DD#96)
-`Tok::Newline`. `Tok::AnsiCQuoted` hits `_ => break`, so the raw text truncates
-to `s/:/` and fails the three-delimiter check → SB4032.
+`Tok::Newline`. **Every other token hits `_ => break`**, truncating the raw
+text so it fails the three-delimiter check → SB4032. `Tok::AnsiCQuoted` is one
+instance; the shell metacharacters that lex as operators (`=` assignment, `#`
+comment, `&` background, `<`/`>` redirect, `;` separator) are the rest.
+
+So the defect is structural, not per-construct: a token-driven reconstruction
+of what is semantically *raw text* will keep losing whichever tokens nobody
+enumerated. Any fix should consider capturing the payload span from the source
+directly rather than re-accumulating it token by token.
 
 ## Why it is not a one-line fix
 
