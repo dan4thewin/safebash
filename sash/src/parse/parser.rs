@@ -932,9 +932,10 @@ fn parse_negated(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnostic>
     if stmt_is_dispatch(&stmt) {
         return Err(dispatch_stmt_only_error(span));
     }
-    // DD#70: `-` and `!` cannot combine on one segment. `- ! cmd` is SB4019
-    // (parse_suppressed); reject the mirror `! - cmd` symmetrically — negating a
-    // suppressed status is contradictory (suppress = "don't count it").
+    // DD#70: `! - cmd` stays rejected, and NOT as a must-consume rule — `-`
+    // has already discarded the result, so `!` has nothing left to invert.
+    // That is a composition error, so the addendum that made `- !` legal
+    // (`-` discards the negated boolean) does not reach it.
     if matches!(&stmt.kind, StmtKind::Suppressed(_)) {
         return Err(parse_error(
             span,
@@ -985,20 +986,10 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
 
-    // Peek ahead: if what follows looks like a command, treat - as suppression
+    // Peek ahead: if what follows looks like a command, treat - as suppression.
+    // DD#70 addendum: `!` is word-like enough to follow — `- ! cmd` discards
+    // the negated boolean.
     let next = scanner.peek_n(1);
-    // DD#70: `- !` suppresses a boolean → SB4019 directly (else it falls through
-    // to `parse_simple_or_assignment` and reports the garbage SB4014). `-`
-    // cannot suppress `!`.
-    if matches!(next.token, Tok::Bang) {
-        return Err(parse_error(
-            span,
-            "SB4019",
-            "`-` cannot suppress `!` — it is a boolean that must be consumed \
-             (if/||) or discarded with `|| :`"
-                .to_string(),
-        ));
-    }
     if next.token.is_word_like()
         || matches!(
             next.token,
@@ -1009,6 +1000,7 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
                 | Tok::DblBracketOpen
                 | Tok::DblParen
                 | Tok::LBrace
+                | Tok::Bang
         )
     {
         scanner.next(); // consume '-'
@@ -1031,6 +1023,17 @@ fn parse_suppressed(scanner: &mut Scanner) -> Result<Option<Statement>, Diagnost
 fn push_suppression_into_pipeline(stmt: Statement, span: Span) -> Statement {
     let stmt_span = stmt.span;
     match stmt.kind {
+        // DD#70 addendum: `- ! X` discards the NEGATION's result, so the
+        // suppression must stay outside. Pushing it into the first segment
+        // would leave the `!` unsuppressed and still must-consume. (A negated
+        // `Pipeline` here is always a single command — `! a | b` is SB4040.)
+        StmtKind::Pipeline(ref p) if p.negated => Statement {
+            kind: StmtKind::Suppressed(Box::new(Statement {
+                kind: stmt.kind,
+                span: stmt_span,
+            })),
+            span,
+        },
         StmtKind::Pipeline(mut p) if !p.commands.is_empty() => {
             let first = p.commands.remove(0);
             let fspan = first.span;

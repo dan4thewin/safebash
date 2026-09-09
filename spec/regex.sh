@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=56
+plan=59
 echo "1..$plan" >&3
 
 set +e
@@ -83,15 +83,20 @@ echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 63.2d
 
 # 63.2e bare `match S P` is a must-consume compile error (DD#70 SB4018)
-# 63.2f `- match S P` — `-` on a (B) construct is a compile error (SB4019)
+# 63.2f `- match S P` — `-` DISCARDS the result (DD#70 addendum 2026-09-09).
+# `-` used to be rejected here on the grounds that a (B) construct has no
+# runtime verdict to suppress; but `|| :` was always allowed, so the rule only
+# dictated WHICH explicit discard you had to write, and mandated the oblique
+# one. SB4018 still catches the SILENT discard, which is the real hazard.
 # native+c: the SB40xx must-consume diagnostics are transform-time (before
 # codegen), so they surface on --emit-c too. janet deferred.
 if in_modes native,c; then
     run_sash 'match abc abc'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
 
-    run_sash '- match abc abc'
-    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk 63.2f
+    run_sash '- match abc abc
+echo after'
+    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 63.2f
 else
     skip_chk 63.2e; skip_chk 63.2f
 fi
@@ -135,7 +140,8 @@ if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
 [[ $rc = 0 && $out = "n 0" && -z $err ]]; chk 63.cap5
 
 # 63.cap6 bare 3-arg `match S P ARR` is a must-consume compile error (SB4018)
-# 63.cap7 `- match S P ARR` — `-` on a (B) construct is SB4019
+# 63.cap7 `- match S P ARR` — `-` discards the boolean and KEEPS the array,
+# which is the point: the out-array form is side-effect-primary
 # Native-only (transform diagnostics not surfaced on --emit-c/--janet).
 if in_modes native,c; then
     run_sash 'array g=()
@@ -143,8 +149,9 @@ match abc abc g'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
 
     run_sash 'array g=()
-- match abc abc g'
-    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk 63.cap7
+- match abc b g
+echo "$(len g):${g[0]}"'
+    [[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.cap7
 else
     skip_chk 63.cap6; skip_chk 63.cap7
 fi
@@ -393,6 +400,43 @@ run_sash 'h=$(getenv HOME)
 matchall "$h" "[a-z]+" parts || :
 echo "${parts[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 63.ma9
+
+
+# ── DD#70 addendum (2026-09-09): `-` discards ANY result ──────────────────
+# `- X` uniformly means "run X, discard its result", whether X is an opaque
+# external (A) or in-process logic (B). The old split forbade `-` on (B) and
+# required `|| :` — but both are explicit discards, so the rule protected
+# nothing and merely mandated the more indirect spelling. This matters most
+# for the side-effect-primary forms, where the boolean is incidental and the
+# ARRAY is the point.
+
+# 63.dash1 the DD#99 mapfile line, in its preferred spelling. native,c: janet
+# scopes an auto-declared collection's `var` to the enclosing block
+# (task `janet-autodeclare-scoped-to-list-block`, not specific to `-`).
+if in_modes native,c; then
+    run_sash '- matchall "a
+b" "[^\x0a]+" arr
+echo "$(len arr):${arr[1]}"'
+    [[ $rc = 0 && $out = "2:b" && -z $err ]]; chk 63.dash1
+else
+    skip_chk 63.dash1
+fi
+
+# 63.dash2 `-` on a NO-match matchall still proceeds (nothing to abort on —
+# a false boolean is not a failure, DD#70)
+if in_modes native,c; then
+    run_sash '- matchall "abc" "zzz" arr
+echo "n=$(len arr)"'
+    [[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 63.dash2
+else
+    skip_chk 63.dash2
+fi
+
+# 63.dash3 bare (unmarked) is STILL an error — the protection that matters is
+# against the SILENT discard, and `-` is not silent
+run_sash 'matchall "a" "a" arr
+echo "$(len arr)"'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.dash3
 
 set -e
 tally

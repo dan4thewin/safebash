@@ -84,6 +84,67 @@ Levers:
 This is *why* (B) has no suppression: you authored the logic, so the
 language makes you say what the result means.
 
+## Addendum (2026-09-09) — `-` discards ANY result
+
+DG: *"I don't like the asymmetry of `- cmd` and boolean `|| :`. `-` should
+work for both."* Approved after discussion. This **supersedes** the "No `-`
+suppression (→ SB4019)" lever above and the distinguishing principle that
+justified it.
+
+`- X` now uniformly means **"run X, discard its result"**, whether X is an
+opaque external (A) or in-process logic (B): `- match`, `- matchall`,
+`- [[ … ]]`, `- ! cmd`, and `- f` for an `-> int` function are all legal.
+
+### Why the original rule did not hold up
+
+Two things, neither visible when this DD was written.
+
+1. **`|| :` was always allowed.** So the result was already discardable, and
+   the rule never protected it — it only dictated *which* explicit discard the
+   author had to write, and mandated the more indirect one. `cmd || :`
+   expresses discard as a side effect of short-circuit control flow; `- cmd`
+   says it directly. What SB4018 actually guards against is the **silent**
+   discard — a bare `[[ -n $x ]]` written as if it asserted, the real bash
+   habit — and `-` is not silent.
+
+2. **(B) gained members whose primary effect is a side effect.** When this DD
+   was written, (B) was bare `match S P`, `[[ … ]]`, and an `-> int` return —
+   all *purely* about their result, where "you authored the logic, say what
+   the result means" is compelling. `match S P ARR` and DD#63's `matchall`
+   are different: the ARRAY is the point and the boolean is incidental, so
+   "I don't care about the boolean" is the normal case rather than a smell.
+   The old rule forced the noisiest spelling precisely where the result
+   genuinely does not matter — including on DD#99's most common migrated line.
+
+The mechanical objection ("`-` suppresses a runtime verdict, and a (B)
+construct has none") is real but not decisive: this widens `-` from *discard
+the verdict* to *discard the result*, which is a generalization rather than a
+contradiction. The (A)/(B) split survives everywhere it does work — abort on
+failure, and `$(status)` availability.
+
+### What does NOT change
+
+- **A bare (B) result is still SB4018.** Unmarked discard stays an error.
+- **`! - cmd` is still rejected.** That is not a must-consume rule: `-` has
+  already discarded the result, so `!` has nothing left to invert. A
+  composition error, so the addendum does not reach it. (It keeps SB4019,
+  which that code is also used for elsewhere — the `-`/`!` combination and a
+  variable/function name collision.)
+- **`- a | b` still suppresses only the first segment** (DD#55). But a
+  *negated* pipeline keeps the suppression outside, because there the `-`
+  applies to the negation's result; pushing it into the first segment left
+  the `!` unsuppressed and still must-consume.
+
+### Retired
+
+**SB4019 no longer means "`-` on a must-consume result".** Its remaining uses
+are the `-`/`!` composition error and the (unrelated, pre-existing)
+variable/function collision.
+
+Specs: `regex.sh` 63.2f, 63.cap7, 63.dash1-dash3; `errors.sh` e.b70.tdash,
+bng.5, bng.11.
+
+
 ## Redirect open(2) is an (A) setup-failure, not a verdict
 
 `echo foo > /bad` is, semantically, `exec 4>/bad; echo foo >&4` (DG). The

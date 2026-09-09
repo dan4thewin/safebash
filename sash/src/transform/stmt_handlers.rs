@@ -147,19 +147,29 @@ fn try_test_arg_capture(
 /// `$((…))`. Emits a diagnostic when violated; does not affect
 /// codegen (the caller still threads the call through).
 fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionState) {
+    // DD#70 addendum: `- f` discards the returned int, like any other result.
+    if state.suppressed > 0 {
+        return;
+    }
     if state.function_non_void.contains(name) && state.in_condition == 0 {
         state.diagnostics.push(format!(
-            "{}:{}: error [SB4016] function '{}' returns a status — handle with if/|| or capture with $(({}))",
+            "{}:{}: error [SB4016] function '{}' returns a status — handle with if/||, discard with `-`, or capture with $(({}))",
             stmt.span.line, stmt.span.col, name, name
         ));
     }
 }
 
-/// DD#70 (B): `match` and a bare `[[ … ]]` are booleans that **must be
-/// consumed**. In a consuming position (if/while/&&/||) they are fine.
-/// Otherwise it is a compile error in the "ignored result" family (adjacent
-/// to SB4016): SB4018 for a bare result, SB4019 when `-` is applied (a
-/// must-consume result has no runtime verdict to suppress).
+/// DD#70 (B): `match` / `matchall` / a bare `[[ … ]]` are booleans that
+/// **must be consumed**. A consuming position (if/while/&&/||) consumes it,
+/// and `|| :` or `-` discards it.
+///
+/// DD#70 addendum (2026-09-09): `-` used to be rejected here (SB4019) on the
+/// grounds that a (B) construct has no runtime verdict to suppress. But
+/// `|| :` was always allowed, so the rule never protected the result — it
+/// only dictated *which* explicit discard the author had to write, and
+/// mandated the oblique one (`|| :` achieves discard as a side effect of
+/// short-circuit control flow; `-` says it directly). What SB4018 actually
+/// guards against is the **silent** discard, and `-` is not silent.
 fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
     let construct = match kind {
         BuiltinCmd::Match => "match",
@@ -167,21 +177,13 @@ fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut Ve
         BuiltinCmd::Test => "[[ … ]]",
         _ => return,
     };
-    if state.in_condition > 0 {
+    if state.in_condition > 0 || state.suppressed > 0 {
         return;
     }
-    let diag = if state.suppressed > 0 {
-        format!(
-            "{}:{}: error [SB4019] `-` cannot suppress `{}` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
-            stmt.span.line, stmt.span.col, construct
-        )
-    } else {
-        format!(
-            "{}:{}: error [SB4018] `{}` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
-            stmt.span.line, stmt.span.col, construct
-        )
-    };
-    state.diagnostics.push(diag);
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4018] `{}` result is unused — consume it with if/`&&`/`||`, or discard with `-` or `|| :`",
+        stmt.span.line, stmt.span.col, construct
+    ));
 }
 
 /// DD#93 Part D: lower `attest SOURCE (( TARGET = SOURCE ))`.
@@ -617,25 +619,17 @@ fn dispatch_multistage_pipeline(
     block
 }
 
-/// DD#70 (B): `! X` produces a must-consume boolean (for any operand). In a
-/// consuming position (if/while/&&/||) it is fine; a bare result is SB4018,
-/// and `-` applied to it is SB4019.
+/// DD#70 (B): `! X` produces a must-consume boolean (for any operand). A
+/// consuming position (if/while/&&/||) is fine; a bare result is SB4018;
+/// `-` discards it (DD#70 addendum — see `check_boolean_must_consume`).
 fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
-    if state.in_condition > 0 {
+    if state.in_condition > 0 || state.suppressed > 0 {
         return;
     }
-    let diag = if state.suppressed > 0 {
-        format!(
-            "{}:{}: error [SB4019] `-` cannot suppress `!` — it is a boolean that must be consumed (if/||) or discarded with `|| :`",
-            stmt.span.line, stmt.span.col
-        )
-    } else {
-        format!(
-            "{}:{}: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or discard with `|| :`",
-            stmt.span.line, stmt.span.col
-        )
-    };
-    state.diagnostics.push(diag);
+    state.diagnostics.push(format!(
+        "{}:{}: error [SB4018] `!` result is unused — consume it with if/`&&`/`||`, or discard with `-` or `|| :`",
+        stmt.span.line, stmt.span.col
+    ));
 }
 
 fn is_mapfile_last(last: &Statement) -> bool {

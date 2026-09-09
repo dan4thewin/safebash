@@ -404,18 +404,20 @@ run_sash 'false || x=set; : $x; echo done'
 # ── DD#70 (A)/(B) error-model contract ───────────────────────────────
 # (B) must-consume booleans: `match` (regex.sh 63.1c-2f) and a bare
 # `[[ … ]]`. A bare boolean is a compile error; if/&&/|| consume it;
-# `|| :` discards it; `-` on a (B) construct is a compile error.
+# `|| :` and `-` both discard it (DD#70 addendum 2026-09-09 — `-` is an
+# explicit discard, so it carries the same weight as `|| :`).
 # SB4018/SB4019 are transform diagnostics — native-only (not surfaced on
 # --emit-c / --janet yet; see c-janet-dd55-abort-channel).
 
 # e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
-# e.b70.tdash `-` on a `[[ … ]]` (a must-consume boolean) → SB4019
+# e.b70.tdash `-` on a `[[ … ]]` discards the result — legal
 if in_modes native,c; then
     run_sash '[[ a = a ]]'
     [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
 
-    run_sash '- [[ a = a ]]'
-    [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk e.b70.tdash
+    run_sash '- [[ a = a ]]
+echo after'
+    [[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.tdash
 else
     skip_chk e.b70.tbare; skip_chk e.b70.tdash
 fi
@@ -435,7 +437,7 @@ run_sash '[[ a = b ]] || echo miss'
 
 # ── `!` precedence + pipeline + suppress (DG 2026-08-19). `!` binds its
 # immediate unit (bash-consistent `(!X) && Y`); it cannot negate a pipeline
-# (reviewability, SB4040); `- !` is SB4019. Runtime negation is native-only
+# (reviewability, SB4040). Runtime negation is native-only
 # (c/janet `!` backend gap); the parse-time rejects are all modes. ──
 # bng.1 `! X && Y` reassociates to `(!X) && Y` (was wrongly SB4018)
 if in_modes native,c; then
@@ -457,9 +459,12 @@ fi
 # bng.4 `!` on a pipeline is rejected — reviewer can't see `!`'s scope (SB4040)
 run_sash 'if ! /bin/true | /bin/cat; then echo x; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.4
-# bng.5 `- !` cannot suppress a boolean → SB4019 (was the garbage SB4014)
-run_sash '- ! /bin/false'
-[[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.5
+# bng.5 `- !` discards the negated result (DD#70 addendum). `!` yields a
+# boolean and `-` discards results, so the composition is legal — redundant
+# with a plain `- cmd`, but explicitly so.
+run_sash '- ! /bin/false
+echo after'
+[[ $rc = 0 && $out = "after" && -z $err ]]; chk bng.5
 
 # ── DD#70 terminal-segment negation (DG 2026-08-31): `!` may negate the FINAL
 # pipeline stage (`a | ! b`), which supplies the pipeline's result — the same
@@ -478,7 +483,9 @@ run_sash 'if /bin/echo abc | /bin/cat | ! /bin/grep -q z; then echo T; else echo
 # bng.10 `!` on a NON-terminal stage (`a | ! b | c`) is rejected — SB4040
 run_sash '/bin/echo abc | ! /bin/grep abc | /bin/cat'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.10
-# bng.11 `! -` (negate a suppressed command) is the `- !` mirror → SB4019
+# bng.11 `! -` stays rejected, and NOT as the `- !` mirror: `-` has already
+# discarded the result, so `!` has nothing left to invert. That is a
+# composition error, not a must-consume one — the addendum does not touch it.
 run_sash '/bin/echo abc | ! - /bin/grep -q z'
 [[ $rc != 0 && -z $out && $err == *SB4019* ]]; chk bng.11
 # bng.12 `return ! X | Y` — a non-terminal `!` in a return producer → SB4040
