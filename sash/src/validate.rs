@@ -1784,6 +1784,7 @@ fn check_dq_body_branch(stmts: &[Statement], state: StatusState, diags: &mut Vec
 const BUILTINS: &[&str] = &[
     // Output
     "echo",
+    "write",
     // Control flow
     ":",
     "exit",
@@ -3191,7 +3192,7 @@ fn check_echo_splat(c: &Command, diags: &mut Vec<Diagnostic>) {
     let ExprKind::Literal(name) = &c.name.kind else {
         return;
     };
-    if name != "echo" {
+    if name != "echo" && name != "write" {
         return;
     }
     for arg in &c.args {

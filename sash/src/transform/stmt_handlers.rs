@@ -25,7 +25,18 @@ pub(super) fn handle_command(
     state: &mut VersionState,
     mut block: BlockId,
 ) -> BlockId {
-    let name = expr_to_string(&c.name);
+    let raw_name = expr_to_string(&c.name);
+    // DD#99: `write` is `echo` minus the trailing newline — a distinct
+    // construct rather than a flag. Desugaring to `echo -n` here gives all
+    // three backends the behaviour for free (each already detects `-n` as the
+    // first argument), and stage 7 removes the `-n` surface spelling.
+    let write_form = (raw_name == "write").then(|| echo_no_newline(c));
+    let c = write_form.as_ref().unwrap_or(c);
+    let name = if write_form.is_some() {
+        "echo".to_string()
+    } else {
+        raw_name
+    };
     let kind = BuiltinCmd::from_name(&name);
 
     // DD#70 (B): `match` and a bare `[[ … ]]` are booleans that must be
@@ -44,6 +55,24 @@ pub(super) fn handle_command(
 
     check_non_void_bare_call(&name, stmt, state);
     super::cmd_handlers::handle_function_call_or_command(&name, c, stmt, ssa, state, block)
+}
+
+/// `write ARGS` as `echo -n ARGS` (DD#99).
+fn echo_no_newline(c: &Command) -> Command {
+    let span = c.name.span;
+    let mut args = Vec::with_capacity(c.args.len() + 1);
+    args.push(Expr {
+        kind: ExprKind::Literal("-n".to_string()),
+        span,
+    });
+    args.extend(c.args.iter().cloned());
+    Command {
+        name: Expr {
+            kind: ExprKind::Literal("echo".to_string()),
+            span,
+        },
+        args,
+    }
 }
 
 /// Dispatch a `BuiltinCmd` to its handler. Most builtins always

@@ -173,7 +173,9 @@ impl BuiltinCmd {
             "__trap_signal" => Self::TrapSignal,
             "__signal_flag" => Self::SignalFlag,
             "__table_delete" => Self::TableDelete,
-            "echo" => Self::Echo,
+            // DD#99: `write` is `echo` minus the trailing newline; the
+            // transform desugars it to `echo -n`, so it shares the variant.
+            "echo" | "write" => Self::Echo,
             "[[" => Self::Test,
             ":" => Self::Noop,
             "exit" => Self::Exit,

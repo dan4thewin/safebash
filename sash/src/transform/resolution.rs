@@ -23,7 +23,7 @@ fn resolve_command_head(name: &str) -> String {
         return name.to_string();
     }
     // Inline builtins handled directly in codegen — no resolution needed
-    if matches!(name, "echo" | ":") {
+    if matches!(name, "echo" | "write" | ":") {
         return name.to_string();
     }
     // DD#23: compile-time PATH resolution (shared with the front-end pass).

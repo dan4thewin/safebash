@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=46
+plan=53
 echo "1..$plan" >&3
 
 set +e
@@ -298,6 +298,67 @@ if in_modes native,c; then
 else
     skip_chk 14.31
 fi
+
+
+# ════════ DD#99 stage 4: `write` — echo without the trailing newline ════════
+# DG: "I'd spell echo -n as write." A distinct construct rather than a flag,
+# following DD#60/#75: `echo` terminates, `write` does not, neither takes a
+# flag. Stage 7 removes the `echo -n` spelling.
+
+# wr.1 writes with no trailing newline
+if in_modes native,c; then
+    run_sash 'write "a"
+write "b"
+echo "|"'
+    [[ $rc = 0 && $out = "ab|" && -z $err ]]; chk wr.1
+else
+    skip_chk wr.1
+fi
+
+# wr.2 several arguments are space-joined, as echo does
+if in_modes native,c; then
+    run_sash 'write "x" "y"
+echo "|"'
+    [[ $rc = 0 && $out = "x y|" && -z $err ]]; chk wr.2
+else
+    skip_chk wr.2
+fi
+
+# wr.3 `echo` still terminates — the two differ only in the newline
+run_sash 'echo "a"
+echo "b"'
+[[ $rc = 0 && $out = "a
+b" && -z $err ]]; chk wr.3
+
+# wr.4 interpolates like echo
+if in_modes native,c; then
+    run_sash 'v=hi
+write "[$v]"
+echo "|"'
+    [[ $rc = 0 && $out = "[hi]|" && -z $err ]]; chk wr.4
+else
+    skip_chk wr.4
+fi
+
+# wr.5 no arguments writes nothing at all
+if in_modes native,c; then
+    run_sash 'write
+echo "|"'
+    [[ $rc = 0 && $out = "|" && -z $err ]]; chk wr.5
+else
+    skip_chk wr.5
+fi
+
+# wr.6 a tainted value still needs attest (DD#24 is unaffected)
+run_sash 'v=$(getenv HOME)
+write $v'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk wr.6
+
+# wr.7 the DD#69 §3 echo-splat rule applies to `write` too — an array splat
+# needs an explicit join, since it is the same output construct
+run_sash 'array a=(x y)
+write @a'
+[[ $rc != 0 && -z $out && -n $err ]]; chk wr.7
 
 set -e
 tally

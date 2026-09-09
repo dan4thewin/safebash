@@ -88,4 +88,12 @@ independent.
   Sweep 4429 passing / 39 failing / 421 skipped, 0 regressions.
   - janet has no emitter for the fill; filed `janet-map-from-array`, specs
     gated native,c. The SB5058 reject and the empty case work in all 3.
-- Stage 4: next — `write` (echo without the newline)
+- **Stage 4 DONE** (2026-09-09): `write` — echo without the trailing newline
+  (DG: *"I'd spell echo -n as write"*). Desugars to `echo -n` in the transform,
+  so native and c get it from the shared SSA lowering; registering it under
+  `BuiltinCmd::Echo` is what stops resolution shelling out to `/usr/bin/write`.
+  Specs `commands.sh` wr.1–wr.7. Sweep 4446 passing / 39 failing / 425 skipped,
+  0 regressions.
+  - janet renders from the AST, so it never sees the desugar; filed
+    `janet-write-builtin`, specs gated native,c.
+- Stage 5: next — migrate spec/ + contrib/ onto the new spellings (~250 sites)
