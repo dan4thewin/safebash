@@ -76,6 +76,28 @@ tally() {
     fi
 }
 
+# ── hang guard ────────────────────────────────────────────────────────────
+# Every child the harness spawns gets </dev/null and a wall-clock limit.
+#
+# Without the stdin guard a binary that reads stdin — a compiler bug, or a
+# spec that legitimately pins one — inherits the runner's own stdin and
+# blocks the whole suite. That is exactly how the DD#14 pipeline-stage
+# redirect bug presented: `cat < f | cat` lost the redirect, the stage read
+# the terminal, and `bash run.sh` sat there forever with no output.
+#
+# Without the time limit an infinite loop in the compiler, in gcc, or in
+# generated code does the same. Either way the spec must FAIL loudly and let
+# the rest of the suite finish, never hang it.
+#
+# Raise SPEC_TIMEOUT for a deliberately slow spec; it is seconds.
+: "${SPEC_TIMEOUT:=10}"
+
+# `timeout` exits 124 when the limit fires. On its own that reads as an
+# ordinary bad exit status, so name it.
+_hang_msg() {
+    echo "spec: $1 exceeded the ${SPEC_TIMEOUT}s hang guard (raise SPEC_TIMEOUT)"
+}
+
 # Compile sash source with the current backend, run, capture rc/out/err.
 # Modes:
 #   native — sash -c "$src" -o ./test_bin; ./test_bin
@@ -94,16 +116,20 @@ run_sash() {
 
 _run_sash_native() {
     local src=$1; shift
-    ${SASH:-sash} ${SASH_CFLAGS:-} -c "$src" -o ./test_bin 2> err.raw
+    timeout "$SPEC_TIMEOUT" ${SASH:-sash} ${SASH_CFLAGS:-} -c "$src" -o ./test_bin \
+        </dev/null 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
         # Capture runtime stderr separately (rerr) so abort diagnostics
         # (DD#55) can be asserted; err stays for compile diagnostics.
-        out=$(./test_bin "$@" 2>rt.err)
+        out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rt.err)
         rc=$?
         rerr=$(cat rt.err 2>/dev/null)
+        if (( rc == 124 )); then rerr=$(_hang_msg "the test binary"); fi
         rm -f ./test_bin rt.err
         err=""
+    elif (( rc == 124 )); then
+        out="" err=$(_hang_msg "the compiler")
     else
         out=""
         err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
@@ -114,12 +140,16 @@ _run_sash_native() {
 _run_sash_janet() {
     local src=$1; shift
     printf '%s\n' "$src" > .input.sash
-    ${SASH:-sash} ${SASH_CFLAGS:-} --janet .input.sash > .out.janet 2> err.raw
+    timeout "$SPEC_TIMEOUT" ${SASH:-sash} ${SASH_CFLAGS:-} --janet .input.sash \
+        </dev/null > .out.janet 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
-        out=$(janet .out.janet "$@" 2>/dev/null)
+        out=$(timeout "$SPEC_TIMEOUT" janet .out.janet "$@" </dev/null 2>/dev/null)
         rc=$?
         err=""
+        if (( rc == 124 )); then err=$(_hang_msg "the janet program"); fi
+    elif (( rc == 124 )); then
+        out="" err=$(_hang_msg "the compiler")
     else
         out=""
         err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
@@ -134,22 +164,31 @@ _run_sash_c() {
         return
     fi
     printf '%s\n' "$src" > .input.sash
-    ${SASH:-sash} ${SASH_CFLAGS:-} --emit-c .input.sash > .out.c 2> err.raw
+    timeout "$SPEC_TIMEOUT" ${SASH:-sash} ${SASH_CFLAGS:-} --emit-c .input.sash \
+        </dev/null > .out.c 2> err.raw
     rc=$?
     if [[ $rc = 0 ]]; then
-        gcc -nostartfiles -static -fno-stack-protector -o ./test_bin .out.c "$SASH_RT_LIB" -lpthread 2> gcc.err
+        timeout "$SPEC_TIMEOUT" gcc -nostartfiles -static -fno-stack-protector \
+            -o ./test_bin .out.c "$SASH_RT_LIB" -lpthread </dev/null 2> gcc.err
         local gcc_rc=$?
         if (( gcc_rc != 0 )); then
             # gcc rejecting our emitted C is a compiler bug. Surface it.
-            rc=126 out="" err="gcc failed: $(<gcc.err)"
+            if (( gcc_rc == 124 )); then
+                rc=126 out="" err=$(_hang_msg "gcc")
+            else
+                rc=126 out="" err="gcc failed: $(<gcc.err)"
+            fi
         else
-            out=$(./test_bin "$@" 2>rerr.raw)
+            out=$(timeout "$SPEC_TIMEOUT" ./test_bin "$@" </dev/null 2>rerr.raw)
             rc=$?
             err=""
             rerr=$(<rerr.raw)
+            if (( rc == 124 )); then rerr=$(_hang_msg "the test binary"); fi
             rm -f rerr.raw
         fi
         rm -f ./test_bin gcc.err
+    elif (( rc == 124 )); then
+        out="" err=$(_hang_msg "the compiler")
     else
         out=""
         err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
@@ -160,7 +199,7 @@ _run_sash_c() {
 run_convert() {
     rc=-1 out="" err=""
     printf '%s\n' "$1" > .input.sh
-    sash-convert .input.sh > out 2> err
+    timeout "$SPEC_TIMEOUT" sash-convert .input.sh </dev/null > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)
@@ -169,7 +208,7 @@ run_convert() {
 run_convert_annotate() {
     rc=-1 out="" err=""
     printf '%s\n' "$1" > .input.sh
-    sash-convert --annotate .input.sh > out 2> err
+    timeout "$SPEC_TIMEOUT" sash-convert --annotate .input.sh </dev/null > out 2> err
     rc=$?
     out=$(<out)
     err=$(<err)

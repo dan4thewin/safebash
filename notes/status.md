@@ -1,3 +1,59 @@
+## ════════ STATUS (2026-09-09) — DD#14: a stage's input redirect went to its stdout ════════
+
+**On `hand-parser`.** Found while migrating `mapfile` for DD#99. DG's
+one-line replacement did nothing:
+
+```sh
+/usr/bin/tr '\n' '\0' < f.txt | newread a   # a was empty. No diagnostic.
+/bin/cat < f.txt | /bin/cat                 # ...and this hung on a terminal.
+```
+
+`emit_one_stage_redirect` (codegen/inst_handlers.rs) defaulted every stage
+redirect's implicit fd to **1**, so `< f` was applied to the stage's *stdout*
+and fd 0 was left on the pipe — or, for a first stage, on the inherited
+terminal. That is the whole failure: empty under `</dev/null`, a hang under an
+interactive stdin, silent either way. The `open(2)` mode was never wrong.
+
+The non-pipeline path had always picked the fd from the redirect's
+**direction** via `default_fd_for_op`. The stage path now calls that same
+function instead of keeping its own idea of the default, so the two cannot
+drift apart again — the same "one function, no drift" correction the taint fix
+needed the day before.
+
+**Specs:** `commands.sh` 14.32-14.36 (native + c) — a first stage's input
+redirect, a middle stage's, the DD#99 idiom end to end, the output direction
+still landing on fd 1, and a non-pipeline redirect as a control. Not
+reproducible in janet: `emit_janet` renders pipelines from the AST.
+
+**Two process findings, both mine, both the kind that hide a green result:**
+
+1. I first filed these in `exec.sh` — which is **native-only**, so a shared
+   codegen bug would have been pinned in one mode. Moved to `commands.sh`.
+2. I then appended them at **end of file, after the trailing `set -e; tally`**.
+   They ran in native and c and produced no janet rows at all, because `tally`
+   exits non-zero when that mode had a failure. The file reported `ran 54`
+   against `plan=59` and **nothing flagged the mismatch.** New chk blocks go
+   *before* `tally`.
+
+**The harness could not report any of this.** `common.sh` gave every child the
+runner's own stdin and no time limit, so a stdin-waiting binary stopped
+`bash run.sh` dead — no output, no indication which spec was responsible.
+Every child (compiler, gcc, test binary, janet, sash-convert) now gets
+`</dev/null` and a `timeout`, and a trip is reported as `spec: … exceeded the
+Ns hang guard` rather than an anonymous bad exit status. `harness.sh` ht.1-ht.3
+pin all three properties: EOF instead of the runner's stdin, a runaway killed
+and named, and **the suite still finishing afterwards**. Cost: the sweep went
+1m25 → 1m38, one extra fork per child.
+
+**Sweep 4465 passing / 39 failing / 433 skipped, 0 regressions.** All 39
+failures remain janet-only and pre-existing.
+
+**Next:** DD#99 stage 5 — the ~250-site `read`/`mapfile` migration, now
+unblocked. 111 single-target `read v` → `readline v` and 5 `read -a x -d ""`
+→ `newread x` are mechanical; the 20 space-split `read -a`, 63 multi-target
+`read a b c` and 46 `mapfile` sites largely pin behaviour DD#99 *removes*, so
+each needs a call: migrate, become a reject-test, or go.
+
 ## ════════ STATUS (2026-09-08) — SECURITY: taint laundering via a leading builtin ════════
 
 **On `hand-parser`.** Found while costing DG's NUL/`tr` design proposal — an
