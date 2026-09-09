@@ -199,7 +199,7 @@ run_sash 'array a=( "pre$(getenv HOME)" ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.8
 
 # 60.13 mapfile from a file → tainted; use without attest rejected
-run_sash 'array a=(); mapfile -t a < d60a.txt; echo ${a[0]}'
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.13
 
 # 60.14 read -a → tainted
@@ -209,15 +209,15 @@ run_sash 'newread a; echo ${a[0]}'
 # ad.4 an AUTO-declared mapfile array (no prior `array a=()`) is still tainted —
 #      an element read without attest rejects (the front-end auto-declare
 #      registers the collection but must NOT clear the taint).
-run_sash 'mapfile -t a < d60a.txt; echo ${a[0]}'
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ad.4
 
 # 60.32 tainted array iterated without attest-all → reject (negative for 60.25)
-run_sash 'array a=(); mapfile -t a < d60b.txt; for x in @a; do echo $x; done'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; for x in @a; do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
 
 # 60.33 tainted array joined without attest-all → reject (cmdsub-arg use site)
-run_sash 'array a=(); mapfile -t a < d60b.txt; echo $(join @a)'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; echo $(join @a)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
 # 60.34 tainted map (mapfile -m) subscripted without attest-all → reject
@@ -231,26 +231,26 @@ run_sash 'map m=(); mapfile -m m < d60m.txt; for k in $(keys m); do echo "$k"; d
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.35
 
 # 60.19 attest-all binder must be on the LHS (anti-tautology)
-run_sash 'array a=(); mapfile -t a < d60b.txt
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ "foo" = $x ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.19
 
 # 60.20 attest-all predicate must reference the binder
-run_sash 'array a=(); mapfile -t a < d60b.txt
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ 1 -eq 1 ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.20
 
 # 60.24 re-reading from a tainted source after attest-all re-taints
-run_sash 'array a=(); mapfile -t a < d60b.txt
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
-mapfile -t a < d60b.txt
+/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.24
 
 # 60.26 scalar attest applied to a (tainted) array → type error
-run_sash 'array a=(); mapfile -t a < d60b.txt
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest a [[ ${a[0]} =~ ^[a-z]+$ ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.26
@@ -302,49 +302,49 @@ array a=( "$h" ); echo ${a[0]}'
     [[ $rc = 0 && $out = "zero" && -z $err ]]; chk 60.12
 
     # 60.15 attest-all clears taint; element readable (runtime pass)
-    run_sash 'array a=(); mapfile -t a < d60b.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[1]}'
     [[ $rc = 0 && $out = "beta" && -z $err ]]; chk 60.15
 
     # 60.16 attest-all then read a different element
-    run_sash 'array a=(); mapfile -t a < d60b.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[2]}'
     [[ $rc = 0 && $out = "gamma" && -z $err ]]; chk 60.16
 
     # 60.17 attest-all runtime failure: one element fails → exit 1, no stdout
-    run_sash 'array a=(); mapfile -t a < d60c.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[0]}'
     [[ $rc != 0 && -z $out ]]; chk 60.17
 
     # 60.18 if-form attest-all failure → false branch, no abort
-    run_sash 'array a=(); mapfile -t a < d60c.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | newread a
 if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
 
     # 60.21 empty array → vacuous pass (∀ over ∅ is true)
-    run_sash 'array a=(); mapfile -t a < d60empty.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60empty.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.21
 
     # 60.22 binder shadows outer var; outer untouched afterward
-    run_sash 'x=outer; array a=(); mapfile -t a < d60b.txt
+    run_sash 'x=outer; /usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo $x'
     [[ $rc = 0 && $out = "outer" && -z $err ]]; chk 60.22
 
     # 60.23 attest-all with a unary predicate on the binder
-    run_sash 'array a=(); mapfile -t a < d60b.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ -n $x ]]
 echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk 60.23
 
     # 60.25 attest-all enables iteration over the cleaned array
-    run_sash 'array a=(); mapfile -t a < d60b.txt
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 for w in @a; do echo $w; done'
     [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
@@ -370,7 +370,7 @@ echo ${m[NAME]}'
     # ad.1 mapfile into an UNDECLARED array (no prior `array a=()`) auto-declares
     #      it (mirrors argv, DG 2026-07-08). `$(len a)` was a codegen ICE
     #      (`undefined array: a`); now it is the count.
-    run_sash 'mapfile -t a < d60a.txt; echo $(len a)'
+    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo $(len a)'
     [[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
     # ad.2 same for `read -a` into an undeclared array
     run_sash 'newread a < d60a.txt; echo $(len a)'
@@ -378,7 +378,7 @@ echo ${m[NAME]}'
     # ad.3 attest-all + element read on an AUTO-declared mapfile array (the
     #      front-end must register the target as a collection, else `attest e in
     #      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
-    run_sash 'mapfile -t a < d60a.txt; attest e in a [[ -n $e ]]; echo ${a[0]}'
+    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; attest e in a [[ -n $e ]]; echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
@@ -539,7 +539,7 @@ fi
 run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.47
 # 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
-run_sash 'array a=(); mapfile -t a < d60b.txt; x=$(join @a); echo $x'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; x=$(join @a); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.48
 # 60.49 `keys` of a tainted map in an array-literal element (a value position)
 run_sash 'map m=(); mapfile -m m < d60m.txt; array k=($(keys m)); echo hi'
@@ -548,7 +548,7 @@ run_sash 'map m=(); mapfile -m m < d60m.txt; array k=($(keys m)); echo hi'
 run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.50
 # 60.51 a tainted array subscript `${a[0]}` (value-flow, not cmdsub) in a test
-run_sash 'array a=(); mapfile -t a < d60b.txt; [[ ${a[0]} = x ]] && echo hi'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; [[ ${a[0]} = x ]] && echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.51
 # 60.52 bare-name `join a` reader as a redirect target (routed through a
 # scalar — a direct `$(…)` redirect *target* is now rejected structurally at

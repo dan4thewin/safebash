@@ -139,3 +139,40 @@ silently wrong today.
 `mapfile -t` is also blocked in practice: the in-process spelling has the same
 shape, and DG's external one-liner `tr '\n' '\0' < f | read arr` only covers
 the cases that read from a file.
+
+## Stage 5 progress (2026-09-09, part 2)
+
+`matchall` (DD#63) unblocked the mapfile work, and the pipeline-stage redirect
+fix unblocked DG's one-liner. Two distinct replacements, and **which one you
+want depends on the taint story**:
+
+| shape | replacement | resulting taint |
+|---|---|---|
+| `mapfile -t a < f` | `/usr/bin/tr "\n" "\0" < f \| newread a` | `a` **tainted** |
+| (in-process) | `s=$(<f); attest s […]` then `- matchall $s "[^\x0a]+" a` | `a` **clean** |
+
+Both are correct; they differ in where the vouching happens. The pipeline route
+fills the array directly from external input, so the array carries the taint
+and must be attested before use. The `$(<f)` route reads the file into a scalar
+first — an ordinary read, so it must be vouched for there, and everything
+derived is then clean.
+
+**24 `mapfile -t` sites migrated** to the pipeline route, which is the one that
+preserves what the taint specs actually test. taint.sh 178/178.
+
+## Blocked on a decision: is a tainted MAP still constructible?
+
+`mapfile -m` was the only primitive that produced one. Its DD#99 replacement is
+array→map, and `map m = @{a:DISP}` is today an ordinary **read** of `a` —
+measurably identical to `join @a` and `for x in @a`, all three SB5020 on a
+tainted array. So the array must be attested first, which cleans it, and **the
+resulting map is always clean**.
+
+That makes the tainted-map scenario unreachable, and 8 specs test it (60.28,
+60.29, 60.30, 60.31, 60.34, 60.35, 60.36, 60.48).
+
+The fork is whether `map m = @{a:DISP}` is a **read** of the array (today —
+DD#24 no-propagation applies, map is clean) or a **bulk transfer** like
+`newread` (taint flows, map stays tainted, attest-all on the map survives).
+DD#24 settles the behaviour of a read; it does not settle which of the two this
+operation *is*. Awaiting DG.
