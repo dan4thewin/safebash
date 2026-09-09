@@ -201,21 +201,53 @@ would not be, which cuts slightly toward the array form. It does not move the
   (`sed-sugar-ansi-c-quoted-replacement`) — the function form
   `$(gsub $s "=" $sep)` works. Worth a worked example before ratifying.
 
-## Open questions
+## Resolved (DG, 2026-09-09)
 
-1. **The inverse conversion.** `array a = @m` (map → flattened pairs) also
-   parses today and silently yields an empty array. If array→map exists, does
-   its inverse, and with what disposition family? Deciding both together seems
-   right.
-2. **Interior NUL crossing argv.** A NUL-bearing value passed to an external
-   command **silently truncates** (`printf "[%s]" $x` on `a\0b\0c` → `[a]`).
-   Pipes, redirects and captures are all byte-transparent; argv alone is not,
-   because a C string is unavoidable there. Under a NUL-centric design this
-   stops being exotic. Guard statically where the value is known, at runtime
-   otherwise, or document it?
-3. **Migration.** `read -f:` has 4 uses in-tree and `read -a` 26, but the
-   multi-target `read a b c` form is everywhere in `spec/`. Convert
-   mechanically, or keep the old spellings deprecated for a period?
+### The inverse conversion is rejected, not built
+
+`array a = @m` (map → flattened pairs) is a **compile error**. It parses today
+and silently yields an empty array, so something must change; rejecting is the
+cheap, reversible move.
+
+It is *well-defined* — sash maps preserve **insertion order** (verified: a map
+built `zebra apple mango kiwi` iterates in that order, stably across runs), so a
+flattened array would round-trip deterministically. And it is *not needed*: a
+map is already emittable with the keys loop,
+
+```sh
+for k in $(keys m) { /usr/bin/printf "%s=%s " $k ${m[$k]} }
+```
+
+so flattening is a convenience, not a capability. Because the ordering
+semantics are settled, it can be added later without reopening any question.
+Building it now would be symmetry for its own sake.
+
+### Interior NUL crossing argv: a runtime check, not static analysis
+
+A NUL-bearing value passed to an external command **silently truncates**
+(`printf "[%s]" $x` on `a\0b\0c` → `[a]`). Pipes, redirects and captures are
+all byte-transparent; argv alone is not, because a C string is unavoidable
+there. Under a NUL-centric design this stops being exotic.
+
+DG: *"I don't want silent truncation of arguments, but it seems too unlikely to
+merit the same defensive posture we usually apply."* Agreed — and it needs no
+static analysis, because the test is exact and local:
+
+> Every sash string is `(ptr, len)` and, per **DD#87**, NUL-terminated at
+> `[len]`. An interior NUL is precisely `memchr(ptr, 0, len) != NULL`.
+
+**Rule:** at the argv build site, an argument containing an interior NUL
+**aborts** (DD#55) with a diagnostic naming it. One `memchr` per argv entry per
+exec — negligible beside the `fork`/`execve` it precedes. No false positives,
+no false negatives, no analysis. Silent truncation becomes a loud abort for a
+handful of lines in the runtime's exec path.
+
+### Migration: convert mechanically
+
+sash is private and unreleased, so breaking changes are acceptable (DG). The
+old spellings are removed outright — no deprecation period, no dual forms.
+`read -f:` has 4 in-tree uses and `read -a` 26; the multi-target `read a b c`
+form is widespread in `spec/` and converts mechanically.
 
 ## Related
 
