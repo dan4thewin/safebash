@@ -173,6 +173,7 @@ fn classify_inst_def(
         | SsaInst::Mapfile { .. }
         | SsaInst::ReadArray { .. }
         | SsaInst::SplitValue { .. } // DD#99: array taint governed by the CST pass, like ReadArray
+        | SsaInst::MapFromArray { .. } // DD#99: ditto — the map is as tainted as its source array
         | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
         | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
         | SsaInst::CaptureStart

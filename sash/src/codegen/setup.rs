@@ -758,6 +758,18 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
     split_arr_sig.params.push(AbiParam::new(I64)); // delim
     split_arr_sig.params.push(AbiParam::new(I64)); // terminator (drop trailing empty)
     split_arr_sig.params.push(AbiParam::new(I64)); // table
+                                                   // DD#99: sash_map_from_array(src_tbl, dst_tbl, mode, key_ptr, key_len) → i64
+    let mut map_from_sig = module.make_signature();
+    map_from_sig.params.push(AbiParam::new(I64)); // src table
+    map_from_sig.params.push(AbiParam::new(I64)); // dst table
+    map_from_sig.params.push(AbiParam::new(I64)); // mode
+    map_from_sig.params.push(AbiParam::new(I64)); // key ptr
+    map_from_sig.params.push(AbiParam::new(I64)); // key len
+    map_from_sig.returns.push(AbiParam::new(I64)); // 1 = odd under `:?`
+    let map_from_array_func = module
+        .declare_function("sash_map_from_array", Linkage::Import, &map_from_sig)
+        .expect("declare sash_map_from_array");
+
     let split_into_array_func = module
         .declare_function("sash_split_into_array", Linkage::Import, &split_arr_sig)
         .expect("declare");
@@ -840,6 +852,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         split_first_word: split_first_word_func,
         split_field: split_field_func,
         split_into_array: split_into_array_func,
+        map_from_array: map_from_array_func,
         read_all: read_all_func,
         splice_argv: splice_argv_func,
         envp: envp_data,
@@ -1033,7 +1046,19 @@ impl<'a> Interner<'a> {
                 self.intern_value(index);
                 self.intern_value(value);
             }
-            SsaInst::ArrayAppend { value, .. } => self.intern_value(value),
+            // One interned value each. DD#99: `MapFromArray`'s is the `:-KEY`
+            // key (or the `:?MSG` message), `SplitValue`'s is the split source.
+            SsaInst::ArrayAppend { value: v, .. }
+            | SsaInst::MapFromArray { key: v, .. }
+            | SsaInst::SplitValue { source: v, .. } => self.intern_value(v),
+            other => self.intern_inst_rest(other),
+        }
+    }
+
+    /// The tail of `intern_inst` — the match/read/attest instructions. Split
+    /// out only to keep each dispatcher under the complexity gate.
+    fn intern_inst_rest(&mut self, inst: &SsaInst) {
+        match inst {
             SsaInst::MatchInto {
                 subject, pattern, ..
             } => {
@@ -1043,11 +1068,7 @@ impl<'a> Interner<'a> {
             SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
-            SsaInst::Attest { test, source, .. } => {
-                self.intern_test_expr(test);
-                self.intern(&source.name);
-            }
-            SsaInst::AttestAll { test, source, .. } => {
+            SsaInst::Attest { test, source, .. } | SsaInst::AttestAll { test, source, .. } => {
                 self.intern_test_expr(test);
                 self.intern(&source.name);
             }

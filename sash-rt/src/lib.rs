@@ -3414,6 +3414,74 @@ pub unsafe extern "C" fn sash_split_into_array(
     }
 }
 
+/// DD#99: fill `dst` (a map) from `src` (an indexed array) consumed PAIRWISE —
+/// element 0 is a key, element 1 its value, and so on. An **odd** count leaves
+/// a trailing element with no partner, and `mode` says what to do:
+///
+/// - 0 `@{a:-KEY}` — the trailing element becomes the VALUE of `KEY`. DG:
+///   supplying the key gives a landmark (`${m[KEY]}`); supplying a value would
+///   force a scan to find which key holds it.
+/// - 1 `@{a:?MSG}` — odd is a failure: abort at runtime with `MSG` (passed in
+///   the key slot), exactly as an empty-splat `@{a:?MSG}` does.
+/// - 2 `@{a:~}` / `@{a:!}` — discard the trailing element.
+///
+/// An EMPTY array is a valid empty map (zero is even), so the disposition
+/// governs odd count only.
+#[no_mangle]
+pub unsafe extern "C" fn sash_map_from_array(
+    src: *const SashTable,
+    dst: *mut u8,
+    mode: i64,
+    key_ptr: *const u8,
+    key_len: i64,
+) -> i64 {
+    let n = sash_table_len(src);
+    let dst = dst as *mut SashTable;
+    let mut i: i64 = 0;
+    while i + 1 < n {
+        let (k_ptr, k_len) = table_index_get(src, i);
+        let (v_ptr, v_len) = table_index_get(src, i + 1);
+        sash_table_set(dst, k_ptr, k_len, v_ptr, v_len);
+        i += 2;
+    }
+    if i >= n {
+        return 0; // even count — nothing owed
+    }
+    match mode {
+        // `:?` — abort at runtime, exactly as an empty-splat `:?` does.
+        1 => {
+            let argv = sash_argv;
+            if !argv.is_null() {
+                let a0 = *argv;
+                if !a0.is_null() {
+                    sash_write(2, a0, strlen(a0) as i64);
+                }
+            }
+            sash_write(2, b": ".as_ptr(), 2);
+            if !key_ptr.is_null() && key_len > 0 {
+                sash_write(2, key_ptr, key_len);
+            }
+            sash_write(2, b"\n".as_ptr(), 1);
+            sash_exit(1);
+        }
+        2 => {} // `:~` / `:!` — discard the trailing element
+        _ => {
+            // `:-KEY` — the trailing element is the VALUE of the supplied key.
+            let (v_ptr, v_len) = table_index_get(src, i);
+            sash_table_set(dst, key_ptr, key_len, v_ptr, v_len);
+        }
+    }
+    0
+}
+
+/// Element `i` of an indexed array (8-byte i64 keys), as `(ptr, len)`.
+unsafe fn table_index_get(t: *const SashTable, i: i64) -> (*const u8, i64) {
+    let key = i.to_ne_bytes();
+    let mut len: i64 = 0;
+    let ptr = sash_table_get(t, key.as_ptr(), 8, &mut len);
+    (ptr, len)
+}
+
 /// Read all available data from fd into a heap-allocated buffer.
 #[no_mangle]
 pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {

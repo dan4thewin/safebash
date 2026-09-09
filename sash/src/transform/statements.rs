@@ -678,21 +678,33 @@ fn lower_one_declaration(
     if is_bare_redeclare_noop(a, is_array, is_assoc, state) {
         return block;
     }
+    // DD#99: `map m = @{a:DISP}` fills a map from an array, pairwise.
+    if is_assoc && lower_map_from_array(a, ssa, state, block) {
+        return block;
+    }
     let val = compute_declaration_value(a, is_array, is_assoc, ssa, state, &mut block);
-    // DD#76: an `int array`/`int map` stores each element as an int cell.
-    let val = if d.var_type == crate::ir::VarType::Int && (is_array || is_assoc) {
-        wrap_int_cells(val)
-    } else {
-        val
-    };
+    let val = shape_declared_value(val, d, is_array || is_assoc);
     let target = state.define(&a.name);
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value: val });
+    note_readonly(a, d, state);
+    block
+}
+
+/// DD#76: an `int array`/`int map` stores each element as an int cell.
+fn shape_declared_value(val: SsaValue, d: &Declaration, is_collection: bool) -> SsaValue {
+    if d.var_type == crate::ir::VarType::Int && is_collection {
+        wrap_int_cells(val)
+    } else {
+        val
+    }
+}
+
+fn note_readonly(a: &Assignment, d: &Declaration, state: &mut VersionState) {
     if d.keyword == crate::ir::DeclKeyword::Readonly {
         state.readonly_vars.insert(a.name.clone());
     }
-    block
 }
 
 /// `declare var` (no value, not -a/-A) on an already-defined variable
@@ -949,4 +961,67 @@ fn lower_list_stmt(
             parent_block
         }
     }
+}
+
+/// Emit the empty map plus its pairwise fill. `false` when the declaration's
+/// value is not an array splat, so ordinary map literals fall through.
+fn lower_map_from_array(
+    a: &Assignment,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> bool {
+    let Some(inst) = map_from_array_inst(a, state) else {
+        return false;
+    };
+    state.collections.insert(a.name.clone());
+    state.assoc_arrays.insert(a.name.clone());
+    let target = state.define(&a.name);
+    ssa.block_mut(block).insts.push(SsaInst::Assign {
+        target,
+        value: SsaValue::AssocArray(vec![]),
+    });
+    ssa.block_mut(block).insts.push(inst);
+    true
+}
+
+/// DD#99: `map m = @{a:DISP}` — the source array splat and its odd-count
+/// disposition. `None` when the declaration's value is not an array splat, so
+/// ordinary map literals fall through. A BARE `@a` is rejected in validate,
+/// not here (the diagnostic belongs with the other splat-position rules).
+fn map_from_array_inst(a: &Assignment, state: &mut VersionState) -> Option<SsaInst> {
+    let ExprKind::ParameterExpansion(pe) = &a.value.kind else {
+        return None;
+    };
+    let (mode, message) = match pe.operator.as_deref()? {
+        // `:~` is a wordless `arrvals_default`; `:-WORD` carries the key.
+        "arrvals_default" if pe.operand.is_none() => (2u8, String::new()),
+        "arrvals_default" => (0u8, String::new()),
+        "arrvals_abort" => (
+            1u8,
+            pe.operand
+                .as_deref()
+                .map(expr_to_string)
+                .unwrap_or_default(),
+        ),
+        "arrvals_trust" => (2u8, String::new()),
+        _ => return None,
+    };
+    // For `:?` the abort MESSAGE rides in the key slot (the runtime prints it);
+    // for `:-` it is the supplied KEY. Neither is used by `:~`/`:!`.
+    let key = match pe.operand.as_deref() {
+        Some(w) if mode == 0 || mode == 1 => expr_to_value(w, state),
+        _ => SsaValue::Literal(if mode == 1 {
+            "map from array: odd element count".to_string()
+        } else {
+            String::new()
+        }),
+    };
+    Some(SsaInst::MapFromArray {
+        source: pe.name.clone(),
+        target: a.name.clone(),
+        mode,
+        key,
+        message,
+    })
 }

@@ -356,6 +356,11 @@ fn emit_prologue(out: &mut String) {
         "extern void sash_split_into_array(const char* p, i64 l, i64 delim, i64 terminator, unsigned char* tbl);"
     )
     .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_map_from_array(const void* src, unsigned char* dst, i64 mode, const char* kp, i64 kl);"
+    )
+    .unwrap();
     writeln!(out).unwrap();
 }
 
@@ -708,6 +713,14 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         // DD#99 `newread $SRC ARRAY` — the same split with the bytes coming
         // from a value rather than a fd.
         SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
+        // DD#99 `map m = @{a:DISP}` — fill the map from the array, pairwise.
+        SsaInst::MapFromArray {
+            source,
+            target,
+            mode,
+            key,
+            ..
+        } => emit_map_from_array(e, source, target, *mode, key, types),
         // a+=( … ) — append at the next integer index (len). Mirrors native
         // emit_array_append (dispatch.rs:69).
         SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
@@ -717,6 +730,31 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
 }
 
 /// `a+=( v )` — set v at integer key `sash_table_len(a)` (the next index).
+/// DD#99 `map m = @{a:DISP}`: pairwise fill. The runtime performs the
+/// odd-count disposition, including the `:?` abort.
+fn emit_map_from_array(
+    e: &mut Emit,
+    source: &str,
+    target: &str,
+    mode: u8,
+    key: &SsaValue,
+    types: &VarTypes,
+) {
+    let src = lookup_table_var(source, types);
+    let dst = lookup_table_var(target, types);
+    let (kp, kl) = lower_value_as_str(e, key, types);
+    writeln!(
+        e.out,
+        "    sash_map_from_array((const void*){src}, (unsigned char*){dst}, {mode}, {kp}, {kl});",
+        src = src,
+        dst = dst,
+        mode = mode,
+        kp = kp,
+        kl = kl
+    )
+    .unwrap();
+}
+
 /// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.
 /// Terminator semantics, matching the fd form.
 fn emit_split_value(e: &mut Emit, source: &SsaValue, array: &str, types: &VarTypes) {

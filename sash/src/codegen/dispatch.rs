@@ -84,6 +84,15 @@ impl SsaInst {
             SsaInst::SplitValue { source, array } => {
                 return self.emit_split_value(source, array, builder, module, ctx);
             }
+            SsaInst::MapFromArray {
+                source,
+                target,
+                mode,
+                key,
+                ..
+            } => {
+                return self.emit_map_from_array(source, target, *mode, key, builder, module, ctx);
+            }
             SsaInst::MatchInto {
                 subject,
                 pattern,
@@ -1090,6 +1099,41 @@ impl SsaInst {
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
         true // block is terminated
+    }
+
+    /// DD#99 `map m = @{a:DISP}`: fill the map from the array, pairwise. The
+    /// odd-count disposition is `mode`; `:?` returns 1 and we abort with the
+    /// supplied message (DD#55), like every other runtime disposition failure.
+    #[allow(clippy::too_many_arguments)]
+    fn emit_map_from_array(
+        &self,
+        source: &str,
+        target: &str,
+        mode: u8,
+        key: &SsaValue,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let (key_ptr, key_len) = super::values::lower_value(
+            key,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        let src = find_array_slot(ctx.vars, source, "array");
+        let src_ptr = builder.use_var(src.str_ptr());
+        let dst = find_array_slot(ctx.vars, target, "map");
+        let dst_ptr = builder.use_var(dst.str_ptr());
+        let mode_val = builder.ins().iconst(I64, i64::from(mode));
+        let fref = module.declare_func_in_func(ctx.externs.map_from_array, builder.func);
+        builder
+            .ins()
+            .call(fref, &[src_ptr, dst_ptr, mode_val, key_ptr, key_len]);
+        false
     }
 
     /// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.

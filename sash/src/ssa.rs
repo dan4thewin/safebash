@@ -289,6 +289,17 @@ pub enum SsaInst {
         map_mode: bool,
         separator: char,
     },
+    /// DD#99: `map m = @{a:DISP}` — fill a map from an array, consumed
+    /// PAIRWISE. `mode` is the odd-count disposition: 0 `:-KEY` (the trailing
+    /// element becomes the value of `key`), 1 `:?` (abort), 2 `:~`/`:!`
+    /// (discard). An empty array is a valid empty map.
+    MapFromArray {
+        source: String,
+        target: String,
+        mode: u8,
+        key: SsaValue,
+        message: String,
+    },
     /// DD#99: `newread $SRC ARRAY` — split a scalar VALUE on NUL into an
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.

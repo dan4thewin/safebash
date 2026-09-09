@@ -110,6 +110,7 @@ pub(super) struct ExternFuncs {
     pub(super) split_first_word: cranelift_module::FuncId,
     pub(super) split_field: cranelift_module::FuncId,
     pub(super) split_into_array: cranelift_module::FuncId,
+    pub(super) map_from_array: cranelift_module::FuncId,
     pub(super) read_all: cranelift_module::FuncId,
     pub(super) envp: cranelift_module::DataId,
     pub(super) argc: cranelift_module::DataId,

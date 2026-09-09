@@ -78,4 +78,14 @@ independent.
   The **sigil rule is enforced**: the source must be a value (`$s`) and the
   target a bare name, so `newread f g` is SB5057. Specs nr.9–nr.14.
   Sweep 4409 passing / 39 failing / 414 skipped, 0 regressions.
-- Stage 3: next — `map m = @{a:DISP}` (pairwise, disposition mandatory)
+- **Stage 3 DONE** (2026-09-09): `map m = @{a:DISP}` — pairwise array→map.
+  New runtime `sash_map_from_array`, `SsaInst::MapFromArray`, native + c
+  emitters, and **SB5058** for a bare `map m = @a` (which used to compile and
+  silently yield an EMPTY map). `:-KEY` puts the trailing element at `${m[KEY]}`
+  — DG's landmark; `:?MSG` aborts at runtime; `:~`/`:!` discard; an empty array
+  is a valid empty map. Specs `var_modifiers.sh` mp.1–mp.9, including mp.8 —
+  the whole map pipeline in-process, `k:v` text → NUL → array → map.
+  Sweep 4429 passing / 39 failing / 421 skipped, 0 regressions.
+  - janet has no emitter for the fill; filed `janet-map-from-array`, specs
+    gated native,c. The SB5058 reject and the empty case work in all 3.
+- Stage 4: next — `write` (echo without the newline)

@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=103
+plan=112
 echo "1..$plan" >&3
 
 set +e
@@ -467,6 +467,102 @@ run_sash 's="a-b-c"
 s =~ s/-/x/g
 echo $s'
 [[ $rc = 0 && $out = "axbxc" && -z $err ]]; chk sr.16
+
+
+# ══════ DD#99 stage 3: `map m = @{a:DISP}` — a map from an array ══════
+# The array is consumed PAIRWISE (k1 v1 k2 v2 …). An odd count leaves a
+# trailing element with no partner, and — as DD#69 requires of an
+# external-command splat — the site must state what happens. A bare `@a` is
+# rejected: a silently mis-paired map is the same hazard as a silently-empty
+# argument list. (It used to compile and yield an EMPTY map, silently.)
+
+# mp.1 a bare splat must state a disposition
+run_sash 'array a=(k v)
+map m = @a
+echo "$(len m)"'
+[[ $rc != 0 && -z $out && $err == *SB5058* ]]; chk mp.1
+
+# mp.2 an even count pairs up; the disposition is simply unused
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1 k2 v2)
+map m = @{a:-X}
+echo "$(len m):${m[k1]}:${m[k2]}"'
+    [[ $rc = 0 && $out = "2:v1:v2" && -z $err ]]; chk mp.2
+else
+    skip_chk mp.2
+fi
+
+# mp.3 `:-KEY` — the trailing element becomes the VALUE of KEY. DG: supplying
+# the key gives a landmark (${m[KEY]}); supplying a value would force a scan.
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1 k2)
+map m = @{a:-EXTRA}
+echo "$(len m):${m[k1]}:${m[EXTRA]}"'
+    [[ $rc = 0 && $out = "2:v1:k2" && -z $err ]]; chk mp.3
+else
+    skip_chk mp.3
+fi
+
+# mp.4 `:~` discards the trailing element
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1 k2)
+map m = @{a:~}
+echo "$(len m):${m[k1]}"'
+    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.4
+else
+    skip_chk mp.4
+fi
+
+# mp.5 `:?MSG` aborts at runtime on an odd count, with the message
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1 k2)
+map m = @{a:?uneven}
+echo "$(len m)"'
+    [[ -z $out && $rerr == *uneven* ]]; chk mp.5
+else
+    skip_chk mp.5
+fi
+
+# mp.6 …and does NOT abort on an even count
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1)
+map m = @{a:?uneven}
+echo "$(len m):${m[k1]}"'
+    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.6
+else
+    skip_chk mp.6
+fi
+
+# mp.7 an EMPTY array is a valid empty map — zero is even, nothing is missing,
+# so DD#69's empty-array reading does not apply in this position
+run_sash 'array a=()
+map m = @{a:~}
+echo "$(len m)"'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk mp.7
+
+# mp.8 the whole DD#99 map pipeline, in-process: k=v text → NUL → array → map
+if in_modes native,c; then
+    run_sash 'sep=$'"'"'\0'"'"'
+s=NAME:sash
+s =~ s/:/$sep/g
+newread $s a
+attest e in a [[ $e = $e ]]
+map m = @{a:?uneven}
+echo "${m[NAME]}"'
+    [[ $rc = 0 && $out = "sash" && -z $err ]]; chk mp.8
+else
+    skip_chk mp.8
+fi
+
+# mp.9 `:!` discards like `:~` (and carries DD#91's taint-guard-off meaning)
+if in_modes native,c; then
+    run_sash 'array a=(k1 v1 k2)
+map m = @{a:!}
+echo "$(len m):${m[k1]}"'
+    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.9
+else
+    skip_chk mp.9
+fi
 
 set -e
 tally

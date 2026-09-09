@@ -5354,3 +5354,65 @@ fn readline_diag(span: Span, what: &str) -> Diagnostic {
         ),
     )
 }
+
+// ── SB5058 (DD#99): a map built from an array must state its disposition ──
+//
+// `map m = @{a:DISP}` consumes the array PAIRWISE. An odd count leaves a
+// trailing element with no partner, and — exactly as DD#69 requires of an
+// external-command splat whose array may be empty — the splat site must say
+// what happens. A silently mis-paired map is the same shape of hazard as a
+// silently-empty argument list.
+
+/// SB5058: a `map m = @a` with no disposition.
+pub fn check_map_from_array(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_map_from_array_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_map_from_array_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        if let StmtKind::Declaration(d) = &stmt.kind {
+            check_map_decl_splats(d, stmt.span, diags);
+        }
+        for body in stmt.child_bodies() {
+            check_map_from_array_in(body, diags);
+        }
+    }
+}
+
+/// Each assignment of a `map` declaration whose value is a BARE array splat.
+fn check_map_decl_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
+    if !d.flags.iter().any(|f| f == "-A") {
+        return;
+    }
+    for a in &d.assignments {
+        if let Some(source) = bare_splat_source(&a.value) {
+            diags.push(map_disposition_diag(span, source, &a.name));
+        }
+    }
+}
+
+/// The array named by a BARE `@a` splat (no disposition), else `None`.
+fn bare_splat_source(value: &Expr) -> Option<&str> {
+    let ExprKind::ParameterExpansion(pe) = &value.kind else {
+        return None;
+    };
+    (pe.operator.as_deref() == Some("arrvals")).then_some(pe.name.as_str())
+}
+
+fn map_disposition_diag(span: Span, source: &str, target: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5058",
+        format!(
+            "`map {target} = @{source}` must state what happens to an odd \
+             element count — the array is consumed pairwise. Use \
+             `@{{{source}:-KEY}}` (the trailing element becomes the value of \
+             KEY), `@{{{source}:?MSG}}` (abort), or `@{{{source}:~}}` (discard \
+             it)"
+        ),
+    )
+}
