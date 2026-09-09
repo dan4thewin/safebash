@@ -1793,6 +1793,7 @@ const BUILTINS: &[&str] = &[
     // Input
     "read",
     "readline",
+    "newread",
     "mapfile",
     // Taint
     "attest",
@@ -3257,7 +3258,7 @@ fn taint_stmt_no_read_taint(
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
-        if name == "read" || name == "readline" || name == "mapfile" {
+        if matches!(name, "read" | "readline" | "newread" | "mapfile") {
             check_clean_read_taint(c, tainted, diags);
             return;
         }
@@ -3606,7 +3607,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if name == "read" || name == "readline" || name == "mapfile" || name == "argv" {
+    if matches!(name, "read" | "readline" | "newread" | "mapfile" | "argv") {
         taint_read_target(c, tainted);
     } else if name == "attest" {
         taint_attest(c, span, tainted, diags);
@@ -4121,7 +4122,7 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
         "read" | "readline" => collect_read_flag_targets(&c.args, set),
-        "mapfile" | "readarray" => {
+        "newread" | "mapfile" | "readarray" => {
             for arg in &c.args {
                 insert_read_target_arg(arg, set);
             }
@@ -5261,8 +5262,9 @@ fn check_readline_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 fn check_readline_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
-        if expr_literal_str(&c.name) == "readline" {
-            check_one_readline(c, stmt.span, diags);
+        let n = expr_literal_str(&c.name);
+        if n == "readline" || n == "newread" {
+            check_one_readline(n, c, stmt.span, diags);
         }
     }
     for body in stmt.child_bodies() {
@@ -5271,7 +5273,7 @@ fn check_readline_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 /// One `readline` command: exactly one argument, a bare identifier.
-fn check_one_readline(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+fn check_one_readline(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let words: Vec<String> = c
         .args
         .iter()
@@ -5281,7 +5283,7 @@ fn check_one_readline(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     if let Some(flag) = words.iter().find(|w| w.starts_with('-')) {
         diags.push(readline_diag(
             span,
-            &format!("`readline` takes no flags — got `{flag}`"),
+            &format!("`{name}` takes no flags — got `{flag}`"),
         ));
         return;
     }
@@ -5289,7 +5291,7 @@ fn check_one_readline(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
         diags.push(readline_diag(
             span,
             &format!(
-                "`readline` takes exactly one target name — got {}",
+                "`{name}` takes exactly one target name — got {}",
                 words.len()
             ),
         ));
@@ -5301,9 +5303,9 @@ fn readline_diag(span: Span, what: &str) -> Diagnostic {
         span,
         "SB5057",
         format!(
-            "{what}. `readline NAME` reads one line into one scalar; to split \
-             a record use `read ARRAY` (NUL-separated fields), and for a map \
-             `map m = @{{a:DISP}}`"
+            "{what}. `readline NAME` reads one line into one scalar and \
+             `newread ARRAY` reads NUL-separated fields into an array; for a \
+             map use `map m = @{{a:DISP}}`"
         ),
     )
 }

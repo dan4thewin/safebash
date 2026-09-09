@@ -184,7 +184,7 @@ impl BuiltinCmd {
             "attest" => Self::Attest,
             // DD#99: `readline` is the line-terminated scalar read. It shares
             // the scalar lowering; stage 3 gives `read` the array-only form.
-            "read" | "readline" => Self::Read,
+            "read" | "readline" | "newread" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
             "break" => Self::Break,

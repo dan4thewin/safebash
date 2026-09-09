@@ -335,7 +335,7 @@ fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
         return false;
     };
     match name.as_str() {
-        "mapfile" | "readarray" => true,
+        "mapfile" | "readarray" | "newread" => true,
         "read" => c
             .args
             .iter()

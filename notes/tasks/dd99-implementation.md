@@ -15,23 +15,28 @@ gates:
 
 # Staged plan
 
-`read x` **changes meaning** (scalar line → array of NUL fields), so the new
-spellings are added first, the tree is migrated onto them, and only then are the
-old ones retired. Each stage is independently verifiable with a 3-mode sweep.
+DG (2026-09-09): *"maybe call it `newread` instead of `read` — finish
+implementing `readline` and `newread` and then replace."*
+
+The array read ships under a **temporary name**, so at no point does an
+existing spelling change meaning while code still depends on it. The old
+`read` keeps working untouched until everything has moved off it.
 
 | # | stage | migration load |
 |---|---|---|
-| 1 | add `readline v` (one line → scalar) | — additive |
-| 2 | migrate single-target `read v` → `readline v` | ~89 sites |
-| 3 | `read a` → array-only NUL-split; add `read $s a` | ~27 + 61 sites |
-| 4 | `map m = @{a:DISP}` (pairwise, disposition mandatory) | — additive |
-| 5 | migrate `mapfile`/`readarray` → `read` + `map` | ~63 sites |
-| 6 | add `write`; migrate `echo -n` | 2 sites |
-| 7 | retire the old spellings (reject with diagnostics) | — |
-| 8 | argv interior-NUL runtime guard | — |
-| 9 | `array a = @m` → compile error | — |
+| 1 | add `readline v` (one line → scalar) ✅ | — additive |
+| 2 | add `newread a` / `newread $s a` (NUL fields → array) | — additive |
+| 3 | add `map m = @{a:DISP}` (pairwise, disposition mandatory) | — additive |
+| 4 | add `write` (echo without the newline) | — additive |
+| 5 | migrate spec/ + contrib/ onto the new spellings | ~250 sites |
+| 6 | retire `read -a/-f/-d/-r`, `mapfile`, `readarray`, `echo -n`, multi-target read; **rename `newread` → `read`** | — |
+| 7 | argv interior-NUL runtime guard | — |
+| 8 | `array a = @m` → compile error | — |
 
 Scale: ~250 sites across 25 of 38 spec files.
+
+Stages 1–4 are purely additive and independently verifiable. Stage 6 is the
+only breaking one, and by then nothing depends on the old spellings.
 
 ## Known blockers, all filed and independent
 
@@ -54,4 +59,17 @@ independent.
   Sweep 4376 passing / 39 failing / 405 skipped, 0 regressions.
   - rl.7 (`while readline`) is gated native-only: the identical `while read v`
     shape also fails in c/janet, so that is a pre-existing backend gap.
-- Stage 2: next — migrate single-target `read v` → `readline v` (~89 sites)
+- **Stage 2a DONE** (2026-09-09): `newread ARRAY` — reads stdin, splits on
+  NUL, fills an auto-declared array. No flags, exactly one bare target
+  (SB5057, shared with `readline`). Lowers to the existing `ReadArray` with
+  `delim = Some(0)`. Specs `wordsplit.sh` nr.1–nr.8, including nr.5 — the full
+  DD#99 round trip with no external `tr`:
+
+  ```sh
+  sep=$'\0'; s=a:b:c; s =~ s/:/$sep/g
+  echo $s | newread f          # → 3 elements
+  ```
+
+  Sweep 4395 passing / 39 failing / 410 skipped, 0 regressions.
+- Stage 2b: next — `newread $SRC ARRAY` (split a scalar). Needs a new SSA
+  instruction; `sash_split_into_array` already does the work.

@@ -15,6 +15,19 @@ pub(super) fn handle_read(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
+    // DD#99: `newread ARRAY` is the NUL-split array read. Arity/flags are
+    // checked in validate (SB5057), so by here the shape is known good.
+    if expr_to_string(&c.name) == "newread" {
+        if let Some(arr) = c.args.first().map(expr_to_string) {
+            super::stmt_handlers::autodeclare_bulk_target(&arr, false, ssa, state, block);
+            ssa.block_mut(block).insts.push(SsaInst::ReadArray {
+                array: arr,
+                fd: 0,
+                delim: Some(0),
+            });
+        }
+        return block;
+    }
     let flags = crate::ir::classify_read_flags(&c.args);
     if let Some(bad) = &flags.unknown_flag {
         state.diagnostics.push(format!(

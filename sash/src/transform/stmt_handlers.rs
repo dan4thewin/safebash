@@ -635,7 +635,10 @@ fn is_mapfile_last(last: &Statement) -> bool {
         StmtKind::Command(c) => {
             let n = expr_to_string(&c.name);
             let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-            n == "mapfile" || n == "readarray" || (n == "read" && args.iter().any(|a| a == "-a"))
+            n == "mapfile"
+                || n == "readarray"
+                || n == "newread"
+                || (n == "read" && args.iter().any(|a| a == "-a"))
         }
         _ => false,
     }

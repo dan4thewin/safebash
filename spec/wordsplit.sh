@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=98
+plan=106
 echo "1..$plan" >&3
 
 set +e
@@ -529,6 +529,81 @@ echo "$x$y"'
 # rl.10 …and at least one
 run_sash 'echo hi | readline'
 [[ $rc != 0 && $err == *SB5057* ]]; chk rl.10
+
+
+# ════════ DD#99 stage 2: `newread` — NUL-separated fields into an array ════════
+# Ships under a temporary name so the existing `read` keeps working until the
+# tree has migrated (DG: "call it newread instead of read ... then replace").
+# NUL is the only separator; the target is always an array, auto-declared.
+
+# nr.1 splits a NUL-separated stream into an array
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "a\0b\0c" | newread f
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[0]}:${f[2]}"'
+    [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.1
+else
+    skip_chk nr.1
+fi
+
+# nr.2 does NOT split on whitespace — NUL is the only separator (DD#22)
+if in_modes native,c; then
+    run_sash 'echo "a b c" | newread f
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[0]}"'
+    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.2
+else
+    skip_chk nr.2
+fi
+
+# nr.3 …nor on newlines
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x\ny\n" | newread f
+attest e in f [[ $e = $e ]]
+echo "$(len f)"'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.3
+else
+    skip_chk nr.3
+fi
+
+# nr.4 auto-declares its target (no prior `array f=()`)
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "p\0q" | newread fresh
+attest e in fresh [[ $e = $e ]]
+echo "$(len fresh)"'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.4
+else
+    skip_chk nr.4
+fi
+
+# nr.5 the whole pipeline round-trip DD#99 is built on: convert a separator to
+# NUL in-process, then split on it — no external `tr`, no flags
+if in_modes native,c; then
+    run_sash 'sep=$'"'"'\0'"'"'
+s=a:b:c
+s =~ s/:/$sep/g
+echo $s | newread f
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[1]}"'
+    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk nr.5
+else
+    skip_chk nr.5
+fi
+
+# nr.6 targets are tainted like every read target (DD#24)
+run_sash '/bin/cat /etc/hostname | newread f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.6
+
+# nr.7 takes no flags
+run_sash 'echo hi | newread -a f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk nr.7
+
+# nr.8 takes exactly one target
+run_sash 'echo hi | newread f g
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk nr.8
 
 set -e
 tally
