@@ -1,6 +1,6 @@
 ---
 title: "switch-free builtins: decompose `read`/`mapfile`/`echo` flags into distinct commands + sigils (the readr/readc question)"
-status: ready
+status: superseded
 priority: P2
 kind: decision
 depends: []
@@ -25,6 +25,16 @@ gates:
 > (bash's NUL convention; `consume_byte_flag` would need empty → 0), a distinct
 > command, or the `@arr` splat. This is the concrete next decision for this
 > task.
+
+> **SUPERSEDED 2026-09-08 by DD#99** (`notes/decisions/DD99-read-family.md`),
+> which answers all five "Decisions for DG" below: the family becomes
+> `read [$SRC] TARGET` + `readline TARGET`, NUL is the only separator, the
+> target's declared kind selects array vs map (array by default), and every
+> flag is retired. `echo -n` becomes `write`. DD#99 is `proposed`, with three
+> open questions of its own.
+>
+> Note the "Progress" section below is stale: `readc` was **removed**, not
+> shipped — `readc` is SB5011 ("command not found") in the current build.
 
 # Switch-free builtins — the `readr`/`readc` question
 
