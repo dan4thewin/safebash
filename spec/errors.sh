@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=116
+plan=122
 echo "1..$plan" >&3
 
 set +e
@@ -655,6 +655,47 @@ false || echo handled'
 run_sash 'a=; b=x
 if [[ ! -n $a && -n $b ]]; then echo T; else echo F; fi'
 [[ $rc = 0 && $out = "T" && -z $err ]]; chk 95.12
+
+
+# ── `$?` is sugar for `$(status)`, so they must agree EVERYWHERE ──────────
+# `$(status)` -> `$?` is a parse-time rewrite that lived only on the unquoted
+# `$( )` path. Inside a double-quoted string the substitution survived as a
+# `Command { name: "status" }`, which no backend recognises as a builtin, so
+# it was dispatched as an external — and the runtime's complaint was
+# substituted INTO THE OUTPUT while the program exited 0. A silent wrong
+# answer, and every compile-time check passed because `status` IS a builtin.
+
+# 55.51 `$(status)` inside "…" reports the status
+run_sash '/bin/false || { echo "s=$(status)"; }'
+[[ $rc = 0 && $out = "s=1" && -z $rerr ]]; chk 55.51
+
+# 55.52 …and agrees with the `$?` spelling, which always worked
+run_sash '/bin/false || { echo "s=$?"; }'
+[[ $rc = 0 && $out = "s=1" && -z $rerr ]]; chk 55.52
+
+# 55.53 the unquoted spelling is unaffected
+run_sash '/bin/false || { echo $(status); }'
+[[ $rc = 0 && $out = "1" && -z $rerr ]]; chk 55.53
+
+# 55.54 concatenated with other text in the same quoted word
+run_sash '/bin/false || { echo "[$(status)][$(status)]"; }'
+[[ $rc = 0 && $out = "[1][1]" && -z $rerr ]]; chk 55.54
+
+# 55.55 `$(getcpid)` (sugar for `$!`) had the identical bug
+if in_modes native,c; then
+    run_sash '/bin/sleep 0 &
+p="$(getcpid)"
+[[ -n $p ]] || :
+echo ok'
+    [[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk 55.55
+else
+    skip_chk 55.55
+fi
+
+# 55.56 no spelling reaches sash_exec as a bare command name — the shape of
+# the failure, pinned directly so a regression cannot be silent again
+run_sash '/bin/false || { echo "s=$(status)"; }'
+[[ $out = "s=1" && $out != *"bare command"* && $out != *"sash: bug"* ]]; chk 55.56
 
 set -e
 tally

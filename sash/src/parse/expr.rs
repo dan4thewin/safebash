@@ -642,10 +642,49 @@ fn command_sub_to_expr(content: &str, span: Span) -> Expr {
         };
     }
     let stmts = parse_sub_script(content, span);
+    if let Some(e) = bareword_shortcut_expansion(&stmts, span) {
+        return e;
+    }
     Expr {
         kind: ExprKind::CommandSubstitution(stmts),
         span,
     }
+}
+
+/// `$(status)` is sugar for `$?` and `$(getcpid)` for `$!` (and DG: `$?` is
+/// *the* sugar, so the two spellings must agree everywhere).
+///
+/// The unquoted `$( )` path rewrites them while scanning, via
+/// `try_special_word`. This path parses a content STRING instead, so it never
+/// reached that probe: the substitution survived as a `Command` no backend
+/// recognises as a builtin, was dispatched as an external, and the runtime's
+/// "bare command passed to sash_exec" complaint was substituted into the
+/// program's output with a 0 exit. Every compile-time check passed, because
+/// `status` really is a registered builtin.
+///
+/// Applied to the parsed result rather than the raw text so the two paths
+/// agree on what counts as the bare form (whitespace, `;`, a trailing
+/// newline) instead of re-deciding it with a string compare.
+fn bareword_shortcut_expansion(stmts: &[Statement], span: Span) -> Option<Expr> {
+    let [stmt] = stmts else { return None };
+    let StmtKind::Command(c) = &stmt.kind else {
+        return None;
+    };
+    if !c.args.is_empty() {
+        return None;
+    }
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return None;
+    };
+    let var = match name.as_str() {
+        "status" => "?",
+        "getcpid" => "!",
+        _ => return None,
+    };
+    Some(Expr {
+        kind: ExprKind::SimpleExpansion(var.to_string()),
+        span,
+    })
 }
 
 // ── Parameter expansion (${...}) ─────────────────────────────────

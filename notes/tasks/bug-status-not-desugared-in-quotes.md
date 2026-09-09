@@ -1,6 +1,6 @@
 ---
 title: "bug: `$(status)` inside a double-quoted string is not desugared"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -56,3 +56,21 @@ not a hole in that rule; it is the desugaring itself going missing in one
 context.
 
 Found while comparing `-` and `|| :` discard idioms.
+
+## Resolved 2026-09-09
+
+`command_sub_to_expr` (the `$( )`-inside-a-string path) now applies the same
+bareword shortcut the unquoted path gets from `try_special_word`, via
+`bareword_shortcut_expansion`.
+
+The rewrite is applied to the **parsed result** — one argument-less `Command`
+named `status`/`getcpid` — rather than to the raw content text, so the two
+paths agree on what counts as the bare form (whitespace, `;`, a trailing
+newline) instead of re-deciding it with a string compare.
+
+`$(getcpid)` (sugar for `$!`) had the identical bug and is fixed by the same
+change; it was found by checking whether the defect was specific to `status`.
+
+Specs: `errors.sh` 55.51-55.56. 55.56 pins the *shape* of the old failure
+(no "bare command" / "sash: bug" text in the output) so a regression cannot be
+silent again.
