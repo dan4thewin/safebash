@@ -1462,10 +1462,6 @@ fn janet_splat_splice(arg: &Expr, ctx: &mut EmitCtx) -> Option<String> {
             ),
             None => format!(";{}", n),
         }),
-        // DD#91: `@a:!` (arrvals_trust) — elide + taint-off; the runtime splat
-        // is identical to a wordless `arrvals_default` (the taint bypass is a
-        // compile-time concern).
-        Some("arrvals_trust") => Some(format!(";{}", n)),
         Some("arrvals_abort") => {
             let w = pe
                 .operand

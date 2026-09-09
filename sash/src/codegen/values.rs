@@ -96,6 +96,17 @@ pub(super) fn lower_value(
                 array
             );
         }
+        // DD#91: `${x:!}` is a pure taint annotation — lower the source and
+        // emit exactly what a bare expansion would.
+        SsaValue::Trusted { source } => lower_value(
+            source,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ElideEmpty { .. } => {
             // DD#84: `:~` is only valid in an elidable list position, where the
             // argv / array-literal builder intercepts it. Reaching a scalar

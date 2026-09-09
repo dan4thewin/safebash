@@ -46,6 +46,7 @@ impl Expr {
                 operator: operator.map(|s| s.to_string()),
                 operand,
                 index: None,
+                taint_off: false,
             }),
             span,
         }
@@ -887,6 +888,15 @@ pub struct ParameterExpansion {
     /// (DG: a string cell behaves like a string variable). Only the `:-`/`:?`
     /// dispositions carry a cell subject; other operators reject upstream.
     pub index: Option<Box<Expr>>,
+    /// DD#91 (2026-09-09 addendum): the `!` in `${x:!}` / `${x:!~}` / `@{a:!-W}`.
+    ///
+    /// A **modifier**, not a disposition: `-`/`?`/`~` say what to do when the
+    /// value is absent, `!` says how to treat the value we have (trusted, so
+    /// the taint guard does not apply). It is a separate flag precisely so the
+    /// two cannot be conflated again — the retired `arrvals_trust` operator
+    /// meant "elide AND trust", which forced the trust to inherit the elide's
+    /// position restriction.
+    pub taint_off: bool,
 }
 
 /// Test expression inside [[ ]] conditionals.

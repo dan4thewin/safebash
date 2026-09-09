@@ -246,7 +246,8 @@ fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
         .find(':')
         .ok_or_else(|| splat_disposition_malformed(span))?;
     let name = &inner[..colon];
-    let (op, operand) = parse_splat_op(&inner[colon + 1..], name, span)?;
+    let after = &inner[colon + 1..];
+    let (op, operand) = parse_splat_op(after, name, span)?;
     if !is_identifier(name) {
         return Err(splat_disposition_malformed(span));
     }
@@ -256,6 +257,7 @@ fn parse_at_brace_disposition(w: &str, span: Span) -> Result<Expr, Diagnostic> {
             operator: Some(op.to_string()),
             operand,
             index: None,
+            taint_off: after.starts_with('!'),
         }),
         span,
     })
@@ -300,9 +302,11 @@ fn parse_splat_op(
         return parse_elide_splat_op(rest, name, span);
     }
     if let Some(rest) = after.strip_prefix('!') {
-        // DD#91: `@a:!` — elide + taint-off (a trusted splat). Wordless like
-        // `:~`; the taint bypass is applied via the `arrvals_trust` operator.
-        return parse_trust_splat_op(rest, name, span);
+        // DD#91 addendum: `!` is a MODIFIER, not a disposition. A splat site
+        // must still state its emptiness behaviour (DD#69), so `@{a:!}` alone
+        // is bare and trips SB5032 exactly as `@a` does — the old coupling
+        // silently supplied an elide the author never wrote.
+        return parse_trusted_splat_op(rest, name, span);
     }
     Err(splat_disposition_malformed(span))
 }
@@ -339,25 +343,19 @@ fn parse_elide_splat_op(
     Ok(("arrvals_default", None))
 }
 
-/// `@{a:!}` (DD#91) — elide + taint-off: a trusted splat. Wordless like `:~`
-/// (`@{a:!WORD}` is a syntax error); encodes as the `arrvals_trust` operator.
-fn parse_trust_splat_op(
+/// `@{a:!DISP}` (DD#91 addendum) — a trusted splat. `!` is the modifier and
+/// `DISP` the disposition; the caller sets `taint_off`. A bare `@{a:!}` states
+/// no disposition, so it yields the bare `arrvals` operator and is rejected by
+/// the ordinary DD#69 check (SB5032) rather than by a special case here.
+fn parse_trusted_splat_op(
     rest: &str,
     name: &str,
     span: Span,
 ) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
-    if !rest.is_empty() {
-        return Err(parse_error(
-            span,
-            "SB5033",
-            format!(
-                "`@{{{name}:!}}` (trust) takes no word — `:!` drops the splat when \
-                 `{name}` is empty and trusts the elements clean; it takes no \
-                 argument"
-            ),
-        ));
+    if rest.is_empty() {
+        return Ok(("arrvals", None));
     }
-    Ok(("arrvals_trust", None))
+    parse_splat_op(rest, name, span)
 }
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.
@@ -996,6 +994,7 @@ fn build_sed_or_malformed(body: &str, subject: Expr, name: &str, rest: &str, spa
                 span,
             })),
             index: None,
+            taint_off: false,
         }),
         span,
     }
@@ -1126,6 +1125,7 @@ fn try_substring_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
                 span,
             })),
             index: None,
+            taint_off: false,
         }),
         span,
     })
@@ -1152,6 +1152,44 @@ fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
 /// `%`, `%%`, `/`, `//`, `/#`, `/%`). The slash family compiles the glob
 /// pattern to a regex and packs it as `pattern\0replacement` for the runtime.
 fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
+    if let Some(peeled) = rest.strip_prefix(":!") {
+        return Some(parse_trusted_operator(peeled, name, span));
+    }
+    parse_disposition_operator(rest, name, span)
+}
+
+/// DD#91 (2026-09-09 addendum): `${x:!…}` — the `!` taint-off MODIFIER, then an
+/// ordinary disposition or nothing.
+///
+/// `!` leads, and the grammar forces that: `-` and `?` take a word that runs
+/// greedily to `}` (`${u:-foo!}` is the word `foo!`), so a trailing modifier
+/// could never be seen. What follows is re-parsed with the colon PUT BACK —
+/// `:-W` (empty or unset) and `-W` (unset only) are different operators, and
+/// dropping it would silently change which one `${x:!-W}` means.
+fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Expr {
+    // `${x:!}` — no disposition at all: the value, trusted. Identical to a bare
+    // `${x}` but for the flag, which is exactly the intent.
+    if peeled.is_empty() {
+        return trusted(Expr::param(name, None, None, span));
+    }
+    match parse_disposition_operator(&format!(":{peeled}"), name, span) {
+        Some(e) => trusted(e),
+        // `${x:!foo}` — `!` followed by something that is not a disposition.
+        // It must not quietly degrade to a trusted bare `${x}`; carry the raw
+        // text on a sentinel the validator rejects (mirrors `s_malformed`).
+        None => Expr::param(name, Some("trust_malformed"), None, span),
+    }
+}
+
+/// Set the DD#91 `!` modifier on an already-parsed expansion.
+fn trusted(mut e: Expr) -> Expr {
+    if let ExprKind::ParameterExpansion(pe) = &mut e.kind {
+        pe.taint_off = true;
+    }
+    e
+}
+
+fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
     let (op, operand_str) = split_operator(rest);
     let op_str = op?;
     // DD#65: the `/`-family glob-replace is dropped. Give it a distinct
@@ -1171,6 +1209,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
                     })
                 }),
                 index: None,
+                taint_off: false,
             }),
             span,
         });
@@ -1192,6 +1231,7 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
             operator: Some(op_str),
             operand,
             index: None,
+            taint_off: false,
         }),
         span,
     })
@@ -1239,6 +1279,7 @@ fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr>
             operator: Some(format!("arrvals_{}", op_str)),
             operand,
             index: None,
+            taint_off: false,
         }),
         span,
     })
@@ -1250,7 +1291,7 @@ fn split_operator(s: &str) -> (Option<String>, Option<String>) {
     // Two-char ops first (`:-` before `-`, `##` before `#`, …) so the longer
     // operator wins. Both tiers share `match_leading_operator`.
     let two_char_ops = &[
-        ":-", ":=", ":+", ":?", ":~", ":!", "##", "%%", "//", "/#", "/%", "^^", ",,",
+        ":-", ":=", ":+", ":?", ":~", "##", "%%", "//", "/#", "/%", "^^", ",,",
     ];
     let one_char_ops = &["%", "#", "/", "^", ",", "-", "+", "=", "?"];
     match_leading_operator(s, two_char_ops)

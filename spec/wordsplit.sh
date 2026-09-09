@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=117
+plan=118
 echo "1..$plan" >&3
 
 set +e
@@ -396,7 +396,7 @@ if in_modes native,c; then
     run_sash 'fn f { echo hi | read -a norm; /bin/echo "$(len norm):${norm[0]}" }; f'
     [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
 
-    # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!}`) — an empty value
+    # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
     # contributes NOTHING (no value, no separator), matching the external argv
     # builder. Previously ICE'd (native) / double-spaced (c). native,c: janet's
     # builtin echo lacks `-n`/elide (task janet-echo-flags-and-elide).
@@ -708,11 +708,24 @@ newread ${u:~} f
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.18
 
-# nr.19 same for `:!`, which is `:~` plus taint-off (DD#91)
-run_sash 'u=""
+# nr.19 …but `:!` alone is NOT an elide (DD#91 addendum) — it is the value,
+# trusted — so it is legal in the source slot. This is the spelling DG
+# reported; it used to be a spurious SB5020, then a misdirected SB5046.
+if in_modes native,c; then
+    run_sash 'u=""
 newread ${u:!} f
+echo "$(len f)"'
+    [[ $rc = 0 && -z $err ]]; chk nr.19
+else
+    skip_chk nr.19
+fi
+
+# nr.20 the ELIDING combination is still rejected there, for the reason nr.18
+# gives: eliding the source would silently re-read stdin instead
+run_sash 'u=""
+newread ${u:!~} f
 echo "${f[0]}"'
-[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.19
+[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk nr.20
 
 set -e
 tally

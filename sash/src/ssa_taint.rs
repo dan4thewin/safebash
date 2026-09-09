@@ -319,7 +319,11 @@ fn value_is_tainted(
         SsaValue::ElideEmpty { source, taint_off } => {
             elide_taint(source, *taint_off, taint, user_functions)
         }
-        // DD#91: `@a:!` (`arrvals_trust`, disposition.taint_off) is a sanctioned
+        // DD#91: `${x:!}` — a sanctioned per-use bypass, so Clean regardless of
+        // the source. The CST pass has already allowed it; this keeps the
+        // backstop in agreement instead of overriding the author.
+        SsaValue::Trusted { .. } => Taint::Clean,
+        // DD#91: `@{a:!DISP}` (disposition.taint_off) is a sanctioned
         // per-use attest-all bypass → Clean; any other splat inherits the array's
         // taint.
         SsaValue::ArraySplat { array, disposition } => splat_taint(array, disposition, taint),

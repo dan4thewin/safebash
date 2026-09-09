@@ -56,14 +56,15 @@ fn splat_disposition(
     pe: &ParameterExpansion,
     state: &VersionState,
 ) -> Option<crate::ssa::ArraySplatDisposition> {
-    // DD#91: `arrvals_trust` (`@a:!`) is elide (like a wordless `arrvals_default`)
-    // + taint-off — the splat is trusted clean.
-    let (abort, taint_off) = match pe.operator.as_deref() {
-        Some("arrvals_default") => (false, false),
-        Some("arrvals_abort") => (true, false),
-        Some("arrvals_trust") => (false, true),
+    // DD#91 addendum: the disposition and the `!` modifier are independent —
+    // the operator says what happens when the array is empty, `taint_off` says
+    // whether the elements are trusted.
+    let abort = match pe.operator.as_deref() {
+        Some("arrvals_default") => false,
+        Some("arrvals_abort") => true,
         _ => return None,
     };
+    let taint_off = pe.taint_off;
     let has_word = pe.operand.is_some();
     let word = pe
         .operand
@@ -217,6 +218,14 @@ fn parameter_expansion_to_value(pe: &ParameterExpansion, state: &VersionState) -
     // read for `${a[i]:OP}` (DG: a cell behaves like a string variable).
     let source = pe_source_value(pe, state);
     let Some(op) = pe.operator.as_ref() else {
+        // DD#91: `${x:!}` — no disposition, just the `!` modifier. Wrap so the
+        // SSA taint backstop can see the sanctioned bypass; without a node the
+        // backstop sees a bare tainted read and rejects what the CST allowed.
+        if pe.taint_off {
+            return SsaValue::Trusted {
+                source: Box::new(source),
+            };
+        }
         return source;
     };
     // `:-`/`:?` (default/require) and substring-on-a-cell carry the subject as a
@@ -284,14 +293,12 @@ fn source_carrying_value(
         // DD#84: `${x:~}` / `${a[i]:~}` (elide) — carry the subject; the argv /
         // array-literal builders drop it when empty. Rejected outside an
         // elidable position at validate (SB5046), so it only reaches a list.
-        // DD#91: `:!` is `:~` + taint-off (the value is trusted clean).
+        // DD#91 addendum: `!` is a modifier, so `:~` and `:!~` share this arm
+        // and differ only in the flag. Bare `:!` is not an elide at all — it
+        // has no operator, so it never reaches here.
         ":~" => Some(SsaValue::ElideEmpty {
             source: Box::new(source),
-            taint_off: false,
-        }),
-        ":!" => Some(SsaValue::ElideEmpty {
-            source: Box::new(source),
-            taint_off: true,
+            taint_off: pe.taint_off,
         }),
         // The scalar `${s:o:l}` (no index) keeps the `ParamExpansion` path.
         "substring" if pe.index.is_some() => Some(SsaValue::Substring {

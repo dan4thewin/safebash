@@ -1,4 +1,4 @@
-title: DD#91 — the `:!` taint-off operator (a per-use bless-without-predicate)
+title: DD#91 — the `:!` taint-off modifier (a per-use bless-without-predicate)
 status: accepted
 
 Settled with DG (2026-09-04). `:!` is a new disposition operator: **`:~` (elide)
@@ -59,6 +59,72 @@ wordless. Backends: native/c go through the SSA `ArraySplat`/`ElideEmpty`
 `arrvals_default`); janet's `janet_splat_splice` gains an `arrvals_trust` arm.
 
 No new SB code (reuses SB4051 / SB5033 / SB5046).
+
+## Addendum (2026-09-09) — the elide is split out; `!` becomes a modifier
+
+DG: *"so, if we split out the elide from `:!` but then allow limited
+combinations of modifiers, like `:!~`, where `!` must come first…"* Approved
+after discussion. This **supersedes** the "elidable-position-only" rule above.
+
+`!` is not a disposition at all. `-` / `?` / `~` answer *what to do when the
+value is absent*; `!` answers *how to treat the value we have*. Bundling them
+made `:!` mean two things at once, and forced the one that mattered (trust) to
+inherit the other's position restriction.
+
+```
+grammar:  ':' [ '!' ] [ '-' WORD | '?' MSG | '~' ]
+```
+
+| spelling | meaning |
+|---|---|
+| `${x:!}` | the value, trusted — **identical to bare `${x}` except for taint** |
+| `${x:!~}` | trusted, and elides when empty (the old `:!`) |
+| `${x:!-W}` | trusted, `W` when empty |
+| `${x:!?M}` | trusted, abort with `M` when empty |
+
+### `!` must come first, and that is forced
+
+Not a style rule. `-` and `?` take a word that runs greedily to `}`:
+`${u:-foo!}` yields `foo!` and `${u:?boom!}` yields `boom!`. A modifier placed
+*after* a word-taking disposition would be swallowed by the word. So `!` leads
+or it cannot exist. (The whole `:!X` space parsed as an error before this
+change, so no existing program silently changes meaning.)
+
+### `${x:!}` alone means "bare, but trusted"
+
+An empty bare `$u` in a list position contributes an **empty argument**, not
+nothing (`echo A $u B` passes three arguments). So removing the elide from `:!`
+leaves it behaving exactly like the bare expansion. The modifier changes trust
+and nothing else — which is why it is now valid in every position a bare
+expansion is valid, including a scalar assignment.
+
+That reverses this DD's original *"`:!` is not a way to assign a trusted value
+to a scalar; use `bless` for that."* The justification given there was *"This
+mirrors `:~`"* — i.e. the restriction was inherited from the elide mechanics,
+not chosen on trust-policy grounds. With the elide gone the rationale goes with
+it. `bless` remains the predicate-bearing form; `:!` remains the
+predicate-less one.
+
+### `@a:!` becomes an error, and should
+
+A splat site must state its emptiness behaviour (bare `@a` is **SB5032**,
+DD#69). Taint-off is not such a statement, so `@a:!` must become `@a:!~`,
+`@a:!-WORD` or `@a:!?MSG`.
+
+This is a break, and it is a fix: today's `@a:!` **is** a DD#69 violation
+hiding in plain sight. The author asks for taint-off and silently receives an
+emptiness policy they never wrote. The split surfaces it. DD#99's
+`map m = @{a:!}` row becomes `@{a:!~}` for the same reason.
+
+### Consequences
+
+- `${x:!}` no longer elides. Existing list-position uses that relied on it
+  become `${x:!~}`.
+- `arrvals_trust` is retired: taint-off is a `taint_off` flag on the expansion,
+  orthogonal to the operator, so the two cannot be conflated again.
+- SB5046 (elide in a value position) now keys on the *elide*, so it fires for
+  `:~` and `:!~` and not for `:!`.
+
 
 ## Audit surface
 

@@ -1266,6 +1266,10 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         // Phase 5: table iteration helpers (for x in "${arr[@]}").
         SsaValue::TableValue { array, index } => emit_table_value(e, array, index, types),
         SsaValue::TableKey { array, index } => emit_table_key(e, array, index, types),
+        // DD#91: `${x:!}` is a pure taint annotation — emit exactly what the
+        // bare expansion would. Without this arm it fell to the `_` catch-all
+        // and emitted a `/* TODO */` comment in place of the value.
+        SsaValue::Trusted { source } => lower_value_as_str(e, source, types),
         // DD#76: an int cell stores as `(val_ptr = null, val_len = the i64)`.
         SsaValue::IntCell(inner) => {
             let n = lower_value_as_int(e, inner, types);

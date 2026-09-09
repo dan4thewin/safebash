@@ -74,7 +74,7 @@ splat site states its behaviour.
 | `map m = @{a:-KEY}` | the trailing element becomes the **value** of `KEY` |
 | `map m = @{a:?MSG}` | abort at runtime with `MSG` |
 | `map m = @{a:~}` | discard the trailing element |
-| `map m = @{a:!}` | discard it **and** disable the taint guard (DD#91) |
+| `map m = @{a:!~}` | discard it **and** disable the taint guard (DD#91) |
 | `map m = @a` | **rejected** — state a disposition |
 
 **`:-` supplies a key, not a value** (DG): *"If I supply the key, I know what
@@ -84,7 +84,7 @@ extra."* So `array a=(k1 v1 k2)` with `@{a:-EXTRA}` yields
 a landmark rather than a needle in the map.
 
 Each disposition keeps the meaning it has everywhere else — `:-` supplies what
-is missing, `:?` aborts with a message, `:~` elides, `:!` elides with the taint
+is missing, `:?` aborts with a message, `:~` elides, `:!~` elides with the taint
 guard off. Only the definition of *missing* is contextual: an empty array in
 argument position, an unpaired trailing element here.
 

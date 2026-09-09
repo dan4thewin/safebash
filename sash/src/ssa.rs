@@ -584,13 +584,26 @@ pub enum SsaValue {
     /// sequence; a non-elidable position is rejected at validate (SB5046), so
     /// this never reaches a scalar `lower_value`.
     ///
-    /// DD#91: `taint_off` is set for the `:!` spelling — the elide behaviour is
-    /// identical, but the value is treated as **clean** (a predicate-less attest,
-    /// a sanctioned per-use taint bypass). Only the taint passes read the flag;
-    /// codegen/backends ignore it.
+    /// DD#91: `taint_off` is set for the `:!~` spelling — the elide behaviour
+    /// is identical, but the value is treated as **clean** (a predicate-less
+    /// attest, a sanctioned per-use taint bypass). Only the taint passes read
+    /// the flag; codegen/backends ignore it. Bare `:!` is not an elide at all
+    /// and uses `Trusted` instead.
     ElideEmpty {
         source: Box<SsaValue>,
         taint_off: bool,
+    },
+    /// DD#91 (2026-09-09 addendum): `${x:!}` — the value, trusted. The `!`
+    /// modifier with no disposition.
+    ///
+    /// Purely a taint annotation: codegen lowers it as its `source` and the
+    /// emitted code is identical. It exists because the CST is not the only
+    /// taint layer — without a node here the SSA backstop would see a bare
+    /// tainted read and reject a bypass the author explicitly asked for. The
+    /// combinations (`:!~`, `:!-W`, `:!?M`) carry the flag on their own node
+    /// instead; only the bare spelling needs a wrapper.
+    Trusted {
+        source: Box<SsaValue>,
     },
     /// `${a[i]:off:len}` — substring of a value `source` (a `Subscript` cell
     /// read; the scalar `${s:o:l}` uses `ParamExpansion` "substring"). `spec` is
@@ -664,7 +677,7 @@ pub struct ArraySplatDisposition {
     /// `:?` — on empty, abort (exit 1, `<progname>: WORD`) instead of
     /// substituting.
     pub abort: bool,
-    /// DD#91: `@a:!` (`arrvals_trust`) — elide + taint-off: the splatted
+    /// DD#91: `@{a:!DISP}` (`taint_off`) — the splatted
     /// elements are trusted clean (a per-use attest-all bypass). Only the taint
     /// passes read this; codegen ignores it (the runtime splat is identical to
     /// a wordless `arrvals_default`).
@@ -690,8 +703,26 @@ impl SsaValue {
     /// subscript index, arith operands, ternary). Split from `child_values` to
     /// keep each dispatcher under the complexity gate.
     fn operand_child_values(&self) -> Vec<&SsaValue> {
-        match self {
+        self.subject_child_values()
+            .or_else(|| self.operator_child_values())
+            .unwrap_or_default()
+    }
+
+    /// Values that wrap a single subject (a disposition, a case fold, a slice).
+    fn subject_child_values(&self) -> Option<Vec<&SsaValue>> {
+        Some(match self {
             SsaValue::Subscript { index, .. } => vec![index],
+            SsaValue::CaseConvert { subject, .. } => vec![subject],
+            SsaValue::ElideEmpty { source, .. } => vec![source],
+            SsaValue::Trusted { source } => vec![source],
+            SsaValue::Substring { source, .. } => vec![source],
+            _ => return None,
+        })
+    }
+
+    /// Values built from several operands.
+    fn operator_child_values(&self) -> Option<Vec<&SsaValue>> {
+        Some(match self {
             SsaValue::RegexReplace {
                 subject,
                 pattern,
@@ -699,19 +730,16 @@ impl SsaValue {
                 ..
             } => vec![subject, pattern, replacement],
             SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
-            SsaValue::CaseConvert { subject, .. } => vec![subject],
             SsaValue::DefaultValue { source, default } => vec![source, default],
             SsaValue::RequireValue { source, message } => vec![source, message],
-            SsaValue::ElideEmpty { source, .. } => vec![source],
-            SsaValue::Substring { source, .. } => vec![source],
             SsaValue::ArithBinOp { left, right, .. } => vec![left, right],
             SsaValue::Ternary {
                 cond,
                 true_val,
                 false_val,
             } => vec![cond, true_val, false_val],
-            _ => Vec::new(),
-        }
+            _ => return None,
+        })
     }
 }
 

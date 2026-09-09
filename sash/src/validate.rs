@@ -3065,12 +3065,14 @@ fn named_splat_scalar_diag(span: Span) -> Diagnostic {
 }
 
 /// A dispositioned array splat `@{a:-WORD}` / `@{a:?WORD}` / `@{a:!}` (operator
-/// `arrvals_default` / `arrvals_abort` / `arrvals_trust`) — distinct from the
-/// bare `@a` (`arrvals`), which is a valid for-in source.
+/// `arrvals_default` / `arrvals_abort`) — distinct from the bare `@a`
+/// (`arrvals`), which is a valid for-in source. `@{a:!…}` carries its
+/// disposition in the operator like any other, so the `!` modifier does not
+/// appear here.
 fn is_disposition_splat(expr: &Expr) -> bool {
     matches!(&expr.kind, ExprKind::ParameterExpansion(pe)
         if matches!(pe.operator.as_deref(),
-            Some("arrvals_default") | Some("arrvals_abort") | Some("arrvals_trust")))
+            Some("arrvals_default") | Some("arrvals_abort")))
 }
 
 /// SB5034 for a `@{a:…}` empty-disposition used outside a command argument
@@ -3886,9 +3888,11 @@ fn expr_uses_tainted(expr: &Expr, tainted: &HashSet<String>) -> bool {
     match &expr.kind {
         ExprKind::SimpleExpansion(var) => tainted.contains(var.as_str()),
         ExprKind::ParameterExpansion(pe) => {
-            // DD#91: `${x:!}` / `@a:!` (arrvals_trust) is a per-use taint bypass
-            // — its value is trusted clean, so it does NOT propagate taint.
-            if matches!(pe.operator.as_deref(), Some(":!") | Some("arrvals_trust")) {
+            // DD#91: the `!` modifier is a per-use taint bypass — the value is
+            // trusted clean, so it does NOT propagate taint. It is a flag, not
+            // an operator, so it applies to every combination (`:!`, `:!~`,
+            // `:!-W`, `:!?M`) without enumerating them.
+            if pe.taint_off {
                 return false;
             }
             // DD#78: a `:-` default is part of the expansion's value, so a
@@ -3990,10 +3994,10 @@ fn check_param_expansion_taint(
     tainted: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
-    // DD#91: `${x:!}` (scalar) and `@a:!` (`arrvals_trust`) are sanctioned
-    // per-use taint bypasses — the subject is trusted clean (a predicate-less
-    // attest), so its read is not a violation.
-    if matches!(pe.operator.as_deref(), Some(":!") | Some("arrvals_trust")) {
+    // DD#91: the `!` modifier is a sanctioned per-use taint bypass — the
+    // subject is trusted clean (a predicate-less attest), so its read is not a
+    // violation. Keyed on the flag, so every combination is covered.
+    if pe.taint_off {
         return;
     }
     push_taint_use(
@@ -4951,9 +4955,36 @@ pub fn check_malformed_sed(program: &Program) -> Vec<Diagnostic> {
         .iter()
         .chain(program.end_block.iter().flatten())
     {
-        crate::ir::walk_all_exprs(stmt, &mut |e| flag_malformed_sed(e, &mut diags));
+        crate::ir::walk_all_exprs(stmt, &mut |e| {
+            flag_malformed_sed(e, &mut diags);
+            flag_malformed_trust(e, &mut diags);
+        });
     }
     diags
+}
+
+/// DD#91: `${x:!JUNK}` — `!` followed by something that is not a disposition.
+/// The parser cannot raise here (the `${…}` value path is not `Result`-
+/// returning), so it carries a `trust_malformed` sentinel. Rejecting matters:
+/// silently degrading to a trusted bare `${x}` would grant the taint bypass
+/// while dropping whatever the author actually asked for.
+fn flag_malformed_trust(e: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::ParameterExpansion(pe) = &e.kind else {
+        return;
+    };
+    if pe.operator.as_deref() != Some("trust_malformed") {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        e.span,
+        "SB4051",
+        format!(
+            "`${{{}:!…}}` — `!` is the taint-off modifier and must be followed \
+             by a disposition (`-WORD`, `?MSG`, `~`) or by nothing. `${{{}:!}}` \
+             is the value, trusted.",
+            pe.name, pe.name
+        ),
+    ));
 }
 
 fn flag_malformed_sed(e: &Expr, diags: &mut Vec<Diagnostic>) {

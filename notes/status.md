@@ -1,3 +1,57 @@
+## ════════ STATUS (2026-09-09) — DD#91: `!` is a modifier, not a disposition ════════
+
+**On `hand-parser`.** DG reported `read $ckd:! opts` returning SB5020. Three
+things were wrong underneath it, and the third turned into a design change.
+
+1. **`newread SRC ARRAY` tainted its target unconditionally** — it was lumped
+   in with `read`/`mapfile`, whose targets are external by definition. The
+   two-arg form splits a value the program already holds, so the source is an
+   ordinary read and DD#24's no-propagation makes the result clean. Splitting a
+   *clean literal* was equally unusable, which is how I found it had nothing to
+   do with `:!`. **My own specs nr.9-nr.11 hid it**: they attested an array
+   split from a clean literal, i.e. I routed around the behaviour instead of
+   asking why it was there.
+2. **`newread ${u:~} f` ICE'd** on an assert whose comment claimed validate's
+   guard "was bypassed". It was never reached — every command argument is
+   marked elidable and syntactically this is one.
+3. That second finding exposed the real defect. **`:!` meant two things at
+   once** — elide *and* taint-off — so the half that mattered inherited the
+   other's position restriction, and DG's line was unwritable.
+
+**DG's call: split them.** `-`/`?`/`~` say what to do when the value is
+**absent**; `!` says how to treat the value we **have**. Grammar
+`: [!] [ -WORD | ?MSG | ~ ]`, all four combinations legal.
+
+`!` leads, and **the grammar forces it**: `-`/`?` words run greedily to `}`
+(`${u:-foo!}` is the word `foo!`), so a trailing modifier could never be seen.
+The whole `:!X` space parsed as an error before, so nothing silently changed
+meaning.
+
+`${x:!}` is now **"bare, but trusted"** — and that lands exactly right, because
+an empty bare `$u` contributes an *empty argument*, not nothing. Dropping the
+elide leaves `:!` behaving identically to the bare expansion. It is therefore
+valid wherever a bare expansion is, including a scalar assignment — reversing
+this DD's original ban, whose stated justification was *"This mirrors `:~`"*,
+i.e. an artifact of the coupling rather than a trust-policy choice.
+
+**`@a:!` is now SB5032**, and that is a fix rather than a cost: a splat must
+state its emptiness behaviour (DD#69), and today's `@a:!` silently supplied an
+elide the author never wrote — a DD#69 violation hiding in plain sight.
+
+**One thing the split nearly broke quietly.** With `:!` no longer producing a
+node, the SSA taint backstop lost the trust and rejected the bypass the CST had
+allowed. Bare `:!` now lowers to `SsaValue::Trusted`, a pure annotation that
+codegen lowers transparently — the two taint layers agree again. The C backend
+needed the same arm: without it `${x:!}` fell to a catch-all that emitted a
+`/* TODO */` **comment in place of the value**, silently.
+
+**Specs:** `taint.sh` 91.12-91.23, `wordsplit.sh` nr.15-nr.20; 91.5/91.6/91.10,
+`var_modifiers.sh` mp.9 and DD#99's map row migrated.
+**Sweep 4514 passing / 39 failing / 438 skipped, 0 regressions** — the failing
+set is byte-identical to HEAD's and remains janet-only.
+
+**Next:** DD#99 stage 5, the ~250-site `read`/`mapfile` migration.
+
 ## ════════ STATUS (2026-09-09) — DD#14: a stage's input redirect went to its stdout ════════
 
 **On `hand-parser`.** Found while migrating `mapfile` for DD#99. DG's

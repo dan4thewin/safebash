@@ -761,24 +761,42 @@ impl Scanner {
     }
 
     /// If `src[pos..]` opens a brace-less disposition, return `(op, operand,
-    /// end)` where `op` is `'-'`, `'?'`, or `'~'` and `end` is just past the
+    /// end)` where `op` is the operator text and `end` is just past the
     /// consumed text. `:~` (elide) takes no operand. `:-`/`:?` scan the operand
     /// to the word boundary; returns `None` (→ caller falls back to the plain
     /// form) when the operand would contain a `$( )` / `$(( ))` / `` `…` ``
     /// substitution, which must use braces.
-    fn try_braceless_disposition(&self, pos: usize) -> Option<(char, String, usize)> {
+    ///
+    /// DD#91 addendum: a leading `!` is the taint-off MODIFIER, so it may lead
+    /// a disposition (`$x:!~`, `$x:!-W`) or stand alone (`$x:!`, which is the
+    /// value trusted). The op text is re-serialized into the braced spelling by
+    /// both callers, so `!` simply rides along and the braced parser does the
+    /// real work — one grammar, not two.
+    fn try_braceless_disposition(&self, pos: usize) -> Option<(String, String, usize)> {
         if self.source.get(pos) != Some(&b':') {
             return None;
         }
-        match self.source.get(pos + 1) {
-            Some(b'~') => Some(('~', String::new(), pos + 2)),
-            Some(b'!') => Some(('!', String::new(), pos + 2)),
+        let trusted = self.source.get(pos + 1) == Some(&b'!');
+        let at = if trusted { pos + 2 } else { pos + 1 };
+        match (self.braceless_disposition_body(at), trusted) {
+            (Some((op, operand, end)), true) => Some((format!("!{op}"), operand, end)),
+            (Some(found), false) => Some(found),
+            // `$x:!` — the modifier with no disposition.
+            (None, true) => Some(("!".to_string(), String::new(), pos + 2)),
+            (None, false) => None,
+        }
+    }
+
+    /// The disposition itself, without the `:` or any `!` modifier.
+    fn braceless_disposition_body(&self, at: usize) -> Option<(String, String, usize)> {
+        match self.source.get(at) {
+            Some(b'~') => Some(("~".to_string(), String::new(), at + 1)),
             Some(b'-') => self
-                .scan_braceless_operand(pos + 2)
-                .map(|(o, e)| ('-', o, e)),
+                .scan_braceless_operand(at + 1)
+                .map(|(o, e)| ("-".to_string(), o, e)),
             Some(b'?') => self
-                .scan_braceless_operand(pos + 2)
-                .map(|(o, e)| ('?', o, e)),
+                .scan_braceless_operand(at + 1)
+                .map(|(o, e)| ("?".to_string(), o, e)),
             _ => None,
         }
     }

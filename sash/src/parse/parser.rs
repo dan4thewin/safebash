@@ -2682,11 +2682,12 @@ fn simple_rejected_operator_diag(
     None
 }
 
-/// DD#84/#91: `:~` (elide) and `:!` (elide + taint-off) never take a word —
-/// `${x:~foo}` / `${x:!foo}` are syntax errors (SB4051). For a value/default,
-/// use `:-`.
+/// DD#84: `:~` (elide) never takes a word — `${x:~foo}` is a syntax error
+/// (SB4051). For a value/default, use `:-`. (`:!` is a modifier, not a
+/// disposition, so a malformed `${x:!foo}` is caught by `flag_malformed_trust`
+/// instead.)
 fn elide_takes_no_word_diag(op: &str, pe: &ParameterExpansion, span: Span) -> Option<Diagnostic> {
-    if !matches!(op, ":~" | ":!") || pe.operand.is_none() {
+    if op != ":~" || pe.operand.is_none() {
         return None;
     }
     Some(parse_error(

@@ -1004,11 +1004,10 @@ fn map_from_array_inst(a: &Assignment, state: &mut VersionState) -> Option<SsaIn
                 .map(expr_to_string)
                 .unwrap_or_default(),
         ),
-        "arrvals_trust" => (2u8, String::new()),
         _ => return None,
     };
     // For `:?` the abort MESSAGE rides in the key slot (the runtime prints it);
-    // for `:-` it is the supplied KEY. Neither is used by `:~`/`:!`.
+    // for `:-` it is the supplied KEY. Neither is used by `:~`/`:!~`.
     let key = match pe.operand.as_deref() {
         Some(w) if mode == 0 || mode == 1 => expr_to_value(w, state),
         _ => SsaValue::Literal(if mode == 1 {

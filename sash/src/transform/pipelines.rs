@@ -30,6 +30,18 @@ fn emit_for_bound(
         .push(SsaInst::sigil(BuiltinCmd::LetExit, vec![cond], true));
 }
 
+/// `for k in @m` binds the KEY, `for v in @a` the VALUE. Hoisted out of
+/// `lower_for_array`, which emits it once per SSA pass.
+fn loop_binding_value(use_keys: bool, array_name: &str, index: &VarRef) -> SsaValue {
+    let array = array_name.to_string();
+    let index = index.clone();
+    if use_keys {
+        SsaValue::TableKey { array, index }
+    } else {
+        SsaValue::TableValue { array, index }
+    }
+}
+
 pub(super) fn lower_for_array(
     f: &For,
     array_name: &str,
@@ -59,15 +71,7 @@ pub(super) fn lower_for_array(
         kind: ExprKind::SimpleExpansion("__ai".to_string()),
         span: Span::default(),
     };
-    let bound_right = Expr {
-        kind: ExprKind::ParameterExpansion(crate::ir::ParameterExpansion {
-            name: array_name.to_string(),
-            operator: Some("arrlen".to_string()),
-            operand: None,
-            index: None,
-        }),
-        span: Span::default(),
-    };
+    let bound_right = Expr::param(array_name, Some("arrlen"), None, Span::default());
     emit_for_bound(ssa, state, header, &bound_left, &bound_right);
     ssa.block_mut(header).terminator = Terminator::Loop {
         condition: "condition".to_string(),
@@ -80,17 +84,7 @@ pub(super) fn lower_for_array(
     let loop_var = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var,
-        value: if use_keys {
-            SsaValue::TableKey {
-                array: array_name.to_string(),
-                index: idx_ref.clone(),
-            }
-        } else {
-            SsaValue::TableValue {
-                array: array_name.to_string(),
-                index: idx_ref.clone(),
-            }
-        },
+        value: loop_binding_value(use_keys, array_name, &idx_ref),
     });
 
     let body_exit_1 = lower_stmts(&f.body, ssa, state, body_block);
@@ -133,17 +127,7 @@ pub(super) fn lower_for_array(
     let loop_var_2 = state.define(&f.variable);
     ssa.block_mut(body_block).insts.push(SsaInst::Assign {
         target: loop_var_2,
-        value: if use_keys {
-            SsaValue::TableKey {
-                array: array_name.to_string(),
-                index: idx_ref_2.clone(),
-            }
-        } else {
-            SsaValue::TableValue {
-                array: array_name.to_string(),
-                index: idx_ref_2.clone(),
-            }
-        },
+        value: loop_binding_value(use_keys, array_name, &idx_ref_2),
     });
 
     let body_exit_2 = lower_stmts(&f.body, ssa, state, body_block);

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=166
+plan=178
 echo "1..$plan" >&3
 
 set +e
@@ -618,7 +618,7 @@ else
     skip_chk bfb.4; skip_chk bfb.5; skip_chk bfb.6
 fi
 
-# ── DD#91: the `:!` taint-off operator (= `:~` elide + taint guard disabled) ──
+# ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate
 # (the middle ground between `attest` and `--no-taint`).
 # 91.1 tainted `${x:!}` compiles & runs (the bypass). native,c: janet lacks
@@ -649,27 +649,113 @@ if in_modes native,c; then
 else
     skip_chk 91.4
 fi
-# 91.5 tainted array splat `@a:!` bypasses attest-all
-run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!' HELLO
+# 91.5 tainted array splat `@a:!~` bypasses attest-all
+run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!~' HELLO
 [[ $rc = 0 && $out = "HELLO" && -z $err ]]; chk 91.5
-# 91.6 braced `@{a:!}` likewise
-run_sash 'argv 1 a; /usr/bin/printf "%s" @{a:!}' HI
+# 91.6 braced `@{a:!~}` likewise
+run_sash 'argv 1 a; /usr/bin/printf "%s" @{a:!~}' HI
 [[ $rc = 0 && $out = "HI" && -z $err ]]; chk 91.6
 # 91.7 control: tainted `@a:?e` (no trust) is rejected (SB5020)
 run_sash 'argv 1 a; /bin/echo @a:?e' X
 [[ $rc != 0 && $err == *SB5020* ]]; chk 91.7
-# 91.8 `:!` takes no word — `${x:!foo}` is SB4051 (scalar)
+# 91.8 `!` must be followed by a disposition or nothing — `${x:!foo}` is
+# malformed and must NOT quietly degrade to a trusted bare `${x}`
 run_sash 'x=hi; /bin/echo ${x:!foo}'
 [[ $rc != 0 && -z $out && $err == *SB4051* ]]; chk 91.8
 # 91.9 `@{a:!WORD}` takes no word — SB5033 (array)
 run_sash 'array a=(); /bin/echo @{a:!x}'
 [[ $rc != 0 && -z $out && $err == *SB5033* ]]; chk 91.9
-# 91.10 `:!` is elidable-position-only like `:~` — a scalar assignment is SB5046
+# 91.10 a scalar assignment is now LEGAL — with the elide split out, `:!` is
+# just "the value, trusted", so it belongs anywhere a bare expansion does.
+# (This reverses the original DD#91 rule; see its 2026-09-09 addendum.)
 run_sash 'x=hi; z=${x:!}; /bin/echo $z'
-[[ $rc != 0 && -z $out && $err == *SB5046* ]]; chk 91.10
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.10
 # 91.11 `:!` on a CLEAN var is a harmless no-op taint-off (just the value)
 run_sash 'x=hi; /bin/echo ${x:!}'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 91.11
+
+# ── DD#91 addendum: `!` is a MODIFIER, `-`/`?`/`~` are DISPOSITIONS ──────────
+# `-`/`?`/`~` say what to do when the value is ABSENT; `!` says how to treat
+# the value we HAVE. Grammar: `: [!] [ -WORD | ?MSG | ~ ]`. `!` must lead,
+# which the grammar forces: `-`/`?` words run greedily to `}`, so `${u:-foo!}`
+# is the word "foo!" and a trailing modifier could never be seen.
+
+# 91.12 `:!` alone is "bare, but trusted" — an EMPTY value contributes an empty
+# argument, exactly as bare `$u` does. It does NOT elide any more. (janet agrees
+# here, but only because it never elides; 91.13 is where that shows.)
+run_sash 'u=""
+/usr/bin/printf "[%s]" A ${u:!} B'
+[[ $rc = 0 && $out = "[A][][B]" && -z $err ]]; chk 91.12
+
+# 91.13 …and `:!~` is the old `:!`: trusted AND elided when empty. native,c:
+# janet renders a scalar `:~` as the plain variable and so does not elide at
+# all (pre-existing DD#84 gap — task `janet-optional-args-elision`).
+if in_modes native,c; then
+    run_sash 'u=""
+/usr/bin/printf "[%s]" A ${u:!~} B'
+    [[ $rc = 0 && $out = "[A][B]" && -z $err ]]; chk 91.13
+else
+    skip_chk 91.13
+fi
+
+# 91.14 `:!-WORD` — trusted, with a default when empty
+run_sash 'u=""
+/bin/echo ${u:!-fallback}'
+[[ $rc = 0 && $out = "fallback" && -z $err ]]; chk 91.14
+
+# 91.15 `:!-WORD` takes the VALUE when non-empty (the `:-` half still applies)
+run_sash 'u=set
+/bin/echo ${u:!-fallback}'
+[[ $rc = 0 && $out = "set" && -z $err ]]; chk 91.15
+
+# 91.16 `:!?MSG` — trusted, aborts when empty
+run_sash 'u=""
+/bin/echo ${u:!?empty please}'
+[[ $rc != 0 && -z $out ]]; chk 91.16
+
+# 91.17 the whole point: a TAINTED value is trusted through a combination too,
+# not just through bare `:!`
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME); /bin/echo ${x:!-none}'
+    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.17
+else
+    skip_chk 91.17
+fi
+
+# 91.18 a splat still must state its emptiness behaviour — taint-off is not
+# such a statement, so bare `@a:!` is SB5032 exactly as bare `@a` is. Under the
+# old coupling this silently supplied an elide the author never wrote.
+run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!' X
+[[ $rc != 0 && $err == *SB5032* ]]; chk 91.18
+
+# 91.19 `@{a:!-WORD}` — trusted splat with a substitute element when empty
+run_sash 'array a=(); /usr/bin/printf "[%s]" @{a:!-sub}'
+[[ $rc = 0 && $out = "[sub]" && -z $err ]]; chk 91.19
+
+# 91.20 `@{a:!?MSG}` — trusted splat, aborts when empty
+run_sash 'array a=(); /usr/bin/printf "%s" @{a:!?nothing}'
+[[ $rc != 0 && -z $out ]]; chk 91.20
+
+# 91.21 the modifier is orthogonal, so the disposition still works normally on
+# a NON-empty trusted splat
+run_sash 'argv 1 a; /usr/bin/printf "[%s]" @{a:!-sub}' P Q
+[[ $rc = 0 && $out = "[P][Q]" && -z $err ]]; chk 91.21
+
+# 91.22 order is fixed: `~!` is not a spelling. It must not be read as `:~`
+# with a stray word either — that would silently drop the trust.
+run_sash 'x=hi; /bin/echo ${x:~!}'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 91.22
+
+# 91.23 DG's reported line: split a tainted scalar into a CLEAN array with a
+# per-use trust, no attest predicate
+if in_modes native,c; then
+    run_sash 'ckd=$(getenv HOME)
+newread $ckd:! opts
+/bin/echo "$(len opts)"'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 91.23
+else
+    skip_chk 91.23
+fi
 
 # ── DD#93 Part A: `bless` renamed to `attest` (hard rename, no alias) ──
 # 93.1 `bless` is no longer a keyword — it is just an unknown command now

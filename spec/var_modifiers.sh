@@ -554,10 +554,11 @@ else
     skip_chk mp.8
 fi
 
-# mp.9 `:!` discards like `:~` (and carries DD#91's taint-guard-off meaning)
+# mp.9 `:!~` discards like `:~` and additionally trusts the elements (DD#91).
+# `!` is the modifier, `~` the disposition — a splat must still state one.
 if in_modes native,c; then
     run_sash 'array a=(k1 v1 k2)
-map m = @{a:!}
+map m = @{a:!~}
 echo "$(len m):${m[k1]}"'
     [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.9
 else
