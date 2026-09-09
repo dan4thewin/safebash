@@ -1035,6 +1035,118 @@ impl Scanner {
         (j, false)
     }
 
+    /// DD#63 Path B for the *statement* form `v =~ s/RE/SUB/[flags]`: take the
+    /// payload verbatim from the source instead of stitching it back from
+    /// tokens. Token reassembly broke on anything the accumulator did not
+    /// enumerate — `$'…'`, and every metacharacter that lexes as an operator
+    /// (`=` `#` `&` `<` `>` `;`) — producing SB4032 on a well-formed payload.
+    /// The `${v:s/…}` form has always scanned raw source (`scan_sed_payload`);
+    /// this is the same thing for the statement form, so the two agree.
+    ///
+    /// Rewinds to just past the last consumed token (dropping any peeked
+    /// lookahead), skips blanks, and requires `s/` at that point. Returns the
+    /// payload text and leaves the scanner just past it. `None` if this is not
+    /// an `s/` payload or a delimiter is missing — the caller raises SB4032.
+    pub fn take_sed_stmt_payload(&mut self) -> Option<String> {
+        self.peeked.clear();
+        self.pos = self.last_end;
+        self.skip_blanks_only();
+        let start = self.pos;
+        let end = self.scan_sed_chain(start)?;
+        let raw = String::from_utf8_lossy(&self.source[start..end]).to_string();
+        self.pos = end;
+        self.last_end = end;
+        Some(raw)
+    }
+
+    /// Blanks only — a newline ends the statement, so it must not be skipped
+    /// while looking for the payload's start.
+    fn skip_blanks_only(&mut self) {
+        while self.pos < self.source.len()
+            && (self.source[self.pos] == b' ' || self.source[self.pos] == b'\t')
+        {
+            self.pos += 1;
+        }
+    }
+
+    /// One or more `,`-separated `s/…/…/[flags]` edits (DD#96). Returns the
+    /// index just past the last edit's flags.
+    fn scan_sed_chain(&self, start: usize) -> Option<usize> {
+        let mut end = self.scan_one_sed_edit(start)?;
+        loop {
+            // A chain continues only while an edit is owed — the next
+            // non-blank byte is the `,` separator.
+            let comma = self.skip_bytes(end, b" \t");
+            if self.source.get(comma) != Some(&b',') {
+                // The payload must end HERE. DD#63 is explicit that a
+                // malformed payload is a compile error, not a silent fallback
+                // (`s/-/x/y/` and `s/-/x/zz9` were SB4032 before this scan
+                // existed). Without this the leftover bytes lex as a fresh
+                // statement, so `s =~ s/-/x/y/` built a program that tried to
+                // execute `/`.
+                return self.sed_payload_ends_cleanly(comma).then_some(end);
+            }
+            // Blanks and a newline may follow it (DD#96 continuation).
+            end = self.scan_one_sed_edit(self.skip_bytes(comma + 1, b" \t\n\r"))?;
+        }
+    }
+
+    /// First index at or after `from` whose byte is not in `set`.
+    fn skip_bytes(&self, from: usize, set: &[u8]) -> usize {
+        let mut j = from;
+        while j < self.source.len() && set.contains(&self.source[j]) {
+            j += 1;
+        }
+        j
+    }
+
+    /// Index just past the delimiter closing SUB, scanning from just past the
+    /// one that opened RE. `None` if a newline or EOF arrives first.
+    fn scan_sed_fields(&self, from: usize) -> Option<usize> {
+        let mut j = from;
+        let mut slashes = 0u8;
+        while let Some(&b) = self.source.get(j) {
+            j += 1;
+            match b {
+                b'\n' | b'\r' => return None, // unterminated payload
+                b'/' if slashes == 1 => return Some(j),
+                b'/' => slashes = 1,
+                _ => {}
+            }
+        }
+        None
+    }
+
+    /// First index at or after `from` whose byte fails `pred`.
+    fn skip_while(&self, from: usize, pred: fn(&u8) -> bool) -> usize {
+        let mut j = from;
+        while self.source.get(j).is_some_and(pred) {
+            j += 1;
+        }
+        j
+    }
+
+    /// True when `j` is a legitimate end for a sed payload: end of input, or a
+    /// byte that ends the statement. A `)` closes an enclosing substitution.
+    fn sed_payload_ends_cleanly(&self, j: usize) -> bool {
+        matches!(
+            self.source.get(j),
+            None | Some(b'\n' | b'\r' | b';' | b'|' | b'&' | b')')
+        )
+    }
+
+    /// One `s/RE/SUB/[flags]` edit from `start`. `None` when the text does not
+    /// open with `s/`, or a newline/EOF arrives before both delimiters.
+    fn scan_one_sed_edit(&self, start: usize) -> Option<usize> {
+        let src = &self.source;
+        if start + 2 > src.len() || &src[start..start + 2] != b"s/" {
+            return None;
+        }
+        let after_fields = self.scan_sed_fields(start + 2)?;
+        // Flags are the run of letters after the closing delimiter.
+        Some(self.skip_while(after_fields, u8::is_ascii_alphabetic))
+    }
+
     /// Scan '...' single-quoted string.
     fn scan_single_quoted(&mut self, start: usize) -> SpannedToken {
         self.pos += 1; // skip opening '

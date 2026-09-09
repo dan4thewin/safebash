@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=87
+plan=103
 echo "1..$plan" >&3
 
 set +e
@@ -343,6 +343,130 @@ run_sash 'x=hi; if (( ${x:~} > 1 )) { echo T }'
 # Subscript/SubscriptAssign children entirely)
 run_sash 'int array a=(1 2); x=hi; (( y = a[${x:~}] )); echo $y'
 [[ $rc != 0 && -z $out && $err == *SB5046* && $err != *ICE* ]]; chk ice.10
+
+
+# ══════ the s/// STATEMENT form must accept whatever the source says ══════
+# `reconstruct_sed_raw` rebuilt the payload token by token and broke on any
+# token it did not enumerate, so metacharacters that lex as operators (= # & <
+# > ;) and `$'…'` all gave SB4032 "malformed … expected three / delimiters" on
+# a perfectly well-formed payload. The EXPANSION form `${v:s/…/…/}` never had
+# this: DD#63 Path B scans the payload from the raw source. The statement form
+# now does the same, so the two agree.
+
+# sr.1 `=` in the RE — the k=v case DD#99's map building needs
+run_sash 's=NAME=x
+s =~ s/=/-/
+echo $s'
+[[ $rc = 0 && $out = "NAME-x" && -z $err ]]; chk sr.1
+
+# sr.2 the other operator-lexed metacharacters
+run_sash 's="a#b"
+s =~ s/#/-/
+echo $s'
+[[ $rc = 0 && $out = "a-b" && -z $err ]]; chk sr.2
+
+# sr.3 `;` — lexes as a statement separator
+run_sash 's="a;b"
+s =~ s/;/-/
+echo $s'
+[[ $rc = 0 && $out = "a-b" && -z $err ]]; chk sr.3
+
+# sr.4 `&` and the redirect chars
+run_sash 's="a&b"
+s =~ s/&/-/
+echo $s'
+[[ $rc = 0 && $out = "a-b" && -z $err ]]; chk sr.4
+
+# sr.5 `<` / `>`
+run_sash 's="a<b>c"
+s =~ s/</-/, s/>/-/
+echo $s'
+[[ $rc = 0 && $out = "a-b-c" && -z $err ]]; chk sr.5
+
+# sr.6 `$'\0'` directly in the replacement — DD#64's escape, and the DD#99
+# separator conversion. The result carries an interior NUL, so compare length.
+if in_modes native,c; then
+    run_sash 's=a:b:c
+s =~ s/:/$'"'"'\0'"'"'/g
+echo $(len s)'
+    [[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
+else
+    skip_chk sr.6
+fi
+
+# sr.7 …and the bytes really are NUL (round-trips through a NUL-split read)
+if in_modes native,c; then
+    run_sash 'array f=()
+s=a:b:c
+s =~ s/:/$'"'"'\0'"'"'/g
+echo $s | read -a f -d ""
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[1]}"'
+    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7
+else
+    skip_chk sr.7
+fi
+
+# sr.8 the expansion form agrees (it always worked — pin it so they cannot drift)
+run_sash 's=NAME=x
+t=${s:s/=/-/}
+echo $t'
+[[ $rc = 0 && $out = "NAME-x" && -z $err ]]; chk sr.8
+
+# sr.9 DD#96 chaining still works across the change (regression guard)
+run_sash 'v=abc
+v =~ s/a/1/, s/b/2/
+echo $v'
+[[ $rc = 0 && $out = "12c" && -z $err ]]; chk sr.9
+
+# sr.10 …including the multi-line chain (DD#96 continuation)
+run_sash 'v=abc
+v =~ s/a/1/,
+    s/b/2/
+echo $v'
+[[ $rc = 0 && $out = "12c" && -z $err ]]; chk sr.10
+
+
+# sr.11 a literal `/` in the replacement is spelled `$'\x2f'` (DD#63's own
+# answer, now working in the statement form too). Because the payload is
+# scanned from raw SOURCE, `$'\x2f'` contains no `/` byte, so the delimiter
+# split and the escape decode cannot interfere.
+run_sash 's="a-b"
+s =~ s/-/$'"'"'\x2f'"'"'/
+echo $s'
+[[ $rc = 0 && $out = "a/b" && -z $err ]]; chk sr.11
+
+# sr.12 …and in the RE slot
+run_sash 's="a/b"
+s =~ s/$'"'"'\x2f'"'"'/-/
+echo $s'
+[[ $rc = 0 && $out = "a-b" && -z $err ]]; chk sr.12
+
+# sr.13 a BARE `/` in the replacement is still the delimiter, so a fourth one
+# is malformed — NOT a silent split that leaves `/` to be run as a command.
+# (The raw-source scan regressed this until the payload was required to end at
+# a statement boundary.)
+run_sash 's="a-b"
+s =~ s/-/x/y/
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk sr.13
+
+# sr.14 trailing junk after the flags is malformed, as it has always been
+run_sash 's="a-b"
+s =~ s/-/x/zz9
+echo $s'
+[[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk sr.14
+
+# sr.15 a `;`-separated statement after the payload still parses
+run_sash 's="a-b"
+s =~ s/-/x/; echo $s'
+[[ $rc = 0 && $out = "axb" && -z $err ]]; chk sr.15
+
+# sr.16 flags still bind (g is global)
+run_sash 's="a-b-c"
+s =~ s/-/x/g
+echo $s'
+[[ $rc = 0 && $out = "axbxc" && -z $err ]]; chk sr.16
 
 set -e
 tally

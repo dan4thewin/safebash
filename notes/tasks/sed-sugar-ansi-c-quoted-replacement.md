@@ -1,6 +1,6 @@
 ---
 title: "investigate: the `s///` sugar silently truncates at any unhandled token — `$'…'`, and the metachars `= # & < > ;`"
-status: ready
+status: done
 priority: P2
 kind: decision
 depends: []
@@ -109,3 +109,48 @@ with no language changes — `$(gsub $s ":" $'\0')` is the in-process,
 fork-free way to convert any separator to NUL. The design does **not** depend
 on resolving this; the function form already does the job. That is why this is
 P3.
+
+
+## RESOLVED 2026-09-09
+
+Fixed by scanning the payload from **raw source** instead of reassembling it
+from tokens — the same thing `${v:s/…/…/}` has always done (DD#63 Path B,
+`Scanner::scan_sed_payload`). `Scanner::take_sed_stmt_payload` rewinds to just
+past the last consumed token, requires `s/` there, scans for the delimiters and
+flags (continuing across `,` for DD#96 chains), and hands back the verbatim
+source text. `reconstruct_sed_raw` is deleted.
+
+Everything the token accumulator lost now works:
+
+```sh
+s =~ s/=/-/            # was SB4032
+s =~ s/#/-/  s/;/-/  s/&/-/  s/</-/  s/>/-/
+s =~ s/:/$'\0'/g       # was SB4032 — the DD#99 separator conversion
+```
+
+**The delimiter question resolved itself.** The task posed a fork: decode
+`$'…'` before delimiter-splitting (making `$'\x2f'` a delimiter) or after
+(needing a non-text marker in the raw slot). Neither is needed. DG: *"we can
+disallow `/` within the replacement, it can be expressed as a hex within
+`$' '`"* — which is DD#63's own prescription (*"A literal `/` (the delimiter)
+is `\x2f`"*). Because the scan reads **source bytes**, `$'\x2f'` contains no
+`/` byte at all, so the split and the decode cannot interfere. Verified in both
+slots:
+
+```sh
+s="a-b"; s =~ s/-/$'\x2f'/     # → a/b
+s="a/b"; s =~ s/$'\x2f'/-/     # → a-b
+```
+
+**One regression was introduced and caught.** The first cut stopped at the end
+of the flags and left the rest to the lexer, so `s =~ s/-/x/y/` built a program
+that tried to *execute* `/` — where HEAD had said SB4032. The payload must now
+end at a statement boundary (EOF, newline, `;`, `|`, `&`, `)`), restoring
+DD#63's rule that a malformed payload is a compile error and not a silent
+fallback.
+
+Specs `spec/var_modifiers.sh` sr.1–sr.16: each metacharacter, `$'\0'` and its
+round-trip through a NUL-split read, `$'\x2f'` in both slots, the
+expansion/statement forms agreeing, DD#96 chains (single- and multi-line), and
+the two malformed cases. Sweep 4348 passing / 39 failing / 403 skipped, 0
+regressions.
