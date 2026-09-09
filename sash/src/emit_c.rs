@@ -705,6 +705,9 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
         // read -a ARR — split one line into an array by delimiter.
         SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
+        // DD#99 `newread $SRC ARRAY` — the same split with the bytes coming
+        // from a value rather than a fd.
+        SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
         // a+=( … ) — append at the next integer index (len). Mirrors native
         // emit_array_append (dispatch.rs:69).
         SsaInst::ArrayAppend { array, value } => emit_array_append_c(e, array, value, types),
@@ -714,6 +717,21 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
 }
 
 /// `a+=( v )` — set v at integer key `sash_table_len(a)` (the next index).
+/// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.
+/// Terminator semantics, matching the fd form.
+fn emit_split_value(e: &mut Emit, source: &SsaValue, array: &str, types: &VarTypes) {
+    let table_expr = lookup_table_var(array, types);
+    let (vp, vl) = lower_value_as_str(e, source, types);
+    writeln!(
+        e.out,
+        "    if ({vp}) sash_split_into_array({vp}, {vl}, 0, 1, (unsigned char*){tbl});",
+        vp = vp,
+        vl = vl,
+        tbl = table_expr
+    )
+    .unwrap();
+}
+
 fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarTypes) {
     let table_expr = lookup_table_var(array, types);
     let (vp, vl) = lower_value_as_str(e, value, types);

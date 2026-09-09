@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup wordsplit
-plan=106
+plan=112
 echo "1..$plan" >&3
 
 set +e
@@ -604,6 +604,70 @@ echo "${f[0]}"'
 run_sash 'echo hi | newread f g
 echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk nr.8
+
+
+# ── stage 2b: `newread $SRC ARRAY` — split a scalar (DD#99's "split") ──
+# DG's observation that a `split` op is just a two-argument `read`: value in
+# (sigil), reference out (bare name).
+
+# nr.9 splits a NUL-bearing scalar into an array, no pipeline, no fork
+if in_modes native,c; then
+    run_sash 'sep=$'"'"'\0'"'"'
+s=a:b:c
+s =~ s/:/$sep/g
+newread $s f
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[0]}:${f[2]}"'
+    [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.9
+else
+    skip_chk nr.9
+fi
+
+# nr.10 a scalar with no NUL is a single element
+if in_modes native,c; then
+    run_sash 's="a b c"
+newread $s f
+attest e in f [[ $e = $e ]]
+echo "$(len f):${f[0]}"'
+    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.10
+else
+    skip_chk nr.10
+fi
+
+# nr.11 auto-declares the target
+if in_modes native,c; then
+    run_sash 'sep=$'"'"'\0'"'"'
+s=p:q
+s =~ s/:/$sep/g
+newread $s brandnew
+attest e in brandnew [[ $e = $e ]]
+echo "$(len brandnew)"'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.11
+else
+    skip_chk nr.11
+fi
+
+# nr.12 taint flows from the source scalar to the array (DD#24)
+run_sash 's=$(/bin/cat /etc/hostname)
+newread $s f
+echo "${f[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.12
+
+# nr.13 …and a clean source stays clean
+if in_modes native,c; then
+    run_sash 's="x y"
+newread $s f
+echo "$(len f)"'
+    [[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.13
+else
+    skip_chk nr.13
+fi
+
+# nr.14 the second argument is a binding, so it takes no sigil (DD#99)
+run_sash 's="a"
+newread $s @f
+echo "$(len f)"'
+[[ $rc != 0 && -z $out && -n $err ]]; chk nr.14
 
 set -e
 tally

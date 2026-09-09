@@ -81,6 +81,9 @@ impl SsaInst {
             SsaInst::ReadArray { array, fd, delim } => {
                 return self.emit_read_array(array, fd, delim, builder, module, ctx);
             }
+            SsaInst::SplitValue { source, array } => {
+                return self.emit_split_value(source, array, builder, module, ctx);
+            }
             SsaInst::MatchInto {
                 subject,
                 pattern,
@@ -1087,6 +1090,38 @@ impl SsaInst {
             .ins()
             .trap(cranelift_codegen::ir::TrapCode::user(1).unwrap());
         true // block is terminated
+    }
+
+    /// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.
+    /// Same call as the fd form, with the bytes coming from `lower_value`
+    /// rather than `sash_read_all`. Terminator semantics (a trailing NUL does
+    /// not add an empty final element), matching `newread` on a stream.
+    fn emit_split_value(
+        &self,
+        source: &SsaValue,
+        array: &str,
+        builder: &mut FunctionBuilder,
+        module: &mut ObjectModule,
+        ctx: &mut InstCtx,
+    ) -> bool {
+        let (ptr, len) = super::values::lower_value(
+            source,
+            builder,
+            module,
+            ctx.vars,
+            ctx.literals,
+            ctx.externs,
+            Some(ctx.exit_status_var),
+        );
+        let sv = find_array_slot(ctx.vars, array, "array");
+        let table_ptr = builder.use_var(sv.str_ptr());
+        let split_ref = module.declare_func_in_func(ctx.externs.split_into_array, builder.func);
+        let nul = builder.ins().iconst(I64, 0);
+        let terminator = builder.ins().iconst(I64, 1);
+        builder
+            .ins()
+            .call(split_ref, &[ptr, len, nul, terminator, table_ptr]);
+        false
     }
 
     fn emit_read_array(

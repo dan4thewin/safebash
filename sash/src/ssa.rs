@@ -289,6 +289,10 @@ pub enum SsaInst {
         map_mode: bool,
         separator: char,
     },
+    /// DD#99: `newread $SRC ARRAY` — split a scalar VALUE on NUL into an
+    /// indexed array. The stdin form is `ReadArray`; this is the same split
+    /// with the bytes coming from a value rather than a fd.
+    SplitValue { source: SsaValue, array: String },
     /// Read a line, split by delimiter, store into indexed array
     ReadArray {
         array: String,

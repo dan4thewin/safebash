@@ -71,5 +71,11 @@ independent.
   ```
 
   Sweep 4395 passing / 39 failing / 410 skipped, 0 regressions.
-- Stage 2b: next — `newread $SRC ARRAY` (split a scalar). Needs a new SSA
-  instruction; `sash_split_into_array` already does the work.
+- **Stage 2b DONE** (2026-09-09): `newread $SRC ARRAY` — splits a scalar,
+  DG's "`split` is just a two-argument `read`". New `SsaInst::SplitValue`
+  (native + c; janet inherits via the shared front end), reusing
+  `sash_split_into_array` with the bytes from `lower_value` instead of a fd.
+  The **sigil rule is enforced**: the source must be a value (`$s`) and the
+  target a bare name, so `newread f g` is SB5057. Specs nr.9–nr.14.
+  Sweep 4409 passing / 39 failing / 414 skipped, 0 regressions.
+- Stage 3: next — `map m = @{a:DISP}` (pairwise, disposition mandatory)

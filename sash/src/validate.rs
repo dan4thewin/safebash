@@ -4122,17 +4122,29 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
         "read" | "readline" => collect_read_flag_targets(&c.args, set),
-        "newread" | "mapfile" | "readarray" => {
-            for arg in &c.args {
-                insert_read_target_arg(arg, set);
-            }
-        }
-        "argv" => {
-            if let Some(ExprKind::Literal(s)) = c.args.last().map(|a| &a.kind) {
-                set.insert(s.clone());
-            }
-        }
+        "mapfile" | "readarray" => insert_all_target_args(&c.args, set),
+        // DD#99: `newread [SRC] ARRAY` — only the last arg is a binding.
+        "newread" => insert_last_target_arg(&c.args, set),
+        "argv" => insert_last_literal_arg(&c.args, set),
         _ => {}
+    }
+}
+
+fn insert_all_target_args(args: &[Expr], set: &mut HashSet<String>) {
+    for arg in args {
+        insert_read_target_arg(arg, set);
+    }
+}
+
+fn insert_last_target_arg(args: &[Expr], set: &mut HashSet<String>) {
+    if let Some(last) = args.last() {
+        insert_read_target_arg(last, set);
+    }
+}
+
+fn insert_last_literal_arg(args: &[Expr], set: &mut HashSet<String>) {
+    if let Some(ExprKind::Literal(s)) = args.last().map(|a| &a.kind) {
+        set.insert(s.clone());
     }
 }
 
@@ -5287,15 +5299,48 @@ fn check_one_readline(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagn
         ));
         return;
     }
-    if words.len() != 1 || !is_plain_identifier(&words[0]) {
+    // `readline NAME`; `newread [SRC] ARRAY` — the two-arg form splits a value
+    // (DD#99). The TARGET is a binding, so it is always the bare last word.
+    let max = if name == "newread" { 2 } else { 1 };
+    if words.is_empty() || words.len() > max {
         diags.push(readline_diag(
             span,
-            &format!(
-                "`{name}` takes exactly one target name — got {}",
-                words.len()
-            ),
+            &arity_complaint(name, max, words.len()),
+        ));
+        return;
+    }
+    if let Some(complaint) = sigil_complaint(name, &words) {
+        diags.push(readline_diag(span, &complaint));
+    }
+}
+
+/// DD#99's sigil rule at a read call: the TARGET is a binding (bare name), and
+/// a two-arg `newread`'s SOURCE is a value (sigilled). `newread f g` is two
+/// bindings and means nothing.
+fn sigil_complaint(name: &str, words: &[String]) -> Option<String> {
+    if !is_plain_identifier(words.last()?) {
+        return Some(format!(
+            "`{name}`'s target must be a bare name — it is a binding, not a value"
         ));
     }
+    if words.len() == 2 && is_plain_identifier(&words[0]) {
+        return Some(format!(
+            "`{name}`'s source must be a value (`${}`), not a bare name — a bare \
+             name is a binding",
+            words[0]
+        ));
+    }
+    None
+}
+
+/// The arity half of the SB5057 message.
+fn arity_complaint(name: &str, max: usize, got: usize) -> String {
+    let shape = if max == 2 {
+        "a target name, optionally preceded by a source value"
+    } else {
+        "exactly one target name"
+    };
+    format!("`{name}` takes {shape} — got {got}")
 }
 
 fn readline_diag(span: Span, what: &str) -> Diagnostic {

@@ -18,15 +18,7 @@ pub(super) fn handle_read(
     // DD#99: `newread ARRAY` is the NUL-split array read. Arity/flags are
     // checked in validate (SB5057), so by here the shape is known good.
     if expr_to_string(&c.name) == "newread" {
-        if let Some(arr) = c.args.first().map(expr_to_string) {
-            super::stmt_handlers::autodeclare_bulk_target(&arr, false, ssa, state, block);
-            ssa.block_mut(block).insts.push(SsaInst::ReadArray {
-                array: arr,
-                fd: 0,
-                delim: Some(0),
-            });
-        }
-        return block;
+        return lower_newread(c, ssa, state, block);
     }
     let flags = crate::ir::classify_read_flags(&c.args);
     if let Some(bad) = &flags.unknown_flag {
@@ -44,6 +36,35 @@ pub(super) fn handle_read(
         return block;
     }
     emit_read_inst(&flags, ssa, state, block);
+    block
+}
+
+/// DD#99 `newread`: one arg reads stdin, two split the first (a value) into
+/// the second (a binding). Arity/flags are checked in validate (SB5057).
+fn lower_newread(
+    c: &Command,
+    ssa: &mut SsaProgram,
+    state: &mut VersionState,
+    block: BlockId,
+) -> BlockId {
+    let (source, target) = match c.args.as_slice() {
+        [only] => (None, expr_to_string(only)),
+        [src, dst] => (Some(expr_to_value(src, state)), expr_to_string(dst)),
+        _ => return block,
+    };
+    super::stmt_handlers::autodeclare_bulk_target(&target, false, ssa, state, block);
+    let inst = match source {
+        Some(source) => SsaInst::SplitValue {
+            source,
+            array: target,
+        },
+        None => SsaInst::ReadArray {
+            array: target,
+            fd: 0,
+            delim: Some(0),
+        },
+    };
+    ssa.block_mut(block).insts.push(inst);
     block
 }
 
