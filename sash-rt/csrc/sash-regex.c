@@ -180,6 +180,60 @@ static int do_captures(const char *subj, const char *pat) {
     return 0;
 }
 
+/*
+ * `captures-all SUBJECT PATTERN` — DD#63 `matchall` for the Janet backend.
+ * Prints EVERY match NUL-separated: each match contributes its capture
+ * groups, or the whole match when the pattern has no groups. Exit 0 if at
+ * least one match, 1 if none, 2 on invalid regex.
+ */
+static int do_captures_all(const char *subj, const char *pat) {
+    void *prog = regcomp9(pat);
+    if (!prog) {
+        return 2;
+    }
+    int nsub = *(int *)((char *)prog + sizeof(void *));
+    int ngroups = nsub > 127 ? 127 : nsub;
+    int ms = ngroups + 1;
+
+    size_t subj_len = strlen(subj);
+    char *buf = malloc(subj_len + 1);
+    memcpy(buf, subj, subj_len);
+    buf[subj_len] = 0;
+
+    char *resub = calloc((size_t)ms, 16);
+    size_t off = 0;
+    int emitted = 0;
+    while (off <= subj_len) {
+        memset(resub, 0, (size_t)ms * 16);
+        if (regexec9(prog, buf + off, resub, ms) <= 0) {
+            break;
+        }
+        char **ptrs = (char **)resub;
+        char *wsp = ptrs[0], *wep = ptrs[1];
+        if (!wsp) {
+            break;
+        }
+        int first = (ngroups == 0) ? 0 : 1;
+        for (int i = first; i <= ngroups; i++) {
+            if (emitted) {
+                fputc('\0', stdout);
+            }
+            char *sp = ptrs[2 * i], *ep = ptrs[2 * i + 1];
+            if (sp) {
+                fwrite(sp, 1, (size_t)(ep - sp), stdout);
+            }
+            emitted = 1;
+        }
+        /* A zero-width match would spin on the same offset forever. */
+        size_t start = (size_t)(wsp - buf), end = (size_t)(wep - buf);
+        off = (end > start) ? end : end + 1;
+    }
+    free(buf);
+    free(resub);
+    return emitted ? 0 : 1;
+}
+
+
 int main(int argc, char **argv) {
     if (argc >= 2 && (strcmp(argv[1], "match") == 0 || strcmp(argv[1], "matchq") == 0)) {
         if (argc != 4) {
@@ -187,6 +241,13 @@ int main(int argc, char **argv) {
             return 2;
         }
         return do_match(argv[2], argv[3], strcmp(argv[1], "match") == 0);
+    }
+    if (argc >= 2 && strcmp(argv[1], "captures-all") == 0) {
+        if (argc < 4) {
+            fprintf(stderr, "usage: sash-regex captures-all SUBJECT PATTERN\n");
+            return 2;
+        }
+        return do_captures_all(argv[2], argv[3]);
     }
     if (argc >= 2 && strcmp(argv[1], "captures") == 0) {
         if (argc != 4) {

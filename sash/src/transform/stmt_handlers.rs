@@ -92,16 +92,23 @@ fn try_handle_match_into(
     state: &mut VersionState,
     block: BlockId,
 ) -> Option<BlockId> {
-    if kind != BuiltinCmd::Match || c.args.len() != 3 {
+    if !matches!(kind, BuiltinCmd::Match | BuiltinCmd::MatchAll) || c.args.len() != 3 {
         return None;
     }
     let subject = expr_to_value(&c.args[0], state);
     let pattern = expr_to_value(&c.args[1], state);
     let array = expr_to_string(&c.args[2]);
+    // DD#63: `matchall` fills its target, so it introduces it (the argv /
+    // read / newread bulk-fill precedent). Singular `match` does not — that
+    // asymmetry is filed as `bug-match-outarray-no-autodeclare`.
+    if kind == BuiltinCmd::MatchAll {
+        autodeclare_bulk_target(&array, false, ssa, state, block);
+    }
     ssa.block_mut(block).insts.push(SsaInst::MatchInto {
         subject,
         pattern,
         array,
+        all: kind == BuiltinCmd::MatchAll,
     });
     Some(block)
 }
@@ -156,6 +163,7 @@ fn check_non_void_bare_call(name: &str, stmt: &Statement, state: &mut VersionSta
 fn check_boolean_must_consume(kind: BuiltinCmd, stmt: &Statement, state: &mut VersionState) {
     let construct = match kind {
         BuiltinCmd::Match => "match",
+        BuiltinCmd::MatchAll => "matchall",
         BuiltinCmd::Test => "[[ … ]]",
         _ => return,
     };

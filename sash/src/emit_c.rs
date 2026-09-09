@@ -314,6 +314,11 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     writeln!(
         out,
+        "extern i64 sash_regex_matchall_into(const char* sp, i64 sl, const char* pp, i64 pl, SashTable* t);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern SashTable* sash_glob(const char* d, i64 dl, const char* p, i64 pl);"
     )
     .unwrap();
@@ -1071,7 +1076,8 @@ fn emit_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) {
             subject,
             pattern,
             array,
-        } => emit_match_into_c(e, subject, pattern, array, types),
+            all,
+        } => emit_match_into_c(e, subject, pattern, array, *all, types),
         SsaInst::ArgvFill { array, start } => emit_argv_fill_c(e, array, *start),
         _ => {
             writeln!(
@@ -2679,6 +2685,7 @@ fn emit_match_into_c(
     subject: &SsaValue,
     pattern: &SsaValue,
     array: &str,
+    all: bool,
     types: &VarTypes,
 ) {
     let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
@@ -2687,8 +2694,13 @@ fn emit_match_into_c(
     let m = e.fresh();
     writeln!(
         e.out,
-        "    i64 {m} = sash_regex_match_into({sp}, {sl}, {pp}, {pl}, (SashTable*){t});",
+        "    i64 {m} = {f}({sp}, {sl}, {pp}, {pl}, (SashTable*){t});",
         m = m,
+        f = if all {
+            "sash_regex_matchall_into"
+        } else {
+            "sash_regex_match_into"
+        },
         sp = s_ptr,
         sl = s_len,
         pp = p_ptr,

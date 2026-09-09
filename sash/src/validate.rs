@@ -1826,8 +1826,10 @@ const BUILTINS: &[&str] = &[
     // Conversion
     "dtoi",
     "itod",
-    // Regex (DD#63): match is a boolean command (sub/gsub are value-only)
+    // Regex (DD#63): match/matchall are boolean commands (sub/gsub are
+    // value-only). `matchall` fills its out-array with every match.
     "match",
+    "matchall",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
@@ -4180,6 +4182,11 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         "mapfile" | "readarray" => insert_all_target_args(&c.args, set),
         // DD#99: `newread [SRC] ARRAY` — only the last arg is a binding.
         "newread" => insert_last_target_arg(&c.args, set),
+        // DD#63: `matchall S P ARR` fills ARR, so it introduces it — the same
+        // bulk-fill precedent as argv / read / newread. (Singular `match` does
+        // NOT auto-declare; that asymmetry is filed as
+        // `bug-match-outarray-no-autodeclare`.)
+        "matchall" => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
@@ -5541,4 +5548,52 @@ fn check_echo_flags_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 /// The literal text of `args[i]`, or "" when absent or non-literal.
 fn expr_literal_str_at(args: &[Expr], i: usize) -> &str {
     args.get(i).map(expr_literal_str).unwrap_or("")
+}
+
+/// DD#63: `match S P` (boolean / `$( )` value) or `match S P ARR` (captures),
+/// and `matchall S P ARR` (every match — the out-array is mandatory, since
+/// "all matches" has no single value to be).
+///
+/// Any other count used to be accepted in silence: the 3-arg out-array
+/// lowering declined the shape, the 2-arg boolean lowering picked it up and
+/// ignored the surplus, and the command reported a SUCCESS it had not
+/// checked — so `if match S P g h` took the then-branch with `g` empty.
+pub fn check_match_arity(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_match_arity_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_match_arity_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_match_arity_stmt(stmt, diags);
+    }
+}
+
+fn check_match_arity_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    if let StmtKind::Command(c) = &stmt.kind {
+        if let Some(d) = match_arity_diag(expr_literal_str(&c.name), c.args.len(), stmt.span) {
+            diags.push(d);
+        }
+    }
+    for body in stmt.child_bodies() {
+        check_match_arity_in(body, diags);
+    }
+}
+
+fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {
+    let complaint = match name {
+        "match" if n != 2 && n != 3 => {
+            format!("`match` takes `S P` (boolean) or `S P ARR` (captures) — got {n} arguments")
+        }
+        "matchall" if n != 3 => format!(
+            "`matchall` takes `S P ARR` — got {n} arguments. The out-array is \
+             required: every match is appended, so there is no single value to \
+             return"
+        ),
+        _ => return None,
+    };
+    Some(Diagnostic::error_span(span, "SB4045", complaint))
 }

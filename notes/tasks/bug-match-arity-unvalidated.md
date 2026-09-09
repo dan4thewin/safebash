@@ -1,6 +1,6 @@
 ---
 title: "bug: `match` accepts a wrong arity silently and matches nothing"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -46,3 +46,8 @@ should both be rejected.
 
 Same shape as the batch fixed in commit 346cf1f: a path that accepts input and
 gives an undefined answer, invisible because no spec pinned the rejection.
+
+## Resolved 2026-09-09
+
+`check_match_arity` (validate) enforces `match` = 2 or 3 args and `matchall`
+= exactly 3, as SB4045. Specs `regex.sh` 63.ar1-63.ar4.

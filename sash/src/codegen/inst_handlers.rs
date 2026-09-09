@@ -1163,6 +1163,7 @@ pub(super) fn handle_match_into(
     subject: &SsaValue,
     pattern: &SsaValue,
     array: &str,
+    all: bool,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -1188,7 +1189,12 @@ pub(super) fn handle_match_into(
     let sv = find_array_slot(ctx.vars, array, "array");
     let table_ptr = builder.use_var(sv.str_ptr());
 
-    let into_ref = module.declare_func_in_func(ctx.externs.regex_match_into, builder.func);
+    let func = if all {
+        ctx.externs.regex_matchall_into
+    } else {
+        ctx.externs.regex_match_into
+    };
+    let into_ref = module.declare_func_in_func(func, builder.func);
     let call = builder
         .ins()
         .call(into_ref, &[s_ptr, s_len, p_ptr, p_len, table_ptr]);

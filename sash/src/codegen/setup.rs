@@ -455,6 +455,19 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         )
         .expect("declare sash_regex_match_into");
 
+    // sash_regex_matchall_into(str_ptr, str_len, pat_ptr, pat_len, table) -> i64
+    // DD#63: `matchall S P ARR` — every match (captures, or the whole match
+    // when the pattern has no groups). Same signature as the singular form.
+    let mut regex_matchall_into_sig = module.make_signature();
+    push_i64s(&mut regex_matchall_into_sig, 5, 1);
+    let regex_matchall_into_func = module
+        .declare_function(
+            "sash_regex_matchall_into",
+            Linkage::Import,
+            &regex_matchall_into_sig,
+        )
+        .expect("declare sash_regex_matchall_into");
+
     // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
     push_i64s(&mut regex_replace_sig, 7, 2); // returns (ptr, len)
@@ -820,6 +833,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         regex_replace: regex_replace_func,
         regex_match_str: regex_match_str_func,
         regex_match_into: regex_match_into_func,
+        regex_matchall_into: regex_matchall_into_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
         table_set: table_set_func,

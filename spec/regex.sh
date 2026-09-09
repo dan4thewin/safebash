@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=43
+plan=56
 echo "1..$plan" >&3
 
 set +e
@@ -289,6 +289,110 @@ run_sash '/bin/echo s/x/y/g'
 # compiled and then hit a runtime `bug: bare command` abort instead).
 run_sash 'nosuchcmd_xyz s/a/b/'
 [[ $rc != 0 && $err == *SB5011* ]]; chk 63.h3
+
+
+# ── E. `match` arity is enforced (bug: it was not) ────────────────────────
+# `match S P ARR EXTRA` used to compile, report SUCCESS, and fill no array —
+# so an `if` took the THEN branch on a match that never happened. The
+# 3-arg out-array lowering simply declined the shape and the 2-arg boolean
+# lowering picked it up, ignoring the surplus.
+
+# 63.ar1 four arguments
+run_sash 'array g=()
+array h=()
+if match "a=1" "(a)" g h; then echo "${g[0]}${h[0]}"; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ar1
+
+# 63.ar2 five arguments
+run_sash 'array g=()
+if match "a=1" "(a)" g x y; then echo "${g[0]}"; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ar2
+
+# 63.ar3 a mistaken flag is surplus, not silently swallowed — this is how the
+# bug surfaced (probing `match … -g` for a global form looked like it worked)
+run_sash 'array g=()
+if match "a=1 b=2" "([a-z])=([0-9])" g -g; then echo "${g[1]}"; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ar3
+
+# 63.ar4 one argument (no pattern)
+run_sash 'if match "a=1"; then echo y; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ar4
+
+# ── F. `matchall S P ARR` — every match, not just the first (DD#63) ───────
+# The rule that lets ONE builtin serve both shapes: append each match's
+# CAPTURE GROUPS, or the WHOLE match when the pattern has no groups.
+#   no groups  -> the matched spans      (the `mapfile -t` shape)
+#   N groups   -> g1..gN per match, flat (the `mapfile -m` shape, which lands
+#                 exactly on the pairwise array `map m = @{a:DISP}` consumes)
+# Unlike `match`, the whole match is NOT prepended when there are groups —
+# it would break the pairing. Boolean: exit 0 when at least one match.
+
+# 63.ma1 no groups → the whole matched spans
+run_sash 'array a=()
+if matchall "x
+y
+z" "[^\x0a]+" a; then echo "$(len a):${a[0]}:${a[2]}"; fi'
+[[ $rc = 0 && $out = "3:x:z" && -z $err ]]; chk 63.ma1
+
+# 63.ma2 groups → captures flattened, whole match omitted
+run_sash 'array a=()
+if matchall "k1=v1
+k2=v2" "([^=\x0a]*)=([^\x0a]*)" a; then echo "$(len a):${a[0]}:${a[1]}:${a[2]}:${a[3]}"; fi'
+[[ $rc = 0 && $out = "4:k1:v1:k2:v2" && -z $err ]]; chk 63.ma2
+
+# 63.ma3 the `mapfile -m` replacement end to end. Note the value keeps its
+# own `=` (only the FIRST is a separator), which the NUL-substitution route
+# could not express at all. native,c: janet does not emit `map m = @{a:DISP}`
+# at all (task `janet-map-from-array`).
+if in_modes native,c; then
+    run_sash 'array pairs=()
+matchall "name=Alice
+key=val=ue" "([^=\x0a]*)=([^\x0a]*)" pairs || :
+map m = @{pairs:~}
+echo "$(len m):${m[name]}:${m[key]}"'
+    [[ $rc = 0 && $out = "2:Alice:val=ue" && -z $err ]]; chk 63.ma3
+else
+    skip_chk 63.ma3
+fi
+
+# 63.ma4 no match → array cleared, non-zero (clear-on-entry like `match`)
+run_sash 'array a=(x y z)
+if matchall "abc" "zzz" a; then echo "y"; else echo "n $(len a)"; fi'
+[[ $rc = 0 && $out = "n 0" && -z $err ]]; chk 63.ma4
+
+# 63.ma5 a single match behaves like the plural case, not like `match`
+run_sash 'array a=()
+if matchall "abc" "b" a; then echo "$(len a):${a[0]}"; fi'
+[[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.ma5
+
+# 63.ma6 the target auto-declares (argv / read / newread precedent). native,c:
+# janet emits the `var` inside the `||` block so the later read cannot see it
+# — generic to every auto-declaring builtin there, not to `matchall` (`argv 1
+# fresh || :` fails identically); task `janet-autodeclare-scoped-to-list-block`.
+if in_modes native,c; then
+    run_sash 'matchall "a b" "[a-z]" fresh || :
+echo "$(len fresh)"'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 63.ma6
+else
+    skip_chk 63.ma6
+fi
+
+# 63.ma7 the out-array is REQUIRED — there is no boolean/value 2-arg form,
+# because "all matches" has no single value to be
+run_sash 'if matchall "abc" "b"; then echo y; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ma7
+
+# 63.ma8 …and surplus arguments are rejected, as for `match`
+run_sash 'array a=()
+if matchall "abc" "b" a extra; then echo y; fi'
+[[ $rc != 0 && -z $out && -n $err ]]; chk 63.ma8
+
+# 63.ma9 a tainted subject taints the result (it is external data reshaped,
+# not declassified — same as `match`)
+run_sash 'h=$(getenv HOME)
+matchall "$h" "[a-z]+" parts || :
+echo "${parts[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 63.ma9
 
 set -e
 tally

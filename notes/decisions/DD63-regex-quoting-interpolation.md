@@ -223,3 +223,64 @@ this lands.)
 See task `regex-interpolation-delimiters` for the spec-first
 implementation; `dd62-test-expr-ssavalue` for the overlapping operand
 work (the `=~`-as-`match`-command desugaring is the seam between them).
+## Addendum (2026-09-09) — `matchall S P ARR`
+
+DG: *"can we use match instead of read?"* — asked while the DD#99 `mapfile`
+migration was stuck. It was the right question: the blocker
+(`bug-regex-blind-past-interior-nul`) was **self-inflicted** by the
+substitute-separator-to-NUL-then-split approach. `matchall` extracts from the
+raw text, so no NUL is ever created and the bug is never reached.
+
+`match` is single-shot. `matchall S P ARR` fills ARR from **every** match:
+
+> each match contributes its **capture groups**, or the **whole match** when
+> the pattern has no groups.
+
+That one rule serves both shapes the migration needs:
+
+```sh
+matchall $s "[^\x0a]+" lines                      # mapfile -t : the lines
+matchall $s "([^=\x0a]*)=([^\x0a]*)" pairs       # mapfile -m : k1 v1 k2 v2 …
+map m = @{pairs:~}
+```
+
+The second lands exactly on the pairwise array `map m = @{a:DISP}` already
+consumes (DD#99) — the two features fit without adapting either. It also
+expresses what the NUL route could not: only the **first** `=` of a record
+separates, so `key=val=ue` keeps its value intact.
+
+### Deliberate differences from `match`
+
+- **The whole match is omitted when there are groups.** `match` yields
+  `[whole, g1..gN]`; prepending the whole here would interleave a third
+  element per record and destroy the pairing. With groups, you asked for the
+  groups.
+- **The out-array is mandatory.** There is no boolean/value 2-arg form,
+  because "all matches" has no single value to be.
+- **The target auto-declares**, following the argv / read / newread bulk-fill
+  precedent (DG 2026-07-08). Singular `match` does not; that asymmetry is a
+  filed bug (`bug-match-outarray-no-autodeclare`), not a rule.
+
+Boolean like `match`: exit 0 when at least one match. The array is cleared on
+entry, so the no-match path leaves it empty.
+
+### Arity is now enforced
+
+`match` validated neither its upper arity nor the 1-argument form:
+`match S P ARR EXTRA` compiled, reported **success**, and filled no array — so
+an `if` took the then-branch on a match that never happened. The 3-arg
+out-array lowering declined the shape and the 2-arg boolean lowering picked it
+up, ignoring the surplus. Both `match` (2 or 3) and `matchall` (exactly 3) are
+now checked (SB4045).
+
+### Implementation
+
+One `SsaInst::MatchInto { …, all: bool }` rather than a parallel variant — the
+forms differ only in which runtime symbol is called, so splitting them would
+mean two of every downstream arm to keep in step. Runtime:
+`sash_regex_matchall_into`; the janet helper gains a `captures-all`
+subcommand. A zero-width match advances one byte, or the loop would spin.
+
+Specs: `regex.sh` 63.ar1-ar4 (arity), 63.ma1-ma9.
+
+

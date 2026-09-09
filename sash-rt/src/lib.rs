@@ -1873,6 +1873,88 @@ pub unsafe extern "C" fn sash_regex_match_into(
     1
 }
 
+/// DD#63 `matchall S P ARR`: every match, not just the first.
+///
+/// Appends each match's CAPTURE GROUPS, or the WHOLE match when the pattern
+/// has no groups. That one rule serves both shapes the DD#99 migration needs:
+/// a group-less pattern yields the matched spans (lines), and an N-group
+/// pattern yields `g1..gN` per match flattened, which is exactly the pairwise
+/// array `map m = @{a:DISP}` consumes. The whole match is deliberately NOT
+/// prepended when there are groups — it would break the pairing.
+///
+/// Returns 1 if at least one match was found, 0 otherwise. The table is
+/// cleared on entry (DD#63), so the no-match path leaves it empty.
+///
+/// # Safety
+/// `str_ptr`/`pat_ptr` must be valid for their lengths; `table` must be a
+/// live `SashTable`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_regex_matchall_into(
+    str_ptr: *const u8,
+    str_len: i64,
+    pat_ptr: *const u8,
+    pat_len: i64,
+    table: *mut SashTable,
+) -> i64 {
+    sash_table_clear(table);
+
+    let pat_buf = sash_alloc((pat_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(pat_ptr, pat_buf, pat_len as usize);
+    *pat_buf.add(pat_len as usize) = 0;
+
+    let str_buf = sash_alloc((str_len + 1) as usize);
+    core::ptr::copy_nonoverlapping(str_ptr, str_buf, str_len as usize);
+    *str_buf.add(str_len as usize) = 0;
+
+    let prog = regcomp9(pat_buf);
+    if prog.is_null() {
+        sash_exit(2);
+    }
+    let nsub = (*(prog.add(core::mem::size_of::<*const u8>()) as *const i32)) as usize;
+    let ngroups = if nsub > 127 { 127 } else { nsub };
+    let ms = ngroups + 1;
+    let resub = sash_alloc(ms * 16);
+
+    let mut slot: i64 = 0;
+    let mut off: usize = 0;
+    let total = str_len as usize;
+    while off <= total {
+        core::ptr::write_bytes(resub, 0, ms * 16);
+        if regexec9(prog, str_buf.add(off), resub, ms as i32) <= 0 {
+            break;
+        }
+        let ptrs = resub as *const *const u8;
+        let whole_sp = *ptrs;
+        let whole_ep = *ptrs.add(1);
+        if whole_sp.is_null() {
+            break;
+        }
+        // With groups, emit the groups; without, the whole match.
+        let first = if ngroups == 0 { 0 } else { 1 };
+        for i in first..=ngroups {
+            let sp = *ptrs.add(2 * i);
+            let ep = *ptrs.add(2 * i + 1);
+            let (vptr, vlen): (*const u8, i64) = if sp.is_null() {
+                (b"".as_ptr(), 0)
+            } else {
+                let len = ep as usize - sp as usize;
+                let cp = alloc_cstr(len);
+                core::ptr::copy_nonoverlapping(sp, cp, len);
+                (cp, len as i64)
+            };
+            let key = slot.to_ne_bytes();
+            sash_table_set(table, key.as_ptr(), 8, vptr, vlen);
+            slot += 1;
+        }
+        // Advance past this match. A zero-width match would otherwise spin
+        // forever on the same offset, so step one byte in that case.
+        let end = whole_ep as usize - str_buf as usize;
+        let start = whole_sp as usize - str_buf as usize;
+        off = if end > start { end } else { end + 1 };
+    }
+    i64::from(slot > 0)
+}
+
 /// DD#63: expand a `sub`/`gsub` replacement template against the current
 /// match's `Resub`. `\0` = whole match, `\1`..`\9` = capture groups, `\\`
 /// = a literal backslash. `\` + a non-digit is rejected at compile time

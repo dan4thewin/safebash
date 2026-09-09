@@ -97,9 +97,10 @@ impl SsaInst {
                 subject,
                 pattern,
                 array,
+                all,
             } => {
                 return super::inst_handlers::handle_match_into(
-                    subject, pattern, array, builder, module, ctx,
+                    subject, pattern, array, *all, builder, module, ctx,
                 );
             }
             SsaInst::ArgvFill { array, start } => {

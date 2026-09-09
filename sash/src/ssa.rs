@@ -145,6 +145,9 @@ pub enum BuiltinCmd {
     /// `match SUBJECT PATTERN` — DD#63 regex match. As a command: boolean
     /// exit status. As `$(match …)`: prints the whole match (`resub[0]`).
     Match,
+    /// `matchall SUBJECT PATTERN ARR` — DD#63 every match. Command-only: the
+    /// out-array is mandatory, since "all matches" has no single value to be.
+    MatchAll,
     /// `$(toupper s)` / `$(tolower s)` — DD#65 case-conversion builtins
     /// (irreducible: a regex `sub` cannot upper/lowercase).
     Toupper,
@@ -202,6 +205,7 @@ impl BuiltinCmd {
             "sub" => Self::Sub,
             "gsub" => Self::Gsub,
             "match" => Self::Match,
+            "matchall" => Self::MatchAll,
             "toupper" => Self::Toupper,
             "tolower" => Self::Tolower,
             "basename" => Self::Basename,
@@ -323,6 +327,11 @@ pub enum SsaInst {
         subject: SsaValue,
         pattern: SsaValue,
         array: String,
+        /// DD#63 `matchall`: every match rather than the first. One flag on
+        /// one instruction rather than a parallel variant — the two forms
+        /// differ only in which runtime symbol is called, so splitting them
+        /// would mean two of every downstream arm to keep in step.
+        all: bool,
     },
     /// DD#60: `argv [N] a` — fill `array` with the program argv slice
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array

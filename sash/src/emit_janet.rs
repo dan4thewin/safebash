@@ -1220,7 +1220,8 @@ fn emit_value_builtin(
     match kind {
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
         BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
-        BuiltinCmd::Match => emit_janet_match(out, ctx, c),
+        BuiltinCmd::Match => emit_janet_match(out, ctx, c, "captures"),
+        BuiltinCmd::MatchAll => emit_janet_match(out, ctx, c, "captures-all"),
         BuiltinCmd::Read => emit_janet_read(out, ctx, c),
         BuiltinCmd::Argv => emit_janet_argv(out, ctx, c),
         BuiltinCmd::Attest => emit_janet_attest(out, ctx, c),
@@ -1272,13 +1273,18 @@ fn emit_janet_test_cmd(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 /// of `&&`/`||`). Shells out to the quiet `sash-regex matchq` (exit 0
 /// matched / 1 not, no stdout), sets `__last_exit`, and yields the
 /// boolean so `(when (do …))` consumes it.
-fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command, sub: &str) {
     if c.args.len() == 3 {
-        // DD#63 out-array form `match S P ARR`.
+        // DD#63 out-array form `match S P ARR` / `matchall S P ARR`.
         let s = emit_expr_inline(&c.args[0], ctx);
         let p = emit_expr_inline(&c.args[1], ctx);
         let arr = expr_to_literal(&c.args[2]);
-        writeln!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr)).unwrap();
+        // `matchall` auto-declares its target (unlike `match`), so the `var`
+        // has to exist before the `set` below.
+        if sub == "captures-all" {
+            predeclare_one(out, ctx, &arr, "@[]", false, 0);
+        }
+        writeln!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr, sub)).unwrap();
         return;
     }
     if c.args.len() != 2 {
@@ -1301,9 +1307,9 @@ fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
 /// boolean (matched) so a condition / `&&` / `||` consumes it. Mirrors the
 /// native `sash_regex_match_into`: clear-on-entry (a no-match leaves the
 /// array empty) and a clean array (the subject is always clean).
-fn emit_janet_match_into_expr(s: &str, p: &str, arr: &str) -> String {
+fn emit_janet_match_into_expr(s: &str, p: &str, arr: &str, sub: &str) -> String {
     format!(
-        "(let [_f (os/spawn [\"sash-regex\" \"captures\" {s} {p}] :p {{:out :pipe}}) \
+        "(let [_f (os/spawn [\"sash-regex\" \"{sub}\" {s} {p}] :p {{:out :pipe}}) \
          _raw (or (:read (_f :out) :all) \"\") _rc (os/proc-wait _f) _m (zero? _rc)] \
          (set {arr} (if _m (string/split (string/from-bytes 0) _raw) @[])) \
          (set __last_exit (if _m 0 1)) _m)"
@@ -1626,7 +1632,7 @@ fn emit_condition_inline(out: &mut String, ctx: &mut EmitCtx, stmt: &Statement) 
 
 /// A command used as an if/while condition: `[[ … ]]` lowers to the test
 /// expression; any other command is true iff it exits 0.
-fn emit_command_condition(out: &mut String, ctx: &EmitCtx, c: &Command) {
+fn emit_command_condition(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
     let name = expr_to_literal(&c.name);
     if name == "[[" {
         match c.args.first() {
@@ -1668,7 +1674,7 @@ fn emit_func_call_condition(out: &mut String, ctx: &EmitCtx, name: &str, c: &Com
 /// DD#63: `match S P` / `match S P ARR` as an if/while condition. Returns
 /// true (and emits) when handled. `matchq` yields exit-status only (no stdout
 /// leak); the out-array form populates ARR and yields the boolean.
-fn try_emit_match_condition(out: &mut String, ctx: &EmitCtx, name: &str, c: &Command) -> bool {
+fn try_emit_match_condition(out: &mut String, ctx: &mut EmitCtx, name: &str, c: &Command) -> bool {
     if name == "match" && c.args.len() == 2 {
         let s = emit_expr_inline(&c.args[0], ctx);
         let p = emit_expr_inline(&c.args[1], ctx);
@@ -1680,14 +1686,37 @@ fn try_emit_match_condition(out: &mut String, ctx: &EmitCtx, name: &str, c: &Com
         .unwrap();
         return true;
     }
-    if name == "match" && c.args.len() == 3 {
-        let s = emit_expr_inline(&c.args[0], ctx);
-        let p = emit_expr_inline(&c.args[1], ctx);
-        let arr = expr_to_literal(&c.args[2]);
-        write!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr)).unwrap();
+    if matches!(name, "match" | "matchall") && c.args.len() == 3 {
+        emit_match_into_condition(out, ctx, name, c);
         return true;
     }
     false
+}
+
+/// The out-array form of `match`/`matchall` in condition position.
+fn emit_match_into_condition(out: &mut String, ctx: &mut EmitCtx, name: &str, c: &Command) {
+    let s = emit_expr_inline(&c.args[0], ctx);
+    let p = emit_expr_inline(&c.args[1], ctx);
+    let arr = expr_to_literal(&c.args[2]);
+    if name == "matchall" {
+        // `matchall` auto-declares; the `var` must precede the `set`.
+        predeclare_one(out, ctx, &arr, "@[]", false, 0);
+    }
+    write!(
+        out,
+        "{}",
+        emit_janet_match_into_expr(&s, &p, &arr, match_subcommand(name))
+    )
+    .unwrap();
+}
+
+/// The `sash-regex` subcommand backing each form.
+fn match_subcommand(name: &str) -> &'static str {
+    if name == "matchall" {
+        "captures-all"
+    } else {
+        "captures"
+    }
 }
 
 /// Check if an expression is known to be integer-typed.

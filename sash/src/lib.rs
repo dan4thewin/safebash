@@ -233,6 +233,7 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_args_immutable(program));
     tdiags.extend(validate::check_discard_reads(program));
     tdiags.extend(validate::check_readline_arity(program));
+    tdiags.extend(validate::check_match_arity(program));
     tdiags.extend(validate::check_map_from_array(program));
     if !tdiags.is_empty() {
         print_diags(input, &tdiags);
