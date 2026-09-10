@@ -25,7 +25,7 @@ function looks fixed — caught by av.h1/av.h3/25.8/31.24 during the sweep.
 `check_callee_arity` (rewritten) runs on all three call paths — plain
 (`inline_function_call`), pipeline (`build_function_pipeline_stage`), and now
 the `$( )` capture (`capture_func_into`, which carries the arg count since
-9fc930c):
+50474e9):
 
 - **Fixed(n)** → exactly n: too few **SB5042**, too many **SB5043**.
 - **Variadic{floor}** → ≥ floor: too few SB5042.

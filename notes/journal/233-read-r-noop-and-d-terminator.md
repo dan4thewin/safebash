@@ -73,7 +73,7 @@ sash-getopt -o ab: -- -a -b val 'has space' | read -a opts -d ''
 - **22.27** interior empty kept, trailing dropped (`a::b:` → `a,"",b`),
   native,c.
 
-Full 3-mode sweep vs `562fc36`: **native 0 regressions, c 0, janet 0**
+Full 3-mode sweep vs `0204fe9`: **native 0 regressions, c 0, janet 0**
 (+3 native, +3 c, +1 janet). `cargo fmt`/`clippy` clean; complexity gate green
 (`classify_read_word` cc=7 cog=6, under the 3× means).
 

@@ -44,7 +44,7 @@ should both be rejected.
 
 ## Notes
 
-Same shape as the batch fixed in commit 346cf1f: a path that accepts input and
+Same shape as the batch fixed in commit 2db18b3: a path that accepts input and
 gives an undefined answer, invisible because no spec pinned the rejection.
 
 ## Resolved 2026-09-09

@@ -15,7 +15,7 @@ gates:
 # DD#55 (A) abort — remaining work
 
 The **external-command** bare abort landed in both backends (commit
-707832f): a bare `/bin/false` aborts with its status, honoring `-`
+bc65140): a bare `/bin/false` aborts with its status, honoring `-`
 suppression / if / || catching (via the SSA `checked` flag in c, a
 structural `EmitCtx.checked` in janet), routing through the END block
 (DD#56). Spec 55.1 green in all three modes. This task tracks the rest.
@@ -73,7 +73,7 @@ eprin before `(os/exit rc)`.
 - c: emit_exec/emit_pipeline/abort_target (sash/src/emit_c.rs).
 - janet: emit_janet_general_command + EmitCtx.checked (sash/src/emit_janet.rs).
 
-## Pipefail + per-segment suppression: DONE (2026-07-24, commit 845f494)
+## Pipefail + per-segment suppression: DONE (2026-07-24, commit 027753a)
 
 The pipefail/per-segment-`-` half is resolved as a full DD#55 semantics pass
 (ratified with DG). A pipeline's aggregate is now context-independent (worst

@@ -1,6 +1,6 @@
 # 179 — DD#81: remove the dead func_constants machinery
 
-Second DD#81 stage. With Part A (c09a4a3) rejecting forward `$(f)`, a bare
+Second DD#81 stage. With Part A (d73c69e) rejecting forward `$(f)`, a bare
 `SsaValue::FuncCall` can no longer reach codegen: `$(f)` resolves to a function
 only when `f` is defined-so-far, and such a call is always lifted to a captured
 temp by `lift_int_func_calls` (capture_func_into finds the body). A
@@ -31,7 +31,7 @@ a transform invariant, not a user-reachable path.
 ## Result
 
 Net −216 lines. `cargo build` + `clippy --tests -D warnings` clean. Full
-`SPEC_MODES="native c janet"` sweep vs base `c09a4a3`: **0 regressions, 0 new**
+`SPEC_MODES="native c janet"` sweep vs base `d73c69e`: **0 regressions, 0 new**
 (behavior-preserving — the code was dead). Spot-checked: `$(f)` capture, assoc
 `map`, `$(join)`, `echo` all compile+run.
 

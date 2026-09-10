@@ -51,7 +51,7 @@ version (`lower_ir_redirect_expr` → `find_highest_version`) and spills
 
 ### Verify
 
-Full 3-mode sweep vs `5ea5ceb`: **native/c 0 regressions, +6 each; janet 0**
+Full 3-mode sweep vs `cc5b8aa`: **native/c 0 regressions, +6 each; janet 0**
 (file redirects are native,c). Coverage re-measured (`scan_radix_literal`=281,
 valid): native-core never-run **25 → 21** — `ir_expr_to_ssa_value` (deleted),
 `redirect_expr_literal`, `redirect_expr_concat`, `parse_ampgt_redirect` all

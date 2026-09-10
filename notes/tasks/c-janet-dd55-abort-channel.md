@@ -13,7 +13,7 @@ gates:
 
 # PARTIAL 2026-07-03 (external abort landed; see dd55-abort-channel-remaining)
 
-Commit 707832f: a bare (unchecked) external command that exits nonzero
+Commit bc65140: a bare (unchecked) external command that exits nonzero
 aborts with that status in both c and janet. c threads the SSA `checked`
 flag through emit_command/emit_exec/emit_pipeline and `goto`s the abort
 target; DD#56 routing added via `Emit.end_block`/`abort_target` (fixes a
@@ -29,7 +29,7 @@ The remaining channels are in `dd55-abort-channel-remaining`.
 
 ## Context
 
-Discovered during W3 (DD#55 syscall-abort work, commit f9d833b): the
+Discovered during W3 (DD#55 syscall-abort work, commit 313843a): the
 native backend implements the (A)-channel implicit-exit abort
 (`emit_status_abort_check` / `emit_pipeline_abort_check`), but **C and
 janet do not** — a bare `/bin/false` exits 0 in both (`emit_inst` in

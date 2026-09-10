@@ -47,7 +47,7 @@ was on the list. Findings:
 
 **Cluster A (pre-DD#53 dead `let _xxx = ctx.field` lines)** was a
 sibling signal: 100 lines of pure dead code that suppressed
-warnings. Removed in commit `982cf07`. That dropped this task's
+warnings. Removed in commit `d1b53bf`. That dropped this task's
 duplication count from 26 to 17 active sites.
 
 **Option (2) tested in a minimal repro:**

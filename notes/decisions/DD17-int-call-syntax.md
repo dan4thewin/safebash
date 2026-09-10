@@ -2,7 +2,7 @@ title: DD#17 — Function Call Syntax
 status: implemented
 superseded-by: DD#58 (for -> int functions)
 
-> **Amendment — Option C (2026-08-15, commit `0a6d690`).** The rule below —
+> **Amendment — Option C (2026-08-15, commit `a8ac707`).** The rule below —
 > "`$(func)` for a `-> int` function is a type error" — was **superseded**.
 > `$(...)` is **return-type-polymorphic**: it captures the callee's declared
 > result — the integer `return` for a `-> int` function, or captured stdout
@@ -24,5 +24,5 @@ Three forms:
   `$(func)` capture above.
 
 `$(func)` for a `-> int` function captures its integer return value
-(Option C, `0a6d690`) — see the amendment at the top. (Originally this
+(Option C, `a8ac707`) — see the amendment at the top. (Originally this
 was defined as a type error; that stance was superseded.)

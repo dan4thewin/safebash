@@ -76,7 +76,7 @@ so CST must remain the diagnostic authority.
 Every position now emits a clean SB5020 (splat, bare-name, and direct-var
 forms); sanctioned source (`x=$(getenv X)`), blessed, and clean-array cases
 still compile/run. Full `SPEC_MODES="native c janet"` sweep, diff vs base
-`147327e`: 0 passing→failing, 0 gone, native gate 0. 29 new passing
+`fe6d30e`: 0 passing→failing, 0 gone, native gate 0. 29 new passing
 (taint.sh 60.37–60.46 × modes; 60.46 janet-skipped). DD#24 amended.
 
 ## Gap-fill (regression matrix, taint.sh 60.47–60.55)

@@ -12,14 +12,14 @@ native/c/janet** on every one (authoritative spec.db diff). Native passing
 
 ## The five commits
 
-1. **star-wildcard** (`95491f5`, `bug-dispatch-literal-star-wildcard`) —
+1. **star-wildcard** (`9424d66`, `bug-dispatch-literal-star-wildcard`) —
    `*` in a dispatch arm is now a literal exact pattern, not a catch-all.
    `CaseItem` gained an `is_default` flag; the `|| { }` arm sets it (no more
    synthetic `*` sentinel), and lowering keys the unconditional-else off
    `is_default` (`is_wildcard_arm` → `is_default_arm`). janet's `_` catch-all
    too. spec/dispatch.sh +dp.e1-e4.
 
-2. **operand-word** (`9c71a99`, the core) — the `=~` RHS parses through a new
+2. **operand-word** (`60c667b`, the core) — the `=~` RHS parses through a new
    `parse_operand_word` (`parse_expr` + absorb `( ) { } | !` as literal chars,
    to the next unquoted whitespace/`]]`), replacing the bespoke
    `parse_regex_rhs`/`regex_rhs_step`/`regex_punct_char` collector and its `{`
@@ -34,7 +34,7 @@ native/c/janet** on every one (authoritative spec.db diff). Native passing
    regression the diff caught, janet:39.8, fixed before commit). Quoted
    invalid regexes are now caught at compile time too. spec/operand_words.sh.
 
-3. **multi-exact** (`ce2dfec`) — a `==` dispatch arm may carry multiple
+3. **multi-exact** (`e9fc520`) — a `==` dispatch arm may carry multiple
    space-separated exact patterns (`[[ $x == a b c { … } ]]`, first-match),
    the OR-of-exacts `==` structurally lacks without re-introducing `|`.
    `dispatch_multi_follows` (a bare word after a `==` binary) enters dispatch;
@@ -42,7 +42,7 @@ native/c/janet** on every one (authoritative spec.db diff). Native passing
    stay single-regex. Parser-only — backends already lower multi-pattern.
    spec/dispatch.sh +dp.f1-f6.
 
-4. **boolean-reject** (`fee53a6`, `reject-nonstatus-in-boolean-context`) — the
+4. **boolean-reject** (`1c2e74f`, `reject-nonstatus-in-boolean-context`) — the
    DD#70 dual: a boolean context (if/elif/while/until cond, left of `&&`/`||`,
    operand of `!`) must consume a boolean/exit-status, so an assignment or
    declaration there is **SB4025**. Fixes the silent `x=hi && echo $x`.
@@ -50,7 +50,7 @@ native/c/janet** on every one (authoritative spec.db diff). Native passing
    left of `&&`/`||` and the `!` operand become boolean contexts.
    spec/errors.sh +e.br1-10.
 
-5. **assign-absorb** (`3ede406`) — an assignment is a value binding, not a
+5. **assign-absorb** (`000dd5a`) — an assignment is a value binding, not a
    connectable command, so its RHS absorbs `& && || |` (and operand puncts)
    as literals: `a=foo|cat` is the literal `foo|cat`, `a=foo&&bar` is
    `foo&&bar`. `parse_word_parts` gained an `AbsorbMode` enum

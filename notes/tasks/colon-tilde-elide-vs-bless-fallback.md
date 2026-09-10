@@ -49,7 +49,7 @@ port=$(getenv PORT)
 
 ## Important: the bless-fallback was NEVER implemented
 
-`git log -S':~'` shows `:~` first entered the parser at `496ece5` (DD#84, this
+`git log -S':~'` shows `:~` first entered the parser at `071fbb7` (DD#84, this
 session) — never before. The ratified `DD24-taint-quarantine.md` does **not**
 mention `:~` or `${var:~DEFAULT}` at all (its bless-on-failure is only "stderr +
 exit 1" / "false branch," no default value). The `:~8080` form lives **only** in

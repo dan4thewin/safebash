@@ -39,7 +39,7 @@ Rejected (SB5041): `cat …; fn cat {…}; cat …` (dynamic shadow); `echo $(f)
 
 `spec/functions.sh` 81.1–81.6 (81.4/81.5 are runtime → `native,c`; janet
 resolves an in-body plain call as an external exec, a pre-existing backend gap).
-Full `SPEC_MODES="native c janet"` sweep vs base `820f0cd`: **0 regressions**,
+Full `SPEC_MODES="native c janet"` sweep vs base `3081205`: **0 regressions**,
 native gate 0 failing, 16 new passing.
 
 ## Next (DD#81 remaining)

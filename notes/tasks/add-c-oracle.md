@@ -5,7 +5,7 @@ priority: P1
 kind: feature
 depends: []
 resolved: 2026-06-07
-resolution: All 6 planned phases landed (commits 5c3f77b → 012762b on hand-parser). 67 c_tests pass. 25/30 janet_tests cases reach parity via emit_c → gcc → bash diff; the 5 remainders are legitimate divergence (3 sash-rejected bash syntax, 2 sash extensions bash misinterprets). 38 sash-rt runtime functions wired; mirror-codegen architecture caught 6 bugs before runtime. Future per-feature work (regex_replace, glob, mapfile, subshells, traps, multi-target read, exotic intrinsics, spec/*.sh cross-check at scale) filed as separate tasks rather than continuing under this umbrella.
+resolution: All 6 planned phases landed (commits 831dfdc → 96b7dac on hand-parser). 67 c_tests pass. 25/30 janet_tests cases reach parity via emit_c → gcc → bash diff; the 5 remainders are legitimate divergence (3 sash-rejected bash syntax, 2 sash extensions bash misinterprets). 38 sash-rt runtime functions wired; mirror-codegen architecture caught 6 bugs before runtime. Future per-feature work (regex_replace, glob, mapfile, subshells, traps, multi-target read, exotic intrinsics, spec/*.sh cross-check at scale) filed as separate tasks rather than continuing under this umbrella.
 gates:
   - sash/src/emit_c.rs exists and compiles
   - --emit-c CLI flag prints generated C

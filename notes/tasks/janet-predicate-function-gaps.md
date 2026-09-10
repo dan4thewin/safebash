@@ -30,6 +30,6 @@ Remaining janet gaps (all pre-existing, surfaced while doing DD#74):
   `__negate_test_result` sigil).
 - **17.1** `x=$(func); …` — janet `$(func)` stdout capture of a user function.
 - **18.1-18.3, 42.1, 48.2** — other janet function/positional specs failing at
-  HEAD (0a6d690). Audit and fix or split into their own tasks.
+  HEAD (a8ac707). Audit and fix or split into their own tasks.
 
 native and c pass all of these.

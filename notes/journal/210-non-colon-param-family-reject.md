@@ -50,5 +50,5 @@ wrongly said bare `-` "matches bash / is unaffected" (that rested on the
 
 ### Verification
 
-Full 3-mode sweep vs HEAD `174164e`: **0 regressions** native/c/janet; +4 each
+Full 3-mode sweep vs HEAD `8979f1f`: **0 regressions** native/c/janet; +4 each
 (vm.dr19-22). fmt + clippy clean. DD#65 non-colon addendum recorded.

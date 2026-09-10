@@ -51,7 +51,7 @@ ICE-invariant.
 - Behavior spot-check: `for f in *.md`, `$(join a -)`, a func-constant, and
   `map m=([k]=v [j]=w)` all compile+run.
 - Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs base
-  `d92f992`: **0 passing→failing, 0 gone, 0 new**. Native gate 0 failing.
+  `373a174`: **0 passing→failing, 0 gone, 0 new**. Native gate 0 failing.
 
 No new specs: P2 is behavior-preserving — the panics were unreachable
 backstops, so removing the drift-ICE risk changes no observable output.

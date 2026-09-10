@@ -43,7 +43,7 @@ test path.
 
 These are the **only two** synthesizers of a numeric `[[ ]]` test
 (`grep '"-lt"' transform/`). Because they bypass validation, codegen
-*must* handle `-lt` — which is why DD#62 section A (commit `14bd0e0`)
+*must* handle `-lt` — which is why DD#62 section A (commit `a5b1678`)
 had to **restore** a numeric arm (`numeric_cc` + integer `icmp`) inside
 `codegen/tests.rs::lower_test_binary`, and a twin (`numeric_c_op` /
 `lower_numeric_test_c`) in `emit_c.rs`. That arm is a **band-aid**: it
@@ -105,7 +105,7 @@ DD#62 section A; correctness was never affected.)
 
 ## Cross-refs
 
-- Introduced by `dd62-test-expr-ssavalue` (section A, commit `14bd0e0`);
+- Introduced by `dd62-test-expr-ssavalue` (section A, commit `a5b1678`);
   journal 114.
 - Template: `transform/statements.rs::lower_arith_test_stmt`.
 - Memory: "Codegen must handle numeric `[[ ]]` ops … for-in synthesizes

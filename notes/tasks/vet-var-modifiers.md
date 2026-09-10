@@ -14,9 +14,9 @@ gates:
 # vet the `${var:OP}` modifier family
 
 > **DONE 2026-07-04.** All stages shipped: toupper/tolower builtins
-> (bff8f82), basename/dirname sugar (e755fc4), the `:-` word on the
-> `:- ≡ "…"` model (6ffe982), the drops → SB4034 uniform reject (85a9aaf),
-> and the dead-backend-dispatch removal (d1d3144). Replacement/migration
+> (896a424), basename/dirname sugar (bdcac8f), the `:-` word on the
+> `:- ≡ "…"` model (1788ee0), the drops → SB4034 uniform reject (7b6974f),
+> and the dead-backend-dispatch removal (39519e5). Replacement/migration
 > moved to sash-convert (task `converter-var-modifier-migration`). See
 > DD#65 and journal 129. Gates below all satisfied.
 

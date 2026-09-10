@@ -13,7 +13,7 @@ gates:
 # c/janet: `echo | read` inline-pipe unsupported
 
 Split from `cjanet-wordsplit-39-10-22-12` (the `\w` half was fixed in
-9ba4bbe; this `echo|read` half is a distinct, larger feature).
+2b06810; this `echo|read` half is a distinct, larger feature).
 
 `echo "clean" | read x; echo $x` → `clean` in native. In a pipeline whose
 last stage is the `read` builtin, `read` must consume the previous stage's
@@ -52,7 +52,7 @@ instead of spawning.
   and emit an in-process read + variable bind rather than os/spawn.
 - Then un-guard `wordsplit.sh` 22.12 (currently `in_modes native`).
 
-## RESOLVED (2026-07-14, commit dc10423)
+## RESOLVED (2026-07-14, commit 2f183c2)
 
 Implemented for c and janet, and extended beyond the single-`read` gate to
 the whole read/mapfile lastpipe family (22.4-22.10, 22.12).

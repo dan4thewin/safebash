@@ -62,7 +62,7 @@ change. Filed `bug-braced-nested-subscript-index.md`.
 ## Verification
 
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs HEAD
-(`52930e4`): 0 passing→failing, 0 gone, 12 new passing (dsx.1-2 ×3 modes,
+(`44043a1`): 0 passing→failing, 0 gone, 12 new passing (dsx.1-2 ×3 modes,
 nsx.1-3 ×native,c). `[[ ]]` forms spot-checked (compact `[[x==x]]`, dispatch
 arms, `return[[…]]`).
 

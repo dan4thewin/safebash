@@ -19,7 +19,7 @@ brief log. This session's design conversation ratified two things:
   strict validity; numeric-literal default; plus a `[[ -i … ]]` test. This
   subsumes a P1 silent-0 bug (bug-arith-param-expansion-operator-zero).
 
-Baseline (HEAD 9a823ea): native 0 failing; c/janet at their DD#76 baselines.
+Baseline (HEAD 3b4b28d): native 0 failing; c/janet at their DD#76 baselines.
 
 ## Point 1 — known-int literal reassignment (DONE)
 

@@ -83,7 +83,7 @@ janet (74.19/74.20 run there). Filed `notes/tasks/janet-return-composite-
 producer.md`.
 
 Native + c: 0 regressions (authoritative latest-run-per-test diff vs HEAD
-`496ece5`); 12 new passing (5 native + 5 c + 2 janet), 0 new failing.
+`071fbb7`); 12 new passing (5 native + 5 c + 2 janet), 0 new failing.
 
 ## Also observed — `X | ! Y` (a separate, pre-existing bug; NOT fixed here)
 

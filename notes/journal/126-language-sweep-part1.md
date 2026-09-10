@@ -7,11 +7,11 @@ throughout; native gate clean.
 ## Shipped this turn (pushed)
 
 1. **dd67 sugar** — verified already-shipped: `name()`/`function`/flat &
-   nested backticks (SB5020)/`[`-literal (e9849ad/def5c40/c3875d1). The
+   nested backticks (SB5020)/`[`-literal (ee12efd/feb244e/45648a9). The
    remaining §3 (sash-convert canonicalize) is coupled to dd68's brace
    forms; deferred there.
 
-2. **dd68 brace control flow** (c98ed29) — `if/while/until/for { }` bodies
+2. **dd68 brace control flow** (217b25d) — `if/while/until/for { }` bodies
    alongside `then/do` sugar. Parser-only, identical IR (verified
    brace==keyword in all 3 backends). Command arg parsing now stops at a
    top-level `{`. `else if` = else + nested if. Brace-group condition /
@@ -19,7 +19,7 @@ throughout; native gate clean.
    like convert.sh); pre-existing c/janet cf gaps filed
    (`cf-backend-gaps-brace-surfaced`).
 
-3. **dd66 dispatch form — additive** (5231dd1) —
+3. **dd66 dispatch form — additive** (292a046) —
    `[[ SUBJECT ==|=~ PATTERN { grp } … || { grp } ]]`. `==` exact, `=~`
    unanchored regex; first-match-wins; `|| { }` default; statement-only
    (SB4028). `ir::Case` gained an `op` field; `build_dispatch_chain`

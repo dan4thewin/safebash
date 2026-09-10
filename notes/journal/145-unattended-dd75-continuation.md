@@ -76,7 +76,7 @@ reject.
 gate-1 transform path handles it with no new arm. `${#a}`→count,
 `${#s}`→bytes, `${#m}`→entries; `${x}`/`$#` unaffected.
 
-**Correction to gate 1:** my a80d94d note "green in janet" for 58.10–13 was
+**Correction to gate 1:** my 51c3754 note "green in janet" for 58.10–13 was
 WRONG — janet emits an undefined `(len …)` symbol (its builtin is `length`),
 so `len` in arith-operand position fails in janet. I misread a stale spec.db
 row. Fixed here: guarded 58.10–16 to native,c and filed the janet gap
@@ -88,9 +88,9 @@ aggregated spec.db row when a test is freshly (re)guarded.
 ## Session summary (2026-08-14 unattended)
 
 Landed (test-first, all pushed on hand-parser):
-- ab184c0 bug-subscript-assign-bare-key (P2) — `a[i]=` bare key reject.
-- dc9f8df dd75-keys-map-only (P3) — keys map-only + For-arm type-check.
-- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 —
+- 7193ba6 bug-subscript-assign-bare-key (P2) — `a[i]=` bare key reject.
+- a17909f dd75-keys-map-only (P3) — keys map-only + For-arm type-check.
+- 51c3754 + dcadfd9 intrinsics-lengths-in-arithmetic gates 1+2 —
   `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` evaluate (DG demo).
 
 All: native 0 failing; c 13 / janet 36 == baseline. Filed janet gaps
@@ -125,10 +125,10 @@ baseline.
 ## Session close (2026-08-14 unattended)
 
 5 tasks landed (test-first, pushed on hand-parser):
-- ab184c0 bug-subscript-assign-bare-key (P2)
-- dc9f8df dd75-keys-map-only (P3)
-- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 (P2, demo)
-- 84c28ce string-func-capture-in-arg-ice (P2, DG: lift-and-print)
+- 7193ba6 bug-subscript-assign-bare-key (P2)
+- a17909f dd75-keys-map-only (P3)
+- 51c3754 + dcadfd9 intrinsics-lengths-in-arithmetic gates 1+2 (P2, demo)
+- 418455f string-func-capture-in-arg-ice (P2, DG: lift-and-print)
 
 All native 0 failing; c 13 / janet 36 == baseline. Filed janet/c backend gaps
 (join/keys/len-in-arith, function-stdout-capture).
@@ -204,7 +204,7 @@ echo $(( $$ > 0 ))      → 0     (BUG — should be 1)
 ```
 
 `$#` was unaffected (it is a materialized var slot). Pre-existing (repro at
-HEAD bef23d9). Violates DD#24 (lists `$#`,`$?`,`$$`,`$!` as clean operands) and
+HEAD ffa9bc7). Violates DD#24 (lists `$#`,`$?`,`$$`,`$!` as clean operands) and
 DD#31 (`$(( ))` accepts arithmetic on clean operands).
 
 **Root cause.** The string codegen path (`lower_value`/`lower_var_value`,
@@ -274,11 +274,11 @@ judgment the prior session used before the retire-bracket parser change. DG's
 nod on approach (a) vs (b) wanted before coding.
 
 ### This continuation delivered (all pushed, hand-parser, 0 native regressions):
-- bef23d9 — dd75-retire-bracket-subscripts (§4): [@]/[*] bracket forms → SB4038
+- ffa9bc7 — dd75-retire-bracket-subscripts (§4): [@]/[*] bracket forms → SB4038
   at parse; @a is the sole splat.
-- 598d228 — bug fix: `$$`/`$?` silent-0 as a compound-arith operand (found while
+- f4bcecc — bug fix: `$$`/`$?` silent-0 as a compound-arith operand (found while
   assessing §1; native lower_value_as_int now computes the computed specials).
-- 1890135 — dd75-special-var-sugar (§1): equivalence pinned, SB5012 reframed to
+- 8593427 — dd75-special-var-sugar (§1): equivalence pinned, SB5012 reframed to
   canonical, DD#75/DD#24 docs.
 
 DD#75 status: §1 done, §2 (len) done, §3 (keys) done, §4 (retire bracket) done,

@@ -1,7 +1,7 @@
 title: Opus 4.7 Review of the 4.6-Era Refactors
 date: 2026-05-26
 reviewer: Opus 4.7 (Copilot CLI)
-spec: 285/285 passing at 8caf908
+spec: 285/285 passing at 3e7b15e
 
 # Opus 4.7 Review
 
@@ -24,14 +24,14 @@ by DG. Sources consulted: ~80 commits since 2026-05-01,
 
 | Area | Evidence |
 |---|---|
-| Hand-written parser migration | `parse/{lexer,parser,expr,arith}.rs` ~4.8K lines, tree-sitter removed from compile path (`73caecf`) |
+| Hand-written parser migration | `parse/{lexer,parser,expr,arith}.rs` ~4.8K lines, tree-sitter removed from compile path (`1c0e64a`) |
 | IR-based validator | `validate.rs` ~1087 lines, replaces ~1600 lines of CST rules + 975-line `taint.rs` |
 | Code structure | 65 source files; `codegen/`, `transform/`, `parse/` modular; setup/dispatch/inst_handlers split out |
-| Quality gates | `mk fmt lint check coverage complexity` (`a3f70a2`); `clippy -D warnings` clean (`e695fda`) |
+| Quality gates | `mk fmt lint check coverage complexity` (`112042b`); `clippy -D warnings` clean (`cc91716`) |
 | Spec correctness | 285/285 passing (spec.db). status.md is stale at "267/15 failing". |
 | Complexity reductions | Max CC dropped 277 → 140 → 88 across the session. |
-| Literate restructuring | Module docs + `// ── section ──` headers + TRUST:/SECURITY: annotations (`81cc663`, `3248096`) |
-| Abstraction extractions | `Expr::literal/param`, `Statement::true_cmd/child_bodies/direct_exprs`, `walk_all_exprs` (`273b145`, `8caf908`) |
+| Literate restructuring | Module docs + `// ── section ──` headers + TRUST:/SECURITY: annotations (`7b8302e`, `0311fd1`) |
+| Abstraction extractions | `Expr::literal/param`, `Statement::true_cmd/child_bodies/direct_exprs`, `walk_all_exprs` (`57021f4`, `3e7b15e`) |
 | Adversarial audit run-2 | 5 models, 12 findings, all fixed, regression-locked with tests |
 | Design discipline | 46 design decisions, one file each, with status frontmatter |
 
@@ -42,7 +42,7 @@ by DG. Sources consulted: ~80 commits since 2026-05-01,
 | Correctness | A | 285/285 spec, ~700 Rust tests. Hand-parser delivered 97.5% specs in a single shot per postmortem. |
 | Architecture / clarity | A− | One parser → IR → validate → transform → SSA → codegen. Module docs are real reading guides. |
 | Complexity reduction | B+ | Max CC from 277 to 88, but top-10 still 54–88 (`tokenize_arith`, `next_token`, `intern_literals`, `cli_main`, `scan_double_quoted`, `emit`). |
-| Coverage | B | Baseline 71.3% lines (`a3f70a2`). Measure-only, no gate. `ssa_printer.rs` at 0% in last report. |
+| Coverage | B | Baseline 71.3% lines (`112042b`). Measure-only, no gate. `ssa_printer.rs` at 0% in last report. |
 | Lint/format gates | B+ | `clippy -D warnings` enforced. `fmt --check` exists but baseline was 1137 diffs — never closed. |
 | Documentation | A | AGENTS.md, 46 decisions, 54-entry journal, parser postmortem, audit run-1/run-2. Auditable. |
 | Process discipline | B− | Two excellent self-postmortems (parser, monitoring). Their existence is also evidence of mid-session detours DG had to correct. |
@@ -63,7 +63,7 @@ it stands or by 4.6's own postmortems.
 
 - Pratt-parser arithmetic was the right call (per DG's
   [parser-migration-postmortem](parser-migration-postmortem) addendum #3)
-  and the text-based path was deleted (`10e8275`, `7717a2f`). Good. Now
+  and the text-based path was deleted (`c8b4a55`, `e235a89`). Good. Now
   `arith.rs:295 tokenize_arith` is CC 88 and `parse_expr` is CC 54 —
   those should be the first targets of the next refactor pass, not
   lower-frequency functions.
@@ -83,7 +83,7 @@ it stands or by 4.6's own postmortems.
 
 ### 3. Stop extracting at CC 45
 
-Recent commits (`9eff657`, `7e9baec`, `8cb2f13`) extracted single arms
+Recent commits (`8854c2b`, `1b867c4`, `ac04657`) extracted single arms
 from a `match` into named methods. Below ~50 the extractions become
 noise — diff churn that hurts review. Set the threshold at 50 and
 enforce it instead of grinding everything below it.

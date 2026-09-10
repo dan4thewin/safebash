@@ -9,7 +9,7 @@ gates:
   - "boolean `[[a==a]]` and dispatch `[[$x==a{…}]]` agree on operator spacing"
 ---
 
-## Resolution (2026-08-10, ee3a2fa)
+## Resolution (2026-08-10, 3bca6b1)
 
 DG chose **loosen** — the dispatch parser now accepts a compact `==`/`=~`,
 matching the boolean test. Tightening was rejected because it would have

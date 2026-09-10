@@ -64,7 +64,7 @@ array; a map reads a numeric key quoted (`${m["5"]}`). Spec 80.16.
 ## Verification
 
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs HEAD
-(`5fc9e05`): **0 passing→failing, 0 gone, 51 new passing**; 57 subscript specs
+(`2675ce5`): **0 passing→failing, 0 gone, 51 new passing**; 57 subscript specs
 (19×3) green; native gate 0 failing. clippy/fmt clean. Arith-context asx.1/asx.2
 intact. Filed `converter-braced-subscript-index` (bash arithmetic subscripts →
 sash explicit forms — the converter has no subscript handling today, nothing

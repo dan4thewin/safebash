@@ -28,7 +28,7 @@ int literal → `"0"` (meaningful-zero). Pre-existing; surfaced by scope.sh 86.5
 
 specs `spec/scope.sh` 86.1–6 (all three modes): `str` no-init `""`, init,
 global-write-from-function, `+=`, `int`/`str` parallel, and the read-in-one-fn /
-write-in-another method pattern. Full 3-mode sweep vs HEAD `031b5f5`: **0
+write-in-another method pattern. Full 3-mode sweep vs HEAD `29e6426`: **0
 regressions, +18 passing** (86.1–6 × 3).
 
 Note: `str s` no-init read only became clean once the DD#87 runtime

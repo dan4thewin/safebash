@@ -34,7 +34,7 @@ handles of the running program" use case).
 ### Verification
 
 Specs coverage.sh cov.86-88 (all modes — parse reject). Full 3-mode sweep vs
-HEAD `ad5c557`: **0 regressions**, +3 each (cov.86-88). fmt + clippy clean.
+HEAD `d46d051`: **0 regressions**, +3 each (cov.86-88). fmt + clippy clean.
 No redirect DD existed (checked — not deliberate). Bug task marked done.
 
 ### Backlog note

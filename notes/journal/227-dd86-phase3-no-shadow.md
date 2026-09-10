@@ -38,7 +38,7 @@ local.
 
 `spec/scope.sh` 86.7–86.12 (native,c,janet): `int`/`str`/`const`/`array`
 re-declaration of a global inside a fn → SB5049; a bare global write and
-a fresh fn-local are *not* flagged. Full 3-mode sweep vs HEAD `b935e28`:
+a fresh fn-local are *not* flagged. Full 3-mode sweep vs HEAD `dcf2c97`:
 **native 0 regressions +6, c 0 regressions +6**, janet +8 (the six plus
 Phase 2's 18.1/18.2, which janet now also passes). No existing spec
 shadowed a global, so nothing needed rewriting.

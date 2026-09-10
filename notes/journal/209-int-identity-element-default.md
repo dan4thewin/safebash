@@ -66,7 +66,7 @@ keeps the disposition homogeneously int.
 
 Specs coverage.sh cov.78/80/81 (positives, all modes), cov.82/83/84 (rejects,
 all modes), cov.85 (int-cell positive, native+c). Full 3-mode sweep, latest-
-run-per-test diff vs HEAD `328e529`: **0 regressions** native / c / janet;
+run-per-test diff vs HEAD `91dddfb`: **0 regressions** native / c / janet;
 native+6, c+6, janet+5 new passing, c:cov.78 skip→pass. fmt + clippy clean;
 new functions pass the cog/cc gate (`walk_value_default` cc=9, cog=1).
 

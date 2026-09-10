@@ -8,7 +8,7 @@ gates:
   - "per-function signature inferred from args usage: literal index → fixed contiguous {0..max}; @args / $(len args) (sugar ${#args}/$#) / dynamic ${args[$i]} → variadic (floor = max literal index+1)"
   - "hole (non-contiguous literal indices, rule (a): full {0..max} must be read) → SB5044 at fn definition"
   - "every call site checked: fixed → exactly N (SB5042 too-few, SB5043 too-many); variadic → ≥ floor (SB5042)"
-  - "applied on all three call paths: plain (inline_function_call), pipeline (build_function_pipeline_stage), capture ($() — now carries arg count after 9fc930c)"
+  - "applied on all three call paths: plain (inline_function_call), pipeline (build_function_pipeline_stage), capture ($() — now carries arg count after 50474e9)"
   - "existing un-coded 'reads $N but called with only M' diagnostic folds into SB5042"
   - "0 regressions native/c/janet; native gate 0"
 ---
@@ -16,7 +16,7 @@ gates:
 ## Context
 
 DD#81 Part A (shadowing/name resolution), the func_constants removal, and the
-`$(f arg)` arg-passing fix are all shipped (commits c09a4a3, f9f16f5, 9fc930c).
+`$(f arg)` arg-passing fix are all shipped (commits d73c69e, 56e4c17, 50474e9).
 Part B — the *arity* half of DD#81 — remains. See
 `notes/decisions/DD81-function-call-discipline.md` §"Part B" for the full rule
 (hole rule (a) is decided).

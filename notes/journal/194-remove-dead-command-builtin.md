@@ -7,7 +7,7 @@ validator with **SB4001** (`check_dynexec`, alongside `eval`/`source`/`.`).
 
 DD#23 is explicit: *"No `command` builtin in sash-native — it's a coercion
 target only"* (`command -v` becomes `[[ -x /path ]]`). The validator rejection
-(commit `d455d98`) post-dates the codegen, so `emit_command_builtin` and the
+(commit `99c6fef`) post-dates the codegen, so `emit_command_builtin` and the
 whole `BuiltinCmd::CommandBuiltin` chain are dead-by-design vestige — the
 pipeline stops at validation, never reaching transform/codegen.
 

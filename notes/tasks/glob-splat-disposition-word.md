@@ -45,7 +45,7 @@ The WORD semantics were a genuine design choice; **DG resolved them on
 
 The shared **word machinery** the resolution couples to is **already
 built**: the scalar `${x:-WORD}` default now interpolates fully (commit
-`6ffe982`, DD#65 stage). So `@{a:-WORD}` reuses that same word lowering
+`1788ee0`, DD#65 stage). So `@{a:-WORD}` reuses that same word lowering
 (interpolation + concat + quoting), substituting the result as one element.
 No blocker remains.
 

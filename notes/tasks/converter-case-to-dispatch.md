@@ -25,7 +25,7 @@ auto-generated regex can be subtly wrong and must get human eyes. So:
 
 - **All-literal case → auto-rewrite, compilable.** Single-literal arms
   and literal `a|b|c` alternation arms map to a `==` dispatch, using
-  **multi-exact** (DD#71, commit `ce2dfec`): `[[ $x == a b c { … } ]]`.
+  **multi-exact** (DD#71, commit `e9fc520`): `[[ $x == a b c { … } ]]`.
   `*)` → `|| { … }`. Arm bodies still get their inner conversions
   (`$HOME`→`$(getenv HOME)`, etc.). Emit an informational
   `# sash-convert:` comment (mechanical-rewrite convention from

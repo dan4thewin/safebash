@@ -74,7 +74,7 @@ through janet's elide path.
   native,c — janet lacks `getenv` (pre-existing). plan 118→129.
 - `var_modifiers.sh` vm.bl13–15 (`$( )`/`$(( ))` operands; external-capture still
   SB5020). vm.bl13 gated native,c (janet positional-default bug). plan 69→72.
-- Full 3-mode sweep vs HEAD (`f1decc8`): **0 regressions**, 42 new (38 passing, 4
+- Full 3-mode sweep vs HEAD (`05dda23`): **0 regressions**, 42 new (38 passing, 4
   janet-gated skips). Rust taint_spec 25 / e2e 47 = baseline (0 new failures).
   fmt/clippy clean.
 

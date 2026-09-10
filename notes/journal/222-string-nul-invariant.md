@@ -57,7 +57,7 @@ substring middle/empty, join, mixed order) through `/bin/echo`, exact-match. The
 class was invisible before because specs used the builtin echo; these
 deliberately use the external one.
 
-Full 3-mode sweep vs HEAD `0d4aeca`: **0 regressions, +16 passing** (xa.1–8 ×
+Full 3-mode sweep vs HEAD `9a145af`: **0 regressions, +16 passing** (xa.1–8 ×
 native+c), 0 new failing. sash-rt-tests 32/32. The `+1` byte and the one
 substring copy are the only runtime cost; internal length-based ops are
 unchanged. DD#87. (Found incidentally during DD#86; that work is paused,

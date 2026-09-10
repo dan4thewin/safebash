@@ -33,7 +33,7 @@ as-is (arith `$(( args[0] ))` stays SB5031, not an ICE) and filed
 
 ## Verification
 
-Full `SPEC_MODES="native c janet"` sweep, diff vs HEAD (`675f2d4`): 0
+Full `SPEC_MODES="native c janet"` sweep, diff vs HEAD (`2bac342`): 0
 passing→failing, 0 gone, 9 new passing (ud.19-21 ×3); native gate 0. Spot-checked
 `${z[0]}`/`${z[k]}`/`$z[0]` → SB5031; declared `${a[0]}`/`${m[k]}`, in-function
 `${args[0]}`, for-loop `${arr[$i]}`, top-level `${args[0]}`→SB5024 all intact.

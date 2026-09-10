@@ -103,9 +103,9 @@ Their unique findings:
 
 ### Failure counts drift across commits — re-inventory at fix time
 Snapshots (single-threaded, illustrative, not a target):
-- 2026-06-16 `59d7123`: codegen 186/71, e2e 93/31, oracle 45/18,
+- 2026-06-16 `a206fec`: codegen 186/71, e2e 93/31, oracle 45/18,
   taint_spec 17/25, janet 24/11, brush 25/27, c 62/5 — ~158 total.
-- 2026-06-25 `5498ca3`: codegen 202/54, e2e 101/23, oracle 51/12,
+- 2026-06-25 `ea556b3`: codegen 202/54, e2e 101/23, oracle 51/12,
   janet 26/9, taint_spec 18/24; `sash-rt-tests` won't link; brush not
   installed.
 The set shifts as the compiler changes, so inventory fresh when the work
@@ -153,7 +153,7 @@ let output = cmd.output().expect("run");
 
 No `Stdio::null()` on stdin, so a binary that waits on stdin blocks the whole
 suite — exactly the defect fixed in `spec/common.sh` on 2026-09-09 (commit
-e2aed41), where the fix was `</dev/null` plus a `timeout` on every child.
+79d2f27), where the fix was `</dev/null` plus a `timeout` on every child.
 
 **Fix that first.** Until the runner cannot hang, the suite cannot even report
 what is wrong with it, and `cargo test` is unusable as a gate.

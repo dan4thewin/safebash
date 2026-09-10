@@ -4,7 +4,7 @@ Continuation of the coverage grind (journal 189). After DD#81 universally
 rejected `$@`/`$*` at validation (they never reach transform or codegen), two
 whole machineries went dead. Removed in two batches:
 
-## codegen side (`ed95432`, prior)
+## codegen side (`0c5c4aa`, prior)
 
 `emit_exec_with_dollar_at` / `has_dollar_at` / `is_dollar_at` /
 `splice_in_program_argv` in `codegen/dispatch.rs` — the exec path that spliced

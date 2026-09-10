@@ -12,7 +12,7 @@ gates:
 ## Done (2026-08-29) — superseded by decollide-spec-chk-ids.md
 
 Resolved as part of a full-suite de-collision. The only real overlap was
-14.7/14.8 (commands.sh moved to 14.17/14.18, commit de79db9); commands.sh
+14.7/14.8 (commands.sh moved to 14.17/14.18, commit baa7288); commands.sh
 (14.1-14.6, 14.17-14.18) and wordsplit.sh (14.7-14.9) are now disjoint. The
 broader audit + fixes (4 more cross-file pairs + types.sh internal duplicates +
 errors.sh 55.30) are recorded in `decollide-spec-chk-ids.md`, which also carries

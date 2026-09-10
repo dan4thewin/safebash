@@ -11,7 +11,7 @@ gates:
   - "no spec/rust regression; --extract still round-trips the source"
 ---
 
-> **DONE / already excised — verified 2026-07-08.** Commit `4e87034`
+> **DONE / already excised — verified 2026-07-08.** Commit `3a352ef`
 > ("dead code: remove vestigial emit_source module — Coercion never
 > constructed") already removed exactly the option-1 (excise) scope. There
 > is no `emit_source.rs` and zero `Coercion`/`COERCIONS` references in the
@@ -34,7 +34,7 @@ embed_sash_source` stores the result in the `.sash_source` ELF Note
 section (DD#45; retrievable via `--extract`).
 
 **The recorder is gone.** The code that pushed `Coercion`s lived in the
-old CST→IR `lower/`, deleted with tree-sitter in commit `73caecf`.
+old CST→IR `lower/`, deleted with tree-sitter in commit `1c0e64a`.
 Nothing now writes to `COERCIONS`, so:
 
 - the list is always empty,
@@ -67,5 +67,5 @@ Recommend (1) unless there's an intent to make the in-binary
 ## Discovery
 
 2026-06-21, while correcting the stale "emit from CST" docs (commit
-`c15b430`). The doc fix documented the dormancy; this task tracks the
+`199b098`). The doc fix documented the dormancy; this task tracks the
 cleanup decision.

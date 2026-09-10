@@ -30,7 +30,7 @@ carries on with an empty value it believes it read.
 ## Why it is not the pipeline-stage bug
 
 Separate from `bug-pipeline-stage-input-redirect-dropped` (fixed 2026-09-09,
-commit f546c4f): there the fd was wrong, so the redirect went to the stage's
+commit b57e1ec): there the fd was wrong, so the redirect went to the stage's
 stdout. Here the fd is right and the read works when the file exists — only
 the **open failure** is unchecked.
 

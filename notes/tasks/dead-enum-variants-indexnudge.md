@@ -117,11 +117,11 @@ process.
 
 | variant | commit | scrutiny note |
 |---|---|---|
-| `SsaInst::Phi` | 3335996 | phis live in `block.phis`; inst-arm was a no-op |
-| `TestExpr::Paren` | 714b8e7 | parens flattened at parse; cascaded to dead `SsaTest::Paren` |
-| `ArithOp::Not` | 129298c | unary `!` uses `IrUnaryArithOp::Not`; removed the ICE panic arm |
-| `RedirectOp::HereDoc` | d4b576c | heredocs dropped (SB5002); closed finish-heredoc-removal |
-| `StmtKind::Subshell` | 44274b2 | DD#38 rejects subshells; cascaded to `Subshell` struct, `lower_subshell_stmt`, `BuiltinCmd::SubshellWait`, `emit_subshell*` |
+| `SsaInst::Phi` | 6b28253 | phis live in `block.phis`; inst-arm was a no-op |
+| `TestExpr::Paren` | 6b0a6b6 | parens flattened at parse; cascaded to dead `SsaTest::Paren` |
+| `ArithOp::Not` | 7aea404 | unary `!` uses `IrUnaryArithOp::Not`; removed the ICE panic arm |
+| `RedirectOp::HereDoc` | e639cf3 | heredocs dropped (SB5002); closed finish-heredoc-removal |
+| `StmtKind::Subshell` | 96c48e6 | DD#38 rejects subshells; cascaded to `Subshell` struct, `lower_subshell_stmt`, `BuiltinCmd::SubshellWait`, `emit_subshell*` |
 
 **Corrections to the original task's claims** (per DG's "scrutinize"):
 - It implied each was a tiny removal; **Paren and Subshell cascaded** to a

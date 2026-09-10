@@ -51,7 +51,7 @@ args while the body does `(scan-number (get _args 0))` — scan-number errors
 on a number. Fixing the string/number coercion here (a `number?`-guarded
 coerce, or passing string args) unblocks janet spec 58.2 and 58.3.
 
-## RESOLVED (2026-07-14, commit 28db76d)
+## RESOLVED (2026-07-14, commit e91a9ac)
 
 Added a `_num` preamble helper coercing arith operands to int at each use
 site (bare `x`, `$x`, `$1`, compound-assign target read, inc/dec). DD#72

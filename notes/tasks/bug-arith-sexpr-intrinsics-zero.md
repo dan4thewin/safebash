@@ -125,7 +125,7 @@ does not use it.
 
 # Resolved decisions (2026-08-15, DG) — governed by Option C
 
-**Governing model: Option C** (`0a6d690`; DD#58/DD#17 amended in place). `$(...)`
+**Governing model: Option C** (`a8ac707`; DD#58/DD#17 amended in place). `$(...)`
 is return-type-polymorphic — it captures the callee's declared result (int
 `return` for `-> int` fns / int intrinsics, stdout string for string fns). An
 **int producer** (user `-> int` fn OR int intrinsic) works in **both** `$(f)`
@@ -159,7 +159,7 @@ raised and **rejected** — it contradicted Option C).
 
 Supersedes `bug-arith-keyword-pid-intrinsic-zero` (which named only getpid/
 getcpid/random). The `$$`/`$?` *punctuation-sugar* siblings of this bug were
-already fixed (commit 598d228: native `lower_value_as_int` computes the computed
+already fixed (commit f4bcecc: native `lower_value_as_int` computes the computed
 specials). This task is the *keyword/sexpr* surface — a different mechanism
 (int-intrinsic dispatch in the transform), and the broader of the two. Found
 2026-08-14 while assessing DD#75 §1. `bug-janet-special-var-arith` tracks the
@@ -167,14 +167,14 @@ janet side of `$$` in arith and the janet getpid-exec / arith-status gaps.
 
 Decisions taken 2026-08-15. During that discussion the AI briefly
 mis-recommended retiring `$()` for int producers — it was reading the **stale**
-DD#58/DD#17 "type error" wording, unaware Option C (`0a6d690`, THIS session) had
+DD#58/DD#17 "type error" wording, unaware Option C (`a8ac707`, THIS session) had
 already superseded it and was never written into the DDs. Fixed as part of this
 work: DD#58 + DD#17 amended in place with Option C banners; the done task
 `dd58-sexpr-int-functions.md` point 2 noted superseded.
 
 ## DONE (2026-08-15)
 
-Part 1 (9f85526): category A int intrinsics compute in a sexpr (native direct-i64
+Part 1 (d42cac5): category A int intrinsics compute in a sexpr (native direct-i64
 via `int_intrinsic_i64`, c via atoi fallback); `(getpid)`→`$$`, `(status)`→`$?`,
 `(getppid)/(argc)/(random)/(signum)/(epochseconds)`→CmdSubst. Also fixed the
 `$(( (x) ))` grouping bug (→0) and Q3 (`random` int-typed). signum native-only

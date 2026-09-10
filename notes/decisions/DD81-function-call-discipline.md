@@ -182,9 +182,9 @@ should controlled dynamic behaviour ever be wanted back).
 
 ## Implemented
 
-- **Part A** (c09a4a3) — SB5041 shadowing/forward-ref rejection; `$(f)` gate
+- **Part A** (d73c69e) — SB5041 shadowing/forward-ref rejection; `$(f)` gate
   unified onto the plain-call `function_bodies` gate. + func_constants removal
-  (f9f16f5), `$(f arg)` capture args (9fc930c).
+  (56e4c17), `$(f arg)` capture args (50474e9).
 - **Part B** — `transform/functions.rs::analyze_arity` infers `Arity`
   (`Fixed(n)` / `Variadic{floor}`) by walking the body's `args` reads
   (`$N`/`${args[k]}` literal → fixed index; `@args`/`$(len args)`/`${#args}`/

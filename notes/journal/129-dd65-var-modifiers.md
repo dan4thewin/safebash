@@ -7,13 +7,13 @@ next and final stage.
 
 ## Stages shipped
 
-1. **toupper/tolower builtins** (bff8f82) — `$(toupper s)` / `$(tolower s)`,
+1. **toupper/tolower builtins** (896a424) — `$(toupper s)` / `$(tolower s)`,
    the awk-named replacements for the moved `^^`/`,,`. `BuiltinCmd` +
    `SsaValue::CaseConvert { subject, upper }`, reusing the existing
    `sash_toupper_all`/`sash_tolower_all` runtime and `emit_case_conversion`.
    Janet uses `string/ascii-upper`/`-lower`.
 
-2. **basename/dirname sugar** (e755fc4) — rewritten at compile time to a
+2. **basename/dirname sugar** (bdcac8f) — rewritten at compile time to a
    fixed-pattern `sub` (`.*/` and `/[^/]*$`, empty replacement), reusing the
    whole `RegexReplace` path. No fork, no taint, no DD#23 dependency.
 

@@ -16,7 +16,7 @@ emitting Janet S-expressions. Repeated patterns:
 Audit verdict: **A**. The note recommended per-operator helpers
 shared with `handle_param_expansion` (pattern #4); the codegen
 side (handle_param_expansion) was already cleared in commit
-`394a6ad`, but the Janet emit side shares no Rust code — the
+`fbc898a`, but the Janet emit side shares no Rust code — the
 target output is a string of Janet S-exprs, not Cranelift IR. So
 the helpers here stand on their own.
 

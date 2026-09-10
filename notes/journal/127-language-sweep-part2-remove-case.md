@@ -6,10 +6,10 @@ date: 2026-07-04
 # Language sweep part 2 — `case` removed (DD#66 destructive half)
 
 DG: "continue — remove case first." The additive `[[ ]]` dispatch form
-landed part 1 (5231dd1); this is the destructive half that deletes the
+landed part 1 (292a046); this is the destructive half that deletes the
 legacy `case…esac` construct now that dispatch covers it.
 
-## What shipped (f71c04a)
+## What shipped (05d2df0)
 
 Spec-first: migrated the specs, watched the reject go red→green, then
 removed the construct.

@@ -11,7 +11,7 @@ gates:
   - "no rust/spec regression (every && / || chain re-associates — verify the whole suite)"
 ---
 
-> **Done in `4abe44a` (fix(parser): && / || are left-associative).**
+> **Done in `dad1dfe` (fix(parser): && / || are left-associative).**
 > Verified 2026-06-21: `false && echo A || echo B` → B; `[[ 1 = 2 ]] && echo
 > A || echo B` → B; `true && echo A || echo B && echo C` → "A C";
 > `false || echo A && echo B` → "A B" — all match bash. The backend

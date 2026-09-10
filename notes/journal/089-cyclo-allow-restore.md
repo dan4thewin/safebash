@@ -7,7 +7,7 @@ top 5 hits were intrinsics (`print_arith_expr`, `to_tok`,
 `arith_expr_to_janet`, `print_stmt`) — all annotated with
 `// cyclo-allow:` but the annotation was dead-letter.
 
-Wanted to restore the original 2026-05-31 intent (commit `1dc651e`):
+Wanted to restore the original 2026-05-31 intent (commit `bf77969`):
 intrinsics filtered out, only "real" CC hotspots surface.
 
 ## Background
@@ -15,7 +15,7 @@ intrinsics filtered out, only "real" CC hotspots surface.
 Three artifacts coexisted briefly in late May 2026:
 
 1. **`contrib/cyclo.sh`** — top-N report tool, filtered by
-   `.cyclo-allow`. **Retired in `967af30`** when indexnudge v9 landed.
+   `.cyclo-allow`. **Retired in `30c33a0`** when indexnudge v9 landed.
 2. **`.cyclo-allow`** (repo root, 119 lines) — `path::fn # rationale`
    whitelist consumed by cyclo.sh. **Deleted** alongside cyclo.sh.
 3. **`// cyclo-allow: <reason>`** comments above each whitelisted fn —
@@ -113,7 +113,7 @@ This restores a **load-bearing tooling signal** at low cost:
 - `sash/src/parse/lexer.rs:1147` — added missing `// cyclo-allow:`
   above `classify_word_token`.
 - `contrib/cyclo_insert_allow_comments.py` — **deleted**.
-- Plan refreshed (Phase 9 results table through `e403807`; Phase 11
+- Plan refreshed (Phase 9 results table through `d90f831`; Phase 11
   documents this housekeeping).
 
 ## Gates

@@ -17,7 +17,7 @@ builtins**, spec-first, with DG steering the model over many turns.
   (`match`, `[[ ]]`, `-> int` returns). Discard is a compile error
   (SB4016 already implements this). No suppression; use `|| :`.
 
-### Bugs fixed (commits 8a40ddc, f9d833b)
+### Bugs fixed (commits c232b75, 313843a)
 
 1. **cd** never set `test_result` and never aborted — `if cd /tmp` took
    the else branch, and a failed `cd` silently continued. Now threads the

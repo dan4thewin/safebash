@@ -1,6 +1,6 @@
 title: DD#71 — Operand words: `=~`/`==` RHS and assignment values are plain words; value positions aren't connectable commands
 status: accepted
-implemented: 2026-07-04 (Cluster A — see journal 128; commits 95491f5,9c71a99,ce2dfec,fee53a6,3ede406)
+implemented: 2026-07-04 (Cluster A — see journal 128; commits 9424d66,60c667b,e9fc520,1c2e74f,000dd5a)
 
 Decided with DG 2026-07-04, out of the DD#66 dispatch follow-up. Started
 as "how does a `=~` regex include a space?" and generalised into a single

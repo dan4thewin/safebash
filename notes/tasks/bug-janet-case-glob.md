@@ -11,7 +11,7 @@ gates:
 
 # BUG — janet case emits glob patterns as exact literals
 
-> **Resolved 2026-07-04 (f71c04a), dissolved by DD#66** — as this task
+> **Resolved 2026-07-04 (05d2df0), dissolved by DD#66** — as this task
 > predicted ("Likely mooted by DD#66"). `case` is removed; case patterns
 > can no longer be globs at all (dispatch is `==` exact or `=~` regex).
 > The legacy string-match glob path (`=glob`/`fnmatch_impl`) is deleted in

@@ -58,7 +58,7 @@ exhaustiveness check drove the sweep — 9 sites):
 
 ### Verify
 
-Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs `be6837e`:
+Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs `b8d2a13`:
 **0 regressions all three modes, +1 (14.25) each**; 24.6 stayed passing. fmt +
 clippy clean (fixed a clippy `match`→`if` on the now-single-arm redirect
 dispatch). Probed: `<<< X` rejects in native/c/janet; `echo $x | read v` clean +

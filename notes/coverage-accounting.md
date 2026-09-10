@@ -115,10 +115,10 @@ The functions it labelled false positives — `incdec_to_ssa`,
 
 | code | shadowed by | commit |
 |------|-------------|--------|
-| `$@`-expansion transform + `$@`-exec codegen | DD#81 `$@`→SB5045 | 29bdd25, ed95432 |
-| `emit_command_builtin` + `CommandBuiltin` chain | DD#23 `command`→SB4001 | 2346c36 |
-| `init_numeric_positional` + `init_at_var` | top-level positionals→SB5024/5045; DD#60 args-array | 211c464 |
-| `emit_strlen_elem` (element-length) | never had a producer | ddeb1d4 |
+| `$@`-expansion transform + `$@`-exec codegen | DD#81 `$@`→SB5045 | 93a85bf, 0c5c4aa |
+| `emit_command_builtin` + `CommandBuiltin` chain | DD#23 `command`→SB4001 | 67affbc |
+| `init_numeric_positional` + `init_at_var` | top-level positionals→SB5024/5045; DD#60 args-array | be426a6 |
+| `emit_strlen_elem` (element-length) | never had a producer | d9e68e0 |
 | `handle_trap` + `handle_trap_exit`/`_ignore_reset` + `Trap` variant | DD#56: `trap`→SB4043; converter owns bash→signal/END | (this session) |
 | `ArithOp::display` (dead operator→string helper, NOT an SSA pretty-printer) | 0 callers — codegen matches `ArithOp` directly | (this session) |
 
@@ -189,7 +189,7 @@ Session coverage: **87.69% → 92.28%** lines (compiler, native+c); functions
 DG: "trap needs to be purged from native." Done — direct `trap` → **SB4043**
 (use `signal`/`END`; the converter owns the bash→native rewrite). The
 `handle_trap` front-end machinery was removed (see Bucket B table above). This
-was the same shape as `command` (DD#23-shadowed, removed 2346c36).
+was the same shape as `command` (DD#23-shadowed, removed 67affbc).
 
 ## Bugs surfaced by the grind
 

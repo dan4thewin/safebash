@@ -65,7 +65,7 @@ codegen path built a wrong-shaped slot (a compiler bug, not user input).
 - Behavior spot-check: int/string assign+read, var-in-arith, `${a[$i]}`→y,
   `int p=$(getpid)` capture, `$(( a[i] ))`/`${a[i]}` still correctly SB4030.
 - Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs base
-  `3ddfc59`: **0 passing→failing, 0 gone, 0 new**. Native gate 0 failing.
+  `e4c7422`: **0 passing→failing, 0 gone, 0 new**. Native gate 0 failing.
 
 Behavior-preserving (`match` ≡ the 2-arm `is_int` if/else) → no new specs.
 

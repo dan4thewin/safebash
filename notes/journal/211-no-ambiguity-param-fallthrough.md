@@ -36,6 +36,6 @@ reaches SB4047.
 ### Verification
 
 Specs `spec/var_modifiers.sh` vm.un1-4 (`&`, `:foo`, `.y`, bare `:`). Full
-3-mode sweep vs HEAD `df6fe84`: **0 regressions, 0 gone** native/c/janet —
+3-mode sweep vs HEAD `e4269d1`: **0 regressions, 0 gone** native/c/janet —
 nothing in the suite relied on the silent-accept. fmt + clippy clean. DD#65
 "no-ambiguity fallthrough" note recorded.

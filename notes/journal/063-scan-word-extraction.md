@@ -64,7 +64,7 @@ Verification: build clean, clippy clean, sash lib 12/12, spec
 
 ## Note on the missing whitelist
 
-The `.cyclo-allow` file was retired (commit `967af30` —
+The `.cyclo-allow` file was retired (commit `30c33a0` —
 "adopt indexnudge v9 + retire contrib/cyclo.sh"); the pre-commit
 hook now reports the unfiltered top-5. The `classify_word_token`
 helper, like `to_tok`, `print_arith_expr`, and

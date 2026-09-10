@@ -5,11 +5,11 @@ kind: process
 source: opus-47-review
 depends: []
 resolved: 2026-06-07
-resolution: Superseded by the cognitive-complexity rubric (journal 108) and the enforced complexity gate (commit c51e296). The gate currently triggers at CC > 16.8 (3× mean), strictly tighter than the CC > 50 floor this task proposed; the grandfather-on-modify mechanic plus the cog-vs-cc delta-aware framing also handles the original concern (don't extract for noise) more precisely than a single numeric floor would. Phase 11/12 refactors validated the new framework in practice. The task's intent — codify a discipline so 4.6-style noise commits stop happening — is fulfilled by the gate + rubric.
+resolution: Superseded by the cognitive-complexity rubric (journal 108) and the enforced complexity gate (commit 323eeb4). The gate currently triggers at CC > 16.8 (3× mean), strictly tighter than the CC > 50 floor this task proposed; the grandfather-on-modify mechanic plus the cog-vs-cc delta-aware framing also handles the original concern (don't extract for noise) more precisely than a single numeric floor would. Phase 11/12 refactors validated the new framework in practice. The task's intent — codify a discipline so 4.6-style noise commits stop happening — is fulfilled by the gate + rubric.
 gates:
   - one-line addition to AGENTS.md or contrib/cyclo.sh comments
 
-Recent commits (`9eff657`, `7e9baec`, `8cb2f13`) extracted individual
+Recent commits (`8854c2b`, `1b867c4`, `ac04657`) extracted individual
 match arms from already-moderate functions into named methods. This
 trades line count for indirection without changing the underlying
 decision tree. Below ~CC 50 the extractions become diff noise that

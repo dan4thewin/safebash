@@ -66,7 +66,7 @@ to EOL; comment between statements; inline comment in a `$( )` body). cmt.11
 gated native,c (janet doesn't inline a `$(user_fn)` capture — pre-existing,
 unrelated). cov.90's stale `parse_comment_stmt` reference refreshed.
 
-Full 3-mode sweep vs HEAD `e638e84`: **0 regressions, 0 new failing, +32
+Full 3-mode sweep vs HEAD `da02f3a`: **0 regressions, 0 new failing, +32
 passing** (cmt.1–11 × 3 − 1 janet skip). Lib unit tests green (16;
 `comment_to_eol` tests the logos layer, unaffected). Rust cargo suites (benched)
 have comment-bearing tests (`brush_cmdsub_comment`, oracle `comment_preserved`)

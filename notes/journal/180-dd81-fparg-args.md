@@ -35,7 +35,7 @@ DD#75) found no `args` array → ICE.
 `s=$(f hello)` reads `$1` → `got:hello`; `echo $(f world)`; multi-arg
 `$(greet a b)`; the `${args[i]}` form; a var arg; and the no-arg capture all
 compile+run. specs functions.sh 81.7/81.8 (native,c — janet has no function
-capture). Full sweep vs base `f9f16f5`: **0 regressions**, native gate 0, 4 new
+capture). Full sweep vs base `56e4c17`: **0 regressions**, native gate 0, 4 new
 passing.
 
 ## Next (DD#81)

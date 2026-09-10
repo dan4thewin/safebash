@@ -66,7 +66,7 @@ native-guarded — the natural home.
 
 - `spec/exec.sh` cl.1–cl.8 (native): open+close, DD#55 abort/caught/suppressed,
   SB4052 arity/non-fd, SB4048-still-rejects. plan 11→19.
-- Full 3-mode sweep, latest-run diff vs HEAD (`a0a775f`): **0 regressions**, 8
+- Full 3-mode sweep, latest-run diff vs HEAD (`867279e`): **0 regressions**, 8
   new passing (native cl.*), 0 gone.
 - `cargo fmt`/`clippy` clean on sash; sash-rt warnings all pre-existing.
 

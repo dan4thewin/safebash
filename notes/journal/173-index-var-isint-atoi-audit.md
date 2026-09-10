@@ -48,6 +48,6 @@ atoi's a value already known to be int.
 
 ## Verification
 
-Full `SPEC_MODES="native c janet"` sweep vs HEAD (`34a54b9`): 0 passing→failing,
+Full `SPEC_MODES="native c janet"` sweep vs HEAD (`4bdd88d`): 0 passing→failing,
 0 gone, 6 new passing (80.20-21 ×3); native gate 0. Dynamic-for over `$@` and
 `for x in @arr` both intact.

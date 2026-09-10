@@ -5,7 +5,7 @@ with DG), each retired by narrowing a type or validating an arity rather than
 trusting a convention. Committed in two commits (P8 the bug, P4+P6 the
 refactors).
 
-## P8 — `$(join)` arity (a reachable compiler panic)  [commit 3fb3458]
+## P8 — `$(join)` arity (a reachable compiler panic)  [commit 3cf1519]
 
 `$(join)` with no args reached `transform::join_intrinsic` and
 **panicked the compiler** (`ICE: join requires at least one argument`); >2 args

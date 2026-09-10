@@ -30,7 +30,7 @@ Both spellings already lowered to one node; this session pinned + reframed:
   three backends; specs misc.sh spv.1–4.
 - SB5012 diagnostic leads with the canonical `$(status)`.
 - Fixed the surfaced bug: `$$`/`$?` silent-0 as a compound-arith operand
-  (arithmetic.sh 31.20–24; commit 598d228).
+  (arithmetic.sh 31.20–24; commit f4bcecc).
 - DD#75 §1 + DD#24 decision docs updated (canonical/sugar framing).
 
 Deferred per DG convert-as-follow-up rule → `converter-special-var-sugar`

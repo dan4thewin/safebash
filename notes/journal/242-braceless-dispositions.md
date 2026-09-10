@@ -73,7 +73,7 @@ filed `janet-positional-default-present`. native/c correct.
   57→69.
 - `glob_splat.sh` gs.25–30: array `@a:-`/`@a:?`/`@a:~`, empty/non-empty,
   brace-less≡braced. plan 24→30.
-- Full 3-mode sweep vs HEAD (`2e48463`): **0 regressions**, 54 new (53 passing,
+- Full 3-mode sweep vs HEAD (`557b444`): **0 regressions**, 54 new (53 passing,
   1 janet skip). Parser unit + logos-equivalence tests pass. fmt/clippy clean.
 
 DD#90 written. No new SB code (reuses the braced diagnostics).

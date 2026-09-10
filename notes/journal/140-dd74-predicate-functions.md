@@ -6,7 +6,7 @@ trailing-command status (that reintroduced `set -e` surprises — the trailing
 command would abort-on-fail rather than yield a status). Shipped in three
 phases, native/c/janet, 0 native regressions throughout.
 
-## Phase 1 — `return N` drives the condition (`81c50dc`)
+## Phase 1 — `return N` drives the condition (`62fa5c1`)
 
 The bug: `f() { return 0 }; if f; then …` branched on `test_result_var`
 (set by commands / `[[ ]]`), but `return N` only set `$?`, so `if f` never
@@ -15,7 +15,7 @@ saw a status. Fix: `handle_exit_status_assign` (the `$?`-assign path a
 `__test_result`, janet on `__last_exit`. Also filled c's missing `!` sigil
 and fixed janet's broken `if <userfunc>`.
 
-## Phase 2 — `return <producer>` (`0adfc36`)
+## Phase 2 — `return <producer>` (`679262a`)
 
 `return` now takes a status *producer*: a command, `[[ … ]]`, or `(( … ))`
 (as well as `N` / `$?` / bare). New `StmtKind::ReturnProducer`; `parse_return`

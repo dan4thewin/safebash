@@ -38,7 +38,7 @@ inside `$(( ))` and `(( ))`.
 ## Amendment (2026-08-15) — point 2 superseded by Option C
 
 Point 2 above ("`$(f)` type error" for a `-> int` function) was **superseded**
-by Option C (commit `0a6d690`): `$(f)` is return-type-polymorphic and captures a
+by Option C (commit `a8ac707`): `$(f)` is return-type-polymorphic and captures a
 `-> int` function's return value. See the amendment banners in DD#58 / DD#17.
 The sexpr `$(( (f) … ))` remains available; both surfaces work for every int
 producer (user `-> int` fn or int intrinsic).

@@ -35,7 +35,7 @@ guard intact: top-level `$(( args[0] ))` → SB5031; typo `$(( notavar[0] ))` �
 SB5031. janet's arith VALUE path still can't read an embedded subscript
 (pre-existing `janet-arith-subscript-read`), so positives are native,c like the
 sibling `bsx.*`. specs arithmetic.sh bsx.8/9 (positive) + bsx.10 (top-level
-reject). Full 3-mode sweep vs `499859c`: **0 regressions**; +3 native/c, +1
+reject). Full 3-mode sweep vs `beee24e`: **0 regressions**; +3 native/c, +1
 janet. fmt + clippy clean.
 
 Native gate now has no known latent bugs — clear to resume the never-run grind.

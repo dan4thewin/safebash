@@ -21,7 +21,7 @@ gates:
 ## Discovery (2026-06-16, during argv-trio)
 
 `cargo test --release` (== `mk test`) in `sash/` is heavily red at HEAD
-(59d7123), independent of the argv-trio work. Stable (single-threaded)
+(a206fec), independent of the argv-trio work. Stable (single-threaded)
 counts:
 
 | suite              | passing | failing |

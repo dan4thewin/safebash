@@ -70,5 +70,5 @@ and NUL reading is `-d ''` (bash convention), so no `-z` alias is needed.
 specs `spec/wordsplit.sh` 22.21–22.24 (`-d ''` NUL array; `-d :` no
 false-positive; unknown-flag rejection consistent standalone + lastpipe; 21–22
 gated native,c — janet lacks custom-delimiter array reads). `cargo fmt` +
-`clippy` clean. Full 3-mode sweep vs HEAD `002b833`: **native 0 regressions, c
+`clippy` clean. Full 3-mode sweep vs HEAD `39705d8`: **native 0 regressions, c
 0, janet 0**.

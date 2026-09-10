@@ -42,7 +42,7 @@ depends: []
 Today `/nonexistent &; wait` already prints the *status* form
 (`command failed (exit 127)`), because the bg child runs through
 `handle_general_command` → `sash_run` and the external status message
-(commit f8382e2) covers it. Spec 55.16 asserts that.
+(commit df807d3) covers it. Spec 55.16 asserts that.
 
 ## Why this needs a decision (the entanglement)
 

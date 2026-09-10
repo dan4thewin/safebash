@@ -82,7 +82,7 @@ regression check):
 ## Verification
 
 `cargo fmt`/`clippy` clean; lib unit tests pass (parser/lexer). Full
-3-mode sweep vs HEAD `0445fe1`: **native 0 regressions, c 0 regressions**,
+3-mode sweep vs HEAD `688616a`: **native 0 regressions, c 0 regressions**,
 janet +2 (the old `local fn` tests failed under janet; the rewrites
 pass). No new passing on native/c because the 7 specs are rewrites of
 already-passing tests.

@@ -9,7 +9,7 @@ vendoring follows (journal 231).
 
 ## Why
 
-`readc` (cooked read, shipped `0445fe1` as switch-free-read-family step 1) was
+`readc` (cooked read, shipped `688616a` as switch-free-read-family step 1) was
 meant to parse `getopt`'s shell-quoted output without `eval` — cooked-split on
 `\`-escaped whitespace, then a `gsub` to strip quotes. In review DG judged this
 too fragile: parsing a program's shell-quoting is exactly the eval-adjacent
@@ -55,7 +55,7 @@ but is orthogonal; it stays.
 `readc` is now SB5011 ("command not found"); the original ICE command is a
 clean SB5011, no panic. Scalar `read`, multi-var `read a b`, and array
 `read -a out` all still work (array-read + bless-all no longer ICE). `cargo
-fmt`/`clippy` clean; tests build. Full 3-mode sweep vs HEAD `8a67e69`: **native
+fmt`/`clippy` clean; tests build. Full 3-mode sweep vs HEAD `ddc237a`: **native
 0 regressions, c 0, janet 0**.
 
 ## Next

@@ -51,7 +51,7 @@ was still corrected (reads the cell) even though not spec-gated there.
 Verified end-to-end: native + c `${a[0]:1:3}`→`ell`, `${a[1]:2}`→`rld`,
 `${a[0]:s/l/L/g}`→`heLLo`, map-cell sed/substring; janet run `${a[0]:1:3}`→`ell`.
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs HEAD
-(`f31d2c9`): 0 passing→failing, 0 gone, 14 new passing.
+(`4b4935c`): 0 passing→failing, 0 gone, 14 new passing.
 
 ## Task complete
 

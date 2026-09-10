@@ -17,7 +17,7 @@ The named-hotspot work in
 closed 2026-06-05 with all 6 targeted parser hotspots refactored.
 Phases 11–12 then introduced the cognitive-vs-cyclomatic rubric
 ([journal 108](../journal/108-cog-cc-rubric.md)) and the
-grandfather-on-modify complexity gate (commit `c51e296`).
+grandfather-on-modify complexity gate (commit `323eeb4`).
 
 This task captures the **standing cohort work** the gate is built
 around. It is the home for ongoing refactor waves, the
@@ -32,34 +32,34 @@ tightened twice without any policy change.
 
 | commit  | function                          | cc        | cog        | notes |
 |---------|-----------------------------------|-----------|------------|-------|
-| `b522d88` | `emit_stmt`                     | 39→17     | 59→1       | pure dispatcher |
-| `55f0f1a` | `emit_expr_inline`              | 31→13     | 27→1       | pure dispatcher |
-| `a6b08a0` | `lower_ir_redirect_expr`        | 16→5      | 27→1       | pure dispatcher + DRY |
-| `d06c3dc` | `scan_brace_expansion`          | 18→11     | 26→8       | DRY (reused skip_balanced_*) |
-| `31e6a18` | `handle_pipe_while_or_mapfile`  | 8→2       | 25→2       | extracted nested loop |
-| `ea7490b` | `handle_function_call_or_command` | 16→2    | 23→1       | 9 helpers, all ≤ cog 3 |
-| `85cf6d9` | `lower_redirected_stmt`         | 15→7      | 23→9       | predicate + 3 helpers |
-| `18d45aa` | `emit_manifest`                 | 9→2       | 23→1       | extracted builtin set |
-| `cfdfcf9` | `emit_redirected`               | 17→2      | 22→2       | 11 helpers |
-| `cd567e8` | `lower_declaration_stmt`        | 13→4      | 22→1       | one-decl orchestrator |
-| `e59b55c` | `tokenize_arith`                | 12→4      | 22→5       | next-token + op-cascade |
-| `d458215` | `lower_expr_value_as_int`       | 10→4      | 22→1       | atoi_call helper |
-| `8984a86` | `parse_command_substitution`    | 16→12     | 21→9       | CmdSubStep enum |
-| `79f6bb7` | `taint_command`                 | 13→5      | 21→4       | read/bless extracted |
-| `3dc78a2` | `check_subscript_types`         | 13→6      | 21→3       | key-kind extracted |
-| `6673167` | `handle_cd`                     | 10→1      | 20→0       | **bug fix** — pre-DD#53 cruft (journal 109) |
-| `bffa6de` | `emit_array_join_expansion`     | 15→2      | 20→2       | 14 helpers (Cranelift emitter) |
-| `8ce3131` | `emit_exec`                     | 10→3      | 20→3       | three-path dispatcher; finalize_exec dedup |
-| `61bdef5` | `collect_arith_content`         | 14→3      | 20→3       | step_*_token helpers |
-| `26ace17` | `emit_pipeline`                 | 10→3      | 19→2       | stage + wait helpers |
-| `c199e35` | `expr_type`                     | 15→6      | 18→1       | per-kind helpers |
-| `d1743f9` | `collect_returns_inner`         | 13→7      | 18→6       | maybe_collect_return |
-| `d4ec214` | `check_rejected`                | 9→2       | 18→0       | per-rejected-shape helpers |
-| `67f918d` | `parse_function`                | 14→7      | 17→2       | optional parens + return type |
-| `768a3f3` | `emit_test_expr`                | 26→7      | 17→1       | inner-test wrap + per-op |
-| `5a250b4` | `emit_while`                    | 12→2      | 17→2       | while-read vs generic |
-| `9d5387b` | `check_cmd_in_stmt`             | 11→5      | 17→4       | is_regex_mutation + let-else |
-| `ceca554` | `intern_inst`                   | 17→11     | 17→3       | intern_command_parts dedup |
+| `af2bc7c` | `emit_stmt`                     | 39→17     | 59→1       | pure dispatcher |
+| `07d2440` | `emit_expr_inline`              | 31→13     | 27→1       | pure dispatcher |
+| `8f0e0c5` | `lower_ir_redirect_expr`        | 16→5      | 27→1       | pure dispatcher + DRY |
+| `1c56fc2` | `scan_brace_expansion`          | 18→11     | 26→8       | DRY (reused skip_balanced_*) |
+| `9bd8447` | `handle_pipe_while_or_mapfile`  | 8→2       | 25→2       | extracted nested loop |
+| `4cb05e4` | `handle_function_call_or_command` | 16→2    | 23→1       | 9 helpers, all ≤ cog 3 |
+| `f00260c` | `lower_redirected_stmt`         | 15→7      | 23→9       | predicate + 3 helpers |
+| `99ad915` | `emit_manifest`                 | 9→2       | 23→1       | extracted builtin set |
+| `f7af4fb` | `emit_redirected`               | 17→2      | 22→2       | 11 helpers |
+| `f2ca27f` | `lower_declaration_stmt`        | 13→4      | 22→1       | one-decl orchestrator |
+| `c8f89d5` | `tokenize_arith`                | 12→4      | 22→5       | next-token + op-cascade |
+| `b169ef0` | `lower_expr_value_as_int`       | 10→4      | 22→1       | atoi_call helper |
+| `9ffcaca` | `parse_command_substitution`    | 16→12     | 21→9       | CmdSubStep enum |
+| `0d76469` | `taint_command`                 | 13→5      | 21→4       | read/bless extracted |
+| `111cbc6` | `check_subscript_types`         | 13→6      | 21→3       | key-kind extracted |
+| `586c2b4` | `handle_cd`                     | 10→1      | 20→0       | **bug fix** — pre-DD#53 cruft (journal 109) |
+| `8dce63e` | `emit_array_join_expansion`     | 15→2      | 20→2       | 14 helpers (Cranelift emitter) |
+| `4efe8ad` | `emit_exec`                     | 10→3      | 20→3       | three-path dispatcher; finalize_exec dedup |
+| `a28c37c` | `collect_arith_content`         | 14→3      | 20→3       | step_*_token helpers |
+| `5ed3216` | `emit_pipeline`                 | 10→3      | 19→2       | stage + wait helpers |
+| `893c610` | `expr_type`                     | 15→6      | 18→1       | per-kind helpers |
+| `7d539df` | `collect_returns_inner`         | 13→7      | 18→6       | maybe_collect_return |
+| `c7e5d58` | `check_rejected`                | 9→2       | 18→0       | per-rejected-shape helpers |
+| `7533865` | `parse_function`                | 14→7      | 17→2       | optional parens + return type |
+| `b0a6026` | `emit_test_expr`                | 26→7      | 17→1       | inner-test wrap + per-op |
+| `f3a3371` | `emit_while`                    | 12→2      | 17→2       | while-read vs generic |
+| `aa3ccbf` | `check_cmd_in_stmt`             | 11→5      | 17→4       | is_regex_mutation + let-else |
+| `1b6cd37` | `intern_inst`                   | 17→11     | 17→3       | intern_command_parts dedup |
 
 ## The rubric (verbatim from journal 108)
 
@@ -161,7 +161,7 @@ new threshold become new cohort members.
 
 - [journal 108](../journal/108-cog-cc-rubric.md) — rubric derivation
 - [journal 109](../journal/109-pre-dd53-cruft-in-handle-cd.md) — handle_cd cruft
-- Commit `c51e296` — gate enforcement
+- Commit `323eeb4` — gate enforcement
 - [r47-reduce-parser-complexity-hotspots](r47-reduce-parser-complexity-hotspots)
   — closed predecessor (named hotspots, parser-side)
 - [r47-set-extraction-floor-cc50](r47-set-extraction-floor-cc50) —

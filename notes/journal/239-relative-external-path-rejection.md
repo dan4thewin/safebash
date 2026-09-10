@@ -79,7 +79,7 @@ SB5051 is a new code.
 ## Verification
 
 - Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs HEAD
-  (`7170517`): **0 regressions**, 0 gone, **18 new passing** (relpath.1–6 ×3).
+  (`e803c04`): **0 regressions**, 0 gone, **18 new passing** (relpath.1–6 ×3).
   errors.sh `plan` 98→104.
 - Rust suites are benched/rot (linker GNU-stack warnings, removed
   heredoc/herestring features, missing `brush` binary). Stash-compared

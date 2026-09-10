@@ -64,7 +64,7 @@ keep their own SB4038 "retired bracket splat" diagnostic).
 ## Verification
 
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs base
-`31eee19`: 0 passing→failing, 0 gone, native gate 0 failing. 12 new passing
+`12d1ffd`: 0 passing→failing, 0 gone, native gate 0 failing. 12 new passing
 (4 checks × 3 modes): functions.sh 81.15 (in-fn `$*`), 81.16 (in-fn `${*}`);
 errors.sh e.dd46.t6 (top-level `${@}`), e.dd46.t7 (top-level `$(( $@ ))`).
 e.dd46.t1/t3 assertions updated (SB5024 → SB5045, still direct to `$(argv 1)`);

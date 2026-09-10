@@ -67,7 +67,7 @@ unreachable for redirect targets — they survive only on the here-string path.
 ### Verification
 
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs HEAD
-(`65b4375`): **native 0 regressions, +6 new; c 0 regressions, +6 new; janet 0
+(`bbeaf24`): **native 0 regressions, +6 new; c 0 regressions, +6 new; janet 0
 regressions, +2 new** (the two parse-level rejects). fmt + clippy clean.
 Complexity gate clear (`parse_redirect` cc=21 is an exempt wide-dispatcher at
 delta −16; the new helpers are all ≤5/≤5).

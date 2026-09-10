@@ -52,7 +52,7 @@ though `bless x` covers the whole `x=$( … )`.
 ## Status / provenance
 
 - **Pre-existing — NOT caused by the bug#3/bug#4 work (2026-08-28).** Verified
-  by building HEAD (`dcda5bf`) with those changes stashed: 14.7/14.8 fail
+  by building HEAD (`1c2a5c4`) with those changes stashed: 14.7/14.8 fail
   identically. Two independent fresh HEAD-vs-change native baseline diffs both
   showed **0 passing→failing** flips.
 - **⚠ PER-RUN NONDETERMINISTIC (the real bug).** Same source, same binary:

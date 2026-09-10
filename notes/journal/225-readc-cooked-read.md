@@ -92,7 +92,7 @@ cc>3×mean / cog>3×mean.
 `spec/wordsplit.sh` 22.20–22.24 (native,c; janet skip): escaped-space
 field kept+de-escaped, remainder de-escaped, single-var de-escape, raw
 `read` contrast, external-source taint. Full 3-mode sweep, latest-run-
-per-test diff vs HEAD `005c7d4`: **native 0 regressions +5**, **c 0
+per-test diff vs HEAD `8e01b0a`: **native 0 regressions +5**, **c 0
 regressions +5**, janet 0/0. `cargo fmt` + `clippy` clean; tests compile
 with the new `cooked` field.
 

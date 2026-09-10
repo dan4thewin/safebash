@@ -5,7 +5,7 @@ priority: P4
 kind: bug
 depends: []
 gates:
-  - "[DONE] spec wordsplit 39.10 (`[[ $x =~ \\w+ ]]`) passes in c and janet — implemented the `=~` test operator in both backends (commit 9ba4bbe)"
+  - "[DONE] spec wordsplit 39.10 (`[[ $x =~ \\w+ ]]`) passes in c and janet — implemented the `=~` test operator in both backends (commit 2b06810)"
   - "[SPLIT OFF -> echo-read-inline-pipe-cjanet] 22.12 (`echo | read`) guarded to native: the lastpipe inline-pipe (read consumes pipe + sets parent var) crashes c on an invalid fd and janet spawns `read` as an external"
 ---
 

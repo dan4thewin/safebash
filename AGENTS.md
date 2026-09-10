@@ -96,7 +96,8 @@ on a consequential fork violates Decision authority.
 - **contrib/** — contributed scripts/tools
 - **suites/** — test suites
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
-- **spec.db** — SQLite database of all spec test results (root of repo)
+- **spec.db** — SQLite database of all spec test results (repo root,
+  **untracked and gitignored** — a local development artifact, not in git)
 - **57 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#69)
 - **1 adversarial audit** completed (5 models, 3 passes, remediation done)
 - **tree-sitter**: not used by the main compiler (hand-written parser). The
@@ -121,7 +122,7 @@ static ELF
 The compiler has **no tree-sitter dependency and no CST** — the parser
 (`parse/`) yields the AST directly (the codebase calls this AST its
 "IR"). tree-sitter survives only in the separate `sash-convert` crate
-(bash→sash-native conversion). (Removed in commit 73caecf, which deleted
+(bash→sash-native conversion). (Removed in commit 1c0e64a, which deleted
 `lower/`, `rules/`, the standalone taint pass, and the logos-CST glue.)
 
 DD#58 arithmetic sexpr: `(name args...)` inside `$(( ))` is parsed
@@ -199,6 +200,17 @@ it via `SASH_RT_LIB`. Rebuild it after touching `sash-rt/src` before an
 Spec tests live in `spec/*.sh`. Run with `cd spec && bash run.sh`.
 Results accumulate in `spec.db` (SQLite, repo root).
 
+**`spec.db` is untracked and gitignored.** It is a local artifact: every run
+rewrites it wholesale, so versioning it added a fresh 20 MB blob per commit
+(9.0 GB of pack across 455 commits) for data that is only meaningful on the
+machine that produced it. It was purged from history on 2026-09-10. Do not
+re-add it, and do not reach for `git show <rev>:spec.db` — that no longer
+exists. **The database is its own history**: `runs` records a `commit_hash`
+per test per run, so cross-commit comparison is a plain SQL query (below).
+
+If you do not have a `spec.db`, run `cd spec && bash run.sh` to build one
+from scratch; it is derived data and always reproducible.
+
 **`chk` ids are a flat GLOBAL namespace across every spec file.** `chk N`
 records `$SASH_MODE:N`, so the same `N` in two files (e.g. `53.1` in both
 `convert.sh` and `taint.sh`) is one test_id — whichever file runs later
@@ -221,7 +233,27 @@ FROM tests t
 JOIN runs r1 ON r1.test_id=t.id AND r1.commit_hash='OLD'
 JOIN runs r2 ON r2.test_id=t.id AND r2.commit_hash='NEW'
 WHERE r1.status != r2.status;
+
+-- Regression check: current state vs a baseline commit.
+-- This replaces the old `git show HEAD:spec.db` + ATTACH recipe.
+-- Find candidate baselines first:
+--   SELECT DISTINCT commit_hash, MAX(committed_at) FROM runs
+--   GROUP BY commit_hash ORDER BY 2 DESC LIMIT 5;
+WITH base AS (
+  SELECT test_id, status FROM runs r
+  WHERE commit_hash = 'BASE'
+    AND rowid = (SELECT MAX(rowid) FROM runs
+                 WHERE test_id = r.test_id AND commit_hash = 'BASE')
+)
+SELECT b.test_id, b.status AS was, t.status AS now
+FROM base b JOIN test_status t ON t.id = b.test_id
+WHERE b.status != t.status
+ORDER BY b.test_id;
 ```
+
+Use `/home/linuxbrew/.linuxbrew/bin/sqlite3` to bypass the indexnudge shim
+when querying `spec.db` (the shim re-parses the source index on every
+invocation, which is pointless here and slow).
 
 ### Rust tests
 
@@ -643,7 +675,8 @@ bare `$HOME` and directs to `$(getenv HOME)`.
 - **Decision authority**: all important decisions go through DG.
   Don't narrow options or choose approaches without presenting them.
 - **spec.db is at repo root**, not `spec/spec.db`. Run `cd spec && bash run.sh`
-  to update it. Query via `test_status` view.
+  to update it. Query via `test_status` view. (It is untracked as of
+  2026-09-10 — see the Spec tests section.)
 - **`pub(crate)` on internal modules** catches dead code. main.rs is
   a thin wrapper; all logic in lib.rs.
 - **Dead code was hiding**: `is_special_var` (taint clean list) was

@@ -53,7 +53,7 @@ reversible internal choice — reported for the record.)
 
 - `glob_splat.sh` gs.20–24 (all 3 modes: `@{a:~}` works in native/c/janet since
   it is an `arrvals_default`). plan 19→24.
-- Full 3-mode sweep, latest-run diff vs HEAD (`c7e0f62`): **0 regressions**, 15
+- Full 3-mode sweep, latest-run diff vs HEAD (`d8ebfee`): **0 regressions**, 15
   new passing (gs.20–24 ×3), 0 gone.
 - `cargo fmt`/`clippy` clean.
 

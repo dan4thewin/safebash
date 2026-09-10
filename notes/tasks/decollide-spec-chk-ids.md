@@ -28,7 +28,7 @@ tests unmasked a real failure (the colliding pairs were all passing).
   (wordsplit.sh owns DD#20).
 - types.sh ↔ wordsplit.sh `62.11` → wordsplit.sh moved to `62.30`
   (types.sh owns DD#62).
-- (earlier, commit de79db9) commands.sh ↔ wordsplit.sh `14.7/14.8` → commands.sh
+- (earlier, commit baa7288) commands.sh ↔ wordsplit.sh `14.7/14.8` → commands.sh
   moved to `14.17/14.18`.
 
 ### Within-file duplicates fixed (types.sh had 2-3 blocks reusing ids)

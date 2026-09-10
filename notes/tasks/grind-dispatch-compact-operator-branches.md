@@ -48,7 +48,7 @@ suite (surfaced in the 2026-08-31 coverage grind):
 
 `extract_compact_operator` itself flipped covered when the dispatch
 compact-operator support landed (`dispatch-compact-operator-spacing`, done
-2026-08-10, ee3a2fa) — but the `dp.co1`–`dp.co8` specs only exercise the
+2026-08-10, 3bca6b1) — but the `dp.co1`–`dp.co8` specs only exercise the
 **middle-part Concat** path (a `$var` subject → `Concat([$x, "==", a])`), leaving
 these two sibling branches untested.
 

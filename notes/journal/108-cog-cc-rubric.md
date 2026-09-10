@@ -2,7 +2,7 @@
 
 Built incrementally across 8 cognitive-vs-cyclomatic refactors
 this session (journal entries inferred — see commit messages
-`08a237b` through `597a9e8`). DG asked: how do we distinguish
+`30ee686` through `29c09cf`). DG asked: how do we distinguish
 the "irreducible" complexity from the "genuinely needlessly
 complex"? The cog-vs-cc divergence pattern is the answer.
 
@@ -180,7 +180,7 @@ its own cog ≤ 9.
    annotation needed.
 
 2. **Hidden bugs become visible.** The infer_stmt fix (commit
-   `597a9e8`) found a journal-056-shape bug missed by that
+   `29c09cf`) found a journal-056-shape bug missed by that
    audit because infer_stmt isn't a validation walker. Cog 28
    on a 19-line cyclomatic suggested "this match is doing too
    much"; reading it revealed the missing default arm.

@@ -142,8 +142,8 @@ No defensive quotes — sash has no word-splitting (DD#22).
 
 ### Implemented (native/c/janet, 0 native regressions)
 
-- Phase 1 (`return N` drives the condition) — commit `81c50dc`.
-- Phase 2 (`return <producer>`) — commit `0adfc36`.
+- Phase 1 (`return N` drives the condition) — commit `62fa5c1`.
+- Phase 2 (`return <producer>`) — commit `679262a`.
 - Phase 3 (definite-return, **SB4037**) — `check_predicate_definite_return`
   in `validate.rs`. A function is a *predicate* iff it is used in a boolean
   context (an `if`/`elif`/`while`/`until` condition, a `! f` negation, or a

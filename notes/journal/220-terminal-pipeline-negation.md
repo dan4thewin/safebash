@@ -84,7 +84,7 @@ DD#70, DD#55).
 ## Specs — `spec/errors.sh` bng.7–bng.12 (plan 91 → 97), all three modes
 
 Runtime terminal negation (bng.7/8/9), non-terminal reject (bng.10), `!-` combo
-(bng.11), `return ! X | Y` (bng.12). Full 3-mode sweep vs HEAD `25d7d66`: **0
+(bng.11), `return ! X | Y` (bng.12). Full 3-mode sweep vs HEAD `e38ee4f`: **0
 regressions, +18 passing** (bng.7-12 × 3), 0 new failing. Rust cargo suites:
 failure set identical at baseline (stash-compared — 8/8 both sides; pre-existing
 `case`/`echo -e` rot, not the gate). DD#70 addendum + DD#55 pointer.

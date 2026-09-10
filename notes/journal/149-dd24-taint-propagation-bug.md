@@ -23,7 +23,7 @@ But the implementation *propagated*: `taint_assignment`'s scalar path did
 than rejecting. `z=$y` compiled; the taint was caught only at a later sink
 (`echo $z`). Every OTHER read site rejected correctly (`arr=($y)` SB5021,
 `(( y ))` SB4030, `f $y` SB5020, `m=([k]=$y)` SB5021) — scalar assignment was
-the lone offender. Pre-existing since the original taint pass (65c1c26); no
+the lone offender. Pre-existing since the original taint pass (4993f7c); no
 spec test or converter path relied on it.
 
 **This is the root cause of the DD#78 hole.** Propagation is only sound if

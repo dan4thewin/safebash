@@ -28,7 +28,7 @@ fix. Positive `for k in $(keys m)` (33.10) still passes.
 **Sweep.** native 0 failing; c 13 / janet 36 failing — identical to the clean
 session baseline (no regressions). 33.17/33.18 pass in all three backends.
 
-**Bonus fix.** The sweep surfaced `dp.co6` (a dispatch test I added in `ee3a2fa`)
+**Bonus fix.** The sweep surfaced `dp.co6` (a dispatch test I added in `3bca6b1`)
 failing in all modes: it used a dispatch form as an `if` *condition*, which
 SB4028 correctly rejects. Replaced it with a valid construct — a compact
 dispatch **statement** inside an `if [[ -n $x ]]` body → `no`. (janet:33.10, the

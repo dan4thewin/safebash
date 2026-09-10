@@ -53,7 +53,7 @@ A scalar `lower_value`/`lower_value_as_str` reaching `ElideEmpty` is a loud ICE
 specs `spec/optional_args.sh` (84.1–18): optional arity via `:-` (0/1/too-many),
 required+optional mix arity [1,2], `:~` elision (absent/present/passed-empty/
 runtime-empty/runtime-nonempty), array-literal elision (compact + kept), and the
-rejects (SB4051 / SB5046 / SB5047 / SB5048). Full 3-mode sweep vs `d88969b`: **0
+rejects (SB4051 / SB5046 / SB5047 / SB5048). Full 3-mode sweep vs `aea691e`: **0
 regressions; +18 native, +18 c, +4 janet** (the risky arity refactor touched
 every function definition — clean). 16 lib unit tests pass. fmt/clippy/complexity
 clear.

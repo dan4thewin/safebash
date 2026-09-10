@@ -208,7 +208,7 @@ silent.
 
 ## Implementation status (2026-06-25)
 
-- **Done** (commits 8a40ddc, f9d833b): (A) for cd / echo-write /
+- **Done** (commits c232b75, 313843a): (A) for cd / echo-write /
   redirect-open + the diagnostic facility (`sash_emsg`, `sash_last_errno`,
   errno table), native. (B) for `-> int` functions (SB4016/SB4017,
   pre-existing).

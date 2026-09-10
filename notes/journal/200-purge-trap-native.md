@@ -14,7 +14,7 @@ primitives inside the compiler (`handle_trap` → `TrapSignal`/`SignalFlag` /
 `exit_trap`). DD#56 makes `signal N {IGN,DFL,FLAG,EXIT}` + `END { }` the native
 model and `trap` a bash form the **converter** rewrites — so the in-compiler
 `trap` alias duplicated the converter's job and let a non-native spelling into
-source. Removed, mirroring the `command` purge (DD#23, 2346c36).
+source. Removed, mirroring the `command` purge (DD#23, 67affbc).
 
 - `validate.rs`: new `check_trap` → **SB4043** ("`trap` is not part of sash —
   use `signal`/`END`; the converter rewrites bash `trap`"); dropped `"trap"`

@@ -92,7 +92,7 @@ Rewrote 14 genuinely-dead specs to keep their intent while reading the variable
 dropped truly-unused scaffolding). New specs `spec/scope.sh` 86.13–86.20
 (dead global, the `coutn` typo, read-makes-live, `: $v` escape hatch, for-var
 dead/live, method-pattern cross-function read, taint-precedence). Full 3-mode
-sweep vs HEAD `30be5f6`: **native 0 regressions +8, c 0 regressions +8, janet
+sweep vs HEAD `891bcf9`: **native 0 regressions +8, c 0 regressions +8, janet
 0 regressions +8**. `cargo fmt`/`clippy` clean; lib unit tests pass; all
 touched functions cleared the complexity gate (extracted `check_dead_globals`/
 `check_dead_locals`/`report_dead`/`push_*_writes`/`record_cmdsub_value_fn_

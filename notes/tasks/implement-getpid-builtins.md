@@ -21,7 +21,7 @@ gates:
 > range decision. All getpid-class intrinsics
 > (echo/getcwd/getpid/getppid/epochseconds/random/argc + `$$`) are clean,
 > in-process, no exec. printf/pwd were moved OUT to external this session
-> (commit 846d96b). spec/functions.sh 42.7 (getpid numeric + clean
+> (commit d3a4072). spec/functions.sh 42.7 (getpid numeric + clean
 > capture), 42.8 (random non-negative), 42.9 (two draws differ), guarded
 > native,c. 0 regressions.
 >

@@ -26,9 +26,9 @@ Enforcement model:
 Implementation in
 [r47-enforce-quality-gates](r47-enforce-quality-gates).
 
-`mk fmt lint coverage complexity` exist (since `a3f70a2`) but only
+`mk fmt lint coverage complexity` exist (since `112042b`) but only
 `lint` (`clippy -D warnings`) is enforced. The others are measurements.
-The baselines from `a3f70a2`:
+The baselines from `112042b`:
 
 - fmt: 1137 diffs (never closed to zero)
 - coverage: 71.3% line coverage (no floor)

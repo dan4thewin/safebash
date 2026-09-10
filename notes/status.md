@@ -1100,7 +1100,7 @@ terminator not separator" (the two top recommendations from the
   idiom is now clean — `sash-getopt … | read -a opts -d ''` has no trailing
   `[]`, and `bless e in opts [[ -n $e ]]` passes.
 
-specs wordsplit.sh 22.25–22.27 (plan 77→80). 3-mode sweep vs `562fc36`:
+specs wordsplit.sh 22.25–22.27 (plan 77→80). 3-mode sweep vs `0204fe9`:
 native 0 regressions, c 0, janet 0 (+3/+3/+1). journal 233. Survey task marked
 done; remaining `-n`/`-N`/`-u`/interactive flags stay unimplemented.
 
@@ -1117,7 +1117,7 @@ cause was `expr_to_string` re-quoting; `read_arg_value` unwraps quotes, empty
 → NUL) — the sash-getopt idiom `sash-getopt … | read -a arr -d ''` works
 end-to-end (both pipe + redirect; space-bearing fields stay one element).
 `read -z` still rejected but consistently. specs wordsplit.sh 22.21–22.24.
-3-mode sweep vs `002b833`: 0 regressions. journal 232.
+3-mode sweep vs `39705d8`: 0 regressions. journal 232.
 
 **Called out (filed `read-behaviors-not-wired`):** (1) `-r` — rejected but
 sash is always raw, and bash uses it everywhere → recommend accept-as-no-op;
@@ -1146,7 +1146,7 @@ SB5015/cov.20). Flagged in `switch-free-read-family` for a DG decision.
 
 ## ════════ STATUS (2026-09-02) — `readc` DROPPED (getopt-NUL route) ════════
 
-**On `hand-parser`.** DG dropped `readc` (cooked read, shipped `0445fe1`) after
+**On `hand-parser`.** DG dropped `readc` (cooked read, shipped `688616a`) after
 an ICE on `… | readc -a out`. Cooked-read parsing of getopt's shell-quoting was
 judged too fragile; the sanctioned getopt idiom is **NUL-splitting** — a patched
 `sash-getopt` (NUL field separation, no quoting) piped into a NUL-delimited
@@ -1154,7 +1154,7 @@ judged too fragile; the sanctioned getopt idiom is **NUL-splitting** — a patch
 cooked`/`sash_deescape`; the `cooked` SSA field + all plumbing; native/c codegen
 cooked paths; readc recognition in BUILTINS/taint/type_check/lastpipe/janet).
 Kept the independent `insert_read_target_types` c-fix. `readc` → SB5011; the ICE
-command is now a clean error. 3-mode sweep vs `8a67e69`: 0 regressions. journal
+command is now a clean error. 3-mode sweep vs `ddc237a`: 0 regressions. journal
 230. **Next: vendor `sash-getopt`.**
 
 ## ════════ STATUS (2026-09-02) — DD#86 Phase 5: converter drops `local`; docs. DD#86 COMPLETE ════════
@@ -1193,7 +1193,7 @@ reads, bless array/map operand) that benefit SB5031 too.
 **Read-completeness proven:** 65 native breaks (hand-rolled, with FPs) → after
 the enumerator reuse, **every break was genuinely dead — 0 false positives**.
 Rewrote 14 genuinely-dead specs (`: $v`/`: @a`/`bless` to read the var).
-specs scope.sh 86.13–86.20. Full 3-mode sweep vs `30be5f6`: **native 0
+specs scope.sh 86.13–86.20. Full 3-mode sweep vs `891bcf9`: **native 0
 regressions +8, c 0 +8, janet 0 +8**. fmt/clippy clean; lib tests pass;
 complexity gate cleared. journal 228. Filed
 `bare-collection-name-operand-asymmetry` (DG asked).
@@ -1208,7 +1208,7 @@ is a redeclaration error (**SB5049**); a bare assignment writes the global.
 `check_no_shadow` in validate.rs collects top-level decls (globals, not
 descending into fn bodies) then scans each fn body for typed decls colliding
 with a global. specs scope.sh 86.7–86.12 (native,c,janet). Full 3-mode sweep vs
-`b935e28`: native 0 regressions +6, c 0 regressions +6, janet +8. journal 227.
+`dcf2c97`: native 0 regressions +6, c 0 regressions +6, janet +8. journal 227.
 
 **Next:** Phase 4 (dead-var), Phase 5 (converter + docs).
 
@@ -1235,7 +1235,7 @@ every fn-body lowering — fn-local const is now isolated while global-const and
 within-fn reassignment enforcement are preserved.
 
 Specs: rewrote the 7 `local` specs (functions 18.1–18.4, types 35.1, arithmetic
-ivc.8, errors 55.7). Full 3-mode sweep vs `0445fe1`: **native 0 regressions,
+ivc.8, errors 55.7). Full 3-mode sweep vs `688616a`: **native 0 regressions,
 c 0 regressions**, janet +2. fmt/clippy clean; lib unit tests pass. journal 226.
 
 **Next:** Phase 3 (no-shadow), Phase 4 (dead-var), Phase 5 (converter + docs).
@@ -1267,7 +1267,7 @@ backslashes vs bash's one — that's DD#64 (no-shell-backslash), ratified; spec
 dropped.
 
 specs `spec/wordsplit.sh` 22.20–22.24 (native,c; janet skip). Full 3-mode
-sweep vs HEAD `005c7d4`: **native 0 regressions +5, c 0 regressions +5**,
+sweep vs HEAD `8e01b0a`: **native 0 regressions +5, c 0 regressions +5**,
 janet 0/0. fmt+clippy clean; complexity gate cleared (extracted
 `emit_read_line_call`/`emit_read_last_var`/`emit_read_field_split` native,
 `emit_readline_last`/`insert_read_target_types` c). journal 225.
@@ -1291,7 +1291,7 @@ bfb.1–6; 0 regressions, +12 passing. DD#24 amended; `:~` stays DD#84 elide (th
 
 **On `hand-parser`.** Two things this session, both pushed:
 
-**DD#87 (pushed `031b5f5`) — critical runtime bug.** Found while testing DD#86:
+**DD#87 (pushed `29e6426`) — critical runtime bug.** Found while testing DD#86:
 interpolating an int var + a string var into one string and passing it to an
 **external** command produced trailing garbage (`/bin/echo "n=$n s=$s"`), while
 the builtin echo was clean. Root cause: sash-rt string builders allocated exactly
@@ -1337,7 +1337,7 @@ DD#85; journal 221.
 Behavior matches bash (`# ; x` runs nothing after `#`; same-line `# c }` eats
 the `}`; shebang dropped; `#` in `$(( ))` stays a Word per DD#72). specs
 `spec/comments.sh` cmt.1–11 (all modes; cmt.11 native,c). Full 3-mode sweep vs
-`e638e84`: **0 regressions, +32 passing**. Lib tests green.
+`da02f3a`: **0 regressions, +32 passing**. Lib tests green.
 
 **Open follow-up (filed, needs a DG decision):**
 `notes/tasks/arith-block-separators-and-comments.md` — DG observed that
@@ -1365,7 +1365,7 @@ invert the negated stage's status in the pipeline wait. Standalone `! cmd`
 head).
 
 DD#70 addendum + DD#55 pointer. specs `spec/errors.sh` bng.7–12 (plan 91→97), all
-three modes. Full 3-mode sweep vs `25d7d66`: **0 regressions, +18 passing**. Rust
+three modes. Full 3-mode sweep vs `e38ee4f`: **0 regressions, +18 passing**. Rust
 suites: failure set identical at baseline (stash-verified; pre-existing rot).
 journal 220. The `X | ! Y` open item from cont.3 is now **resolved**.
 
@@ -1385,7 +1385,7 @@ Verified vs bash (pipeline match/no-match, `&&` both-true/second-false, `||`).
 
 specs `spec/functions.sh` 74.19–74.23 (plan 63→68): pipelines 74.19/20 all
 modes; `&&`/`||` lists 74.21–23 native,c only. **0 regressions** (3-mode diff vs
-HEAD `496ece5`); +12 passing (5 native + 5 c + 2 janet), 0 new failing. DD#74
+HEAD `071fbb7`); +12 passing (5 native + 5 c + 2 janet), 0 new failing. DD#74
 producer table amended; journal 219.
 
 janet gated: its AST return-producer emit **collapses** an `&&`/`||` list to one
@@ -1410,7 +1410,7 @@ rejected elsewhere (SB5046) and never takes a word (SB4051). DD#84; journal 218.
 
 Lowering: `:~` → `SsaValue::ElideEmpty`; native + c list builders do a runtime
 0-or-1 on emptiness (argv + array literal, compacting). specs
-`spec/optional_args.sh` (84.1–18). Full 3-mode sweep vs `d88969b`: **0
+`spec/optional_args.sh` (84.1–18). Full 3-mode sweep vs `aea691e`: **0
 regressions; +18 native/c, +4 janet** (arity refactor touched every fn def —
 clean). janet deferred (no `args` model; `janet-optional-args-elision`); int-cell
 identity deferred (elides on empty string).
@@ -1423,7 +1423,7 @@ full `[[ ]]` battery showed neither ever fires — the lexer always splits `==`/
 into its own token, so a compact operand always arrives as `Concat([subj, "==",
 pat])` (middle-part branch), never a glued `Literal` or glued last part. Removed
 both fns + the two dead call-site branches; remove-then-run 0 regressions (3-mode
-sweep vs `d398170`). Task done.
+sweep vs `790711b`). Task done.
 
 **Grind endpoint reached** — spec-only native-core never-run is now only the two
 unit-tested intentional ICEs + `type_check::fmt` (documented artifact).
@@ -1444,7 +1444,7 @@ unit-tested intentional ICEs + `type_check::fmt` (documented artifact).
 - **Explained**: `type_check::fmt` (uncalled `Display for TypeError` — errors
   surface via `.message`/`.span`, not `{}`).
 
-Full 3-mode sweep vs `cd97212`: **0 regressions, +6 cli each**. 16 lib unit tests
+Full 3-mode sweep vs `0500841`: **0 regressions, +6 cli each**. 16 lib unit tests
 pass. Spec-only never-run endpoint = the two unit-tested ICEs (can't be
 spec-driven) + the two queued dispatch branches; all else covered or documented.
 
@@ -1461,7 +1461,7 @@ builders); deleted `ir_expr_to_ssa_value`. Journal 217.
 
 specs commands.sh 14.26–31 (stage `$f`/`${x:-f}`/`$a[i]`; plus never-run
 `&>`/`> '…'`/`> "$x.txt"`; plan 40→46, native,c). Full 3-mode sweep vs
-`5ea5ceb`: **native/c 0 regressions, +6 each; janet 0**. Coverage re-measured:
+`cc5b8aa`: **native/c 0 regressions, +6 each; janet 0**. Coverage re-measured:
 native-core never-run **25 → 21** (4 flipped/removed).
 
 **Grind continues** (21 left, triaged in `coverage-accounting.md`): bucket-A
@@ -1483,7 +1483,7 @@ operand, byte-for-byte. Pure sugar, so removed. DD#83, journal 216.
 `ssa_taint` clean-literal source, the transform special-case) — 9 sites, driven
 by exhaustiveness. specs commands.sh 14.25 (SB4050 all modes; plan 39→40);
 taint.sh 24.6 rewritten to `echo hello | read x`. Full 3-mode sweep vs
-`be6837e`: **0 regressions, +1 each**. Supersedes
+`b8d2a13`: **0 regressions, +1 each**. Supersedes
 `bug-herestring-nonscalar-data-empty`; filed `converter-herestring-to-pipe` (P3).
 
 **Next:** resume the never-run grind (`grind-continue`) — native gate clean.
@@ -1505,7 +1505,7 @@ the redirect to read it (codegen already handles `$var`); no new SSA type,
 native+c inherit it. janet unchanged (no file redirects; reject still applies at
 parse). specs commands.sh 14.19–24 (plan 33→39); taint.sh 60.41/60.52 rerouted
 through a scalar (direct `$(join …)` target now SB4049 before SB5020). Full
-3-mode sweep vs `65b4375`: **native/c 0 regressions, +6 each; janet 0, +2**.
+3-mode sweep vs `bbeaf24`: **native/c 0 regressions, +6 each; janet 0, +2**.
 fmt+clippy clean, complexity gate clear.
 
 **Filed:** `bug-herestring-nonscalar-data-empty` (P2) — the `<<<` DATA path has
@@ -1527,7 +1527,7 @@ does). Fix: (1) `subscript_read_to_ssa` calls `resolve_args_name` (mirror
 code). `f(){ echo $(( args[0]+1 )); }; f 5` → 6. Unmasking routes arith args
 through the pre-existing positional rules (non-contiguous → SB5044, over-arity →
 SB5043; parity with `${args[i]}`); top-level `args` still SB5031. specs
-arithmetic.sh bsx.8/9/10. Full 3-mode sweep vs `499859c`: **0 regressions**; +3
+arithmetic.sh bsx.8/9/10. Full 3-mode sweep vs `beee24e`: **0 regressions**; +3
 native/c, +1 janet. janet arith subscript still gapped (`janet-arith-subscript-
 read`).
 
@@ -1545,7 +1545,7 @@ had the bug**. Journal 212.
 silently dup'd to fd 2. Fix (DG: **reject-only**): `reject_nonfd_dup_target` in
 `parse_redirect` → **SB4048** for any non-numeric/malformed target; `>&N` /
 `N>&M` / `<&N` still work. `RedirectOp` gained `Copy`. specs coverage.sh
-cov.86-88 (all modes). Full 3-mode sweep vs `ad5c557`: **0 regressions**, +3
+cov.86-88 (all modes). Full 3-mode sweep vs `d46d051`: **0 regressions**, +3
 each. Follow-up filed: fd dup/close as **builtins** (`fd-manipulation-builtins`).
 
 **Next:** resume the never-run grind (`grind-continue`) — the native gate is
@@ -1565,7 +1565,7 @@ Two-layer model: SB4034 = known-dropped op (specific guidance); SB4047 =
 genuinely unknown content. Everything sash understands (`:-`/`:?`/`:off:len`/
 `:s/`, subscripts, `@`→SB4015, `!`→SB4003, strlen) is recognised earlier, so
 only garbage reaches SB4047. specs var_modifiers.sh vm.un1-4. Full 3-mode sweep
-vs `df6fe84`: **0 regressions, 0 gone** — nothing relied on the silent-accept.
+vs `e4269d1`: **0 regressions, 0 gone** — nothing relied on the silent-accept.
 
 ## ════════ STATUS (2026-08-29) — non-colon param family rejected + SUBSET.md deleted ════════
 
@@ -1587,7 +1587,7 @@ vs `df6fe84`: **0 regressions, 0 gone** — nothing relied on the silent-accept.
   `notes/decisions/` as the subset authority. Corrected the journal-209/DD#65
   bare-`-` note (was wrong).
 
-**Verification:** full 3-mode sweep vs `174164e` → **0 regressions**; +4 each
+**Verification:** full 3-mode sweep vs `8979f1f` → **0 regressions**; +4 each
 (vm.dr19-22). fmt+clippy clean.
 
 ## ════════ STATUS (2026-08-29) — int `:-` identity-element default (all 3 backends) ════════
@@ -1609,7 +1609,7 @@ vs `df6fe84`: **0 regressions, 0 gone** — nothing relied on the silent-accept.
   default check). DD#65 addendum; new task `janet-int-array-and-cell-default` (P3,
   janet int arrays broken independent of `:-`).
 
-**Verification:** full 3-mode sweep vs HEAD `328e529` → **0 regressions** native/
+**Verification:** full 3-mode sweep vs HEAD `91dddfb` → **0 regressions** native/
 c/janet; +6 native, +6 c, +5 janet new passing, c:cov.78 skip→pass. coverage.sh
 cov.78/80/81 (positives), 82/83/84 (rejects), 85 (int-cell, native+c). fmt+clippy
 clean; new fns pass the cog/cc gate.
@@ -1694,23 +1694,23 @@ feature probe does NOT prove a specific fn ran. Two earlier P1 bugs fixed:
 
 ## ════════ (prior) trap purged + exec supported ════════
 
-**Pushed @ `e7d83b8`.** Two DG dispositions of the "accepted-in-source bash
+**Pushed @ `8acce46`.** Two DG dispositions of the "accepted-in-source bash
 forms" the coverage grind surfaced:
 
 
 
-**On `hand-parser`, pushed @ `0401ec2`.** Coverage grind (DG: "keep going").
+**On `hand-parser`, pushed @ `a044bb9`.** Coverage grind (DG: "keep going").
 Release line coverage **87.69% → 90.80%** across the session (compiler,
 native+c). Latest commits (all 0 native/c regressions, verified by full
 3-mode sweep):
-- `211c464` removed the dead positional-init cluster
+- `be426a6` removed the dead positional-init cluster
   (`init_numeric_positional`/`init_at_var`, ~90 lines) — top-level positionals
   are validation-rejected and function positionals use the args-array (DD#60),
   so `init_one_positional` only ever hits its DD#53 empty-default. **Verified
   DG's way: remove + full-suite run confirms safety, git checkout reverts.**
-- `2346c36` removed the dead `command` builtin codegen (DD#23/SB4001-shadowed).
-- `7bd1a81` `spec/trace.sh` (DD#32 `--trace`/SASH_TRACE tracing).
-- `88910be`/`86ac293`/`0401ec2` cov.59-61 (`$(< file)` slurp, `trap … EXIT`,
+- `67affbc` removed the dead `command` builtin codegen (DD#23/SB4001-shadowed).
+- `d5b5cf5` `spec/trace.sh` (DD#32 `--trace`/SASH_TRACE tracing).
+- `12fb51e`/`3ac9c96`/`a044bb9` cov.59-61 (`$(< file)` slurp, `trap … EXIT`,
   for-in-cmdsubst pipe-while-read).
 
 **Bugs filed this stretch:** `c-pipe-while-read-eof-extra-iter` (P3 — c does an
@@ -1726,18 +1726,18 @@ largely exhausted; further progress needs DG input on the ambiguous forms.
 
 
 
-**On `hand-parser`, pushed @ `88910be`.** Coverage grind continued (DG: "keep
+**On `hand-parser`, pushed @ `12fb51e`.** Coverage grind continued (DG: "keep
 going"). Release line coverage **87.69% → 90.36%** across the session (compiler,
 native+c; 610 fewer missed lines). Commits after the ternary work (all 0
 native/c regressions):
-- `2346c36` removed the dead `command` builtin codegen (`emit_command_builtin`
+- `67affbc` removed the dead `command` builtin codegen (`emit_command_builtin`
   + `BuiltinCmd::CommandBuiltin` chain, ~79 lines) — DD#23 rejects `command`
   via SB4001 (`check_dynexec`); the codegen was shadowed vestige. cov.58 pins
   it; shrinks the command-exec attack surface.
-- `7bd1a81` `spec/trace.sh` (NEW, native-only) covers DD#32 tracing
+- `d5b5cf5` `spec/trace.sh` (NEW, native-only) covers DD#32 tracing
   (`--trace` + `SASH_TRACE=1` → `emit_branch_outcome_trace` /
   `intern_trace_terminator`, ~68 lines). tr.1-3 (if.then/if.else/while).
-- `88910be` cov.59 covers `$(< file)` slurp parse (parse_slurp_form).
+- `12fb51e` cov.59 covers `$(< file)` slurp parse (parse_slurp_form).
 
 **Candidate-dead (needs careful verification, NOT removed):**
 `codegen/setup.rs::init_numeric_positional` + `init_at_var` (+ their only caller
@@ -1754,19 +1754,19 @@ lexer scan_dq_backtick/scan_ansi_c_octal). Re-measure: `/tmp/rcov.sh`.
 
 ## ════════ STATUS (2026-08-27) — ternary fixes + coverage grind (89.66%) ════════
 
-**On `hand-parser`, pushed @ `9218f23`.** Coverage grind continued (DG: "no
+**On `hand-parser`, pushed @ `3cbcd40`.** Coverage grind continued (DG: "no
 rest, continue while a path forward exists"). Release line coverage **87.69%
 → 89.66%** this session (compiler, native+c, no janet; ~447 fewer missed
 lines). Commits this run (all 0 native/c regressions):
-- `29bdd25` removed dead `$@` transform machinery (post-DD#81, ~82 lines).
-- `d66b831` arith-operator coverage cov.29-48 (unary/inc-dec/compound-assign/
+- `93a85bf` removed dead `$@` transform machinery (post-DD#81, ~82 lines).
+- `2b49dbe` arith-operator coverage cov.29-48 (unary/inc-dec/compound-assign/
   comma).
-- `ddeb1d4` + `3971248` **retired `${#…}` entirely** (DG Policy C) — see block
+- `d9e68e0` + `03eabb1` **retired `${#…}` entirely** (DG Policy C) — see block
   below.
-- `2fcacd8` **c-backend ternary was silently empty** (no lower_value_as_str
+- `70c34ed` **c-backend ternary was silently empty** (no lower_value_as_str
   arm) → fixed via lower_value_as_int + emit_ternary_as_int_c (if/else temp,
   lazy). cov.49-56.
-- `9218f23` **native ternary was eager** (evaluated both branches → leaked a
+- `3cbcd40` **native ternary was eager** (evaluated both branches → leaked a
   side-effecting untaken branch's div-by-zero/overflow) → both sites
   (lower_ternary_value + new lower_ternary_int) rewritten to brif+phi merge.
   Now native==c==bash (lazy). cov.57 pins it. Closed native-ternary-eager-eval.
@@ -1804,10 +1804,10 @@ retracted — every verified "missing" line was genuinely dead-or-untested;
 the 91%↔48% debug swing is just line-counting granularity). Harness: needs
 `cargo llvm-cov clean --workspace` to force instrumentation; rebuild whole
 workspace (convert/expand) before those specs; force-rebuild uninstrumented
-after. Batches pushed (0 regressions, native 0): `4d94eb9` 4 dead methods;
-`0f36b7a` parser-shadowed check_export_or_declare + coverage.sh cov.1-3;
-`877d55e` coverage.sh cov.4-10 (7 reachable-untested diagnostics);
-cov.11-28 (more reachable diagnostics + redirect forms); `ed95432` dead
+after. Batches pushed (0 regressions, native 0): `56024da` 4 dead methods;
+`511cddf` parser-shadowed check_export_or_declare + coverage.sh cov.1-3;
+`2885993` coverage.sh cov.4-10 (7 reachable-untested diagnostics);
+cov.11-28 (more reachable diagnostics + redirect forms); `0c5c4aa` dead
 `$@`-exec codegen path; **dead `$@`-expansion transform machinery**
 (`expand_dollar_at_*`, ~82 lines — all no-ops post-DD#81 `$@`-rejection).
 High-yield pattern: recent feature *removals* ($@, case, var-modifiers)
@@ -1920,15 +1920,15 @@ SB5044 hole (rule (a)). DG's no-op idiom (`: $1` to acknowledge an unused param,
 
 ## ════════ STATUS (2026-08-25, cont.) — DD#81 structural stages COMPLETE; Part B (arity) filed ════════
 
-**Pushed on `hand-parser` (c09a4a3, f9f16f5, 9fc930c) + DD 820f0cd.** DD#81
+**Pushed on `hand-parser` (d73c69e, 56e4c17, 50474e9) + DD 3081205.** DD#81
 ("function-call discipline") structural work done — three reachable ICEs fixed
 and the "one name, one meaning" principle implemented:
 
-- **Part A** (c09a4a3) — reject command/function shadowing + forward refs
+- **Part A** (d73c69e) — reject command/function shadowing + forward refs
   (SB5041); unified the `$(f)` gate onto the plain-call `function_bodies` gate.
-- **func_constants removal** (f9f16f5) — the forward-`$(f)` machinery, now
+- **func_constants removal** (56e4c17) — the forward-`$(f)` machinery, now
   provably dead, deleted (−216 lines, 8 files).
-- **`$(f arg)`** (9fc930c) — the capture path now carries + sets up the callee's
+- **`$(f arg)`** (50474e9) — the capture path now carries + sets up the callee's
   `args` (was an `undefined array` ICE); unified onto the args-array model.
 - **message cleanup** — MOOT: Part A + SB5011 catch every unresolved/forward
   bareword at compile, so the sash-rt `bug: bare command` backstop is now an
@@ -2041,7 +2041,7 @@ Review remaining: P1 Pattern-A `match` conversions (types.rs flag-checked
 
 **Committed on `hand-parser`.** Three ICE arms from the per-pattern review
 (reviewed interactively with DG) retired:
-- **P8** (`3fb3458`) — `$(join)` 0/>2-arg was a **reachable compiler panic**; now
+- **P8** (`3cf1519`) — `$(join)` 0/>2-arg was a **reachable compiler panic**; now
   `validate::check_join_arity` → SB5040. spec types.sh 33.23-24.
 - **P4** — `ssa::CheckedArithOp{Add,Sub,Mul}` makes `emit_checked_arith(_c)` total
   (2 arms gone). Dispatch maps each ArithOp variant directly.
@@ -2124,7 +2124,7 @@ began with the `arith-bare-subscript-followups` edge-2 finding.
 - Filed `bug-braced-nested-subscript-index` (pre-existing, separate path:
   `${a[a[0]]}` returns the inner cell).
 
-Commits `f31d2c9` (edges 1+2), edge 4 (this). 0 regressions native/c/janet;
+Commits `4b4935c` (edges 1+2), edge 4 (this). 0 regressions native/c/janet;
 journals 169, 170. Remaining native backlog: `eliminate-ice-arms-via-types`,
 `audit-string-keyed-builtin-dispatch`, doc task.
 
@@ -2156,12 +2156,12 @@ janet. Journal 168. Remaining native backlog: `arith-bare-subscript-followups`,
 Combined effort from the `len-undefined` discussion (DG approved). Three parts,
 all 0-regression across native/c/janet:
 
-- **`9ce861e` args in len/join/keys + top-level reject** — `$(len args)`/
+- **`2834536` args in len/join/keys + top-level reject** — `$(len args)`/
   `$(join args)`/`$(keys args)` now resolve the implicit array (was a silent 0);
   `resolve_args_name` at the intrinsic sites + type_check `check_function`
   registers `args` as a function-scope collection. Top-level `@args`/`${args[i]}`
   → SB5024 (function-local). Specs 75.23-75.26.
-- **`1fcc94a` `len <undefined>` → SB5039** — a dedicated `validate.rs`
+- **`27201d2` `len <undefined>` → SB5039** — a dedicated `validate.rs`
   `check_len_operands` pass, NOT the type_check route the task sketched. Key
   insight (DG): the loop-var gap is only in *type_check*'s env; validate's SB5031
   `collect_scope_names` already tracks `for` vars / decls / read targets, so
@@ -2177,7 +2177,7 @@ runtime), + the doc task.
 
 ## ════════ STATUS (2026-08-21, backlog sweep cont.) — 3rd fix: arith 0x/0o/0b disposition defaults ════════
 
-**Pushed `2e5916f`.** `arith-disposition-hex-octal-default`: the arith `:-`
+**Pushed `2f435a6`.** `arith-disposition-hex-octal-default`: the arith `:-`
 default now accepts DD#72 `0x`/`0o`/`0b` literals (was decimal-only, SB4030).
 New shared `parse::parse_dd72_literal`; type_check D4 widened; native/c convert
 to decimal at SSA level (`canonicalize_arith_default`, arith-scoped so string
@@ -2186,8 +2186,8 @@ to decimal at SSA level (`canonicalize_arith_default`, arith-scoped so string
 Specs d4.2/d4.4-d4.7b. 0 regressions all 3 modes.
 
 **Backlog sweep so far (all 0-regression, pushed):** arg-negative-index (SB5038)
-`960c9dd`; bare-nested-cmdsub (lexer `))` split) `caa4a35`; arith-disposition
-`2e5916f`. Remaining native: `len-undefined-reject` (needs loop-var/param
+`fc7262e`; bare-nested-cmdsub (lexer `))` split) `07ee969`; arith-disposition
+`2f435a6`. Remaining native: `len-undefined-reject` (needs loop-var/param
 tracking), `const-fold-command-name` (feature), `arith-bare-subscript-followups`,
 + args-model polish (`$(len/join/keys args)`, `$*`→`$(join args)`) + the doc task
 (`docs-tail-recursion-args-model`). janet residuals tracked in
@@ -2198,12 +2198,12 @@ tracking), `const-fold-command-name` (feature), `arith-bare-subscript-followups`
 Working the native backlog (DG: "keep after the backlog"). Two bugs fixed, each
 0-regression across native/c/janet:
 
-- **`arg-negative-index-compile-reject`** (`960c9dd`): `$(arg -1)` compiled
+- **`arg-negative-index-compile-reject`** (`fc7262e`): `$(arg -1)` compiled
   (only aborting at runtime) despite DD#60's compile-time guarantee. Now
   `arg_index_diag` rejects a negative integer literal index with **SB5038**
   (both `$(arg -N)` and `$(arg -N DEFAULT)`). Specs argv.sh av.t7 (strengthened
   to assert SB5038) + av.t7b.
-- **`bare-nested-cmdsub-arg`** (`caa4a35`): a bare nested `$(f $(g))` was a parse
+- **`bare-nested-cmdsub-arg`** (`07ee969`): a bare nested `$(f $(g))` was a parse
   error (SB4014). Root cause: logos lexes `))` as one `DblParenClose`, but that
   token is arith-only; in `$(f $(g))` the `))` are two cmdsub closes.
   `split_dbl_paren_close` splits `DblParenClose`→`RParen` when `arith_depth==0`.
@@ -2220,7 +2220,7 @@ args-model polish (`$(len/join/keys args)`, `$*`→`$(join args)`) and the doc t
 
 ## ════════ STATUS (2026-08-21, later²) — FIX: nested-paren sexpr arg (arith collector) ════════
 
-**Pushed `ca79d0f`.** Fixed the P2 bug found during tail-recursion work: a DD#58
+**Pushed `665151a`.** Fixed the P2 bug found during tail-recursion work: a DD#58
 arith sexpr call with a **parenthesised arg** — `(dbl (2 + 1))` — silently gave
 0 (and `(dbl (2))` was an SB4020 parse error).
 
@@ -2242,7 +2242,7 @@ for tail recursion — a nested arith arg now works directly.)
 
 ## ════════ STATUS (2026-08-21, later) — RECURSION: reject non-tail, tail→loop ════════
 
-**Pushed `94dac99`.** Recursion crashed the compiler (unbounded inlining → stack
+**Pushed `46ff63a`.** Recursion crashed the compiler (unbounded inlining → stack
 overflow). Now, per DD#27 (amended):
 
 - **Non-tail + all mutual recursion → SB5037** (clean reject, no crash). An
@@ -2275,7 +2275,7 @@ silently lowers to 0. Independent of the args model / tail recursion (a plain
 
 ## ════════ STATUS (2026-08-21) — DD#75 §5 args model SHIPPED (0-indexed); `shift` dropped ════════
 
-**Pushed `f505e2d`.** Function positionals (`$1..$9`/`$@`/`$#`) are now backed
+**Pushed `03e37e8`.** Function positionals (`$1..$9`/`$@`/`$#`) are now backed
 by a real **0-indexed** `args` array, not scalar `"1".."9"/"#"` vars. DG's key
 insight: `args` is a compiler-managed abstraction, so each inline mints a
 **fresh unique array name** (`__args0`, `__args1`, …) materialized once from the
@@ -2312,7 +2312,7 @@ followups`, `arith-disposition-hex-octal-default`, + the args-model polish.
 
 ## ════════ STATUS (2026-08-20, later still) — janet STRUCTURAL MAP: Stage 2 SHIPPED ════════
 
-**Stage 2 shipped `48bd47d` (pushed)** — the function surface + typed bindings.
+**Stage 2 shipped `aac76b6` (pushed)** — the function surface + typed bindings.
 Verified byte-identical to native on 7 programs (functions, positionals, `$@`
 splice, return, function-in-condition, elif-in-function, negative int).
 
@@ -2330,7 +2330,7 @@ splice, return, function-in-condition, elif-in-function, negative int).
   up to the first unmapped construct, then aborts naming it (`expr:arithmetic`
   etc.) — graceful degradation for DG's experimentation.
 
-**Fix folded in first (`6da6522`):** removed the numeric `[[ ]]` forms
+**Fix folded in first (`f6db842`):** removed the numeric `[[ ]]` forms
 (`sash/-eq…-ge`) — a bashism; sash `[[ ]]` is string/file only, numeric compare
 is `(( ))` (S4). Readable TODO labels (`stmt:*`/`expr:*`).
 
@@ -2346,7 +2346,7 @@ interprets the sash source … side-by-side … 'oh, I see that didn't parse the
 way I expected'." Structural legibility (the parse shape) over semantic/
 idiomatic legibility. Build in **stages**; get an early read after stage 1.
 
-**Stage 1 shipped `2e6ad81` (pushed).** New `--janet-map` backend, additive
+**Stage 1 shipped `6bc0130` (pushed).** New `--janet-map` backend, additive
 (old `--janet` untouched):
 - `sash/src/emit_janet_map.rs` — structural emitter: Program → `sash/*` map.
 - `sash/janet/sash-rt.janet` — primitive library, prepended as preamble.
@@ -2379,7 +2379,7 @@ remaining (descriptive-abort incl. harness change, bgpid, ivc.8).
 Started at 13 failing + 63 native-guarded; now 0 failing, 7 skipped — and all
 7 are genuinely NOT c gaps: janet tests (15.1/15.2, `run_sash_janet`),
 native-ELF-only (32.1/32.2, `.sash_source`/`--extract`), and mode-independent
-CLI flags (57.46a-c). ~13 commits `16c5078`..`867e93a`, all 0 regressions.
+CLI flags (57.46a-c). ~13 commits `cde633e`..`01884df`, all 0 regressions.
 
 Batches (journal 158-166):
 - bless-fail abort, signum, DD#56 signals/END (+9)
@@ -2410,19 +2410,19 @@ DG: "tackle all the c parity work, and wait on janet." Started at **13 failing
 skipped being not-c-gaps. 7 batches, all 0 regressions, all pushed on
 `hand-parser`:
 
-- **158** `16c5078` bless-fail abort, signum, DD#56 signals/END (+9:
+- **158** `cde633e` bless-fail abort, signum, DD#56 signals/END (+9:
   24.12, sx.7, 56.4-56.11). Signal runtime prims already in sash-rt.
-- **159** `2d9230e` external `$(cmd)` capture + DD#55 abort (+3: 55.7/8/9).
+- **159** `4489c63` external `$(cmd)` capture + DD#55 abort (+3: 55.7/8/9).
   New `sash_capture_status` runtime helper.
-- **160** `6fea877` bless-all + mapfile-from-file + array append (+19:
+- **160** `68d18f2` bless-all + mapfile-from-file + array append (+19:
   60.9-60.36, ad.1-3). RedirectPush/Pop stack, BlessAll loop (shadowing,
   if-form, map), BlessRetag, ArrayAppend.
-- **161** `95602ec` un-guard 12 already-working (e.b70.tbare/tdash, 63.2e/f,
+- **161** `6e83b5f` un-guard 12 already-working (e.b70.tbare/tdash, 63.2e/f,
   63.cap6/7, bng.1-6, ud.16, e.a70.silent).
-- **162** `dd1215c` function/multi-statement stdout capture (+4: 17.3/4,
+- **162** `92a8aa7` function/multi-statement stdout capture (+4: 17.3/4,
   mcs.3/4). CaptureStart/End via sash_capture_start/end.
-- **163(6)** `eb4c63c` un-guard 14.2c/14.3a/b/d (cmdsub, work via 159/162).
-- **163(7)** `6b9019c` implement `cd` (was a no-op — real bug); fix
+- **163(6)** `e3e867d` un-guard 14.2c/14.3a/b/d (cmdsub, work via 159/162).
+- **163(7)** `08b5253` implement `cd` (was a no-op — real bug); fix
   `bug-emit-c-splat-vla-jump` P2 (heap-alloc splat argv, not a stack VLA, so
   cd's abort goto can cross it). 0 un-guarded but 2 real fixes.
 
@@ -2478,7 +2478,7 @@ sash-convert + a spec file; the compiler is untouched.
 
 DG: "finish partials." Also fixed a bless-all bug DG surfaced.
 
-- **bug-mapfile-undeclared-len-ice — front-end completion** (bc8940f): the
+- **bug-mapfile-undeclared-len-ice — front-end completion** (6b12c73): the
   transform auto-declare made `$(len a)` work but the FRONT-END didn't register
   an auto-declared mapfile/read array as a collection, so `bless e in a` /
   `${a[0]}` gave SB4030 ("scalar") — while `argv` and explicit `array a=()`
@@ -2542,8 +2542,8 @@ DG: "let's tackle the decisions." All three implemented + pushed:
   now recursive over all stmts/stages + a matching `CaptureEnd{tainted}` flag.
   native (c/janet capture is a pre-existing gap); taint rejects all modes.
   spec commands.sh 14.3*, taint.sh mcs.*, errors.sh 55.9. +17, 0 regr. Jrnl 154.
-- **B — compound-condition catch** (fff66b4): see below.
-- **C — $LINENO reject** (fe986b6): see below.
+- **B — compound-condition catch** (b32e038): see below.
+- **C — $LINENO reject** (e671d6a): see below.
 
 
 
@@ -2617,7 +2617,7 @@ DG proposed `$(arg N)` take an optional default instead of aborting on OOB.
 Design ratified **DD#78** (disposition defaults must be clean + non-`random`)
 and a **DD#60 addendum** (`$(arg N DEFAULT)`). **Both complete + pushed.**
 
-- **DD#78 Stage 1 (8e522e9):** closed a real taint hole — a `:-` default's
+- **DD#78 Stage 1 (14a3b70):** closed a real taint hole — a `:-` default's
   operand was never taint-checked (`echo ${x:-$(getenv)}` / `${x:-$y}` compiled;
   `z=${x:-$(getenv)}` left z clean). Both taint primitives now recurse into the
   `:-` operand; `check_disposition_defaults` rejects `$(random)` defaults
@@ -2639,10 +2639,10 @@ enforced), `bare-nested-cmdsub-arg` (general parse limit — quote the nested su
 DD#77 (arith string→int conversion discipline) is **complete**. Stage C shipped
 this session on top of the mechanism + `-i` work below:
 
-- **3028b65** C1 — un-prune `:?` everywhere (word ctx aborts on unset/empty;
+- **ca4f75f** C1 — un-prune `:?` everywhere (word ctx aborts on unset/empty;
   arith on non-int); `RequireValue` SSA node + `sash_require_value` runtime +
   3-backend codegen.
-- **028c325** C2 — arith strict-disposition semantics for `:-`/`:?` via
+- **bd296c3** C2 — arith strict-disposition semantics for `:-`/`:?` via
   `sash_atoi_or`/`sash_atoi_or_abort` (sash_is_int gate); native+c.
 - **(this commit)** C3 — **D1** bare string operand in arith → SB4030 (directs to
   `${s:-N}`/`${s:?msg}`); **D4** the `:-` default must be a decimal integer
@@ -2669,15 +2669,15 @@ Design conversation ratified DD#77 (string→int conversion discipline in arith)
 + DD#30 point-1 refinement. Shipped this session (all pushed hand-parser, 0 real
 regressions, native 0-fail):
 
-- **61a251e** point-1 — bare numeric literal to a known-int LHS (`int x=0; x=5`,
+- **54b57a7** point-1 — bare numeric literal to a known-int LHS (`int x=0; x=5`,
   `a[1]=99`); DD#30 amended. Fixed a pre-existing janet scalar-`+=` silent
   miscompile inline.
-- **87cbd2b** DD#77 A — route arith `${…}` through the real param parser; fixes
+- **fe5af21** DD#77 A — route arith `${…}` through the real param parser; fixes
   the P1 silent-0 bug (`${s:-0}` → bogus var → 0).
-- **489d994** DD#77 B — `sash_is_int` + `[[ -i EXPR ]]` test, 3 backends.
-- **a020ade** fix — Stage A opened a pruned-operator ICE hole (`:?`/`:=`/`##`… in
+- **ca44731** DD#77 B — `sash_is_int` + `[[ -i EXPR ]]` test, 3 backends.
+- **87d60d7** fix — Stage A opened a pruned-operator ICE hole (`:?`/`:=`/`##`… in
   arith bypassed SB4034 → ICE); walk now descends arith, rejects cleanly.
-- **91dd253** DG follow-up — `-i` range-checked (valid AND representable);
+- **a8d2c22** DG follow-up — `-i` range-checked (valid AND representable);
   runtime atoi overflow now a clean `sash_arith_overflow` trap (was rc-99 panic).
 
 DD#77 recorded (+ resolved sub-decisions: `:?` un-prune everywhere mirroring
@@ -2738,7 +2738,7 @@ native 904/0-fail; c 13 / janet 36 == baseline; 0 regressions.
 ## ════════ STATUS (2026-08-15) — DD#58/Option C sexpr int intrinsics DONE ════════
 
 bug-arith-sexpr-intrinsics-zero complete (both parts, pushed on hand-parser):
-- **Part 1 (9f85526)** — category A int intrinsics compute in a sexpr (were
+- **Part 1 (d42cac5)** — category A int intrinsics compute in a sexpr (were
   silent 0); `$(( (x) ))` grouping bug (→0) fixed; Q3 `random` int-typed.
 - **Part 2** — category B + Q2: a string producer in a sexpr → SB4030 type
   error (type_check third pass). Closes the getenv/arg validator-bypass +
@@ -2825,11 +2825,11 @@ c 13 / janet 36 == baseline (0 regressions). Converter half filed as
 ## ════════ STATUS (2026-08-14 unattended, cont.) — DD#75: 5 tasks landed ════════
 
 Continued the unattended DD#75 run (test-first, pushed on hand-parser):
-- ab184c0 bug-subscript-assign-bare-key (P2)
-- dc9f8df dd75-keys-map-only (P3) — + added the missing For-arm to type_check
-- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic gates 1+2 (P2, DEMO):
+- 7193ba6 bug-subscript-assign-bare-key (P2)
+- a17909f dd75-keys-map-only (P3) — + added the missing For-arm to type_check
+- 51c3754 + dcadfd9 intrinsics-lengths-in-arithmetic gates 1+2 (P2, DEMO):
   `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` evaluate (sexpr + ATok::LenOf)
-- 84c28ce string-func-capture-in-arg-ice (P2) — DG: lift-and-print; shared
+- 418455f string-func-capture-in-arg-ice (P2) — DG: lift-and-print; shared
   capture_func_into; `echo $(greet)` works incl. runtime capture (no ICE)
 
 All native 0 failing; c 13 / janet 36 == baseline. Backend gaps filed:
@@ -2847,10 +2847,10 @@ Qs as follow-ups). Remaining, scoped in their task files:
 
 Unattended session (SOP: ready backlog, dependency order, test-first, skip
 decision-gated). Landed on hand-parser:
-- ab184c0 bug-subscript-assign-bare-key (P2) — indexed `a[i]=` bare-key reject.
-- dc9f8df dd75-keys-map-only (P3) — keys map-only; added the missing For-arm
+- 7193ba6 bug-subscript-assign-bare-key (P2) — indexed `a[i]=` bare-key reject.
+- a17909f dd75-keys-map-only (P3) — keys map-only; added the missing For-arm
   to type_check (for-in headers now type-checked).
-- a80d94d + 2dad1ab intrinsics-lengths-in-arithmetic (gates 1+2) — DG demo:
+- 51c3754 + dcadfd9 intrinsics-lengths-in-arithmetic (gates 1+2) — DG demo:
   `$(( (len a)+1 ))` and `$(( ${#a}+1 ))` now evaluate (arith sexpr + braced
   `${#x}` via ATok::LenOf → the len FuncCall shape). Filed sub-task
   arith-braced-length (done). string-intrinsic-in-arith reject deferred.
@@ -2871,14 +2871,14 @@ Implementing DD#75 in DG's recommended order, **test-first** with spec tests.
 Pushed on `hand-parser`.
 
 **DONE (committed + pushed):**
-1. `keys-splat-context-bypass` **P1** (`6742554`) — `$(keys m)` bypassed the
+1. `keys-splat-context-bypass` **P1** (`9685412`) — `$(keys m)` bypassed the
    SB5025 splat guard → silent join + garbage bytes (memory-unsafe). Added
    `is_keys_splat_expr`; SB5025 outside for-in. Also fixed a stray `dp.co6`.
-2. `bug-join-explicit-separator-segfault` **P1** (`2c78be7`) — DG chose
+2. `bug-join-explicit-separator-segfault` **P1** (`3d1f8f5`) — DG chose
    `join arr SEP` (array-first); swapped arg order; `check_join_operand` rejects
    a non-array operand (SB4030) — no more segfault. janet join gaps guarded +
    filed (`janet-join-intrinsic-gaps`).
-3. `dd75-len-polymorphic` **P2 core** (`039ed7b`) — `len` dispatches on TYPE
+3. `dd75-len-polymorphic` **P2 core** (`1b35dc2`) — `len` dispatches on TYPE
    (collection→count, string→bytes); `${#x}` is Int sugar (`int n=${#a}`→3,
    `int n=${#s}`→5). Demo works. Partial: arith + undefined-reject deferred.
 
@@ -2923,7 +2923,7 @@ memory-safety bugs (independent of the language change), then §2 (len) for the 
 ## ════════ (prior status below) ════════
 ## ════════ STATUS (2026-08-10, late) — dispatch operator parity COMPLETE ════════
 
-**Pushed `ee3a2fa` on `hand-parser`.** Achieved dispatch-boolean parity for compact
+**Pushed `3bca6b1` on `hand-parser`.** Achieved dispatch-boolean parity for compact
 operators (==, =~). Issue: `[[ $x==a { … } ]]` required spaces; `[[ $x==a ]]`
 worked fine. Root cause: parser's `parse_test_binary_tail` returned a Unary
 (implicit `-n`) when no token-level binary operator followed. Fix: added
@@ -2951,7 +2951,7 @@ modified: 2026-06-07
 <!-- BEGIN: mk-status (regenerated by contrib/status-update.sh) -->
 ## Current branch: hand-parser
 
-## Spec status: 4120 passing / 33 failing of 4544 (spec.db @ ffd546f)
+## Spec status: 4120 passing / 33 failing of 4544 (spec.db @ 5bec718)
 
 _Regenerated 2026-09-08 by `mk status`. Edits inside this block will be
 overwritten; edit outside the BEGIN/END markers._
@@ -2981,10 +2981,10 @@ DG established DD#74: a function used in a *boolean context* (an `if`/`elif`/
 its status comes only from an explicit `return` — no implicit trailing-command
 status. Shipped native/c/janet, 0 native regressions:
 
-- **Phase 1** (`81c50dc`) — `return N` drives the enclosing condition (it now
+- **Phase 1** (`62fa5c1`) — `return N` drives the enclosing condition (it now
   syncs `test_result_var`, not just `$?`). Fixed c's missing `!` sigil and
   janet's `if <userfunc>`.
-- **Phase 2** (`0adfc36`) — `return <producer>`: `return CMD` / `return [[ ]]`
+- **Phase 2** (`679262a`) — `return <producer>`: `return CMD` / `return [[ ]]`
   / `return (( ))`. New `StmtKind::ReturnProducer`; the command form is
   consumed (never aborts).
 - **Phase 3** — definite-return in a boolean context (**SB4037**):
@@ -3015,7 +3015,7 @@ on a DG decision before it can complete.**
    gap filed as `janet-getpid-class-intrinsics`, Tier 4). **Tier 1 COMPLETE.**
 
 _Correction 2026-07-07 (autopilot): `dd55-abort-channel-remaining` moved to
-Tier 4 — it is entirely c/janet backend work (native landed in `707832f`),
+Tier 4 — it is entirely c/janet backend work (native landed in `bc65140`),
 so it follows the native tiers per the native-first rule. `dd67-bash-sugar-
 sweep` compiler part is DONE (§1/§2/§4B shipped); its only remainder is §3,
 a sash-convert canonicalize mode → moved to Tier 6._
@@ -3087,26 +3087,26 @@ a sash-convert canonicalize mode → moved to Tier 6._
     msgs/janet pipeline (moved from Tier 1: all backend)
 17. `c-janet-compound-pipeline-stage`
 18. `cf-backend-gaps-brace-surfaced`
-19. ~~`echo-read-inline-pipe-cjanet`~~ — DONE (dc10423): DD#20 lastpipe
+19. ~~`echo-read-inline-pipe-cjanet`~~ — DONE (2f183c2): DD#20 lastpipe
     read/mapfile for c+janet + bare `array`/`map` decl fix (janet). Extended
     beyond the single-read gate to 22.4-10/22.12. c 47→38, janet 70→61.
-20. ~~`janet-arith-string-coercion`~~ — DONE (28db76d): `_num` coercion at
+20. ~~`janet-arith-string-coercion`~~ — DONE (e91a9ac): `_num` coercion at
     arith use sites; DD#72 0x/0o/0b; fixes 58.2/3, cf.f5/f8, 16.2, nl.s*.
 
 **Tier 4 extra (not a pre-filed task) — DONE this session (2026-07-14):**
-- DD#58 int-func-in-arith c+janet (73de6d2): c 58.1-8 (fixed the `$?`-assign
+- DD#58 int-func-in-arith c+janet (793c8f3): c 58.1-8 (fixed the `$?`-assign
   → __exit_status mis-wire); janet 58.1/4/5/8 (nullary `(f)` call + `_ret`
 label numeric return). janet 58.2/3 → DONE via janet-arith-string-coercion.
-- dtoi/itod fixed-point intrinsics c+janet (28948e7): 36.1-4 both modes.
-- janet arith string→int coercion `_num` (28db76d): 58.2/3, cf.f5/f8, 16.2,
+- dtoi/itod fixed-point intrinsics c+janet (c655bc5): 36.1-4 both modes.
+- janet arith string→int coercion `_num` (e91a9ac): 58.2/3, cf.f5/f8, 16.2,
 un-guarded nl.s1-10.
 - c_var_name distinct special-var names + enforce transform diagnostics for
-  c/janet/manifest (e7c530f): fixed dup-`__ptr` compile error + made the
+  c/janet/manifest (6d0a619): fixed dup-`__ptr` compile error + made the
   oracles reject SB4016-class programs like native. Fixed 0.6/46.4/48.1/
   55.12/13/14/17c/16.2/0.5.
-- dtoi/itod (28948e7), janet arith coercion (28db76d), unset collection
-  (a355d38: 30.11), read-herestring + multi-part DoubleQuoted (3511fe4: 24.6).
-- **DD#55 pipeline semantics pass** (845f494, DG-ratified): context-independent
+- dtoi/itod (c655bc5), janet arith coercion (e91a9ac), unset collection
+  (ccb643c: 30.11), read-herestring + multi-part DoubleQuoted (076d3f3: 24.6).
+- **DD#55 pipeline semantics pass** (027753a, DG-ratified): context-independent
   aggregate (pipefail over non-suppressed segments); position decides only
   abort-vs-branch. Fixed pipefail-in-conditions, leading-`-` later-stage
   abort, non-first-`-` stage-drop; `pipeline &&/|| C` → SB4023. Per-segment
@@ -3124,7 +3124,7 @@ un-guarded nl.s1-10.
 **Tier 5 — hardening / infra / cleanup** (compiler-related → before convert)
 22. `eliminate-ice-arms-via-types` (bug-surface; may pull up near tier 2)
 23. ~~`excise-dormant-coercion-machinery`~~ — DONE (already excised in
-    `4e87034`; verified 2026-07-08, no Coercion refs remain)
+    `3a352ef`; verified 2026-07-08, no Coercion refs remain)
 24. `audit-string-keyed-builtin-dispatch`
 25. `fuzz-validator`
 26. `brush-rerun`
@@ -3190,8 +3190,8 @@ fixed, 0 regressions.**
 
 DG-directed, spec-first, **0 regressions native/c/janet** (native 648→663
 before this entry's tests; c 52 / janet 74 unchanged). DD#65 build-up:
-- **toupper/tolower** builtins (bff8f82), **basename/dirname** sugar
-  (e755fc4) — earlier this session.
+- **toupper/tolower** builtins (896a424), **basename/dirname** sugar
+  (bdcac8f) — earlier this session.
 - **`${var:-DEFAULT}` full interpolation** — DG settled the shape as
   **`:- ≡ "…"`**: the default is *exactly* a double-quoted-string body.
   Quotes (`'`/`"`) are ordinary literal bytes (no strip/group), whitespace
@@ -3222,9 +3222,9 @@ before this entry's tests; c 52 / janet 74 unchanged). DD#65 build-up:
 
 DG: "do the language sweep." Shipped (0 regressions, native clean):
 - **dd67** verified already-done (name()/function/backticks/[literal).
-- **dd68 brace control flow** (c98ed29) — if/while/until/for `{ }`;
+- **dd68 brace control flow** (217b25d) — if/while/until/for `{ }`;
   parser-only, same IR; spec/brace.sh 25 native-only.
-- **dd66 dispatch form** additive (5231dd1) —
+- **dd66 dispatch form** additive (292a046) —
   `[[ SUBJECT ==|=~ PAT { grp } … || { grp } ]]`; == exact / =~ regex;
   statement-only (SB4028); ir::Case gained `op`; native+c+janet;
   spec/dispatch.sh 22.
@@ -3235,7 +3235,7 @@ See journal 126.
 ### Session 2026-07-04 (cont.) — DD#66 remove `case` (sweep part 2)
 
 DG: "continue — remove case first." Destructive half of DD#66 shipped
-(f71c04a) spec-first, **0 regressions native/c/janet**:
+(05d2df0) spec-first, **0 regressions native/c/janet**:
 - `case`/`esac` → reserved-word reject **SB4029**; `;&`/`;;&` tokens gone;
   `CaseItem.fallthrough`/`resume`, `=glob`, `sash_fnmatch`/`fnmatch_impl`
   all deleted (filename `sash_glob` kept). `case.merge`→`dispatch.merge`.
@@ -3272,17 +3272,17 @@ accepted):
 DG: "Cluster A — DD#71 operand-words, spec-first." Shipped all five coupled
 components, one commit each, **0 regressions native/c/janet** every time.
 Native passing 595 → 635. See journal 128.
-- **star-wildcard** (95491f5) — dispatch `*` is a literal; `is_default` flag
+- **star-wildcard** (9424d66) — dispatch `*` is a literal; `is_default` flag
   replaces the `*` sentinel.
-- **operand-word** (9c71a99) — `=~` RHS is an operand word
+- **operand-word** (60c667b) — `=~` RHS is an operand word
   (parse_operand_word); deleted parse_regex_rhs. Fixes quoted spaces, the
   silent-`foobar` concat, and dynamic `=~ $pat`; comptime regex validation
   extended to any static operand shape.
-- **multi-exact** (ce2dfec) — `[[ $x == a b c { … } ]]` (parser-only).
-- **boolean-reject** (fee53a6) — SB4025: a value binding in a boolean context
+- **multi-exact** (e9fc520) — `[[ $x == a b c { … } ]]` (parser-only).
+- **boolean-reject** (1c2e74f) — SB4025: a value binding in a boolean context
   (if/while cond, left of &&/||, `!`) is a compile error. Fixes silent
   `x=hi && echo $x`.
-- **assign-absorb** (3ede406) — assignment RHS absorbs `& && || |` as
+- **assign-absorb** (000dd5a) — assignment RHS absorbs `& && || |` as
   literals (`a=foo|cat` → literal). AbsorbMode enum; `=(…)` unaffected.
 
 Filed `bug-test-operand-concat-splice` (P3, pre-existing `run$suf`). Tasks
@@ -3296,17 +3296,17 @@ DG: "tackle the whole batch." Shipped the c/janet parity cluster spec-first,
 one commit per change, full-suite diff each time. **Native 0-failing
 throughout; zero regressions.** Pre-existing baselines: **c 58→52, janet
 106→75.**
-- janet pipeline EAGAIN flakiness → blocking `(os/pipe :WR)` (cb6086a).
-- janet multi-pattern `case a|b` → match guard alternation (3481512, P1).
+- janet pipeline EAGAIN flakiness → blocking `(os/pipe :WR)` (567b8fe).
+- janet multi-pattern `case a|b` → match guard alternation (4b0e0f6, P1).
 - janet argv trio DD#60 via `(dyn :args)` + fixed `for x in @a` splat +
-  `join` (430f2e4, −24 janet).
+  `join` (0f36cdf, −24 janet).
 - `&&`/`||` branch on exit status (not value) in c+janet; every command
-  sets the status var (032386a).
-- DD#55 (A) external-command abort in c+janet (707832f, partial — external
+  sets the status var (fa9da7c).
+- DD#55 (A) external-command abort in c+janet (bc65140, partial — external
   done, END-routing via `Emit.end_block`; remainder in
   `dd55-abort-channel-remaining`).
-- `[[ =~ ]]` test operator implemented in both oracle backends (9ba4bbe);
-  `echo|read` guarded to native + filed (c9d67c1).
+- `[[ =~ ]]` test operator implemented in both oracle backends (2b06810);
+  `echo|read` guarded to native + filed (381512a).
 
 Followups: `bug-janet-case-glob`, `dd55-abort-channel-remaining`,
 `echo-read-inline-pipe-cjanet`. See journal 125.
@@ -3434,7 +3434,7 @@ Both capture surfaces, all three backends, after DG resolved D1–D6.
   SB4019 `-` on a (B) construct, next to SB4016/SB4017); verbatim argv[0].
   Contract-spec task `dd70-error-model-contract-spec.md`.
 - **`match` boolean command (DD#63 1b-bool)** shipped on all three
-  backends (commit bbe5816): `match S P` → exit 0/1, sets the if/&&/||
+  backends (commit c03b933): `match S P` → exit 0/1, sets the if/&&/||
   boolean. native (sash_regex_match), C (sash_regex_match), janet
   (sash-regex `matchq` — quiet, no stdout leak). Bare `match` → SB4018,
   `- match` → SB4019 (native; via a `suppressed` counter +
@@ -3448,7 +3448,7 @@ Both capture surfaces, all three backends, after DG resolved D1–D6.
 ### Session 2026-06-25 — DD#55 W3: syscall aborts + stderr diagnostics
 
 - **cd / echo / redirect-open now participate in the DD#55 (A)-channel**
-  (native; commits `8a40ddc`, `f9d833b`). Three bugs fixed: `cd` never
+  (native; commits `c232b75`, `313843a`). Three bugs fixed: `cd` never
   set test_result/aborted (`if cd /tmp` took else; failed cd continued);
   `echo` ignored `write(2)` failures ("echo always succeeds"); a failed
   redirect `open(2)` **silently misrouted** output to fd 1.
@@ -3478,14 +3478,14 @@ Both capture surfaces, all three backends, after DG resolved D1–D6.
 - **Native spec suite is GREEN (0 failing).** cf.c7/cf.c8 rewritten to the
   **star-only** glob contract (DG, DD#39): `?` and `[class]` are literal
   characters in `case` patterns, not metacharacters — only `*` globs.
-- **DD#23 resolution hoisted ahead of the front-end** (`599fa74`): new
+- **DD#23 resolution hoisted ahead of the front-end** (`d4fdc63`): new
   `sash/src/resolve.rs` rewrites external command heads (incl. cmdsub heads)
   to absolute paths before taint/type checks, so the CST taint pass sees the
   real exec form. Unresolved = fatal (SB5011, now incl. cmdsub heads).
   `--sysroot` dir + `.squashfs` honored. Structural rejections (heredoc,
   export/declare) now run before resolution.
-- **dd67 sugar sweep**: `name() { }` (`e9849ad`), flat backticks (`def5c40`),
-  single-bracket `[` is an ordinary literal (`c3875d1`).
+- **dd67 sugar sweep**: `name() { }` (`ee12efd`), flat backticks (`feb244e`),
+  single-bracket `[` is an ordinary literal (`45648a9`).
 - **Rust suites (sash/tests/) have significant bit-rot** (DG) — they are NO
   LONGER a regression gate. **spec.db is the source of truth.** Filed
   `audit-rust-test-suites`. Their nondeterminism: codegen tests call
@@ -3498,7 +3498,7 @@ Both capture surfaces, all three backends, after DG resolved D1–D6.
 ### Session 2026-06-21 (cont.) — DD decision review
 
 Walked every candidate DD with DG; **all now resolved** (DD#57 implemented;
-DD#62–69 accepted). Commits `ed4a1e4`…`2a68f2b`. Highlights:
+DD#62–69 accepted). Commits `b7ed1a4`…`776aec4`. Highlights:
 
 - **DD#64 addendum** (new): `$'…'` is recognized **inside `"…"`** as an
   escape-aware, compile-time-constant expansion — every `$`-form now
@@ -3521,7 +3521,7 @@ DD#62–69 accepted). Commits `ed4a1e4`…`2a68f2b`. Highlights:
   keep/drop table DG ratifies first. **DD#68**: brace control flow,
   converter default preserves `then/do`. **DD#69**: ratified.
 
-Doc fixes (`c15b430`, `d9f28ce`): corrected stale tree-sitter/CST docs
+Doc fixes (`199b098`, `2373317`): corrected stale tree-sitter/CST docs
 (hand-parser is AST-based; `emit_source` coercion path is dormant →
 `.sash_source` is verbatim). Tasks filed:
 `excise-dormant-coercion-machinery`, `cstring-in-double-quotes`,
@@ -3536,19 +3536,19 @@ Five tasks landed (journal 115), all multi-backend verified with zero net
 regression (native cf.c7/c8 only; c/janet diffed per-mode; complexity
 gates green):
 
-- **bug-dollar-hash-in-arith** (`4b48920`): `$#`/`$?`/positionals now read
+- **bug-dollar-hash-in-arith** (`55a2d46`): `$#`/`$?`/positionals now read
   inside `(( ))` (lexer `scan_arith_dollar` scans the special single-char
   names; DD#46 enforced in arith via `check_positionals`). Fixed a
   pre-existing janet double-paren arith-value crash (repaired 6 specs).
-- **bug-janet-arith-condition** (`a3fc02e`): janet `(( ))` conditions were
+- **bug-janet-arith-condition** (`412db73`): janet `(( ))` conditions were
   constant-`true`. Now `emit_condition_inline` handles `ArithTest`;
   comparisons/logicals yield bash 1/0 ints; int counters stay numeric;
   string `[[ ]]` tests stringify int operands. janet −8 (cf.w1–w7, cf.i3).
-- **nonbrace-dynamic-subscript** (`44dc0b3`): `$a[$i]` reads `${a[$i]}`
+- **nonbrace-dynamic-subscript** (`b0c189d`): `$a[$i]` reads `${a[$i]}`
   (decision B) via `try_split_subscript_arm` (peek_n lookahead).
-- **bug-c-janet-concat-in-value** (`15654ef`): c `lower_value_as_str`
+- **bug-c-janet-concat-in-value** (`13f03af`): c `lower_value_as_str`
   gained a `Concat` arm (`emit_concat_value` via runtime `sash_concat`).
-- **bug-janet-indexed-assignment** (`4db609e`): janet `a[i]=v`/`a[i]+=v`
+- **bug-janet-indexed-assignment** (`51d5ee4`): janet `a[i]=v`/`a[i]+=v`
   now `(put …)` with collection-typed index (`EmitCtx::map_vars`).
   types.sh 33.11–33.13 fully un-guarded (all modes).
 
@@ -3563,10 +3563,10 @@ Implemented the resolved DDs in dependency order; all multi-backend
 verified, native baseline held (cf.c7/cf.c8 only), rust 184=184 (oracle
 order-flakiness only). Commits:
 
-- **cstring-in-double-quotes** (`ba345da`): DD#64 addendum — `$'…'`
+- **cstring-in-double-quotes** (`e4efef0`): DD#64 addendum — `$'…'`
   recognized inside `"…"` (lexer `scan_dq_cstring`). Specs wordsplit
   64.4–64.8 (all backends).
-- **array-splat-command-arg** (`d24084e`): `@a` expands to one argv entry
+- **array-splat-command-arg** (`8245a14`): `@a` expands to one argv entry
   per element (DD#20/#22), all backends. A1 `SsaValue::ArraySplat` (taint
   inherits from the array); B1 native `build_argv_values` (unifies exec/
   pipeline/cmdsub; runtime `sash_alloc` + Cranelift fill-loops); C VLA;
@@ -3574,7 +3574,7 @@ order-flakiness only). Commits:
   hygiene fix**: wordsplit had a misplaced mid-file `tally` (its
   "Additional coverage" ran only in native) → moved to EOF; surfaced two
   pre-existing c/janet gaps (39.10 `\w`, 22.12 echo|read, filed).
-- **glob-splat Part 1** (`c8b3530`, `90ed26b`): DD#69 globs-are-arrays.
+- **glob-splat Part 1** (`076e8a2`, `c997193`): DD#69 globs-are-arrays.
   1.2 — inline `*` in command-arg position is SB5029 (use `array a=(*)`).
   1.1 — `for f in *` routes through glob→array→per-element
   (`try_dispatch_glob`); **fixed a C-backend glob SIGSEGV** (`emit_glob_c`;
@@ -3601,7 +3601,7 @@ Other tasks filed this session: `bug-cmdsubst-builtin-not-resolved`
 
 Worked the ready backlog in dependency order (journal 115). Landed:
 
-- **for-loop-arith-condition** (`d76b77a`): for-in bound checks moved off
+- **for-loop-arith-condition** (`f06866f`): for-in bound checks moved off
   the synthesized `[[ -lt ]]` test onto the `(( ))` arith path
   (`emit_for_bound`: `ArithBinOp` + `LetExit`); `emit_let_exit`
   generalized to any `SsaValue`; the `[[ ]]` numeric arm deleted in both
@@ -3612,9 +3612,9 @@ Worked the ready backlog in dependency order (journal 115). Landed:
   lexer splits `<=` into `<`+`=`; `collect_arith_content` inserted a
   separator space). Fixed in `arith.rs::needs_separator_space`. Spec
   arithmetic.sh 31.15–31.18.
-- **subscript-append-broken** (`7ee2854`): `a[i]+=v` now read-modify-write
+- **subscript-append-broken** (`da9b17b`): `a[i]+=v` now read-modify-write
   (`Concat([${a[i]}, rhs])`). native; spec types.sh 33.11–33.13.
-- **bug-until-arith-condition** (`6f97636`): `until` desugar appends the
+- **bug-until-arith-condition** (`081d122`): `until` desugar appends the
   `NegateTestResult` sigil instead of patching `SsaInst::Test`, so
   `until (( ))` / `until <cmd>` are negated (and compound conditions
   negate once). 3 until codegen_tests re-enabled.
@@ -4115,7 +4115,7 @@ SSA-stage oracle. emit_janet joined the complexity-gate cohort
 (the exemption was removed in the same change set that filed
 add-c-oracle).
 
-**Complexity gate enforced.** Commit `c51e296` introduced the
+**Complexity gate enforced.** Commit `323eeb4` introduced the
 3× mean cyclomatic gate (currently cc > 16.8) with
 grandfather-on-modify mechanic. The cog-vs-cc rubric in
 [journal 108](journal/108-cog-cc-rubric.md) replaced the cyclo-allow

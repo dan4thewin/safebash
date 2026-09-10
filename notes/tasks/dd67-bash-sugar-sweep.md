@@ -5,9 +5,9 @@ priority: P3
 kind: feature
 depends: [DD67-native-syntax-sugar-policy]
 gates:
-  - "[DONE e9849ad] name() { } AND function name { } accepted as 1-to-1 sugar for fn name { } (same function IR)"
-  - "[DONE def5c40] flat backticks `cmd` accepted as 1-to-1 sugar for $(cmd); nested backticks rejected (SB5020)"
-  - "[DONE c3875d1] single-bracket `[` is an ordinary literal char (no longer starts a test)"
+  - "[DONE ee12efd] name() { } AND function name { } accepted as 1-to-1 sugar for fn name { } (same function IR)"
+  - "[DONE feb244e] flat backticks `cmd` accepted as 1-to-1 sugar for $(cmd); nested backticks rejected (SB5020)"
+  - "[DONE 45648a9] single-bracket `[` is an ordinary literal char (no longer starts a test)"
   - "[DONE 2026-06-21] keep/drop table ratified by DG"
   - "[SPLIT OUT -> sash-convert-canonicalize-mode] §3 sash-convert canonicalize mode; dd68 brace forms now exist, so it is unblocked Tier-6 convert work tracked in its own task"
 ---

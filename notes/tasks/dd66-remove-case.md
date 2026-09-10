@@ -16,7 +16,7 @@ gates:
 
 # Remove `case` — the DD#66 dispatch form replaces it
 
-The additive dispatch form landed in 5231dd1 (`bug-janet-case-multipattern`
+The additive dispatch form landed in 292a046 (`bug-janet-case-multipattern`
 and the janet case work are subsumed once this lands). This is the
 destructive half: delete the legacy `case…esac` construct now that
 `[[ SUBJECT ==|=~ … ]]` dispatch covers it.
@@ -46,7 +46,7 @@ destructive half: delete the legacy `case…esac` construct now that
   removing the legacy-glob path closes that (the dispatch `==`/`=~` paths
   are correct).
 
-## Resolution (2026-07-04, f71c04a + follow-on)
+## Resolution (2026-07-04, 05d2df0 + follow-on)
 
 Done. `case` is a reserved-word compile error (**SB4029**) directing to the
 dispatch form; `parse_case`/`parse_case_item` deleted; `Tok::SemiAmp`/

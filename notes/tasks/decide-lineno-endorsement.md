@@ -42,7 +42,7 @@ printf/pwd-as-builtins (fixed → external)?
   That is DD#24 rationalizing it into the taint clean-list, not a decision
   to support it.
 - **A carryover.** Journal 076 shows it lived in the old (pre-hand-parser)
-  `Tok::Dollar` arm; ported into the hand-written parser at `f955cbd`.
+  `Tok::Dollar` arm; ported into the hand-written parser at `824e357`.
   Inherited from bash across both parser generations, never chosen.
 - **No spec pins it.** Only `spec/` hit is `PS4='+$LINENO: '` in
   `common.sh` — bash xtrace config for the harness, not a sash test.

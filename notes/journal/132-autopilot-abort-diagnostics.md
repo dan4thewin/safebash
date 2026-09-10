@@ -7,9 +7,9 @@ convert. Skipping the 4 decision-gated (⚠) tasks.
 
 ## Prep
 
-- Recorded the tier ordering (commit 4fc9221).
+- Recorded the tier ordering (commit d434b41).
 - Correction on entering execution: `dd55-abort-channel-remaining` is all
-  c/janet (native landed 707832f) → moved to Tier 4; `dd67-bash-sugar-sweep`
+  c/janet (native landed bc65140) → moved to Tier 4; `dd67-bash-sugar-sweep`
   compiler part done, §3 is a convert canonicalize mode → Tier 6. So the
   real first native task is `abort-diagnostics-remaining`.
 
@@ -404,7 +404,7 @@ exemption. spec/glob_splat.sh gs.1-13 native/c/janet (gs.6 abort native-only,
 rerr); 0 regressions all modes. Tier 3 (all native compiler features) is now
 fully complete.
 
-## 2026-07-14 — Tier 4 unattended: c/janet lastpipe read/mapfile (dc10423)
+## 2026-07-14 — Tier 4 unattended: c/janet lastpipe read/mapfile (2f183c2)
 
 First Tier 4 (c/janet parity) task under the unattended SOP. Fresh
 multi-mode sweep to map failures: native **0** (gate green), c **47**,
@@ -451,7 +451,7 @@ all green, no bypass.
 
 Two more commits after the lastpipe work.
 
-**e7c530f — distinct special-var C names + enforce transform diags.**
+**6d0a619 — distinct special-var C names + enforce transform diags.**
 Investigating the 58.x cluster surfaced a c codegen bug: `c_var_name`
 collapsed every non-alphanumeric char to `_`, so `$#`/`$?`/`$@`/`$*`/`$!`/
 `$$` all became the same C identifier (`__ptr`) → duplicate declaration
@@ -465,7 +465,7 @@ in c only because the dup-decl made the bad C fail to compile.)
 → c 38→31, janet 61→53; fixed compile-error specs 0.6/46.4/48.1/55.12/13/14
   + 58.6/58.7. 0 regressions.
 
-**73de6d2 — DD#58 int-func-in-arith c + janet.**
+**793c8f3 — DD#58 int-func-in-arith c + janet.**
 - c: `return N` in a lifted int-func lowers to `Assign(?, N)`; emit_assign
   wrote `?` to the generic string slot but `$?` reads come from
   __exit_status → capture saw 0. Now Assign to `?` sets __exit_status (int),
@@ -486,12 +486,12 @@ clusters: 36.x (dtoi), 55.x (DD#55 abort), 56.x (signals, mostly janet).
 
 ## 2026-07-14 (cont.) — dtoi/itod (36.x) + janet arith coercion
 
-**28948e7 — dtoi/itod fixed-point intrinsics (c+janet).** c added
+**c655bc5 — dtoi/itod fixed-point intrinsics (c+janet).** c added
 sash_dtoi/sash_itod calls in try_native_intrinsic_c (were TODO); janet added
 cmdsub_num_intrinsic (float-based, illustration). → c 22→18, janet 50→46.
 Fixes 36.1-36.4 both modes.
 
-**28db76d — janet arith string→int coercion (`_num`).** sash vars hold
+**e91a9ac — janet arith string→int coercion (`_num`).** sash vars hold
 strings; arith needs ints. `_num` coerces operands (var/`$x`/`$1`/compound-
 assign read/inc-dec), DD#72-aware (0x via scan-number, 0o/0b via janet
 radix, leading-zero decimals base-10). → janet 46→41. Fixes 58.2/58.3,
@@ -506,13 +506,13 @@ cf-backend-gaps-brace-surfaced), NOT arith.
 
 ## 2026-07-14 (cont.) — unset collections + read-herestring; session wrap
 
-**a355d38 — unset array/map (DD#30) c+janet.** c: emit_assign now handles
+**ccb643c — unset array/map (DD#30) c+janet.** c: emit_assign now handles
 the `__new_table__` sentinel (→ sash_table_new); janet: `${#a[@]}` nil-safe
 via `(length (or a ""))`. → 30.11 both. (Also: the earlier "c array-length
 segfault" was a red herring — my manual gcc dropped `-fno-stack-protector`;
 the harness flag is correct.)
 
-**3511fe4 — read from herestring + multi-part DoubleQuoted.** c: emit_readline
+**076d3f3 — read from herestring + multi-part DoubleQuoted.** c: emit_readline
 now applies its redirects (was ignoring them → read from inherited stdin);
 ir_expr_as_str concatenates multi-part DoubleQuoted (a herestring body
 `"hello"` parses as multi-part, so it had emitted empty via the TODO — broke
@@ -524,13 +524,13 @@ generalization. → 24.6 both.
 8 code commits, **native 0 throughout (gate green), 0 regressions**:
 | commit  | area                                   | c        | janet    |
 |---------|----------------------------------------|----------|----------|
-| dc10423 | DD#20 lastpipe read/mapfile + bare decl| 47→38    | 70→61    |
-| e7c530f | c_var_name distinct + enforce diags    | 38→31    | 61→53    |
-| 73de6d2 | DD#58 int-func-in-arith                 | 31→22    | 53→50    |
-| 28948e7 | dtoi/itod intrinsics                    | 22→18    | 50→46    |
-| 28db76d | janet arith string→int coercion (_num) | 18       | 46→41    |
-| a355d38 | unset collection (DD#30)               | 18→17    | 41→40    |
-| 3511fe4 | read-herestring + DoubleQuoted         | 17→16    | 40→39    |
+| 2f183c2 | DD#20 lastpipe read/mapfile + bare decl| 47→38    | 70→61    |
+| 6d0a619 | c_var_name distinct + enforce diags    | 38→31    | 61→53    |
+| 793c8f3 | DD#58 int-func-in-arith                 | 31→22    | 53→50    |
+| c655bc5 | dtoi/itod intrinsics                    | 22→18    | 50→46    |
+| e91a9ac | janet arith string→int coercion (_num) | 18       | 46→41    |
+| ccb643c | unset collection (DD#30)               | 18→17    | 41→40    |
+| 076d3f3 | read-herestring + DoubleQuoted         | 17→16    | 40→39    |
 
 **Net: c 47→16 (−31), janet 70→39 (−31).**
 
@@ -553,7 +553,7 @@ Tasks closed: echo-read-inline-pipe-cjanet, janet-arith-string-coercion.
   + `${m[$k]}`), 42.1, 48.2, 53.2 — heterogeneous.
 - c singletons: 24.12 (bless runtime-fail exit).
 
-## 2026-07-24 — DD#55 pipeline semantics pass (DG-directed, commit 845f494)
+## 2026-07-24 — DD#55 pipeline semantics pass (DG-directed, commit 027753a)
 
 DG chose to fix the SEMANTICS (not just the c/janet representation) after the
 investigation surfaced that `-` per-segment suppression was never represented

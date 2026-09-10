@@ -23,7 +23,7 @@ was deferred and filed.
    consumed — exactly the (B) must-consume violation, but the enforcement
    only keyed on `match`/`[[ ]]`, never on `!`.
 
-Confirmed pre-existing via a HEAD worktree (9af7ce2) before touching
+Confirmed pre-existing via a HEAD worktree (58f0f23) before touching
 anything (bug policy: investigate, don't route around).
 
 ## The rule (mirror `[[ ]]`)

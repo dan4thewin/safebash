@@ -23,7 +23,7 @@ gates:
 > `sash_emsg_status` (`<argv0>: <name>: command failed (exit N)`); cd /
 > redirect / echo-write (W3, errno) already; overflow already; regerror9
 > reprefixed to argv0. Specs 55.1/55.8/55.10/55.16 assert the native
-> message. Commits f8382e2, eb2b48a, 28c253c; journal 132.
+> message. Commits df807d3, a050115, 2eaf967; journal 132.
 >
 > Two follow-ons, both already tracked: (1) bg-exec currently uses the
 > status form, not the errno form — the errno-precision refinement is a
@@ -31,7 +31,7 @@ gates:
 > to c/janet is the separate `c-janet-dd55-abort-channel` /
 > `dd55-abort-channel-remaining` parity work.
 
-W3 (commit f9d833b) shipped the diagnostics facility (`sash_emsg`,
+W3 (commit 313843a) shipped the diagnostics facility (`sash_emsg`,
 `sash_last_errno`, errno→strerror table) and wired it for the **syscall
 aborts**: cd (chdir), redirect open(2), echo write(2). DG ratified the
 scheme `<argv0>: <context>: <reason>` with the program name (argv[0]) as

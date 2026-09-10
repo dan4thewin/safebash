@@ -17,7 +17,7 @@ but `sash_itoa(i64::MIN)` no longer panics — the runtime arith-overflow fix
 the test "did not panic as expected" and fails.
 
 Surfaced 2026-08-21 while restoring unit_tests.rs (which hadn't compiled since
-c330181, masking that overflow_tests also runs). Pre-existing, unrelated to the
+ae9a9fa, masking that overflow_tests also runs). Pre-existing, unrelated to the
 strip-runtime removal that surfaced it.
 
 ## Fix

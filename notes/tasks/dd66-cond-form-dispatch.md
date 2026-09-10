@@ -5,14 +5,14 @@ priority: P2
 kind: feature
 depends: [DD66-cond-form-dispatch, DD62-test-expr-simplification, DD63-regex-quoting-interpolation]
 gates:
-  - "[DONE 5231dd1] the [[ ]] dispatch form: `[[ SUBJECT ==|=~ PATTERN { grp } … || { grp } ]]`; == exact, =~ unanchored regex; first-match-wins; || default; statement-only (SB4028); native+c+janet (spec/dispatch.sh 22 cases); 0 regressions"
+  - "[DONE 292a046] the [[ ]] dispatch form: `[[ SUBJECT ==|=~ PATTERN { grp } … || { grp } ]]`; == exact, =~ unanchored regex; first-match-wins; || default; statement-only (SB4028); native+c+janet (spec/dispatch.sh 22 cases); 0 regressions"
   - "[SPLIT OFF -> dd66-remove-case] remove case/esac (reserved-word diagnostic), ;&/;;&, =glob/fnmatch_impl, CaseItem.fallthrough/resume; migrate case specs -> dispatch; converter bash case -> dispatch; docs"
 ---
 
 # STATUS 2026-07-04: additive dispatch DONE; case removal split off
 
 The dispatch form (the new capability) is implemented and green in all
-three backends (commit 5231dd1) — see spec/dispatch.sh. The destructive
+three backends (commit 292a046) — see spec/dispatch.sh. The destructive
 removal of `case` (a separate, large increment: spec migration + deleting
 the case/`;&`/`=glob`/`fnmatch` machinery across parser/lowering/backends +
 converter + docs) is filed as `dd66-remove-case`. Note: `ir::Case` now

@@ -42,6 +42,6 @@ reverted if `&&` should instead abort-on-fail.
 
 specs `taint.sh` bfb.1–6 (native,c): valid→value, invalid/empty→default, v
 clean+reusable, `&&` runs-on-pass / skips-and-continues-on-fail. 3-mode sweep vs
-HEAD `3729a69`: **0 regressions, +12 passing**. DD#24 amended; the
+HEAD `4ede782`: **0 regressions, +12 passing**. DD#24 amended; the
 `colon-tilde-elide-vs-bless-fallback` task is closed (`:~` stays DD#84 elide;
 no `:!`).

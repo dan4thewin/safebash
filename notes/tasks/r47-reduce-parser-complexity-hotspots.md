@@ -87,7 +87,7 @@ Everything else in the top-10 is codegen/transform.
 - New `sash/src/parse/logos_tokens.rs` with 5 equivalence tests.
 - Hand-roll boundary documented in the DD.
 
-`tokenize_arith` split into per-class helpers (commit 23b1665).
+`tokenize_arith` split into per-class helpers (commit 353e0c6).
 
 - `parse/arith.rs::tokenize_arith` CC: **88 → 12**.
 - Helpers: `scan_arith_number`, `parse_arith_base_digits`,
@@ -104,7 +104,7 @@ if we ever exceed the threshold by more than a token or two.
 Pick functions in this order; each should land in its own commit with
 the spec/test gates green:
 
-1. ~~`tokenize_arith` (CC 88)~~ — **done** (commit 23b1665, 88 → 12).
+1. ~~`tokenize_arith` (CC 88)~~ — **done** (commit 353e0c6, 88 → 12).
 2. ~~`next_token` (CC 78)~~ — **done** (DD#59, 78 → 15).
 3. ~~`scan_double_quoted` (CC 68)~~ — **done** (68 → 9).
 4. ~~`intern_literals` (CC 70)~~ — **done** (70 → 6 via `Interner` struct).

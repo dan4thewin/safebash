@@ -16,20 +16,20 @@ batch.** Pre-existing failing baselines:
 
 ## What shipped
 
-1. **janet pipeline EAGAIN flakiness** (cb6086a). Root cause: janet's
+1. **janet pipeline EAGAIN flakiness** (567b8fe). Root cause: janet's
    `:out :pipe` / `os/pipe` default ends are non-blocking (ev loop), so a
    child inheriting one read EAGAIN. Fix: connect stages with blocking
    `(os/pipe :WR)`, keep `:out :pipe` only on the last stage (janet drains
    it via ev). 2-stage 0/100, 3-stage 0/60, 5000-line stress 0/60.
    Un-guarded wordsplit 22.18/22.19.
 
-2. **janet multi-pattern case → catch-all** (3481512, P1). `a|b) …`
+2. **janet multi-pattern case → catch-all** (4b0e0f6, P1). `a|b) …`
    emitted `_` (matched everything). Fixed with a janet `match` guard
    alternation `(_casev (or (= _casev "a") …))`. Regression gate cf.c5b.
    Found + filed the separate `bug-janet-case-glob` (`h*` emitted as an
    exact literal).
 
-3. **janet argv trio (DD#60)** (430f2e4). `(dyn :args)` = [script, ARGS…]
+3. **janet argv trio (DD#60)** (0f36cdf). `(dyn :args)` = [script, ARGS…]
    (matches C argv[0]=progname). `$(argc)`/`$(arg N)`/`for x in $(argv N)`
    (clamped)/`array a=$(argv N)`. argv.sh fully green under janet. **Bonus
    pre-existing bug**: `for x in @a` emitted `(each x [a])` — iterating the
@@ -38,13 +38,13 @@ batch.** Pre-existing failing baselines:
    control_flow/wordsplit/misc).
 
 4. **&&/|| chains branch on exit status, not value-truthiness**
-   (032386a). janet branched on the left block's janet VALUE (a successful
+   (fa9da7c). janet branched on the left block's janet VALUE (a successful
    print → nil → falsy → `||` wrongly fired). Rewrote to branch on
    `__last_exit`; made EVERY command set the status var. c: `emit_echo`
    left `__exit_status` stale so `echo X && cmd` skipped `cmd` — Echo now
    sets it. Un-guarded 62.8-62.10 + added 62.11.
 
-5. **DD#55 (A) external-command abort** (707832f, PARTIAL). A bare
+5. **DD#55 (A) external-command abort** (bc65140, PARTIAL). A bare
    (unchecked) external that exits nonzero aborts with that status, both
    backends. c threads the SSA `checked` flag + routes the abort THROUGH
    the END block (new `Emit.end_block`/`abort_target`, fixing a 56.3
@@ -55,7 +55,7 @@ batch.** Pre-existing failing baselines:
    messages, janet pipeline, janet-diagnostic decision) filed as
    `dd55-abort-channel-remaining`.
 
-6. **wordsplit 39.10/22.12** (9ba4bbe, c9d67c1). The `[[ s =~ pat ]]` test
+6. **wordsplit 39.10/22.12** (2b06810, 381512a). The `[[ s =~ pat ]]` test
    operator was unimplemented in BOTH oracle backends (emit_c TODO; emit_janet
    undefined `(=~ …)`) — only the `match S P` builtin worked. Implemented
    `=~`: c → `sash_regex_match`, janet → `sash-regex matchq`. Fixed 39.10

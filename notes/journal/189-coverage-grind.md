@@ -40,10 +40,10 @@ lines** (22337 lines, 2750 missed), 91.5% functions.
 
 ## Batches so far (all pushed, 0 regressions, native gate 0)
 
-- `4d94eb9` remove 4 dead methods (predecessors/as_u8/from_str/deferred_at).
-- `0f36b7a` remove parser-shadowed check_export_or_declare; coverage.sh cov.1-3
+- `56024da` remove 4 dead methods (predecessors/as_u8/from_str/deferred_at).
+- `511cddf` remove parser-shadowed check_export_or_declare; coverage.sh cov.1-3
   (mutation/comma-in-condition → SB5007).
-- `877d55e` coverage.sh cov.4-10: code-asserting tests for 7 reachable-untested
+- `2885993` coverage.sh cov.4-10: code-asserting tests for 7 reachable-untested
   diagnostics (SB5023/5019/4037/5016/4015/4029/5021).
 
 ## Realistic scope

@@ -16,7 +16,7 @@ tested; this task fills the gaps and consolidates the contract.
 ## Status of the two channels
 
 - **(A) done**: cd / echo-write / redirect-open abort + diagnostics
-  (commits 8a40ddc, f9d833b; spec 55.20-30).
+  (commits c232b75, 313843a; spec 55.20-30).
 - **(A) pending diagnostics**: external / pipeline / cmdsub / bg-exec /
   overflow / dynamic-regcomp — abort exists, the `<argv0>: …` message does
   not. See `abort-diagnostics-remaining.md`.
@@ -85,7 +85,7 @@ Legend below: [✓N]=native only (transform diagnostics not yet on c/janet).
   surfacing transform diagnostics on the C/janet CLIs is a precondition to
   un-guarding them (relates to `c-janet-dd55-abort-channel`).
 - `match`'s boolean *behavior* (if/&&/||/`|| :`) IS implemented on all
-  three backends (commit bbe5816) — native (sash_regex_match), C
+  three backends (commit c03b933) — native (sash_regex_match), C
   (sash_regex_match), janet (sash-regex `matchq`, exit-only/no stdout).
 - Spec harness already captures runtime stderr in `$rerr` (native) for the
   diagnostic assertions; `err` stays compile-only.

@@ -1,7 +1,7 @@
 title: DD#58 — Integer Function Capture Syntax
 status: implemented
 
-> **Amendment — Option C (2026-08-15, commit `0a6d690`).** The original
+> **Amendment — Option C (2026-08-15, commit `a8ac707`).** The original
 > rule below — "`$(f)` for a `-> int` function is a type error" — was
 > **superseded**. `$(...)` is now **return-type-polymorphic**: it captures
 > the callee's declared result — the integer `return` value for a `-> int`
@@ -29,7 +29,7 @@ value is captured in arithmetic context via s-expression call syntax:
     int z=$(( (add (mul 2 3) 4) ))    # nested calls
 
 `$(f)` for a `-> int` function captures its **return value** — see the
-Option C amendment at the top (commit `0a6d690`, supersedes the original
+Option C amendment at the top (commit `a8ac707`, supersedes the original
 "type error" stance). `$(...)` is return-type-polymorphic: it yields the
 callee's declared result — the integer `return` for a `-> int` function,
 or captured stdout (a string) for a string/void function. The
@@ -66,7 +66,7 @@ This eliminates ambiguity inside `(( ))` where `f` could be either.
   callee's return type** — a string for string functions, the integer
   `return` for `-> int` functions. A `-> int` function may ALSO be used
   in `$(( ))` / `(( ))` (arithmetic composition). (DD#58 originally
-  narrowed this to "string functions only"; Option C, `0a6d690`, widened
+  narrowed this to "string functions only"; Option C, `a8ac707`, widened
   it back — see the amendment at the top.)
 
 ## Non-void enforcement (DD#55 gates 55.13, 55.16)

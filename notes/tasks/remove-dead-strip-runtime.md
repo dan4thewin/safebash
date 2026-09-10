@@ -14,7 +14,7 @@ gates:
 # remove the now-dead strip runtime functions
 
 DD#65 dropped both the scalar `${var#p}`/`${var%p}` strip operators (commit
-d1d3144) and the per-element array `${arr[@]#p}`/`${arr[@]%%p}` forms
+39519e5) and the per-element array `${arr[@]#p}`/`${arr[@]%%p}` forms
 (follow-up). With both callers gone, `sash_strip_prefix` and
 `sash_strip_suffix` have **no remaining users** anywhere in generated code.
 

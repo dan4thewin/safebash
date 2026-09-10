@@ -47,4 +47,4 @@ Only the suggested replacement text is corrected.
 ## Verification
 
 Full `SPEC_MODES="native c janet"` sweep, latest-run-per-test diff vs
-base `0acde32`: 0 passing→failing, 0 gone, native gate 0 failing.
+base `6fa9885`: 0 passing→failing, 0 gone, native gate 0 failing.

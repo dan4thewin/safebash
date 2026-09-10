@@ -36,7 +36,7 @@ being reverted because of this breakage).
 
 ## 2. Cargo core suites: ~122 failures from old syntax
 
-On committed `hand-parser` (5498ca3), `cargo test -p sash --release`:
+On committed `hand-parser` (ea556b3), `cargo test -p sash --release`:
 
 | suite                | pass | fail |
 |----------------------|-----:|-----:|

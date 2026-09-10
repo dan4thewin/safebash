@@ -41,4 +41,4 @@ job: when translating bash `"$@"` it must not emit `"@args"` (a silent literal)
 functions.sh 81.14 (`$@` → SB5045); cf.f11 rewritten to `$(join args)` (joined,
 native+c — janet's `_args` model doesn't expose the `args` name), cf.f12 to
 `@args` (splat, all modes). Full `SPEC_MODES="native c janet"` sweep vs
-`03b66a1`: 0 regressions, native gate 0, 3 new passing.
+`7ad4a7a`: 0 regressions, native gate 0, 3 new passing.

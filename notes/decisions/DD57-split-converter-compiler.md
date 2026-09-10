@@ -7,7 +7,7 @@ status: implemented
 > compiler. **Update:** the line below about the compiler "keeping the
 > modified fork (future: purpose-built sash-native parser)" was overtaken
 > — the compiler now uses a **hand-written parser** and dropped tree-sitter
-> entirely (commit 73caecf); the fork is no longer part of the build. Only
+> entirely (commit 1c0e64a); the fork is no longer part of the build. Only
 > `sash-convert` uses tree-sitter.
 
 Two programs: `sash-convert` (bash → sash-native source) and `sash` (sash-native → binary).

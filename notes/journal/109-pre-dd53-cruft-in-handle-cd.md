@@ -46,7 +46,7 @@ did try to update `$PWD`) and obscured the real situation.
 `handle_cd` is now a straight-line function: `chdir(arg)` + set `$?`
 from the result. No-arg is a silent success (no `$HOME` magic).
 `cog 20 → 0, cc 10 → 1`. Sixteenth cohort violator cleared (commit
-`6673167`).
+`586c2b4`).
 
 Test comment in `brush_cd_pwd` updated to reflect DD#53 semantics.
 
