@@ -126,3 +126,43 @@ idiom or make them expect the reject. Known:
   already covers the pipe forms (taint.sh 24.6).
 - the 5 true/false body-semantics tests noted earlier (explicit-`return` idiom).
 
+## Measured 2026-09-10 (backlog prune)
+
+Ran every suite at HEAD. The "~158 failures" estimate is about right, and
+there is a worse problem underneath it.
+
+| suite | result |
+|---|---|
+| `codegen_tests` | **HANGS** — killed at 600s |
+| `e2e_tests` | 76 passed, **54 failed** |
+| `taint_spec_tests` | 16 passed, **26 failed** |
+| `brush_compat_tests` | 24 passed, **28 failed** |
+| `oracle_tests` | 46 passed, **17 failed** |
+| `janet_tests` | 19 passed, **16 failed**, 3 ignored |
+| | **141 failures** + a hanging suite |
+
+### The hang is the same bug I fixed in the spec harness
+
+`codegen_tests` stalls on `read_delim_colon`, `test_read_multi_vars` and
+`test_read_three_vars` — all **read** tests using spellings DD#99 retired. The
+runner (`tests/codegen_tests.rs:31`) is:
+
+```rust
+let output = cmd.output().expect("run");
+```
+
+No `Stdio::null()` on stdin, so a binary that waits on stdin blocks the whole
+suite — exactly the defect fixed in `spec/common.sh` on 2026-09-09 (commit
+e2aed41), where the fix was `</dev/null` plus a `timeout` on every child.
+
+**Fix that first.** Until the runner cannot hang, the suite cannot even report
+what is wrong with it, and `cargo test` is unusable as a gate.
+
+### Context
+
+`spec/` (4599 passing, 0 regressions) is the authoritative suite and is
+healthy; AGENTS.md already records the cargo suites as stale. The question
+this task should answer is not "make 141 tests pass" but **which of these
+suites still earn their place** now that spec/ covers the same ground — some
+assert behaviour DD#99, DD#86 and DD#91 deliberately changed, so a failure
+there is the test being wrong, not the compiler.
