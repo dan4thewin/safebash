@@ -195,3 +195,96 @@ Two caveats to weigh before choosing `=` over `^`:
   like nothing else in the language. `=` costs no free character, which is
   its real advantage — it was never free, it was *over-claimed*, and the
   fix reclaims it.
+
+## Addendum (2026-09-11) — DG picks `=`; scope of the sigil
+
+DG chose `=`: *"evocative of assigning the collection to the parameter, and
+visually similar to `:symbol` without being the same."* Character settled.
+
+DG then scoped it: `=foo` useful as an argument to a user function and *some*
+builtins; `read` and `match` keep bare names; `keys` takes `=m` ("symmetry
+says bare `m` is a string"); `=` parsing unchanged in `(( ))` and `[[ ]]`.
+DG asked whether `read`/`match` are then sore thumbs.
+
+### Verified: `=a` already arrives intact at all nine slots
+
+No ICE, no misparse — each slot rejects with its own correct diagnostic, so
+implementation is tractable everywhere:
+
+```
+read =ARR SB5057   argv 1 =a SB5063   matchall S P =a SB5063
+attest x in =a SB4014   keys =m SB5062   @{=p:~} SB5033
+```
+
+**One exception, measured:** `$(( (len =a) ))` → **SB4020** ("an assignment
+inside `$(( … ))` can't take effect"). The arith lexer is separate
+(`parse/arith.rs`, `b'=' => ATok::Eq`) and owns `=`. So "leave `(( ))`
+parsing unchanged" and "sigil in the DD#58 sexpr slot" are in direct
+conflict — that slot must either keep bare names as a deliberate carve-out
+or the arith lexer must learn the sigil. This is the one place `=` is not
+free.
+
+### Answer: yes — but the inconsistency is deeper than `read`/`match`
+
+DG's scoping rests on two *incompatible* principles:
+
+1. **Position**: `read $s a` — `a` is a name because of where it sits. (Used
+   to justify bare `read`/`match`.)
+2. **Symmetry**: a bare word is a string, so a name needs marking. (Used to
+   justify `keys =m`.)
+
+Principle 2 applied to `read` gives `read =a`. Principle 1 applied to `keys`
+gives bare `keys m`. Only one can govern. Under (2), `read`/`match` are sore
+thumbs; under (1), `keys` is.
+
+**Principle 1 is the one that failed in practice.** It requires the reader —
+and the compiler author — to know each builtin's signature. That is exactly
+the knowledge that was missing when the language shipped nine name slots
+enforced by six unrelated diagnostics, two of them not enforced at all
+(SB5062/SB5063, this session). Principle 2 needs no signature knowledge and
+can be enforced *once*, in the parser, instead of per-builtin in the
+validator.
+
+### DG's own rationale inverts the proposed split
+
+If `=` is chosen because it evokes **binding**, then it fits the slots that
+actually bind — the call site, `read`, `argv`, `match`, `unset` — and fits
+*least* the pure reads, `len`/`join`/`keys`/`attest`. `read =a` reads as
+"read into a"; `len =a` evokes no assignment at all. That is the opposite of
+the proposed scoping, which sigils the reads and leaves the writes bare.
+
+This is an argument for uniformity, not for flipping the split: a
+semantically-graded rule (writes marked, reads bare) still forces the reader
+to know which category a builtin is in — principle 1 again, one level up.
+
+### Recommendation — uniform, with a migration path
+
+Mark **every** name slot, so the rule is "a bare word is a string; `=word` is
+a name," with no exceptions to memorise. Churn measured across `spec/*.sh` +
+`contrib/`:
+
+| slot | sites |  | slot | sites |
+|---|---:|---|---|---:|
+| `read`/`readline` | 201 | | `len` | 144 |
+| `@{name:DISP}` | 115 | | `match`/`matchall` | 61 |
+| `attest … in` | 53 | | `join` | 38 |
+| `argv N` | 37 | | `keys` | 23 |
+| `unset` | 20 | | `len`/`join` `@a` | 19 |
+
+~692 sites, all mechanical. Staging: accept both spellings, warn on bare,
+then make bare an error once the tree is converted.
+
+### `len`/`join` and `@a` — settled, not open
+
+- **`len`**: DG already decided len is **collection-only** with `strlen` for
+  scalars. `@a` splats to N *values*, and values are not a collection, so
+  `len @a` must be **rejected**. `len =a` is the spelling. This follows from
+  the decision already made; it is not a fresh choice.
+- **`join`**: collection-only is the well-formed option, on grammar rather
+  than taste. The separator is **last**, so a variadic value-list form is
+  ambiguous — in `join "x" "y" ","` nothing says whether `","` is an element
+  or the separator. A collection operand removes the ambiguity by
+  construction. So `join =a ","`, and `join @a ","` rejected.
+
+Both conclusions agree with DG's instinct ("len probably wants `=a`… if we
+say join is only for collections then `=a` is better").
