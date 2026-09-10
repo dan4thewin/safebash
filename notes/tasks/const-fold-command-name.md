@@ -1,6 +1,6 @@
 ---
 title: "Const-fold a command name: allow `const x=/path; $x arg` via compile-time resolution"
-status: wontfix
+status: done
 priority: P3
 kind: feature
 depends: []
@@ -50,3 +50,8 @@ computed from a `const` binding is a source-preprocessing / general-purpose-
 preprocessor concern, not something sash's compiler should special-case. A
 command head stays a literal path (SB5011 for any variable/expansion). Closed
 wontfix.
+
+## Closed 2026-09-10 (backlog prune)
+
+Closed 2026-09-10 (backlog prune) — `wontfix` normalised to `done` so it stops
+appearing in open-work listings. The decision stands.

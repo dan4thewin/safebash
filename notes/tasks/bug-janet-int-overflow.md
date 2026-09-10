@@ -1,6 +1,6 @@
 ---
 title: "BUG — janet backend: integer arithmetic does not trap i64 overflow (DD#25)"
-status: wontfix
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -45,3 +45,8 @@ result and exits 0. By design per the resolution above.
 Found 2026-06-21 fixing `bug-dollar-hash-in-arith` (the janet double-paren
 arith crash had been *false-passing* the overflow specs). Resolved as
 by-design in the 2026-06-21 decision review.
+
+## Closed 2026-09-10 (backlog prune)
+
+Closed 2026-09-10 (backlog prune) — `wontfix` normalised to `done`. janet-only
+in any case.

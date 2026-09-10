@@ -1,6 +1,7 @@
 ---
 title: "c/janet backends don't implement the `signum` value intrinsic (emit a TODO stub)"
-status: partial
+status: ready
+scope: c/janet backends only (native complete)
 priority: P3
 kind: bug
 depends: []

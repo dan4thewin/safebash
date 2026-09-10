@@ -1,6 +1,7 @@
 ---
 title: "C and janet backends lack the DD#55 (A)-channel implicit-exit abort"
-status: partial
+status: ready
+scope: c/janet backends only (native complete)
 priority: P2
 kind: bug
 depends: []

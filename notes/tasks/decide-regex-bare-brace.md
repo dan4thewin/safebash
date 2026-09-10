@@ -1,6 +1,6 @@
 ---
 title: "DECISION: bare `{` in a regex — literal (bash-compatible) or require `\\{`?"
-status: resolved
+status: done
 priority: P2
 kind: decision
 depends: []
@@ -97,3 +97,10 @@ direct `$(sub/gsub/match …)`. So a bad-brace static pattern compile-rejects
 via `=~` but runtime-errors via `${var:s}`/`$(sub)`. Whichever way this
 decision goes, `validate_regex` and the engine should agree. Tracked
 alongside this decision.
+
+## Closed 2026-09-10 (backlog prune)
+
+Re-verified 2026-09-10: the decision is implemented. A bare `{` is a
+**quantifier** (`[[ ab =~ a{1}b ]]` -> Y) and `\{` is a **literal** brace
+(`[[ "a{b" =~ a\{b ]]` -> Y). Both spellings work and mean different things,
+which is the resolution. Closing.

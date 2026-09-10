@@ -1,6 +1,6 @@
 ---
 title: "BUG — arithmetic based literal `base#digits` drops the digits (`#` eaten as comment)"
-status: done (DD#72)
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -58,3 +58,9 @@ base delimiter.
 Sibling of `bug-arith-literal-out-of-range` (Policy A). Decimal/hex/octal
 range handling shipped there; based literals were deferred here because
 the `#`-comment bug makes the based path unreachable and thus untestable.
+
+## Closed 2026-09-10 (backlog prune)
+
+Re-verified 2026-09-10: `$((16#ff))` and `$((2#1010))` are **SB4035** — a
+clean rejection, so the "drops the digits" miscompile cannot occur. `$((0xff))`
+still evaluates to 255. DD#72 dropped the `base#digits` form; nothing left.

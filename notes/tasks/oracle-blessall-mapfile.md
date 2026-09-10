@@ -1,6 +1,7 @@
 ---
 title: C/Janet oracle support for bless-all + mapfile
-status: partial
+status: ready
+scope: c/janet backends only (native complete)
 priority: P2
 kind: feature
 depends: []
