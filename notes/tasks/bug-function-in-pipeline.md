@@ -1,6 +1,7 @@
 ---
 title: "BUG — a user function used in a pipeline hits runtime `bug: bare command passed to sash_exec`; breaks the SB4021-4024 escape hatch"
-status: done (native); c/janet split to c-janet-compound-pipeline-stage
+status: done
+note: native complete; the c/janet half lives in c-janet-compound-pipeline-stage
 priority: P1
 kind: bug
 depends: []
@@ -94,3 +95,19 @@ SB4021-4024 design. The fix must make them run.
 - The `sash_exec` "bare command" message is an internal backstop; the fix
   makes it unreachable from valid input (zero-tolerance: no runtime `bug:`
   from compilable source).
+
+## Native re-verified 2026-09-10 (backlog prune)
+
+All five gates pass at HEAD, no `sash: bug:` in any shape:
+
+| gate | result |
+|---|---|
+| producer `f \| cat` | `hi` |
+| consumer `echo hi \| f` | `hi` |
+| middle `echo hi \| f \| cat` | `hi` |
+| SB4022 hatch `g \| cat` | `hi` |
+| args `f x \| cat` | `x` |
+
+Status normalised to plain `done` — the compound free-text status is why this
+kept surfacing as open work in native-only backlog listings. The c/janet half
+remains open under `c-janet-compound-pipeline-stage`.
