@@ -7,6 +7,23 @@ release=${SASH_RELEASE_DIR:-$(pwd)/target/release}
 tsv=$(mktemp)
 trap 'rm -f "$tsv"' EXIT
 
+# Bootstrap the database. spec.db is untracked local-derived data, so a
+# fresh clone starts with no file at all; schema.sql and clauses.tsv are
+# the tracked inputs that make it reproducible. Both steps are idempotent.
+# clauses holds curated DD clause text (the one part of spec.db that is
+# NOT derived from a test run), so it is loaded from the TSV rather than
+# regenerated.
+#
+# _clause_import is created explicitly before .import: importing into a
+# table that does not exist makes sqlite3 consume the first row as column
+# names, which silently drops the first clause.
+sqlite3 spec.db < spec/schema.sql
+sqlite3 spec.db -cmd ".mode tabs" \
+    "CREATE TEMP TABLE _clause_import(id TEXT, dd INTEGER, text TEXT);" \
+    ".import spec/clauses.tsv _clause_import" \
+    "INSERT OR IGNORE INTO clauses(id, dd, text) SELECT * FROM _clause_import;"
+
+
 # Modes to run each spec file under. Override via SPEC_MODES env var
 # (e.g. SPEC_MODES="native" for fast iteration).
 MODES=${SPEC_MODES:-"native janet c"}

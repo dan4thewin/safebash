@@ -1,0 +1,231 @@
+5.1	5	$(cmd) inside a heredoc body SHALL be a compile error (SB5002)
+6.1	6	${!var} indirect expansion SHALL be a compile error
+12.1	12	Strings SHALL carry both a pointer and a length
+12.2	12	Strings SHALL be null-terminated for C/POSIX API interop
+12.3	12	String length queries SHALL be O(1)
+14.1	14	Pipelines SHALL be composed from fork, exec, wait, pipe primitives
+14.2	14	Command substitution SHALL be composed from fork, exec, wait, pipe primitives
+14.3	14	Background commands SHALL be composed from fork, exec, wait, pipe primitives
+14.4	14	for...done > file SHALL redirect the loop body output to file
+14.5	14	while...done | cmd SHALL pipe the loop body output to cmd
+14.6	14	if...fi > file SHALL redirect the conditional output to file
+15.1	15	Native codegen output SHALL match Janet backend output for all test inputs
+15.2	15	When sash deliberately diverges from bash, Janet SHALL reflect sash semantics, not bash semantics
+16.1	16	int variables SHALL store machine-width integers
+16.2	16	fn name -> int { } SHALL declare integer return type
+16.3	16	There SHALL be no implicit conversion between int and string
+17.1	17	$(func args) SHALL capture the return value of func
+17.2	17	Bare func args SHALL invoke func for side effects only, discarding return
+18.1	18	local fn name() { ... } SHALL define a function visible only within the enclosing block
+18.2	18	A local function SHALL override a same-named global function within its block
+18.3	18	After the block exits, the global function definition SHALL be restored
+18.4	18	A local function SHALL NOT be callable from outside its defining block
+20.3	20	lastpipe SHALL always be on
+20.4	20	extglob patterns @() +() !() SHALL be rejected
+20.5	20	globstar (**) SHALL be rejected
+20.6	20	pipefail semantics SHALL be baked in (always on)
+21.1	21	- cmd SHALL suppress the exit status of cmd
+21.2	21	- cmd1 | - cmd2 SHALL allow per-segment pipeline suppression
+21.3	21	With pipefail always on, unchecked pipeline segment exit status SHALL be flagged by the compiler
+22.1	22	$var and "$var" SHALL be semantically identical (no word splitting)
+22.2	22	IFS SHALL NOT exist as a variable
+22.3	22	for x in $choices SHALL be a compile error
+22.4	22	read -r line SHALL read one line into one variable delimited by newline
+22.5	22	read -d: -r a b c SHALL split one line into named fields by explicit delimiter
+22.6	22	mapfile -t arr SHALL read many lines into an array delimited by newline
+22.7	22	-r SHALL always be implied on read
+22.8	22	mapfile -m var SHALL read KEY=VALUE lines into a map
+22.9	22	mapfile -m SHALL skip blank lines and # comment lines
+22.10	22	mapfile -m SHALL split on first = only (values may contain =)
+22.11	22	mapfile -m result SHALL be tainted
+23.1	23	Bare command names SHALL be resolved to absolute paths at compile time
+23.2	23	An unresolved external command SHALL be a fatal compile error
+23.3	23	command -v SHALL NOT be accepted in sash-native code
+23.4	23	/usr/bin/env cmd SHALL be accepted as the explicit runtime PATH delegation escape hatch
+23.5	23	sash_exec SHALL accept absolute paths only; a path without slash SHALL be a compiler bug
+24.1	24	x=$(getenv VAR) SHALL produce a tainted variable
+24.2	24	x=$(argv N) SHALL produce a tainted variable
+24.3	24	read x from any fd or pipe SHALL produce a tainted variable
+24.4	24	mapfile -t x from any fd or pipe SHALL produce a tainted variable
+24.5	24	$(external_cmd) SHALL produce a tainted variable
+24.6	24	read/mapfile from a heredoc of clean data SHALL produce a clean variable
+24.7	24	$(user_func) capture of a user-defined sash function SHALL produce a clean variable
+24.8	24	Using a tainted variable at any use site SHALL be a compile error
+24.9	24	bless VAR [[ test ]] SHALL make VAR clean from that point forward
+24.10	24	bless SHALL require $VAR to appear in the test expression (SB4012)
+24.11	24	bless SHALL require $VAR on the LHS of the test operator, not on the RHS
+24.12	24	bless failure (unconditional form) SHALL write "bless: validation failed" to stderr and exit 1
+24.13	24	if bless VAR [[ test ]] failure SHALL take the false branch and leave VAR tainted
+24.14	24	Re-assignment of a blessed variable from a tainted source SHALL re-taint it
+24.15	24	Literals, arithmetic from clean operands, $0, $#, $?, $$ SHALL be clean
+24.16	24	The bless test expression SHALL NOT allow external commands or arithmetic
+25.1	25	Integer overflow SHALL trap at runtime (not silent wraparound)
+25.2	25	Integer overflow SHALL abort the process — no recovery, no suppression with -
+25.3	25	The overflow error message SHALL identify the operation and operands
+28.1	28	for x in $var (unquoted expansion in loop header) SHALL be a compile error
+28.2	28	for x in "${arr[@]}" SHALL be the accepted loop form
+30.1	30	There SHALL be no implicit conversion between int and string
+30.2	30	$(( )) SHALL be the explicit string-to-int conversion boundary
+30.3	30	x=5 SHALL be a string assignment (equivalent to x="5")
+30.4	30	int x=5 SHALL be required for integer variable declaration
+30.5	30	sash-convert SHALL convert [[ $x -gt N ]] to (( x > N )) and likewise for -lt -ge -le -eq -ne
+30.6	30	The compiler SHALL NOT implement -gt -lt -ge -le -eq -ne operators — they are not valid sash-native syntax
+30.7	30	sash-convert SHALL convert unset var (scalar) to var=""
+30.8	30	unset var (scalar) in sash-native SHALL be a compile error
+30.9	30	unset arr[N] SHALL remove the element
+30.10	30	unset map[key] SHALL remove the key
+30.11	30	unset arr / unset map SHALL clear the collection (empty, not empty string)
+31.1	31	(( )) statement context SHALL accept mutation operators: =, +=, -=, *=, /=, %=, x++, x--
+31.2	31	(( )) statement context SHALL reject comparison operators
+31.3	31	if (( )) condition context SHALL accept comparison operators: ==, !=, <, >, <=, >=
+31.4	31	if (( )) condition context SHALL reject mutation operators
+31.5	31	$(( )) expression context SHALL reject mutation operators — compile error
+31.6	31	Prefix ++x and --x forms SHALL be rejected — compile error
+31.7	31	Postfix x++ and x-- SHALL only be valid as statements, not inside expressions
+31.8	31	(( x = y++ )) SHALL be rejected — increment inside expression
+31.9	31	if (( x++ )) SHALL be rejected — mutation in condition position
+31.10	31	Comma operator: non-final expressions in (( )) SHALL be mutations
+31.11	31	Comma operator in condition position: final expression SHALL be a comparison
+31.13	31	Statement (( )) exit status SHALL always be 0
+31.14	31	(( x > 0 )) as bare statement (not in if/while) SHALL be a compile error
+32.1	32	Compiled binary SHALL contain .sash_source ELF section with sash-native source
+32.2	32	sash --extract <binary> SHALL dump the embedded source from .sash_source section
+33.1	33	Indexed arrays SHALL use integer keys
+33.2	33	Associative arrays (map) SHALL use string keys
+33.3	33	Using a string key on an indexed array SHALL be a compile error
+33.4	33	Using an integer key on a map SHALL be a compile error
+33.5	33	${arr[@]/pat/rep} SHALL apply substitution to each element
+33.6	33	${arr[@]#prefix} SHALL strip prefix from each element
+33.7	33	${arr[@]%%suffix} SHALL strip suffix from each element
+35.1	35	Declaration axes SHALL be freely stackable: local const int x=5 is valid
+35.2	35	const SHALL apply to scalars only
+36.1	36	dtoi(digits, string) SHALL convert a decimal string to integer with explicit scale (e.g., dtoi(2, "3.14") → 314)
+36.2	36	itod(digits, int) SHALL convert an integer to decimal string with explicit scale (e.g., itod(2, 314) → "3.14")
+36.3	36	Scale SHALL be explicit — no silent truncation
+36.4	36	dtoi and itod SHALL be runtime builtins alongside atoi/itoa
+37.1	37	<(cmd) process substitution SHALL be rejected with diagnostic SB5004
+37.2	37	>(cmd) process substitution SHALL be rejected with diagnostic SB5004
+38.1	38	Sash-native ( cmd ) subshell syntax SHALL be a compile error
+38.4	38	Background execution SHALL use cmd & syntax as the explicit fork mechanism
+38.5	38	$! SHALL store last background process pid
+39.1	39	Glob patterns SHALL only support * — ? and [abc] SHALL be rejected
+39.2	39	var =~ s/re/str/flags SHALL mutate the variable in place (statement form)
+39.3	39	${var:s/re/str/flags} SHALL return the substituted value without mutating var
+39.4	39	${var/pat/rep} family SHALL be accepted via glob-to-regex coercion
+39.5	39	Literal regex patterns SHALL be validated at compile time
+39.6	39	Regex engine SHALL NOT support {n,m} counted repetition
+39.7	39	Regex engine SHALL NOT support \d, \w shortcuts
+39.8	39	Regex engine SHALL NOT support lookahead or lookbehind
+39.9	39	Validated literal patterns SHALL be precompiled once at runtime init
+40.3	40	$var and "$var" SHALL be treated identically — no quoting rules enforced
+41.1	41	array arr=(...) SHALL be accepted as array declaration syntax
+41.2	41	map m=(...) SHALL be accepted as associative array declaration syntax
+42.1	42	$(getenv VAR) SHALL read the environment variable VAR
+42.2	42	$(getenv VAR) result SHALL be tainted
+42.3	42	$(argv N) SHALL read positional parameter N
+42.4	42	$(argv N) result SHALL be tainted
+42.5	42	$(argc) SHALL return the count of positional parameters
+42.6	42	Out-of-range $(argv N) SHALL return empty string and set $? to 1
+46.1	46	Sash-native: $1..$N, $@, $*, $# at top level SHALL be a compile error
+46.2	46	Sash-native: $1..$N, $@, $*, $# inside function bodies SHALL be accepted
+46.4	46	Reading $K where K > call argc SHALL be a compile error
+48.1	48	If a function reads $N but call site provides fewer than N arguments, compiler SHALL emit an error
+50.1	50	If a function reads a global variable that is tainted at the call site, compiler SHALL emit an error
+51.1	51	SSA backstop SHALL reject tainted values at codegen — ICE if reached (validator should have caught it)
+52.1	52	${var@U} SHALL be rejected with diagnostic SB4015
+52.2	52	${var@u} SHALL be rejected with diagnostic SB4015
+52.3	52	${var@L} SHALL be rejected with diagnostic SB4015
+52.4	52	${var@Q} SHALL be rejected with diagnostic SB4015
+52.5	52	${var@E} SHALL be rejected with diagnostic SB4015
+52.6	52	${var^^} and ${var,,} SHALL be accepted as alternatives
+53.1	53	$HOME in sash source SHALL refer to a sash variable, NOT the environment variable
+53.2	53	The only way to read an environment variable SHALL be $(getenv NAME)
+53.3	53	$(getenv NAME) result SHALL be tainted and must be blessed before use
+53.4	53	There SHALL be no mechanism to push sash variable changes to the environment
+53.5	53	export keyword SHALL be a compile error (SB5001)
+53.6	53	Per-command env vars SHALL use /usr/bin/env
+54.1	54	. ./file and source ./file SHALL be rejected with diagnostic SB4002
+55.1	55	External commands SHALL have implicit exit checks — nonzero aborts the program
+55.2	55	Variable assignment SHALL NOT have an exit check
+55.3	55	Arithmetic evaluation SHALL NOT have an exit check
+55.4	55	- cmd SHALL suppress the implicit exit check
+55.5	55	Reading $? after - cmd SHALL be a compile error
+55.6	55	$? SHALL only be available in handling position (|| RHS, if/while body)
+55.7	55	local x=$(cmd) SHALL check cmd exit status — local SHALL NOT swallow exit codes
+55.8	55	x=$(cmd) where cmd fails SHALL abort the program — x is never assigned
+55.9	55	x=$(- cmd) SHALL capture output and discard exit status
+55.10	55	Pipefail SHALL always be on — implicit check fires on aggregate pipeline status
+55.11	55	- cmd1 | cmd2 SHALL suppress cmd1 failure but check cmd2
+55.12	55	$(f) for -> int function SHALL be a type error (DD#58)
+55.13	55	Bare call of non-void function SHALL be a compile error
+55.14	55	return 0 as the only return path SHALL be a compile error
+55.15	55	- cmd; return $? SHALL be a compile error — $? unavailable after -
+55.16	55	Background exec failure (fork/exec) SHALL abort the parent
+55.17	55	$(status) SHALL only be valid as the first expression evaluated in the handling branch — once another command executes, the value is consumed
+55.18	55	$? SHALL be syntax sugar for $(status)
+55.19	55	$! SHALL be syntax sugar for $(getcpid)
+56.1	56	END block SHALL appear at top level, exactly once, and execute immediately before process exit
+56.2	56	END block SHALL NOT return to the program — reaching end, return, or exit N all terminate
+56.3	56	exit N within END SHALL override the process exit status
+56.4	56	Without explicit exit N, the process SHALL exit with the status that triggered END
+56.5	56	signal N IGN SHALL mask the signal at OS level (SIG_IGN) — zero overhead, invisible
+56.6	56	signal N DFL SHALL restore the kernel default disposition
+56.7	56	signal N FLAG SHALL record the signal in signum without inserting check points
+56.8	56	signal N EXIT SHALL set the flag AND insert check points — at next check point, jump to END
+56.9	56	Check points SHALL be inserted before external commands, function calls, function returns, and loop tops
+56.10	56	FLAG disposition (signal N FLAG) SHALL add zero runtime overhead — no checks inserted
+56.11	56	$(signum) SHALL return the most recent signal number as int (0 if none)
+56.12	56	Supported signals: 1(HUP), 2(INT), 10(USR1), 12(USR2), 13(PIPE), 15(TERM)
+56.13	56	signal takes a numeric signal argument — names are user-defined (GPP macros)
+57.1	57	sash-convert SHALL convert declare -i to int
+57.2	57	sash-convert SHALL convert declare -a to array
+57.3	57	sash-convert SHALL convert declare -A to map
+57.4	57	sash-convert SHALL convert declare -r and readonly to const
+57.5	57	sash-convert SHALL convert backtick command substitution to $()
+57.6	57	sash-convert SHALL convert [ ] test to [[ ]]
+57.7	57	sash-convert SHALL convert ${var-x} to ${var:-x}
+57.8	57	sash-convert SHALL convert let expr to (( expr ))
+57.9	57	sash-convert SHALL convert typeset to bare assignment
+57.10	57	sash-convert SHALL extract $((x=10)) to ((x=10)) statement form
+57.11	57	sash-convert SHALL convert subshells with assignments to synthetic function with local declarations
+57.12	57	sash-convert SHALL convert subshells with cd to save/restore cwd
+57.13	57	sash-convert SHALL convert $1, ${1}, $@, ${@}, $#, ${#} to $(argv N), $(argv @), $(argc)
+57.15	57	sash-convert output SHALL be valid sash-native source
+57.16	57	sash-convert --annotate SHALL add "# was: ..." comments showing original form
+57.17	57	sash-convert SHALL emit # MANUAL: annotation for eval
+57.18	57	sash-convert SHALL emit # MANUAL: annotation for source and dot command (.)
+57.19	57	sash-convert SHALL emit # MANUAL: annotation for ${!var} indirect expansion
+57.20	57	sash-convert SHALL emit # MANUAL: annotation for declare -n / local -n / typeset -n (nameref)
+57.21	57	sash-convert SHALL emit # MANUAL: annotation for <(...) and >(...) process substitution
+57.22	57	sash-convert SHALL emit # MANUAL: annotation for ${var@X} parameter transformations
+57.23	57	sash-convert SHALL emit # MANUAL: annotation for $(cmd) inside heredoc body
+57.24	57	sash-convert SHALL emit # MANUAL: annotation for export
+57.25	57	sash-convert SHALL emit # MANUAL: annotation for select
+57.26	57	sash-convert SHALL emit # MANUAL: annotation for coproc
+57.27	57	sash-convert SHALL emit # MANUAL: annotation for set -e, set -u, shopt
+57.28	57	sash-convert SHALL emit # MANUAL: annotation for alias
+57.29	57	sash-convert SHALL emit # MANUAL: annotation for ( cmd ) subshell syntax that cannot be mechanically converted
+57.30	57	sash-convert SHALL pass through unconvertible lines unchanged alongside their annotation
+57.32	57	sash-convert SHALL NOT require shellcheck-clean input as a precondition
+57.33	57	sash-convert SHALL emit # CHECK: hint for unquoted $var in command arguments (SC2086) — word splitting will not occur in sash
+57.34	57	sash-convert SHALL NOT alter unquoted variables — only annotate them
+57.35	57	sash-convert SHALL emit bless lines for variables assigned from known externals (e.g., date, hostname)
+57.36	57	sash-convert SHALL emit # BLESS: hint for variables assigned from unknown external commands
+57.37	57	sash-convert SHALL emit # BLESS: hint for variables populated by read
+57.38	57	sash-convert output and .sash_source ELF section SHALL use the same sash-native format
+57.39	57	sash-convert SHALL accept input from a file argument or stdin
+57.40	57	sash-convert SHALL write output to -o file or stdout
+57.41	57	sash-convert | sash -o binary SHALL produce a working binary for scripts in the safe subset
+57.42	57	sash SHALL accept sash-native source only
+57.43	57	sash SHALL accept trivial bash that is incidentally indistinguishable from sash-native
+57.44	57	A tree-sitter node type not in the sash-native accepted set SHALL be a compile error
+57.45	57	A non-sash declaration keyword (declare, typeset, readonly, export) SHALL be a compile error
+57.46	57	The compiler SHALL NOT have --emit-source, --annotate, or --no-lint flags
+58.1	58	$((f)) SHALL capture zero-arg -> int function return value
+58.2	58	$(( (f args) )) sexpr SHALL call -> int function with arguments
+58.3	58	Nested sexpr calls SHALL compose
+58.4	58	((x = f)) SHALL assign -> int function result to existing variable
+58.5	58	if ((f > 0)) SHALL use -> int function in boolean context
+58.6	58	$(f) for -> int function SHALL be a type error
+58.7	58	Function and variable name collision SHALL be a compile error
+58.8	58	$(( (f) + expr )) SHALL compose sexpr with arithmetic

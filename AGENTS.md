@@ -208,8 +208,22 @@ re-add it, and do not reach for `git show <rev>:spec.db` — that no longer
 exists. **The database is its own history**: `runs` records a `commit_hash`
 per test per run, so cross-commit comparison is a plain SQL query (below).
 
-If you do not have a `spec.db`, run `cd spec && bash run.sh` to build one
-from scratch; it is derived data and always reproducible.
+**The database is reproducible from two tracked files.** `run.sh` applies
+`spec/schema.sql` (tables, views, indexes) and loads `spec/clauses.tsv`
+before recording anything, both idempotently, so a fresh clone with no
+`spec.db` at all builds one correctly. `clauses` is the one part that is
+**not** derived from a test run — 231 rows of curated DD clause text — which
+is why it lives in a tracked TSV rather than being regenerated. If you add or
+edit a clause, re-export it:
+
+```sh
+sqlite3 -noheader -separator "$(printf '\t')" spec.db \
+  "SELECT id, dd, text FROM clauses
+   ORDER BY dd, CAST(substr(id, instr(id,'.')+1) AS INTEGER), id;" \
+  > spec/clauses.tsv
+```
+
+Clause text must not contain tabs or newlines (the TSV has no quoting).
 
 **`chk` ids are a flat GLOBAL namespace across every spec file.** `chk N`
 records `$SASH_MODE:N`, so the same `N` in two files (e.g. `53.1` in both
@@ -254,6 +268,10 @@ ORDER BY b.test_id;
 Use `/home/linuxbrew/.linuxbrew/bin/sqlite3` to bypass the indexnudge shim
 when querying `spec.db` (the shim re-parses the source index on every
 invocation, which is pointless here and slow).
+
+`runs` is append-only and past 1.4M rows, so both queries above depend on
+the indexes in `schema.sql`. Without them the regression query takes about
+four minutes; with them, milliseconds. They cost ~95 MB of local disk.
 
 ### Rust tests
 

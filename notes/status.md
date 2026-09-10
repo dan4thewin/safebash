@@ -1,3 +1,51 @@
+## ════════ STATUS (2026-09-10) — spec.db purged from history ════════
+
+**On `hand-parser`.** `spec.db` and `notes/misses.md` are gone from every
+commit on every branch. It was 455 of 1001 commits carrying 10,791 blobs for
+**9.0 GB** of pack — every spec run rewrites the database wholesale, so each
+touch added a fresh ~20 MB blob that deltas poorly. `.git` went **1.7 GB →
+5.7 MB**; a fresh clone from GitHub is **7.3 MB**, largest blob now 292 KB of
+`codegen.rs`. All six branches force-pushed with `--force-with-lease`.
+
+**Any other clone must be re-cloned.** Every hash from the first `spec.db`
+commit onward changed; an old clone cannot pull.
+
+**431 commit citations across 122 notes/docs files were repaired.**
+filter-repo rewrites hashes in commit *messages* but not in file contents.
+Rather than regex-replacing hex-looking tokens, the 238 distinct hashes were
+snapshotted *before* the rewrite and confirmed to resolve via `cat-file`, then
+remapped through the commit-map and re-verified after — zero unmapped, zero
+ambiguous at 7 chars. `spec.db`'s own `runs` table got the same treatment
+across 1.46M rows. (One value, `0961a2e`, was already dangling *before* the
+rewrite — an amended commit, not something the purge broke.)
+
+**The purge exposed that `spec.db` was not purely derived**, which is the part
+worth remembering. `run.sh` only ever `INSERT`s — the schema arrived with the
+clone — so a fresh clone hit `no such table: tests`. And `clauses` is 231 rows
+of **curated** DD clause text that nothing regenerates; `status.md` had
+flagged in September that it "exists only inside the binary spec.db". The
+9.0 GB was all `runs`, which genuinely is derived; the 15 KB curated
+remainder just needed a better home.
+
+Now tracked as text: `spec/clauses.tsv` (231 rows, diffable, reviewable) and
+`spec/schema.sql` (tables, views, indexes, all `IF NOT EXISTS`). `run.sh`
+applies both idempotently, so the database rebuilds from nothing. Verified by
+bootstrapping in a scratch dir: 231 clauses, byte-identical round-trip, stable
+across a second run. That test caught a real bug — `.import` into a
+non-existent table eats the first row as column names, silently loading 230.
+
+**The regression gate is faster than it ever was.** `git show HEAD:spec.db`
+dies with the purge; the replacement was already latent in the schema, since
+`runs` records `commit_hash` per run. But `runs` had **no indexes**, so that
+query took ~4 minutes. Two indexes later: **9 milliseconds**, at ~95 MB of
+local disk — affordable precisely because the file is no longer in git.
+
+**4616 passing / 39 failing / 459 skipped — unchanged, zero flips.** Verified
+through the new `run.sh` end to end.
+
+Backups (bundle, raw `.git` tar, live database) are outside the repo at
+`/home/dg/safebash-purge-backup-20260910-183332/`.
+
 ## ════════ STATUS (2026-09-10) — DD#99 complete (stages 1-8) ════════
 
 **On `hand-parser`.** The read family is redesigned end to end.
