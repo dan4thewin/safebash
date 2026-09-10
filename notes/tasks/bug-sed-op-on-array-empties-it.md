@@ -5,9 +5,9 @@ priority: P1
 kind: bug
 depends: []
 gates:
-  - "`array a=(x:1 y:2); a =~ s/:/-/g` either maps over the elements or is REJECTED with an SB code — it must not silently leave `len 0`"
-  - "`$(gsub @a \":\" \"-\")` either maps over the elements or is rejected — it must not silently behave as `$(gsub \"$(join a)\" …)`"
-  - "whichever is chosen, a spec pins it for both the statement (`=~`) and function (`$(gsub …)`) forms"
+  - "`array a=(x:1 y:2); a =~ s/:/-/g` is REJECTED with an SB code — no silent `len 0`, no segfault"
+  - "`$(gsub @a \":\" \"-\")` is likewise rejected — it must not silently behave as `$(gsub \"$(join a)\" …)`"
+  - "a spec pins the rejection for both the statement (`=~`) and function (`$(gsub …)`) forms"
 ---
 
 ## Found
@@ -72,3 +72,33 @@ Both compile cleanly and produce wrong results — the recurring shape of this
 week's finds (DD#97's `len`/`join` disagreement, the DD#87 execve leak, the
 taint laundering): not a missing feature, an **accepted input with an
 undefined answer**.
+
+## Decided 2026-09-10 (DG): **reject** (option B)
+
+Re-verified at HEAD, and it is worse than first filed — not merely silent
+emptying:
+
+```
+before n=2 [0]=x:1
+after  n=0 [0]=            <- then Segmentation fault (core dumped)
+```
+
+`$(gsub @a ":" "-")` returns `x-1 y-2`, i.e. it silently behaves as
+`gsub "$(join a)" …`.
+
+Cause: DD#96 defines `v =~ s/RE/SUB/` as `v = $(sub "$v" RE SUB)`
+(`parse_regex_mutation`, parse/parser.rs:1949). Applied to an array that is a
+category error — a scalar is assigned to the array slot, `len` reads 0, and
+the following `${a[0]}` reads through a dangling table.
+
+**Both forms are rejected.** A string operation does not apply to a
+collection; the author writes the loop. Mapping over elements (option A) was
+considered and deferred, not dismissed — see
+`future-array-element-mapping.md`.
+
+Scope when implemented: the statement form is rejected where the desugaring is
+built (`parse_regex_mutation` knows the target name, so it needs the
+declaration set), and the value form where `@a` reaches a scalar operand of
+`sub`/`gsub`. The segfault goes with it — but check separately whether
+`${a[0]}` after a bad assignment can still fault, since that is the more
+general defect.
