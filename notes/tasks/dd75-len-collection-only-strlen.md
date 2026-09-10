@@ -68,3 +68,20 @@ unambiguous/self-consistent over paste-from-elsewhere familiarity.)
 
 DD#75 §2's "sole length spelling" argument is not lost — there is still
 exactly one spelling per *question*, which is the stronger form of it.
+
+## Addendum (2026-09-11) — absorb the splat-operand removal
+
+DD#100 Part D settles that builtins take **bare names and no splats** in a
+name operand, and defers the removal here rather than doing it separately,
+since this task must decide `len`'s operand set anyway and would otherwise
+churn the same sites twice.
+
+Scope to absorb:
+
+- Reject `len @a` (2 sites) and `join @a SEP` (17 sites) in `spec/` +
+  `contrib/`. Measured today, `join a ","` and `join @a ","` are exact
+  synonyms, so this is a pure spelling restriction.
+- **Update SB5025's message.** It currently *recommends* the spelling being
+  removed — "use `$(join @a)` for a string, `${a[i]}` for one" (recorded at
+  `spec/glob_splat.sh:99`). That guidance must become `$(join a)`.
+- `keys` already accepts bare names only (SB5062), so it needs no change.

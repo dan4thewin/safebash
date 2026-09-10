@@ -1,6 +1,6 @@
 ---
 title: Collection parameters and the name sigil — symbol or reference?
-status: open
+status: done
 priority: P2
 kind: decision
 depends: []
@@ -345,3 +345,13 @@ avoids churning the same 19 sites in two passes.
   whether slot letters are positional (`f =x =y` → `A`, `B`).
 - **Array vs map typing** of a slot, and whether a callee may **mutate** it
   (in/out) or only read it.
+
+## Closed (2026-09-11) — settled as DD#100
+
+DG settled the remaining questions: defer `join @a`; **5** slots; `A`–`E`
+reserved; **scalars first, then collections** (open to counter-arguments);
+array and map both usable in any slot.
+
+Written up as `notes/decisions/DD100-collection-parameters.md`. The `join @a`
+removal is folded into `dd75-len-collection-only-strlen`. One question
+remains open in the DD: whether a callee may **mutate** a collection slot.

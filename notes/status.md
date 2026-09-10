@@ -1,3 +1,34 @@
+## ══ STATUS (2026-09-11) — DD#100: collection parameters settled ══
+
+**On `hand-parser`.** DG settled the design; written up as
+**`notes/decisions/DD100-collection-parameters.md`** (next free number —
+DD#99 was the highest).
+
+- **Sigil `=`** at the call site: `show "nums" =nums`. Chosen as evocative of
+  assigning the collection to the parameter, and `:symbol`-like without being
+  it. `=` was never free — it was *over-claimed*; the symmetry fix reclaimed
+  the spaced-left/glued-right shape.
+- **`A`–`E` in the callee, 5 max, reserved** on the `args` precedent
+  (SB5024/SB5052). Array and map both usable — inlining makes each
+  instantiation monomorphic.
+- **Scalars first, then collections.** Not needed for parsing (`=`
+  self-identifies) but keeps source position = `args` index, so `$1` reads as
+  in bash and DD#81's arity inference stays legible. **Forward-compatible**:
+  interleaving can be allowed later without breaking any call; tightening
+  later could not.
+- **Builtins unaffected** — bare names, no splats. `attest`/`array a` are
+  syntax, not calls; `read a` is double duty (declares *and* populates).
+- **Escape hatch**: `f '=foo'` / `f "=foo"` pass the literal — `SingleQuoted`
+  and `DoubleQuoted` are structurally distinct from `Literal` in the AST.
+- **`join @a` removal deferred** into `dd75-len-collection-only-strlen`,
+  which must decide `len`'s operand set anyway. That task now carries the
+  note that SB5025's message *recommends* the spelling being removed.
+
+**Next up:** implement DD#100 — but **one open question first** (recorded in
+the DD): may a callee *mutate* a collection slot (`A[0]=x`, `read A`) and
+affect the caller's array? Inlining makes it free to implement; the question
+is taint/`attest` flow across the binding.
+
 ## ═══ STATUS (2026-09-11) — SB5064: `$a` on a collection is an error ═══
 
 **On `hand-parser`.** DG, mid-discussion: *"`$a` for an array `a` is an
