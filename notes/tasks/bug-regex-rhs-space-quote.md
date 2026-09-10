@@ -1,6 +1,6 @@
 ---
 title: "BUG — `[[ =~ ]]` regex RHS silently drops spaces and rejects quotes (no way to match a space)"
-status: superseded
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -77,3 +77,18 @@ Sibling of `bug-dispatch-literal-star-wildcard` (same session). Related to
 `regex-interpolation-delimiters` (DD#63 remainder) and the pre-existing
 "quoted-regex-in-`=~`" gap. Blocks nothing in the multi-exact dispatch work
 (that is `==`-only) but should be resolved before leaning harder on `=~`.
+
+## Closed 2026-09-10 — verified done, not merely superseded
+
+The title's core claim ("no way to match a space") is false at HEAD. Every
+gate re-verified:
+
+| gate | today |
+|---|---|
+| a `=~` regex can contain a literal space | `[[ $s =~ "a b" ]]` matches; `a\x20b` (DD#63 byte escape) also matches |
+| no silent concatenation | `s="a b"` → Y, `s="ab"` → N |
+| no silent miscompile | a BARE space is **SB4014**, a clean compile error |
+| native + c + janet identical; dispatch `=~` consistent | native and janet both Y; c emits; `[[ $s =~ "a b" { … } ]]` prints D |
+
+DD#71 operand-words gave quotes their meaning here, which is what made the
+quoted form work. Closing.
