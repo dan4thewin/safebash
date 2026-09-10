@@ -1,6 +1,6 @@
 ---
 title: "standalone `read` taint reports via the SSA backstop with no SB code (pipeline `read` does not)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -51,3 +51,15 @@ DD#98 removes the *motivation* for `: $v` on a read target — write `_` instead
 — but does not fix this. `: $v` remains the documented hatch for a
 deliberately-unused **named** write, and it should behave the same in both read
 shapes.
+
+## Closed 2026-09-10 (backlog prune)
+
+Re-verified 2026-09-10 — both forms now report with a proper SB code:
+
+```
+read a          -> SB5020  tainted array ${a[...]} used without attest
+cat f | read a  -> SB5020  (same)
+```
+
+The asymmetry the task describes (standalone reporting via the bare SSA
+backstop with no code, pipeline reporting SB5020) is gone. Closing.

@@ -1,6 +1,6 @@
 ---
 title: "brace-`if` must require braces on `else`/`elif` consistently (mixed/missing braces silently mis-parse)"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -56,3 +56,20 @@ silently instead of erroring.
 ## Related
 
 - DD#68 / the brace/dispatch block form.
+
+## Closed 2026-09-10 (backlog prune)
+
+Re-verified 2026-09-10 — braces are required consistently and nothing
+mis-parses silently:
+
+| form | result |
+|---|---|
+| `if (( x )) { … } else { … }` | runs |
+| `if (( x )) { … } elif (( 1 )) { … } else { … }` | runs |
+| `if (( x )); then … else … fi` (classic) | runs |
+| `if (( x )) { … } else` **without** a brace | **SB4014** "expected '{' block body" |
+| `elif` without a brace | **SB4014** |
+| mixed `then …` + `{ … }` | **SB4014** |
+
+The gate asked that the mixed/missing cases stop mis-parsing silently; they
+are clean compile errors. Closing.
