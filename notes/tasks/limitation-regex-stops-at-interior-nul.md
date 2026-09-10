@@ -1,13 +1,12 @@
 ---
-title: "bug: regex/gsub silently ignore everything past an interior NUL"
-status: ready
-priority: P1
-kind: bug
+title: "limitation: regex ops see only up to the first interior NUL"
+status: documented-limitation
+priority: P3
+kind: limitation
 depends: []
 gates:
-  - "`s=\"abc\"; s =~ s/b/$'\\0'/; s =~ s/c/X/` yields `a\\0X`, not `a\\0c`"
-  - "`[[ $s =~ cd ]]` on `a\\0bcd` agrees with whatever the replace path does"
-  - "no string op on a NUL-bearing scalar returns a wrong answer silently"
+  - "the limitation is stated in the DD#63 regex documentation"
+  - "revisit if a real program needs to match across a NUL"
 ---
 
 ## What
@@ -81,3 +80,45 @@ question is a language-surface call.
 Pre-existing (the Plan 9 regex has always been C-string based); DD#99 is what
 makes it load-bearing. Found while migrating `mapfile -m` sites for DD#99
 stage 5.
+
+## Decided 2026-09-10 (DG): YAGNI — document as a limitation
+
+Re-verified at HEAD: still live. `len=5` on `a\0bcd`, but `[[ $s =~ cd ]]` is
+false and `$(gsub $s "cd" "Z")` returns the subject unchanged, both silently.
+
+**Not fixed, deliberately.** Two things changed after it was filed:
+
+1. It stopped blocking anything — `matchall` (DD#63, 2026-09-09) routed the
+   DD#99 mapfile migration around it, so it is no longer on any critical path.
+2. DD#99 stage 7 closed the outward leak: a NUL-bearing value can no longer
+   reach argv silently, it aborts. So the remaining exposure is in-process
+   only.
+
+No real program has needed to match across a NUL. The regex ops operate on
+text; NUL is the DD#99 **record separator**, and text within one record never
+contains one. A program that has NULs in a scalar is mid-split, and the
+operation to reach for there is `read` or `matchall`, not `=~`.
+
+## The limitation, stated
+
+> A regex operation (`[[ =~ ]]`, `match`, `matchall`, `sub`, `gsub`, `s///`)
+> examines the subject **up to its first interior NUL**. Bytes after that are
+> neither matched nor replaced, and are preserved unchanged. Split first
+> (`read`, `matchall`) and operate on the fields.
+
+Belongs in the DD#63 regex docs — it is a documented boundary, not a silent
+one, once written down.
+
+## If reconsidered
+
+The candidate fix is **segment on NUL**: split the subject at NULs, run the
+regex on each segment, rejoin with the NULs intact. Contained to the runtime
+(`sash-rt/src/lib.rs`), and it makes a NUL a hard match boundary — which is
+coherent with NUL-as-record-separator rather than merely convenient. Care
+needed so a non-global `s///` still means "first match across the whole
+subject", not "first in every segment".
+
+Rejected alternatives: a length-aware engine (means replacing or forking
+`regexec9` — general, but far larger than the problem); and rejecting a
+NUL-bearing subject outright, which was attractive when NUL scalars were
+exotic but would now reject ordinary DD#99 programs.
