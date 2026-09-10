@@ -38,3 +38,4 @@ spec/.trace/
 .indexnudge-rust.db
 *.profraw
 notes/tmux-*.log
+spec.db
