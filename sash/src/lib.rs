@@ -428,6 +428,57 @@ fn emit_manifest(program: &crate::ir::Program) {
 }
 
 /// Default path: type-check, taint-verify, codegen, and link a static ELF.
+/// Where a native build writes its binary: an explicit `-o`, `a.out` for
+/// `-c`, else the source name with its shell suffix dropped.
+fn native_output_path(input: &str, output_path: Option<&str>, is_inline: bool) -> String {
+    if let Some(p) = output_path {
+        return p.to_string();
+    }
+    if is_inline {
+        return "a.out".to_string();
+    }
+    input
+        .strip_suffix(".sh")
+        .or_else(|| input.strip_suffix(".bash"))
+        .unwrap_or(&format!("{}.out", input))
+        .to_string()
+}
+
+/// Link the object against the runtime, then drop the object.
+///
+/// `-o` and the name must be SEPARATE arguments: `ld` uses
+/// `getopt_long_only`, so a glued `-ou` is matched against single-dash long
+/// options, where `ou` is an unambiguous prefix of `--out-implib` — which
+/// takes an argument, so ld swallowed the object file and left `_start`
+/// with an undefined reference to `main`.
+fn link_object(obj_path: &str, output: &str) {
+    let rt_path = format!(
+        "{}/../sash-rt/target/release/libsash_rt.a",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    let ld = Command::new("ld")
+        .args([
+            "-o",
+            output,
+            obj_path,
+            &rt_path,
+            "-static",
+            "--gc-sections",
+            "-z",
+            "noexecstack",
+            "--strip-debug",
+        ])
+        .status()
+        .expect("ld failed");
+
+    let _ = std::fs::remove_file(obj_path);
+
+    if !ld.success() {
+        eprintln!("sash: linking failed");
+        std::process::exit(1);
+    }
+}
+
 fn compile_native(
     input: &str,
     source: &str,
@@ -436,18 +487,7 @@ fn compile_native(
     is_inline: bool,
     flags: &[&str],
 ) {
-    let output = if let Some(p) = output_path {
-        p.to_string()
-    } else if is_inline {
-        "a.out".to_string()
-    } else {
-        input
-            .strip_suffix(".sh")
-            .or_else(|| input.strip_suffix(".bash"))
-            .unwrap_or(&format!("{}.out", input))
-            .to_string()
-    };
-
+    let output = native_output_path(input, output_path, is_inline);
     let obj_path = format!("{}.o", output);
 
     let type_map = type_check::infer_types(program);
@@ -467,31 +507,7 @@ fn compile_native(
     };
     std::fs::write(&obj_path, &obj_bytes).expect("write .o");
 
-    let rt_path = format!(
-        "{}/../sash-rt/target/release/libsash_rt.a",
-        env!("CARGO_MANIFEST_DIR")
-    );
-
-    let ld = Command::new("ld")
-        .args([
-            &format!("-o{}", output),
-            &obj_path,
-            &rt_path,
-            "-static",
-            "--gc-sections",
-            "-z",
-            "noexecstack",
-            "--strip-debug",
-        ])
-        .status()
-        .expect("ld failed");
-
-    let _ = std::fs::remove_file(&obj_path);
-
-    if !ld.success() {
-        eprintln!("sash: linking failed");
-        std::process::exit(1);
-    }
+    link_object(&obj_path, &output);
 
     println!("sash: {} -> {} (static binary)", input, output);
 }

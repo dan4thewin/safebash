@@ -76,9 +76,41 @@ says it: *"the target must be a bare name — it is a binding, not a value."*
 `command_writes_args` had even written the inventory down, for an unrelated
 purpose. The list existed; enforcement never followed it.
 
-**Next: enumerate every name-position slot**, then design the sigil against
-the full list (DG's call — character and marker placement both deferred until
-the inventory is complete). Free leading chars, measured: `:` `%` `^` `~` `+`;
+**The enumeration found three more defects, one of them mine.** `match S P "o"`
+**ICEd** (`undefined array: "o"` — `match` is `matchall`'s sibling, DD#63 gives
+it a 3-arg out-array form; I fixed `matchall` and did not look next door).
+`unset "a"` **bypassed a deliberate rejection** — `unset a` on a scalar is
+rejected on purpose (SB4030), the quoted form compiled clean and did nothing:
+`type_check.rs:1186` skips any operand it cannot read as a name, the third
+instance of that exact shape. And my own SB5063 had started preempting
+SB4045's much better wrong-arity message for `matchall S P`, caught by probing
+arities rather than trusting a green sweep — no spec covered the two-arg form.
+
+**The inventory: nine name slots, six diagnostics, four added only after a bug.**
+
+| slot | kind | enforced by |
+|---|---|---|
+| `read ARR`, `readline v` | binds | SB5057 (DD#99) |
+| `argv [N] a` | binds | SB5063 |
+| `match`/`matchall S P a` | binds | SB5063 |
+| `unset a`, `unset a[i]` | unbinds | SB5063 |
+| `attest x in a`, `attest k v in m` | reads | SB4014 |
+| `len a`, `join a S`, `keys m` | reads | SB5062 |
+| `map m = @{a:DISP}` | reads | SB5033 |
+
+Correctly *not* name slots, verified not assumed: `for x in "a"`, `getenv
+"HOME"` (an env name — different namespace), `arg N`. The argument for a sigil
+is now measured: nobody was careless, but "this operand is a name" has no
+representation, so every slot re-derives it and each re-derivation can forget.
+
+**Separate bug, found by accident:** `sash prog.sash -o u` failed to link (also
+`-o ut`; `-o out` fine). `format!("-o{}", output)` glued the flag, and `ld`'s
+getopt_long_only matched `-ou` as `--out-implib` by unambiguous prefix,
+swallowing the object file. Fixed — `-o` and the name are separate args now.
+Spec `cli.7`.
+
+**Next: design the sigil against the full list above** (DG's call — character
+and marker placement both still open). Free leading chars, measured: `:` `%` `^` `~` `+`;
 taken: `&` `=` `@` `#` `*` `?` `'`. `:` fits semantically (Janet/Clojure
 symbols) but collides with the `:` builtin and `@{a:DISP}`. The invariant that
 matters more than the character: the sigil must be **compile-time syntax, never

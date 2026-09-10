@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=60
+plan=63
 echo "1..$plan" >&3
 
 set +e
@@ -406,6 +406,21 @@ echo "${parts[0]}"'
 run_sash 'array out=(old)
 if matchall "abc" "[a-c]" "out"; then echo "n=$(len out)"; fi'
 [[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk 63.ma10
+
+# 63.ma11 `match S P ARR` has the same binding target, and a quoted one ICEd
+# the compiler ("ICE: undefined array") rather than diagnosing.
+run_sash 'array o=(old)
+if match "abc" "(b)" "o"; then echo "n=$(len o)"; fi'
+[[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk 63.ma11
+
+# 63.ma12 the two-arg boolean `match S P` has no target — still accepted, and
+# a wrong `matchall` arity stays SB4045's to report, not SB5063's.
+run_sash 'if match "abc" "b"; then echo y; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 63.ma12
+
+# 63.ma13 `matchall S P` (missing out-array) keeps its own arity diagnostic
+run_sash 'if matchall "abc" "[a-c]"; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 63.ma13
 
 
 # ── DD#70 addendum (2026-09-09): `-` discards ANY result ──────────────────

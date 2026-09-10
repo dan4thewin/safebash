@@ -4645,7 +4645,8 @@ fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
 
 // ── SB5063: a fill target is a binding, not a value ─────────────────
 //
-// `argv [N] a` and `matchall S P a` write INTO a named array. A quoted or
+// `argv [N] a`, `match`/`matchall S P a` write INTO a named array, and
+// `unset a` unbinds one. A quoted or
 // sigilled operand in that slot is not a name, so the write landed nowhere:
 // the array silently kept its previous contents, and because both are
 // tainted sources, the attest obligation vanished along with the write.
@@ -4674,27 +4675,46 @@ fn check_fill_target_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 fn flag_fill_target(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
     let builtin = expr_literal_str(&c.name);
-    // `argv`'s target is the last non-flag word; `matchall`'s is the last.
-    let target = match builtin {
-        "argv" => argv_target_name(&c.args),
-        "matchall" => c.args.last().map(expr_literal_str),
+    // `unset` takes several targets and permits the subscript form `a[i]`;
+    // the fill builtins take one, and a bare name only.
+    let (targets, allow_subscript): (Vec<&str>, bool) = match builtin {
+        "argv" => (argv_target_name(&c.args).into_iter().collect(), false),
+        // DD#63: the out-array is the third argument. `match S P` is the
+        // two-arg boolean form and has no target at all, and a wrong arity
+        // is SB4045's to report — do not preempt it.
+        "match" | "matchall" if c.args.len() == 3 => (
+            c.args.last().map(expr_literal_str).into_iter().collect(),
+            false,
+        ),
+        "unset" => (c.args.iter().map(expr_literal_str).collect(), true),
         _ => return,
     };
-    let Some(target) = target else {
-        return;
-    };
-    if is_plain_identifier(target) {
-        return;
+    for target in targets {
+        if is_plain_identifier(target) || (allow_subscript && is_subscripted_name(target)) {
+            continue;
+        }
+        diags.push(fill_target_diag(builtin, span));
     }
-    diags.push(Diagnostic::error_span(
+}
+
+/// `a[i]` — a plain identifier carrying a subscript. `unset a[i]` is legal.
+fn is_subscripted_name(word: &str) -> bool {
+    match word.split_once('[') {
+        Some((name, rest)) => is_plain_identifier(name) && rest.ends_with(']'),
+        None => false,
+    }
+}
+
+fn fill_target_diag(builtin: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
         span,
         "SB5063",
         format!(
             "`{builtin}`'s target must be a bare name — it is a binding, not a \
-             value. A quoted or sigilled target names nothing, so the fill is \
-             silently discarded and the array keeps its previous contents"
+             value. A quoted or sigilled target names nothing, so the operation \
+             is silently discarded"
         ),
-    ));
+    )
 }
 
 fn check_len_in_scope(

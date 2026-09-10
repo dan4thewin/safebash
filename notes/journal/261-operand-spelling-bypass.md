@@ -172,3 +172,73 @@ same property that makes collection parameters cheap.
 
 DG chose: fix `argv`/`matchall` now, enumerate every name slot before picking
 a spelling. Marker placement and character both deferred to that inventory.
+
+## Addendum — the enumeration, and what it caught
+
+DG's call: fix `argv`/`matchall`, then enumerate every name slot before
+choosing a sigil. The enumeration was not bookkeeping. It found three more
+defects, one of them mine.
+
+**`match S P "o"` ICEd** — `ICE: undefined array: "o"`, the quoted name
+carried all the way to codegen. `match` is `matchall`'s sibling: DD#63 gives
+it both a two-arg boolean form and a three-arg out-array form. I had fixed
+`matchall` and not looked next door.
+
+**`unset "a"` bypassed a deliberate rejection.** `unset a` on a scalar is
+rejected on purpose (SB4030, *"use a=\"\" to clear"*). The quoted spelling
+compiled clean and silently did nothing — `type_check.rs:1186` reads
+`if name.contains('[') || name.is_empty() { continue; }`, and a quoted operand
+yields the empty name. The *third* instance of the same shape as
+`flag_len_cmdsub`'s `else { return }` and `join_operand_name`'s
+`_ => String::new()`: an unreadable operand treated as *nothing to check*
+rather than as *not a name*.
+
+**And a regression I had just introduced.** My SB5063 took
+`c.args.last()` unconditionally, so `matchall S P` (wrong arity) started
+reporting SB5063 instead of SB4045's much better *"the out-array is required:
+every match is appended, so there is no single value to return"*. Caught by
+probing arities rather than trusting the green sweep — no spec covered the
+two-arg form, so nothing would have told me. The target is now only inspected
+at the arity that has one.
+
+## The inventory
+
+| slot | kind | non-name operand | enforced by |
+|---|---|---|---|
+| `read ARR`, `read $s ARR` | binds | SB5057 | DD#99 |
+| `readline v` | binds | SB5057 | DD#99 |
+| `argv [N] a` | binds | SB5063 | this session |
+| `matchall S P a` | binds | SB5063 | this session |
+| `match S P a` (3-arg) | binds | SB5063 | this session |
+| `unset a`, `unset a[i]` | unbinds | SB5063 | this session |
+| `attest x in a`, `attest k v in m` | reads | SB4014 | — |
+| `len a`, `join a S`, `keys m` | reads | SB5062 | this session |
+| `map m = @{a:DISP}` | reads | SB5033 | — |
+
+Nine slots. Four were silently wrong until this session; one crashed the
+compiler. Correctly *not* name slots, verified rather than assumed: `for x in
+"a"` (a value list), `getenv "HOME"` (an environment name — a different
+namespace, where a string is right), `arg N`.
+
+## A separate bug the probing turned up
+
+Chasing an odd link failure: `sash prog.sash -o u` **failed to link**, and so
+did `-o ut`, while `-o out` and `-o zz` were fine.
+
+`lib.rs` built the flag as `format!("-o{}", output)`. `ld` uses
+`getopt_long_only`, so the glued `-ou` is matched against single-dash *long*
+options — and `ou` is an unambiguous prefix of `--out-implib`, which takes an
+argument, so ld consumed the object file as the implib name. The link then had
+the runtime but not our code: *undefined reference to `main`*.
+
+Nothing to do with names or sigils; found because a scratch binary happened to
+be called `u`. Fixed by passing `-o` and the name as separate arguments, which
+is what should have been there all along. Spec `cli.7`.
+
+## Where the sigil argument stands
+
+Nine slots, six diagnostics, four of them added only after a bug. The pattern
+is not that anyone was careless — it is that "this operand is a name" has no
+representation in the language, so every slot re-derives it and each
+re-derivation is a chance to forget. That is the case for the sigil, and it is
+now measured rather than asserted.

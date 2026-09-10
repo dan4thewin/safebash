@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=155
+plan=157
 echo "1..$plan" >&3
 
 set +e
@@ -368,6 +368,17 @@ if in_modes native,c; then
 else
     skip_chk 30.43
 fi
+
+# 30.44 the unset target is a BINDING, not a value. A quoted target slipped
+# past the scalar rejection (30.40) entirely: `unset "x"` compiled clean and
+# silently did nothing, because the check skipped any operand it could not
+# read as a name.
+run_sash 'x=hello; echo $x; unset "x"'
+[[ $rc != 0 && $err == *SB5063* ]]; chk 30.44
+
+# 30.45 a sigilled target is a value, not a binding → rejected
+run_sash 'array a=(x); n=a; echo "$(len a)$n"; unset $n'
+[[ $rc != 0 && $err == *SB5063* ]]; chk 30.45
 
 # --- DD#65: per-element array ops dropped → `for x in @a` loop + sub/gsub ---
 # (the `${arr[@]OP}` forms now reject SB4034; see var_modifiers.sh vm.dr16-18)

@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=6
+plan=7
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -48,6 +48,15 @@ PATH=/bin $SASH -c 'mytool' -o /dev/null 2>ns.err; rc=$?
 # root and sysroot_file_exists (dir branch) finds <sysroot>/<PATH-dir>/mytool.
 PATH=/bin $SASH --sysroot="$PWD/sr" -c 'mytool' -o sysbin 2>ws.err; rc=$?
 [[ $rc = 0 ]]; chk cli.6
+
+# cli.7 the -o output name is passed as its own argument, not glued. `ld` uses
+# getopt_long_only, so a glued `-ou` matched the single-dash long option
+# `--out-implib` by unambiguous prefix and swallowed the object file as its
+# argument — linking failed for any binary named `u` or `ut`, with the
+# object silently unlinked ("undefined reference to `main'").
+$SASH -c 'echo hi' -o ut >/dev/null 2>&1; rc=$?
+out=$([[ -x ut ]] && ./ut 2>/dev/null)
+[[ $rc = 0 && $out = "hi" ]]; chk cli.7
 
 set -e
 tally
