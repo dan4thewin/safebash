@@ -340,3 +340,30 @@ A NUL remains a perfectly good value in-process — spec an.5 pins that, since
 it is the basis of the whole design.
 
 Specs `commands.sh` an.1-an.5 (native + c; janet has no `$'…'`/split path).
+
+## Stage 8 landed (2026-09-10) — `array a = @m` is a compile error (SB5061)
+
+It was **accepted**, and silently produced an **empty** array — the same
+"accepts input and gives an undefined answer" shape as the ICE batch and the
+`f=(*)` collection bug.
+
+A map is built FROM an array (`map m = @{a:DISP}`). The reverse was never
+specified, and picking a flatten order on the author's behalf is exactly the
+silent mis-pairing that DD#69 and DD#99 make you state a disposition to avoid.
+Adding a disposition does not rescue it (`array a = @{m:~}` is equally
+rejected) — the direction is the problem, not the emptiness policy.
+
+To walk a map, iterate it: `for k in $(keys m)`.
+
+Specs `var_modifiers.sh` af.1-af.4 (all three modes; af.4 is the
+supported-direction control, gated for `janet-map-from-array`).
+
+## Status
+
+Stages 1-8 are complete. Remaining, both filed rather than folded in:
+
+- `sash-convert-read-dd99` (P1) — the converter still passes bash `read`
+  through verbatim, so its output no longer compiles. It has no
+  command-rewriting path today, only annotation insertion.
+- `docs/sash.1` still documents the retired read flag surface; that is mostly
+  deletion rather than correction.

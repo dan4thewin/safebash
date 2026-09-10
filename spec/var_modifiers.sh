@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=112
+plan=116
 echo "1..$plan" >&3
 
 set +e
@@ -563,6 +563,43 @@ echo "$(len m):${m[k1]}"'
     [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.9
 else
     skip_chk mp.9
+fi
+
+
+# ── DD#99 stage 8: an array is not built from a splat ─────────────────────
+# `array a = @m` was ACCEPTED and silently produced an EMPTY array — the
+# "gives an undefined answer to input it accepted" shape. A map is built FROM
+# an array (`map m = @{a:DISP}`); the reverse was never specified, and
+# guessing a flatten order for the author is the same silent mis-pairing that
+# DD#69/DD#99 make you state a disposition to avoid.
+
+# af.1 the bare form
+run_sash 'array p=(k1 v1)
+map m = @{p:~}
+array a = @m
+echo "$(len a)"'
+[[ $rc != 0 && -z $out && $err == *SB5061* ]]; chk af.1
+
+# af.2 …and with a disposition, which does not make it meaningful
+run_sash 'array p=(k1 v1)
+map m = @{p:~}
+array a = @{m:~}
+echo "$(len a)"'
+[[ $rc != 0 && -z $out && $err == *SB5061* ]]; chk af.2
+
+# af.3 control: an ordinary array literal is untouched
+run_sash 'array a=(x y)
+echo "$(len a)"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk af.3
+
+# af.4 control: the SUPPORTED direction still works
+if in_modes native,c; then
+    run_sash 'array p=(k v)
+map m = @{p:~}
+echo "$(len m):${m[k]}"'
+    [[ $rc = 0 && $out = "1:v" && -z $err ]]; chk af.4
+else
+    skip_chk af.4
 fi
 
 set -e

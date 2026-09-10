@@ -5466,14 +5466,62 @@ fn check_map_from_array_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 /// Each assignment of a `map` declaration whose value is a BARE array splat.
 fn check_map_decl_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
-    if !d.flags.iter().any(|f| f == "-A") {
-        return;
+    if d.flags.iter().any(|f| f == "-A") {
+        check_map_target_splats(d, span, diags);
+    } else {
+        check_array_target_splats(d, span, diags);
     }
+}
+
+/// `map m = @a` — the supported direction, but the disposition is mandatory
+/// (DD#99): a bare `@a` is SB5058.
+fn check_map_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
     for a in &d.assignments {
         if let Some(source) = bare_splat_source(&a.value) {
             diags.push(map_disposition_diag(span, source, &a.name));
         }
     }
+}
+
+/// DD#99 stage 8: `array a = @m` is the reverse direction and is not a thing.
+/// It was ACCEPTED and silently produced an EMPTY array — the "gives an
+/// undefined answer to input it accepted" shape. A map is built FROM an
+/// array; flattening one back was never specified, and guessing a pair order
+/// for the author is exactly the silent mis-pairing DD#69/DD#99 make you
+/// state a disposition to avoid.
+fn check_array_target_splats(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
+    for a in &d.assignments {
+        if let Some(source) = any_splat_source(&a.value) {
+            diags.push(array_from_map_diag(span, source, &a.name));
+        }
+    }
+}
+
+/// The subject of ANY `@name` splat (with or without a disposition).
+fn any_splat_source(value: &Expr) -> Option<&str> {
+    let ExprKind::ParameterExpansion(pe) = &value.kind else {
+        return None;
+    };
+    let op = pe.operator.as_deref()?;
+    if op == "arrvals" || op.starts_with("arrvals_") {
+        Some(pe.name.as_str())
+    } else {
+        None
+    }
+}
+
+fn array_from_map_diag(span: Span, source: &str, target: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5061",
+        format!(
+            "`array {target} = @{source}` — an array is not built from a splat \
+             (DD#99). A map is built FROM an array (`map m = @{{a:DISP}}`); the \
+             reverse is not defined, and this silently produced an empty \
+             array. Build the elements directly, or iterate the map with \
+             `for k in $(keys {source})`."
+        ),
+    )
 }
 
 /// The array named by a BARE `@a` splat (no disposition), else `None`.
