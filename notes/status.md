@@ -1,4 +1,4 @@
-## ════════ STATUS (2026-09-10) — SB5062: the operand slot ════════
+## ════════ STATUS (2026-09-10) — SB5062/SB5063: name slots ════════
 
 **On `hand-parser`.** Resuming the backlog prune surfaced a validator bypass
 that had been producing **silent wrong answers**. `len "hello"` returned `0`.
@@ -61,8 +61,30 @@ safety property, not a feature gap.
 **4639 passing / 39 failing / 460 skipped — zero regressions** against
 `272b977`. Specs 75.31–75.38, fail-first verified (7 red, control green).
 
-**Next:** the deferred design discussion — collection parameters via
-compile-time monomorphisation, which subsumes
+**SB5063 — the fifth face, found by asking DG's design question.** `argv N "a"`
+and `matchall S P "out"` accepted a quoted target and **silently wrote
+nowhere**: the array kept its old contents, and since both are tainted
+sources, the `attest` obligation vanished with the write. Not a taint escape
+(no tainted data flows in) but the program runs on stale data with the
+diagnostic that would have caught it suppressed. Now rejected.
+
+**Why this argues for a name sigil.** The language has ~7 name-position slots
+and "must be a bare name" had been enforced **ad hoc, three times, with three
+unrelated diagnostics** — two slots missed entirely (SB5057 read/readline,
+SB4014 attest, SB5062 len/join/keys, then this). SB5057's own wording already
+says it: *"the target must be a bare name — it is a binding, not a value."*
+`command_writes_args` had even written the inventory down, for an unrelated
+purpose. The list existed; enforcement never followed it.
+
+**Next: enumerate every name-position slot**, then design the sigil against
+the full list (DG's call — character and marker placement both deferred until
+the inventory is complete). Free leading chars, measured: `:` `%` `^` `~` `+`;
+taken: `&` `=` `@` `#` `*` `?` `'`. `:` fits semantically (Janet/Clojure
+symbols) but collides with the `:` builtin and `@{a:DISP}`. The invariant that
+matters more than the character: the sigil must be **compile-time syntax, never
+a runtime value**, or DD#6's `${!var}` rejection stops meaning anything.
+
+Then: collection parameters via compile-time monomorphisation, which subsumes
 `bare-collection-name-operand-asymmetry`.
 
 ## ════════ STATUS (2026-09-10) — spec.db purged from history ════════

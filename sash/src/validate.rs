@@ -4643,6 +4643,60 @@ fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     ));
 }
 
+// ── SB5063: a fill target is a binding, not a value ─────────────────
+//
+// `argv [N] a` and `matchall S P a` write INTO a named array. A quoted or
+// sigilled operand in that slot is not a name, so the write landed nowhere:
+// the array silently kept its previous contents, and because both are
+// tainted sources, the attest obligation vanished along with the write.
+// DD#99 already enforces this for `read`/`readline` (SB5057); these two
+// slots were simply never covered.
+
+/// SB5063: reject a fill target that is not a bare name.
+pub fn check_fill_target(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        check_fill_target_in(block, &mut diags);
+    }
+    diags
+}
+
+fn check_fill_target_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            flag_fill_target(c, stmt.span, diags);
+        }
+        for body in stmt.child_bodies() {
+            check_fill_target_in(body, diags);
+        }
+    }
+}
+
+fn flag_fill_target(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let builtin = expr_literal_str(&c.name);
+    // `argv`'s target is the last non-flag word; `matchall`'s is the last.
+    let target = match builtin {
+        "argv" => argv_target_name(&c.args),
+        "matchall" => c.args.last().map(expr_literal_str),
+        _ => return,
+    };
+    let Some(target) = target else {
+        return;
+    };
+    if is_plain_identifier(target) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5063",
+        format!(
+            "`{builtin}`'s target must be a bare name — it is a binding, not a \
+             value. A quoted or sigilled target names nothing, so the fill is \
+             silently discarded and the array keeps its previous contents"
+        ),
+    ));
+}
+
 fn check_len_in_scope(
     stmts: &[Statement],
     known: &HashSet<String>,

@@ -104,3 +104,71 @@ it is a safety property. Filed, not forgotten.
 8 specs, 75.31–75.38, fail-first verified (7 red, control green) before the
 fix. Sweep: **4639 passing / 40 failing / 459 skipped, zero regressions**
 against `272b977`.
+
+## Addendum — the fifth face, found by asking a design question
+
+DG's response to the above was not "which spelling wins" but something
+better: *there ought to be a sigil that means this is an identifier, not a
+string.* `@a` looks like it, but it is the splat — a value operation over
+collections, so it cannot name a scalar.
+
+Checking that reading turned up a fifth face, and the worst of them:
+
+```sash
+array a=(old)
+argv 1 "a"          # compiles clean, no diagnostic
+echo $(len a)       # -> 1, "old". The argv values never arrive.
+```
+
+`argv N "a"` and `matchall S P "out"` accepted a quoted target and **silently
+wrote nowhere**. The bare form `argv 1 a` taints the array and demands an
+`attest` (SB5020); the quoted form performs no write, so the attest obligation
+disappears along with it. Not a taint escape — no tainted data flows in — but
+the program runs on stale data with the diagnostic that would have caught it
+suppressed.
+
+## Why a sigil, argued from the evidence rather than taste
+
+The measurement that makes the case: the language already has ~7
+name-position slots, and "must be a bare name" has been enforced **ad hoc,
+three separate times, with three unrelated diagnostics** — and two slots were
+missed entirely.
+
+| slot | non-name operand | enforced |
+|---|---|---|
+| `read ARR`, `readline v` | SB5057 | ✓ DD#99 |
+| `attest x in a` | SB4014 | ✓ |
+| `len` / `join` / `keys` | SB5062 | ✓ (this session) |
+| `argv N a` | silent no-op | ✗ → SB5063 |
+| `matchall S P ARR` | silent no-op | ✗ → SB5063 |
+
+SB5057's own wording already states the concept exactly: *"the target must be
+a bare name — it is a binding, not a value."* So "name" is a real category the
+language keeps rediscovering one slot at a time. Every rediscovery has cost a
+bug. A sigil promotes it from a validator rule someone must remember to write
+into something the parser knows.
+
+The codebase had even written the inventory down already — `command_writes_args`
+enumerates `read`/`readline`/`matchall`/`argv`/`attest` targets, for the
+unrelated purpose of checking whether a builtin writes the reserved `args`.
+The list existed; the enforcement did not follow it.
+
+## Free characters, measured not guessed
+
+`&` is background, `=` is assignment, `@` is the splat, `#` `*` `?` `'` are
+taken. Currently free as a leading character: `:` `%` `^` `~` `+` — each
+presently lexing as an ordinary word (`echo ^a` prints `^a`), so any choice
+costs a little churn.
+
+`:` is the strongest semantic fit — in Janet (the backend), Clojure and Ruby,
+`:foo` means *symbol, not string* — but it collides with the `:` builtin and
+the `@{a:DISP}` disposition separator. `^` is unused anywhere.
+
+The fork that actually matters is not the character: the sigil must be a
+**syntactic marker resolved at compile time**, never a runtime value. If `&a`
+could be stored, DD#6's rejection of `${!var}` indirect expansion would stop
+meaning anything. Inlining makes the compile-time reading free — which is the
+same property that makes collection parameters cheap.
+
+DG chose: fix `argv`/`matchall` now, enumerate every name slot before picking
+a spelling. Marker placement and character both deferred to that inventory.

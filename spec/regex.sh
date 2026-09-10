@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=59
+plan=60
 echo "1..$plan" >&3
 
 set +e
@@ -400,6 +400,12 @@ run_sash 'h=$(getenv HOME)
 matchall "$h" "[a-z]+" parts || :
 echo "${parts[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 63.ma9
+
+# 63.ma10 the target is a BINDING, not a value (SB5063). A quoted target
+# silently wrote nowhere and left the array's previous contents in place.
+run_sash 'array out=(old)
+if matchall "abc" "[a-c]" "out"; then echo "n=$(len out)"; fi'
+[[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk 63.ma10
 
 
 # ── DD#70 addendum (2026-09-09): `-` discards ANY result ──────────────────

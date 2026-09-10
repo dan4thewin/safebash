@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup argv
-plan=45
+plan=48
 echo "1..$plan" >&3
 
 set +e
@@ -231,6 +231,23 @@ run_sash 'array a=$(argv 1); echo done' a b c
 #         abort (parity with the old `$(argv N)` behavior)
 run_sash 'argv 5 a; echo $(len a)' a b
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk av.rej3
+
+# ── The target is a BINDING, not a value (SB5063) ────────────────────
+# A quoted target silently wrote nowhere: the array kept its old contents
+# and, because `argv` is a tainted source, the attest obligation vanished
+# along with the write. Same rule DD#99 already enforces for `read`.
+
+# av.rej4 quoted target → rejected (was: silent no-op, stale data survives)
+run_sash 'array a=(old); argv 1 "a"; echo $(len a)' x y z
+[[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk av.rej4
+
+# av.rej5 a sigilled target is a value, not a binding → rejected
+run_sash 'str t=a; array a=(old); argv 1 $t; echo "$(len a)$t"' x y z
+[[ $rc != 0 && -z $out && $err == *SB5063* ]]; chk av.rej5
+
+# av.rej6 control: the bare target still binds, taints, and needs an attest
+run_sash 'array a=(old); argv 1 a; attest x in a [[ -n $x ]]; echo $(len a)' x y z
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk av.rej6
 
 set -e
 tally
