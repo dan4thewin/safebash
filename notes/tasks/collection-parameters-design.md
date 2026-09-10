@@ -122,3 +122,76 @@ Three uses, two files. Reserving `A, B, C` is essentially free today.
 - **"Or more than one"** — whether DG meant in/out direction. Position: one
   sigil suffices, since direction is a property of the callee the compiler
   already knows.
+
+## Addendum (2026-09-11) — DG asked about `=`; it is viable, and asking
+## uncovered a live bug
+
+DG proposed `=` as the sigil character and observed it *"would only be legal
+as an argument"*. Both halves check out, but only after fixing a divergence
+the question exposed.
+
+### The bug the question found
+
+`looks_like_assignment` peeked *word* then `Tok::Eq` with **no adjacency
+test**. Since the scanner drops whitespace, any command word followed by a
+`=`-leading word became an assignment:
+
+| source | bash | sash (before) |
+|---|---|---|
+| `echo =a` | `=a` | *assigns* `echo=a` |
+| `echo =x` then `$echo` | `=x`, then blank | prints `x` |
+
+A silent wrong answer, against the byte-identical-to-bash claim. There was no
+spec coverage; `grep =foo f.txt` happened to be caught by SB5011, which is
+why it had never surfaced.
+
+### Why the obvious fix is wrong
+
+Requiring plain adjacency regressed **21 tests** (7 × 3 modes) — all DD#86.
+Spaced bare assignment is *deliberate*: `fn set_msg { msg = hi }` is the
+frictionless-write surface, pinned by `scope.sh` 86.3/86.4/86.6/86.10/
+86.14/86.19/86.20. Declarations use it too (`map m = @{p:~}`).
+
+### The rule that works — and why it answers DG
+
+The three shapes are distinct, and only two were claimed:
+
+| shape | spelling | meaning |
+|---|---|---|
+| glued both | `x=5` | bash assignment |
+| spaced both | `msg = hi` | DD#86 frictionless write |
+| **spaced left, glued right** | `echo =a` | **unclaimed** |
+
+So `=` binds as an assignment operator iff it is glued on both sides or
+spaced on both sides. The asymmetric shape is a plain word — which is
+exactly the sigil shape. Implemented in `looks_like_assignment`; full
+3-mode sweep **4680 passing / 39 failing / 461 skipped**, zero regressions
+(baseline 4669/39/460).
+
+Measured after the fix:
+
+```
+echo =a        -> =a          (bash-exact)
+f =nums        -> =nums       (ordinary argument)
+len =a         -> SB5062      (a word, reaching the operand-spelling check)
+unset =a       -> SB5063
+x=5, a+=q, msg = hi, map m = @{p:~}   all unchanged
+```
+
+### Consequence for the design
+
+DG's "only legal as an argument" is now *structurally* true rather than a
+convention: the assignment operator owns the symmetric shapes, and the sigil
+owns the asymmetric one. Command-word position is not a name slot in any of
+the nine, so nothing is lost.
+
+Two caveats to weigh before choosing `=` over `^`:
+
+- **`[[ ]]` is still asymmetric-hungry.** `[[ $x =b ]]` evaluates as `= b`
+  (measured). No name slot lives inside `[[ ]]` today, so it is latent
+  rather than live — but a sigil that means one thing outside `[[ ]]` and
+  another inside is a readability tax `^` would not levy.
+- **Reader load.** `=nums` looks like an assignment fragment; `^nums` looks
+  like nothing else in the language. `=` costs no free character, which is
+  its real advantage — it was never free, it was *over-claimed*, and the
+  fix reclaims it.

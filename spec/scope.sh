@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=35
+plan=39
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -244,6 +244,34 @@ attest x p?
 y=$(( _ + 1 ))
 echo "$y $x"'
 [[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.15
+
+# 86.21 `=`-leading word after a command is an argument, not an assignment.
+# `=` binds as assignment only glued-both (`x=5`) or spaced-both (`msg = hi`);
+# spaced-left/glued-right is a plain word, as in bash.
+run_sash 'echo =a'
+[[ $rc = 0 && $out = "=a" && -z $err ]]; chk 86.21
+
+# 86.22 glued assignment still binds
+run_sash 'int x=5
+echo $x'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 86.22
+
+# 86.23 a `=`-leading word survives as a user-function argument.
+# native,c — janet's `${args[N]}` is unbound for *any* argument (`f nums`
+# fails identically): janet renders from the AST, so it never sees the
+# transform's args handling. See notes/tasks/janet-join-intrinsic-gaps.md.
+if in_modes native,c; then
+    run_sash 'fn f { echo ${args[0]} }
+f =nums'
+    [[ $rc = 0 && $out = "=nums" && -z $err ]]; chk 86.23
+else
+    skip_chk 86.23
+fi
+
+# 86.24 spaced-both at command position is still the DD#86 write (here the
+# target is undeclared, so it reaches the dead-variable check, not `echo`)
+run_sash 'echo = a'
+[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 86.24
 
 set -e
 tally

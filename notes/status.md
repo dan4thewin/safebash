@@ -1,3 +1,38 @@
+## ══ STATUS (2026-09-11) — `=` as the name sigil; assignment symmetry fix ══
+
+**On `hand-parser`.** DG asked about `=` as the sigil character, and whether it
+*"would only be legal as an argument."* Both hold — but the question exposed a
+**silent wrong answer** first.
+
+`looks_like_assignment` peeked *word* then `Tok::Eq` with **no adjacency test**,
+and the scanner drops whitespace, so any command word followed by a `=`-leading
+word became an assignment. `echo =a` printed `a`; bash prints `=a`. No spec
+covered it.
+
+The obvious fix (require adjacency) regressed **21 tests** — spaced bare
+assignment is *deliberate*, it is DD#86's frictionless write (`fn set_msg
+{ msg = hi }`). Three shapes exist and only two were claimed:
+
+| shape | spelling | meaning |
+|---|---|---|
+| glued both | `x=5` | bash assignment |
+| spaced both | `msg = hi` | DD#86 frictionless write |
+| **spaced left, glued right** | `echo =a` | **unclaimed — the sigil shape** |
+
+`=` now binds iff symmetric. `echo =a` → `=a`, `f =nums` → `=nums`,
+`len =a` → SB5062. **4680 passing / 39 / 461 skipped**, zero regressions
+(baseline 4669/39/460). Specs `scope.sh` 86.21–86.24, fail-first verified.
+
+So `=` costs no free character — it was never free, it was **over-claimed**.
+Caveat: `[[ $x =b ]]` still evaluates as `= b`; latent (no name slot lives in
+`[[ ]]`), but `^` would not levy that readability tax.
+
+Also found: **janet leaves `args` unbound**, so *every* user-function argument
+is broken there (`f nums` fails identically) — filed to
+`janet-join-intrinsic-gaps.md`; 86.23 guarded `native,c`.
+
+Analysis: `notes/tasks/collection-parameters-design.md`.
+
 ## ════ STATUS (2026-09-11) — collection parameters: symbol or reference? ════
 
 **On `hand-parser`.** DG proposed passing collections to functions via a

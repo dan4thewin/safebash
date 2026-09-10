@@ -1750,13 +1750,19 @@ fn rejected_keyword_msg(w: &str) -> Option<(&'static str, String)> {
 /// `name = value` / `name += value` / `name[idx] = value` shape probe.
 /// Doesn't consume any tokens.
 fn looks_like_assignment(scanner: &mut Scanner) -> bool {
-    let Tok::Word(w) = &scanner.peek().token else {
+    let head = scanner.peek();
+    let Tok::Word(w) = &head.token else {
         return false;
     };
     let w = w.clone();
+    let w_end = head.span.end;
     let next = scanner.peek_n(1);
     if matches!(next.token, Tok::Eq | Tok::PlusAssign) && is_identifier_or_subscript(&w) {
-        return true;
+        let eq = next.span;
+        if eq.start == w_end {
+            return true;
+        }
+        return scanner.peek_n(2).span.start != eq.end;
     }
     looks_like_dynamic_subscript_assign(scanner, &w)
 }

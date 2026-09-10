@@ -61,3 +61,24 @@ Root cause is the one this whole file circles: `emit_janet` renders from the
 inherit from SSA — cf. `emit-janet-from-ssa`. Fixing that retires the class
 rather than patching spelling-by-spelling; DG deferred the janet overhaul
 (including the `/usr/bin/join` fallthrough guard) to a single later pass.
+
+## Addendum (2026-09-11) — `args` is unbound in janet, so *every* user
+## function argument is broken
+
+Same root cause, wider blast radius than the `len`/`join`/`keys` operands
+above. Janet emits a user function as **zero-arity** and then calls it with
+arguments:
+
+```
+(defn f [] (label _ret (print (get args 0)) ...))
+(f "nums")
+```
+
+`args` is never bound, so `janet` reports `compile error: unknown symbol
+args`. This is not sigil-specific — `f nums` and `f =nums` fail identically;
+any `${args[N]}` in a called function does. native/c are correct.
+
+Found while pinning the `=`-leading-word fix (spec `86.23`, guarded
+native,c). Note this is the *function-call* surface, not an intrinsic, so
+`emit-janet-from-ssa` has to cover parameter binding too — worth checking
+that the overhaul's scope includes it.
