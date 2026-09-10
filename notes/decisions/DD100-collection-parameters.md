@@ -127,12 +127,59 @@ collides with SB5025's own advice, which currently recommends `$(join @a)`.
   nothing in value contexts while `len $a` resolved it as the collection
   *name* (returning `3` for a three-element array).
 
+## Part E — a slot *is* the caller's collection (DG 2026-09-11)
+
+`f =foo` binds `A` to the **identical underlying collection**, and `f` may
+**modify** it. This is deliberate: it removes any need for out-parameters or
+multiple return values — a function can fill several collections in place.
+
+### `=foo` is not a read; `@foo` is
+
+This is the load-bearing distinction, and it falls out of what each form
+passes:
+
+| call | passes | is it a read? | attest |
+|---|---|---|---|
+| `f @foo` | the **values** | **yes** | required at the call site |
+| `f =foo` | the **identity** | **no** | **deferred into `f`** |
+
+Measured today, `f @a` on a tainted array is already rejected **SB5020** at
+the call site. `=foo` must therefore be excluded from taint's read detection
+— that is the one genuinely new rule this DD adds to the validator.
+
+### The rest needs no new machinery
+
+Because every call is inlined, the binding is a **name substitution**, and
+the existing passes then see the real sites. All three halves were measured
+against the equivalent hard-coded-name program:
+
+- **Taint flows in.** A tainted collection read inside a function body is
+  rejected **SB5020**, exactly as at top level.
+- **`attest` inside the function discharges it.** `fn f { attest e in a
+  [[ -n $e ]]; echo ${a[0]} }` is accepted — so DG's "deferred into `f`" is
+  already the behaviour, not a new mechanism.
+- **Mutation and write-back already work.** A function writing `a[0]=z`
+  changes the caller's array; and a write from a tainted source inside the
+  function taints it, so the caller's later read is rejected **SB5021**.
+
+So Part E is mostly *binding plus one exclusion*, not a new taint model.
+
+### Consequences to expect
+
+- **Diagnostics can point inside a callee because of a caller.** Safety is
+  per-instantiation, so a function that is fine at one call site can raise a
+  taint error at another. The error names a line inside `f` whose cause is a
+  call elsewhere; the message should say which call site instantiated it.
+- **Aliasing two slots to one collection** (`f =foo =foo`) is coherent under
+  substitution — writes through `A` are visible through `B`. Allowed, but
+  worth a spec pinning it.
+- **`=foo` alone does not satisfy SB5050.** If `f` only *writes* the slot,
+  `foo` is still never read, and the dead-variable check fires unless the
+  caller reads it afterwards — which is the correct shape for an out-param.
+- **`=foo` on a scalar, or on an undeclared name, is an error** (slots are
+  collections; SB5031 already covers the undeclared case).
+
 ## Open
 
-- **Mutation.** Whether a callee may *write* a collection slot (`A[0]=x`,
-  `read A`) and have it affect the caller's array, or whether slots are
-  read-only. Inlining makes mutation free to implement; the question is
-  whether it should be allowed, and how taint and `attest` obligations flow
-  across the binding.
 - Whether the DD#58 arith sexpr slot (`$(( (len a) ))`) ever needs the
   sigil; today the arith lexer owns `=` and `$(( (len =a) ))` is SB4020.

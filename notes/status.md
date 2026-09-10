@@ -24,10 +24,16 @@ DD#99 was the highest).
   which must decide `len`'s operand set anyway. That task now carries the
   note that SB5025's message *recommends* the spelling being removed.
 
-**Next up:** implement DD#100 — but **one open question first** (recorded in
-the DD): may a callee *mutate* a collection slot (`A[0]=x`, `read A`) and
-affect the caller's array? Inlining makes it free to implement; the question
-is taint/`attest` flow across the binding.
+**Part E (DG):** a slot **is** the caller's collection and `f` may modify it,
+removing any need for out-params or multiple return. `f =foo` is **not a
+read** (so `attest` defers into `f`), whereas `f @foo` **is** — measured, the
+splat form is already SB5020 at the call site. That exclusion is the one
+genuinely new validator rule; everything else was measured to work already
+via inlining: taint flows into a function body (SB5020), an `attest` inside
+discharges it, mutation writes back to the caller's array, and a tainted
+write inside taints it outward (SB5021).
+
+**Next up:** implement DD#100. No open blockers.
 
 ## ═══ STATUS (2026-09-11) — SB5064: `$a` on a collection is an error ═══
 
