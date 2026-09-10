@@ -1,6 +1,6 @@
 ---
 title: "DD#99 implementation — read/readline, NUL-only, no flags"
-status: in-progress
+status: done
 priority: P1
 kind: task
 depends: []
@@ -218,3 +218,19 @@ map from external data at all. Task `janet-map-from-array` raised to P2.
 multi-target read (the 14 flag-subject + 9 multi-target specs become
 reject-tests), rename `newread` → `read`, and update **sash-convert**, which
 still emits `read -r line`.
+
+## CLOSED 2026-09-10 — every gate verified at HEAD
+
+| gate | result |
+|---|---|
+| `readline v` / `read a` / `read $s a` | `hi` / 2 fields / 1 field |
+| `map m = @{a:DISP}`; `array a = @m` rejected | `v` / **SB5061** |
+| `write`; `echo -n` rejected | `abc` / **SB5059** |
+| `read -a`/`-f`/`-r`, multi-target, `mapfile`, `readarray` rejected | **SB5057** ×4, **SB5060** ×2 |
+| argv interior NUL aborts | aborts with a message, rc 1 |
+| 3-mode sweep, 0 regressions at every stage | held throughout (4120 → 4599 passing) |
+
+Stages 1-8 complete. Two follow-ons are tracked separately and are **not**
+part of this task: `sash-convert-read-dd99` (P1 — the converter still emits
+`read -r`, so its output no longer compiles) and `docs/sash.1`, which still
+documents the retired flag surface.
