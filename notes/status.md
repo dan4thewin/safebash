@@ -1,3 +1,53 @@
+## ════════ STATUS (2026-09-10) — DD#99 complete (stages 1-8) ════════
+
+**On `hand-parser`.** The read family is redesigned end to end.
+
+```sh
+read ARR         # stdin, NUL-separated fields -> array
+read $s ARR      # split a value already in hand
+readline v       # one line -> scalar
+write / echo     # without / with a trailing newline
+matchall S P ARR # every match -> array (DD#63, added for this)
+map m = @{a:DISP}
+```
+
+Retired: every read flag, multi-target `read a b c`, `mapfile`, `readarray`,
+`echo -n`, and `array a = @m`. Each with a diagnostic that names the
+replacement, never a silent reinterpretation.
+
+**Stages 6-8 this session.** `newread` was a staging alias so nothing changed
+meaning while code still depended on it; it is gone. Stage 7 added the argv
+interior-NUL guard — argv crosses `execve` as C strings, so a NUL-bearing
+value was truncated silently with a zero exit, and DD#99 makes NUL the field
+separator, so that went from exotic to an ordinary slip. Stage 8 rejected
+`array a = @m`, which was accepted and silently produced an EMPTY array.
+
+**Three defects the stage-6 rename exposed, all mine, each caught by a spec:**
+dropping `read` from `is_bulk_read_cmd` made `read ARR < f` ignore its
+redirect and read stdin; the lastpipe classifier still treated `read` as the
+scalar consumer, so a piped `read ARR` miscounted; and `command_writes_args`
+matched `"read"` on its old flag-based arm first, so `read args` stopped being
+SB5052 and reached the linker. All three were silent-wrong-answer shapes. That
+is the argument for having migrated the spec *vehicles* in stage 5 first.
+
+**The near-miss worth remembering.** Stage 7's first version guarded argv
+scalars only; the splat probe still printed `[abc]`. Half a guard is worse
+than none — it implies argv NULs abort while `@a` truncates quietly. Splat
+elements are now guarded via the length `sash_table_value` already writes out.
+
+**Sweep 4599 passing / 39 failing / 452 skipped, 0 regressions.** All 39
+remain janet-only and pre-existing.
+
+**Not done, filed rather than folded in:**
+- `sash-convert-read-dd99` (P1) — the converter still passes bash `read`
+  through verbatim, so its output no longer compiles. It has no
+  command-rewriting path today, only annotation insertion.
+- `docs/sash.1` still documents the retired flag surface (mostly deletion).
+- `janet-map-from-array` (P2) — janet cannot build a map from external data at
+  all, which now costs five previously-green specs.
+- `bug-regex-blind-past-interior-nul` (P1) — every regex op ignores bytes past
+  an interior NUL. No longer blocking (matchall routed around it), still real.
+
 ## ════════ STATUS (2026-09-09) — DD#91: `!` is a modifier, not a disposition ════════
 
 **On `hand-parser`.** DG reported `read $ckd:! opts` returning SB5020. Three
