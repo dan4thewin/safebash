@@ -1,3 +1,40 @@
+## ════ STATUS (2026-09-11) — collection parameters: symbol or reference? ════
+
+**On `hand-parser`.** DG proposed passing collections to functions via a
+reserved set `A, B, C…` parallel to the scalar `$1, $2`, and asked whether the
+name sigil is more like a **Lisp symbol** or a **reference**.
+
+**It is neither — it is a parameter slot, and sash already ships one.** `args`
+is the exact precedent: a reserved, per-function, compiler-managed collection
+(DD#75 §5 / DD#81) where `$1` is sugar for `${args[0]}`. Measured: `array
+args=(x)` → SB5024 at top level, SB5052 inside a function. So `A, B, C` is not
+a new mechanism — it is `args` generalised from scalars to collections, which
+is why the **callee needs no new syntax at all** (`len A`, `${A[0]}`, `@A`).
+
+- **Symbol is ruled out by decision, not taste.** A symbol is a *value*; if
+  names flowed as values, DD#6's rejection of `${!var}` re-opens and SB5031 /
+  SB5050 / taint all become undecidable.
+- **Reference is close but overshoots** — it drags in an aliasing algebra
+  (ref-to-ref, lifetime, storage) sash never needs. A parameter answers all of
+  those by construction, and since sash inlines everything, it has **no runtime
+  representation**.
+- **Consequence:** the sigil is a *position marker*, not a type constructor. It
+  need not compose, it collapses nine slots into one parser rule, and under
+  `A, B, C` it is **only ever needed at the call site**.
+
+**The one real gap:** `A, B, C` fixes the callee and leaves the caller
+untouched — `f nums` is still ambiguous between the collection and the string,
+i.e. `bare-collection-name-operand-asymmetry` relocated, not resolved.
+
+**No-shadowing (DG's flag was right):** DD#86/SB5049 forbid exactly the shape a
+reserved `A` would create against a user global `A`. Fix is the `args`
+precedent — reserve the names. Cost measured at **3 uses in 2 files** across
+real sash sources (`spec/.trace/` is generated; `suites/oils` is an external
+bash corpus, not sash).
+
+Full analysis, open questions and the measured sigil-character survey:
+`notes/tasks/collection-parameters-design.md`.
+
 ## ════════ STATUS (2026-09-10) — SB5062/SB5063: name slots ════════
 
 **On `hand-parser`.** Resuming the backlog prune surfaced a validator bypass
