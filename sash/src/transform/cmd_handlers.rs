@@ -15,9 +15,10 @@ pub(super) fn handle_read(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // DD#99: `newread ARRAY` is the NUL-split array read. Arity/flags are
-    // checked in validate (SB5057), so by here the shape is known good.
-    if expr_to_string(&c.name) == "newread" {
+    // DD#99 stage 6: `read ARRAY` / `read SRC ARRAY` IS the NUL-split array
+    // read — the staging alias `read` is retired. Arity/flags are checked
+    // in validate (SB5057), so by here the shape is known good.
+    if expr_to_string(&c.name) == "read" {
         return lower_newread(c, ssa, state, block);
     }
     let flags = crate::ir::classify_read_flags(&c.args);
@@ -39,7 +40,7 @@ pub(super) fn handle_read(
     block
 }
 
-/// DD#99 `newread`: one arg reads stdin, two split the first (a value) into
+/// DD#99 `read`: one arg reads stdin, two split the first (a value) into
 /// the second (a binding). Arity/flags are checked in validate (SB5057).
 fn lower_newread(
     c: &Command,

@@ -1065,9 +1065,8 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         "attest" => check_attest_form(c, span, env, errors),
         "argv" => register_argv_target(c, env),
         "mapfile" | "readarray" => register_bulk_read_target(c, env),
-        // DD#99: `newread [SRC] ARRAY` — the target is always the last arg.
-        "newread" => register_newread_target(c, env),
-        "read" => register_read_array_target(c, env),
+        // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
+        "read" => register_newread_target(c, env),
         _ => {}
     }
 
@@ -1086,14 +1085,7 @@ fn register_argv_target(c: &Command, env: &mut TypeEnv) {
     }
 }
 
-/// `read -a a` fills (auto-declares) an indexed array target.
-fn register_read_array_target(c: &Command, env: &mut TypeEnv) {
-    if let Some(name) = crate::ir::classify_read_flags(&c.args).array_name {
-        env.collections.insert(name);
-    }
-}
-
-/// DD#99: `newread [SRC] ARRAY` fills an indexed array named by its LAST
+/// DD#99: `read [SRC] ARRAY` fills an indexed array named by its LAST
 /// argument (the optional first one is the scalar VALUE being split).
 fn register_newread_target(c: &Command, env: &mut TypeEnv) {
     if let Some(last) = c.args.last() {

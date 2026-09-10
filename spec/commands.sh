@@ -395,7 +395,7 @@ fi
 # 14.34 the DD#99 idiom: turn a separator into NUL upstream, then split
 if in_modes native,c; then
     run_sash '/usr/bin/printf "a\nb\nc\n" > rd3.txt
-/usr/bin/tr "\n" "\0" < rd3.txt | newread arr
+/usr/bin/tr "\n" "\0" < rd3.txt | read arr
 attest e in arr [[ $e = $e ]]
 echo "$(len arr):${arr[1]}"'
     [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk 14.34

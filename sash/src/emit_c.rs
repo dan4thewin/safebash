@@ -715,7 +715,7 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
         } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
         // read -a ARR — split one line into an array by delimiter.
         SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
-        // DD#99 `newread $SRC ARRAY` — the same split with the bytes coming
+        // DD#99 `read $SRC ARRAY` — the same split with the bytes coming
         // from a value rather than a fd.
         SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
         // DD#99 `map m = @{a:DISP}` — fill the map from the array, pairwise.
@@ -760,7 +760,7 @@ fn emit_map_from_array(
     .unwrap();
 }
 
-/// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.
+/// DD#99 `read $SRC ARRAY`: split a scalar value on NUL into the array.
 /// Terminator semantics, matching the fd form.
 fn emit_split_value(e: &mut Emit, source: &SsaValue, array: &str, types: &VarTypes) {
     let table_expr = lookup_table_var(array, types);

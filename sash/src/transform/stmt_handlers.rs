@@ -99,7 +99,7 @@ fn try_handle_match_into(
     let pattern = expr_to_value(&c.args[1], state);
     let array = expr_to_string(&c.args[2]);
     // DD#63: `matchall` fills its target, so it introduces it (the argv /
-    // read / newread bulk-fill precedent). Singular `match` does not — that
+    // read bulk-fill precedent). Singular `match` does not — that
     // asymmetry is filed as `bug-match-outarray-no-autodeclare`.
     if kind == BuiltinCmd::MatchAll {
         autodeclare_bulk_target(&array, false, ssa, state, block);
@@ -632,27 +632,23 @@ fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
     ));
 }
 
+/// The ARRAY-filling lastpipe consumers. DD#99 stage 6: `read` is now the
+/// array form, so it belongs here rather than with the scalar reads —
+/// `readline` is the only scalar one left.
 fn is_mapfile_last(last: &Statement) -> bool {
     match &last.kind {
         StmtKind::Command(c) => {
             let n = expr_to_string(&c.name);
-            let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-            n == "mapfile"
-                || n == "readarray"
-                || n == "newread"
-                || (n == "read" && args.iter().any(|a| a == "-a"))
+            n == "mapfile" || n == "readarray" || n == "read"
         }
         _ => false,
     }
 }
 
+/// The SCALAR lastpipe consumer — `readline NAME` only (DD#99).
 fn is_lastpipe_read_last(last: &Statement) -> bool {
     match &last.kind {
-        StmtKind::Command(c) => {
-            let n = expr_to_string(&c.name);
-            let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-            (n == "read" || n == "readline") && !args.iter().any(|a| a == "-a")
-        }
+        StmtKind::Command(c) => expr_to_string(&c.name) == "readline",
         _ => false,
     }
 }

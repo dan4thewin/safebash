@@ -30,9 +30,9 @@ run_sash '[[ 5 -lt abc ]] && echo y'
 # cov.6 a boolean-context predicate that does not return on all paths → SB4037
 run_sash 'p() { if true; then return 0; fi }; if p; then echo y; fi'
 [[ $rc != 0 && -z $out && $err == *SB4037* ]]; chk cov.6
-# cov.7 `read -f` (field separator) with a single target var → SB5016
+# cov.7 `read -f` is retired with every other read flag (DD#99) → SB5057
 run_sash 'read -f x < /etc/hostname'
-[[ $rc != 0 && -z $out && $err == *SB5016* ]]; chk cov.7
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk cov.7
 # cov.8 a `${x@OP}` transform is rejected → SB4015
 run_sash 'x=hi; echo ${x@Q}'
 [[ $rc != 0 && -z $out && $err == *SB4015* ]]; chk cov.8
@@ -69,9 +69,10 @@ run_sash 'y=a; for x in $y; do echo $x; done'
 # cov.19 the `**` globstar is always rejected (even quoted) → SB5006
 run_sash 'echo "**"'
 [[ $rc != 0 && -z $out && $err == *SB5006* ]]; chk cov.19
-# cov.20 `read` with an unknown flag → SB5015
+# cov.20 `read` takes NO flag, so a bogus one is the same error as a real one
+# — there is no unknown-flag category left (DD#99) → SB5057
 run_sash 'read -z x < /etc/hostname'
-[[ $rc != 0 && -z $out && $err == *SB5015* ]]; chk cov.20
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk cov.20
 # cov.21 quoting an array splat is not allowed → SB5026
 run_sash 'echo "$(argv)"'
 [[ $rc != 0 && -z $out && $err == *SB5026* ]]; chk cov.21

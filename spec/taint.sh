@@ -21,7 +21,7 @@ run_sash 'readline x; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.3
 
 # 24.4 mapfile produces tainted var
-run_sash 'newread arr; echo ${arr[0]}'
+run_sash 'read arr; echo ${arr[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.4
 
 # 24.5 external cmd produces tainted var
@@ -199,25 +199,25 @@ run_sash 'array a=( "pre$(getenv HOME)" ); echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.8
 
 # 60.13 mapfile from a file → tainted; use without attest rejected
-run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo ${a[0]}'
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.13
 
 # 60.14 read -a → tainted
-run_sash 'newread a; echo ${a[0]}'
+run_sash 'read a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.14
 
 # ad.4 an AUTO-declared mapfile array (no prior `array a=()`) is still tainted —
 #      an element read without attest rejects (the front-end auto-declare
 #      registers the collection but must NOT clear the taint).
-run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo ${a[0]}'
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk ad.4
 
 # 60.32 tainted array iterated without attest-all → reject (negative for 60.25)
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; for x in @a; do echo $x; done'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; for x in @a; do echo $x; done'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
 
 # 60.33 tainted array joined without attest-all → reject (cmdsub-arg use site)
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; echo $(join @a)'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; echo $(join @a)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
 # 60.34 DG (2026-09-10): "the read of the array must have a clean array, so
@@ -226,33 +226,33 @@ run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; echo $(join @a)'
 # and a TAINTED array cannot be paired into a map at all. The gate that used to
 # sit on the map now sits one step earlier, on the array, and it is the SAME
 # gate rather than a new rule.
-run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
 map m = @{p:~}
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.34
 
 
 # 60.19 attest-all binder must be on the LHS (anti-tautology)
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ "foo" = $x ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.19
 
 # 60.20 attest-all predicate must reference the binder
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ 1 -eq 1 ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.20
 
 # 60.24 re-reading from a tainted source after attest-all re-taints
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
-/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+/usr/bin/tr "\n" "\0" < d60b.txt | read a
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.24
 
 # 60.26 scalar attest applied to a (tainted) array → type error
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest a [[ ${a[0]} =~ ^[a-z]+$ ]]
 echo ${a[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.26
@@ -262,7 +262,7 @@ run_sash 'x=$(getenv HOME); attest y in x [[ $y =~ ^/ ]]; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.27
 
 # 60.28 1-binder attest-all on a map → type error (needs two binders)
-run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest v in m [[ $v =~ ^[A-Za-z]+$ ]]
@@ -270,7 +270,7 @@ echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.28
 
 # 60.30 map attest-all: both binders must be validated (value omitted) → reject
-run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ ]]
@@ -308,49 +308,49 @@ array a=( "$h" ); echo ${a[0]}'
     [[ $rc = 0 && $out = "zero" && -z $err ]]; chk 60.12
 
     # 60.15 attest-all clears taint; element readable (runtime pass)
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[1]}'
     [[ $rc = 0 && $out = "beta" && -z $err ]]; chk 60.15
 
     # 60.16 attest-all then read a different element
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[2]}'
     [[ $rc = 0 && $out = "gamma" && -z $err ]]; chk 60.16
 
     # 60.17 attest-all runtime failure: one element fails → exit 1, no stdout
-    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[0]}'
     [[ $rc != 0 && -z $out ]]; chk 60.17
 
     # 60.18 if-form attest-all failure → false branch, no abort
-    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
 if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
 
     # 60.21 empty array → vacuous pass (∀ over ∅ is true)
-    run_sash '/usr/bin/tr "\n" "\0" < d60empty.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60empty.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo done'
     [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.21
 
     # 60.22 binder shadows outer var; outer untouched afterward
-    run_sash 'x=outer; /usr/bin/tr "\n" "\0" < d60b.txt | newread a
+    run_sash 'x=outer; /usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo $x'
     [[ $rc = 0 && $out = "outer" && -z $err ]]; chk 60.22
 
     # 60.23 attest-all with a unary predicate on the binder
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ -n $x ]]
 echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk 60.23
 
     # 60.25 attest-all enables iteration over the cleaned array
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
+    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 for w in @a; do echo $w; done'
     [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
@@ -359,14 +359,14 @@ for w in @a; do echo $w; done'
     # for, the map built from it is CLEAN — no map-level attest-all, because there
     # is no longer any way for a map to be tainted. This is what makes 60.34 a
     # relocation of the gate rather than a hole in it.
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
     attest e in p [[ -n $e ]]
     map m = @{p:~}
     for k in $(keys m); do echo "$k=${m[$k]}"; done'
     [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.35
 
     # 60.29 map attest-all clears, value readable (runtime pass)
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
@@ -374,7 +374,7 @@ echo ${m[NAME]}'
     [[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
 
     # 60.36 attested map: keys + dynamic subscript idiom iterates pairs
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
@@ -382,7 +382,7 @@ for k in $(keys m); do echo "$k=${m[$k]}"; done'
     [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
 
     # 60.31 map attest-all runtime failure: a value fails its predicate → exit 1
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m2.txt | newread p_m
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m2.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
@@ -392,15 +392,15 @@ echo ${m[NAME]}'
     # ad.1 mapfile into an UNDECLARED array (no prior `array a=()`) auto-declares
     #      it (mirrors argv, DG 2026-07-08). `$(len a)` was a codegen ICE
     #      (`undefined array: a`); now it is the count.
-    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; echo $(len a)'
+    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; echo $(len a)'
     [[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
     # ad.2 same for `read -a` into an undeclared array
-    run_sash 'newread a < d60a.txt; echo $(len a)'
+    run_sash 'read a < d60a.txt; echo $(len a)'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
     # ad.3 attest-all + element read on an AUTO-declared mapfile array (the
     #      front-end must register the target as a collection, else `attest e in
     #      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
-    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | newread a; attest e in a [[ -n $e ]]; echo ${a[0]}'
+    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; attest e in a [[ -n $e ]]; echo ${a[0]}'
     [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
 else
     for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
@@ -561,11 +561,11 @@ fi
 run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.47
 # 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; x=$(join @a); echo $x'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; x=$(join @a); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.48
 # 60.49 the same relocation in a value position: `keys` of a map built from an
 # UNVOUCHED array is rejected at the pairing, before `keys` is ever reached.
-run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
 map m = @{p:~}
 array k=($(keys m)); echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.49
@@ -573,7 +573,7 @@ array k=($(keys m)); echo hi'
 run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.50
 # 60.51 a tainted array subscript `${a[0]}` (value-flow, not cmdsub) in a test
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; [[ ${a[0]} = x ]] && echo hi'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; [[ ${a[0]} = x ]] && echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.51
 # 60.52 bare-name `join a` reader as a redirect target (routed through a
 # scalar — a direct `$(…)` redirect *target* is now rejected structurally at
@@ -775,7 +775,7 @@ run_sash 'x=hi; /bin/echo ${x:~!}'
 # per-use trust, no attest predicate
 if in_modes native,c; then
     run_sash 'ckd=$(getenv HOME)
-newread $ckd:! opts
+read $ckd:! opts
 /bin/echo "$(len opts)"'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk 91.23
 else
@@ -1029,18 +1029,18 @@ run_sash 'echo ig | /bin/cat /etc/hostname | readline x
 echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.1
 
-# tl.2 …multi-target read
-run_sash 'echo ig | /bin/cat /etc/hostname | read x y
-echo "$x$y"'
+# tl.2 …a scalar read (the multi-target form is retired, DD#99 stage 6)
+run_sash 'echo ig | /bin/cat /etc/hostname | readline x
+echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.2
 
 # tl.3 …array read
-run_sash 'echo ig | /bin/cat /etc/hostname | newread a
+run_sash 'echo ig | /bin/cat /etc/hostname | read a
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.3
 
 # tl.4 …mapfile
-run_sash 'echo ig | /bin/cat /etc/hostname | newread a
+run_sash 'echo ig | /bin/cat /etc/hostname | read a
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.4
 
@@ -1056,9 +1056,9 @@ echo "ok"'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk tl.6
 
 # tl.7 an ALL-builtin pipeline stays clean — no attest needed (no regression)
-run_sash 'echo "a b" | read x y
-echo "$x$y"'
-[[ $rc = 0 && $out = "ab" && -z $err ]]; chk tl.7
+run_sash 'echo "a b" | readline x
+echo "$x"'
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk tl.7
 
 # tl.8 a clean pipeline into an ARRAY read likewise needs no attest — the
 # fix must not over-taint the shapes that were always legitimate.
@@ -1066,7 +1066,7 @@ echo "$x$y"'
 # The split is NUL-only (DD#99), so "p q\n" is ONE field — the subject here is
 # that a clean producer needs no attest, not the field count.
 if in_modes native,c; then
-    run_sash 'echo "p q" | newread a
+    run_sash 'echo "p q" | read a
 echo "$(len a)"'
     [[ $rc = 0 && $out = "1" && -z $err ]]; chk tl.8
 else

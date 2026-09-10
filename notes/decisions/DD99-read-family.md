@@ -257,3 +257,52 @@ form is widespread in `spec/` and converts mechanically.
   (`bug-while-read-a-zero-iterations`, `bug-sed-op-on-array-empties-it`,
   `bug-match-outarray-no-autodeclare`, `sed-sugar-ansi-c-quoted-replacement`)
   are all independent and should be fixed on their own terms.
+
+## Stage 6 landed (2026-09-10) — the rename, and the old surface retired
+
+`newread` was only ever a staging alias so nothing changed meaning while code
+still depended on it. It is gone: **`read` IS the array form**.
+
+```sh
+read ARR            # stdin, NUL-separated fields -> array
+read $s ARR         # split a value already in hand
+readline v          # one line -> scalar
+```
+
+Retired, each with a diagnostic rather than a silent reinterpretation:
+
+| gone | code |
+|---|---|
+| every read flag (`-a -d -f -r -z …`) | SB5057 |
+| multi-target `read a b c` | SB5057 |
+| `mapfile` / `readarray` | **SB5060** (new) |
+
+SB5060 names the replacement instead of letting the retired builtins fall
+through to SB5011 "command not found", which would send the author looking for
+a missing binary. `readarray` had to be *added* to the builtin registry to get
+there — it was never in it, so SB5011 spoke first.
+
+`-r` is worth calling out: it used to be an accepted no-op, because sash reads
+are always raw and bash scripts write `read -r` everywhere. DD#99 takes no
+flags at all, so that courtesy is gone.
+
+### Three defects the rename exposed, all mine
+
+- Dropping `read` from `is_bulk_read_cmd` made `read ARR < f` **ignore its
+  redirect** and read stdin instead — empty array, no diagnostic, and a
+  missing file did not even abort.
+- The lastpipe classifier still treated `read` as the *scalar* consumer, so a
+  piped `read ARR` produced the wrong element count.
+- `command_writes_args` matched `"read"` on its old flag-based arm before the
+  new one, so `read args` stopped being SB5052 and reached the linker.
+
+Each was caught by a spec, which is the argument for having migrated the
+vehicles in stage 5 first.
+
+### Not done
+
+`sash-convert` still passes bash `read` through verbatim, so its output no
+longer compiles. It has no command-rewriting path today (it only inserts
+annotations), so this is an addition rather than an edit — filed as
+`sash-convert-read-dd99` (P1). `docs/sash.1` still documents the retired flag
+surface.

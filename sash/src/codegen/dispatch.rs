@@ -1137,10 +1137,10 @@ impl SsaInst {
         false
     }
 
-    /// DD#99 `newread $SRC ARRAY`: split a scalar value on NUL into the array.
+    /// DD#99 `read $SRC ARRAY`: split a scalar value on NUL into the array.
     /// Same call as the fd form, with the bytes coming from `lower_value`
     /// rather than `sash_read_all`. Terminator semantics (a trailing NUL does
-    /// not add an empty final element), matching `newread` on a stream.
+    /// not add an empty final element), matching `read` on a stream.
     fn emit_split_value(
         &self,
         source: &SsaValue,

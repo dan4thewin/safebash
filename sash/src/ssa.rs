@@ -191,7 +191,7 @@ impl BuiltinCmd {
             "attest" => Self::Attest,
             // DD#99: `readline` is the line-terminated scalar read. It shares
             // the scalar lowering; stage 3 gives `read` the array-only form.
-            "read" | "readline" | "newread" => Self::Read,
+            "read" | "readline" => Self::Read,
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
             "break" => Self::Break,
@@ -308,7 +308,7 @@ pub enum SsaInst {
         key: SsaValue,
         message: String,
     },
-    /// DD#99: `newread $SRC ARRAY` — split a scalar VALUE on NUL into an
+    /// DD#99: `read $SRC ARRAY` — split a scalar VALUE on NUL into an
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.
     SplitValue { source: SsaValue, array: String },

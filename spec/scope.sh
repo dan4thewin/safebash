@@ -151,31 +151,39 @@ z = $y'
 # `_` is write-only: exempt from SB5050, unobservable (so taint-safe by
 # construction), repeatable, and reading it in ANY form is SB5056.
 
-# dc.1 a `_` read target needs no acknowledgment and no attest
-run_sash '/usr/bin/printf "xx yy\n" | read _ b
-attest b p?
-echo "b=$b"'
-[[ $rc = 0 && $out = "b=yy" && -z $err ]]; chk dc.1
+# dc.1 a `_` read target needs no acknowledgment and no attest. (DD#99 stage 6
+# removed multi-target read, so the binder list this used is gone; `_` is
+# unchanged and still valid wherever a binder appears.)
+run_sash '/usr/bin/printf "xx\n" | read _
+echo "ok"'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk dc.1
 
-# dc.2 `_` still BINDS — it consumes its field, it does not vanish
-run_sash 'echo "aa bb cc" | read _ b
-echo "b=$b"'
-[[ $rc = 0 && $out = "b=bb cc" && -z $err ]]; chk dc.2
+# dc.2 `_` still BINDS — the array is filled and discarded, not skipped
+run_sash 'echo "aa bb cc" | read _
+echo "ok"'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk dc.2
 
-# dc.3 `_` may repeat within one binder list
-run_sash 'echo "aa bb cc" | read _ b _
-echo "b=$b"'
-[[ $rc = 0 && $out = "b=bb" && -z $err ]]; chk dc.3
+# dc.3 `_` may repeat — two binders in one program, each independently bound
+# and discarded. (It used to repeat within a single multi-target read binder
+# list; DD#99 stage 6 removed that form, so repetition is shown across
+# binders instead. Deliberately two for-binders rather than one plus a
+# `read _`: janet cannot declare `_` from a read target, a pre-existing gap
+# unrelated to what this pins.)
+run_sash 'array a=(p q)
+for _ in @a { echo tick }
+for _ in @a { echo tock }
+echo "ok"'
+[[ $rc = 0 && $out = $'tick\ntick\ntock\ntock\nok' && -z $err ]]; chk dc.3
 
 # dc.4 reading `$_` is an error — this is what makes the taint exemption safe
 # rather than a laundering hole (`read _ x; y=$_` must not work)
-run_sash 'echo "aa bb" | read _ b
-echo "$_ $b"'
+run_sash 'echo "aa bb" | read _
+echo "$_"'
 [[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.4
 
 # dc.5 …in the braced form too
-run_sash 'echo "aa bb" | read _ b
-echo "${_} $b"'
+run_sash 'echo "aa bb" | read _
+echo "${_}"'
 [[ $rc != 0 && -z $out && $err == *SB5056* ]]; chk dc.5
 
 # dc.6 …as a subscript cell

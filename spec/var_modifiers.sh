@@ -399,7 +399,7 @@ if in_modes native,c; then
     run_sash 'array f=()
 s=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
-echo $s | newread f
+echo $s | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[1]}"'
     [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7
@@ -545,7 +545,7 @@ if in_modes native,c; then
     run_sash 'sep=$'"'"'\0'"'"'
 s=NAME:sash
 s =~ s/:/$sep/g
-newread $s a
+read $s a
 attest e in a [[ $e = $e ]]
 map m = @{a:?uneven}
 echo "${m[NAME]}"'

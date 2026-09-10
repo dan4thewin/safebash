@@ -372,7 +372,7 @@ run_sash 'array a=()
 if matchall "abc" "b" a; then echo "$(len a):${a[0]}"; fi'
 [[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.ma5
 
-# 63.ma6 the target auto-declares (argv / read / newread precedent). native,c:
+# 63.ma6 the target auto-declares (argv / read / read precedent). native,c:
 # janet emits the `var` inside the `||` block so the later read cannot see it
 # — generic to every auto-declaring builtin there, not to `matchall` (`argv 1
 # fresh || :` fails identically); task `janet-autodeclare-scoped-to-list-block`.

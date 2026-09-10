@@ -1794,8 +1794,8 @@ const BUILTINS: &[&str] = &[
     // Input
     "read",
     "readline",
-    "newread",
     "mapfile",
+    "readarray",
     // Taint
     "attest",
     "getenv",
@@ -2294,12 +2294,12 @@ fn check_elide_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
         check_elide_expr(&c.name, false, diags);
         // DD#91's elidable positions are the VARIADIC ones — argv, an array
         // literal — where dropping a token just shortens a list. `readline`
-        // and `newread` take fixed positional ROLES, so eliding an argument
-        // does not shorten anything: `newread ${u:~} f` would become
-        // `newread f` and read STDIN instead, a different input source
+        // and `read` take fixed positional ROLES, so eliding an argument
+        // does not shorten anything: `read ${u:~} f` would become
+        // `read f` and read STDIN instead, a different input source
         // entirely. That silent switch is the DD#69 hazard, so the slot is
         // non-elidable. (Before this it reached codegen and panicked.)
-        let elidable = !matches!(expr_literal_str(&c.name), "readline" | "newread");
+        let elidable = !matches!(expr_literal_str(&c.name), "readline" | "read");
         for a in &c.args {
             check_elide_expr(a, elidable, diags);
         }
@@ -2393,7 +2393,7 @@ fn check_elide_pexp(
         let sigil = pe.operator.as_deref().unwrap_or(":~");
         // Say VARIADIC, not "a command argument". A fixed-arity builtin's
         // argument is a command argument too, and saying otherwise told an
-        // author whose `newread ${x:!} f` was rejected that the very position
+        // author whose `read ${x:!} f` was rejected that the very position
         // they had used was the valid one.
         //
         let advice = elide_advice(sigil, &pe.name);
@@ -2870,21 +2870,15 @@ fn check_args_immutable_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 }
 
 /// True if `c` is a builtin that writes the `args` array: `read -a args`,
-/// `newread [SRC] args`, `readline args`, `argv … args`, `mapfile/readarray
+/// `read [SRC] args`, `readline args`, `argv … args`, `mapfile/readarray
 /// args`, or `attest … in args`.
 fn command_writes_args(c: &Command) -> bool {
     match expr_literal_str(&c.name) {
-        "read" => {
-            crate::ir::classify_read_flags(&c.args)
-                .array_name
-                .as_deref()
-                == Some("args")
-        }
         // DD#99: the target is the last argument for both arities
-        // (`newread ARRAY` and `newread SRC ARRAY`), and `readline`'s only
+        // (`read ARRAY` and `read SRC ARRAY`), and `readline`'s only
         // one. DD#63 `matchall S P ARR` is a bulk fill too, with the same
         // trailing target.
-        "newread" | "readline" | "matchall" => c.args.last().map(expr_literal_str) == Some("args"),
+        "read" | "readline" | "matchall" => c.args.last().map(expr_literal_str) == Some("args"),
         "argv" => argv_target_name(&c.args) == Some("args"),
         "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
@@ -3299,7 +3293,7 @@ fn taint_stmt_no_read_taint(
     if let StmtKind::Command(c) = &stmt.kind {
         let name = expr_literal_str(&c.name);
         // read/mapfile from clean pipe source: don't taint
-        if matches!(name, "read" | "readline" | "newread" | "mapfile") {
+        if matches!(name, "read" | "readline" | "mapfile") {
             check_clean_read_taint(c, tainted, diags);
             return;
         }
@@ -3648,9 +3642,7 @@ fn taint_command(
 ) {
     let name = expr_literal_str(&c.name);
 
-    if matches!(name, "read" | "readline" | "newread" | "mapfile" | "argv")
-        && !is_value_split(name, c)
-    {
+    if matches!(name, "read" | "readline" | "mapfile" | "argv") && !is_value_split(name, c) {
         taint_read_target(c, tainted);
     } else if name == "attest" {
         taint_attest(c, span, tainted, diags);
@@ -3669,15 +3661,15 @@ fn taint_command(
 /// DD#99: does this command split a value that is ALREADY in the program,
 /// rather than reading one in from outside?
 ///
-/// `newread ARRAY` reads stdin — external, so its target is tainted by
-/// definition. `newread SRC ARRAY` splits `SRC`, which the program already
+/// `read ARRAY` reads stdin — external, so its target is tainted by
+/// definition. `read SRC ARRAY` splits `SRC`, which the program already
 /// holds. The source is an ordinary read, checked like every other read by the
 /// arg walk below; DD#24's "no propagation" then makes the result clean,
 /// exactly as `x=$y` is clean when `y` is. Tainting the target regardless made
 /// a clean split unusable and pushed the author toward a reflexive `attest` —
 /// laundering by habit, which is worse than the taint it worked around.
 fn is_value_split(name: &str, c: &Command) -> bool {
-    name == "newread" && c.args.len() == 2
+    name == "read" && c.args.len() == 2
 }
 
 fn taint_read_target(c: &Command, tainted: &mut HashSet<String>) {
@@ -4180,12 +4172,11 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
-        "read" | "readline" => collect_read_flag_targets(&c.args, set),
+        "read" | "readline" => insert_last_target_arg(&c.args, set),
         "mapfile" | "readarray" => insert_all_target_args(&c.args, set),
-        // DD#99: `newread [SRC] ARRAY` — only the last arg is a binding.
-        "newread" => insert_last_target_arg(&c.args, set),
+        // DD#99: `read [SRC] ARRAY` — only the last arg is a binding.
         // DD#63: `matchall S P ARR` fills ARR, so it introduces it — the same
-        // bulk-fill precedent as argv / read / newread. (Singular `match` does
+        // bulk-fill precedent as argv / read. (Singular `match` does
         // NOT auto-declare; that asymmetry is filed as
         // `bug-match-outarray-no-autodeclare`.)
         "matchall" => insert_last_target_arg(&c.args, set),
@@ -4209,17 +4200,6 @@ fn insert_last_target_arg(args: &[Expr], set: &mut HashSet<String>) {
 fn insert_last_literal_arg(args: &[Expr], set: &mut HashSet<String>) {
     if let Some(ExprKind::Literal(s)) = args.last().map(|a| &a.kind) {
         set.insert(s.clone());
-    }
-}
-
-/// `read x`/`read -a ARR`: the shared classifier's scalar var names plus the
-/// `-a` array-target name. The classifier skips `-d`/`-f` VALUES (a delim like
-/// `:` is not a target).
-fn collect_read_flag_targets(args: &[Expr], set: &mut HashSet<String>) {
-    let f = crate::ir::classify_read_flags(args);
-    set.extend(f.var_names);
-    if let Some(a) = f.array_name {
-        set.insert(a);
     }
 }
 
@@ -5376,7 +5356,7 @@ fn check_readline_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 fn check_readline_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
         let n = expr_literal_str(&c.name);
-        if n == "readline" || n == "newread" {
+        if n == "readline" || n == "read" {
             check_one_readline(n, c, stmt.span, diags);
         }
     }
@@ -5400,9 +5380,9 @@ fn check_one_readline(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagn
         ));
         return;
     }
-    // `readline NAME`; `newread [SRC] ARRAY` — the two-arg form splits a value
+    // `readline NAME`; `read [SRC] ARRAY` — the two-arg form splits a value
     // (DD#99). The TARGET is a binding, so it is always the bare last word.
-    let max = if name == "newread" { 2 } else { 1 };
+    let max = if name == "read" { 2 } else { 1 };
     if words.is_empty() || words.len() > max {
         diags.push(readline_diag(
             span,
@@ -5416,7 +5396,7 @@ fn check_one_readline(name: &str, c: &Command, span: Span, diags: &mut Vec<Diagn
 }
 
 /// DD#99's sigil rule at a read call: the TARGET is a binding (bare name), and
-/// a two-arg `newread`'s SOURCE is a value (sigilled). `newread f g` is two
+/// a two-arg `read`'s SOURCE is a value (sigilled). `read f g` is two
 /// bindings and means nothing.
 fn sigil_complaint(name: &str, words: &[String]) -> Option<String> {
     if !is_plain_identifier(words.last()?) {
@@ -5450,7 +5430,7 @@ fn readline_diag(span: Span, what: &str) -> Diagnostic {
         "SB5057",
         format!(
             "{what}. `readline NAME` reads one line into one scalar and \
-             `newread ARRAY` reads NUL-separated fields into an array; for a \
+             `read ARRAY` reads NUL-separated fields into an array; for a \
              map use `map m = @{{a:DISP}}`"
         ),
     )
@@ -5586,13 +5566,36 @@ fn check_match_arity_in(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
 
 fn check_match_arity_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     if let StmtKind::Command(c) = &stmt.kind {
-        if let Some(d) = match_arity_diag(expr_literal_str(&c.name), c.args.len(), stmt.span) {
+        let name = expr_literal_str(&c.name);
+        if let Some(d) = match_arity_diag(name, c.args.len(), stmt.span) {
+            diags.push(d);
+        }
+        if let Some(d) = retired_bulk_read_diag(name, stmt.span) {
             diags.push(d);
         }
     }
     for body in stmt.child_bodies() {
         check_match_arity_in(body, diags);
     }
+}
+
+/// DD#99 stage 6: `mapfile` / `readarray` are retired. Point at the
+/// replacement rather than letting them fall through to SB5011 "command not
+/// found", which would send the author looking for a missing binary.
+fn retired_bulk_read_diag(name: &str, span: Span) -> Option<Diagnostic> {
+    if !matches!(name, "mapfile" | "readarray") {
+        return None;
+    }
+    Some(Diagnostic::error_span(
+        span,
+        "SB5060",
+        format!(
+            "`{name}` is retired (DD#99). To split a file into lines use \
+             `matchall $s \"[^\\x0a]+\" ARR` on its contents, or read \
+             NUL-separated fields with `tr '\\n' '\\0' < f | read ARR`; \
+             for a map, pair the array with `map m = @{{ARR:DISP}}`."
+        ),
+    ))
 }
 
 fn match_arity_diag(name: &str, n: usize, span: Span) -> Option<Diagnostic> {

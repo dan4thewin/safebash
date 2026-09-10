@@ -325,8 +325,14 @@ fn attach_redirects_to_result(
     }
 }
 
-/// True for `mapfile` / `readarray` / `read -a` commands, whose lowered
-/// SSA instructions (Mapfile / ReadArray) carry no redirect list.
+/// True for the bulk (array-filling) reads, whose lowered SSA instructions
+/// (Mapfile / ReadArray) carry no redirect list — so the redirect has to be
+/// applied around them by the caller rather than by the instruction.
+///
+/// DD#99 stage 6: `read` IS the array form now, so it belongs here
+/// unconditionally. Dropping it silently made `read a < f` ignore its
+/// redirect and read stdin instead — no diagnostic, an empty array, and a
+/// missing file did not even abort.
 fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
     let StmtKind::Command(c) = kind else {
         return false;
@@ -334,14 +340,7 @@ fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
     let ExprKind::Literal(name) = &c.name.kind else {
         return false;
     };
-    match name.as_str() {
-        "mapfile" | "readarray" | "newread" => true,
-        "read" => c
-            .args
-            .iter()
-            .any(|a| matches!(&a.kind, ExprKind::Literal(s) if s == "-a")),
-        _ => false,
-    }
+    matches!(name.as_str(), "mapfile" | "readarray" | "read")
 }
 
 fn is_compound_stmt(kind: &StmtKind) -> bool {
