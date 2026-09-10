@@ -43,3 +43,21 @@ emit an undefined `len` symbol (janet compile error). native/c fine. Guarded
 `spec/arithmetic.sh` 58.10–58.16 to native,c. Gate: janet evaluates the len
 intrinsic (array/map count, string byte length) as an arith operand — emit
 `(length …)` or a table-len helper. Same collection-intrinsic class as join/keys.
+
+## Addendum (2026-09-10): `len $x` / `len @x` in command form missing in janet
+
+Surfaced by the SB5062 control spec (`types.sh` 75.38). The three addenda above
+cover `len` in *arith-operand* position; the `$(len …)` **command** form has the
+same class of gap for the sigil spellings:
+
+- `$(len $s)`, `$(len $a)` → janet emits the operand verbatim as a symbol,
+  giving `compile error: unknown symbol $s`.
+- `$(len @a)` → same, as `unknown symbol ?`.
+
+Bare `$(len a)` is fine. native/c accept all four. Guarded 75.38 to native,c.
+
+Root cause is the one this whole file circles: `emit_janet` renders from the
+**AST**, so it never sees the transform's operand resolution that native and c
+inherit from SSA — cf. `emit-janet-from-ssa`. Fixing that retires the class
+rather than patching spelling-by-spelling; DG deferred the janet overhaul
+(including the `/usr/bin/join` fallthrough guard) to a single later pass.

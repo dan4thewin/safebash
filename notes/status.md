@@ -1,3 +1,70 @@
+## ════════ STATUS (2026-09-10) — SB5062: the operand slot ════════
+
+**On `hand-parser`.** Resuming the backlog prune surfaced a validator bypass
+that had been producing **silent wrong answers**. `len "hello"` returned `0`.
+So did `len "$s"` — the most idiomatic spelling in shell.
+
+One root cause, three faces:
+
+| spelling | was | now |
+|---|---|---|
+| `len "$s"`, `len ${a[0]}`, `len "lit"` | `0`, silently | SB5062 |
+| `join $a ","` | empty output; `a` not even counted as read | SB5062 |
+| `keys @m`, `keys $m` | **ICE** `undefined arrlen: ${marrvals}` | SB5062 |
+
+`try_len_intrinsic` derives a variable *name* by calling `expr_to_string`, a
+**source-text pretty-printer**. `"$s"` stringifies to `"$s"` *with the quote
+characters*, which is then looked up as a name, misses, and reads as nothing.
+`len $s` works only by accident — the formatter happens to strip the sigil.
+
+The validator was meant to catch this. `len_operand_name` matches only
+`ExprKind::Literal`; its `else { return }` says *"resolved elsewhere"*. They
+are not. That comment was the bypass. Not deliberate either — DD#75 §2 says
+`len` of an unknown name is a *compile error, no runtime garbage*, and there
+was zero spec coverage for any quoted operand.
+
+**This is rejection, not repair.** `join $a` is now rejected while `len $a`
+still works. That inconsistency is deliberate: DG's pending `len`
+→ collection-only + `strlen` split and the collection-parameter design rewrite
+this exact surface, so guessing the final spelling now would only be undone.
+
+**Why the accepted sets differ at all** — and it is not carelessness: **sash
+has no first-class collection values.** `@a` is a splat into N values, not a
+handle, so `keys` genuinely cannot take it (values have no keys). That same
+absence is the root of the parameterised-function problem: a function can read
+*and mutate* a caller's array, but only by hard-coding its name. Contents are
+parameterisable (splat, read-only); identity is not. The way out is cheap
+because sash **inlines every function** — a collection parameter can be a
+compile-time name binding, not a runtime handle.
+
+**A fourth face, in janet.** The control spec pinning what already worked
+failed there, and no single spelling works uniformly across all three backends:
+
+| form | native / c | janet |
+|---|---|---|
+| `len a`, `keys m`, `join @a` | ✓ | ✓ |
+| `len $s`, `len $a`, `len @a` | ✓ | compile error: unknown symbol `$s` |
+| `join @a ","` | ✓ | bad slot #1, expected string, got array |
+| `join a ","` | `x,y,z` | **execs /usr/bin/join** |
+
+All pre-existing, verified against the pre-change build; most already filed in
+`janet-join-intrinsic-gaps` since August, the `$(len $x)` command form added as
+an addendum. Cause is the one that file keeps circling: `emit_janet` renders
+from the **AST**, so it never sees the operand resolution native and c inherit
+from SSA (`emit-janet-from-ssa` retires the class). DG deferred the janet
+overhaul wholesale; 75.38 guarded to `native,c` per that task's convention.
+
+The `/usr/bin/join` fallthrough is deferred but worth naming: a backend that
+silently execs an external binary when it does not recognise a builtin is a
+safety property, not a feature gap.
+
+**4639 passing / 39 failing / 460 skipped — zero regressions** against
+`272b977`. Specs 75.31–75.38, fail-first verified (7 red, control green).
+
+**Next:** the deferred design discussion — collection parameters via
+compile-time monomorphisation, which subsumes
+`bare-collection-name-operand-asymmetry`.
+
 ## ════════ STATUS (2026-09-10) — spec.db purged from history ════════
 
 **On `hand-parser`.** `spec.db` and `notes/misses.md` are gone from every

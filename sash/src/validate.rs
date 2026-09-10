@@ -4556,6 +4556,93 @@ fn flag_join_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// How a `len` / `join` / `keys` operand is spelled. These builtins resolve
+/// their operand as a variable **name**, not a value, so only a plain
+/// identifier carries meaning.
+enum OperandForm {
+    /// A bare identifier: `a`
+    Bare,
+    /// A `$`-sigil expansion of an identifier: `$a`
+    Dollar(String),
+    /// An arrvals splat: `@a`
+    Splat(String),
+    /// Not a name — a quoted string, a subscript cell, a `$( )`, arithmetic, …
+    Other,
+}
+
+fn classify_operand(expr: &Expr) -> OperandForm {
+    match &expr.kind {
+        ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
+            OperandForm::Splat(pe.name.clone())
+        }
+        ExprKind::Literal(s) if is_plain_identifier(s) => OperandForm::Bare,
+        ExprKind::SimpleExpansion(s) if is_plain_identifier(s) => OperandForm::Dollar(s.clone()),
+        _ => OperandForm::Other,
+    }
+}
+
+/// SB5062: `len` / `join` / `keys` resolve their operand as a variable NAME.
+/// Any other spelling was rendered by `expr_to_string` — a source-text
+/// formatter, quotes and all — and the resulting text looked up as if it were
+/// a name. That silently found nothing (`len "$s"` read as **0**, `join "a"`
+/// as empty, and the operand was not even counted as a read) or produced a
+/// bogus name that crashed codegen (`keys @m` → `ICE: undefined arrlen:
+/// ${marrvals}`). Accept only what each builtin can actually resolve.
+///
+/// The accepted sets differ per builtin because their resolutions differ, not
+/// by preference: `keys` needs the map itself, and a splat carries values,
+/// which have no keys.
+pub fn check_operand_spelling(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| flag_operand_spelling(e, &mut diags));
+    }
+    diags
+}
+
+fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+        return;
+    };
+    let builtin = expr_literal_str(&c.name);
+    let Some(arg) = c.args.first() else {
+        return;
+    };
+    let accepted = match (builtin, classify_operand(arg)) {
+        ("len", OperandForm::Other) => {
+            "a variable name (`len a`, `len $a`, or `len @a`)".to_string()
+        }
+        ("join", OperandForm::Dollar(n)) => {
+            format!("a collection name (`join {n} SEP`) or a splat (`join @{n} SEP`)")
+        }
+        ("join", OperandForm::Other) => {
+            "a collection name (`join a SEP`) or a splat (`join @a SEP`)".to_string()
+        }
+        ("keys", OperandForm::Dollar(n) | OperandForm::Splat(n)) => {
+            format!("a bare map name (`keys {n}`) — a splat carries values, which have no keys")
+        }
+        ("keys", OperandForm::Other) => {
+            "a bare map name (`keys m`) — a splat carries values, which have no keys".to_string()
+        }
+        _ => return,
+    };
+    diags.push(Diagnostic::error_span(
+        expr.span,
+        "SB5062",
+        format!(
+            "`{builtin}` resolves its operand as a variable name, and does not \
+             resolve this spelling. Use {accepted}"
+        ),
+    ));
+}
+
 fn check_len_in_scope(
     stmts: &[Statement],
     known: &HashSet<String>,

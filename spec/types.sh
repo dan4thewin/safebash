@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=147
+plan=155
 echo "1..$plan" >&3
 
 set +e
@@ -623,6 +623,46 @@ run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
 run_sash 'fn f { echo $(len bogus); }
 f'
 [[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.30
+
+# ── SB5062: a collection/variable operand must be a plain NAME ──────────
+# `len`/`join`/`keys` resolve their operand as a variable NAME, not a value.
+# Any other spelling used to be stringified by a source-text formatter and
+# then looked up as if it were a name, which silently found nothing (0 or
+# empty) or crashed the compiler. Reject the spelling instead.
+# 75.31 a quoted expansion is not a name — it silently read as 0
+run_sash 's=hi; echo $(len "$s")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.31
+# 75.32 a subscript cell is not a name — silently read as 0
+run_sash 'array a=(x y); echo $(len ${a[0]})'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.32
+# 75.33 a quoted literal is not a name — silently read as 0
+run_sash 'echo $(len "lit")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.33
+# 75.34 `join $a` silently produced empty output (only bare `a`/`@a` resolve)
+run_sash 'array a=(x y); echo $(join $a ",")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.34
+# 75.35 a quoted operand to `join` was not even counted as a read of `a`
+run_sash 'array a=(x y); echo $(len a); echo $(join "a" ",")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.35
+# 75.36 `keys @m` ICEd the compiler — a splat is not a map reference
+run_sash 'map m=([k]=v); for k in $(keys @m); do echo "$k"; done'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.36
+# 75.37 `keys $m` ICEd the same way
+run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.37
+# 75.38 control: every spelling that already worked still works.
+# (janet resolves only bare names and the `@a` space-join — `len $s`, `len $a`,
+# `len @a` emit the sigil as a bare symbol, and `join a SEP` execs /usr/bin/join.
+# See notes/tasks/janet-join-intrinsic-gaps.md; guard to native,c.)
+if in_modes native,c; then
+    run_sash 's=hi; array a=(x y z); map m=([k]=v)
+echo "$(len s) $(len $s) $(len a) $(len $a) $(len @a) $(len m)"
+echo "$(join a ",") $(join @a ",")"
+for k in $(keys m); do echo "$k"; done'
+    [[ $rc = 0 && $out = $'2 2 3 3 3 1\nx,y,z x,y,z\nk' && -z $err ]]; chk 75.38
+else
+    skip_chk 75.38
+fi
 
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
