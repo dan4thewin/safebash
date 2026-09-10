@@ -21,7 +21,7 @@ run_sash 'readline x; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.3
 
 # 24.4 mapfile produces tainted var
-run_sash 'mapfile -t arr; echo ${arr[0]}'
+run_sash 'newread arr; echo ${arr[0]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 24.4
 
 # 24.5 external cmd produces tainted var
@@ -220,15 +220,17 @@ run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; for x in @a; do echo $x;
 run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; echo $(join @a)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
-# 60.34 tainted map (mapfile -m) subscripted without attest-all → reject
-# (negative for the attested map subscript 60.29; mirrors the array 60.13)
-run_sash 'map m=(); mapfile -m m < d60m.txt; echo ${m[NAME]}'
+# 60.34 DG (2026-09-10): "the read of the array must have a clean array, so
+# no tainted maps." `map m = @{a:DISP}` is an ordinary READ of `a` — measurably
+# identical to `join @a` and `for x in @a` — so DD#24's no-propagation applies
+# and a TAINTED array cannot be paired into a map at all. The gate that used to
+# sit on the map now sits one step earlier, on the array, and it is the SAME
+# gate rather than a new rule.
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+map m = @{p:~}
+echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.34
 
-# 60.35 keys of a tainted (mapfile -m) map without attest-all → reject.
-# keys exposes the file-derived keys; a use site like ${m[…]} (60.34).
-run_sash 'map m=(); mapfile -m m < d60m.txt; for k in $(keys m); do echo "$k"; done'
-[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.35
 
 # 60.19 attest-all binder must be on the LHS (anti-tautology)
 run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a
@@ -260,13 +262,17 @@ run_sash 'x=$(getenv HOME); attest y in x [[ $y =~ ^/ ]]; echo $x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.27
 
 # 60.28 1-binder attest-all on a map → type error (needs two binders)
-run_sash 'map m=(); mapfile -m m < d60m.txt
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+attest e in p_m [[ -n $e ]]
+map m = @{p_m:~}
 attest v in m [[ $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.28
 
 # 60.30 map attest-all: both binders must be validated (value omitted) → reject
-run_sash 'map m=(); mapfile -m m < d60m.txt
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+attest e in p_m [[ -n $e ]]
+map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.30
@@ -349,20 +355,36 @@ attest x in a [[ $x =~ ^[a-z]+$ ]]
 for w in @a; do echo $w; done'
     [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
 
+    # 60.35 …and the consequence, stated positively: once the array is vouched
+    # for, the map built from it is CLEAN — no map-level attest-all, because there
+    # is no longer any way for a map to be tainted. This is what makes 60.34 a
+    # relocation of the gate rather than a hole in it.
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+    attest e in p [[ -n $e ]]
+    map m = @{p:~}
+    for k in $(keys m); do echo "$k=${m[$k]}"; done'
+    [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.35
+
     # 60.29 map attest-all clears, value readable (runtime pass)
-    run_sash 'map m=(); mapfile -m m < d60m.txt
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+attest e in p_m [[ -n $e ]]
+map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
 
     # 60.36 attested map: keys + dynamic subscript idiom iterates pairs
-    run_sash 'map m=(); mapfile -m m < d60m.txt
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p_m
+attest e in p_m [[ -n $e ]]
+map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 for k in $(keys m); do echo "$k=${m[$k]}"; done'
     [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
 
     # 60.31 map attest-all runtime failure: a value fails its predicate → exit 1
-    run_sash 'map m=(); mapfile -m m < d60m2.txt
+    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m2.txt | newread p_m
+attest e in p_m [[ -n $e ]]
+map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
     [[ $rc != 0 && -z $out ]]; chk 60.31
@@ -541,8 +563,11 @@ run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
 # 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
 run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | newread a; x=$(join @a); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.48
-# 60.49 `keys` of a tainted map in an array-literal element (a value position)
-run_sash 'map m=(); mapfile -m m < d60m.txt; array k=($(keys m)); echo hi'
+# 60.49 the same relocation in a value position: `keys` of a map built from an
+# UNVOUCHED array is rejected at the pairing, before `keys` is ever reached.
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | newread p
+map m = @{p:~}
+array k=($(keys m)); echo hi'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.49
 # 60.50 bare-name `join a` reader reached through a `[[ ]]` operand
 run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
@@ -1015,7 +1040,7 @@ echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.3
 
 # tl.4 …mapfile
-run_sash 'array a=(); echo ig | /bin/cat /etc/hostname | mapfile a
+run_sash 'echo ig | /bin/cat /etc/hostname | newread a
 echo "${a[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk tl.4
 

@@ -2881,8 +2881,10 @@ fn command_writes_args(c: &Command) -> bool {
                 == Some("args")
         }
         // DD#99: the target is the last argument for both arities
-        // (`newread ARRAY` and `newread SRC ARRAY`), and `readline`'s only one.
-        "newread" | "readline" => c.args.last().map(expr_literal_str) == Some("args"),
+        // (`newread ARRAY` and `newread SRC ARRAY`), and `readline`'s only
+        // one. DD#63 `matchall S P ARR` is a bulk fill too, with the same
+        // trailing target.
+        "newread" | "readline" | "matchall" => c.args.last().map(expr_literal_str) == Some("args"),
         "argv" => argv_target_name(&c.args) == Some("args"),
         "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
@@ -4336,14 +4338,24 @@ fn report_dead(
 ) {
     let mut reported: HashSet<String> = HashSet::new();
     for (name, span) in writes {
-        // DD#98: `_` is bound to be discarded — being unread is the point.
-        if crate::ir::is_discard_binder(name) {
+        if exempt_from_dead_check(name) {
             continue;
         }
         if is_dead(name) && reported.insert(name.clone()) {
             diags.push(dead_var_diag(*span, name));
         }
     }
+}
+
+/// Names SB5050 must not claim are dead.
+///
+/// `_` (DD#98) is bound in order to be discarded — being unread is the point.
+/// The reserved `args` is immutable, so ANY write to it is SB5052 whether or
+/// not it is read; claiming "dead variable" first gives the author the wrong
+/// reason and implies that adding a read would fix it. This pass runs before
+/// the transform's, so it has to yield.
+fn exempt_from_dead_check(name: &str) -> bool {
+    crate::ir::is_discard_binder(name) || name == "args"
 }
 
 /// Find each function body and flag its dead function-locals.

@@ -21,3 +21,14 @@ The rejection half works in janet (SB5058 for a bare `@a` is a front-end
 check), as does the empty-array case. Only the fill is missing. Same shape as
 `janet-read-a-element-count` and the other janet parity gaps — the front end is
 shared, the emitters are not.
+
+## Raised to P2 (2026-09-10)
+
+This now costs **real, previously-green coverage**. DD#99 stage 5 migrated the
+`mapfile -m` sites onto `matchall` + `map m = @{a:DISP}`, and janet does not
+emit that form at all, so five specs that passed under `mapfile -m` are now
+skipped in janet: `wordsplit.sh` 22.6, 22.8, 22.9, 22.10 and `misc.sh` 54.1.
+
+Nothing is wrong with those programs — janet simply cannot express the route
+DD#99 requires for building a map. Until this lands, janet has no way to
+construct a map from external data at all.

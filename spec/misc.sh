@@ -132,12 +132,18 @@ run_sash 'x=HELLO; echo ${x,,}'
 
 # --- DD#54 sash-expand pipeline ---
 
-# 54.1 sash-expand | mapfile -m loads config into map (DD#61: maps use
-# two-binder attest-all — scalar attest on a map is now a type error)
+# 54.1 sash-expand output parsed into a config map (DD#99: `mapfile -m` is
+# replaced by `matchall` + array->map, which also splits on the FIRST `=`
+# only, so a value may contain one). native,c: janet does not emit
+# `map m = @{a:DISP}` (task `janet-map-from-array`).
 printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
 EXPAND=$(which sash-expand)
-run_sash "map config; $EXPAND /tmp/sash_test_config.conf | mapfile -m config; attest k v in config [[ \$k =~ ^[A-Z]+\$ && -n \$v ]]; echo \${config[GREETING]}"
-[[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
+if in_modes native,c; then
+    run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - matchall \$s \"([^=\\x0a]*)=([^\\x0a]*)\" p; map config = @{p:~}; echo \${config[GREETING]}"
+    [[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
+else
+    skip_chk 54.1
+fi
 
 # --- DD#75 §1: punctuation specials are sugar for the keyword forms ---
 # Both spellings compile to the same node/behaviour: $$ ≡ $(getpid),

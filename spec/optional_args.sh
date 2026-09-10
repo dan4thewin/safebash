@@ -8,7 +8,7 @@ set -eu
 . common.sh
 setup optional_args
 set +e
-plan=30
+plan=32
 echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
@@ -183,8 +183,24 @@ run_sash 'fn f { echo hi | newread args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.26
 run_sash 'fn f { argv 1 args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.27
-run_sash 'fn f { echo hi | mapfile args; /bin/echo x }; f'
+# 84.28 `matchall … args` — every BULK FILL must reject the reserved array,
+# not just the read family. This one was a real hole: `matchall` was added to
+# the collection-target list but not to the immutability list, and SB5050
+# ("dead variable") fired first and masked it. `args` is now exempt from
+# SB5050 precisely because a write to it is illegal whether or not it is read,
+# so the accurate rule gets to speak.
+run_sash 'fn f { - matchall "a b" "[a-z]" args; /bin/echo x }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.28
+
+# 84.31 …and the `|| :` spelling of the same discard is equally rejected —
+# the hole was in the target check, not in how the result was consumed
+run_sash 'fn f { matchall "a b" "[a-z]" args || :; /bin/echo x }; f'
+[[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.31
+
+# 84.32 a NORMAL bulk-fill target in a function is unaffected (control) —
+# an unread one is still an ordinary dead variable
+run_sash 'fn f { - matchall "a b" "[a-z]" ok; /bin/echo x }; f'
+[[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 84.32
 run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.29
 # 84.30 control: a differently-named local array is fine (only `args` is

@@ -176,3 +176,45 @@ DD#24 no-propagation applies, map is clean) or a **bulk transfer** like
 `newread` (taint flows, map stays tainted, attest-all on the map survives).
 DD#24 settles the behaviour of a read; it does not settle which of the two this
 operation *is*. Awaiting DG.
+
+## Stage 5 COMPLETE (2026-09-10)
+
+DG settled the fork: *"the read of the array must have a clean array, so no
+tainted maps."* `map m = @{a:DISP}` is an ordinary read, DD#24's
+no-propagation applies, and the tainted-map scenario is gone from the
+language. The taint gate does not disappear — it moves one step earlier, onto
+the array, and it is the *same* gate.
+
+All 39 `mapfile` sites migrated; **no live `mapfile` use remains in spec/**.
+
+| shape | replacement |
+|---|---|
+| `mapfile -t a < f` (taint is the subject) | `/usr/bin/tr "\n" "\0" < f \| newread a` |
+| `mapfile -t a` (splitting is the subject) | `- matchall $s "[^\x0a]+" a` |
+| `mapfile -m m` | `- matchall $s "([^=\x0a]*)=([^\x0a]*)" p` + `map m = @{p:~}` |
+
+60.34/60.35/60.49 and 22.11 were rewritten rather than deleted: they now pin
+the relocated gate (a tainted array cannot be paired into a map) and its
+positive counterpart (once vouched for, the map is clean).
+
+### Two real defects found by migrating
+
+- **`matchall` was missing from the `args` write-protection.** `matchall … args`
+  was accepted where `newread args` is SB5052. It was masked by SB5050 ("dead
+  variable") firing first, which is also the wrong reason — a write to `args`
+  is illegal whether or not it is read — so `args` is now exempt from SB5050
+  and the accurate rule reports. Specs `optional_args.sh` 84.28, 84.31, 84.32.
+- Two of my own rewrites (22.11, 22.13) replaced a tainted producer with a
+  literal scalar, which would have **laundered the taint tests into
+  tautologies**. Caught by the specs going red; restored to external producers.
+
+### Cost
+
+Five janet specs went passing→skipped (`wordsplit.sh` 22.6/22.8/22.9/22.10,
+`misc.sh` 54.1): janet does not emit `map m = @{a:DISP}`, so it cannot build a
+map from external data at all. Task `janet-map-from-array` raised to P2.
+
+**Next: stage 6** — retire `read -a/-f/-d/-r`, `mapfile`, `readarray` and
+multi-target read (the 14 flag-subject + 9 multi-target specs become
+reject-tests), rename `newread` → `read`, and update **sash-convert**, which
+still emits `read -r line`.
