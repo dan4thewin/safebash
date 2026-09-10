@@ -529,7 +529,7 @@ fn resolve_splat_tables(
 }
 
 /// Load an array variable's table pointer by name.
-fn array_table_ptr(
+pub(super) fn array_table_ptr(
     array: &str,
     vars: &HashMap<String, VarSlot>,
     builder: &mut FunctionBuilder,
@@ -542,7 +542,7 @@ fn array_table_ptr(
 /// expand — non-empty array → the array; empty → `sash_splat_disposition`
 /// (WORD single arg for `:-`, abort for `:?`, empty for bare `@{a:-}`).
 #[allow(clippy::too_many_arguments)]
-fn emit_splat_disposition(
+pub(super) fn emit_splat_disposition(
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     vars: &HashMap<String, VarSlot>,

@@ -409,7 +409,10 @@ fn dq_to_value(parts: &[Expr], state: &VersionState) -> SsaValue {
 /// `arr=(…)` array literal: detect two sash-native shorthand patterns
 /// (regex filter and single-glob) before falling back to IndexedArray.
 fn lower_array_literal(elems: &[Expr], state: &VersionState) -> SsaValue {
-    let vals: Vec<SsaValue> = elems.iter().map(|e| expr_to_value(e, state)).collect();
+    // An array-literal element is an elidable list position like a command
+    // argument, so `@a` SPLICES its elements — `(p @a q)` is p,x,y,z, not a
+    // 3-element array whose middle entry is the joined string.
+    let vals: Vec<SsaValue> = elems.iter().map(|e| arg_to_value(e, state)).collect();
     if let Some(v) = try_array_regex_filter(&vals) {
         return v;
     }

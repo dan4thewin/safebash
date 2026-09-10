@@ -3392,6 +3392,31 @@ fn emit_pipeline_exec(e: &mut Emit, name: &str, args: &[SsaValue], types: &VarTy
 /// lower_indexed_array_value (codegen/values.rs:836). Creates a
 /// SashTable with int keys 0..N-1. The table pointer goes in the
 /// var's _ptr slot; _len is 0.
+/// One `@a` element of an array literal: append every element of the splat's
+/// (disposition-resolved) table, mirroring the native `emit_splat_append`.
+fn emit_array_splat_element(
+    e: &mut Emit,
+    t: &str,
+    si: usize,
+    array: &str,
+    disposition: Option<&crate::ssa::ArraySplatDisposition>,
+    types: &VarTypes,
+) {
+    let raw = lookup_table_var(array, types);
+    let tbl = match disposition {
+        None => raw,
+        Some(d) => emit_splat_disposition_c(e, "    ", t, si, &raw, d, types),
+    };
+    let iv = format!("{t}_si{si}");
+    writeln!(
+        e.out,
+        "    for (i64 {iv} = 0; {iv} < sash_table_len((SashTable*){tbl}); {iv}++) {{ \
+         i64 {t}_el; const char* {t}_ep = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); \
+         i64 {t}_k = {t}_w; sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {t}_ep, {t}_el); {t}_w++; }}"
+    )
+    .unwrap();
+}
+
 fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CStr {
     let t = e.fresh();
     let capacity = std::cmp::max(elems.len() * 2, 8);
@@ -3405,23 +3430,39 @@ fn emit_indexed_array(e: &mut Emit, elems: &[SsaValue], types: &VarTypes) -> CSt
     // DD#84: a running write index so a `${…:~}` element that is empty is
     // skipped and the rest stay contiguous (`(x ${y:~} z)` empty y → [x, z]).
     writeln!(e.out, "    i64 {t}_w = 0;", t = t).unwrap();
+    let mut si = 0usize;
     for val_ssa in elems {
-        let (inner, guard) = match val_ssa {
-            SsaValue::ElideEmpty { source: inner, .. } => (inner.as_ref(), true),
-            other => (other, false),
-        };
-        let (val_ptr, val_len) = lower_value_as_str(e, inner, types);
-        let set = format!(
-            "{{ i64 {t}_k = {t}_w; sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {vp}, {vl}); {t}_w++; }}",
-            t = t, vp = val_ptr, vl = val_len
-        );
-        if guard {
-            writeln!(e.out, "    if (({}) != 0) {}", val_len, set).unwrap();
-        } else {
-            writeln!(e.out, "    {}", set).unwrap();
+        // A splat contributes its ELEMENTS (mirrors the native
+        // `emit_splat_append`); anything else is one element.
+        match val_ssa {
+            SsaValue::ArraySplat { array, disposition } => {
+                emit_array_splat_element(e, &t, si, array, disposition.as_ref(), types);
+                si += 1;
+            }
+            _ => emit_array_scalar_element(e, &t, val_ssa, types),
         }
     }
     (format!("(const char*){}_tbl", t), "0".to_string())
+}
+
+/// One ordinary (non-splat) element of an array literal. A DD#84
+/// `${…:~}` element is written only when non-empty, so the indices stay
+/// contiguous.
+fn emit_array_scalar_element(e: &mut Emit, t: &str, val_ssa: &SsaValue, types: &VarTypes) {
+    let (inner, guard) = match val_ssa {
+        SsaValue::ElideEmpty { source: inner, .. } => (inner.as_ref(), true),
+        other => (other, false),
+    };
+    let (val_ptr, val_len) = lower_value_as_str(e, inner, types);
+    let set = format!(
+        "{{ i64 {t}_k = {t}_w; sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {vp}, {vl}); {t}_w++; }}",
+        t = t, vp = val_ptr, vl = val_len
+    );
+    let line = match guard {
+        true => format!("    if (({val_len}) != 0) {set}"),
+        false => format!("    {set}"),
+    };
+    writeln!(e.out, "{}", line).unwrap();
 }
 
 /// Associative array literal — sash_table_new + per-pair set with

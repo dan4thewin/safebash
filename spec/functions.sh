@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=82
+plan=90
 echo "1..$plan" >&3
 
 set +e
@@ -551,6 +551,101 @@ int i=0
 while [[ $(f) = x ]] { echo L; (( i = i + 1 )); if (( i > 1 )) { break } }'
 [[ $rc = 0 && $out = "L
 L" && -z $err ]]; chk ice.6
+
+
+# ── a splat argument must SPLAT, not join ────────────────────────────────
+# `@a` gave an external command three arguments but a user function ONE
+# joined argument, and an array literal `(@a q)` two elements instead of
+# four. Both go through `IndexedArray`, whose element loop had no splat arm,
+# so a splat was lowered as a single value that stringifies as the joined
+# array. Silently lossy: `("a b" "c")` and `(a b c)` both became "a b c", so
+# an element containing a space was indistinguishable from two elements.
+
+# sp.1 a function receives one argument per ELEMENT
+# native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
+# unrelated to splatting — the no-splat control sp.8 fails there identically.
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+fn f { echo "n=$(len args)" }
+f @a'
+    [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.1
+else
+    skip_chk sp.1
+fi
+
+# sp.2 …and they are the elements, in order
+# native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
+# unrelated to splatting — the no-splat control sp.8 fails there identically.
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+fn f { for v in @args { echo "<$v>" } }
+f @a'
+    [[ $rc = 0 && $out = $'<x>\n<y>\n<z>' && -z $err ]]; chk sp.2
+else
+    skip_chk sp.2
+fi
+
+# sp.3 element boundaries survive: two DIFFERENT arrays must not collapse to
+# the same thing (this is the lossy half of the bug)
+# native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
+# unrelated to splatting — the no-splat control sp.8 fails there identically.
+if in_modes native,c; then
+    run_sash 'array two=("a b" "c")
+fn f { echo "n=$(len args) first=[${args[0]}]" }
+f @two'
+    [[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.3
+else
+    skip_chk sp.3
+fi
+
+# sp.4 a splat inside an ARRAY LITERAL splices too
+# native,c: janet array-literal splat parity is unimplemented.
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+array b=(@a q)
+echo "$(len b):${b[0]}:${b[3]}"'
+    [[ $rc = 0 && $out = "4:x:q" && -z $err ]]; chk sp.4
+else
+    skip_chk sp.4
+fi
+
+# sp.5 a splat BEFORE and AFTER other elements keeps its position
+# native,c: janet array-literal splat parity is unimplemented.
+if in_modes native,c; then
+    run_sash 'array a=(m n)
+array b=(p @a q)
+echo "$(len b):${b[0]}:${b[1]}:${b[2]}:${b[3]}"'
+    [[ $rc = 0 && $out = "4:p:m:n:q" && -z $err ]]; chk sp.5
+else
+    skip_chk sp.5
+fi
+
+# sp.6 an EMPTY array splats to nothing (it must not contribute an element)
+# native,c: janet array-literal splat parity is unimplemented.
+if in_modes native,c; then
+    run_sash 'array e=()
+array b=(p @{e:~} q)
+echo "$(len b):${b[0]}:${b[1]}"'
+    [[ $rc = 0 && $out = "2:p:q" && -z $err ]]; chk sp.6
+else
+    skip_chk sp.6
+fi
+
+# sp.7 the external path is unchanged (control — it was always correct)
+run_sash 'array a=(x y z)
+/usr/bin/printf "<%s>" @{a:~}'
+[[ $rc = 0 && $out = "<x><y><z>" && -z $err ]]; chk sp.7
+
+# sp.8 an explicit argument list is unchanged (control)
+# native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
+# unrelated to splatting — the no-splat control sp.8 fails there identically.
+if in_modes native,c; then
+    run_sash 'fn f { echo "n=$(len args)" }
+f x y z'
+    [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
+else
+    skip_chk sp.8
+fi
 
 set -e
 tally

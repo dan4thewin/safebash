@@ -1001,6 +1001,28 @@ fn lower_indexed_array_value(
                     builder, module, externs, table_ptr, widx, val_ptr, val_len,
                 );
             }
+            // A splat contributes its ELEMENTS, not itself. Without this arm
+            // it fell to `_` below and was lowered as one value that
+            // stringifies as the joined array — so `f @a` passed a function a
+            // single "x y z", and `(@a q)` built a 2-element array. Silently
+            // lossy: `("a b" "c")` and `(a b c)` both collapsed to "a b c".
+            SsaValue::ArraySplat { array, disposition } => {
+                let tbl = super::commands::array_table_ptr(array, vars, builder);
+                let eff = match disposition {
+                    None => tbl,
+                    Some(d) => super::commands::emit_splat_disposition(
+                        builder,
+                        module,
+                        vars,
+                        literals,
+                        externs,
+                        exit_status_var,
+                        tbl,
+                        d,
+                    ),
+                };
+                emit_splat_append(builder, module, externs, table_ptr, widx, eff);
+            }
             _ => {
                 let (val_ptr, val_len) = lower_value(
                     val_ssa,
@@ -1017,6 +1039,52 @@ fn lower_indexed_array_value(
     }
     let zero = builder.ins().iconst(I64, 0);
     (table_ptr, zero)
+}
+
+/// Append every element of `src` to `dst` at the running write index — the
+/// array-building counterpart of the argv builder's `emit_splat_fill`.
+fn emit_splat_append(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    dst: cranelift_codegen::ir::Value,
+    widx: Variable,
+    src: cranelift_codegen::ir::Value,
+) {
+    let len_ref = module.declare_func_in_func(externs.table_len, builder.func);
+    let call = builder.ins().call(len_ref, &[src]);
+    let len = builder.inst_results(call)[0];
+
+    let i = builder.declare_var(I64);
+    let zero = builder.ins().iconst(I64, 0);
+    builder.def_var(i, zero);
+
+    let hdr = builder.create_block();
+    let body = builder.create_block();
+    let done = builder.create_block();
+    builder.ins().jump(hdr, &[]);
+
+    builder.switch_to_block(hdr);
+    let iv = builder.use_var(i);
+    let end = builder.ins().icmp(IntCC::SignedGreaterThanOrEqual, iv, len);
+    builder.ins().brif(end, done, &[], body, &[]);
+
+    builder.switch_to_block(body);
+    builder.seal_block(body);
+    let iv2 = builder.use_var(i);
+    let (out_slot, out_addr) = alloc_out_slot(builder);
+    let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
+    let call = builder.ins().call(tv_ref, &[src, iv2, out_addr]);
+    let elem_ptr = builder.inst_results(call)[0];
+    let elem_len = builder.ins().stack_load(I64, out_slot, 0);
+    emit_array_set_running(builder, module, externs, dst, widx, elem_ptr, elem_len);
+    let next = builder.ins().iadd_imm(iv2, 1);
+    builder.def_var(i, next);
+    builder.ins().jump(hdr, &[]);
+    builder.seal_block(hdr);
+
+    builder.switch_to_block(done);
+    builder.seal_block(done);
 }
 
 /// `table[widx++] = (val_ptr, val_len)` — set at the running index and advance.

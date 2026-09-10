@@ -290,7 +290,12 @@ fn inline_function_call(
     // Lower the call arguments ONCE in the caller's scope (before `args` is
     // redefined), so a side-effecting `$( … )` arg is not executed twice and
     // args reading the caller's positionals see the caller's values.
-    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| expr_to_value(a, state)).collect();
+    // `arg_to_value`, not `expr_to_value`: a call argument is a COMMAND-ARG
+    // position, so `@a` splats to one value per element. `expr_to_value` gives
+    // `@a` its joined-string meaning, which silently passed a function the
+    // whole array as a single argument — and made `("a b" "c")`
+    // indistinguishable from `(a b c)`.
+    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
 
     check_callee_arity(name, body, arg_values.len(), state);
     let saved_args = super::functions::save_caller_args(state);
