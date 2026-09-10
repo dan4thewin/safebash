@@ -1,6 +1,6 @@
 ---
 title: "DD#86 scope model — phases 2–5 (drop local, structural scope, no-shadow, dead-var, converter)"
-status: ready
+status: done
 priority: P1
 kind: feature
 depends: []
@@ -62,3 +62,19 @@ Phase 1 (the `str` keyword) shipped. The design is fully ratified in
   counts as used.
 - Phases 2/4 will churn many specs (every `local`; any assigned-but-unread var);
   land each phase with its spec updates so the native gate stays green.
+
+## CLOSED 2026-09-10 — all four phases verified at HEAD
+
+| phase | evidence |
+|---|---|
+| **2** drop `local`, structural scope | `local x=1` → **SB5011** (an unknown command, not a keyword); a new name in a function is auto-local; a global is read *and written* from a function (`g=7; fn f { g=9 }` → 9) |
+| **3** no-shadowing | a typed redeclaration of a top-level global inside a function → **SB5049** |
+| **4** dead variable | assigned-but-never-read → **SB5050**, `const` included, hard error not a warning |
+| **5** converter / specs / docs | `sash-convert` drops the keyword with a DD#86-aware comment (convert.rs:223); `functions.sh` 18.1/18.2 pin both removals; **DD#35 amended** — "the *lifetime* axis (`local`) is retired… lifetime is positional, not a keyword" |
+
+Phase 2's removal list is complete except for cosmetic residue, filed
+separately as `cleanup-stale-local-names`: `parse_local` survives in two
+**doc comments** only (parser.rs:14, :648), and `save_locals`/`restore_locals`
+are live code that no longer has anything to do with `local` — they snapshot
+and restore variables around a **body capture** (`$(f)` subshell isolation),
+so the names mislead.
