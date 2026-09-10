@@ -1,5 +1,5 @@
 title: Subshell decomposition — lowerer should coerce to sash primitives
-status: superseded
+status: done
 superseded-by: dd38-subshell-coercion-docs
 depends: dd38-subshell-coercion-docs
 severity: correctness
@@ -30,3 +30,7 @@ when process isolation is genuinely required (e.g., subshell contains
 
 This makes sash-native code fork-free for the common subshell patterns
 while preserving correct semantics.
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor `dd38-subshell-coercion-docs` landed.

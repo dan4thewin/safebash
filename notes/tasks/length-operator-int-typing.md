@@ -1,6 +1,6 @@
 ---
 title: "Int-type the `${#…}` length operator: `int n=${#s}` and `int n=${#a[@]}`"
-status: superseded
+status: done
 superseded_by: dd75-len-polymorphic (DD#75 §2)
 priority: P2
 kind: bug
@@ -59,3 +59,7 @@ string.
 Sibling of the shipped `is_int_returning_intrinsic` fix (commit adding
 `len`/`epochseconds`). Together they complete "a length/count expression is
 int-typed" across both spellings (`$(len …)` and `${#…}`).
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Superseded by DD#75 §2 (polymorphic `len`); `${#…}` is retired (SB4038).

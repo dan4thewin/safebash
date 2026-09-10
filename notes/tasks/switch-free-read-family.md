@@ -1,6 +1,6 @@
 ---
 title: "switch-free builtins: decompose `read`/`mapfile`/`echo` flags into distinct commands + sigils (the readr/readc question)"
-status: superseded
+status: done
 priority: P2
 kind: decision
 depends: []
@@ -120,3 +120,11 @@ independently and stays valid whichever way the rest lands.
 - Still open: everything under "Decisions for DG" (readr rename, drop
   `-a`/`-f`/`-d`/`-z`, unify/delete the two `parse_read_flags`).
 
+## Closed 2026-09-10 (backlog prune)
+
+**DD#99 is this task's answer.** Its own gate — "read → decompose + drop
+-a/-f/-d/-z" — shipped in stages 1-8 (2026-09-09/10): `read` is array-only
+NUL-split, `readline` is the scalar form, `write` replaced `echo -n`, and
+every read flag plus `mapfile`/`readarray` is now rejected with a diagnostic
+naming the replacement. The two inconsistent `parse_read_flags` went with
+them. The `readc` half was already dropped by DG in 2026-09-02.

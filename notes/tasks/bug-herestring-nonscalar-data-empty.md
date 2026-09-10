@@ -1,6 +1,6 @@
 ---
 title: "BUG — a here-string `<<<` with non-simple data (`<<< ${x:-f}`, `<<< $a[i]`, `<<< $(cmd)`) silently feeds EMPTY stdin"
-status: superseded
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -64,3 +64,11 @@ legitimately supports `<<< $(cmd)` (command output as stdin). Open questions:
 
 2026-08-30, while implementing the redirect-target scalar fix — probing whether
 the same silent-empty fallthrough reached the here-string path (it does).
+
+## Closed 2026-09-10 (backlog prune)
+
+Re-verified at HEAD: `<<<` is now **rejected outright** (SB4050) in every form
+tested — `${x:-f}`, `$(cmd)`, `${a[i]}` and a plain `$x` alike. The
+"silently feeds EMPTY stdin" behaviour cannot occur, because no here-string
+compiles. The construct was dropped (DD#83; the converter task
+`converter-herestring-to-pipe` rewrites bash's `<<<` to a pipe).

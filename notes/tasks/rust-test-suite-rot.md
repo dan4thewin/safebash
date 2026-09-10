@@ -1,6 +1,6 @@
 ---
 title: Rust test suite rot — ~158 pre-existing failures at HEAD
-status: superseded
+status: done
 superseded-by: audit-rust-test-suites
 priority: P1
 kind: bug
@@ -72,3 +72,7 @@ for a stable count.
 ## See also
 - `Makefile`/`mkfile` `test:V:` target
 - `notes/tasks/brush-rerun.md`
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor `audit-rust-test-suites` is live.

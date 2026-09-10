@@ -1,6 +1,6 @@
 ---
 title: sash-convert — command-arg $@ has no clean sash-native target
-status: superseded
+status: done
 superseded-by: converter-positional-use-needs-bless
 priority: P2
 kind: feature
@@ -58,3 +58,7 @@ assignment), emit the MANUAL marker instead of `$(argv)`.
 - `notes/tasks/argv-trio-converter.md`
 - `notes/decisions/DD60-argv-trio.md`
 - `sash-convert/src/convert.rs` (convert_simple_expansion, splat_replace_node)
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor `converter-positional-use-needs-bless` is live.

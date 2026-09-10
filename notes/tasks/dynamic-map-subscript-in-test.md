@@ -1,6 +1,6 @@
 ---
 title: BUG — dynamic map subscript inside `[[ ]]` does an integer lookup (test-path)
-status: superseded
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -85,3 +85,7 @@ too — but worth a spec when this is picked up:
   subscript reads as 0 inside `$(( ))`).
 - **Indexed `${!a[@]}` key splat**: `for i in ${!a[@]}; do echo $i; done`
   prints blanks + a runtime "ignored null byte" warning.
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor DD#62 `dd62-test-expr-ssavalue` landed.

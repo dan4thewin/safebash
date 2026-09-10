@@ -1,6 +1,6 @@
 ---
 title: "bug: pid/random keyword intrinsics as arithmetic operands silently yield 0 (only `len` is wired as an arith int-intrinsic)"
-status: superseded
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -61,3 +61,7 @@ found **every** sash-native intrinsic except `len` is broken in a sexpr — the
 int-returning ones silently yield 0, the string/collection ones silently yield 0
 instead of a type error, plus the `random` int-typing inconsistency, the
 wrong-arity `sash: bug:` abort, and the `signum` doc bug. See that task.
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor `bug-arith-sexpr-intrinsics-zero` is the live, comprehensive task.

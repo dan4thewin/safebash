@@ -1,6 +1,6 @@
 ---
 title: "Stale Rust test suites: sash-rt-tests broken + cargo core suites use old syntax"
-status: superseded
+status: done
 superseded-by: audit-rust-test-suites
 priority: P3
 kind: chore
@@ -59,3 +59,7 @@ suites are partially legacy.
 
 DG to decide scope/priority — this is a cleanup, not a correctness bug in
 shipped code.
+
+## Closed 2026-09-10 (backlog prune)
+
+Bookkeeping only — closed 2026-09-10. Successor `audit-rust-test-suites` is live.

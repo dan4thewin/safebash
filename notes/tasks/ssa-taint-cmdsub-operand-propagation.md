@@ -1,6 +1,6 @@
 ---
 title: "SSA taint defense-in-depth: cmd_subst_taint should propagate operand taint"
-status: superseded
+status: done
 priority: P2
 kind: hardening
 depends: []
@@ -36,3 +36,10 @@ Watch-item: `join a` (bare name) needs taint_of_name lookup since the operand
 is a Literal, not a value that carries the array's taint. `bless` predicates
 legitimately read tainted data — ensure the propagation doesn't regress them
 (check_inst_uses already exempts bless args; verify Test-in-bless-predicate).
+
+## Closed 2026-09-10 (backlog prune)
+
+Marked superseded with no successor named. Its subject — the SSA backstop
+being incomplete — is covered by the live `ssa-taint-full-backstop`, which
+tracks making the backstop a complete gate (capture path, arrays, positions).
+Closing as a duplicate of that.
