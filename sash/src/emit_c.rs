@@ -240,6 +240,7 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_run(const char* const* argv, const char* const* envp);"
     )
     .unwrap();
+    writeln!(out, "extern void sash_argv_guard(const char* p, i64 n);").unwrap();
     writeln!(
         out,
         "extern const char* sash_capture_status(const char* const* argv, const char* const* envp, i64* out_len, i64* out_status);"
@@ -1982,7 +1983,9 @@ fn emit_argv_fixed(
     let mut arg_ptrs: Vec<String> = Vec::with_capacity(args.len() + 1);
     arg_ptrs.push(format!("\"{}\"", c_escape(name)));
     for arg in args {
-        let (ptr, _len) = lower_value_as_str(e, arg, types);
+        let (ptr, len) = lower_value_as_str(e, arg, types);
+        // DD#99 stage 7: the length is known here but lost at execve.
+        writeln!(e.out, "{ind}sash_argv_guard({ptr}, {len});").unwrap();
         arg_ptrs.push(ptr);
     }
     writeln!(
@@ -2036,7 +2039,8 @@ fn emit_argv_splat(
             writeln!(
                 e.out,
                 "{ind}for (i64 {iv} = 0; {iv} < {len}; {iv}++) {{ i64 {t}_el; \
-                 {argv}[{t}_w++] = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); }}"
+                 const char* {t}_ep = sash_table_value((SashTable*){tbl}, {iv}, &{t}_el); \
+                 sash_argv_guard({t}_ep, {t}_el); {argv}[{t}_w++] = {t}_ep; }}"
             )
             .unwrap();
         } else if let SsaValue::ElideEmpty { source: inner, .. } = arg {
@@ -2044,9 +2048,11 @@ fn emit_argv_splat(
             // lower_value_as_str returns already-evaluated ptr/len (temps for
             // complex reads), so the guard evaluates them once.
             let (ptr, len) = lower_value_as_str(e, inner, types);
+            writeln!(e.out, "{ind}sash_argv_guard({ptr}, {len});").unwrap();
             writeln!(e.out, "{ind}if (({len}) != 0) {argv}[{t}_w++] = {ptr};").unwrap();
         } else {
-            let (ptr, _len) = lower_value_as_str(e, arg, types);
+            let (ptr, len) = lower_value_as_str(e, arg, types);
+            writeln!(e.out, "{ind}sash_argv_guard({ptr}, {len});").unwrap();
             writeln!(e.out, "{ind}{argv}[{t}_w++] = {ptr};").unwrap();
         }
     }

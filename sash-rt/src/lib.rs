@@ -684,6 +684,45 @@ pub unsafe extern "C" fn sash_splat_disposition(
     tbl
 }
 
+/// DD#99 stage 7: an argv entry may not contain an interior NUL.
+///
+/// argv crosses `execve(2)` as C strings, so a value holding a NUL is
+/// truncated there — silently, and with a zero exit. sash scalars are
+/// byte-transparent and DD#99 makes NUL the field separator, so a NUL-bearing
+/// value reaching argv is now a realistic mistake rather than an exotic one
+/// (`read` a NUL-separated stream, forget to split, pass the whole thing).
+///
+/// Truncation is the one outcome the language must not have: the callee
+/// receives a *different, shorter* argument than the program computed and
+/// nothing says so. So this aborts (DD#55) instead.
+///
+/// # Safety
+/// `ptr` must be valid for `len` bytes.
+#[no_mangle]
+pub unsafe extern "C" fn sash_argv_guard(ptr: *const u8, len: i64) {
+    if ptr.is_null() || len <= 0 {
+        return;
+    }
+    let bytes = core::slice::from_raw_parts(ptr, len as usize);
+    if !bytes.contains(&0) {
+        return;
+    }
+    let argv = sash_argv;
+    if !argv.is_null() {
+        let a0 = *argv;
+        if !a0.is_null() {
+            sash_write(2, a0, strlen(a0) as i64);
+            sash_write(2, b": ".as_ptr(), 2);
+        }
+    }
+    sash_write(
+        2,
+        b"argument contains a NUL byte and would be truncated at exec\n".as_ptr(),
+        60,
+    );
+    sash_exit(1);
+}
+
 /// DD#77: `${var:?MESSAGE}` — abort when the scalar is unset/empty. `s_len <= 0`
 /// (unset reads as empty) writes `<argv0>: MESSAGE\n` to stderr and exits 1
 /// (mirrors the splat `:?` abort); otherwise a no-op. The caller keeps the

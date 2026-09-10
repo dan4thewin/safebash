@@ -306,3 +306,37 @@ longer compiles. It has no command-rewriting path today (it only inserts
 annotations), so this is an addition rather than an edit — filed as
 `sash-convert-read-dd99` (P1). `docs/sash.1` still documents the retired flag
 surface.
+
+## Stage 7 landed (2026-09-10) — the argv interior-NUL guard
+
+argv crosses `execve(2)` as C strings, so a NUL-bearing value was truncated
+there: silently, with a zero exit, and the callee received a **different,
+shorter argument** than the program computed.
+
+```sh
+s="abc$'\0'HIDDEN"
+echo "$(len s)"          # 10
+/usr/bin/printf "[%s]" $s # [abc]   ← 7 bytes gone, rc 0
+```
+
+DD#99 is what makes this urgent rather than exotic: scalars are
+byte-transparent and NUL is now *the* field separator, so "read a
+NUL-separated stream, forget to split, pass the whole thing" is an ordinary
+slip. Truncation is the one outcome the language must not have, so
+`sash_argv_guard(ptr, len)` aborts (DD#55).
+
+The check has to sit where argv is **built**, not in `sash_exec` — by there the
+length is already gone. Three sites, all of them:
+
+- the fixed (stack) argv path;
+- the runtime path's scalars and `:~` elides;
+- **splat elements**, via the length `sash_table_value` already writes out.
+
+That last one mattered: guarding only scalars would have been *worse than no
+guard*, because it would imply argv NULs abort while `@a` still truncated
+quietly.
+
+A NUL remains a perfectly good value in-process — spec an.5 pins that, since
+it is the basis of the whole design.
+
+Specs `commands.sh` an.1-an.5 (native + c; janet has no `$'…'`/split path).

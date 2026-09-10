@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=59
+plan=64
 echo "1..$plan" >&3
 
 set +e
@@ -418,6 +418,58 @@ if in_modes native,c; then
     [[ $rc = 0 && $out = "solo" && -z $err ]]; chk 14.36
 else
     skip_chk 14.36
+fi
+
+
+# ── DD#99 stage 7: an argv entry may not contain an interior NUL ──────────
+# argv crosses execve(2) as C strings, so a NUL-bearing value is truncated
+# there — silently, with a zero exit, and the callee receives a DIFFERENT,
+# shorter argument than the program computed. sash scalars are byte-
+# transparent and DD#99 makes NUL the field separator, so this went from
+# exotic to a realistic slip (read a NUL-separated stream, forget to split,
+# pass the whole thing). It aborts instead (DD#55).
+
+# an.1 a scalar argument carrying a NUL aborts rather than truncating
+if in_modes native,c; then
+    run_sash 'nul=$'"'"'\0'"'"'
+s="abc${nul}HIDDEN"
+/usr/bin/printf "[%s]" $s'
+    [[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk an.1
+else
+    skip_chk an.1
+fi
+
+# an.2 …and so does a SPLAT ELEMENT. Guarding only scalars would be worse
+# than no guard: it would imply argv NULs abort while `@a` still truncated.
+if in_modes native,c; then
+    run_sash 'nul=$'"'"'\0'"'"'
+s="abc${nul}HID"
+array a=($s x)
+/usr/bin/printf "[%s]" @{a:~}'
+    [[ $rc != 0 && $rerr == *NUL* ]]; chk an.2
+else
+    skip_chk an.2
+fi
+
+# an.3 control: a clean scalar is unaffected
+run_sash '/usr/bin/printf "[%s]" ok'
+[[ $rc = 0 && $out = "[ok]" && -z $rerr ]]; chk an.3
+
+# an.4 control: a clean splat is unaffected
+run_sash 'array a=(p q)
+/usr/bin/printf "[%s]" @{a:~}'
+[[ $rc = 0 && $out = "[p][q]" && -z $rerr ]]; chk an.4
+
+# an.5 the NUL is only rejected AT argv — it remains a legitimate value
+# in-process, which is the whole basis of DD#99's split
+if in_modes native,c; then
+    run_sash 'nul=$'"'"'\0'"'"'
+s="a${nul}b"
+read $s f
+echo "$(len s):$(len f):${f[1]}"'
+    [[ $rc = 0 && $out = "3:2:b" && -z $err ]]; chk an.5
+else
+    skip_chk an.5
 fi
 
 set -e

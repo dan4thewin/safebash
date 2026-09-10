@@ -342,6 +342,23 @@ pub(super) fn build_argv_values(
     }
 }
 
+/// DD#99 stage 7: an argv entry's length is known here but is lost at
+/// `execve`, where the entry becomes a C string. Check for an interior NUL
+/// while we still can — silent truncation is the one outcome to avoid.
+///
+/// Splat ELEMENTS are not guarded here: they come from a table the runtime
+/// walks, so `emit_splat_fill` would need the check inside its loop.
+fn emit_argv_guard(
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    externs: &ExternFuncs,
+    ptr: cranelift_codegen::ir::Value,
+    len: cranelift_codegen::ir::Value,
+) {
+    let guard = module.declare_func_in_func(externs.argv_guard, builder.func);
+    builder.ins().call(guard, &[ptr, len]);
+}
+
 /// Compile-time-sized argv on a stack slot. No splats present.
 #[allow(clippy::too_many_arguments)]
 fn build_argv_fixed(
@@ -363,7 +380,11 @@ fn build_argv_fixed(
 
     for (i, v) in values.iter().enumerate() {
         let offset = (i * 8) as i32;
-        let (ptr, _) = lower_value(v, builder, module, vars, literals, externs, exit_status_var);
+        let (ptr, len) = lower_value(v, builder, module, vars, literals, externs, exit_status_var);
+        // DD#99 stage 7: the length is known here but is lost at execve, where
+        // the entry becomes a C string. Check for an interior NUL while we
+        // still can — truncating silently is the one outcome to avoid.
+        emit_argv_guard(builder, module, externs, ptr, len);
         builder.ins().stack_store(ptr, argv_slot, offset);
     }
 
@@ -443,10 +464,11 @@ fn build_argv_runtime(
                     externs,
                     exit_status_var,
                 );
+                emit_argv_guard(builder, module, externs, ptr, len);
                 store_argv_entry_if_nonempty(builder, base, widx, ptr, len);
             }
             scalar => {
-                let (ptr, _) = lower_value(
+                let (ptr, len) = lower_value(
                     scalar,
                     builder,
                     module,
@@ -455,6 +477,7 @@ fn build_argv_runtime(
                     externs,
                     exit_status_var,
                 );
+                emit_argv_guard(builder, module, externs, ptr, len);
                 store_argv_entry(builder, base, widx, ptr);
             }
         }
@@ -638,6 +661,12 @@ fn emit_splat_fill(
     let tv_ref = module.declare_func_in_func(externs.table_value, builder.func);
     let call = builder.ins().call(tv_ref, &[tbl, iv2, out_addr]);
     let elem_ptr = builder.inst_results(call)[0];
+    // DD#99 stage 7: guard splat ELEMENTS too. `table_value` writes the
+    // element length into `out_slot`, so the check is available right here —
+    // without it the guard would cover scalars only, which is worse than no
+    // guard: it would imply argv NULs abort while `@a` still truncated.
+    let elem_len = builder.ins().stack_load(I64, out_slot, 0);
+    emit_argv_guard(builder, module, externs, elem_ptr, elem_len);
     store_argv_entry(builder, base, widx, elem_ptr);
     let next = builder.ins().iadd_imm(iv2, 1);
     builder.def_var(i, next);

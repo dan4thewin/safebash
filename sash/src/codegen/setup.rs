@@ -468,6 +468,14 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         )
         .expect("declare sash_regex_matchall_into");
 
+    // sash_argv_guard(ptr, len) — DD#99 stage 7: abort rather than let an
+    // interior NUL truncate the argument at execve.
+    let mut argv_guard_sig = module.make_signature();
+    push_i64s(&mut argv_guard_sig, 2, 0);
+    let argv_guard_func = module
+        .declare_function("sash_argv_guard", Linkage::Import, &argv_guard_sig)
+        .expect("declare sash_argv_guard");
+
     // sash_regex_replace(str_ptr, str_len, pat_ptr, pat_len, rep_ptr, rep_len, global) -> (ptr, len)
     let mut regex_replace_sig = module.make_signature();
     push_i64s(&mut regex_replace_sig, 7, 2); // returns (ptr, len)
@@ -834,6 +842,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         regex_match_str: regex_match_str_func,
         regex_match_into: regex_match_into_func,
         regex_matchall_into: regex_matchall_into_func,
+        argv_guard: argv_guard_func,
         strcmp: strcmp_func,
         table_new: table_new_func,
         table_set: table_set_func,
