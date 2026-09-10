@@ -242,3 +242,51 @@ is not that anyone was careless — it is that "this operand is a name" has no
 representation in the language, so every slot re-derives it and each
 re-derivation is a chance to forget. That is the case for the sigil, and it is
 now measured rather than asserted.
+
+## Addendum — `$a` on a collection (SB5064)
+
+DG, mid-design-discussion: *"$a for an array a is an error."* Stated as a
+rule. It was not enforced, and the two things it did instead disagreed with
+each other:
+
+| spelling | before |
+|---|---|
+| `echo $a`, `str x=$a`, `echo $m` | silently **empty** |
+| `len $a` (a=(x y z)) | **3** — resolved as the collection *name* |
+
+One spelling, two different wrong answers, neither an error. The value
+contexts dropped it; the operand slot resolved it. `len $a` returning the
+array length is the same `expr_to_string` accident this journal opened with —
+the pretty-printer strips the `$` and the result is looked up as a name.
+
+This is the dual of `bug-scalar-subscript-segfault`: there, a *subscript* on a
+scalar (`${s[0]}`) segfaults; here, a *scalar sigil* on a collection silently
+vanishes. Both are the expansion form disagreeing with the variable's type,
+and neither was checked. Worth noting the pair — the type/shape agreement of
+an expansion is a category the compiler was not validating at all.
+
+**SB5064** (`validate.rs`, `check_collection_scalar_read`): collect every
+`-a`/`-A` declaration name (descending into function and control-flow
+bodies), then flag any `SimpleExpansion` of one. The check lives in
+`validate.rs` rather than `type_check.rs` for the usual reason — every
+`TypeError` collapses to SB4030 at `lib.rs`, so a check that needs its own
+code cannot live there.
+
+Churn was one test: `75.38`, the control written earlier this session, which
+asserted `$(len $a)` works. It was pinning the accident. Dropped that clause
+and added `75.39`–`75.43`. `75.43` needed the same `native,c` guard as
+`75.38` (janet execs `/usr/bin/join`).
+
+Sweep **4694 / 39 / 462**, zero regressions.
+
+### Also settled here
+
+DG corrected the nine-slot inventory: `attest` and `array a` are **language
+syntax**, not builtin calls, so they were never operand slots. And `read a`
+is *double duty* — it declares `a` and populates it — which is why it kept
+resisting the pattern. The sigil `=a`, DG's most convincing framing, is about
+**connecting `a` to a parameter slot**, which is a property of *calls*.
+
+Scope for now (DG, low-churn): builtins take **bare names, no splats**; user
+functions get the new collection slots (5 max?). The sigil is not applied to
+builtins.

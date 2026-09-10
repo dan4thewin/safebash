@@ -4581,6 +4581,90 @@ fn classify_operand(expr: &Expr) -> OperandForm {
     }
 }
 
+/// SB5064: a collection read through the scalar `$name` sigil.
+///
+/// `$a` for a collection `a` is an error (DG 2026-09-11). It was neither
+/// rejected nor meaningful: in every value context it silently expanded to
+/// **nothing** (`echo $a`, `str x=$a`, `echo $m` all produced empty), while
+/// the `len` operand slot resolved the same spelling as the collection
+/// *name* — `len $a` on a three-element array returned `3`. Two different
+/// wrong answers for one spelling, neither of them an error.
+///
+/// This is the dual of `bug-scalar-subscript-segfault` (`${s[0]}` on a
+/// scalar): both are the expansion form disagreeing with the variable's
+/// type. Use `@a` for the values, `${a[i]}` for one element, or
+/// `$(len a)` / `$(join a SEP)`.
+pub fn check_collection_scalar_read(program: &Program) -> Vec<Diagnostic> {
+    let mut collections = HashSet::new();
+    collect_collection_names(&program.statements, &mut collections);
+    if let Some(end) = &program.end_block {
+        collect_collection_names(end, &mut collections);
+    }
+    let mut diags = Vec::new();
+    for stmt in program
+        .statements
+        .iter()
+        .chain(program.end_block.iter().flatten())
+    {
+        crate::ir::walk_all_exprs(stmt, &mut |e| {
+            flag_collection_scalar_read(e, &collections, &mut diags);
+        });
+    }
+    diags
+}
+
+/// Every `-a`/`-A` declaration name in the program, including inside function
+/// bodies and control-flow bodies.
+fn collect_collection_names(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        insert_collection_decl(&stmt.kind, set);
+        if let StmtKind::Function(f) = &stmt.kind {
+            collect_collection_names(&f.body, set);
+        }
+        for body in stmt.child_bodies() {
+            collect_collection_names(body, set);
+        }
+    }
+}
+
+fn insert_collection_decl(kind: &StmtKind, set: &mut HashSet<String>) {
+    let StmtKind::Declaration(d) = kind else {
+        return;
+    };
+    if !is_collection_flags(&d.flags) {
+        return;
+    }
+    for a in &d.assignments {
+        set.insert(a.name.clone());
+    }
+}
+
+fn is_collection_flags(flags: &[String]) -> bool {
+    flags.iter().any(|f| f == "-a" || f == "-A")
+}
+
+fn flag_collection_scalar_read(
+    expr: &Expr,
+    collections: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let ExprKind::SimpleExpansion(name) = &expr.kind else {
+        return;
+    };
+    if !collections.contains(name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        expr.span,
+        "SB5064",
+        format!(
+            "`${name}` reads the collection `{name}` with the scalar sigil, which \
+             is neither the collection nor element 0 — use `@{name}` for its values, \
+             `${{{name}[i]}}` for one element, or `$(len {name})` / `$(join {name} SEP)`"
+        ),
+    ));
+}
+
 /// SB5062: `len` / `join` / `keys` resolve their operand as a variable NAME.
 /// Any other spelling was rendered by `expr_to_string` — a source-text
 /// formatter, quotes and all — and the resulting text looked up as if it were

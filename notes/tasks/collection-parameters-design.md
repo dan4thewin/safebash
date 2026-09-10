@@ -288,3 +288,60 @@ then make bare an error once the tree is converted.
 
 Both conclusions agree with DG's instinct ("len probably wants `=a`… if we
 say join is only for collections then `=a` is better").
+
+## Addendum (2026-09-11) — DG scopes it low-churn; one blocker for DG
+
+DG settled scope: **builtins take bare names, no splats**; **user functions
+get the new collection slots (`A`, `B`, `C`… — 5 max?)**; the sigil is *not*
+applied to builtins. DG also corrected the inventory:
+
+- **`attest` and `array a` are language syntax, not builtin calls** — they
+  were never operand slots, so the "nine slots" count conflated grammar with
+  calls.
+- **`read a` is double duty**: it declares `a` *and* populates it. That is
+  why it resisted the pattern — it is part declaration (syntax), part call.
+- The governing intuition: `=a` **connects `a` to a parameter slot**. That is
+  a property of *calls*, which is exactly why builtins-as-syntax do not need
+  it.
+
+This supersedes the uniform-marking recommendation above.
+
+### Done under this scope
+
+`$a` on a collection is now **SB5064** (see journal 261 addendum). That was
+DG's rule stated in passing and found unenforced.
+
+### Blocker — "no splats" collides with SB5025's own advice
+
+`join @a` is not an incidental spelling; it is the one the **compiler
+recommends**. `spec/glob_splat.sh:99` records SB5025's guidance verbatim:
+
+> use `$(join @a)` for a string, `${a[i]}` for one
+
+Removing splats from `len`/`join` therefore means rewriting that diagnostic's
+recommendation as well as 17 `join @a` sites (`len @a` adds 2). Measured
+today, `join a ","` and `join @a ","` are exact synonyms, so this is a pure
+spelling restriction, not a semantic change.
+
+Worth DG's call because it trades against the stated "low churn" goal:
+
+- **Proceed** — one form per operation, consistent with `keys` (already bare
+  only) and with the grammar argument for collection-only `join`. Cost: 19
+  sites + SB5025's message.
+- **Defer** — leave `@a` accepted on `len`/`join` and revisit when
+  `dd75-len-collection-only-strlen` lands, since that task rewrites this
+  exact surface anyway and would otherwise touch the same sites twice.
+
+Recommendation: **defer and fold it into `dd75-len-collection-only-strlen`**
+— that task already has to decide `len`'s operand set, and doing it once
+avoids churning the same 19 sites in two passes.
+
+### Still open for the parameter slots
+
+- **`5 max?`** — DG's own question mark. Needs a rule for what happens at 6.
+- Whether `A`…`E` are **reserved** (the `args` precedent says yes: SB5024 at
+  top level, SB5052 in a function).
+- How collection and scalar arguments **interleave** at the call site, and
+  whether slot letters are positional (`f =x =y` → `A`, `B`).
+- **Array vs map typing** of a slot, and whether a callee may **mutate** it
+  (in/out) or only read it.

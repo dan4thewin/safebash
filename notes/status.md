@@ -1,3 +1,33 @@
+## ═══ STATUS (2026-09-11) — SB5064: `$a` on a collection is an error ═══
+
+**On `hand-parser`.** DG, mid-discussion: *"`$a` for an array `a` is an
+error."* It was not enforced, and the two things it did instead disagreed:
+
+| spelling | before |
+|---|---|
+| `echo $a`, `str x=$a`, `echo $m` | silently **empty** |
+| `len $a` (a=(x y z)) | **3** — resolved as the collection *name* |
+
+One spelling, two wrong answers, neither an error. Now **SB5064**
+(`check_collection_scalar_read` in `validate.rs`). Sweep **4694 / 39 / 462**,
+zero regressions. Specs `types.sh` 75.39–75.43; `75.38` had been pinning the
+accident and was corrected.
+
+**The pair worth noting:** this is the dual of `bug-scalar-subscript-segfault`
+(`${s[0]}` on a scalar segfaults). Both are the expansion form disagreeing
+with the variable's type — a category the compiler was not validating at all.
+
+**Sigil scope settled (DG, low churn):** builtins keep **bare names, no
+splats**; user functions get the new collection slots (5 max?). DG corrected
+the inventory — `attest` and `array a` are *language syntax*, not calls, and
+`read a` is double duty (declares *and* populates), which is why it resisted
+the pattern. `=a` means **connecting `a` to a parameter slot**.
+
+**Open — needs DG:** removing splats from `len`/`join` conflicts with
+**SB5025's own message**, which tells users to write `$(join @a)` for a
+string (`glob_splat.sh:99`). 17 `join @a` sites + the diagnostic's guidance.
+See `collection-parameters-design.md`.
+
 ## ══ STATUS (2026-09-11) — `=` as the name sigil; assignment symmetry fix ══
 
 **On `hand-parser`.** DG asked about `=` as the sigil character, and whether it

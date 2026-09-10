@@ -230,6 +230,7 @@ fn run_semantic_checks(input: &str, program: &crate::ir::Program, flags: &[&str]
     tdiags.extend(validate::check_join_arity(program));
     tdiags.extend(validate::check_operand_spelling(program));
     tdiags.extend(validate::check_fill_target(program));
+    tdiags.extend(validate::check_collection_scalar_read(program));
     tdiags.extend(validate::check_disposition_defaults(program));
     tdiags.extend(validate::check_elide_positions(program));
     tdiags.extend(validate::check_args_immutable(program));

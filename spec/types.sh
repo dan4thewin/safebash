@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=157
+plan=162
 echo "1..$plan" >&3
 
 set +e
@@ -667,12 +667,46 @@ run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 # See notes/tasks/janet-join-intrinsic-gaps.md; guard to native,c.)
 if in_modes native,c; then
     run_sash 's=hi; array a=(x y z); map m=([k]=v)
-echo "$(len s) $(len $s) $(len a) $(len $a) $(len @a) $(len m)"
+echo "$(len s) $(len $s) $(len a) $(len @a) $(len m)"
 echo "$(join a ",") $(join @a ",")"
 for k in $(keys m); do echo "$k"; done'
-    [[ $rc = 0 && $out = $'2 2 3 3 3 1\nx,y,z x,y,z\nk' && -z $err ]]; chk 75.38
+    [[ $rc = 0 && $out = $'2 2 3 3 1\nx,y,z x,y,z\nk' && -z $err ]]; chk 75.38
 else
     skip_chk 75.38
+fi
+
+# ── SB5064: `$a` on a collection is an error (DG 2026-09-11) ──
+# It was neither rejected nor meaningful: every value context silently
+# expanded to nothing, while the `len` operand slot resolved the same
+# spelling as the collection NAME (`len $a` on a 3-element array gave 3).
+
+# 75.39 scalar-sigil read of an array in a value context
+run_sash 'array a=(x y z); echo $a'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.39
+
+# 75.40 same for a map
+run_sash 'map m=([k]=v); echo $m'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.40
+
+# 75.41 assigning from it (silently produced an empty string)
+run_sash 'array a=(x y z); str x=$a; echo $x'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.41
+
+# 75.42 the operand slot: `len $a` returned the ARRAY length for a spelling
+# that is not the array
+run_sash 'array a=(x y z); echo $(len $a)'
+[[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.42
+
+# 75.43 control: the correct spellings are unaffected.
+# native,c — janet execs /usr/bin/join for `join a SEP` and emits `$s` as a
+# bare symbol; see notes/tasks/janet-join-intrinsic-gaps.md (same guard as
+# 75.38).
+if in_modes native,c; then
+    run_sash 'array a=(x y z); str s=hi
+echo "${a[1]} $(len a) $(join a ",") $s $(len $s)"'
+    [[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
+else
+    skip_chk 75.43
 fi
 
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
