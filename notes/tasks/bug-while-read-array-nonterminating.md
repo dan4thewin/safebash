@@ -1,13 +1,13 @@
 ---
-title: "bug: `while read -a arr` runs ZERO iterations (silent no-op); `read -a` default splits on space only"
+title: "bug: `while read ARR` never terminates — reject it (DD#99)"
 status: ready
 priority: P1
 kind: bug
 depends: []
 gates:
-  - "`while read -a l; do echo ITER; done` over two lines runs the body (bash runs it twice); today it runs zero times and emits no diagnostic"
-  - "`read -a` documents and implements ONE default separator consistently (today: space splits, tab and newline do not)"
-  - "if `while read -a` is deliberately unsupported, it is REJECTED with an SB code, not silently skipped"
+  - "`while read ARR; do … done` is REJECTED with an SB code naming `while readline v`"
+  - "`while readline v` keeps working (it already does)"
+  - "a spec pins the rejection, and the diagnostic says what to write instead"
 ---
 
 ## Found
@@ -54,3 +54,36 @@ Both sit inside the `read`/`mapfile` family that `switch-free-read-family`
 proposes to replace. If that redesign lands, (a) and (b) may be resolved by
 construction — but neither should wait on an open decision, and the redesign
 needs these behaviors pinned as specs either way.
+
+## Re-verified 2026-09-10 — the original description was wrong twice
+
+At HEAD the spelling is `while read ARR` (DD#99 removed `-a`), and it does not
+run **zero** iterations:
+
+```
+n=0
+n=0
+n=0
+n=0            <- forever
+```
+
+It is an **infinite loop**, spinning on an empty array. Worse than filed, and
+the "`read -a` splits on space only" half of the title is moot — that flag is
+gone.
+
+`while readline v` is correct and unaffected (`got a`, `got b`, `done`).
+
+## Decided (DG): **reject** (option A)
+
+`read ARR` consumes the whole stream by design, so looping over it is a
+category error — there is no second read for the loop to make. The construct
+has no meaning anyone can state in a sentence, which is the strongest argument
+against keeping it in any form.
+
+Considered and rejected: giving it a per-iteration meaning (bind the next
+NUL-separated field), which puts a scalar's worth of data in an array; and
+fixing EOF only, which would leave a construct that terminates but still means
+nothing.
+
+`while readline v` is the iteration form and already works. The diagnostic
+must name it.
