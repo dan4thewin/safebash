@@ -1,6 +1,6 @@
 ---
 title: "`len` on a non-array operand: garbage (string) / segfault (undefined) — reject at compile time"
-status: superseded
+status: done
 superseded_by: dd75-len-polymorphic (DD#75 §2)
 priority: P1
 kind: bug
@@ -55,3 +55,18 @@ also DD#41 array ops) and cover them in the same pass.
 The **segfault** on an undefined operand is a crash (P1). The garbage on a
 string is a silent-wrong-answer (also serious). Neither should ever reach
 runtime — both are statically detectable (operand is not an array).
+
+## Closed 2026-09-10 — verified done, not merely superseded
+
+DD#75 §2 resolved this by making `len` **type-polymorphic** (Go semantics)
+rather than by rejecting the operand, so every original gate is met at HEAD:
+
+| gate | today |
+|---|---|
+| scalar is not runtime garbage | `len s` on "hello" → `5`, the byte length — deliberate |
+| undefined is not a segfault | **SB5039** at compile time |
+| `len arr` still works | element count |
+| the doc comment | still says "string or array length" — which DD#75 made *true* |
+
+The comment predates the decision but happens to describe current behaviour,
+so there is nothing left to correct. Closing.
