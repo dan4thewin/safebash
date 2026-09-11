@@ -1,6 +1,6 @@
 ---
 title: "`join <map>` silently drops the keys — reject it (SB4030)"
-status: ready
+status: closed
 priority: P2
 kind: bug
 depends: []
@@ -46,3 +46,37 @@ Rejected alternatives:
 The explicit spellings exist or are cheap: `$(join $(keys m))` for the keys,
 and a `values` builtin (map-only, mirroring `keys`) for the values. That would
 be a separate proposal — the point here is not to smuggle it into `join`.
+
+## REVERSED 2026-09-11 (DG) — not a bug; values-only is correct
+
+> "arrays and maps differ only in how they're indexed, splat of an array
+> doesn't produce indices, why would splat of a map…?"
+
+The filing above is wrong, and the error is in its first sentence: it treats
+map keys as **data** ("keys silently gone"). They are **indices**. `@a` does
+not yield `0 1 2`, and nobody calls that silently dropping the indices — so
+`@m` yielding values is the same operation, not a lesser one.
+
+That also dissolves the meaning-shift objection. Under the values rule `join m`
+is `join a` with the type selecting the traversal, which is precisely the
+*coherent-category* polymorphism `dd75-len-collection-only-strlen` blesses. In
+fact that task's own survey table already listed `for v in @x` as ✅ for array
+**and** map — the values reading, one row above the `join` row used to condemn
+it. The `join` row was the outlier in its own table.
+
+The two rejected alternatives are re-read accordingly:
+
+- *"keep values-only, specify it"* — this is now the ruling, and it entrenches
+  nothing: there is no meaning-shift to entrench.
+- *"join the pairs"* — still wrong, and now for a sharper reason (below).
+
+`array a = @m` (SB5061) is **unaffected** and stays rejected — but its DD#99
+stage 8 reasoning is replaced too, since "silent mis-pairing" presupposed the
+pairs reading. It survives on the **broken round trip**: `map m = @{a:~}`
+consumes alternating k/v, so `array a = @m` reads as its inverse and is not
+one. See the DD#75 clarification.
+
+No `values` builtin is needed: `join m SEP` gives the values, `keys m` the
+indices.
+
+Specs `spec/var_modifiers.sh` af.5–af.10.

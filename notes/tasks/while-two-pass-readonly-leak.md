@@ -1,6 +1,6 @@
 ---
 title: "`lower_while`'s two-pass lowering leaks `readonly_vars` into pass 2"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -75,3 +75,25 @@ that fixing the leak has a visible consequence here.
 The version counters must **not** be rolled back — `VersionState::counter` is
 documented as a high-water mark, and `insert_phis_two_branch` consumes pass
 1's versions. Only guard-then-skip state is in question.
+
+## Resolved 2026-09-11 — DG ruled; the leak is now irrelevant (SB5072)
+
+> "const shouldn't be within loop"
+
+This filing asked whether a loop body may bind a `const`, because restoring
+`readonly_vars` across `lower_while`'s two passes would have made `while`
+accept it while `for` still rejected it. DG ruled: **no** — it follows from
+DD#86's no-block-scope model, since a loop body introduces no scope and the
+binding is simply re-executed.
+
+So the leak is not fixed, and no longer needs to be: the construct it was
+accidentally rejecting is now rejected **deliberately**, by `check_const_in_loop`
+in `validate.rs`, with a real span. Previously it surfaced as the spanless
+`VersionState::define` backstop reported at `1:1`.
+
+`const` inside a function body stays legal — DD#86 Phase 2 fixed the identical
+leak there via `enter/exit_fn_body_scope`, and spec 86.30 keeps it fixed.
+
+The one note worth carrying forward: version counters must still **not** be
+rolled back across the two passes (`counter` is a documented high-water mark
+that `insert_phis_two_branch` consumes). Only guard-then-skip state may be.

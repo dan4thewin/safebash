@@ -117,3 +117,77 @@ lands on *another* declared global — fundamentally undetectable, and rare.
    amended (lifetime axis retired, `str` added). Remaining refinement: the
    converter does not yet detect+rename a bash local that *shadowed* a global
    (flag-for-review) — filed follow-up.**
+
+## Amendment (2026-09-11, DG) — a `fn` must be defined at the top level
+
+> "I think all functions must be top-level — counterargument?"
+
+**Accepted, in the broad form.** A `fn` definition is legal only as a direct
+element of the top-level statement list. Anywhere else is **SB5071**: inside
+`if`/`while`/`for`/`case`, inside a `{ … }` group, as an operand of `&&`/`||`,
+as a pipeline stage, or inside another function's body.
+
+### Why this belongs to DD#86
+
+DD#86 makes scope **positional**, and gives control flow no scope of its own —
+loop-variable auto-scoping is one of the rejected alternatives above. So a
+function name is global *wherever the definition is written*, and the compiler
+hoists it. The hoisting is DD#86-correct. What is wrong is that the placement
+then **reads as a scope, or a condition, that does not exist**:
+
+```sh
+if [[ 1 = 2 ]] { fn f { echo A } }
+f                    # sash printed A;  bash: `f: command not found`
+```
+
+The branch is false and never runs. Bash defines functions at *execution* time,
+so it has no `f`; sash defines them at compile time, so it does. Same
+divergence for `false && fn f {…}`, and for a `fn` used as a pipeline stage —
+bash runs the stage in a subshell, so the definition cannot survive into the
+parent at all. With one definition per branch of an `if`, sash took the
+**lexically last** regardless of which branch ran.
+
+It was also the last **taint bypass**. `check_taint` defers the functions it
+finds in the top-level statement list and re-walks them against the completed
+tainted set; one hidden inside control flow was not in that list, kept the old
+definition-point walk, and could read a global tainted afterwards. It compiled
+and leaked raw argv. SB5071 closes that hole **by construction** — the
+`taint-fn-in-toplevel-control-flow` fix sketch (thread a phase flag, pair each
+deferred function with its scope) is no longer needed.
+
+### The counter-argument, and why the broad form won
+
+The counter-argument is only against the word *all*. Specs 18.3/18.4 pinned
+`fn` inside another `fn` as legal, citing this DD: a nested function is an
+ordinary global, callable from outside. That form is never conditional, so it
+carries none of the divergence and none of the taint hole. Rejecting it costs
+two specs.
+
+But that is a **cost** argument, not a principled one — and by this DD's own
+logic the nested-in-a-function case is misleading for exactly the same reason:
+its placement suggests a scope that function names do not have. Spec 18.3 was
+pinning the wart, not a feature. Applying the principle uniformly is the whole
+point of having it, so the broad rule wins and 18.3/18.4 are inverted.
+
+Specs `spec/functions.sh` 18.3–18.12 (including the taint case, and a control
+proving the top-level spelling is still taint-checked).
+
+## Amendment (2026-09-11, DG) — `const` in a loop body is SB5072
+
+> "const shouldn't be within loop"
+
+Follows directly from the no-block-scope model. A loop body introduces no
+scope, so a `const` inside one is a single binding **re-executed** — a const
+reassigned.
+
+The construct was already rejected, but badly: only by the spanless backstop in
+`VersionState::define`, reported at `1:1` with no source location. In the
+`while` case it was rejected only as a *side effect* of `readonly_vars` leaking
+across that loop's two-pass lowering — the same leak Phase 2 above had already
+fixed for function bodies. SB5072 makes the rejection deliberate and spanned,
+so it no longer depends on a bug to happen.
+
+`const` inside a **function** body stays legal (Phase 2's fix): a function body
+is entered once per call, not re-executed in place.
+
+Specs `spec/scope.sh` 86.25–86.30.

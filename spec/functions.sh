@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup functions
-plan=90
+plan=98
 echo "1..$plan" >&3
 
 set +e
@@ -48,20 +48,72 @@ run_sash 'fn outer {
 outer'
 [[ $rc != 0 && $err == *SB5011* ]]; chk 18.2
 
-# 18.3 DD#86: no block scope — a nested `fn` is an ordinary (global) function,
-# callable from outside its defining function
+# 18.3 DD#86 (2026-09-11): a `fn` must be defined at the TOP LEVEL. A nested
+# definition used to be accepted and hoisted to a global — which is what
+# DD#86's no-block-scope model implies, but it reads as though the function
+# were scoped to its parent. Rejected rather than documented.
 run_sash 'fn outer { fn inner { echo in } }
 outer
 inner'
-[[ $rc = 0 && $out = "in" && -z $err ]]; chk 18.3
+[[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk 18.3
 
-# 18.4 a nested `fn` def is usable within its defining function too
+# 18.4 same rejection when the nested definition is used only inside its parent
 run_sash 'fn outer {
   fn inner { echo inside }
   inner
 }
 outer'
-[[ $rc = 0 && $out = "inside" && -z $err ]]; chk 18.4
+[[ $rc != 0 && $err == *SB5071* ]]; chk 18.4
+
+# 18.5 a `fn` inside control flow is rejected. This is the case that made the
+# rule necessary: the branch is FALSE, never runs, and sash still defined `f`
+# and printed A — where bash reports `f: command not found`.
+run_sash 'if [[ 1 = 2 ]] { fn f { echo A } }
+f'
+[[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk 18.5
+
+# 18.6 the same divergence via `&&` — the left operand fails, so bash never
+# defines the function; sash hoisted it.
+run_sash 'false && fn f { echo A }
+f'
+[[ $rc != 0 && $err == *SB5071* ]]; chk 18.6
+
+# 18.7 ... and as a pipeline stage, where bash runs the stage in a subshell so
+# the definition cannot survive into the parent at all.
+run_sash 'fn f { echo A } | cat
+f'
+[[ $rc != 0 && $err == *SB5071* ]]; chk 18.7
+
+# 18.8 a `{ … }` group is not the top level either
+run_sash '{ fn f { echo A } }
+f'
+[[ $rc != 0 && $err == *SB5071* ]]; chk 18.8
+
+# 18.9 the taint bypass this rule closes by construction: `check_taint` defers
+# the functions it finds in the top-level statement list, so one hidden inside
+# control flow kept the definition-point walk and could read a global tainted
+# afterwards. It compiled and leaked raw argv before SB5071.
+run_sash 'if [[ 1 = 1 ]] { fn f { for v in @g { echo "$v" } } }
+argv g
+f'
+[[ $rc != 0 && -z $out && $err == *SB5071* ]]; chk 18.9
+
+# 18.10 control: the top-level spelling of 18.9 is still taint-checked (SB5020),
+# so the rejection above is not hiding a lost check.
+run_sash 'fn f { for v in @g { echo "$v" } }
+argv g
+f'
+[[ $rc != 0 && $err == *SB5020* ]]; chk 18.10
+
+# 18.11 control: an ordinary top-level `fn` calling another is unaffected
+run_sash 'fn a { echo A }
+fn b { a }
+b'
+[[ $rc = 0 && $out = "A" && -z $err ]]; chk 18.11
+
+# 18.12 control: `;`-separated top-level statements are still top level
+run_sash 'g=hi; fn f { echo $g }; f'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 18.12
 
 # 42.1 $(getenv VAR) reads env var
 run_sash 'x=$(getenv HOME)

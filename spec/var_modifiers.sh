@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=127
+plan=133
 echo "1..$plan" >&3
 
 set +e
@@ -600,6 +600,71 @@ echo "$(len m):${m[k]}"'
     [[ $rc = 0 && $out = "1:v" && -z $err ]]; chk af.4
 else
     skip_chk af.4
+fi
+
+# ── DD#75 (2026-09-11, DG): a splat yields VALUES, not indices ──────────────
+# `@a` does not produce `0 1 2`, so `@m` does not produce keys. Map keys are
+# indices, not data — which is why "join m drops the keys" was the wrong
+# reading, and `join-map-reject` was closed as not-a-bug. The behaviour below
+# was already what the compiler did; it was pinned by nothing.
+#
+# native,c only: these need `map m = @{a:DISP}`, which the janet backend does
+# not emit (`janet-map-from-array`, P2) — the same gap that gates af.4.
+if in_modes native,c; then
+
+# af.5 `join` on a map joins its values, exactly as on an array
+run_sash 'array p=(k1 v1 k2 v2)
+map m = @{p:~}
+echo "$(join m ,)"'
+[[ $rc = 0 && $out = "v1,v2" && -z $err ]]; chk af.5
+
+# af.6 the array form, for the symmetry the rule rests on: the elements, not
+# the indices
+run_sash 'array a=(x y z)
+echo "$(join a ,)"'
+[[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk af.6
+
+# af.7 splatting a map into a for-in yields values too (already true, unpinned)
+run_sash 'array p=(k1 v1 k2 v2)
+map m = @{p:~}
+for v in @m { echo "$v" }'
+[[ $rc = 0 && $out = "v1
+v2" && -z $err ]]; chk af.7
+
+# af.8 `keys` is how you ask for the indices — the capability is not lost, it
+# just has its own spelling (DD#75 section 3, map-only)
+run_sash 'array p=(k1 v1 k2 v2)
+map m = @{p:~}
+for k in $(keys m) { echo "$k" }'
+[[ $rc = 0 && $out = "k1
+k2" && -z $err ]]; chk af.8
+
+# af.9 `len` on a map counts entries
+run_sash 'array p=(k1 v1 k2 v2)
+map m = @{p:~}
+echo "$(len m)"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk af.9
+
+# af.10 why SB5061 (af.1) survives the values ruling: the round trip is broken.
+# `map m = @{a:~}` consumes alternating k/v, but `@m` is the VALUES — so
+# re-mapping them cannot rebuild the map. `array a = @m` would sit opposite
+# map-construction and read as its inverse while silently not being one.
+# Shown here through the spellings that ARE legal.
+run_sash 'array a=(k1 v1 k2 v2)
+map m = @{a:~}
+echo "m entries: $(len m)"
+echo "values: $(join m ,)"
+array b=(v1 v2)
+map m2 = @{b:~}
+echo "remapped entries: $(len m2)"
+for k in $(keys m2) { echo "remapped key: $k" }'
+[[ $rc = 0 && $out = "m entries: 2
+values: v1,v2
+remapped entries: 1
+remapped key: v1" && -z $err ]]; chk af.10
+
+else
+    for t in af.5 af.6 af.7 af.8 af.9 af.10; do skip_chk $t; done
 fi
 
 # ── SB5070: an array splat in a scalar operand of a value intrinsic ───────

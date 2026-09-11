@@ -253,3 +253,70 @@ The converter emits the canonical forms and accepts the bash forms as input:
   DD#41 (`@arr`, `len`/`keys`/`join`), DD#46/#60 (positionals; now the `args`
   model), DD#65 (`${var#pat}` strip already dropped, so `${#…}` owns `#`),
   DD#69 (glob arrays; `@` splat disposition).
+
+## Clarification (2026-09-11, DG) — a splat yields **values**, not indices
+
+> "arrays and maps differ only in how they're indexed; splat of an array
+> doesn't produce indices, why would splat of a map…?"
+
+`@a` yields an array's **elements** — not `0 1 2`. So `@m` yields a map's
+**values** — not its keys. Map keys are *indices*, the same role the integers
+play for an array. That settles every splat site uniformly, and it is already
+what the compiler does:
+
+| site | `@a` | `@m` |
+|---|---|---|
+| `for v in @…` | elements | values |
+| `join … SEP` | elements | values |
+| `keys …` | SB4030 | the indices |
+| `len …` | count | entry count |
+
+### What this overturns
+
+`join-map-reject` (decided 2026-09-10, reject) argued that `$(join m)`
+"silently drops the keys". That reading treats keys as **data**. They are
+indices, and nobody describes `$(join a)` as silently dropping `0 1 2`. Under
+the values rule `join m` is `join a` with the type selecting the traversal —
+which is exactly the *coherent-category* polymorphism that the
+`dd75-len-collection-only-strlen` amendment explicitly blesses:
+
+> But they are polymorphic over a **coherent category** — "a collection" —
+> where the operation means the same thing and the type only selects the
+> traversal.
+
+That amendment's own survey table already listed `for v in @x` as ✅ for array
+*and* map, i.e. it had blessed the values reading one row above the `join` row
+that contradicted it. The `join` row was the outlier. The filing is closed as
+**not a bug**; §2's scalar/collection split (`len`/`strlen`) is untouched and
+in fact supports this — it is about crossing the scalar↔collection boundary,
+which `join m` never does.
+
+### What survives, with new reasoning
+
+`array a = @m` stays rejected (SB5061), but **not** for the reason DD#99 stage
+8 gave. That reason — "picking a flatten order on the author's behalf is
+exactly the silent mis-pairing" — presupposes `@m` means *pairs*, which this
+clarification removes. Under the values rule `array a = @m` is perfectly
+well-defined: it is the values.
+
+The real hazard is the **broken round trip** (DG). A map is built from an array
+of alternating k/v, so `array a = @m` sits opposite `map m = @{a:DISP}` and
+reads as its inverse. It is not one:
+
+```sh
+array a=(k1 v1 k2 v2)
+map m = @{a:~}        # 2 entries, keys k1 k2
+                      # @m is v1 v2 — the values
+array b=(v1 v2)
+map m2 = @{b:~}       # 1 entry, key v1     ← not m
+```
+
+`a ≠ b` and `m ≠ m2`, silently. So SB5061 is kept on the same rule that
+motivates SB5071 in DD#86: **reject a construct whose appearance implies
+something the language does not do.** `for v in @m` and `join m` look like the
+inverse of nothing, so they stay.
+
+The capability is not lost: `keys m` gives the indices, `join m SEP` the values.
+
+Specs `spec/var_modifiers.sh` af.5–af.10 (af.10 demonstrates the broken round
+trip through the spellings that are legal).

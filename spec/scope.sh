@@ -7,7 +7,7 @@ set -eu
 . common.sh
 setup scope
 set +e
-plan=39
+plan=45
 echo "1..$plan" >&3
 
 # 86.1 `str s` with no initializer declares a string, meaningful-zero ""
@@ -268,6 +268,48 @@ f =nums'
 # target is undeclared, so it reaches the dead-variable check, not `echo`)
 run_sash 'echo = a'
 [[ $rc != 0 && -z $out && $err == *SB5050* ]]; chk 86.24
+
+# ── DD#86 (2026-09-11): `const` in a loop body, and `fn` placement ──────────
+
+# 86.25 SB5072: DD#86 rejected loop-variable auto-scoping, so a loop body
+# introduces no scope. A `const` there is one binding re-executed — a const
+# reassigned. It was already rejected, but only by the spanless SSA backstop
+# (reported at 1:1); this pins the deliberate, spanned rejection.
+run_sash 'int n=0
+while (( n < 2 )) {
+  (( n = n + 1 ))
+  const r="x"
+  echo "$r"
+}'
+[[ $rc != 0 && -z $out && $err == *SB5072* ]]; chk 86.25
+
+# 86.26 same for `for` — the static form unrolls, so the repeated binding is
+# literal there
+run_sash 'for i in 1 2 { const r="x"; echo "$r" }'
+[[ $rc != 0 && -z $out && $err == *SB5072* ]]; chk 86.26
+
+# 86.27 the diagnostic is spanned — not the 1:1 backstop it used to be
+run_sash 'for i in 1 2 { const limit="x"; echo "$limit" }'
+[[ $rc != 0 && $err != *:1:1:* && $err == *SB5072* ]]; chk 86.27
+
+# 86.28 control: declaring the const BEFORE the loop is the fix, and works
+run_sash 'const r="x"
+for i in 1 2 { echo "$r$i" }'
+[[ $rc = 0 && $out = "x1
+x2" && -z $err ]]; chk 86.28
+
+# 86.29 control: a non-const binding in a loop body is unaffected
+run_sash 'for i in 1 2 { str r = "x"; echo "$r$i" }'
+[[ $rc = 0 && $out = "x1
+x2" && -z $err ]]; chk 86.29
+
+# 86.30 control: a `const` inside a *function* body is still fine — a function
+# body is entered once per call, not re-executed in place. (This is the case
+# DD#86 phase 2 had to fix when `readonly_vars` leaked across the two-pass
+# function lowering; it must stay fixed.)
+run_sash 'fn f { const r="x"; echo "$r" }
+f'
+[[ $rc = 0 && $out = "x" && -z $err ]]; chk 86.30
 
 set -e
 tally

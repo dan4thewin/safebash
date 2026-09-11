@@ -61,6 +61,10 @@ pub fn validate(program: &Program) -> Vec<Diagnostic> {
     // SB5049 (DD#86): no shadowing — a typed declaration inside a function of a
     // top-level global name is a redeclaration error.
     check_no_shadow(program, &mut diags);
+    // SB5071 (DD#86): a `fn` definition is legal only at the top level.
+    check_fn_placement(&blocks, &mut diags);
+    // SB5072 (DD#86): a `const` binding inside a loop body.
+    check_const_in_loop(&blocks, &mut diags);
     for &block in &blocks {
         check_block_value_rules(block, &mut diags);
     }
@@ -92,6 +96,126 @@ fn check_const_reassignment(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>
     for &block in blocks {
         scan_const_stmts(block, &mut consts, diags);
     }
+}
+
+/// SB5071 (DD#86): a `fn` definition is legal only as a **top-level**
+/// statement.
+///
+/// DD#86 makes scope positional and gives control flow no scope of its own, so
+/// a function name is global wherever the definition is written. Anywhere but
+/// the top level the definition is therefore hoisted, and its placement
+/// suggests a scope — or a condition — that the language does not have:
+///
+/// ```text
+/// if [[ 1 = 2 ]] { fn f { echo A } }
+/// f                   # sash printed A; bash: `f: command not found`
+/// ```
+///
+/// The branch never runs and `f` is still defined. The same divergence appears
+/// for `false && fn f {…}` and for a `fn` used as a pipeline stage (bash runs
+/// the stage in a subshell, so the definition does not survive). It was also
+/// the last taint bypass: `check_taint` defers the functions it finds in the
+/// *top-level statement list*, so one hidden inside control flow kept the old
+/// definition-point walk and could read a global tainted later.
+///
+/// Nesting inside another function's body is rejected for the same reason
+/// rather than a weaker one — spec 18.3 pinned that such a function is an
+/// ordinary global, i.e. the placement never meant anything there either.
+fn check_fn_placement(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
+    for &block in blocks {
+        for stmt in block {
+            flag_fns_below(stmt, diags);
+        }
+    }
+}
+
+/// Everything strictly below a top-level statement — including a top-level
+/// `fn`'s own body, which is why nesting inside a function is caught too.
+fn flag_fns_below(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    for body in stmt.child_bodies() {
+        flag_nested_fns(body, diags);
+    }
+}
+
+fn flag_nested_fns(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_stmt_tree(stmts, &mut |s| {
+        let StmtKind::Function(f) = &s.kind else {
+            return;
+        };
+        diags.push(Diagnostic::error_span(
+            s.span,
+            "SB5071",
+            format!(
+                "`fn {}` is not at the top level. A function name is global \
+                 wherever it is written, so this definition is hoisted and its \
+                 placement means nothing — but it reads as though the function \
+                 were scoped or conditional. Move `fn {}` to the top level.",
+                f.name, f.name
+            ),
+        ));
+    });
+}
+
+/// SB5072 (DD#86): a `const` binding inside a loop body.
+///
+/// DD#86 rejected loop-variable auto-scoping, so a loop body introduces no
+/// scope: the binding is one binding in the enclosing scope, re-executed. A
+/// `const` re-executed is a const reassigned. Both loop kinds are covered —
+/// `for` because the static form unrolls into genuinely repeated bindings,
+/// `while` because the body is re-entered.
+///
+/// The construct was already rejected, but only by the spanless backstop in
+/// `VersionState::define` (reported at `1:1`), and in `while`'s case only as a
+/// side effect of `readonly_vars` leaking across the two-pass lowering. This
+/// check makes the rejection deliberate and spanned.
+fn check_const_in_loop(blocks: &[&[Statement]], diags: &mut Vec<Diagnostic>) {
+    for &block in blocks {
+        scan_for_loops(block, diags);
+    }
+}
+
+fn scan_for_loops(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        if let Some(body) = loop_body(stmt) {
+            flag_const_decls(body, diags);
+        }
+        for body in stmt.child_bodies() {
+            scan_for_loops(body, diags);
+        }
+    }
+}
+
+/// The body of a loop statement — the region that is re-executed.
+fn loop_body(stmt: &Statement) -> Option<&[Statement]> {
+    match &stmt.kind {
+        StmtKind::While(w) => Some(&w.body),
+        StmtKind::For(f) => Some(&f.body),
+        _ => None,
+    }
+}
+
+fn flag_const_decls(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    crate::ir::walk_stmt_tree(stmts, &mut |s| {
+        let StmtKind::Declaration(d) = &s.kind else {
+            return;
+        };
+        if d.keyword != DeclKeyword::Readonly {
+            return;
+        }
+        for a in &d.assignments {
+            diags.push(Diagnostic::error_span(
+                s.span,
+                "SB5072",
+                format!(
+                    "`const {}` is inside a loop body. A loop body introduces \
+                     no scope (DD#86), so this is one binding re-executed on \
+                     every iteration — a `const` reassigned. Declare it before \
+                     the loop, or drop `const`.",
+                    a.name
+                ),
+            ));
+        }
+    });
 }
 
 fn scan_const_stmts(

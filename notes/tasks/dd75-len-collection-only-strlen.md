@@ -26,7 +26,7 @@ that crosses the scalar/collection boundary:
 | operation | scalar | array | map |
 |---|---|---|---|
 | **`len`** | 5 (bytes) | 3 | 1 |
-| `join` | SB4030 | ✅ | ✅ (values only — see below) |
+| `join` | SB4030 | ✅ | ✅ (values only — correct; DG 2026-09-11 ruled a splat yields values, not indices, so this row is ordinary collection polymorphism. See the DD#75 clarification; `join-map-reject` is closed as not-a-bug.) |
 | subscript `x[i]` | segfault (filed) | ✅ | ✅ |
 | `for v in @x` | — | ✅ | ✅ |
 | `keys` | SB4030 | SB4030 | ✅ |

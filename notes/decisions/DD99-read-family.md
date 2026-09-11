@@ -355,6 +355,16 @@ rejected) — the direction is the problem, not the emptiness policy.
 
 To walk a map, iterate it: `for k in $(keys m)`.
 
+**Reasoning replaced (2026-09-11).** DG later ruled that a splat yields
+**values, not indices** (DD#75 clarification), so `@m` is `v1 v2` and there is
+no pair for a flatten order to get wrong — the "silent mis-pairing" argument
+above no longer applies. The verdict stands on a better reason: the **round
+trip is broken**. `array a = @m` sits opposite `map m = @{a:DISP}` and reads as
+its inverse, but re-mapping the values cannot rebuild the map —
+`(k1 v1 k2 v2)` → 2 entries → values `(v1 v2)` → 1 entry keyed `v1`. Rejected
+because it looks like something the language does not do, which is the same
+rule that motivates SB5071 (DD#86).
+
 Specs `var_modifiers.sh` af.1-af.4 (all three modes; af.4 is the
 supported-direction control, gated for `janet-map-from-array`).
 

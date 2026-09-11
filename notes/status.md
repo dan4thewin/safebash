@@ -1,3 +1,74 @@
+## ══ STATUS (2026-09-11) — `fn` top-level, `const` not in a loop, splat = values ══
+
+**DG, in one message:** functions must be top-level (counter-argument?),
+`const` shouldn't be within a loop, splat/join on a map should deal with
+values not keys. All three land here. Sweep **4947 / 38 / 501**, zero
+non-janet failures, zero regressions against `4d7d792`; Rust suites diff empty.
+
+**1. SB5071 — `fn` must be top-level.** `if [[ 1 = 2 ]] { fn f { … } }; f`
+runs `f` in sash and is "command not found" in bash: the branch never
+executes and the function is defined anyway. Same for `false && fn` and for
+`fn` as a pipeline stage. It was also the **last remaining taint bypass** —
+top-level and fn-in-fn both raise SB5020 on raw `$1`, fn-in-`if` leaked argv.
+Now closed by construction.
+
+I argued for the narrow form (allow `fn` inside `fn`) and **withdrew it**: the
+argument was cost-based, not principled. DD#86 makes scope positional with no
+block scope, so control flow creates no scope and the hoisting is DD#86-
+*correct* — the defect is that the placement reads like a scope that doesn't
+exist, and that applies to `fn`-in-`fn` identically. Specs 18.3/18.4 were
+pinning the wart; they are inverted into rejections.
+
+**2. SB5072 — `const` in a loop body.** Falls out of the same no-block-scope
+model: the binding is re-executed, i.e. a `const` reassigned. It was already
+rejected, but only by the spanless `VersionState::define` backstop at `1:1` —
+and in `while`'s case only as a side effect of the `readonly_vars` leak filed
+yesterday. Spec 86.27 asserts the diagnostic is *not* at `:1:1:` so the
+backstop can't quietly reclaim it. `const` in a **function** body stays legal
+(DD#86 Phase 2 fixed that leak properly; 86.30 pins it).
+
+**3. A splat yields values, not indices.** `join m ,` → `v1,v2` and
+`for v in @m` → `v1 v2` were already the behaviour, pinned by nothing. DG:
+"arrays and maps differ only in how they're indexed, splat of an array doesn't
+produce indices, why would splat of a map…?" Keys are indices, not data. The
+DD#75 `len` amendment had already blessed this a row above the line that
+contradicted it.
+
+SB5061 (`join m ,` rejected) **survives on new reasoning**: not "silent
+mis-pairing" — that presupposed the pairs reading — but **no round trip**.
+`(k1 v1 k2 v2)` → map (2 entries) → values `(v1 v2)` → map (1 entry, keyed
+`v1`). `a ≠ b`, `m ≠ m2`, silently. Spec af.10 demonstrates it.
+
+**Three traps recorded in journal 266:** a spec passing *vacuously* (af.10's
+`rc != 0` short-circuit was firing because the program never compiled);
+re-indenting a spec block when wrapping it in `in_modes` breaks
+whitespace-sensitive `run_sash` bodies; and a baseline regression query is
+vacuous when HEAD hasn't moved, since a dirty re-run records under the same
+`commit_hash`.
+
+**Closed:** `taint-fn-in-toplevel-control-flow`, `while-two-pass-readonly-leak`
+(DG's ruling makes the leak irrelevant), and `join-map-reject` — **reversed**,
+it was not a bug.
+
+**Correction to the entry below:** it lists
+`bug-regex-blind-past-interior-nul` as an open P1. There is no such bug —
+the filing is `limitation-regex-stops-at-interior-nul`, `kind: limitation`,
+P3, `documented-limitation`. Open bug census is **35**, and no P1 remains in
+the native compiler; the three P1 bugs left are all janet.
+
+**Next:** resume the P1 prune — `sash-convert-read-dd99` (a task, not a bug:
+the converter emits `read -r`, which no longer compiles) and three janet bugs
+(`janet-array-append-string-concat`,
+`janet-command-substitution-capture-broken`,
+`janet-compound-if-condition-ignored`).
+
+**Deferred by DG:** the `len`/`strlen` split, as its own pass. It absorbs the
+DD#100 Part D splat-operand removal (~35 spec sites, SB5025's message,
+`sash-convert`).
+
+**Still open for DG:** `rust-tests-hang-on-retired-surfaces` — rewrite the
+stale fixtures, or make `codegen_tests` run `validate` first?
+
 ## ══ STATUS (2026-09-11) — three P1 bugs fixed, one of them a segfault ══
 
 **DG: "fix P1s now."** Three landed. Sweep **4892 / 39 / 495**, zero non-janet

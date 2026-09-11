@@ -1,6 +1,6 @@
 ---
 title: "A function defined inside top-level control flow keeps the definition-point taint walk"
-status: open
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -56,3 +56,27 @@ inheriting enclosing locals via `taint_function_body`'s existing recursion.
 
 - SB5067 (`validate::check_fn_taints_global`)
 - `notes/decisions/DD100-collection-parameters.md` Part F
+
+## Resolved 2026-09-11 — closed by construction (SB5071)
+
+Not fixed by patching the walk. DG ruled that a `fn` must be defined at the
+**top level** (DD#86 amendment), so a function inside top-level control flow no
+longer exists as a construct and the bypass has nothing to live in.
+
+The fix sketch above — give phase 2 every reachable function paired with the
+scope to walk it in, and make phase 1 skip exactly that set — is therefore
+unnecessary. The only remaining non-top-level position, nested inside another
+function's body, is also rejected by SB5071, so phase 1's scan of the top-level
+statement list is now **complete by definition**.
+
+Measured before the rule landed, the three placements behaved like this:
+
+| `fn` placement | tainted `@g` read in the body |
+|---|---|
+| top level | SB5020 ✓ |
+| inside another `fn` | SB5020 ✓ |
+| inside a top-level `if` | **accepted — printed raw argv** |
+
+Spec `functions.sh` 18.9 pins the rejection of exactly that program, and 18.10
+is the control proving the top-level spelling still reaches SB5020 — i.e. the
+new rejection is not masking a lost check.
