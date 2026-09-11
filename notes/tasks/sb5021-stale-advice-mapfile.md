@@ -1,6 +1,6 @@
 ---
 title: "SB5021's advice names the retired `mapfile`, and calls a map an array"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -44,3 +44,32 @@ airtight: collections are protected at the **write**, not the read.
 ## Found
 
 2026-09-10, backlog prune — by reading the diagnostic rather than the code.
+
+## Resolution
+
+Fixed 2026-09-11. `validate::SlotCx` now carries a `map_names` set (built by
+the new `collect_map_names`, which reuses `type_check::collect_collection_kinds`
+rather than re-deriving the `-A`/`-a` classification), and the SB5021 text is
+produced by `tainted_into_collection_msg(name, is_map)`.
+
+Array target:
+
+```
+tainted value cannot be placed in array 'a' — external data enters an array
+via `read ARR`; or attest a scalar first and assign the clean value
+```
+
+Map target:
+
+```
+tainted value cannot be placed in map 'm' — a map is built from a vouched-for
+array: `read ARR`, then `attest x in ARR [[ … ]]`, then `map m = @{ARR:DISP}`;
+or attest a scalar first and assign the clean value
+```
+
+All four write shapes are covered: array subscript, map subscript, `array`
+literal, and `@{…}` literal (the last passes `is_map = true` straight from the
+AST; the other three consult `sx.is_map`). Every route the new text recommends
+was run end-to-end before the wording was written.
+
+Spec: 60.56–60.59 in `spec/taint.sh` (all four shapes; fail-first verified).

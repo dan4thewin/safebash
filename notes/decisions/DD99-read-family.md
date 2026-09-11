@@ -452,3 +452,33 @@ now emits `attest NAME [[ … ]]` or `attest x in NAME [[ … ]]` to match. This
 not cosmetic: a converted `mapfile` target that the reader attests with the
 scalar form still fails SB5020, and the hint would have been the thing that
 sent them there.
+
+### A failed redirect open aborts the read (2026-09-11)
+
+DD#55 makes a failed `open(2)` on a redirect an abort. The read family did not
+get that guard: `read a < nosuch` and `readline v < nosuch` both exited 0 with
+an empty result, so a mistyped path was indistinguishable from an empty file.
+
+The root was in the SSA: `SsaInst::ReadArray` carried no redirect list, so the
+redirect was applied *around* it by a `RedirectPush`/`RedirectPop` pair built
+from the unguarded `emit_redirects`. `ReadArray` now carries its own
+`redirects`, symmetric with `ReadLine`, and both emitters wrap their bodies in
+the DD#55 guard.
+
+That choice was available because `RedirectPush` turned out to be reachable
+only via bulk reads — SB4021 rejects redirects on compound commands and SB4046
+on declarations and assignments. It was also the only choice that *can* express
+DD#55: push/pop bracket an arbitrary span of blocks with no body to skip, so
+"skip the body and flow the status to the condition" has nowhere to live there.
+
+Consequences, native and c agreeing: a bare `read`/`readline` with a bad open
+aborts with the usual `<path>: No such file or directory`; `- read a < nosuch`
+still aborts, because `-` binds the read's own verdict and not the prior open;
+and `if read a < nosuch`, `read a < nosuch || …` catch it, leaving the target
+at its zero value (empty string, length 0) because the body never ran.
+
+janet is unaffected in both directions: it emits reads from the IR rather than
+the SSA and drops the redirect entirely — `janet-read-family-ignores-input-
+redirect`, and it has no abort channel at all (`c-janet-dd55-abort-channel`).
+
+Specs: `errors.sh` 55.60-55.66.

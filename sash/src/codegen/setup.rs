@@ -1088,7 +1088,9 @@ impl<'a> Interner<'a> {
                 self.intern_value(subject);
                 self.intern_value(pattern);
             }
-            SsaInst::ReadLine { redirects, .. } | SsaInst::ReadLineMulti { redirects, .. } => {
+            SsaInst::ReadLine { redirects, .. }
+            | SsaInst::ReadLineMulti { redirects, .. }
+            | SsaInst::ReadArray { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
             SsaInst::Attest { test, source, .. } | SsaInst::AttestAll { test, source, .. } => {

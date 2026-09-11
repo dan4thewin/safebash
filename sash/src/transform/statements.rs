@@ -325,14 +325,15 @@ fn attach_redirects_to_result(
     }
 }
 
-/// True for the bulk (array-filling) reads, whose lowered SSA instructions
-/// (Mapfile / ReadArray) carry no redirect list — so the redirect has to be
-/// applied around them by the caller rather than by the instruction.
+/// True for the bulk (array-filling) reads whose lowered SSA instruction
+/// carries no redirect list — so the redirect has to be applied around it by
+/// the caller rather than by the instruction.
 ///
-/// DD#99 stage 6: `read` IS the array form now, so it belongs here
-/// unconditionally. Dropping it silently made `read a < f` ignore its
-/// redirect and read stdin instead — no diagnostic, an empty array, and a
-/// missing file did not even abort.
+/// DD#99 stage 6: `read` lowers to `ReadArray`, which *does* carry its own
+/// redirects (and therefore gets the DD#55 open(2) guard), so it is no longer
+/// bracketed here. Only the retired `mapfile`/`readarray` spellings — which
+/// validate rejects before they reach codegen — still lower to the
+/// redirect-less `Mapfile`.
 fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
     let StmtKind::Command(c) = kind else {
         return false;
@@ -340,7 +341,7 @@ fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
     let ExprKind::Literal(name) = &c.name.kind else {
         return false;
     };
-    matches!(name.as_str(), "mapfile" | "readarray" | "read")
+    matches!(name.as_str(), "mapfile" | "readarray")
 }
 
 fn is_compound_stmt(kind: &StmtKind) -> bool {
@@ -393,6 +394,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
     match inst {
         SsaInst::Command { redirects: r, .. }
         | SsaInst::ReadLine { redirects: r, .. }
+        | SsaInst::ReadArray { redirects: r, .. }
         | SsaInst::ReadLineMulti { redirects: r, .. } => {
             *r = redirects.to_vec();
         }

@@ -1,6 +1,6 @@
 ---
 title: "bug: `match S P ARR` does not auto-declare its out-array, unlike every other bulk fill"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -65,3 +65,23 @@ by the `match`.
 Filed at DG's request during the read-family design discussion. Independent of
 that redesign: `match` is not part of the `read`/`mapfile` family being
 reshaped, so this should be fixed on its own terms.
+
+## Resolution
+
+Fixed 2026-09-11. The filing named three dispatch sites; there were five, and
+`matchall` (added by DD#63 after this was filed) had the same gap in two of
+them. All five now dispatch on `"match" | "matchall" if c.args.len() == 3`, so
+the 2-arg boolean form still binds nothing:
+
+| site | file |
+|---|---|
+| `collect_read_targets` | `validate.rs` |
+| `command_writes_args` | `validate.rs` |
+| `check_command` → `register_newread_target` | `type_check.rs` |
+| `try_handle_match_into` | `transform/stmt_handlers.rs` |
+| `emit_janet_match`, `emit_match_into_condition` | `emit_janet.rs` |
+
+Spec: 63.mi1–63.mi5 in `spec/regex.sh`. mi1–mi3 are gated `native,c` — janet
+has a separate pre-existing bug (`janet-match-outarray-var-in-condition`) that
+emits the auto-declaring `var` inside the if-condition expression; it
+reproduces with `matchall` on unmodified code, so it predates this fix.

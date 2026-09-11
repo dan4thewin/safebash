@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=63
+plan=68
 echo "1..$plan" >&3
 
 set +e
@@ -458,6 +458,53 @@ fi
 run_sash 'matchall "a" "a" arr
 echo "$(len arr)"'
 [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.dash3
+
+# --- DD#63: the out-array form auto-declares, for `match` as for `matchall` ---
+# `match S P ARR` fills ARR, so it introduces it — the same bulk-fill
+# precedent as `matchall` / `read` / `argv`. It used to require a prior
+# `array g=()`, and without one SB5039 claimed `g` was "introduced nowhere".
+
+# 63.mi1-63.mi3 are native,c: janet emits the auto-declaring `var` INSIDE the
+# if-condition expression, so the program does not compile. Pre-existing for
+# `matchall`; task `janet-match-outarray-var-in-condition`.
+if in_modes native,c; then
+    # 63.mi1 `match` auto-declares its out-array — `len` resolves with no `array`
+    run_sash 'if match abc "(a)(b)" g { echo hit }
+echo "n=$(len g)"'
+    [[ $rc = 0 && $out = "hit
+n=3" && -z $err ]]; chk 63.mi1
+
+    # 63.mi2 the auto-declared array iterates (whole match + each group)
+    run_sash 'if match abc "(a)(b)" g { - echo hit }
+for x in @g { echo "x=$x" }'
+    [[ $rc = 0 && $out = "hit
+x=ab
+x=a
+x=b" && -z $err ]]; chk 63.mi2
+
+    # 63.mi3 on NO match the array still exists, empty — the declaration is
+    # static, not conditional on the match succeeding
+    run_sash 'if match qq "(z)" g { echo yes } else { echo no }
+echo "n=$(len g)"'
+    [[ $rc = 0 && $out = "no
+n=0" && -z $err ]]; chk 63.mi3
+else
+    skip_chk 63.mi1; skip_chk 63.mi2; skip_chk 63.mi3
+fi
+
+# 63.mi4 a PRE-declared array is not double-declared — auto-declare is a
+# no-op when the name is already a collection
+run_sash 'array g=(x y z)
+if match ab "(a)" g { - echo hit }
+echo "n=$(len g)"'
+[[ $rc = 0 && $out = "hit
+n=2" && -z $err ]]; chk 63.mi4
+
+# 63.mi5 the two-arg boolean `match S P` still declares NOTHING — the
+# pattern is not a binding, so a later read of it is SB5039
+run_sash 'if match abc "a" { - echo hit }
+echo "$(len a)"'
+[[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 63.mi5
 
 set -e
 tally

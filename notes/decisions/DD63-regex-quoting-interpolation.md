@@ -284,3 +284,23 @@ subcommand. A zero-width match advances one byte, or the loop would spin.
 Specs: `regex.sh` 63.ar1-ar4 (arity), 63.ma1-ma9.
 
 
+
+### The out-array form auto-declares its target (2026-09-11)
+
+The out-array form was specified as "consistent with `mapfile -m m` / `read -a
+a`", but only `matchall` carried the auto-declare half across; singular `match
+S P ARR` left the name unregistered, so a following `len g` drew SB5039
+("introduced nowhere") on a name introduced two lines above.
+
+Both forms now register the out-array, in all five places that dispatch on it:
+`collect_read_targets` and `command_writes_args` (validate), `check_command`
+(type_check), `try_handle_match_into` (transform), and the two janet match
+emitters. Every site is guarded on a 3-argument call, so the boolean form still
+binds nothing.
+
+janet is gated off the new specs for an unrelated pre-existing bug — it writes
+the auto-declaring `var` inside the if-condition expression
+(`janet-match-outarray-var-in-condition`), which reproduces with `matchall` on
+untouched code.
+
+Specs: `regex.sh` 63.mi1-63.mi5.

@@ -287,12 +287,18 @@ fn emit_block_insts(
     // DD#55: the command in condition position is the last Command/Pipeline
     // of a Branch-terminated block (mirrors transform's
     // mark_unchecked_in_conditions). Its redirect open(2) failure is caught
-    // by if/||, not aborted — distinct from `-` suppression.
+    // by if/||, not aborted — distinct from `-` suppression. The reads count
+    // too: they carry their own redirects and run the same open(2) guard, so
+    // `if read a < f` must catch exactly as `if echo > f` does.
     let is_branch = matches!(ssa_block.terminator, crate::ssa::Terminator::Branch { .. });
     let last_cmd_idx = ssa_block.insts.iter().rposition(|i| {
         matches!(
             i,
-            crate::ssa::SsaInst::Command { .. } | crate::ssa::SsaInst::Pipeline { .. }
+            crate::ssa::SsaInst::Command { .. }
+                | crate::ssa::SsaInst::Pipeline { .. }
+                | crate::ssa::SsaInst::ReadLine { .. }
+                | crate::ssa::SsaInst::ReadLineMulti { .. }
+                | crate::ssa::SsaInst::ReadArray { .. }
         )
     });
     for (idx, inst) in ssa_block.insts.iter().enumerate() {

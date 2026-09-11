@@ -1,3 +1,59 @@
+## ══ STATUS (2026-09-11) — three P2 native bugs fixed ══
+
+**DG: "fix P2 native bugs now".** The census had turned up exactly three P2s
+in the native compiler; all three are fixed. Sweep **5001 / 38 / 512**, zero
+non-janet failures, zero flips against `ea0e7a8` and `0ca316a`, all 48 new
+test rows passing or deliberately skipped. **Native P2 count is now 0.**
+
+**SB5021's advice named the retired `mapfile` and called a map an array.** The
+validator had no idea `m` was a map — `SlotCx` carries no collection kind. I
+was about to write the `-A`/`-a` classification when I found
+`type_check::collect_collection_kinds` already doing exactly it; made it
+`pub(crate)` and reused it. All four write shapes now route through one
+`tainted_into_collection_msg`. Every route the new text recommends was run
+end-to-end *before* the wording was written — which is the point, since the
+old text's advice did not work.
+
+**`match S P ARR` did not auto-declare its out-array.** The filing named three
+dispatch sites; there were five, and `matchall` (added by DD#63 *after* the
+filing) had the same gap in two of them. All five now guard on
+`c.args.len() == 3`, so the boolean form still binds nothing.
+
+**The read family ignored a failed redirect open.** `read a < nosuch` exited 0
+with an empty array — a mistyped path was indistinguishable from an empty
+file. Root: `SsaInst::ReadArray` carried no redirect list, so the redirect was
+applied *around* it by a push/pop pair built from the unguarded
+`emit_redirects`. Two fixes were possible; what settled it was finding that
+`RedirectPush` is reachable **only** via bulk reads (SB4021/SB4046 reject
+redirects everywhere else), and that push/pop bracket an arbitrary span with no
+body to skip — so DD#55's "skip the body, flow the status to the condition"
+could not be expressed there at all. `ReadArray` now carries its own redirects,
+symmetric with `ReadLine`. Also: `emit_block_insts` scanned only
+`Command`/`Pipeline` when deciding `in_condition`, so the reads never saw it.
+
+**Three things surfaced and were filed rather than fixed.** A failed open in a
+`while` **condition** aborts in native and is caught in c — reproduces at
+`c1e9807` with a plain `echo`, so it predates this, and whether a `while`
+condition should catch is **DG's DD#55 call**
+(`dd55-while-condition-redirect-divergence`). janet writes the auto-declaring
+`var` inside the if-condition (`janet-match-outarray-var-in-condition`), and
+janet drops input redirects on the read family entirely, reading stdin instead
+(`janet-read-family-ignores-input-redirect`). Both janet bugs reproduce on
+untouched code paths; both are probably subsumed by `emit-janet-from-ssa`.
+
+**Fail-first, honestly.** 55.60-62, 60.56-59 and 63.mi1-mi4 all failed against
+a stashed build. 55.63-55.66 and 63.mi5 passed pre-fix — annotated in the spec
+as regression pins, not discriminators. (55.63/55.64 cannot discriminate: the
+harness runs binaries with `</dev/null`.)
+
+### Next up
+
+DG's standing direction is to **return to pruning the backlog**. Open P2s after
+this: janet 13, c/both 4, converter 1, hardening/audit 3, language surface 3,
+docs 1 — native 0. P1s: `rust-tests-hang-on-retired-surfaces` (blocks step 1
+of the completion checklist; two forks open for DG) and
+`bug-regex-blind-past-interior-nul`.
+
 ## ══ STATUS (2026-09-11) — sash-convert learns the DD#99 read family ══
 
 **DG picked `sash-convert-read-dd99`** off the P1 list: the only remaining P1

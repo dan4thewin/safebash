@@ -640,7 +640,7 @@ fn infer_slot_kinds(program: &Program, errors: &mut Vec<TypeError>) -> HashMap<S
 type SlotKinds = [SlotKind; crate::ir::MAX_COLLECTION_SLOTS];
 
 /// Every collection declaration in the program → whether it is a map.
-fn collect_collection_kinds(stmts: &[Statement], out: &mut HashMap<String, bool>) {
+pub(crate) fn collect_collection_kinds(stmts: &[Statement], out: &mut HashMap<String, bool>) {
     crate::ir::walk_stmt_tree(stmts, &mut |stmt| {
         let StmtKind::Declaration(d) = &stmt.kind else {
             return;
@@ -1179,6 +1179,9 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
         "mapfile" | "readarray" => register_bulk_read_target(c, env),
         // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
         "read" => register_newread_target(c, env),
+        // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
+        // the trailing array; the two-arg `match S P` binds nothing.
+        "match" | "matchall" if c.args.len() == 3 => register_newread_target(c, env),
         _ => {}
     }
 

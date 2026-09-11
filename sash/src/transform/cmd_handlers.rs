@@ -66,6 +66,7 @@ fn lower_newread(
             array: target,
             fd: 0,
             delim: Some(0),
+            redirects: vec![],
         },
     };
     ssa.block_mut(block).insts.push(inst);
@@ -88,6 +89,7 @@ fn emit_read_inst(
             array: arr,
             fd: 0,
             delim: flags.delim,
+            redirects: vec![],
         });
         return;
     }

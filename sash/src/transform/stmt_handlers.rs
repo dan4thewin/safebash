@@ -98,10 +98,9 @@ fn try_handle_match_into(
     let subject = expr_to_value(&c.args[0], state);
     let pattern = expr_to_value(&c.args[1], state);
     let array = super::expressions::fill_target_name(&c.args[2], state);
-    // DD#63: `matchall` fills its target, so it introduces it (the argv /
-    // read bulk-fill precedent). Singular `match` does not — that
-    // asymmetry is filed as `bug-match-outarray-no-autodeclare`.
-    if kind == BuiltinCmd::MatchAll {
+    // DD#63: the out-array form fills (and auto-declares) its trailing
+    // array, for singular `match` exactly as for `matchall`.
+    if c.args.len() == 3 {
         autodeclare_bulk_target(&array, false, ssa, state, block);
     }
     ssa.block_mut(block).insts.push(SsaInst::MatchInto {

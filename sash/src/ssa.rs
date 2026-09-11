@@ -312,11 +312,17 @@ pub enum SsaInst {
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.
     SplitValue { source: SsaValue, array: String },
-    /// Read a line, split by delimiter, store into indexed array
+    /// Read a line, split by delimiter, store into indexed array.
+    ///
+    /// Carries its own `redirects` (as `ReadLine` does) so the DD#55
+    /// open(2) guard can wrap the read itself. Bracketing it with
+    /// `__redirect_push`/`__redirect_pop` instead would apply the fds but
+    /// leave a failed open unchecked — a missing file read as an empty array.
     ReadArray {
         array: String,
         fd: i64,
         delim: Option<u8>,
+        redirects: Vec<crate::ir::Redirect>,
     },
     /// DD#63: `match S P ARR` out-array form. Fills `array` with
     /// `[whole, g1..gN]` (bash-parity length = group count + 1), clears it

@@ -78,8 +78,13 @@ impl SsaInst {
                     array, fd, map_mode, separator, builder, module, ctx,
                 );
             }
-            SsaInst::ReadArray { array, fd, delim } => {
-                return self.emit_read_array(array, fd, delim, builder, module, ctx);
+            SsaInst::ReadArray {
+                array,
+                fd,
+                delim,
+                redirects,
+            } => {
+                return self.emit_read_array(array, fd, delim, redirects, builder, module, ctx);
             }
             SsaInst::SplitValue { source, array } => {
                 return self.emit_split_value(source, array, builder, module, ctx);
@@ -897,39 +902,18 @@ impl SsaInst {
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        let test_result_var = ctx.test_result_var;
-        let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        // Set up redirects (e.g. herestring <<< "text")
-        let saved = emit_redirects(
+        // Set up redirects (e.g. herestring <<< "text"). DD#55: a failed
+        // open aborts rather than binding an empty line.
+        let (target, fd, delim) = (target.clone(), *fd, *delim);
+        let in_condition = ctx.in_condition;
+        super::inst_handlers::emit_redirect_guarded_body(
             redirects,
+            in_condition,
             builder,
             module,
-            externs,
-            literals,
-            vars,
-            Some(exit_status_var),
+            ctx,
+            |builder, module, ctx| emit_readline_body(&target, fd, delim, builder, module, ctx),
         );
-        // fd=-1 is sentinel for "use captured pipe fd"
-        let fd_val = if *fd == -1 {
-            builder.use_var(pipe_read_fd_var)
-        } else {
-            builder.ins().iconst(I64, *fd)
-        };
-        let (ptr, len) = emit_read_line_call(builder, module, externs, fd_val, delim);
-        let sv = &vars[&target.display()];
-        builder.def_var(sv.str_ptr(), ptr);
-        builder.def_var(sv.str_len(), len);
-        // Set test_result: 1 if we got data (len > 0), 0 if EOF
-        let zero = builder.ins().iconst(I64, 0);
-        let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
-        let result = builder.ins().uextend(I64, got_data);
-        builder.def_var(test_result_var, result);
-        // Restore redirects
-        emit_restore(saved, builder, module, externs);
         false
     }
 
@@ -1169,43 +1153,28 @@ impl SsaInst {
         false
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn emit_read_array(
         &self,
         array: &str,
         fd: &i64,
         delim: &Option<u8>,
+        redirects: &[crate::ir::Redirect],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
         ctx: &mut InstCtx,
     ) -> bool {
-        let vars = &mut *ctx.vars;
-        let externs = ctx.externs;
-        let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        // Slurp all input from fd, then split by delimiter into indexed array
-        let sv = find_array_slot(vars, array, "array");
-        let table_ptr = builder.use_var(sv.str_ptr());
-
-        let fd_val = if *fd == -1 {
-            builder.use_var(pipe_read_fd_var)
-        } else {
-            builder.ins().iconst(I64, *fd)
-        };
-
-        // Read all data from fd
-        let read_all_ref = module.declare_func_in_func(externs.read_all, builder.func);
-        let call = builder.ins().call(read_all_ref, &[fd_val]);
-        let data_ptr = builder.inst_results(call)[0];
-        let data_len = builder.inst_results(call)[1];
-
-        // Split by delimiter into array. An explicit `-d` (delim.is_some())
-        // uses terminator semantics (drop a trailing empty); the default
-        // space split keeps separator semantics.
-        let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
-        let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
-        let terminator = builder.ins().iconst(I64, delim.is_some() as i64);
-        builder.ins().call(
-            split_ref,
-            &[data_ptr, data_len, delim_val, terminator, table_ptr],
+        // DD#55: a failed `read a < nosuch` open must abort rather than
+        // yield an empty array, exactly as `readline v < nosuch` does.
+        let (array, fd, delim) = (array.to_string(), *fd, *delim);
+        let in_condition = ctx.in_condition;
+        super::inst_handlers::emit_redirect_guarded_body(
+            redirects,
+            in_condition,
+            builder,
+            module,
+            ctx,
+            |builder, module, ctx| emit_read_array_body(&array, fd, delim, builder, module, ctx),
         );
         false
     }
@@ -1510,4 +1479,71 @@ fn emit_echo_body(
         checked,
         Some(msg),
     );
+}
+
+/// The `read ARR` body proper: slurp the fd and split into the array. Split
+/// out of `emit_read_array` so it can be handed to the DD#55 redirect guard
+/// as a closure.
+fn emit_read_array_body(
+    array: &str,
+    fd: i64,
+    delim: Option<u8>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let externs = ctx.externs;
+    let pipe_read_fd_var = ctx.pipe_read_fd_var;
+    let sv = find_array_slot(&*ctx.vars, array, "array");
+    let table_ptr = builder.use_var(sv.str_ptr());
+
+    let fd_val = if fd == -1 {
+        builder.use_var(pipe_read_fd_var)
+    } else {
+        builder.ins().iconst(I64, fd)
+    };
+
+    let read_all_ref = module.declare_func_in_func(externs.read_all, builder.func);
+    let call = builder.ins().call(read_all_ref, &[fd_val]);
+    let data_ptr = builder.inst_results(call)[0];
+    let data_len = builder.inst_results(call)[1];
+
+    // Split by delimiter into array. An explicit `-d` (delim.is_some())
+    // uses terminator semantics (drop a trailing empty); the default
+    // space split keeps separator semantics.
+    let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
+    let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
+    let terminator = builder.ins().iconst(I64, delim.is_some() as i64);
+    builder.ins().call(
+        split_ref,
+        &[data_ptr, data_len, delim_val, terminator, table_ptr],
+    );
+}
+
+/// The `readline VAR` body proper. Split out of `emit_readline` so it can be
+/// handed to the DD#55 redirect guard as a closure.
+fn emit_readline_body(
+    target: &VarRef,
+    fd: i64,
+    delim: Option<u8>,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    ctx: &mut InstCtx,
+) {
+    let externs = ctx.externs;
+    // fd=-1 is sentinel for "use captured pipe fd"
+    let fd_val = if fd == -1 {
+        builder.use_var(ctx.pipe_read_fd_var)
+    } else {
+        builder.ins().iconst(I64, fd)
+    };
+    let (ptr, len) = emit_read_line_call(builder, module, externs, fd_val, &delim);
+    let sv = &ctx.vars[&target.display()];
+    builder.def_var(sv.str_ptr(), ptr);
+    builder.def_var(sv.str_len(), len);
+    // Set test_result: 1 if we got data (len > 0), 0 if EOF
+    let zero = builder.ins().iconst(I64, 0);
+    let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
+    let result = builder.ins().uextend(I64, got_data);
+    builder.def_var(ctx.test_result_var, result);
 }

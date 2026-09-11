@@ -1279,11 +1279,9 @@ fn emit_janet_match(out: &mut String, ctx: &mut EmitCtx, c: &Command, sub: &str)
         let s = emit_expr_inline(&c.args[0], ctx);
         let p = emit_expr_inline(&c.args[1], ctx);
         let arr = expr_to_literal(&c.args[2]);
-        // `matchall` auto-declares its target (unlike `match`), so the `var`
+        // DD#63: the out-array form auto-declares its target, so the `var`
         // has to exist before the `set` below.
-        if sub == "captures-all" {
-            predeclare_one(out, ctx, &arr, "@[]", false, 0);
-        }
+        predeclare_one(out, ctx, &arr, "@[]", false, 0);
         writeln!(out, "{}", emit_janet_match_into_expr(&s, &p, &arr, sub)).unwrap();
         return;
     }
@@ -1698,10 +1696,9 @@ fn emit_match_into_condition(out: &mut String, ctx: &mut EmitCtx, name: &str, c:
     let s = emit_expr_inline(&c.args[0], ctx);
     let p = emit_expr_inline(&c.args[1], ctx);
     let arr = expr_to_literal(&c.args[2]);
-    if name == "matchall" {
-        // `matchall` auto-declares; the `var` must precede the `set`.
-        predeclare_one(out, ctx, &arr, "@[]", false, 0);
-    }
+    // DD#63: the out-array form auto-declares its target, so the `var` must
+    // precede the `set`, for singular `match` exactly as for `matchall`.
+    predeclare_one(out, ctx, &arr, "@[]", false, 0);
     write!(
         out,
         "{}",

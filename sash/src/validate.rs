@@ -2523,7 +2523,11 @@ pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
     let mut diags = Vec::new();
     let info = analyze_slots(program);
-    let cx = SlotCx { info: &info };
+    let map_names = collect_map_names(program);
+    let cx = SlotCx {
+        info: &info,
+        map_names: &map_names,
+    };
     for f in taint_top_level(program, &mut tainted, &cx, &mut diags) {
         taint_function_body(f, &tainted, &cx, &mut diags);
     }
@@ -3170,9 +3174,12 @@ fn command_writes_args(c: &Command) -> bool {
     match expr_literal_str(&c.name) {
         // DD#99: the target is the last argument for both arities
         // (`read ARRAY` and `read SRC ARRAY`), and `readline`'s only
-        // one. DD#63 `matchall S P ARR` is a bulk fill too, with the same
-        // trailing target.
-        "read" | "readline" | "matchall" => c.args.last().map(expr_literal_str) == Some("args"),
+        // one. DD#63 `match S P ARR` / `matchall S P ARR` are bulk fills
+        // too, with the same trailing target.
+        "read" | "readline" => c.args.last().map(expr_literal_str) == Some("args"),
+        "match" | "matchall" => {
+            c.args.len() == 3 && c.args.last().map(expr_literal_str) == Some("args")
+        }
         "argv" => argv_target_name(&c.args) == Some("args"),
         "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
@@ -3634,10 +3641,10 @@ fn taint_stmt(
     diags: &mut Vec<Diagnostic>,
 ) {
     match &stmt.kind {
-        StmtKind::Assignment(a) => taint_assignment(a, tainted, diags),
+        StmtKind::Assignment(a) => taint_assignment(a, tainted, sx, diags),
         StmtKind::Declaration(d) => {
             for a in &d.assignments {
-                taint_assignment(a, tainted, diags);
+                taint_assignment(a, tainted, sx, diags);
             }
         }
         StmtKind::Command(c) => taint_command(c, stmt.span, tainted, sx, diags),
@@ -3731,13 +3738,18 @@ fn splat_array_name(w: &Expr) -> Option<&str> {
 /// tainted arrays come only from bulk external reads (read -a / mapfile).
 /// Scalar assignment from a tainted source follows the normal flow:
 /// the scalar becomes tainted.
-fn taint_assignment(a: &Assignment, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
-    if taint_array_literal_assignment(a, tainted, diags) {
+fn taint_assignment(
+    a: &Assignment,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if taint_array_literal_assignment(a, tainted, sx, diags) {
         return;
     }
     // `a[i]=value` — subscript assignment into an array slot.
     if a.index.is_some() {
-        reject_tainted_into_array(&a.value, &a.name, tainted, diags);
+        reject_tainted_into_array(&a.value, &a.name, sx.is_map(&a.name), tainted, diags);
         return;
     }
     // Scalar (or string `+=`) assignment.
@@ -3809,18 +3821,20 @@ fn reject_scalar_rhs_read(expr: &Expr, tainted: &HashSet<String>, diags: &mut Ve
 fn taint_array_literal_assignment(
     a: &Assignment,
     tainted: &HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) -> bool {
     match &a.value.kind {
         ExprKind::Array(elems) => {
+            let is_map = sx.is_map(&a.name);
             for e in elems {
-                reject_tainted_into_array(e, &a.name, tainted, diags);
+                reject_tainted_into_array(e, &a.name, is_map, tainted, diags);
             }
             true
         }
         ExprKind::AssocArray(pairs) => {
             for (_k, v) in pairs {
-                reject_tainted_into_array(v, &a.name, tainted, diags);
+                reject_tainted_into_array(v, &a.name, true, tainted, diags);
             }
             true
         }
@@ -3853,10 +3867,11 @@ fn arg_default(e: &Expr) -> Option<&Expr> {
     c.args.get(1)
 }
 
-/// DD#61: reject a tainted value being placed into an array element.
+/// DD#61: reject a tainted value being placed into a collection element.
 fn reject_tainted_into_array(
     e: &Expr,
     name: &str,
+    is_map: bool,
     tainted: &HashSet<String>,
     diags: &mut Vec<Diagnostic>,
 ) {
@@ -3864,17 +3879,36 @@ fn reject_tainted_into_array(
         diags.push(Diagnostic::error_span(
             e.span,
             "SB5021",
-            format!(
-                "tainted value cannot be placed in array '{}' — external data enters \
-                 arrays via read/mapfile; or attest a scalar first and assign the clean value",
-                name
-            ),
+            tainted_into_collection_msg(name, is_map),
         ));
     }
     // A read of already-tainted data inside a `$( )` element (`a[i]=$(join @b)`,
     // `array a=($(join @b))`) is a use-site (SB5020) — `expr_uses_tainted`
     // above doesn't look inside command substitutions.
     check_value_cmdsub_reads(e, tainted, diags);
+}
+
+/// SB5021's advice, spelled for the kind of collection actually being filled.
+///
+/// DD#99 retired `mapfile`/`read -a`: an array now takes external data through
+/// `read ARR`, and a map has no bulk read of its own at all — it is built from
+/// an already-vouched-for array with `map m = @{ARR:DISP}` (DD#99 stage 4).
+/// Naming the wrong route here sends the reader after a command that no longer
+/// exists, so the message follows the declared kind.
+fn tainted_into_collection_msg(name: &str, is_map: bool) -> String {
+    let (kind, route) = if is_map {
+        (
+            "map",
+            "a map is built from a vouched-for array: `read ARR`, then \
+             `attest x in ARR [[ … ]]`, then `map m = @{ARR:DISP}`",
+        )
+    } else {
+        ("array", "external data enters an array via `read ARR`")
+    };
+    format!(
+        "tainted value cannot be placed in {kind} '{name}' — {route}; \
+         or attest a scalar first and assign the clean value"
+    )
 }
 
 /// Taint a function body. Positional params ($1-$9, $@) are clean within
@@ -3894,7 +3928,10 @@ fn taint_function_body(
     for slot in tainted_slots_on_entry(&f.name, sx.info, tainted) {
         fn_tainted.insert(slot);
     }
-    let inner = SlotCx { info: sx.info };
+    let inner = SlotCx {
+        info: sx.info,
+        map_names: sx.map_names,
+    };
     for s in &f.body {
         taint_stmt(s, &mut fn_tainted, &inner, diags);
     }
@@ -4499,11 +4536,10 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         "read" | "readline" => insert_last_target_arg(&c.args, set),
         "mapfile" | "readarray" => insert_all_target_args(&c.args, set),
         // DD#99: `read [SRC] ARRAY` — only the last arg is a binding.
-        // DD#63: `matchall S P ARR` fills ARR, so it introduces it — the same
-        // bulk-fill precedent as argv / read. (Singular `match` does
-        // NOT auto-declare; that asymmetry is filed as
-        // `bug-match-outarray-no-autodeclare`.)
-        "matchall" => insert_last_target_arg(&c.args, set),
+        // DD#63: `match S P ARR` / `matchall S P ARR` fill ARR, so they
+        // introduce it — the same bulk-fill precedent as argv / read. The
+        // two-arg `match S P` is the boolean form and binds nothing.
+        "matchall" | "match" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
         _ => {}
     }
@@ -5481,12 +5517,21 @@ pub(crate) struct SlotInfo {
     taints: HashSet<(String, usize)>,
 }
 
-/// The slot facts, carried through the taint walk. A forwarded slot argument
+/// The static facts carried through the taint walk. A forwarded slot argument
 /// (`f =A` inside `g`) needs no enclosing-function context here: the binding
 /// fixpoint already resolved it, and marking the slot name itself tainted is
-/// what the enclosing body reads.
+/// what the enclosing body reads. `map_names` is separate static knowledge —
+/// SB5021 needs the declared kind of a collection to name a route that exists.
 struct SlotCx<'a> {
     info: &'a SlotInfo,
+    map_names: &'a HashSet<String>,
+}
+
+impl SlotCx<'_> {
+    /// Whether `name` was declared as a map (`map m` / `declare -A m`).
+    fn is_map(&self, name: &str) -> bool {
+        self.map_names.contains(name)
+    }
 }
 
 impl SlotInfo {
@@ -5501,6 +5546,19 @@ impl SlotInfo {
     fn taints_slot(&self, fname: &str, j: usize) -> bool {
         self.taints.contains(&(fname.to_string(), j))
     }
+}
+
+/// The names declared as maps anywhere in the program (DD#61 `map m`).
+fn collect_map_names(program: &Program) -> HashSet<String> {
+    let mut kinds = HashMap::new();
+    for block in program_blocks(program) {
+        crate::type_check::collect_collection_kinds(block, &mut kinds);
+    }
+    kinds
+        .into_iter()
+        .filter(|(_, is_map)| *is_map)
+        .map(|(name, _)| name)
+        .collect()
 }
 
 pub(crate) fn analyze_slots(program: &Program) -> SlotInfo {

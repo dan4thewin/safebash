@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=122
+plan=129
 echo "1..$plan" >&3
 
 set +e
@@ -737,6 +737,76 @@ if in_modes native,c; then
       && { ! in_modes native || [[ $rerr == *"(exit 42)"* ]]; }; chk 55.59
 else
     skip_chk 55.59
+fi
+
+# --- DD#55 + DD#99: the read family runs the same open(2) guard ---
+# `read ARR < f` / `readline v < f` carry their own redirects (SsaInst::
+# ReadArray/ReadLine), so a failed open aborts instead of silently yielding
+# an empty array / empty line — a mistyped path used to be indistinguishable
+# from an empty file. Context governs the abort exactly as for `echo > f`
+# (55.24-55.26, 55.50). native,c: janet has no DD#55 abort channel at all
+# (task `c-janet-dd55-abort-channel`).
+if in_modes native,c; then
+    # 55.60 bare `read ARR < nosuch` aborts — no empty array, + diagnostic
+    run_sash 'read a < /nonexistent_dir_55/f
+echo "n=$(len a)"'
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.60
+
+    # 55.61 bare `readline v < nosuch` aborts — no empty line, + diagnostic
+    run_sash 'readline v < /nonexistent_dir_55/f
+attest v [[ -n $v ]]
+echo "v=$v"'
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.61
+
+    # 55.62 `- read ARR < nosuch` still ABORTS: `-` suppresses the read's own
+    # verdict, not the prior open, which runs first (mirrors 55.26)
+    run_sash '- read a < /nonexistent_dir_55/f
+echo "n=$(len a)"'
+    [[ $rc != 0 && -z $out && -z $err \
+       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.62
+
+    # 55.63/55.64 are NOT fail-first gates — they passed before the guard
+    # existed too, because the unguarded read fell through to the harness's
+    # `</dev/null` stdin and returned empty. They pin the other half of the
+    # fix: now that the guard DOES fire, `in_condition` must catch it rather
+    # than abort (getting that wrong turns these red).
+    # 55.63 the failure is caught in an if-condition → else branch, no diag
+    run_sash 'if read a < /nonexistent_dir_55/f { echo yes } else { echo no }
+echo "n=$(len a)"'
+    [[ $rc = 0 && $out = "no
+n=0" && -z $err && -z $rerr ]]; chk 55.63
+
+    # 55.64 ... and with `||` too (symmetry with if, mirrors 55.50)
+    run_sash 'read a < /nonexistent_dir_55/f || echo caught
+echo "n=$(len a)"'
+    [[ $rc = 0 && $out = "caught
+n=0" && -z $err && -z $rerr ]]; chk 55.64
+else
+    skip_chk 55.60; skip_chk 55.61; skip_chk 55.62
+    skip_chk 55.63; skip_chk 55.64
+fi
+
+# 55.65/55.66 the guard does not disturb a redirect that opens fine.
+# native,c only: janet drops the redirect and reads stdin instead —
+# janet-read-family-ignores-input-redirect (pre-existing, not this guard).
+if in_modes native,c; then
+  # DD#99 `read ARR` splits the whole stream on NUL, so two NUL-terminated
+  # fields are two elements.
+  printf 'alpha\0beta\0' > /tmp/sash_spec_55_65.txt
+  run_sash 'read a < /tmp/sash_spec_55_65.txt
+echo "n=$(len a)"'
+  [[ $rc = 0 && $out = "n=2" && -z $err ]]; chk 55.65
+
+  # 55.66 likewise for the scalar read (newline-delimited, so its own file)
+  printf 'alpha beta\n' > /tmp/sash_spec_55_66.txt
+  run_sash 'readline v < /tmp/sash_spec_55_66.txt
+attest v [[ -n $v ]]
+echo "v=$v"'
+  [[ $rc = 0 && $out = "v=alpha beta" && -z $err ]]; chk 55.66
+else
+  skip_chk 55.65; skip_chk 55.66
 fi
 
 set -e

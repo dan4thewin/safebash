@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup taint
-plan=178
+plan=182
 echo "1..$plan" >&3
 
 set +e
@@ -1072,6 +1072,42 @@ echo "$(len a)"'
 else
     skip_chk tl.8
 fi
+
+# --- DD#99: SB5021 names a route that still exists ---
+# The advice used to read "external data enters arrays via read/mapfile" for
+# every target. `mapfile` is retired (DD#99) and a MAP has no bulk read at
+# all — it is built from an already-vouched-for array. The message now
+# follows the declared kind of the target.
+
+# 60.56 a tainted value into an ARRAY element: says "array", points at
+# `read ARR`, and no longer names the retired `mapfile`
+run_sash 'array a=()
+a[0]=$(getenv HOME)
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* \
+   && $err == *"array 'a'"* && $err == *'read ARR'* \
+   && $err != *mapfile* ]]; chk 60.56
+
+# 60.57 a tainted value into a MAP element: says "map", and names the real
+# route (array -> attest -> `map m = @{ARR:DISP}`)
+run_sash 'map m
+m[k]=$(getenv HOME)
+echo "${m[k]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* \
+   && $err == *"map 'm'"* && $err == *'@{ARR:DISP}'* \
+   && $err != *mapfile* ]]; chk 60.57
+
+# 60.58 the map LITERAL form gets the map wording too
+run_sash 'map m=([k]=$(getenv HOME))
+echo "${m[k]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* \
+   && $err == *"map 'm'"* && $err != *mapfile* ]]; chk 60.58
+
+# 60.59 the array LITERAL form gets the array wording
+run_sash 'array a=($(getenv HOME))
+echo "${a[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5021* \
+   && $err == *"array 'a'"* && $err != *mapfile* ]]; chk 60.59
 
 set -e
 tally

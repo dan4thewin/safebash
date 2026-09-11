@@ -715,7 +715,12 @@ fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
             separator,
         } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
         // read -a ARR — split one line into an array by delimiter.
-        SsaInst::ReadArray { array, fd, delim } => emit_read_array(e, array, *fd, *delim, types),
+        SsaInst::ReadArray {
+            array,
+            fd,
+            delim,
+            redirects,
+        } => emit_read_array(e, array, *fd, *delim, redirects, types),
         // DD#99 `read $SRC ARRAY` — the same split with the bytes coming
         // from a value rather than a fd.
         SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
@@ -3716,6 +3721,46 @@ fn emit_table_key(e: &mut Emit, array: &str, index: &VarRef, types: &VarTypes) -
     (format!("{}_p", t), format!("{}_l", t))
 }
 
+/// The DD#55 open(2) guard around an arbitrary body — the closure-taking
+/// sibling of [`emit_redirect_guarded_body`], for the reads, whose body is
+/// not a `BuiltinCmd` dispatch. On an open failure the body is skipped (no
+/// misroute), status is 1, and — unless caught by an if/`||` condition —
+/// the `<argv0>: <path>: <reason>` diagnostic is written and the program
+/// aborts. Mirrors native `emit_redirect_guarded_body`.
+fn emit_guarded_body(
+    e: &mut Emit,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+    body: impl FnOnce(&mut Emit, &VarTypes),
+) {
+    let (saved, failure) = if redirects.is_empty() {
+        (Vec::new(), None)
+    } else {
+        emit_redirects_guarded(e, redirects, types)
+    };
+    let Some((failed, path_ptr, path_len)) = failure else {
+        body(e, types);
+        if !saved.is_empty() {
+            emit_restore(e, &saved);
+        }
+        return;
+    };
+    let in_condition = e.in_condition;
+    writeln!(e.out, "    if ({failed}) {{").unwrap();
+    writeln!(e.out, "        __exit_status = 1; __test_result = 0;").unwrap();
+    if !in_condition {
+        writeln!(e.out, "        sash_emsg({path_ptr}, {path_len}, 0, 0);").unwrap();
+    }
+    emit_restore(e, &saved);
+    if !in_condition {
+        writeln!(e.out, "        goto {};", abort_target(e)).unwrap();
+    }
+    writeln!(e.out, "    }} else {{").unwrap();
+    body(e, types);
+    emit_restore(e, &saved);
+    writeln!(e.out, "    }}").unwrap();
+}
+
 /// `read VAR` — assigns one line from `fd` to `target`. Mirrors
 /// emit_readline (codegen/dispatch.rs:876). delim=None uses
 /// newline; delim=Some(b) uses that byte. Sets __exit_status = 1
@@ -3728,9 +3773,15 @@ fn emit_readline(
     redirects: &[crate::ir::Redirect],
     types: &VarTypes,
 ) {
-    // `read VAR < file` / `read VAR <<< word` — apply the redirect (e.g.
-    // herestring → fd 0) around the read, then restore.
-    let saved = emit_redirects(e, redirects, types);
+    // `readline VAR < file` / `readline VAR <<< word` — apply the redirect
+    // (e.g. herestring → fd 0) around the read, then restore. DD#55: a
+    // failed open aborts rather than reading an empty line.
+    emit_guarded_body(e, redirects, types, |e, _types| {
+        emit_readline_body(e, target, fd, delim)
+    });
+}
+
+fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>) {
     let t = e.fresh();
     let fdx = c_read_fd(fd);
     let call = match delim {
@@ -3748,7 +3799,6 @@ fn emit_readline(
         t = t
     )
     .unwrap();
-    emit_restore(e, &saved);
 }
 
 /// The C fd expression for a read: fd=-1 is the lastpipe sentinel
@@ -3905,7 +3955,21 @@ fn emit_mapfile(
 /// `read -a ARR` — slurp `fd` and split it into `array` by `delim`
 /// (default space). Mirrors emit_read_array (codegen/dispatch.rs:1219):
 /// sash_read_all + sash_split_into_array.
-fn emit_read_array(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, types: &VarTypes) {
+fn emit_read_array(
+    e: &mut Emit,
+    array: &str,
+    fd: i64,
+    delim: Option<u8>,
+    redirects: &[crate::ir::Redirect],
+    types: &VarTypes,
+) {
+    // DD#55: `read ARR < nosuch` aborts rather than yielding an empty array.
+    emit_guarded_body(e, redirects, types, |e, types| {
+        emit_read_array_body(e, array, fd, delim, types)
+    });
+}
+
+fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, types: &VarTypes) {
     let table_expr = lookup_table_var(array, types);
     let fdx = c_read_fd(fd);
     let t = e.fresh();
