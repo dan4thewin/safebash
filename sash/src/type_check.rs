@@ -33,6 +33,12 @@ struct TypeEnv {
     intrinsic_int: HashSet<String>,
     /// Variables declared as array or map (collections)
     collections: HashSet<String>,
+    /// DD#100: per-function collection-slot kinds, inferred from call sites.
+    slot_kinds: HashMap<String, SlotKinds>,
+    /// The slots whose kind is known while checking the current body. A slot
+    /// outside this set is genuinely unknown (the function is never called
+    /// with one, or the argument was undeclared), so kind checks skip it.
+    known_slots: HashSet<String>,
     /// Variables declared as map (associative array) — string keys
     assoc_arrays: HashSet<String>,
 }
@@ -42,11 +48,22 @@ impl TypeEnv {
         let mut intrinsic_int = HashSet::new();
         intrinsic_int.insert("#".to_string()); // $#
         intrinsic_int.insert("?".to_string()); // $?
+                                               // DD#100: `A`..`E` are the collection-parameter slots. They are always
+                                               // collections, but their *kind* is per-call-site (Part B: array and
+                                               // map are both usable), and this pass runs before inlining — so they
+                                               // are seeded as collections and deliberately left out of
+                                               // `assoc_arrays`, which would commit them to one kind program-wide.
+                                               // SB5065 has already rejected any top-level use.
+        let collections = (0..crate::ir::MAX_COLLECTION_SLOTS)
+            .map(crate::ir::collection_slot_name)
+            .collect();
         Self {
             vars: HashMap::new(),
             funcs: HashMap::new(),
             intrinsic_int,
-            collections: HashSet::new(),
+            collections,
+            slot_kinds: HashMap::new(),
+            known_slots: HashSet::new(),
             assoc_arrays: HashSet::new(),
         }
     }
@@ -65,6 +82,13 @@ impl TypeEnv {
 
     fn is_collection(&self, name: &str) -> bool {
         self.collections.contains(name)
+    }
+
+    /// DD#100 Part B: a collection-parameter slot's *kind* is whatever the
+    /// call site passed, and this pass runs before inlining, so no
+    /// program-wide answer exists. Kind-specific checks skip slots.
+    fn is_slot(&self, name: &str) -> bool {
+        crate::ir::is_collection_slot(name) && !self.known_slots.contains(name)
     }
 
     fn declare(&mut self, name: &str, vtype: VarType) {
@@ -209,6 +233,9 @@ fn check_arith_indexed_map_assign(
     errors: &mut Vec<TypeError>,
 ) {
     let Some(idx) = &a.index else { return };
+    if env.is_slot(&a.name) {
+        return;
+    }
     if matches!(idx.kind, ExprKind::Arithmetic(_)) && env.assoc_arrays.contains(&a.name) {
         errors.push(bare_map_subscript_error(&a.name, span));
     }
@@ -624,6 +651,130 @@ fn expr_to_name(expr: &Expr) -> String {
     }
 }
 
+/// DD#100 Part B: the collection kind bound to a function's slot. A slot is
+/// filled by the caller, so its kind comes from the call sites, not the body.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SlotKind {
+    Unbound,
+    Array,
+    Map,
+}
+
+/// Per-function slot kinds, inferred from every call site.
+///
+/// This pass runs before inlining, so a slot has no kind of its own — yet the
+/// kind-specific checks (`keys` is map-only, a string key needs a map, an
+/// integer key needs an array) must still apply, or they silently produce
+/// wrong answers: `keys A` on an array printed garbage and `${A[x]}` on an
+/// array returned element 0.
+///
+/// Call sites that disagree on a slot's kind are rejected. Starting strict is
+/// the forward-compatible order (as in Part C): per-instantiation checking can
+/// be allowed later without breaking any accepted program, whereas tightening
+/// later would break them.
+fn infer_slot_kinds(program: &Program, errors: &mut Vec<TypeError>) -> HashMap<String, SlotKinds> {
+    let mut decls = HashMap::new();
+    collect_collection_kinds(&program.statements, &mut decls);
+    let mut out: HashMap<String, SlotKinds> = HashMap::new();
+    collect_slot_kind_calls(&program.statements, &decls, &mut out, errors);
+    out
+}
+
+type SlotKinds = [SlotKind; crate::ir::MAX_COLLECTION_SLOTS];
+
+/// Every collection declaration in the program → whether it is a map.
+fn collect_collection_kinds(stmts: &[Statement], out: &mut HashMap<String, bool>) {
+    crate::ir::walk_stmt_tree(stmts, &mut |stmt| {
+        let StmtKind::Declaration(d) = &stmt.kind else {
+            return;
+        };
+        let Some(is_assoc) = declared_collection_kind(d) else {
+            return;
+        };
+        for a in &d.assignments {
+            out.insert(a.name.clone(), is_assoc);
+        }
+    });
+}
+
+/// `Some(is_map)` if this declaration introduces a collection.
+fn declared_collection_kind(d: &Declaration) -> Option<bool> {
+    let is_assoc = d.flags.iter().any(|f| f == "-A");
+    if is_assoc || d.flags.iter().any(|f| f == "-a") {
+        Some(is_assoc)
+    } else {
+        None
+    }
+}
+
+fn collect_slot_kind_calls(
+    stmts: &[Statement],
+    decls: &HashMap<String, bool>,
+    out: &mut HashMap<String, SlotKinds>,
+    errors: &mut Vec<TypeError>,
+) {
+    crate::ir::walk_stmt_tree(stmts, &mut |stmt| {
+        if let StmtKind::Command(c) = &stmt.kind {
+            record_call_slot_kinds(c, stmt.span, decls, out, errors);
+        }
+    });
+}
+
+fn record_call_slot_kinds(
+    c: &Command,
+    span: Span,
+    decls: &HashMap<String, bool>,
+    out: &mut HashMap<String, SlotKinds>,
+    errors: &mut Vec<TypeError>,
+) {
+    let fname = expr_to_name(&c.name);
+    let passed = crate::ir::collection_args(&c.args);
+    if passed.is_empty() {
+        return;
+    }
+    let slots = out
+        .entry(fname.clone())
+        .or_insert([SlotKind::Unbound; crate::ir::MAX_COLLECTION_SLOTS]);
+    for (j, name) in passed
+        .iter()
+        .enumerate()
+        .take(crate::ir::MAX_COLLECTION_SLOTS)
+    {
+        let Some(kind) =
+            decls
+                .get(name.as_str())
+                .map(|&m| if m { SlotKind::Map } else { SlotKind::Array })
+        else {
+            continue; // undeclared, or itself a slot — reported elsewhere
+        };
+        merge_slot_kind(&mut slots[j], kind, &fname, j, span, errors);
+    }
+}
+
+fn merge_slot_kind(
+    slot: &mut SlotKind,
+    kind: SlotKind,
+    fname: &str,
+    j: usize,
+    span: Span,
+    errors: &mut Vec<TypeError>,
+) {
+    if *slot == SlotKind::Unbound {
+        *slot = kind;
+    } else if *slot != kind {
+        errors.push(TypeError {
+            message: format!(
+                "function `{fname}` is called with both an array and a map in \
+                 collection slot `{}` — a slot's kind comes from its call sites, \
+                 and the body is checked against one kind. Split the function, or \
+                 pass the same kind everywhere",
+                crate::ir::collection_slot_name(j)
+            ),
+            span,
+        });
+    }
+}
+
 /// Type-check a program. Returns a list of type errors (empty = OK).
 pub fn type_check(program: &Program) -> Vec<TypeError> {
     let mut errors = Vec::new();
@@ -635,6 +786,10 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
             env.funcs.insert(f.name.clone(), f.return_type);
         }
     }
+
+    // DD#100 Part B: a slot's kind comes from the call sites, so infer it
+    // before checking any body (a call may appear after the definition).
+    env.slot_kinds = infer_slot_kinds(program, &mut errors);
 
     // Second pass: check statements
     for stmt in &program.statements {
@@ -765,7 +920,7 @@ fn check_subscript_key_kind(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    if !env.collections.contains(name) {
+    if !env.collections.contains(name) || env.is_slot(name) {
         return;
     }
     let is_map = env.assoc_arrays.contains(name);
@@ -817,7 +972,7 @@ fn check_keys_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
         return;
     };
     let name = join_operand_name(arg);
-    if name.is_empty() || env.assoc_arrays.contains(&name) {
+    if name.is_empty() || env.assoc_arrays.contains(&name) || env.is_slot(&name) {
         return;
     }
     let what = if env.collections.contains(&name) {
@@ -1223,12 +1378,44 @@ fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
 fn check_function(f: &Function, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
     let had_args = env.collections.contains("args");
     env.collections.insert("args".to_string());
+    // DD#100: seed the map slots this function is called with, so the
+    // kind-specific checks (`keys` map-only, string vs integer key) apply
+    // inside the body exactly as they would on the caller's collection.
+    let map_slots = enter_slot_kinds(&f.name, env);
     for s in &f.body {
         check_stmt(s, env, errors);
+    }
+    for name in map_slots {
+        env.assoc_arrays.remove(&name);
+        env.known_slots.remove(&name);
     }
     if !had_args {
         env.collections.remove("args");
     }
+}
+
+/// Bind this function's slot kinds for the duration of its body check,
+/// returning the names to clear afterwards. A **map** slot is also marked
+/// associative, which is what the kind checks read; an **array** slot only
+/// needs to be *known*. An unbound slot stays unknown, so `TypeEnv::is_slot`
+/// keeps it out of the kind checks — there is nothing to check it against.
+fn enter_slot_kinds(fname: &str, env: &mut TypeEnv) -> Vec<String> {
+    let Some(kinds) = env.slot_kinds.get(fname).copied() else {
+        return Vec::new();
+    };
+    let mut added = Vec::new();
+    for (j, k) in kinds.iter().enumerate() {
+        if *k == SlotKind::Unbound {
+            continue;
+        }
+        let name = crate::ir::collection_slot_name(j);
+        if *k == SlotKind::Map {
+            env.assoc_arrays.insert(name.clone());
+        }
+        env.known_slots.insert(name.clone());
+        added.push(name);
+    }
+    added
 }
 
 fn check_if(if_stmt: &If, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {

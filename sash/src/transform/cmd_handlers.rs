@@ -49,8 +49,11 @@ fn lower_newread(
     block: BlockId,
 ) -> BlockId {
     let (source, target) = match c.args.as_slice() {
-        [only] => (None, expr_to_string(only)),
-        [src, dst] => (Some(expr_to_value(src, state)), expr_to_string(dst)),
+        [only] => (None, super::expressions::fill_target_name(only, state)),
+        [src, dst] => (
+            Some(expr_to_value(src, state)),
+            super::expressions::fill_target_name(dst, state),
+        ),
         _ => return block,
     };
     super::stmt_handlers::autodeclare_bulk_target(&target, false, ssa, state, block);
@@ -77,11 +80,12 @@ fn emit_read_inst(
     block: BlockId,
 ) {
     if let Some(arr) = &flags.array_name {
+        let arr = super::expressions::resolve_args_name(arr, state);
         // Auto-declare (mirrors argv/mapfile) so a later len/element read on an
         // undeclared `read -a a` target resolves instead of an ICE.
-        super::stmt_handlers::autodeclare_bulk_target(arr, false, ssa, state, block);
+        super::stmt_handlers::autodeclare_bulk_target(&arr, false, ssa, state, block);
         ssa.block_mut(block).insts.push(SsaInst::ReadArray {
-            array: arr.clone(),
+            array: arr,
             fd: 0,
             delim: flags.delim,
         });
@@ -295,10 +299,15 @@ fn inline_function_call(
     // `@a` its joined-string meaning, which silently passed a function the
     // whole array as a single argument — and made `("a b" "c")`
     // indistinguishable from `(a b c)`.
-    let arg_values: Vec<SsaValue> = c.args.iter().map(|a| arg_to_value(a, state)).collect();
+    // DD#100: a `=name` argument passes a COLLECTION by identity — it binds a
+    // slot (`A`..`E`) rather than contributing a value to `args`, so split it
+    // out before lowering.
+    let (scalar_args, coll_args) = super::functions::split_call_args(&c.args);
+    let arg_values: Vec<SsaValue> = scalar_args.iter().map(|a| arg_to_value(a, state)).collect();
 
     check_callee_arity(name, body, arg_values.len(), state);
     let saved_args = super::functions::save_caller_args(state);
+    let saved_slots = super::functions::setup_callee_slots(&coll_args, state);
     let saved_ro = super::functions::enter_fn_body_scope(state);
     super::functions::setup_callee_args(&arg_values, ssa, state, block);
 
@@ -322,6 +331,7 @@ fn inline_function_call(
     ssa.block_mut(exit_block).terminator = Terminator::Goto(restore_block);
 
     super::functions::exit_fn_body_scope(state, saved_ro);
+    super::functions::restore_caller_slots(saved_slots, state);
     super::functions::restore_caller_args(saved_args, state);
 
     state.inlining.pop();

@@ -31,6 +31,51 @@ pub(super) fn setup_callee_args(
     state.current_args_name = name;
 }
 
+/// DD#100: bind the callee's collection slots `A`..`E` from the call's
+/// `=name` arguments (in call order), returning the caller's bindings for
+/// restore. Each passed name is resolved through the *caller's* slots first,
+/// so `fn g { f =A }` forwards the collection `g` itself received rather than
+/// a slot letter that means nothing in `f`.
+pub(super) fn setup_callee_slots(
+    names: &[String],
+    state: &mut VersionState,
+) -> std::collections::HashMap<String, String> {
+    let bound: Vec<String> = names
+        .iter()
+        .map(|n| super::expressions::resolve_args_name(n, state))
+        .collect();
+    let saved = std::mem::take(&mut state.collection_slots);
+    for (i, target) in bound.into_iter().enumerate() {
+        state
+            .collection_slots
+            .insert(crate::ir::collection_slot_name(i), target);
+    }
+    saved
+}
+
+pub(super) fn restore_caller_slots(
+    saved: std::collections::HashMap<String, String>,
+    state: &mut VersionState,
+) {
+    state.collection_slots = saved;
+}
+
+/// DD#100: split a call's arguments into the scalar ones (which become the
+/// callee's `args`) and the collection ones (`=name` → `A`..`E`). Part C puts
+/// the scalars first, but the split is by form, not position, so a misordered
+/// call still lowers coherently while the validator reports it.
+pub(super) fn split_call_args(args: &[Expr]) -> (Vec<&Expr>, Vec<String>) {
+    let mut scalars = Vec::new();
+    let mut colls = Vec::new();
+    for a in args {
+        match crate::ir::collection_arg_name(a) {
+            Some(n) => colls.push(n),
+            None => scalars.push(a),
+        }
+    }
+    (scalars, colls)
+}
+
 /// Save the *name* of the current positional scope (a cheap string — the array
 /// itself is uniquely named, so nothing in SSA needs saving/restoring).
 pub(super) fn save_caller_args(state: &mut VersionState) -> String {

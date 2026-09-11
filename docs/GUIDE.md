@@ -199,9 +199,23 @@ strings (`$'\x65\x76\x61\x6c'`) are decoded before comparison.
 
 ### Phase 3: Taint
 
-Flow-sensitive taint analysis (DD#24, DD#42–44). Walks the program
-sequentially, tracking each variable as `Tainted`, `Attested`, or
-`Clean`.
+Flow-sensitive taint analysis (DD#24, DD#42–44), tracking each variable
+as `Tainted`, `Attested`, or `Clean`.
+
+**Two phases (DD#100).** Phase 1 walks the top level, deferring every
+function definition; phase 2 then checks the deferred bodies against the
+completed set. A single sequential walk checked each body *at its
+definition*, so a global tainted later was invisible inside it — `fn user
+{ for v in @g; … }` followed by `argv g` compiled and leaked. The two
+phases need no fixpoint because **SB5067** forbids a function from
+tainting a global (use a local, attest it, assign out), which makes the
+top level the only place a global's taint can arrive.
+
+**Collection slots (DD#100)** are a call-site fact, so no phase ordering
+exposes them. `analyze_slots` resolves both directions ahead of the walk
+with a call-graph fixpoint: inward, a slot is tainted if *any* call site
+passes a tainted collection; outward, a callee that bulk-fills a slot
+taints the caller's collection.
 
 **Taint sources:** `$(argv N)` (program arguments), `read`
 targets, `$(external cmd)`, environment variables via `$(getenv NAME)`.

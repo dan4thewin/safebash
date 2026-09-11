@@ -197,9 +197,23 @@ pub(super) fn positional_to_value(var: &str, state: &VersionState) -> Option<Ssa
 pub(super) fn resolve_args_name(name: &str, state: &VersionState) -> String {
     if name == "args" && !state.current_args_name.is_empty() {
         state.current_args_name.clone()
+    } else if let Some(target) = state.collection_slots.get(name) {
+        // DD#100: a collection-parameter slot resolves to the collection the
+        // caller passed. Substitution is the whole mechanism — reads, writes
+        // and taint all then apply to the caller's name.
+        target.clone()
     } else {
         name.to_string()
     }
+}
+
+/// The NAME a bulk-fill target denotes, resolved through DD#100's collection
+/// slots so `read A` / `argv N A` / `matchall … A` / `mapfile A` fill the
+/// **caller's** collection. Unresolved, these silently filled a function-local
+/// array literally named `A` and the caller's collection was left untouched —
+/// which is precisely the out-parameter form Part E exists for.
+pub(super) fn fill_target_name(e: &Expr, state: &VersionState) -> String {
+    resolve_args_name(&expr_to_string(e), state)
 }
 
 /// A single-digit positional name `"1".."9"` → its 0-based `args` index (n-1).

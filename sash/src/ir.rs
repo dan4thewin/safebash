@@ -272,6 +272,31 @@ fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// Visit every statement in a tree, including those in nested bodies.
+pub fn walk_stmt_tree(stmts: &[Statement], f: &mut impl FnMut(&Statement)) {
+    walk_scoped_stmts(stmts, "", &mut |stmt, _| f(stmt));
+}
+
+/// Visit every statement in a tree, tracking the name of the enclosing
+/// function — `""` at the top level.
+///
+/// Function bodies are reached through `child_bodies` like any other nested
+/// body, so a nested function simply rebinds the name for its own subtree. A
+/// visitor that cares only about top-level statements tests `in_fn.is_empty()`
+/// rather than skipping `StmtKind::Function` itself.
+pub fn walk_scoped_stmts<F: FnMut(&Statement, &str)>(stmts: &[Statement], in_fn: &str, f: &mut F) {
+    for stmt in stmts {
+        f(stmt, in_fn);
+        let inner = match &stmt.kind {
+            StmtKind::Function(fun) => fun.name.as_str(),
+            _ => in_fn,
+        };
+        for body in stmt.child_bodies() {
+            walk_scoped_stmts(body, inner, f);
+        }
+    }
+}
+
 /// DD#98: `_` is the don't-care binder. In any binding position (assignment
 /// LHS, declaration, `for` variable, `read`/`mapfile`/`argv` target, attest
 /// binder) it means "bind this and discard it": exempt from the DD#86
@@ -280,6 +305,67 @@ fn walk_opt(operand: Option<&Expr>, f: &mut impl FnMut(&Expr)) {
 /// field and `b` gets the next one.
 pub(crate) fn is_discard_binder(name: &str) -> bool {
     name == "_"
+}
+
+/// DD#100: the number of collection-parameter slots a function may receive.
+pub(crate) const MAX_COLLECTION_SLOTS: usize = 5;
+
+/// DD#100: `A`..`E` are the reserved collection-parameter slots. A call passes
+/// a collection with `=name`; the callee sees it as `A`..`E` in call order.
+/// Reserved on the `args` precedent (DD#75 §5) — they can't be declared as
+/// user variables, and outside a function they name nothing at all.
+pub(crate) fn is_collection_slot(name: &str) -> bool {
+    name.len() == 1 && matches!(name.as_bytes()[0], b'A'..=b'E')
+}
+
+/// The slot name for the `i`th collection argument (`0` → `"A"`).
+pub(crate) fn collection_slot_name(i: usize) -> String {
+    ((b'A' + i as u8) as char).to_string()
+}
+
+/// DD#100: the collection named by a `=name` call argument, or `None` if this
+/// argument is not the sigil form.
+///
+/// Only a **bare** `Literal` counts. `f '=foo'` and `f "=foo"` are
+/// `SingleQuoted`/`DoubleQuoted` and pass the literal string `=foo` — that is
+/// the escape hatch. The sigil is a position marker, not a value, so it does
+/// not compose: the tail must be a plain identifier, which rejects `==a`,
+/// `=a[0]`, `=@a` and `=` alone.
+pub(crate) fn collection_arg_name(e: &Expr) -> Option<String> {
+    let text = match &e.kind {
+        ExprKind::Literal(s) => s.clone(),
+        // The scanner emits `=` as its own token, so a bare `=name` argument
+        // reaches the AST as a Concat of literal pieces, not one Literal.
+        ExprKind::Concat(parts) => {
+            let mut out = String::new();
+            for p in parts {
+                let ExprKind::Literal(s) = &p.kind else {
+                    return None; // `=$x`, `=@a` — a value crept in, so not a sigil
+                };
+                out.push_str(s);
+            }
+            out
+        }
+        _ => return None,
+    };
+    let name = text.strip_prefix('=')?;
+    is_plain_identifier(name).then(|| name.to_string())
+}
+
+/// The `=name` arguments of a call, in order.
+pub(crate) fn collection_args(args: &[Expr]) -> Vec<String> {
+    args.iter().filter_map(collection_arg_name).collect()
+}
+
+/// A plausible user identifier — excludes punctuation specials (`$?`, `$$`,
+/// `$!`, `$#`, `$@`, `$*`, `$-`) and positionals (`$1`…) by construction.
+pub(crate) fn is_plain_identifier(s: &str) -> bool {
+    let mut bytes = s.bytes();
+    match bytes.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == b'_' => {}
+        _ => return false,
+    }
+    bytes.all(|c| c.is_ascii_alphanumeric() || c == b'_')
 }
 
 /// Walk the `${…}` expansions embedded in an `ArithExpr` tree, applying `f` to

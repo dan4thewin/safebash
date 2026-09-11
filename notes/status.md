@@ -1,3 +1,61 @@
+## ══ STATUS (2026-09-11) — DD#100 implemented; a taint hole found under it ══
+
+**On `hand-parser`.** DD#100 collection parameters land end-to-end:
+`=name` at the call site, `A`–`E` in the callee, five slots, scalars first.
+`spec/collparam.sh` is the executable spec (34 tests). Sweep **4780 / 39 /
+478** — every failure is `janet:*`, **zero non-janet failures**, zero
+regressions against `fff2a1b`.
+
+**The find that mattered was not DD#100's.** `taint_function_body` walked a
+body **once, at its definition**, with the tainted set as of that point, so
+a global tainted *later* was invisible inside it:
+
+```sh
+fn user { for v in @g; do echo "$v"; done }
+argv g
+user            # compiled; printed unattested argv
+```
+
+Reproduced at `fff2a1b`. Scalars survive it via the SSA backstop; arrays do
+not, because `ssa_taint.rs` deliberately does not re-derive array taint.
+
+**DG's two calls fixed it structurally.** (1) *Forbid a fn from tainting a
+global* → **SB5067**; the escape is local → attest → assign out, and this
+only finishes a rule SB5021 already applied to `g[0]=$(arg 1)`. With it, the
+top level is the only place a global's taint can arrive, so a **two-phase**
+walk (top level, then deferred bodies) is sound with no fixpoint. (2) Slots
+**allow and propagate** rather than ban — an out-param carrying external
+data is the point — resolved in `analyze_slots` with a call-graph fixpoint
+in both directions. Slot **kinds** stay strict: inferred from call sites,
+disagreement rejected.
+
+**Probing found what reading could not.** Three write paths never called
+`resolve_args_name`: `A[0]=z` (ICE), `attest v in A` (ICE), and `read $t A`
+— which **silently filled a function-local array**, the out-parameter doing
+nothing. A permissive slot-kind shortcut reintroduced two answers DD#75/DD#80
+already reject: `keys A` on an array printed garbage, `${A[x]}` returned
+element 0.
+
+**Two things for DG to decide** (both filed, neither fixed):
+
+- **`notes/tasks/rust-tests-hang-on-retired-surfaces.md` (P1)** — `cargo test
+  --test codegen_tests` **never terminates**. `codegen_tests` bypasses
+  `validate`, so pre-DD#99 fixtures (`echo -n … | while read -d: -r word`)
+  compile to a binary that spins forever. The compiler itself rejects the
+  program (SB5059). Pre-existing at `fff2a1b`. `mk test` cannot complete, so
+  checklist step 1 is currently unachievable.
+- **`notes/tasks/bug-regex-literal-dash-in-bracket.md` (P1)** — `[[ $s =~
+  ^[A-Za-z-]+$ ]]` is rejected `malformed '[]'`. A literal `-` first or last
+  in a bracket expression is valid POSIX ERE and bash accepts it. The
+  message comes from the vendored Plan 9 `regcomp9`, so the fix is a fork
+  (patch the engine / normalise the pattern / document the divergence).
+
+**Also filed:** `janet-collection-parameters` (P2) — the janet backend has no
+slot support at all; it renders from the AST and emits `(show "nums" (string
+"=" "nums"))`. 17 runtime tests guarded `in_modes native,c`.
+
+**Next up:** DG's call on the two P1s above.
+
 ## ══ STATUS (2026-09-11) — DD#100: collection parameters settled ══
 
 **On `hand-parser`.** DG settled the design; written up as

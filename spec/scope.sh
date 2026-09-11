@@ -256,17 +256,13 @@ run_sash 'int x=5
 echo $x'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 86.22
 
-# 86.23 a `=`-leading word survives as a user-function argument.
-# native,c — janet's `${args[N]}` is unbound for *any* argument (`f nums`
-# fails identically): janet renders from the AST, so it never sees the
-# transform's args handling. See notes/tasks/janet-join-intrinsic-gaps.md.
-if in_modes native,c; then
-    run_sash 'fn f { echo ${args[0]} }
+# 86.23 DD#100 supersedes the old reading here: at a *user-function* call a
+# `=`-leading word is a collection argument, not a plain word. `nums` is not a
+# collection, so it is SB5066. (86.21's `echo =a` is a builtin and still a
+# plain word; `f "=nums"` still passes the literal — see collparam.sh 100.21.)
+run_sash 'fn f { echo ${args[0]} }
 f =nums'
-    [[ $rc = 0 && $out = "=nums" && -z $err ]]; chk 86.23
-else
-    skip_chk 86.23
-fi
+[[ $rc != 0 && -z $out && $err == *SB5066* ]]; chk 86.23
 
 # 86.24 spaced-both at command position is still the DD#86 write (here the
 # target is undeclared, so it reaches the dead-variable check, not `echo`)

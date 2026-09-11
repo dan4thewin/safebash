@@ -2,7 +2,7 @@
 
 use super::cmd_handlers::check_callee_arity;
 use super::expressions::{
-    arg_to_value, expr_to_string, expr_to_value, subscript_to_value, test_to_ssa,
+    arg_to_value, expr_to_string, expr_to_value, resolve_args_name, subscript_to_value, test_to_ssa,
 };
 use super::functions::{lift_int_func_args, lift_int_func_calls};
 use super::pipelines::lower_pipe_while_read;
@@ -97,7 +97,7 @@ fn try_handle_match_into(
     }
     let subject = expr_to_value(&c.args[0], state);
     let pattern = expr_to_value(&c.args[1], state);
-    let array = expr_to_string(&c.args[2]);
+    let array = super::expressions::fill_target_name(&c.args[2], state);
     // DD#63: `matchall` fills its target, so it introduces it (the argv /
     // read bulk-fill precedent). Singular `match` does not — that
     // asymmetry is filed as `bug-match-outarray-no-autodeclare`.
@@ -323,6 +323,9 @@ fn push_attest_all(
     test: crate::ir::TestExpr,
     is_map: bool,
 ) {
+    // DD#100: `attest v in A` attests the *caller's* collection — the deferral
+    // Part E describes. Unresolved, this ICEd on an undefined array `A`.
+    let array = &resolve_args_name(array, state);
     let source = state.lookup(array);
     // Define the binders so they receive globally-unique SSA versions,
     // resolve the predicate against them, then restore current versions so
@@ -470,7 +473,7 @@ fn try_handle_argv(
     block: BlockId,
 ) -> Option<BlockId> {
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    let array = args.last()?.clone();
+    let array = super::expressions::resolve_args_name(args.last()?, state);
     let start = match args.len() {
         1 => 0,
         2 => args[0].parse::<i64>().ok().filter(|n| *n >= 0)?,
@@ -524,7 +527,7 @@ fn try_handle_mapfile(
     let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
     let (map_mode, separator) = parse_mapfile_flags(&args);
     let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let arr_name = var_names.first()?;
+    let arr_name = &super::expressions::resolve_args_name(var_names.first()?, state);
     // Auto-declare the target so `find_array_slot` resolves it with no prior
     // `array a=()` / `map a=()` (else a codegen ICE). `-m` → an assoc array.
     autodeclare_bulk_target(arr_name, map_mode, ssa, state, block);
@@ -1021,12 +1024,17 @@ fn handle_subscript_assign(
     block: BlockId,
 ) -> BlockId {
     let rhs = expr_to_value(&a.value, state);
-    let is_int_key = !state.assoc_arrays.contains(&a.name);
-    let is_int_val = state.type_map.get(&a.name).copied() == Some(crate::ir::VarType::Int);
-    let val = build_subscript_rhs(a, idx, rhs, is_int_val, state);
+    // DD#100: `A[i]=v` writes through a collection-parameter slot, so resolve
+    // to the caller's collection first — that binding is what makes the write
+    // land on the caller's array (Part E). Unresolved, the name `A` reached
+    // codegen as an undeclared array and ICE'd.
+    let name = super::expressions::resolve_args_name(&a.name, state);
+    let is_int_key = !state.assoc_arrays.contains(&name);
+    let is_int_val = state.type_map.get(&name).copied() == Some(crate::ir::VarType::Int);
+    let val = build_subscript_rhs(&name, a, idx, rhs, is_int_val, state);
     let idx_val = expr_to_value(idx, state);
     ssa.block_mut(block).insts.push(SsaInst::SubscriptAssign {
-        array: a.name.clone(),
+        array: name,
         index: idx_val,
         value: val,
         is_integer_key: is_int_key,
@@ -1039,6 +1047,7 @@ fn handle_subscript_assign(
 /// element (correct); `a[i] += v` reads it back: arithmetic add for an int
 /// cell, string concat otherwise.
 fn build_subscript_rhs(
+    name: &str,
     a: &Assignment,
     idx: &Expr,
     rhs: SsaValue,
@@ -1048,7 +1057,7 @@ fn build_subscript_rhs(
     let append = a.op == crate::ir::AssignOp::Append;
     match (append, is_int_val) {
         (true, true) => {
-            let current = subscript_to_value(&a.name, idx, state);
+            let current = subscript_to_value(name, idx, state);
             SsaValue::IntCell(Box::new(SsaValue::ArithBinOp {
                 left: Box::new(current),
                 op: ArithOp::Add,
@@ -1056,7 +1065,7 @@ fn build_subscript_rhs(
             }))
         }
         (true, false) => {
-            let current = subscript_to_value(&a.name, idx, state);
+            let current = subscript_to_value(name, idx, state);
             SsaValue::Concat(vec![current, rhs])
         }
         (false, true) => SsaValue::IntCell(Box::new(rhs)),

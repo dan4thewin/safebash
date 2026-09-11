@@ -179,7 +179,89 @@ So Part E is mostly *binding plus one exclusion*, not a new taint model.
 - **`=foo` on a scalar, or on an undeclared name, is an error** (slots are
   collections; SB5031 already covers the undeclared case).
 
+## Part F — what implementation settled (2026-09-11)
+
+Implemented across `validate.rs` (SB5065/SB5066/SB5067), `type_check.rs`
+(slot kinds), the transform (binding + substitution) and `spec/collparam.sh`
+(34 tests). Five things the design did not decide, decided by building it:
+
+### The sigil arrives as a `Concat`, not a `Literal`
+
+The scanner emits `=` as its own token, so `f =nums` reaches the AST as
+`Concat([Literal("="), Literal("nums")])`. `collection_arg_name` accepts a
+`Literal` **or** an all-`Literal` `Concat`. This is fortunate rather than
+awkward: a non-literal part (`=$x`, `=@a`) fails naturally, and the escape
+hatch still works, because `f "=foo"` is a `DoubleQuoted` — structurally
+distinct, exactly as Part A assumed.
+
+### A slot's kind comes from its call sites, and they must agree
+
+`type_check` runs **before** inlining, so a slot has no program-wide kind and
+the kind-specific checks had nothing to check against. Skipping them for slots
+was measured and rejected: `keys A` on an array printed **garbage** and
+`${A[x]}` on an array **silently returned element 0** — two wrong answers the
+project had already promoted to compile errors (DD#75 §3, DD#80).
+
+So each function's slot kinds are inferred from its call sites, and call sites
+that **disagree** are rejected (SB4030). This narrows Part B, which allows any
+kind in any slot: a genuinely kind-agnostic helper (only `len A`, `@A`,
+`join A`) called with an array at one site and a map at another is now an
+error. Strict-first for the same reason Part C gives — per-instantiation
+checking can be allowed later without breaking an accepted program, whereas
+tightening later would break them. (DG confirmed, 2026-09-11.)
+
+### `=foo` *is* a read when the callee reads the slot
+
+Part E says `=foo` passes identity, not a value, so it is not a read. Applied
+literally, SB5050 rejected **Part A's own example** — `show "nums" =nums` saw
+only the `=nums` token and called `nums` dead. Resolved with slot-usage
+analysis: `=foo` counts as a read of `foo` exactly when the callee reads that
+slot. Writes are deliberately *not* counted, so the out-parameter-never-read
+case still fires, which is what Part E asks for.
+
+### Substitution has to cover every write path, not just reads
+
+`resolve_args_name` is the single substitution hook, but it was only wired
+into reads. Three write paths bypassed it, each found by probing rather than
+by reading the code:
+
+- `handle_subscript_assign` → **ICE** (`undefined array A`) on `A[0]=z`
+- the five bulk-fill sites → `read A` silently filled a function-*local* `A`
+  and left the caller's collection untouched
+- both attest-all sites → **ICE** (`undefined attest-all array: A`), which is
+  precisely the deferral Part E exists for
+
+Any new path that names a collection must call `resolve_args_name` or
+`fill_target_name`.
+
+### Slot taint crosses the boundary in both directions
+
+Part E's "a slot is the caller's collection" makes taint a call-boundary
+problem, and neither direction was covered:
+
+- **inward** — `argv a; f =a` let `${A[0]}` reach `echo` unattested
+- **outward** — `fn fill { argv A }` left the caller's `a` tainted-but-clean
+
+Both are now resolved structurally before the walk (`analyze_slots`), with a
+fixpoint over the call graph so forwarding (`fn g { f =A }`) closes too. DG
+chose to **allow** a callee to fill a slot from outside and propagate the
+taint outward, rather than ban it as SB5067 bans the global case: an
+out-parameter carrying external data is much of what out-parameters are for.
+
+Inward taint is a **union over call sites** — a function called once with a
+tainted collection and once with a clean one is checked as tainted. That
+matches the slot-kind rule, where all call sites must agree too.
+
+This work also uncovered and fixed a **pre-existing** taint bypass unrelated
+to slots; see SB5067 in DD#24's lineage and `notes/journal/`.
+
 ## Open
 
 - Whether the DD#58 arith sexpr slot (`$(( (len a) ))`) ever needs the
   sigil; today the arith lexer owns `=` and `$(( (len =a) ))` is SB4020.
+- The janet backend has no slot support (`notes/tasks/janet-collection-
+  parameters.md`); the 17 runtime tests in `spec/collparam.sh` are guarded
+  `in_modes native,c`.
+- A function defined *inside top-level control flow* keeps the old
+  definition-point taint walk (`notes/tasks/taint-fn-in-toplevel-control-
+  flow.md`).

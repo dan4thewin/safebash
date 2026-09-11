@@ -265,9 +265,12 @@ WHERE b.status != t.status
 ORDER BY b.test_id;
 ```
 
-Use `/home/linuxbrew/.linuxbrew/bin/sqlite3` to bypass the indexnudge shim
-when querying `spec.db` (the shim re-parses the source index on every
-invocation, which is pointless here and slow).
+Use plain `sqlite3` for **every** database, including `spec.db`. The
+indexnudge shim only re-parses the source index when the database it is
+handed is the index itself; for anything else it is a pass-through to the
+real `sqlite3`. Do **not** reach for `/home/linuxbrew/.linuxbrew/bin/sqlite3`
+to "bypass" it — that advice was wrong, and copying it onto
+`.indexnudge-rust.db` silently serves stale line numbers.
 
 `runs` is append-only and past 1.4M rows, so both queries above depend on
 the indexes in `schema.sql`. Without them the regression query takes about
@@ -665,6 +668,16 @@ Every task ends with:
 7. Update this file if SOP changed
 8. `git commit` with descriptive message
 9. `git push`
+
+**Step 1 is currently not achievable.** `cargo test --test codegen_tests`
+**hangs forever** — the harness bypasses `validate`, so fixtures using
+surfaces DD#99 retired compile to binaries that never terminate. A further
+~141 Rust integration tests fail at HEAD across brush/e2e/oracle/janet/taint,
+mostly diagnostic-code drift. Until
+`notes/tasks/rust-tests-hang-on-retired-surfaces.md` is resolved, treat step
+2 (the spec suite) as the authoritative gate, and **always run Rust suites
+under `timeout`** so a hang does not consume a session. Verify any Rust
+failure against clean HEAD (`git stash`) before believing you caused it.
 
 ## Bug policy
 

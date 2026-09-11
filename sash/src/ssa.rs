@@ -954,6 +954,12 @@ pub struct VersionState {
     pub current_args_name: String,
     /// Monotonic counter minting the unique `args` array names above.
     pub args_counter: u32,
+    /// DD#100: the collection-parameter slots in scope — `A`..`E` mapped to
+    /// the caller's actual collection name. Empty at top level. Every call is
+    /// inlined, so a slot is a pure compile-time name binding with no runtime
+    /// representation: `resolve_args_name` substitutes the bound name, which
+    /// is why the callee's writes land on the caller's collection (Part E).
+    pub collection_slots: HashMap<String, String>,
     /// DD#27/§5: the stack of function names currently being inlined on the
     /// active path (push on inline-enter, pop on inline-exit). A call to a name
     /// already on the stack is a recursive edge — rejected (SB5033) unless it is
@@ -1022,6 +1028,7 @@ impl VersionState {
             diagnostics: Vec::new(),
             current_args_name: String::new(),
             args_counter: 0,
+            collection_slots: HashMap::new(),
             inlining: Vec::new(),
             tail_loop: None,
             external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),

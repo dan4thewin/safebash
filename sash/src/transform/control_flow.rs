@@ -1,6 +1,8 @@
 //! Control flow: if/while/for/case → SSA blocks with branches.
 
-use super::expressions::{arg_to_value, expr_to_string, expr_to_value, test_to_ssa};
+use super::expressions::{
+    arg_to_value, expr_to_string, expr_to_value, resolve_args_name, test_to_ssa,
+};
 use super::helpers::insert_phis_two_branch;
 use super::pipelines::{lower_for_argv_slice, lower_for_array};
 use super::statements::lower_stmts;
@@ -168,7 +170,8 @@ fn push_if_attest_condition(
             binders,
             is_map,
         } => {
-            let source = state.lookup(array);
+            // DD#100: the if-form attest-all resolves its slot too.
+            let source = state.lookup(&resolve_args_name(array, state));
             // Fresh, unique binder versions (see push_attest_all); restore so
             // the binders stay loop-local.
             let snap = state.snapshot();

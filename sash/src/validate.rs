@@ -24,6 +24,7 @@
 
 use crate::diagnostic::Diagnostic;
 use crate::ir::*;
+use std::collections::HashMap;
 
 // ── Entry point ────────────────────────────────────────────────────
 
@@ -2244,18 +2245,56 @@ use std::collections::HashSet;
 
 /// Run taint analysis: track which variables hold tainted data,
 /// reject any use of tainted variables outside attest expressions.
+/// Taint runs in two phases, because a function body used to be walked at its
+/// **definition** — with only the taint known at that point. A global tainted
+/// further down was invisible inside the body, and an array that fell through
+/// `ssa_taint`'s documented array gap leaked unattested:
+///
+///     fn user { for v in @g; do echo "$v"; done }
+///     argv g
+///     user            # printed unattested argv
+///
+/// Phase 1 walks the whole top level, deferring function definitions; phase 2
+/// then walks each body against the completed set. That is sound with no
+/// fixpoint **because SB5067 forbids a function from tainting a global**: the
+/// top level is the only place a global's taint can arrive, so phase 1's set
+/// is final before any body is read. It also costs nothing in precision —
+/// top-level flow order is preserved exactly, so `argv a` followed by an
+/// attest-all still leaves `a` clean for every body.
+///
+/// A function defined *inside* top-level control flow keeps the old
+/// definition-point walk (see `taint-fn-in-toplevel-control-flow`).
 pub fn check_taint(program: &Program) -> Vec<Diagnostic> {
     let mut tainted: HashSet<String> = HashSet::new();
     let mut diags = Vec::new();
-    for stmt in &program.statements {
-        taint_stmt(stmt, &mut tainted, &mut diags);
-    }
-    if let Some(ref end) = program.end_block {
-        for stmt in end {
-            taint_stmt(stmt, &mut tainted, &mut diags);
-        }
+    let info = analyze_slots(program);
+    let cx = SlotCx { info: &info };
+    for f in taint_top_level(program, &mut tainted, &cx, &mut diags) {
+        taint_function_body(f, &tainted, &cx, &mut diags);
     }
     diags
+}
+
+/// Phase 1: walk the top level, deferring every function definition.
+///
+/// SB5067 makes the top level the only place a global's taint can arrive, so
+/// the set this leaves behind is final — the deferred bodies can then be
+/// checked against it in one pass, with no fixpoint.
+fn taint_top_level<'a>(
+    program: &'a Program,
+    tainted: &mut HashSet<String>,
+    cx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) -> Vec<&'a Function> {
+    let mut deferred = Vec::new();
+    for stmt in program_blocks(program).into_iter().flatten() {
+        if let StmtKind::Function(f) = &stmt.kind {
+            deferred.push(f);
+        } else {
+            taint_stmt(stmt, tainted, cx, diags);
+        }
+    }
+    deferred
 }
 
 // ── DD#46 / DD#60: top-level positional rejection (SB5024) ────────
@@ -3288,6 +3327,7 @@ fn cmdsub_command_is(stmts: &[Statement], name: &str) -> bool {
 fn taint_stmt_no_read_taint(
     stmt: &Statement,
     tainted: &mut HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     if let StmtKind::Command(c) = &stmt.kind {
@@ -3298,7 +3338,7 @@ fn taint_stmt_no_read_taint(
             return;
         }
     }
-    taint_stmt(stmt, tainted, diags);
+    taint_stmt(stmt, tainted, sx, diags);
 }
 
 /// `read`/`mapfile` from a clean pipe source: check the name+args for taint but
@@ -3332,7 +3372,12 @@ pub(crate) fn is_external_source(stmt: &Statement) -> bool {
     }
 }
 
-fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn taint_stmt(
+    stmt: &Statement,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
     match &stmt.kind {
         StmtKind::Assignment(a) => taint_assignment(a, tainted, diags),
         StmtKind::Declaration(d) => {
@@ -3340,18 +3385,25 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
                 taint_assignment(a, tainted, diags);
             }
         }
-        StmtKind::Command(c) => taint_command(c, stmt.span, tainted, diags),
-        StmtKind::Function(f) => taint_function_body(&f.body, tainted, diags),
-        StmtKind::Pipeline(p) => taint_pipeline(p, tainted, diags),
-        StmtKind::Redirected(r) => taint_redirected(r, tainted, diags),
-        StmtKind::Case(c) => taint_case_arms(c, tainted, diags),
-        StmtKind::For(f) => taint_for(f, tainted, diags),
-        _ => {
-            for body in stmt.child_bodies() {
-                for s in body {
-                    taint_stmt(s, tainted, diags);
-                }
-            }
+        StmtKind::Command(c) => taint_command(c, stmt.span, tainted, sx, diags),
+        StmtKind::Function(f) => taint_function_body(f, tainted, sx, diags),
+        StmtKind::Pipeline(p) => taint_pipeline(p, tainted, sx, diags),
+        StmtKind::Redirected(r) => taint_redirected(r, tainted, sx, diags),
+        StmtKind::Case(c) => taint_case_arms(c, tainted, sx, diags),
+        StmtKind::For(f) => taint_for(f, tainted, sx, diags),
+        _ => taint_child_bodies(stmt, tainted, sx, diags),
+    }
+}
+
+fn taint_child_bodies(
+    stmt: &Statement,
+    tainted: &mut HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for body in stmt.child_bodies() {
+        for s in body {
+            taint_stmt(s, tainted, sx, diags);
         }
     }
 }
@@ -3368,7 +3420,7 @@ fn taint_stmt(stmt: &Statement, tainted: &mut HashSet<String>, diags: &mut Vec<D
 ///   must be attest-all'd first. Emitted as SB5020 directing to attest-all.
 /// - A clean source rebinds the loop var to clean values (it is removed
 ///   from the tainted set, e.g. `for x in a b c`).
-fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn taint_for(f: &For, tainted: &mut HashSet<String>, sx: &SlotCx, diags: &mut Vec<Diagnostic>) {
     for w in &f.words {
         reject_tainted_array_iter(w, tainted, diags);
         // `for k in $(keys m)` etc.: a tainted read *inside* the iterated
@@ -3383,7 +3435,7 @@ fn taint_for(f: &For, tainted: &mut HashSet<String>, diags: &mut Vec<Diagnostic>
         tainted.remove(&f.variable);
     }
     for s in &f.body {
-        taint_stmt(s, tainted, diags);
+        taint_stmt(s, tainted, sx, diags);
     }
 }
 
@@ -3574,10 +3626,22 @@ fn reject_tainted_into_array(
 /// a function (the caller's args are statically visible — DD#46); they are
 /// never added to the tainted set, so the body simply inherits the outer
 /// tainted set unchanged.
-fn taint_function_body(body: &[Statement], tainted: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn taint_function_body(
+    f: &Function,
+    tainted: &HashSet<String>,
+    sx: &SlotCx,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut fn_tainted = tainted.clone();
-    for s in body {
-        taint_stmt(s, &mut fn_tainted, diags);
+    // DD#100: a slot is the caller's collection, so it enters tainted when any
+    // call site passes a tainted one. Attesting it here is the deferral Part E
+    // describes — the callee, not the caller, states the gate.
+    for slot in tainted_slots_on_entry(&f.name, sx.info, tainted) {
+        fn_tainted.insert(slot);
+    }
+    let inner = SlotCx { info: sx.info };
+    for s in &f.body {
+        taint_stmt(s, &mut fn_tainted, &inner, diags);
     }
 }
 
@@ -3593,14 +3657,15 @@ fn taint_function_body(body: &[Statement], tainted: &HashSet<String>, diags: &mu
 fn taint_pipeline(
     p: &crate::ir::Pipeline,
     tainted: &mut HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     let mut upstream_external = false;
     for (i, s) in p.commands.iter().enumerate() {
         if i > 0 && !upstream_external {
-            taint_stmt_no_read_taint(s, tainted, diags);
+            taint_stmt_no_read_taint(s, tainted, sx, diags);
         } else {
-            taint_stmt(s, tainted, diags);
+            taint_stmt(s, tainted, sx, diags);
         }
         upstream_external |= is_external_source(s);
     }
@@ -3611,24 +3676,26 @@ fn taint_pipeline(
 fn taint_redirected(
     r: &crate::ir::Redirected,
     tainted: &mut HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     for rd in &r.redirects {
         check_expr_taint(&rd.target, tainted, diags);
     }
-    taint_stmt(&r.body, tainted, diags);
+    taint_stmt(&r.body, tainted, sx, diags);
 }
 
 /// Taint a case statement's discriminant and each arm body.
 fn taint_case_arms(
     c: &crate::ir::Case,
     tainted: &mut HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     check_expr_taint(&c.value, tainted, diags);
     for item in &c.items {
         for s in &item.body {
-            taint_stmt(s, tainted, diags);
+            taint_stmt(s, tainted, sx, diags);
         }
     }
 }
@@ -3638,10 +3705,12 @@ fn taint_command(
     c: &Command,
     span: Span,
     tainted: &mut HashSet<String>,
+    sx: &SlotCx,
     diags: &mut Vec<Diagnostic>,
 ) {
     let name = expr_literal_str(&c.name);
 
+    taint_out_params(c, sx, tainted);
     if matches!(name, "read" | "readline" | "mapfile" | "argv") && !is_value_split(name, c) {
         taint_read_target(c, tainted);
     } else if name == "attest" {
@@ -4213,21 +4282,14 @@ fn insert_read_target_arg(arg: &Expr, set: &mut HashSet<String>) {
     }
 }
 
-/// A plausible user identifier — excludes punctuation specials ($?, $$,
-/// $!, $#, $@, $*, $-) and positionals ($1…) by construction.
-fn is_plain_identifier(name: &str) -> bool {
-    let mut chars = name.chars();
-    match chars.next() {
-        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
-        _ => return false,
-    }
-    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
 /// Names handled by other rules (their own diagnostics) — skip so the typo
 /// check never double-diagnoses.
 fn handled_elsewhere(name: &str) -> bool {
-    ENV_VARS.contains(&name) || REJECTED_VARS.iter().any(|(n, _)| *n == name)
+    ENV_VARS.contains(&name)
+        || REJECTED_VARS.iter().any(|(n, _)| *n == name)
+        // DD#100: `A`..`E` are bound by the caller, never assigned in scope.
+        // SB5065 owns them (in-scope inside a function, rejected at top level).
+        || is_collection_slot(name)
 }
 
 /// DD#62 Model B: reject a scalar read of a name introduced nowhere in
@@ -4256,6 +4318,128 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
+/// DD#100: which collection slots a function touches. A slot is bound by the
+/// caller, so `=foo` at a call site is a read of `foo` exactly when the callee
+/// reads that slot, and a write exactly when it writes it. Without this the
+/// dead-variable gate (SB5050) saw only the `=foo` token and reported every
+/// collection argument as never-read — which made Part A's own example
+/// uncompilable.
+#[derive(Clone, Copy, Default, PartialEq)]
+pub(crate) struct SlotUse {
+    reads: [bool; MAX_COLLECTION_SLOTS],
+    writes: [bool; MAX_COLLECTION_SLOTS],
+}
+
+impl SlotUse {
+    /// How many collection arguments a call must supply: one past the highest
+    /// slot the function touches.
+    fn arity(&self) -> usize {
+        (0..MAX_COLLECTION_SLOTS)
+            .rev()
+            .find(|&i| self.reads[i] || self.writes[i])
+            .map_or(0, |i| i + 1)
+    }
+}
+
+/// `A`..`E` → 0..4.
+fn slot_index(name: &str) -> Option<usize> {
+    is_collection_slot(name).then(|| (name.as_bytes()[0] - b'A') as usize)
+}
+
+/// Every function body in the program, keyed by name.
+fn function_bodies(program: &Program) -> Vec<(&str, &[Statement])> {
+    let mut out = Vec::new();
+    for block in program_blocks(program) {
+        push_function_bodies(block, &mut out);
+    }
+    out
+}
+
+fn push_function_bodies<'a>(stmts: &'a [Statement], out: &mut Vec<(&'a str, &'a [Statement])>) {
+    for stmt in stmts {
+        if let StmtKind::Function(f) = &stmt.kind {
+            out.push((f.name.as_str(), f.body.as_slice()));
+        }
+        for body in stmt.child_bodies() {
+            push_function_bodies(body, out);
+        }
+    }
+}
+
+/// Slot usage per function, including slots forwarded through a call
+/// (`fn g { f =A }` makes `g` a user of `A` iff `f` uses its first slot).
+/// Recursion is rejected (SB5033), so the fixpoint converges.
+pub(crate) fn slot_usage_map(program: &Program) -> HashMap<String, SlotUse> {
+    let bodies = function_bodies(program);
+    let mut map: HashMap<String, SlotUse> = bodies
+        .iter()
+        .map(|(n, b)| (n.to_string(), direct_slot_use(b)))
+        .collect();
+    for _ in 0..bodies.len() {
+        if !slot_use_round(&bodies, &mut map) {
+            break;
+        }
+    }
+    map
+}
+
+/// One forwarding round: fold each body's forwarded slots into its own usage.
+fn slot_use_round(bodies: &[(&str, &[Statement])], map: &mut HashMap<String, SlotUse>) -> bool {
+    let mut changed = false;
+    for (name, body) in bodies {
+        let mut u = map[*name];
+        propagate_slot_calls(body, map, &mut u);
+        if u != map[*name] {
+            map.insert(name.to_string(), u);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// The slots a body names directly, reusing the same read/write enumerators
+/// the dead-variable gate uses so the two can never disagree.
+fn direct_slot_use(body: &[Statement]) -> SlotUse {
+    let mut reads = HashSet::new();
+    collect_reads(body, &mut reads);
+    let mut writes = Vec::new();
+    collect_writes(body, &mut writes);
+    let mut u = SlotUse::default();
+    for (i, flag) in u.reads.iter_mut().enumerate() {
+        *flag = reads.contains(&collection_slot_name(i));
+    }
+    for (i, flag) in u.writes.iter_mut().enumerate() {
+        let s = collection_slot_name(i);
+        *flag = writes.iter().any(|(n, _)| *n == s);
+    }
+    u
+}
+
+/// Fold in the slots this body forwards to other functions.
+fn propagate_slot_calls(stmts: &[Statement], map: &HashMap<String, SlotUse>, u: &mut SlotUse) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            fold_forwarded_slots(c, map, u);
+        }
+        for body in stmt.child_bodies() {
+            propagate_slot_calls(body, map, u);
+        }
+    }
+}
+
+fn fold_forwarded_slots(c: &Command, map: &HashMap<String, SlotUse>, u: &mut SlotUse) {
+    let Some(callee) = map.get(expr_literal_str(&c.name)) else {
+        return;
+    };
+    for (j, passed) in collection_args(&c.args).into_iter().enumerate() {
+        let (Some(here), true) = (slot_index(&passed), j < MAX_COLLECTION_SLOTS) else {
+            continue;
+        };
+        u.reads[here] |= callee.reads[j];
+        u.writes[here] |= callee.writes[j];
+    }
+}
+
 // ── SB5050: reject a variable assigned but never read (dead variable) ──
 //
 // DD#86: the dual of SB5031. Every variable must appear in both a write and a
@@ -4274,18 +4458,57 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
 /// SB5050 (DD#86): reject an assigned-but-never-read variable.
 pub fn check_dead_variables(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
-    check_dead_globals(program, &mut diags);
-    check_dead_locals(program, &mut diags);
+    let usage = slot_usage_map(program);
+    check_dead_globals(program, &usage, &mut diags);
+    check_dead_locals(program, &usage, &mut diags);
     diags
+}
+
+/// DD#100: `f =foo` is a read of `foo` exactly when `f` reads the slot it
+/// lands in. The token itself is not a read (Part E — it passes identity, not
+/// values), so without this the gate reported every collection argument as
+/// never-read. Writes are deliberately NOT added: a collection must be
+/// declared before it can be passed, and the declaration is already a write,
+/// so an out-parameter that nobody reads still fires — which is the behaviour
+/// Part E specifies.
+fn collect_slot_arg_reads(
+    stmts: &[Statement],
+    usage: &HashMap<String, SlotUse>,
+    reads: &mut HashSet<String>,
+) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            push_slot_arg_reads(c, usage, reads);
+        }
+        for body in stmt.child_bodies() {
+            collect_slot_arg_reads(body, usage, reads);
+        }
+    }
+}
+
+fn push_slot_arg_reads(c: &Command, usage: &HashMap<String, SlotUse>, reads: &mut HashSet<String>) {
+    let Some(callee) = usage.get(expr_literal_str(&c.name)) else {
+        return;
+    };
+    for (j, passed) in collection_args(&c.args).into_iter().enumerate() {
+        if j < MAX_COLLECTION_SLOTS && callee.reads[j] {
+            reads.insert(passed);
+        }
+    }
 }
 
 /// A top-level (global) write is dead iff it is read nowhere in the whole
 /// program (a global may be read from any function).
-fn check_dead_globals(program: &Program, diags: &mut Vec<Diagnostic>) {
+fn check_dead_globals(
+    program: &Program,
+    usage: &HashMap<String, SlotUse>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut reads = HashSet::new();
     let mut writes = Vec::new();
     for block in program_blocks(program) {
         collect_reads(block, &mut reads);
+        collect_slot_arg_reads(block, usage, &mut reads);
         collect_writes(block, &mut writes);
     }
     report_dead(&writes, |n| !reads.contains(n), diags);
@@ -4293,13 +4516,17 @@ fn check_dead_globals(program: &Program, diags: &mut Vec<Diagnostic>) {
 
 /// Each function-local write (a name that is not a top-level global) is dead
 /// iff it is read nowhere within that function.
-fn check_dead_locals(program: &Program, diags: &mut Vec<Diagnostic>) {
+fn check_dead_locals(
+    program: &Program,
+    usage: &HashMap<String, SlotUse>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut globals = HashSet::new();
     for block in program_blocks(program) {
         collect_scope_names(block, &mut globals);
     }
     for block in program_blocks(program) {
-        check_dead_in_functions(block, &globals, diags);
+        check_dead_in_functions(block, &globals, usage, diags);
     }
 }
 
@@ -4335,30 +4562,43 @@ fn report_dead(
 /// reason and implies that adding a read would fix it. This pass runs before
 /// the transform's, so it has to yield.
 fn exempt_from_dead_check(name: &str) -> bool {
-    crate::ir::is_discard_binder(name) || name == "args"
+    crate::ir::is_discard_binder(name)
+        || name == "args"
+        // DD#100: a write through a collection slot lands on the CALLER's
+        // collection, so whether it is dead is decided in the caller's scope
+        // where the real name lives. Filling a slot is the out-parameter form
+        // Part E exists for, and the callee never reads it back.
+        || is_collection_slot(name)
 }
 
 /// Find each function body and flag its dead function-locals.
 fn check_dead_in_functions(
     stmts: &[Statement],
     globals: &HashSet<String>,
+    usage: &HashMap<String, SlotUse>,
     diags: &mut Vec<Diagnostic>,
 ) {
     for stmt in stmts {
         if let StmtKind::Function(f) = &stmt.kind {
-            check_fn_dead(&f.body, globals, diags);
+            check_fn_dead(&f.body, globals, usage, diags);
         }
         for body in stmt.child_bodies() {
-            check_dead_in_functions(body, globals, diags);
+            check_dead_in_functions(body, globals, usage, diags);
         }
     }
 }
 
 /// A write in a function to a non-global name is dead iff it is read nowhere in
 /// the function body.
-fn check_fn_dead(body: &[Statement], globals: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+fn check_fn_dead(
+    body: &[Statement],
+    globals: &HashSet<String>,
+    usage: &HashMap<String, SlotUse>,
+    diags: &mut Vec<Diagnostic>,
+) {
     let mut fn_reads = HashSet::new();
     collect_reads(body, &mut fn_reads);
+    collect_slot_arg_reads(body, usage, &mut fn_reads);
     let mut writes = Vec::new();
     collect_writes(body, &mut writes);
     report_dead(
@@ -4618,9 +4858,6 @@ pub fn check_collection_scalar_read(program: &Program) -> Vec<Diagnostic> {
 fn collect_collection_names(stmts: &[Statement], set: &mut HashSet<String>) {
     for stmt in stmts {
         insert_collection_decl(&stmt.kind, set);
-        if let StmtKind::Function(f) = &stmt.kind {
-            collect_collection_names(&f.body, set);
-        }
         for body in stmt.child_bodies() {
             collect_collection_names(body, set);
         }
@@ -4663,6 +4900,609 @@ fn flag_collection_scalar_read(
              `${{{name}[i]}}` for one element, or `$(len {name})` / `$(join {name} SEP)`"
         ),
     ));
+}
+
+/// SB5066: the call-site rules for collection arguments (DD#100).
+///
+/// - **Part C — scalars first.** A scalar after a collection is rejected, so
+///   source position equals `args` index and `$1` is the first word as in bash.
+/// - **Part B — at most five.** A sixth collection argument has no slot.
+/// - **The name must be a collection.** `=s` on a scalar, or on a name that is
+///   introduced nowhere, has nothing to bind.
+/// - **Enough collections for the callee.** A slot the body uses but the call
+///   never fills read as an empty collection: `$(len A)` silently returned 0.
+///
+/// The sigil is only meaningful at a **user-function** call. `echo =a` stays a
+/// plain word printing `=a` (spec `scope.sh` 86.21–86.24), and builtins take
+/// bare names (Part D).
+pub fn check_collection_args(program: &Program) -> Vec<Diagnostic> {
+    let mut funcs = HashSet::new();
+    let mut colls = HashSet::new();
+    for block in program_blocks(program) {
+        collect_functions(block, &mut funcs);
+        collect_collection_names(block, &mut colls);
+        collect_bulk_targets(block, &mut colls);
+    }
+    let usage = slot_usage_map(program);
+    let mut diags = Vec::new();
+    let cx = CallArgCx {
+        funcs: &funcs,
+        colls: &colls,
+        usage: &usage,
+    };
+    for block in program_blocks(program) {
+        check_call_args_in(block, &cx, &mut diags);
+    }
+    diags
+}
+
+struct CallArgCx<'a> {
+    funcs: &'a HashSet<String>,
+    colls: &'a HashSet<String>,
+    usage: &'a HashMap<String, SlotUse>,
+}
+
+/// Bulk-fill targets (`read a`, `argv N a`, `mapfile a`, `matchall … a`)
+/// introduce a collection without an `array` keyword, so they count as
+/// declarations for "is this name a collection".
+fn collect_bulk_targets(stmts: &[Statement], set: &mut HashSet<String>) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            collect_read_targets(c, set);
+        }
+        for body in stmt.child_bodies() {
+            collect_bulk_targets(body, set);
+        }
+    }
+}
+
+fn check_call_args_in(stmts: &[Statement], cx: &CallArgCx, diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        if let StmtKind::Command(c) = &stmt.kind {
+            check_one_call_args(c, stmt.span, cx, diags);
+        }
+        for body in stmt.child_bodies() {
+            check_call_args_in(body, cx, diags);
+        }
+    }
+}
+
+fn check_one_call_args(c: &Command, span: Span, cx: &CallArgCx, diags: &mut Vec<Diagnostic>) {
+    let fname = expr_literal_str(&c.name);
+    if !cx.funcs.contains(fname) {
+        return; // not a user-function call — `=a` is an ordinary word
+    }
+    check_scalars_first(c, span, diags);
+    let passed = collection_args(&c.args);
+    check_slot_count(fname, passed.len(), span, diags);
+    for name in &passed {
+        check_slot_operand(name, span, cx, diags);
+    }
+    check_slot_arity(fname, passed.len(), span, cx, diags);
+}
+
+/// Part C: every collection argument comes after every scalar one.
+fn check_scalars_first(c: &Command, span: Span, diags: &mut Vec<Diagnostic>) {
+    let mut seen_collection = None;
+    for arg in &c.args {
+        match collection_arg_name(arg) {
+            Some(n) => seen_collection = Some(n),
+            None => {
+                if let Some(first) = &seen_collection {
+                    diags.push(Diagnostic::error_span(
+                        span,
+                        "SB5066",
+                        format!(
+                            "a scalar argument follows the collection argument \
+                             `={first}` — list the scalars first (DD#100 Part C), so \
+                             that a call's source position is its `args` index"
+                        ),
+                    ));
+                    return;
+                }
+            }
+        }
+    }
+}
+
+fn check_slot_count(fname: &str, passed: usize, span: Span, diags: &mut Vec<Diagnostic>) {
+    if passed <= MAX_COLLECTION_SLOTS {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5066",
+        format!(
+            "`{fname}` is passed {passed} collections, but a function has only \
+             {MAX_COLLECTION_SLOTS} slots (`A`..`E`)"
+        ),
+    ));
+}
+
+/// The passed name must be a collection: a declared/filled one, or a slot the
+/// enclosing function itself received (`fn g { f =A }`).
+fn check_slot_operand(name: &str, span: Span, cx: &CallArgCx, diags: &mut Vec<Diagnostic>) {
+    if cx.colls.contains(name) || is_collection_slot(name) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5066",
+        format!(
+            "`={name}` passes a collection, but `{name}` is not one — declare it \
+             `array {name}=(…)` / `map {name}=(…)`, or pass a scalar as an \
+             ordinary argument"
+        ),
+    ));
+}
+
+/// A slot the callee uses must actually be filled — an unbound slot read as an
+/// empty collection, so `$(len A)` silently returned 0.
+fn check_slot_arity(
+    fname: &str,
+    passed: usize,
+    span: Span,
+    cx: &CallArgCx,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let Some(u) = cx.usage.get(fname) else { return };
+    let needed = u.arity();
+    if passed >= needed {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        span,
+        "SB5066",
+        format!(
+            "`{fname}` uses collection slot `{}` but this call passes {passed} \
+             collection{} — pass it with `=name`",
+            collection_slot_name(needed - 1),
+            if passed == 1 { "" } else { "s" }
+        ),
+    ));
+}
+
+// ── DD#100: slot taint, in both directions ────────────────────────
+//
+// A slot **is** the caller's collection (Part E), so taint has to cross the
+// call boundary both ways:
+//
+//   inward   `argv a; f =a`      — reading `${A[0]}` inside `f` reads tainted
+//                                  data, and must need an attest.
+//   outward  `fn fill { argv A }` — `fill =a` leaves the *caller's* `a`
+//                                  tainted; DG chose to allow this (a useful
+//                                  out-parameter) and track it, rather than
+//                                  ban it as SB5067 bans the global case.
+//
+// Both are resolved structurally, before the walk, so no extra pass over the
+// taint state is needed:
+//
+//   `bindings`  slot → the caller names ever passed to it. A body read of `A`
+//               is tainted if *any* bound name is. Conservative by union: a
+//               function called once with a tainted array and once with a
+//               clean one is checked as tainted. That matches the strict
+//               slot-*kind* rule, where all call sites must agree too.
+//   `taints`    the slots a body fills from outside. At a call site those
+//               names become tainted, exactly as `argv a` would.
+//
+// Both close over forwarding (`fn g { f =A }`) with a fixpoint on the call
+// graph. The sets only grow, so it terminates.
+#[derive(Default)]
+pub(crate) struct SlotInfo {
+    bindings: HashMap<(String, usize), Vec<String>>,
+    taints: HashSet<(String, usize)>,
+}
+
+/// The slot facts, carried through the taint walk. A forwarded slot argument
+/// (`f =A` inside `g`) needs no enclosing-function context here: the binding
+/// fixpoint already resolved it, and marking the slot name itself tainted is
+/// what the enclosing body reads.
+struct SlotCx<'a> {
+    info: &'a SlotInfo,
+}
+
+impl SlotInfo {
+    /// The caller names bound to slot `j` of `fname`.
+    fn bound(&self, fname: &str, j: usize) -> &[String] {
+        self.bindings
+            .get(&(fname.to_string(), j))
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    fn taints_slot(&self, fname: &str, j: usize) -> bool {
+        self.taints.contains(&(fname.to_string(), j))
+    }
+}
+
+pub(crate) fn analyze_slots(program: &Program) -> SlotInfo {
+    let mut info = SlotInfo::default();
+    let mut calls = Vec::new();
+    for block in program_blocks(program) {
+        collect_slot_calls(block, &mut calls);
+        collect_slot_fills(block, &mut info.taints);
+    }
+    while slot_fixpoint_step(&calls, &mut info) {}
+    info
+}
+
+/// One fixpoint round: a forwarded argument binds through, and an out-param
+/// taint propagates back through the forwarding call.
+fn slot_fixpoint_step(calls: &[SlotCall], info: &mut SlotInfo) -> bool {
+    let mut changed = false;
+    for call in calls {
+        changed |= apply_call_bindings(call, info);
+        changed |= apply_call_taints(call, info);
+    }
+    changed
+}
+
+/// One `f =x =y` call site, tagged with the function it appears in.
+struct SlotCall {
+    callee: String,
+    caller: String,
+    args: Vec<String>,
+}
+
+fn collect_slot_calls(stmts: &[Statement], out: &mut Vec<SlotCall>) {
+    crate::ir::walk_scoped_stmts(stmts, "", &mut |stmt, in_fn| {
+        let StmtKind::Command(c) = &stmt.kind else {
+            return;
+        };
+        let args = collection_args(&c.args);
+        if !args.is_empty() {
+            out.push(SlotCall {
+                callee: expr_literal_str(&c.name).to_string(),
+                caller: in_fn.to_string(),
+                args,
+            });
+        }
+    });
+}
+
+/// The slots a body fills from outside — the same bulk-fill set SB5067 uses
+/// for globals, but here recorded rather than rejected.
+fn collect_slot_fills(stmts: &[Statement], out: &mut HashSet<(String, usize)>) {
+    crate::ir::walk_scoped_stmts(stmts, "", &mut |stmt, in_fn| {
+        if let (StmtKind::Command(c), false) = (&stmt.kind, in_fn.is_empty()) {
+            record_slot_fill(c, in_fn, out);
+        }
+    });
+}
+
+fn record_slot_fill(c: &Command, in_fn: &str, out: &mut HashSet<(String, usize)>) {
+    for t in bulk_fill_targets(c) {
+        if let Some(j) = slot_index(&t) {
+            out.insert((in_fn.to_string(), j));
+        }
+    }
+}
+
+/// Bind each argument to the callee's slot. A forwarded slot (`f =A` inside
+/// `g`) binds through to everything `g`'s own slot holds.
+fn apply_call_bindings(call: &SlotCall, info: &mut SlotInfo) -> bool {
+    let mut changed = false;
+    for (j, arg) in call.args.iter().enumerate() {
+        let names = binding_sources(call, arg, info);
+        changed |= extend_binding(info, &call.callee, j, names);
+    }
+    changed
+}
+
+/// The caller-side names an argument stands for: a forwarded slot resolves to
+/// whatever the forwarding function's own slot already holds.
+fn binding_sources(call: &SlotCall, arg: &str, info: &SlotInfo) -> Vec<String> {
+    match slot_index(arg) {
+        Some(k) if !call.caller.is_empty() => info.bound(&call.caller, k).to_vec(),
+        _ => vec![arg.to_string()],
+    }
+}
+
+fn extend_binding(info: &mut SlotInfo, callee: &str, j: usize, names: Vec<String>) -> bool {
+    let slot = info.bindings.entry((callee.to_string(), j)).or_default();
+    let mut changed = false;
+    for n in names {
+        if !slot.contains(&n) {
+            slot.push(n);
+            changed = true;
+        }
+    }
+    changed
+}
+
+/// If the callee fills slot `j` from outside, the forwarding caller's own slot
+/// is filled too, so the taint reaches its caller in turn.
+fn apply_call_taints(call: &SlotCall, info: &mut SlotInfo) -> bool {
+    let mut changed = false;
+    for (j, arg) in call.args.iter().enumerate() {
+        if !info.taints_slot(&call.callee, j) || call.caller.is_empty() {
+            continue;
+        }
+        if let Some(k) = slot_index(arg) {
+            changed |= info.taints.insert((call.caller.clone(), k));
+        }
+    }
+    changed
+}
+
+/// Inward: the slot names that are tainted on entry to `fname`.
+fn tainted_slots_on_entry(fname: &str, info: &SlotInfo, tainted: &HashSet<String>) -> Vec<String> {
+    let mut out = Vec::new();
+    for j in 0..MAX_COLLECTION_SLOTS {
+        if info.bound(fname, j).iter().any(|n| tainted.contains(n)) {
+            out.push(collection_slot_name(j));
+        }
+    }
+    out
+}
+
+/// Outward: a call to a function that fills a slot from outside taints the
+/// caller's collection, exactly as a bulk fill on the name would.
+fn taint_out_params(c: &Command, cx: &SlotCx, tainted: &mut HashSet<String>) {
+    let callee = expr_literal_str(&c.name);
+    for (j, arg) in collection_args(&c.args).iter().enumerate() {
+        if cx.info.taints_slot(callee, j) {
+            tainted.insert(arg.clone());
+        }
+    }
+}
+
+// ── SB5067: a function may not taint a global ─────────────────────
+//
+// The taint pass walks a function body **once**, with the tainted set known
+// at that point. That was sound only because taint could not arrive later —
+// and it could:
+//
+//     array g=()
+//     fn taint_it { argv g }
+//     fn user { for v in @g; do echo "$v"; done }
+//     taint_it
+//     user                 # printed unattested argv
+//
+// `g[0]=$(arg 1)` was already SB5021 ("tainted value cannot be placed in
+// array 'g'"); the **bulk-fill** path simply escaped the same rule. Closing
+// it makes the top level the only place a global can become tainted, which is
+// what lets `check_taint` finish the whole top level before it walks any body
+// — no fixpoint, and no conservative rejection of a call that ran before the
+// filler.
+//
+// The escape hatch is the ordinary one: fill a local, attest it, assign the
+// clean value out.
+//
+//     fn f { array t=(); argv t; attest v in t [[ … ]]; g[0]=${t[1]} }
+//
+// A **slot** (`A`..`E`) is exempt: it is the caller's collection, passed
+// deliberately, and DD#100 lets a callee fill one as an out-parameter. That
+// taint propagates back to the caller (`slot_taint_summary`), so it is
+// tracked rather than banned.
+pub fn check_fn_taints_global(program: &Program) -> Vec<Diagnostic> {
+    let mut globals = HashSet::new();
+    for block in program_blocks(program) {
+        collect_global_names(block, &mut globals);
+    }
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        walk_fns_for_global_taint(block, &globals, &mut diags);
+    }
+    diags
+}
+
+/// Names declared at the top level — everything a function must not taint.
+/// Descends into top-level control flow but **not** into function bodies,
+/// whose declarations are local.
+fn collect_global_names(stmts: &[Statement], out: &mut HashSet<String>) {
+    crate::ir::walk_scoped_stmts(stmts, "", &mut |stmt, in_fn| {
+        if in_fn.is_empty() {
+            record_global_name(stmt, out);
+        }
+    });
+}
+
+fn record_global_name(stmt: &Statement, out: &mut HashSet<String>) {
+    match &stmt.kind {
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments {
+                out.insert(a.name.clone());
+            }
+        }
+        StmtKind::Assignment(a) => {
+            out.insert(a.name.clone());
+        }
+        StmtKind::Command(c) => collect_read_targets(c, out),
+        _ => {}
+    }
+}
+
+fn walk_fns_for_global_taint(
+    stmts: &[Statement],
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for stmt in stmts {
+        if let StmtKind::Function(f) = &stmt.kind {
+            check_body_global_taint(&f.body, &f.name, globals, diags);
+        }
+        for body in stmt.child_bodies() {
+            walk_fns_for_global_taint(body, globals, diags);
+        }
+    }
+}
+
+fn check_body_global_taint(
+    body: &[Statement],
+    fname: &str,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    crate::ir::walk_stmt_tree(body, &mut |stmt| {
+        check_stmt_global_taint(stmt, fname, globals, diags);
+    });
+}
+
+fn check_stmt_global_taint(
+    stmt: &Statement,
+    fname: &str,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match &stmt.kind {
+        StmtKind::Command(c) => check_cmd_global_taint(c, stmt.span, fname, globals, diags),
+        StmtKind::Assignment(a) => check_assign_global_taint(a, stmt.span, fname, globals, diags),
+        StmtKind::Declaration(d) => {
+            for a in &d.assignments {
+                check_assign_global_taint(a, stmt.span, fname, globals, diags);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// A bulk fill (`argv g`, `read g`, `mapfile g`) draws from outside the
+/// program, so its target becomes tainted.
+fn check_cmd_global_taint(
+    c: &Command,
+    span: Span,
+    fname: &str,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let name = expr_literal_str(&c.name);
+    for t in bulk_fill_targets(c) {
+        if globals.contains(&t) {
+            diags.push(global_taint_diag(span, fname, &t, name));
+        }
+    }
+}
+
+/// The names a bulk fill (`argv g`, `read g`, `mapfile g`) writes from outside
+/// the program. Empty for anything that is not a bulk fill, so SB5067 and the
+/// DD#100 slot analysis can never disagree about what counts as one.
+fn bulk_fill_targets(c: &Command) -> HashSet<String> {
+    let name = expr_literal_str(&c.name);
+    if !matches!(name, "read" | "readline" | "mapfile" | "argv") || is_value_split(name, c) {
+        return HashSet::new();
+    }
+    let mut targets = HashSet::new();
+    taint_read_target(c, &mut targets);
+    targets
+}
+
+fn check_assign_global_taint(
+    a: &Assignment,
+    span: Span,
+    fname: &str,
+    globals: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    // A tainted *element* write is already SB5021; only the whole-name
+    // assignment reaches here, so the two never double-report.
+    if a.index.is_some() || !globals.contains(&a.name) || !is_taint_source(&a.value) {
+        return;
+    }
+    diags.push(global_taint_diag(span, fname, &a.name, "assignment"));
+}
+
+fn global_taint_diag(span: Span, fname: &str, target: &str, via: &str) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5067",
+        format!(
+            "`{fname}` taints the global `{target}` via {via} — a function may \
+             only taint its own locals, so that a caller can see where external \
+             data enters. Fill a local, attest it, then assign the clean value \
+             to `{target}`"
+        ),
+    )
+}
+
+// ── DD#100: collection parameters — `=name` at the call site, `A`..`E` in
+// the callee ────────────────────────────────────────────────────────────────
+
+/// SB5065: `A`..`E` are the reserved collection-parameter slots (DD#100).
+///
+/// They copy the `args` precedent (DD#75 §5 / DD#81): compiler-managed,
+/// per-function, never declarable as a user variable. Two rules:
+///
+/// - **Top level has no slots.** A slot names a collection the *caller*
+///   passed, so outside a function it names nothing — rejected exactly as
+///   `args`/`$1` are (SB5024). Left to fall through, a top-level slot read
+///   reached SB5039 ("introduced nowhere … declare it"), whose advice can't
+///   be followed because declaring it is itself an error.
+/// - **A slot can't be rebound.** A typed declaration (`array A=…`, `str A`)
+///   or a whole-name assignment (`A=v`) would shadow the caller's collection.
+///   Mutating *through* the slot — `A[0]=v`, `read A` — is the point of
+///   DD#100 Part E and stays legal.
+pub fn check_collection_slots(program: &Program) -> Vec<Diagnostic> {
+    let mut diags = Vec::new();
+    for block in program_blocks(program) {
+        crate::ir::walk_scoped_stmts(block, "", &mut |stmt, in_fn| {
+            slot_rebind(stmt, &mut diags);
+            if in_fn.is_empty() {
+                slot_toplevel_reads(stmt, &mut diags);
+            }
+        });
+    }
+    diags
+}
+
+/// A declaration or whole-name assignment of a slot name. `A[0]=v` carries an
+/// index and is a *mutation through* the slot, which Part E allows.
+fn slot_rebind(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let assigns: &[Assignment] = match &stmt.kind {
+        StmtKind::Assignment(a) => std::slice::from_ref(a),
+        StmtKind::Declaration(d) => &d.assignments,
+        _ => return,
+    };
+    for a in assigns {
+        if a.index.is_none() && is_collection_slot(&a.name) {
+            diags.push(slot_rebind_diag(&a.name, stmt.span));
+        }
+    }
+}
+
+/// Slot reads in this statement's own expressions (not its child bodies —
+/// `slot_stmt` walks those, so that a nested function flips `in_fn`).
+fn slot_toplevel_reads(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let mut visit = |e: &Expr| {
+        let name = match &e.kind {
+            ExprKind::SimpleExpansion(n) => n.as_str(),
+            ExprKind::ParameterExpansion(pe) => pe.name.as_str(),
+            ExprKind::Subscript { name, .. } => name.as_str(),
+            _ => return,
+        };
+        if is_collection_slot(name) {
+            diags.push(slot_toplevel_diag(name, e.span));
+        }
+    };
+    stmt.direct_exprs(&mut |e| crate::ir::walk_expr_tree(e, &mut visit));
+    if let StmtKind::ArithTest(arith) = &stmt.kind {
+        crate::ir::walk_arith_expansions(arith, &mut visit);
+    }
+}
+
+fn slot_rebind_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5065",
+        format!(
+            "`{name}` is a reserved collection-parameter slot — it names the \
+             collection a caller passed as `={{name}}`, so it can't be declared or \
+             assigned. Write through it instead (`{name}[i]=…`, `read {name}`), or \
+             use a differently named local"
+        ),
+    )
+}
+
+fn slot_toplevel_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5065",
+        format!(
+            "`{name}` is a function-local collection-parameter slot — it does not \
+             exist at top level, where there is no caller to have passed a \
+             collection. Name the collection directly"
+        ),
+    )
 }
 
 /// SB5062: `len` / `join` / `keys` resolve their operand as a variable NAME.
@@ -4833,25 +5673,16 @@ fn flag_len_cmdsub(
     in_function: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+    let Some(name) = len_cmdsub_operand(expr) else {
         return;
     };
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
-        return;
-    };
-    if expr_literal_str(&c.name) != "len" {
-        return;
-    }
-    let Some(name) = len_operand_name(c) else {
-        return; // subscript cell / expansion / cmdsub operand — resolved elsewhere
-    };
-    // `args` is the implicit array: valid inside a function; a top-level
-    // `$(len args)` is the function-local reject (SB5024) — check_positionals
-    // only sees the `@args`/`${args…}` expansion forms, not this bare operand.
-    if name == "args" {
-        if !in_function {
-            flag_args_toplevel("args", expr.span, diags);
-        }
+    // Both `args` (the implicit array) and `A`–`E` (caller-bound slots) exist
+    // only inside a function, so neither is ever "introduced" in a body — but
+    // at top level each is its own reject. `check_positionals` only sees the
+    // `@args`/`${args…}` expansion forms and `slot_toplevel_reads` only sees
+    // expansions, so a bare `len` operand has to be caught here.
+    if name == "args" || is_collection_slot(&name) {
+        flag_function_local_operand(&name, expr.span, in_function, diags);
         return;
     }
     if known.contains(&name) || handled_elsewhere(&name) {
@@ -4865,6 +5696,39 @@ fn flag_len_cmdsub(
              map, loop variable, or `args`); this reads as 0. Declare it, or fix the typo"
         ),
     ));
+}
+
+/// The bare identifier operand of a `$(len NAME)` command substitution.
+fn len_cmdsub_operand(expr: &Expr) -> Option<String> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let StmtKind::Command(c) = &stmts.first()?.kind else {
+        return None;
+    };
+    if expr_literal_str(&c.name) != "len" {
+        return None;
+    }
+    // subscript cell / expansion / cmdsub operand — resolved elsewhere
+    len_operand_name(c)
+}
+
+/// `args` and the DD#100 slots are legitimate inside a function and a reject
+/// outside one.
+fn flag_function_local_operand(
+    name: &str,
+    span: Span,
+    in_function: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if in_function {
+        return;
+    }
+    if name == "args" {
+        flag_args_toplevel("args", span, diags);
+    } else {
+        diags.push(slot_toplevel_diag(name, span));
+    }
 }
 
 /// The bare-identifier operand of `len`: a plain word (`len a`) or a splat
@@ -4968,6 +5832,11 @@ fn check_function_scope(f: &Function, known: &HashSet<String>, sink: &mut ReadSi
     // arith cell read `$(( args[0] ))` was an SB5031 false positive
     // (arith-args-subscript-codegen).
     fn_known.insert("args".to_string());
+    // DD#100: the collection-parameter slots are bound by the caller, so they
+    // are in scope in every function body without being introduced in it.
+    for i in 0..MAX_COLLECTION_SLOTS {
+        fn_known.insert(collection_slot_name(i));
+    }
     check_reads_in_scope(&f.body, &fn_known, sink);
 }
 
