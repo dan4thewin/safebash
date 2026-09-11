@@ -384,9 +384,15 @@ else
     skip_chk 14.32
 fi
 
-# 14.33 …and a middle stage's, overriding what the pipe would have supplied
+# 14.33 …and a middle stage's, overriding what the pipe would have supplied.
+# The producing stage is suppressed with `-`: because stage 2 redirects stdin
+# from a file it never drains the pipe, so `echo` races SIGPIPE against stage
+# 2's exit. DD#55 makes that abort deliberate ("SIGPIPE is the programmer's
+# responsibility — use `- cmd` on the producing side"), so without the `-`
+# this test failed about 2.5% of runs. Found 2026-09-12; it had already flaked
+# once at fe71aa1.
 if in_modes native,c; then
-    run_sash '/usr/bin/printf "m\n" > rd2.txt; echo ignored | /bin/cat < rd2.txt | /bin/cat'
+    run_sash '/usr/bin/printf "m\n" > rd2.txt; - echo ignored | /bin/cat < rd2.txt | /bin/cat'
     [[ $rc = 0 && $out = "m" && -z $err ]]; chk 14.33
 else
     skip_chk 14.33

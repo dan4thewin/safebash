@@ -624,6 +624,51 @@ pub fn walk_arith_var_reads(a: &ArithExpr, f: &mut impl FnMut(&str)) {
     }
 }
 
+/// Invoke `f(name)` for every bare subscript (`ArithExpr::Subscript` /
+/// `SubscriptAssign`) *subject* name in an arith tree, descending into every
+/// sub-expr. The complement of [`walk_arith_var_reads`], which descends into a
+/// subscript's index but deliberately skips its subject.
+pub fn walk_arith_subscripts(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+    match a {
+        ArithExpr::Subscript { name, index } => {
+            f(name);
+            walk_arith_subscripts(index, f);
+        }
+        ArithExpr::SubscriptAssign {
+            name, index, value, ..
+        } => {
+            f(name);
+            walk_arith_subscripts(index, f);
+            walk_arith_subscripts(value, f);
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_subscripts(left, f);
+            walk_arith_subscripts(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
+            walk_arith_subscripts(operand, f)
+        }
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_subscripts(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_subscripts(cond, f);
+            walk_arith_subscripts(true_val, f);
+            walk_arith_subscripts(false_val, f);
+        }
+        ArithExpr::Comma(exprs) | ArithExpr::FuncCall { args: exprs, .. } => {
+            for e in exprs {
+                walk_arith_subscripts(e, f);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// What justifies an `attest` — the thing the author offers as evidence.
 ///
 /// Normally a `[[ ]]` predicate. DD#93 Part D adds a second kind: an

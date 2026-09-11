@@ -697,5 +697,47 @@ fi
 run_sash '/bin/false || { echo "s=$(status)"; }'
 [[ $out = "s=1" && $out != *"bare command"* && $out != *"sash: bug"* ]]; chk 55.56
 
+# ── a signal death is 128+signum, not a bare 128 (2026-09-12) ──
+# `sash_wait` returned `128` for ANY signal, dropping the number, so every
+# signal death reported the same status. DD#55 defines the pipeline aggregate
+# as the worst exit status (pipefail), and bash's pipefail gives 128+signum;
+# `emit_signal_exit_check` already used that convention for the program's own
+# signal deaths, so the runtime was the odd one out. Found while tracking a
+# 2.5% flake in commands.sh 14.33.
+#
+# `- cmd` would discard the status (DD#70), and `$(status)` is unavailable
+# after it (SB5012), so these pin the program's own exit code -- the
+# observable that actually diverged from bash. The diagnostic TEXT is asserted
+# in native only, per the convention at 55.1/55.8/55.10: the c backend exits
+# with the right status but emits no abort diagnostic.
+
+# 55.57 SIGTERM -> 143, matching bash
+if in_modes native,c; then
+    run_sash '/usr/bin/timeout --preserve-status -s TERM 0.1 /bin/sleep 5'
+    [[ $rc = 143 ]] \
+      && { ! in_modes native || [[ $rerr == *"(exit 143)"* ]]; }; chk 55.57
+else
+    skip_chk 55.57
+fi
+
+# 55.58 SIGPIPE -> 141. DD#55 makes the abort itself deliberate ("SIGPIPE is
+# the programmer's responsibility"); this pins the STATUS it aborts with.
+if in_modes native,c; then
+    run_sash '/usr/bin/timeout --preserve-status -s PIPE 0.1 /bin/sleep 5'
+    [[ $rc = 141 ]] \
+      && { ! in_modes native || [[ $rerr == *"(exit 141)"* ]]; }; chk 55.58
+else
+    skip_chk 55.58
+fi
+
+# 55.59 a normal exit code is unaffected by the 128+signum path
+if in_modes native,c; then
+    run_sash '/bin/sh -c "exit 42"'
+    [[ $rc = 42 ]] \
+      && { ! in_modes native || [[ $rerr == *"(exit 42)"* ]]; }; chk 55.59
+else
+    skip_chk 55.59
+fi
+
 set -e
 tally

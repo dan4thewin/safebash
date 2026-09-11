@@ -1,3 +1,67 @@
+## ══ STATUS (2026-09-12) — SB5068: a subscript on a scalar is an error ══
+
+**On `hand-parser`.** `bug-scalar-subscript-segfault` is closed. The filed
+reproducer was one spelling; probing found **seven faces of one defect** —
+six segfaults (read, dynamic index, `[[ ]]` operand, arithmetic operand, loop
+variable, subscript assignment) and a compiler **ICE** for an `int` subject.
+All seven are now SB5068 at compile time.
+
+The hole was `check_subscript_key_kind` in `type_check.rs`, which returns
+early when the subject has no collection kind — it validates the key, and a
+scalar subject has nothing to validate against. The subscript then lowered to
+a table read, dereferencing a scalar's `char*` as a `SashTable*`.
+
+**The fix deliberately does not live where the hole is.** `TypeEnv.vars` is
+filled from Assignments and Declarations only, so a `for` variable is never in
+it; a check at that site would have fixed six faces and left the seventh
+segfaulting, with a green suite. SB5068 lives in `validate.rs` next to
+SB5064 — its exact dual — and uses `collect_scope_names`, which does include
+loop variables.
+
+The allow-set is not the declaration set: `argv g` and `read ARR` introduce a
+collection with **no declaration**, so `${g[0]}` and `${ARR[0]}` are valid.
+It is declarations ∪ bulk-fill targets ∪ slots `A`–`E` ∪ `args`, deliberately
+over-approximated — a false negative leaves a latent crash, a false positive
+breaks a working script, and only one of those can be routed around.
+
+`walk_arith_subscripts` moved from `type_check.rs` to `ir.rs`; the arith face
+needed its own walk site, as did the assignment face (the subject is a
+statement field, in no expression).
+
+**The control found a second bug.** `${args[0]}` under `--janet` emits
+`(get args 0)` against a `defn` binding no such symbol. Pre-existing
+(confirmed by stashing to `fe71aa1`; this change is validate-only). Filed as
+`janet-args-subscript-unbound` — same family as `janet-collection-parameters`.
+
+**Two more fixes came out of the sweep.** A non-janet failure appeared in
+`native:14.33` — a pipeline test untouched by any of this, flaking ~2.5%.
+`runs` showed it had already flaked once at `fe71aa1`, which is why the
+regression query stayed silent. DD#55 settles the behaviour ("SIGPIPE is the
+programmer's responsibility"), so the **test** was wrong: it asserted rc=0
+from a pipeline the model says may abort. Suppressing the producer with `-`
+gives 0/300 failures.
+
+Chasing it found a real defect: `sash_wait` returned a bare **128 for every
+signal**, dropping the number. Bash gives 128+signum (143 SIGTERM, 141
+SIGPIPE), DD#55 defines the aggregate as pipefail's worst status, and codegen's
+`emit_signal_exit_check` already used 128+signum — the runtime was the lone
+dissenter. Fixed in `sash-rt`; `spec/errors.sh` 55.57–55.59 pin it.
+
+Sweep **4818 / 39 / 482** — every failure `janet:*`, **zero non-janet
+failures**, zero regressions vs `fe71aa1`. Rust suites: the same 141
+pre-existing failures, name for name.
+
+**Next:** continue the P1 prune — `bug-sed-op-on-array-empties-it` part (b)
+(`$(gsub @a …)` silently joins the splat), `bug-while-read-array-nonterminating`
+(`while read l` is a silent no-op), `sash-convert-read-dd99`.
+
+**Awaiting DG (batched):** the `rust-tests-hang-on-retired-surfaces` fork
+(rewrite stale fixtures vs. make `codegen_tests` validate first);
+`bug-regex-literal-dash-in-bracket` (patch vendored `regcomp9` / normalise /
+document); and — now that `=a` exists — whether a bare collection name passed
+to a user function should be rejected, directing to `=a` or `"a"`
+(`bare-collection-name-operand-asymmetry`).
+
 ## ══ STATUS (2026-09-11) — DD#100 implemented; a taint hole found under it ══
 
 **On `hand-parser`.** DD#100 collection parameters land end-to-end:

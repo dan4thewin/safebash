@@ -388,6 +388,12 @@ pub extern "C" fn sash_exec(argv: *const *const u8, envp: *const *const u8) -> !
 }
 
 /// Wait for a child process. Returns exit status, or 127 on error.
+///
+/// A child killed by a signal yields `128 + signum`, the convention bash uses
+/// and the one `emit_signal_exit_check` already applies to the program's own
+/// signal deaths. Returning a bare `128` lost the signal number, so every
+/// signal death reported the same status: a SIGPIPE stage read as 128 where
+/// bash's pipefail aggregate gives 141, and SIGTERM as 128 against bash's 143.
 #[no_mangle]
 pub extern "C" fn sash_wait(pid: i64) -> i64 {
     let pid = unsafe { rustix::process::Pid::from_raw_unchecked(pid as i32) };
@@ -396,7 +402,10 @@ pub extern "C" fn sash_wait(pid: i64) -> i64 {
             if let Some(code) = status.exit_status() {
                 return code as i64;
             }
-            128
+            match status.terminating_signal() {
+                Some(sig) => 128 + sig as i64,
+                None => 128,
+            }
         }
         Ok(None) => 0,
         Err(_) => 127,

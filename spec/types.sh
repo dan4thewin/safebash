@@ -709,6 +709,73 @@ else
     skip_chk 75.43
 fi
 
+# ── SB5068: a subscript on a scalar is an error (2026-09-12) ──
+# The exact dual of SB5064. `${s[0]}` was neither supported nor rejected: it
+# lowered to a table read, so the scalar's char* was dereferenced as a
+# SashTable*. One type mistake, seven measured outcomes -- SEGFAULT in six
+# spellings and a compiler ICE in the seventh.
+# Was: bug-scalar-subscript-segfault.
+
+# 75.44 read form -- segfaulted (rc 139)
+run_sash 'str s=hello; echo "${s[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.44
+
+# 75.45 dynamic index -- segfaulted
+run_sash 'str s=hello; str k=x; echo "${s[$k]}"'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.45
+
+# 75.46 int subject -- ICEd the compiler at codegen/types.rs
+run_sash 'int n=5; echo "${n[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.46
+
+# 75.47 loop variable -- the face type_check could not have caught, because a
+# for-variable is never declared into TypeEnv.vars
+run_sash 'array a=(1 2 3); for x in @a; do echo "${x[0]}"; done'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.47
+
+# 75.48 write form -- segfaulted
+run_sash 'str s=hello; s[0]=x; echo "$s"'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.48
+
+# 75.49 arithmetic operand -- segfaulted
+run_sash 'str s=hello; echo $(( s[0] + 1 ))'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.49
+
+# 75.50 [[ ]] operand -- segfaulted
+run_sash 'str s=hello; if [[ ${s[0]} == h ]]; then echo y; fi'
+[[ $rc != 0 && -z $out && $err == *SB5068* ]]; chk 75.50
+
+# 75.51 an undefined name stays SB5031 -- an unintroduced variable is a
+# different mistake and keeps its own diagnostic
+run_sash 'echo "${nope[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 75.51
+
+# 75.52 control: a declared collection still subscripts, read and write
+run_sash 'array a=(x y z); map m=([k]=v)
+a[0]=w
+echo "${a[0]} ${a[1]} ${m[k]}"'
+[[ $rc = 0 && $out = "w y v" && -z $err ]]; chk 75.52
+
+# 75.53 a bulk-fill target is subscriptable with no declaration at all --
+# `argv g` introduces the collection, so SB5068 must not fire (taint still
+# demands the attest, which is SB5020's job)
+run_sash 'argv g; echo "${g[0]}"'
+[[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5068* ]]; chk 75.53
+
+# 75.54 control: `args` is the other undeclared collection, and subscripts.
+# native,c -- the janet backend emits a bare `(get args 0)` against a `defn`
+# that declares no such binding, so the program does not compile. Pre-existing
+# and unrelated to SB5068; see notes/tasks/janet-args-subscript-unbound.md.
+# (The DD#100 slots A..E are the third undeclared case; spec/collparam.sh
+# covers them under the same guard.)
+if in_modes native,c; then
+    run_sash 'f() { echo "${args[0]}"; }
+f one'
+    [[ $rc = 0 && $out = "one" && -z $err ]]; chk 75.54
+else
+    skip_chk 75.54
+fi
+
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
 # a 0x/0o/0b prefix with valid digits; empty/unset → false). Lets an author

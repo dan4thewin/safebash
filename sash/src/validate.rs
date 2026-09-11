@@ -4853,6 +4853,139 @@ pub fn check_collection_scalar_read(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
+/// SB5068: a subscript whose subject is not a collection.
+///
+/// The exact dual of SB5064 (`$a` on a collection): there the sigil was scalar
+/// and the variable a collection; here the subject is a scalar and the
+/// expansion a container read. `${s[0]}` was neither supported nor rejected —
+/// it lowered to a table read, so the generated code dereferenced a scalar's
+/// `char*` as a `SashTable*`. One type mistake, seven measured outcomes: a
+/// **segfault** for a string subject in each of six spellings (read, dynamic
+/// index, `[[ ]]` operand, arithmetic operand, loop variable, subscript
+/// assignment) and a **compiler ICE** for an `int` one.
+///
+/// A name introduced nowhere is left to SB5031 — an undefined variable is a
+/// different mistake with its own diagnostic.
+pub fn check_scalar_subscript(program: &Program) -> Vec<Diagnostic> {
+    let mut subscriptable = HashSet::new();
+    let mut introduced = HashSet::new();
+    for block in program_scopes(program) {
+        collect_subscriptable_names(block, &mut subscriptable);
+        collect_scope_names(block, &mut introduced);
+    }
+    let mut diags = Vec::new();
+    for block in program_scopes(program) {
+        crate::ir::walk_stmt_tree(block, &mut |stmt| {
+            flag_scalar_subscripts(stmt, &subscriptable, &introduced, &mut diags);
+        });
+    }
+    diags
+}
+
+/// The top-level statement blocks, plus every function body — so a
+/// program-wide union covers names introduced inside functions too. Sound
+/// because sash forbids shadowing: one name, one meaning, program-wide.
+fn program_scopes(program: &Program) -> Vec<&[Statement]> {
+    let mut work: Vec<&[Statement]> = std::iter::once(program.statements.as_slice())
+        .chain(program.end_block.as_deref())
+        .collect();
+    let mut blocks = work.clone();
+    while let Some(block) = work.pop() {
+        work.extend(block.iter().flat_map(|s| s.child_bodies()));
+        blocks.extend(block.iter().filter_map(function_body));
+    }
+    blocks
+}
+
+fn function_body(stmt: &Statement) -> Option<&[Statement]> {
+    match &stmt.kind {
+        StmtKind::Function(f) => Some(&f.body),
+        _ => None,
+    }
+}
+
+/// Names a subscript may legitimately address: `-a`/`-A` declarations, plus the
+/// bulk-fill targets (`read`/`mapfile`/`matchall`/`argv`), which introduce a
+/// collection with no declaration at all — `argv g` then `${g[1]}` is valid.
+/// `readline v` fills a *scalar* but is collected too; over-approximating here
+/// costs a missed diagnostic, never a rejected working program.
+fn collect_subscriptable_names(stmts: &[Statement], set: &mut HashSet<String>) {
+    crate::ir::walk_stmt_tree(stmts, &mut |stmt| {
+        insert_collection_decl(&stmt.kind, set);
+        if let StmtKind::Command(c) = &stmt.kind {
+            collect_read_targets(c, set);
+        }
+    });
+}
+
+fn flag_scalar_subscripts(
+    stmt: &Statement,
+    subscriptable: &HashSet<String>,
+    introduced: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    let mut subjects = Vec::new();
+    subscript_subjects(stmt, &mut subjects);
+    diags.extend(
+        subjects
+            .iter()
+            .filter(|(n, _)| subscript_subject_is_scalar(n, subscriptable, introduced))
+            .map(|(n, span)| scalar_subscript_diag(n, *span)),
+    );
+}
+
+/// Every subscript *subject* in a statement, with the span to report it at.
+/// Three walk sites, because the faces are not all reachable from one:
+/// expressions (which carry `[[ ]]` operands and quoted parts), the assignment
+/// lvalue (`s[0]=x` — the subject is a statement field, present in no
+/// expression), and arithmetic (`ArithExpr::Subscript`, which
+/// `walk_arith_var_reads` deliberately skips).
+fn subscript_subjects(stmt: &Statement, out: &mut Vec<(String, Span)>) {
+    match &stmt.kind {
+        StmtKind::Assignment(a) if a.index.is_some() => out.push((a.name.clone(), stmt.span)),
+        StmtKind::ArithTest(arith) => push_arith_subjects(arith, stmt.span, out),
+        _ => {}
+    }
+    stmt.direct_exprs(&mut |e| crate::ir::walk_expr_tree(e, &mut |x| push_expr_subject(x, out)));
+}
+
+fn push_expr_subject(expr: &Expr, out: &mut Vec<(String, Span)>) {
+    match &expr.kind {
+        ExprKind::Subscript { name, .. } => out.push((name.clone(), expr.span)),
+        ExprKind::Arithmetic(a) => push_arith_subjects(a, expr.span, out),
+        _ => {}
+    }
+}
+
+fn push_arith_subjects(a: &crate::ir::ArithExpr, span: Span, out: &mut Vec<(String, Span)>) {
+    crate::ir::walk_arith_subscripts(a, &mut |n| out.push((n.to_string(), span)));
+}
+
+/// `args` and the DD#100 slots `A`..`E` are collections with no declaration in
+/// scope; an unintroduced name belongs to SB5031, not here.
+fn subscript_subject_is_scalar(
+    name: &str,
+    subscriptable: &HashSet<String>,
+    introduced: &HashSet<String>,
+) -> bool {
+    introduced.contains(name)
+        && !subscriptable.contains(name)
+        && !is_collection_slot(name)
+        && name != "args"
+}
+
+fn scalar_subscript_diag(name: &str, span: Span) -> Diagnostic {
+    Diagnostic::error_span(
+        span,
+        "SB5068",
+        format!(
+            "`{name}` is a scalar, so `{name}[…]` has no element to address — \
+             declare it with `array {name}` / `map {name}` to subscript it, or \
+             drop the subscript to use its value"
+        ),
+    )
+}
+
 /// Every `-a`/`-A` declaration name in the program, including inside function
 /// bodies and control-flow bodies.
 fn collect_collection_names(stmts: &[Statement], set: &mut HashSet<String>) {

@@ -102,7 +102,7 @@ fn is_print_shape() {
         assert_eq!(t(b"\x00"), 0);
         assert_eq!(t(b"\x1f"), 0); // just below the range
         assert_eq!(t(b"\x7f"), 0); // DEL, just above
-        // ASCII-only: high bytes are rejected (UTF-8 "café")
+                                   // ASCII-only: high bytes are rejected (UTF-8 "café")
         assert_eq!(t(b"caf\xc3\xa9"), 0);
         assert_eq!(t(b"\x80"), 0);
         assert_eq!(t(b"\xff"), 0);

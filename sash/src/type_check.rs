@@ -252,7 +252,7 @@ fn check_arith_bare_map_subscript(
     env: &TypeEnv,
     errors: &mut Vec<TypeError>,
 ) {
-    for_each_arith_subscript(a, &mut |name| {
+    crate::ir::walk_arith_subscripts(a, &mut |name| {
         if env.assoc_arrays.contains(name) {
             errors.push(bare_map_subscript_error(name, span));
         } else if env.is_collection(name) && env.var_type(name) == VarType::String {
@@ -285,49 +285,6 @@ fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
              (imports the value) and write with `{name}[k]=…` (statement form)."
         ),
         span,
-    }
-}
-
-/// Invoke `f(name)` for every bare subscript (`ArithExpr::Subscript` /
-/// `SubscriptAssign`) name in an arith tree, descending into every sub-expr.
-fn for_each_arith_subscript(a: &ArithExpr, f: &mut impl FnMut(&str)) {
-    match a {
-        ArithExpr::Subscript { name, index } => {
-            f(name);
-            for_each_arith_subscript(index, f);
-        }
-        ArithExpr::SubscriptAssign {
-            name, index, value, ..
-        } => {
-            f(name);
-            for_each_arith_subscript(index, f);
-            for_each_arith_subscript(value, f);
-        }
-        ArithExpr::BinOp { left, right, .. } => {
-            for_each_arith_subscript(left, f);
-            for_each_arith_subscript(right, f);
-        }
-        ArithExpr::UnaryOp { operand, .. } | ArithExpr::Paren(operand) => {
-            for_each_arith_subscript(operand, f)
-        }
-        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
-            for_each_arith_subscript(value, f)
-        }
-        ArithExpr::Ternary {
-            cond,
-            true_val,
-            false_val,
-        } => {
-            for_each_arith_subscript(cond, f);
-            for_each_arith_subscript(true_val, f);
-            for_each_arith_subscript(false_val, f);
-        }
-        ArithExpr::Comma(exprs) | ArithExpr::FuncCall { args: exprs, .. } => {
-            for e in exprs {
-                for_each_arith_subscript(e, f);
-            }
-        }
-        _ => {}
     }
 }
 
