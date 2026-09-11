@@ -1,3 +1,49 @@
+## ══ STATUS (2026-09-11) — regex: DG rules the dialect deliberate ══
+
+**DG settled one of the three batched decisions.** `bug-regex-literal-dash-in-
+bracket` is **not a bug**:
+
+> the regex library is chosen on faith in the author, Rob Pike. It represents
+> his view of a sane pre-feature-creep implementation. POSIX compliance is not
+> a goal. dash can be used in a character class with a `\`. I have made small
+> changes for convenience, not compliance. It deserves a full write-up in the
+> future docs/man page
+
+The filing assumed POSIX and bash define what sash's regex must accept. They
+do not. It also offered "document the workaround" as an option **without
+testing it** — `\-` works in all three positions and agrees with bash, which
+falsifies the filing's central claim that sash accepts a strictly smaller
+language. A P1 with a three-way fork was one backslash.
+
+**Confirming it found two stale claims in DD#39.** Its prose said `\d`/`\w`
+were unsupported (the 2026-07-08 clarification restated it explicitly). Both
+halves were wrong: the vendored `bldshortclass` provides `\d \w \s \D \W
+\S`, and `{n,m}` works with a cap of 32. Only lookaround is genuinely absent.
+The DD had drifted from the implementation twice in one paragraph — so the
+dialect now has specs (`wordsplit.sh` 39.12–39.16) and the next drift fails a
+test instead of misleading a reader.
+
+Also established for the write-up: `regexec.c` and `regaux.c` are
+**byte-identical** to upstream `contrib/plan9port-regexp/`. Every local change
+is in `regcomp.c` (~223 lines), both additions to the *parser*; the matcher is
+untouched.
+
+No code change. Sweep **4833 / 39 / 482**, zero non-janet failures, zero
+regressions.
+
+**Still awaiting DG (2 of the 3):**
+- `rust-tests-hang-on-retired-surfaces` — rewrite the stale fixtures, or make
+  `codegen_tests` run `validate` first (it bypasses it today, so DD#99-retired
+  surfaces compile into non-terminating binaries).
+- `bare-collection-name-operand-asymmetry` — now that `=a` exists, should a
+  bare collection name passed to a user function be rejected (directing to
+  `=a` or `"a"`)? Today `len a` reads the collection while `show a` passes the
+  literal `"a"`, silently.
+
+**Next:** resume the P1 prune — `bug-sed-op-on-array-empties-it` part (b)
+(`$(gsub @a …)` silently joins the splat), `bug-while-read-array-nonterminating`
+(`while read l` is a silent no-op), `sash-convert-read-dd99`.
+
 ## ══ STATUS (2026-09-12) — SB5068: a subscript on a scalar is an error ══
 
 **On `hand-parser`.** `bug-scalar-subscript-segfault` is closed. The filed

@@ -288,6 +288,45 @@ run_sash 'x="\d+"; echo $x'
 run_sash 'x="abc123"; [[ $x =~ \w+ ]] && echo yes'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 39.10
 
+# ── the regex dialect, pinned (DD#39 clarification, DG 2026-09-11) ──
+# The engine is Plan 9 / Pike's, chosen deliberately; POSIX compliance is not
+# a goal. DD#39's PROSE went stale twice (it claimed no `{n,m}`, then claimed
+# no `\d`/`\w`) because nothing executable pinned the surface. These do.
+# Each divergence below is deliberate, not a gap -- see the DD before "fixing"
+# one. Real wrong ANSWERS remain bugs (bug-regex-blind-past-interior-nul).
+
+# 39.12 a literal `-` in a bracket class is spelled `\-`, in any position.
+# POSIX would make a first/last `-` a literal; this engine does not, so the
+# escape is the spelling (same shape as `\{` and `\[`, 2026-07-08 ruling).
+run_sash 'str a="a-b"; str b="-ab"; str c="a_b-c"
+if [[ $a =~ ^[A-Za-z\-]+$ ]]; then echo 1; fi
+if [[ $b =~ ^[\-A-Za-z]+$ ]]; then echo 2; fi
+if [[ $c =~ ^[a-z_\-]+$ ]]; then echo 3; fi'
+[[ $rc = 0 && $out = $'1\n2\n3' && -z $err ]]; chk 39.12
+
+# 39.13 ...and an UNescaped first/last `-` is a compile error, deliberately.
+# bash accepts this; sash does not, and that divergence is the ruling.
+run_sash 'str s=hi; if [[ $s =~ ^[A-Za-z-]+$ ]]; then echo m; fi'
+[[ $rc != 0 && -z $out && $err == *SB5023* ]]; chk 39.13
+
+# 39.14 the six shorthand classes are supported (DD#39 claimed otherwise
+# until 2026-09-11 -- the vendored `bldshortclass` provides them)
+run_sash 'str d="123"; str w="a_1"; str p="a b"
+if [[ $d =~ ^\d+$ ]]; then echo d; fi
+if [[ $w =~ ^\w+$ ]]; then echo w; fi
+if [[ $p =~ ^a\sb$ ]]; then echo s; fi
+if [[ $w =~ ^\D ]]; then echo D; fi
+if [[ $p =~ ^\S ]]; then echo S; fi'
+[[ $rc = 0 && $out = $'d\nw\ns\nD\nS' && -z $err ]]; chk 39.14
+
+# 39.15 `{n,m}` works and is capped at 32 (a vendored addition, not upstream)
+run_sash 'str s="aa"; if [[ $s =~ ^a{2,3}$ ]]; then echo ok; fi'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 39.15
+
+# 39.16 ...over the cap is a compile error
+run_sash 'str s="aaa"; if [[ $s =~ ^a{33}$ ]]; then echo m; fi'
+[[ $rc != 0 && -z $out && $err == *SB5023* ]]; chk 39.16
+
 # 22.12 echo|read is clean (builtin pipe, no exec). `echo | read` is the
 # lastpipe inline-pipe: the read builtin consumes the pipe and sets a PARENT
 # variable, in-process (no fork). Native, c, and janet all support it.

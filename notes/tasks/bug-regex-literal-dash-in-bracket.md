@@ -1,8 +1,8 @@
 ---
-title: "Literal `-` first or last in a bracket expression is rejected (SB5023)"
-status: open
+title: "NOT A BUG: literal `-` in a bracket expression is spelled `\\-`"
+status: closed
 priority: P1
-kind: bug
+kind: not-a-bug
 depends: []
 gates:
   - "`[[ $s =~ ^[A-Za-z-]+$ ]]` compiles (trailing `-` is a literal)"
@@ -72,3 +72,34 @@ is the one that touches vendored code.
 - `notes/tasks/bug-regex-rhs-space-quote.md`
 - `notes/tasks/limitation-regex-stops-at-interior-nul.md`
 - DD#39 (compile-time regex validation), DD#63
+
+## Resolution (DG, 2026-09-11) — not a bug; the premise was wrong
+
+DG ruled on the fork directly, and rejected all three options because the
+question was mis-framed:
+
+> the regex library is chosen on faith in the author, Rob Pike. It represents
+> his view of a sane pre-feature-creep implementation. POSIX compliance is not
+> a goal. dash can be used in a character class with a `\` (I think). I have
+> made small changes for convenience, not compliance. It deserves a full
+> write-up in the future docs/man page
+
+DG's recollection is correct, verified 2026-09-11: `\-` works in **every**
+position and agrees with bash's result on the same subject.
+
+    ^[A-Za-z\-]+$  matches a-b      (bash: same)
+    ^[\-A-Za-z]+$  matches -ab      (bash: same)
+    ^[a-z_\-]+$    matches a_b-c    (bash: same)
+
+So the claim in "Where it comes from" above — that sash "accepts a strictly
+smaller regex language than bash" — is **false**. The same character classes
+are expressible; they are spelled with an escape, exactly as `{` and `[` are
+under the 2026-07-08 ruling. The attest-gate ergonomics concern is real but
+costs one backslash.
+
+No engine patch, no normalisation layer. The posture is recorded as a
+clarification in `notes/decisions/DD39-glob-regex.md`, which also corrects two
+stale claims found while confirming this (`\d`/`\w`/`\s` **are** supported;
+`{n,m}` is capped at 32).
+
+Superseded by `docs-regex-dialect-writeup`.
