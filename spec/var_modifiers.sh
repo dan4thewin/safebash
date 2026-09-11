@@ -5,7 +5,7 @@
 set -eu
 . common.sh
 setup var_modifiers
-plan=116
+plan=127
 echo "1..$plan" >&3
 
 set +e
@@ -600,6 +600,90 @@ echo "$(len m):${m[k]}"'
     [[ $rc = 0 && $out = "1:v" && -z $err ]]; chk af.4
 else
     skip_chk af.4
+fi
+
+# ── SB5070: an array splat in a scalar operand of a value intrinsic ───────
+# DD#22/#69 give a splat one argument per element, so a splat in a scalar
+# slot is a category error. It used to collapse into a single joined
+# argument, so `$(gsub @a ":" "-")` silently ran `gsub "$(join a)" …` —
+# arity checked out because a splat is one *syntactic* argument. All seven
+# scalar-operand intrinsics shared the defect, not just `gsub`.
+
+# 96.12 the filed case: `gsub` with a splat subject
+run_sash 'array a=(x:1 y:2 z:3)
+t=$(gsub @a ":" "-")
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.12
+
+# 96.13 the advice names `join`, which is DD#75's explicit joined-string form
+[[ $err == *join* ]]; chk 96.13
+
+# 96.14 `sub` goes with it
+run_sash 'array a=(x:1 y:2)
+t=$(sub @a ":" "-")
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.14
+
+# 96.15 so do the single-operand string intrinsics
+run_sash 'array a=(x y)
+t=$(toupper @a)
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.15
+
+run_sash 'array a=(/p/q /r/s)
+t=$(basename @a)
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.16
+
+run_sash 'array a=(ab cd)
+t=$(match @a "a")
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.17
+
+# 96.18 a splat carrying a disposition is still a splat
+run_sash 'array a=(x:1 y:2)
+t=$(sub @{a:~} ":" "-")
+echo "[$t]"'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.18
+
+# 96.19 `@args` is a collection splat too — no exemption here (the SB5032
+# arity guarantee is about running an external command with too few
+# arguments, which has no bearing on a scalar operand)
+run_sash 'fn f {
+  t=$(gsub @args ":" "-")
+  echo "[$t]"
+}
+f a:1'
+[[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.19
+
+# 96.20 control: the advice actually works — joining first compiles and runs
+if in_modes native,c; then
+    run_sash 'array a=(x:1 y:2)
+t=$(gsub "$(join a " ")" ":" "-")
+echo "[$t]"'
+    [[ $rc = 0 && $out = "[x-1 y-2]" && -z $rerr ]]; chk 96.20
+else
+    skip_chk 96.20
+fi
+
+# 96.21 control: a scalar subject is untouched
+if in_modes native,c; then
+    run_sash 's="x:1:2"
+t=$(gsub $s ":" "-")
+echo "[$t]"'
+    [[ $rc = 0 && $out = "[x-1-2]" && -z $rerr ]]; chk 96.21
+else
+    skip_chk 96.21
+fi
+
+# 96.22 control: `len` and `join` take a collection by name, so a splat
+# there is NOT this error — they stay as they were (DD#75 open questions)
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+echo "$(len @a):$(join @a)"'
+    [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
+else
+    skip_chk 96.22
 fi
 
 set -e

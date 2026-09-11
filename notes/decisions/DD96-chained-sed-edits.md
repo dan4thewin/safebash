@@ -92,3 +92,30 @@ no spec pinned the rejection.**
 `spec/var_modifiers.sh` 96.1–96.11: both forms, order of application, per-edit
 flags, the multi-line chain, the trailing-comma reject, and the tail-junk
 reject that used to be swallowed.
+
+## Clarification (2026-09-11) — a splat in a scalar operand slot is SB5070
+
+The same shape as the silent-drop above, one slot over. `$(gsub @a s x)` joined
+the array into a string and substituted on that — wrong answer, no diagnostic.
+
+It got through because arity is counted **syntactically**: a splat is one
+argument, so `gsub @a s x` counted three and passed. Nothing downstream asked
+whether that one argument was a collection.
+
+**All seven** scalar-operand value intrinsics had it: `sub`, `gsub`, `toupper`,
+`tolower`, `basename`, `dirname`, `match`. The filing named `gsub` only;
+measuring found the rest. Fixing the filed one alone would have left five
+identical silent wrong answers sitting behind a green suite, so SB5070 covers
+every one, in every argument position, bare or carrying a disposition
+(`@{a:-W}`, `@{a:?W}`).
+
+`len`, `join` and `keys` are **excluded on principle**, not for expedience:
+their operand slot is declared to name a collection, so `@a` there is not a
+reinterpretation of intent — `len @a` genuinely returns the element count. What
+`len @a` and `join @a` *should* accept is DD#75's open question and stays open.
+
+The diagnostic names `$(join a SEP)`, which is what an author writing
+`gsub @a …` was reaching for. Spec 96.20 runs that advice to confirm it
+compiles and produces the intended result.
+
+Specs `spec/var_modifiers.sh` 96.12–96.22.

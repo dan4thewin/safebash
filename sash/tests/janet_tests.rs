@@ -9,13 +9,34 @@
 
 use std::process::Command;
 
+/// Every temp path in this file is keyed by a caller-supplied `name`, and
+/// `cargo test` runs tests in parallel — so two tests sharing a name race on
+/// the same file and one runs the other's program. That is exactly how
+/// `janet_const` and `janet_int_keyword` (both `"standalone"`) produced a
+/// flake that passed in isolation and failed about two runs in three.
+///
+/// Claim each path once and panic on reuse, so the collision is a named
+/// failure at the point of the mistake instead of a wrong answer later.
+fn claim(path: String) -> String {
+    use std::collections::HashSet;
+    use std::sync::{Mutex, OnceLock};
+    static SEEN: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
+    let seen = SEEN.get_or_init(|| Mutex::new(HashSet::new()));
+    assert!(
+        seen.lock().unwrap().insert(path.clone()),
+        "temp path {path} claimed twice — two tests share a `name`. \
+         Names must be unique across this file; give one of them its own."
+    );
+    path
+}
+
 fn sash_bin() -> String {
     let p = std::path::PathBuf::from(env!("CARGO_BIN_EXE_sash"));
     p.to_str().unwrap().to_string()
 }
 
 fn write_tmp(name: &str, content: &str) -> String {
-    let path = format!("/tmp/sash_janet_{}.sh", name);
+    let path = claim(format!("/tmp/sash_janet_{}.sh", name));
     std::fs::write(&path, content).unwrap();
     path
 }
@@ -38,7 +59,7 @@ fn to_janet(name: &str, script: &str) -> String {
 
 /// Run janet source, return stdout
 fn run_janet(name: &str, janet_src: &str) -> String {
-    let path = format!("/tmp/sash_janet_run_{}.janet", name);
+    let path = claim(format!("/tmp/sash_janet_run_{}.janet", name));
     std::fs::write(&path, janet_src).unwrap();
     let out = Command::new("janet")
         .arg(&path)
@@ -49,7 +70,7 @@ fn run_janet(name: &str, janet_src: &str) -> String {
 
 /// Run bash script, return stdout
 fn run_bash(name: &str, script: &str) -> String {
-    let path = format!("/tmp/sash_janet_bash_{}.sh", name);
+    let path = claim(format!("/tmp/sash_janet_bash_{}.sh", name));
     std::fs::write(&path, script).unwrap();
     let out = Command::new("bash")
         .arg(&path)
@@ -302,7 +323,7 @@ fn janet_const() {
 #[test]
 fn janet_int_keyword() {
     let janet = to_janet("int_kw", "#!/bin/bash\nint n=42\necho $n");
-    let out = run_janet("standalone", &janet);
+    let out = run_janet("int_kw", &janet);
     assert_eq!(out, "42\n");
 }
 

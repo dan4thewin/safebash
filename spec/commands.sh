@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=64
+plan=74
 echo "1..$plan" >&3
 
 set +e
@@ -476,6 +476,134 @@ echo "$(len s):$(len f):${f[1]}"'
     [[ $rc = 0 && $out = "3:2:b" && -z $err ]]; chk an.5
 else
     skip_chk an.5
+fi
+
+# ── an auto-declared bulk-read target inside a `while` body ───────────────
+# `lower_while` lowers the body twice: pass 1 discovers loop-carried vars,
+# then its instructions are cleared and pass 2 re-lowers. Pass 1 had already
+# registered the target in `state.collections`, so pass 2's
+# `autodeclare_bulk_target` skipped the empty-collection Assign and the fill
+# wrote into a slot holding the `""` initializer — a segfault, not a wrong
+# answer. Only `read`'s two DD#99 forms reach it; `argv` was unaffected.
+
+# 14.37 `read ARR` auto-declared inside a while body
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x y" > wl1.txt
+int n=0
+while (( n < 1 )) {
+  (( n = n + 1 ))
+  read ARR < wl1.txt
+  echo "n=$(len ARR)"
+}'
+    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.37
+else
+    skip_chk 14.37
+fi
+
+# 14.38 `read $s ARR` (the split form) likewise — no I/O involved, so this
+# isolates the missing allocation from anything the redirect does
+if in_modes native,c; then
+    run_sash 'int n=0
+while (( n < 1 )) {
+  (( n = n + 1 ))
+  s="p q"
+  read $s ARR
+  echo "e=${ARR[0]}"
+}'
+    [[ $rc = 0 && $out = "e=p q" && -z $rerr ]]; chk 14.38
+else
+    skip_chk 14.38
+fi
+
+# 14.39 the slot stays valid on every iteration, not just the first
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x y" > wl2.txt
+int n=0
+while (( n < 3 )) {
+  (( n = n + 1 ))
+  read ARR < wl2.txt
+  echo "n=$(len ARR)"
+}'
+    [[ $rc = 0 && $out = "n=1
+n=1
+n=1" && -z $rerr ]]; chk 14.39
+else
+    skip_chk 14.39
+fi
+
+# 14.40 control: an explicit declaration in the same position was never
+# affected — it emits its own Assign, which pass 2 re-emits
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x y" > wl3.txt
+int n=0
+while (( n < 1 )) {
+  (( n = n + 1 ))
+  array ARR=()
+  read ARR < wl3.txt
+  echo "n=$(len ARR)"
+}'
+    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.40
+else
+    skip_chk 14.40
+fi
+
+# ── SB5069: a loop whose condition is a `read` (DD#99) ────────────────────
+# `read` consumes the whole stream, so the loop has no second read to make.
+# Before this was rejected it compiled clean and spun forever on an empty
+# array. `readline v` is the iteration form and the message must name it.
+
+# 14.41 `while read ARR` is rejected
+run_sash 'array l=()
+while read l {
+  echo ITER
+}'
+[[ $rc != 0 && -z $out && $err == *SB5069* ]]; chk 14.41
+
+# 14.42 the advice names `readline`, which is the whole point of the code
+[[ $err == *readline* ]]; chk 14.42
+
+# 14.43 `until read ARR` goes the same way — the defect is looping on a
+# slurp, not the sense of the test
+run_sash 'until read A {
+  echo x
+}'
+[[ $rc != 0 && -z $out && $err == *SB5069* ]]; chk 14.43
+
+# 14.44 a pipeline ending in `read` is still a read condition
+run_sash '/usr/bin/printf "a\n" > wl4.txt
+while /usr/bin/tr "\n" "\0" < wl4.txt | read ARR {
+  echo "n=$(len ARR)"
+}'
+[[ $rc != 0 && -z $out && $err == *SB5069* ]]; chk 14.44
+
+# 14.45 `if read ARR` is NOT rejected — testing whether a read produced
+# anything is meaningful; only iterating on it is the category error
+if in_modes native,c; then
+    run_sash '/usr/bin/printf "x y" > wl5.txt
+if read ARR < wl5.txt {
+  echo "n=$(len ARR)"
+}'
+    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.45
+else
+    skip_chk 14.45
+fi
+
+# 14.46 control: `while readline v` is the replacement and still compiles.
+# The redirect goes on the producing side — `while readline v < f` re-opens
+# `f` every iteration and never advances, in sash exactly as in bash.
+# native only, matching wordsplit.sh rl.7: a `while readline` consumer fed by
+# a non-function producer does not terminate under the c backend. That is a
+# pre-existing backend gap (the identical `while read v` shape fails the same
+# way), not something this check introduced.
+if in_modes native; then
+    run_sash '/usr/bin/printf "a\nb\n" | while readline v {
+  attest v [[ $v =~ ^.*$ ]]
+  echo "got $v"
+}'
+    [[ $rc = 0 && $out = "got a
+got b" && -z $rerr ]]; chk 14.46
+else
+    skip_chk 14.46
 fi
 
 set -e

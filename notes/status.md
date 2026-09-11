@@ -1,3 +1,62 @@
+## ══ STATUS (2026-09-11) — three P1 bugs fixed, one of them a segfault ══
+
+**DG: "fix P1s now."** Three landed. Sweep **4892 / 39 / 495**, zero non-janet
+failures, zero flips against `5a5a2c0`.
+
+**1. Segfault — an auto-declared bulk-read target inside a `while` body.**
+Found while testing the counter-argument to #2, which is the whole reason DG
+asks for counter-arguments. `while … { read ARR }` wrote into a read-only
+string literal. `lower_while` lowers the body **twice** — pass 1 discovers
+loop-carried variables, `insts.clear()` discards it, pass 2 re-lowers — and it
+rolled back the instructions but not `state`. `autodeclare_bulk_target` is
+guard-then-emit, so pass 1 registered `ARR` and emitted its empty-collection
+`Assign`, the clear threw the `Assign` away, and pass 2 skipped on the guard.
+`ARR_ptr` kept its `""` initializer. Fixed by snapshotting `collections` /
+`assoc_arrays` around the two passes, exactly as `enter_fn_body_scope` already
+does. `lower_while` is the only two-pass lowering, which is why `for` never
+reproduced it.
+
+**2. SB5069 — `while read ARR` rejected.** DG called it nonsensical and asked
+for the counter-argument first. The honest one was bash's `while read -a arr`
+per-line field split — and it collapses: `read $s ARR` splits on **NUL**, not
+whitespace, so there is no per-line field split in the language for this to be
+the spelling of. `readline v` is the entire replacement, and the diagnostic
+says so. `if read ARR` still works; only iterating on a slurp is the error.
+
+**3. SB5070 — a splat in a scalar operand slot.** `$(gsub @a s x)` silently
+joined the array and returned a string. Arity checked out because a splat is
+one *syntactic* argument. The filing named `gsub`; measuring found **all
+seven** scalar-operand intrinsics doing it — `sub`, `gsub`, `toupper`,
+`tolower`, `basename`, `dirname`, `match`. Fixing only the filed one would
+have left five identical silent wrong answers behind a green suite. `len` /
+`join` / `keys` are excluded on principle: they take a collection *by name*,
+so `@a` there is not a reinterpretation.
+
+**4. A flaky test, found by the verification.** The name-for-name Rust-suite
+diff showed one new failure, `janet_tests:janet_const` — which turned out to be
+a pre-existing race, not a regression: two tests passed the same `name` to the
+temp-path helper, so under `cargo test`'s parallel threads one ran the other's
+program. The stashed baseline failed it two runs in three; a *count-only*
+comparison would have read 141-vs-140 and sent me hunting a regression in the
+transform. Renamed, and the helpers now `claim()` each path and panic on reuse
+so the next collision is a named failure rather than a wrong answer. Five
+suites now diff **empty** against baseline: 140 pre-existing failures, same
+names, before and after.
+
+**Filed, not fixed:** `while-two-pass-readonly-leak` (P3). `readonly_vars`
+leaks across the same two passes, but restoring it would make `while` **accept**
+`const` in a loop body while `for` still rejects it — and `for` is right on the
+merits there, since it unrolls. Which way both should go is a language question,
+so it is DG's. Today they agree; the filing records that `while`'s half rests on
+a bug.
+
+**Next:** remaining P1s — `sash-convert-read-dd99` (converter still emits
+`read -r`, so its output no longer compiles), `bug-regex-blind-past-interior-nul`,
+and four janet P1s.
+
+**Still open for DG:** `rust-tests-hang-on-retired-surfaces` — rewrite the stale
+fixtures, or make `codegen_tests` run `validate` first?
+
 ## ══ STATUS (2026-09-11) — bare name to a user function stays a string ══
 
 **DG settled the second of three batched decisions.**

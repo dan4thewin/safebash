@@ -383,8 +383,17 @@ pub(super) fn lower_while(
     let pre_state = state.snapshot();
 
     // === Two-pass loop lowering ===
-    // Pass 1: Lower body to discover which variables are modified
+    // Pass 1: Lower body to discover which variables are modified.
+    //
+    // Pass 1's *instructions* are discarded below, so any state it sets that
+    // gates emission must be rolled back too — otherwise pass 2 takes a
+    // different path and emits different code. `collections`/`assoc_arrays`
+    // are the guard-then-emit pair: `autodeclare_bulk_target` skips the
+    // empty-collection Assign once the name is registered, which would leave
+    // a bulk-read target (`read ARR`) with no table to fill.
     let _state_at_header = state.snapshot();
+    let pre_collections = state.collections.clone();
+    let pre_assoc_arrays = state.assoc_arrays.clone();
     let body_exit_1 = lower_stmts(&w.body, ssa, state, body_block);
     let body_state_1 = state.snapshot();
 
@@ -404,6 +413,8 @@ pub(super) fn lower_while(
     // Clear the body block's instructions (we're re-lowering)
     ssa.block_mut(body_block).insts.clear();
     ssa.block_mut(header).insts.clear();
+    state.collections = pre_collections;
+    state.assoc_arrays = pre_assoc_arrays;
 
     // Lower condition in header using post-phi state
     state.in_condition += 1;

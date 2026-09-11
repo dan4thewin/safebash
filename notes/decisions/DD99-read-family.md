@@ -367,3 +367,35 @@ Stages 1-8 are complete. Remaining, both filed rather than folded in:
   command-rewriting path today, only annotation insertion.
 - `docs/sash.1` still documents the retired read flag surface; that is mostly
   deletion rather than correction.
+
+## Clarification (2026-09-11) — `while read ARR` is SB5069
+
+DG: *"`while read ARR` seems nonsensical so reject. counter argument?"*
+
+The counter-argument worth having is bash's `while read -a arr`, which splits
+each **line** into fields. If sash had an equivalent, `while read ARR` would be
+its natural spelling and rejecting it would remove a real idiom.
+
+It does not. `read $s ARR` splits on **NUL** — that is the rule at the top of
+this DD, deliberately. On `"a b c"` it yields one element, not three. There is
+no per-line field split in the language, so there is nothing for
+`while read ARR` to be the spelling *of*.
+
+What it does mean is: slurp the whole stream, then ask the loop to go round
+again on a stream that is now empty. Either it never terminates, or it is a
+one-shot dressed as a loop. `readline v` is the iteration form and the
+diagnostic names it.
+
+Scope of the rejection:
+
+- fires on the **condition** of `while` *and* `until` — the defect is looping
+  on a slurp, not the sense of the test
+- walks the condition, so `tr … | read ARR` is caught as well as the bare form
+- `if read ARR` is still **accepted**: asking whether a read produced anything
+  is meaningful. Only iterating on it is the category error.
+
+`read ARR` in a loop **body** remains legal. It was segfaulting — the empty
+collection was allocated during a discarded first lowering pass — and that is
+fixed in the same commit (journal 265).
+
+Specs `spec/commands.sh` 14.37–14.46.

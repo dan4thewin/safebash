@@ -282,6 +282,88 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// SB5070: an array splat in a *scalar* operand of a value intrinsic.
+///
+/// DD#22/#69 give a splat one argument per element, and `sub`/`gsub`/
+/// `toupper`/`tolower`/`basename`/`dirname`/`match` take scalar strings. The
+/// splat was instead collapsing to a single joined argument, so
+/// `$(gsub @a ":" "-")` silently behaved as `$(gsub "$(join a)" ":" "-")` —
+/// arity checked out because the splat is one *syntactic* argument. DD#75
+/// makes `$(join a SEP)` the explicit way to ask for a joined string, so the
+/// message names it.
+///
+/// `len`, `join` and `keys` are excluded: they take a collection by name, so
+/// `@a` there is not a silent reinterpretation (`keys @a` is already SB5025,
+/// and `len @a` / `join @a` are open questions of their own — DD#75).
+fn check_cmdsub_splat_operand(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return;
+    };
+    let Some(c) = single_cmdsub_command(stmts) else {
+        return;
+    };
+    let ExprKind::Literal(name) = &c.name.kind else {
+        return;
+    };
+    if !is_scalar_operand_intrinsic(name) {
+        return;
+    }
+    for arg in &c.args {
+        if !is_any_arrvals_splat(&arg.kind) {
+            continue;
+        }
+        let collection = splat_collection_name(&arg.kind).unwrap_or("a");
+        diags.push(Diagnostic::error_span(
+            arg.span,
+            "SB5070",
+            format!(
+                "`{name}` takes a string, but `@{collection}` is an array splat — one \
+                 argument per element (DD#69), not a joined string. To operate on the \
+                 joined text write `$({name} \"$(join {collection} SEP)\" …)`; to operate \
+                 on each element, loop over `@{collection}`"
+            ),
+        ));
+    }
+}
+
+/// The value intrinsics whose operands are scalar strings. `len` / `join` /
+/// `keys` are the collection-by-name intrinsics and are deliberately absent.
+fn is_scalar_operand_intrinsic(name: &str) -> bool {
+    matches!(
+        name,
+        "sub" | "gsub" | "toupper" | "tolower" | "basename" | "dirname" | "match"
+    )
+}
+
+/// Any array splat — bare `@a` or one carrying a disposition (`@{a:-W}`,
+/// `@{a:?W}`). Every splat operator is spelled `arrvals…`.
+fn is_any_arrvals_splat(kind: &ExprKind) -> bool {
+    match kind {
+        ExprKind::ParameterExpansion(pe) => pe
+            .operator
+            .as_deref()
+            .is_some_and(|op| op.starts_with("arrvals")),
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => is_any_arrvals_splat(&parts[0].kind),
+        _ => false,
+    }
+}
+
+/// The collection name behind any array splat (bare or with a disposition).
+fn splat_collection_name(kind: &ExprKind) -> Option<&str> {
+    match kind {
+        ExprKind::ParameterExpansion(pe)
+            if pe
+                .operator
+                .as_deref()
+                .is_some_and(|op| op.starts_with("arrvals")) =>
+        {
+            Some(pe.name.as_str())
+        }
+        ExprKind::DoubleQuoted(parts) if parts.len() == 1 => splat_collection_name(&parts[0].kind),
+        _ => None,
+    }
+}
+
 /// The single command body of a `$( )` (ignoring comments), or `None` if the
 /// substitution holds a pipeline / multiple statements (not a simple intrinsic
 /// call).
@@ -574,12 +656,60 @@ fn validate_if(i: &If, diags: &mut Vec<Diagnostic>) {
 }
 
 fn validate_while(w: &While, diags: &mut Vec<Diagnostic>) {
+    check_loop_read_condition(w, diags);
     for s in &w.condition {
         validate_stmt_ctx(s, diags, true);
     }
     for s in &w.body {
         validate_stmt_ctx(s, diags, false);
     }
+}
+
+/// SB5069 (DD#99): a loop whose condition is a `read`.
+///
+/// `read` fills its target from the *whole* stream, so there is no second
+/// read for the loop to make — `while read ARR` spins forever on an empty
+/// array rather than iterating. The two-argument form (`read $s ARR`) splits
+/// a value already in hand, which cannot change between iterations either.
+/// `readline v` is the iteration form, and the message names it.
+fn check_loop_read_condition(w: &While, diags: &mut Vec<Diagnostic>) {
+    let keyword = if w.until { "until" } else { "while" };
+    for stmt in &w.condition {
+        let Some(span) = first_read_span(stmt) else {
+            continue;
+        };
+        diags.push(Diagnostic::error_span(
+            span,
+            "SB5069",
+            format!(
+                "`{keyword} read …` never terminates — `read` consumes the \
+                 whole stream, so the loop has no second read to make. \
+                 To iterate one line at a time use `{keyword} readline v`."
+            ),
+        ));
+    }
+}
+
+/// The span of the first `read` anywhere inside `stmt`, so the pipeline form
+/// (`tr … | read ARR`) is caught as well as the bare one.
+fn first_read_span(stmt: &Statement) -> Option<Span> {
+    let mut found = None;
+    crate::ir::walk_stmt_tree(std::slice::from_ref(stmt), &mut |s| {
+        if found.is_none() && is_read_command(s) {
+            found = Some(s.span);
+        }
+    });
+    found
+}
+
+/// The DD#99 `read` builtin as a statement — the array form (`read ARR`) or
+/// the split form (`read $s ARR`). Retired spellings (flags, multi-target)
+/// are SB5057's business and are reported there.
+fn is_read_command(stmt: &Statement) -> bool {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return false;
+    };
+    matches!(&c.name.kind, ExprKind::Literal(n) if n == "read")
 }
 
 fn validate_for(f: &For, diags: &mut Vec<Diagnostic>) {
@@ -1336,6 +1466,7 @@ fn check_stmt_value_rules(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     let attest_preds = attest_arith_predicates(stmt);
     walk_all_exprs(stmt, &mut |expr| {
         check_cmdsub_arity(expr, diags);
+        check_cmdsub_splat_operand(expr, diags);
         if !attest_preds.contains(&(expr as *const Expr)) {
             check_arith_value_mutation(expr, diags);
         }

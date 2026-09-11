@@ -1,6 +1,6 @@
 ---
 title: "bug: `while read ARR` never terminates — reject it (DD#99)"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -87,3 +87,26 @@ nothing.
 
 `while readline v` is the iteration form and already works. The diagnostic
 must name it.
+
+## Resolved 2026-09-11 — SB5069 (journal 265)
+
+`validate_while` now rejects a `read` in a loop condition. The check walks each
+condition statement, so it catches the pipeline form (`tr … | read ARR`) as
+well as the bare one, and it fires for `until` too — the defect is looping on a
+slurp, not the sense of the test. The message names `while readline v`.
+
+Still accepted, deliberately:
+
+- `if read ARR` — asking whether a read produced anything is meaningful; only
+  iterating on it is the category error.
+- `read ARR` in a loop **body** — which was separately segfaulting and is fixed
+  in the same commit.
+
+DG asked for the counter-argument before implementing. The candidate was
+bash's `while read -a arr` per-line field split; it does not survive, because
+`read $s ARR` splits on **NUL**, not whitespace (`read $s ARR` on `"a b c"`
+yields one element). There is no per-line field split in the language for
+`while read ARR` to be the spelling of, so `readline v` is the whole
+replacement.
+
+Specs `commands.sh` 14.41–14.46.

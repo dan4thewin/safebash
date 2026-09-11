@@ -1,6 +1,6 @@
 ---
 title: "bug: `a =~ s/…/…/` on an ARRAY silently empties it; `gsub @a …` silently joins the splat"
-status: ready
+status: done
 priority: P1
 kind: bug
 depends: []
@@ -102,3 +102,30 @@ declaration set), and the value form where `@a` reaches a scalar operand of
 `sub`/`gsub`. The segfault goes with it — but check separately whether
 `${a[0]}` after a bad assignment can still fault, since that is the more
 general defect.
+
+## Resolved 2026-09-11 — SB5064 (a) + SB5070 (b) (journal 265)
+
+**(a)** closed earlier by SB5064: `a =~ s/…/…/` on an array is rejected at the
+scalar-sigil read the desugaring produces. The follow-on `${a[0]}` fault noted
+in the scope paragraph is SB5068, also landed.
+
+**(b)** is SB5070. Arity checked out because a splat is one *syntactic*
+argument, so `check_cmdsub_arity` counted three and passed; the splat then
+collapsed to a joined string at runtime.
+
+**Scope widened on measurement.** This filing named `gsub`; all seven
+scalar-operand value intrinsics had the identical defect — `sub`, `gsub`,
+`toupper`, `tolower`, `basename`, `dirname`, `match`. Fixing only the filed
+one would have left five silent wrong answers of the same shape behind a green
+suite, so SB5070 covers all seven, in every argument position, bare splat or
+carrying a disposition.
+
+`len`, `join` and `keys` are excluded on principle, not expediency: they take a
+collection **by name**, so `@a` there is not a reinterpretation (`len @a`
+correctly returns the element count; `keys @a` is already SB5025). `len @a` /
+`join @a` remain DG's open DD#75 questions.
+
+The message names `$(join a SEP)`; spec 96.20 runs that advice to confirm it
+compiles and yields what the author was reaching for.
+
+Specs `var_modifiers.sh` 96.12–96.22.
