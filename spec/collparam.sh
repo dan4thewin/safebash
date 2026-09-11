@@ -333,5 +333,47 @@ argv a
 f @a'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 100.34
 
+# ── a bare name to a user function is a STRING (DG ruling, 2026-09-11) ──
+# `bare-collection-name-operand-asymmetry` asked whether a bare collection
+# name at a user-function call should be rejected, directing to `=a` or `"a"`.
+# DG ruled no: `len`/`join`/`keys` are language surface whose operand slot is
+# DECLARED to name a collection, while a user function takes values and
+# creates no such expectation. Bare word to a user function = string, always.
+# Marked "live with it" -- DG may reconsider with use -- so these pin the
+# behaviour rather than bless it. If they start failing, read the DD#100
+# clarification before "fixing" anything.
+
+# 100.35 the asymmetry itself: one bare word, two meanings, no diagnostic.
+# `show a` gets the STRING "a"; `len a` gets the COLLECTION.
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+show() { echo "arg1=${args[0]}"; }
+show a
+echo "len=$(len a)"'
+    [[ $rc = 0 && $out = $'arg1=a\nlen=3' && -z $err ]]; chk 100.35
+else
+    skip_chk 100.35
+fi
+
+# 100.36 `=a` is the one spelling that binds the collection
+if in_modes native,c; then
+    run_sash 'array a=(x y z)
+show() { echo "slot=${A[0]} n=$(len A)"; }
+show =a'
+    [[ $rc = 0 && $out = "slot=x n=3" && -z $err ]]; chk 100.36
+else
+    skip_chk 100.36
+fi
+
+# 100.37 a bare word that names NOTHING is still just a string -- the rule
+# does not depend on a variable existing, which is what makes it regular
+if in_modes native,c; then
+    run_sash 'show() { echo "arg1=${args[0]}"; }
+show hello'
+    [[ $rc = 0 && $out = "arg1=hello" && -z $err ]]; chk 100.37
+else
+    skip_chk 100.37
+fi
+
 set -e
 tally

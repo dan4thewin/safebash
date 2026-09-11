@@ -1,6 +1,6 @@
 ---
 title: "asymmetry: bare collection-name operands to builtins vs user-defined functions"
-status: ready
+status: closed
 priority: P2
 kind: decision
 depends: []
@@ -83,3 +83,47 @@ Recommendation deferred to DG. The finite builtin set today is exactly
   rejection) — added `collect_value_fn_operands` to count these bare-name
   operands as reads.
 - DD#60/#75 (`@args`, splat forms) — the splat surface these would unify with.
+
+## Resolution (DG, 2026-09-11) — live with it; bare = string
+
+> I'm going to just live with the current state that non-sigiled [names]
+> provided to a user function are strings, since there is no expectation that
+> they should operate on bare variables/collections, unlike `len`, `join`, et
+> al. With use, I may reconsider or have an inspiration.
+
+The gate asked DG to decide between pass-by-reference, literal-string, and
+unifying/deprecating the builtin bare-name form. **None of the above:** the
+asymmetry is kept, because the two callee kinds are genuinely different.
+
+- `len` / `join` / `keys` are **language surface**. Their operand slot is
+  *declared* to name a collection — that is what the builtin is for — so a
+  bare name there can only sensibly be a name.
+- A **user function** takes values. Nothing about it creates an expectation
+  that a bare word resolves to a variable, any more than `f hello` should look
+  for a variable named `hello`.
+
+DD#100 supplied the missing half of this in the meantime: `=a` is now a
+first-class spelling for "bind the collection", so the author who wants the
+collection has an unambiguous way to say so, and the bare form no longer has
+to carry two jobs.
+
+Measured behaviour, unchanged and now pinned by `spec/collparam.sh`
+100.35–100.37:
+
+```sh
+array a=(x y z)
+show() { echo "arg1=${args[0]}"; }
+show a               # arg1=a   -- the STRING
+echo "len=$(len a)"  # len=3    -- the COLLECTION
+show =a              # binds the collection to slot A
+```
+
+Explicitly provisional — DG left the door open ("with use, I may reconsider
+or have an inspiration"). The specs pin the behaviour so it cannot drift
+silently before that reconsideration; they are not a blessing of it. Recorded
+as a clarification in `notes/decisions/DD100-collection-parameters.md`.
+
+Note the related cleanup is a *separate* question and still open: removing
+**splats** from builtin operand slots is tracked in
+`dd75-len-collection-only-strlen`. DG has already ruled there that builtins
+take bare names but not splats.

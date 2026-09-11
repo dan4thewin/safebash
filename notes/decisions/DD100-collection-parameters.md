@@ -255,6 +255,47 @@ matches the slot-kind rule, where all call sites must agree too.
 This work also uncovered and fixed a **pre-existing** taint bypass unrelated
 to slots; see SB5067 in DD#24's lineage and `notes/journal/`.
 
+## Clarification (DG, 2026-09-11): a bare name to a user function stays a string
+
+**Ruling.**
+
+> I'm going to just live with the current state that non-sigiled [names]
+> provided to a user function are strings, since there is no expectation that
+> they should operate on bare variables/collections, unlike `len`, `join`, et
+> al. With use, I may reconsider or have an inspiration.
+
+This closes `bare-collection-name-operand-asymmetry`, which asked whether a
+bare collection name passed to a user function should be **rejected**,
+directing the author to `=a` (the collection) or `"a"` (the literal).
+
+The asymmetry it reported is real and measured (2026-09-11):
+
+```sh
+array a=(x y z)
+show() { echo "arg1=${args[0]}"; }
+show a              # arg1=a      -- the STRING "a"
+echo "len=$(len a)" # len=3       -- the COLLECTION a
+```
+
+One bare word, two meanings, in one program, with no diagnostic. It is
+nevertheless **not** a defect, because the two callees are different kinds of
+thing:
+
+- `len` / `join` / `keys` are **language surface**. Their operand slot is
+  declared to name a collection; that is what the builtin is *for*, so a bare
+  name there can only sensibly be a name.
+- A **user function** takes values. Nothing about it creates an expectation
+  that a bare word should be resolved as a variable or a collection, any more
+  than `f hello` should look for a variable named `hello`.
+
+So the rule is regular once the two are distinguished: **bare word to a user
+function = string, always.** `=name` is the one spelling that binds a
+collection, and it is unambiguous by construction.
+
+Marked as a "live with it" rather than a permanent settlement — DG left the
+door open to reconsider with use. Pinned by `spec/collparam.sh` 100.35–100.37
+so the behaviour cannot drift silently in the meantime.
+
 ## Open
 
 - Whether the DD#58 arith sexpr slot (`$(( (len a) ))`) ever needs the

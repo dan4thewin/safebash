@@ -1,3 +1,39 @@
+## ══ STATUS (2026-09-11) — bare name to a user function stays a string ══
+
+**DG settled the second of three batched decisions.**
+`bare-collection-name-operand-asymmetry` is closed — none of the three options
+it offered:
+
+> I'm going to just live with the current state that non-sigiled [names]
+> provided to a user function are strings, since there is no expectation that
+> they should operate on bare variables/collections, unlike `len`, `join`, et
+> al. With use, I may reconsider or have an inspiration.
+
+The asymmetry is real — `show a` gets the string `"a"` while `len a` gets the
+collection, in one program, with no diagnostic — but it is **regular** once the
+two callee kinds are distinguished. `len`/`join`/`keys` are language surface
+whose operand slot is *declared* to name a collection. A user function takes
+values, and creates no more expectation that `a` names a variable than `f
+hello` does that `hello` does.
+
+DD#100 supplied the missing half in the meantime: `=a` is now an unambiguous
+way to say "bind the collection", so the bare form no longer carries two jobs.
+
+Explicitly **provisional** — DG left the door open. So `spec/collparam.sh`
+100.35–100.37 pin the behaviour rather than bless it, and the DD#100
+clarification says so. Sweep **4839 / 39 / 485**, zero non-janet failures,
+zero regressions.
+
+**One decision still open:** `rust-tests-hang-on-retired-surfaces` — rewrite
+the stale fixtures, or make `codegen_tests` run `validate` first? It bypasses
+validation today, so DD#99-retired surfaces compile into binaries that never
+terminate (this is why `mk test` cannot currently pass, and why the Rust
+suites carry 141 pre-existing failures).
+
+**Next:** resume the P1 prune — `bug-sed-op-on-array-empties-it` part (b)
+(`$(gsub @a …)` silently joins the splat), `bug-while-read-array-nonterminating`
+(`while read l` is a silent no-op, no diagnostic), `sash-convert-read-dd99`.
+
 ## ══ STATUS (2026-09-11) — regex: DG rules the dialect deliberate ══
 
 **DG settled one of the three batched decisions.** `bug-regex-literal-dash-in-
