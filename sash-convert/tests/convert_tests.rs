@@ -244,3 +244,120 @@ fn tilde_quoted_is_literal() {
         out
     );
 }
+
+// ═══════════════════════════════════════════════════════════════
+// DD#99 READ FAMILY
+// ═══════════════════════════════════════════════════════════════
+
+#[test]
+fn read_single_target_becomes_readline() {
+    // DD#99 retires every read flag; `read [-r] VAR` is the one spelling
+    // with an exact mechanical rewrite.
+    let out = convert("read_single", "#!/bin/bash\nread -r line\n");
+    assert!(
+        out.contains("readline line") && !out.contains("read -r line"),
+        "expected readline rewrite, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn read_ifs_prefix_is_exact_and_drops_the_assignment() {
+    // `IFS= read -r x` is what `readline` matches byte-for-byte, so no
+    // CHECK — and the IFS= prefix goes away with the command it modified.
+    let out = convert("read_ifs", "#!/bin/bash\nIFS= read -r line\n");
+    assert!(
+        out.contains("readline line") && !out.contains("IFS=") && !out.contains("# CHECK:"),
+        "expected exact rewrite with no CHECK, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn read_plain_gets_a_trim_check() {
+    // Without `IFS=`, bash strips leading/trailing IFS whitespace and
+    // `readline` does not. Convert anyway, but say so.
+    let out = convert("read_trim", "#!/bin/bash\nread -r line\n");
+    assert!(
+        out.contains("# CHECK:") && out.contains("IFS whitespace"),
+        "expected trim CHECK, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn read_array_flag_is_manual_not_a_guess() {
+    // bash `read -a` splits one line on IFS; sash `read` slurps all of
+    // stdin on NUL. Converting would be a silent semantic change.
+    let out = convert("read_array", "#!/bin/bash\nread -a arr\n");
+    assert!(
+        out.contains("# MANUAL:") && out.contains("NUL") && out.contains("read -a arr"),
+        "expected MANUAL note with the command untouched, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn read_multi_target_is_manual() {
+    let out = convert("read_multi", "#!/bin/bash\nread a b c\n");
+    assert!(
+        out.contains("# MANUAL:") && out.contains("multi-target") && out.contains("read a b c"),
+        "expected multi-target MANUAL note, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn mapfile_moves_the_redirect_onto_tr() {
+    // `mapfile -t a < f` is a redirected_statement. Replacing only the
+    // command would re-bind `< f` to `read`, which would then read the
+    // file raw instead of tr's NUL-separated output.
+    let out = convert("mapfile_redir", "#!/bin/bash\nmapfile -t names < f\n");
+    assert!(
+        out.contains(r#"/usr/bin/tr "\n" "\0" < f | read names"#) && !out.contains("mapfile"),
+        "expected the redirect to move onto tr, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn mapfile_without_t_is_manual() {
+    // Without -t bash keeps each trailing newline; sash `read` splits on
+    // NUL and cannot retain the separator.
+    let out = convert("mapfile_no_t", "#!/bin/bash\nmapfile lines < f\n");
+    assert!(
+        out.contains("# MANUAL:") && out.contains("without -t") && out.contains("mapfile lines"),
+        "expected MANUAL note, got:\n{}",
+        out
+    );
+}
+
+#[test]
+fn attest_hint_names_the_collection_form_for_bulk_targets() {
+    // `readline` binds a scalar, `read`/`mapfile` bind a collection —
+    // naming the wrong attest form sends the reader at a diagnostic they
+    // cannot satisfy.
+    let scalar = convert("attest_scalar", "#!/bin/bash\nread -r line\n");
+    let bulk = convert("attest_bulk", "#!/bin/bash\nmapfile -t names < f\n");
+    assert!(
+        scalar.contains("attest line [[") && bulk.contains("attest x in names [["),
+        "expected form to follow the target kind, got:\n{}\n{}",
+        scalar,
+        bulk
+    );
+}
+
+#[test]
+fn after_hints_sort_before_the_next_lines_before_hints() {
+    // An ATTEST hint means "after this line" and a MANUAL means "before
+    // this line" — the same insertion point. If the MANUAL wins, it reads
+    // as belonging to the preceding command.
+    let out = convert("hint_order", "#!/bin/bash\nread -r x\nread a b c\n");
+    let attest = out.find("# ATTEST: x").expect("attest hint");
+    let manual = out.find("# MANUAL:").expect("manual hint");
+    assert!(
+        attest < manual,
+        "expected the ATTEST hint first, got:\n{}",
+        out
+    );
+}

@@ -1,3 +1,84 @@
+## ══ STATUS (2026-09-11) — sash-convert learns the DD#99 read family ══
+
+**DG picked `sash-convert-read-dd99`** off the P1 list: the only remaining P1
+outside the janet backend, and the only one leaving a shipped tool emitting
+programs that do not compile. Done. Sweep **4964 / 38 / 501**, zero non-janet
+failures, zero flips against `0ca316a`.
+
+**Two premises in the filing were wrong, and finding that out was the work.**
+
+1. *"The converter has no command-rewriting path — it only inserts annotation
+   lines."* False. `let` → `(( ))` and `trap` → `signal N IGN` have both
+   replaced whole command nodes via `Patch::replace_node` since DD#57. I wrote
+   that sentence during stage 6 without checking and then read my own filing as
+   evidence. It made the task look like an addition; it was an edit.
+
+2. *The mapping table copied DD#99's "What is retired" table.* That table is a
+   **sash → sash** rename map — its "26 in-tree `read -a` uses" were *sash*
+   `read -a`, which already split on NUL. Bash's `read -a arr` splits **one
+   line on IFS**; sash's `read arr` slurps **all of stdin on NUL**. Different
+   extent, different separator, no error. A migration table and a conversion
+   table look identical and are not interchangeable.
+
+**Third finding: `readline` is `IFS= read -r`, not `read -r`.** Measured on
+`"   spaced   "` — bash gives `[spaced]`, sash gives `[   spaced   ]`. Bash
+strips leading/trailing IFS whitespace. The careful bash idiom
+`while IFS= read -r line` therefore converts *exactly*; the sloppy one does not.
+
+**DG's ruling — scope B, trim=check, keep ATTEST.** Converted: `read [-r] VAR`
+→ `readline VAR` (+ `# CHECK:` unless `IFS=`-prefixed, which is dropped with
+the command it modified); `mapfile/readarray -t A [< f]` →
+`/usr/bin/tr "\n" "\0" [< f] | read A`. Annotated `# MANUAL:`: multi-target
+`read a b c`, `-a`/`-ra`, `-p/-s/-n/-N/-t/-u/-d`, bare `read` (`$REPLY`), and
+`mapfile` without `-t`. The line that decides the cut: the `mapfile` rewrites
+guess **nothing**, while `-a` and multi-target must assume `IFS` is default
+whitespace — and a wrong guess is the failure mode the converter exists to
+prevent.
+
+`mapfile -t a < f` is a `redirected_statement`; replacing only the command
+would re-bind `< f` to `read`, so `tr` would get the terminal and `read` the
+file with its newlines intact. The rewrite replaces the enclosing statement and
+carries the redirect onto `tr`. Two redirects, or a `>`, and it declines.
+
+**Also fixed: hint ordering.** `# ATTEST:` is placed *after* its line
+(`line + 1`), `# MANUAL:`/`# CHECK:` *before* (`line`) — the same insertion
+point, resolved by push order, so a MANUAL for line N+1 printed above the
+ATTEST for line N and read as a complaint about the preceding command.
+`inject_attest_hints` now runs first. Pre-existing; this task made it common.
+The ATTEST hint also now names the **form** matching the target kind, since a
+`mapfile` target attested with the scalar form still fails SB5020.
+
+**Unrelated defect found while verifying: `janet:60.35` had not run in two
+days.** `spec/taint.sh`'s `in_modes native,c` else-branch skip list omitted
+`60.35`, so in janet mode it was neither run nor skipped — and `test_status`,
+which takes each test's `MAX(rowid)` run, kept reporting **passing** from
+`9b74bde`. The plan mismatch can't catch this: `tally` deliberately treats
+`plan != index` as advisory because `in_modes` guards make per-mode divergence
+legitimate. Queried the whole 1.4M-row table for others
+(`committed_at < date(latest)`) — exactly one. Fixed; all three modes now
+178/178.
+
+**Left where they were, both separately filed:** `done < f` (SB4021,
+`converter-compound-postfix`) and `${names[@]}` (`converter-retire-bracket-splat`,
+which also misfires a `${var@X}` MANUAL note on it — noted on that task). So a
+converted `while read` loop *over a file* still doesn't compile end to end; the
+piped form does, and spec 57.73 pins it convert → attest → compile → run.
+
+**Specs:** `convert.sh` 57.37 inverted from asserting the passthrough to
+asserting the rewrite, 57.56–57.59 and 57.61–57.73 added; all 18 fail against
+the unpatched converter. `convert_tests.rs` +9 → 27.
+
+**Next:** the P1 list is now three janet bugs —
+`janet-array-append-string-concat`, `janet-command-substitution-capture-broken`,
+`janet-compound-if-condition-ignored`.
+
+**Deferred by DG:** the `len`/`strlen` split, as its own pass (absorbs the
+DD#100 Part D splat-operand removal — ~35 spec sites, SB5025's message,
+`sash-convert`).
+
+**Still open for DG:** `rust-tests-hang-on-retired-surfaces` — rewrite the
+stale fixtures, or make `codegen_tests` run `validate` first?
+
 ## ══ STATUS (2026-09-11) — `fn` top-level, `const` not in a loop, splat = values ══
 
 **DG, in one message:** functions must be top-level (counter-argument?),

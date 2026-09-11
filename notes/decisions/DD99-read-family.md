@@ -370,11 +370,9 @@ supported-direction control, gated for `janet-map-from-array`).
 
 ## Status
 
-Stages 1-8 are complete. Remaining, both filed rather than folded in:
+Stages 1-8 are complete, and `sash-convert` was brought in line on
+2026-09-11 (below). Remaining, filed rather than folded in:
 
-- `sash-convert-read-dd99` (P1) — the converter still passes bash `read`
-  through verbatim, so its output no longer compiles. It has no
-  command-rewriting path today, only annotation insertion.
 - `docs/sash.1` still documents the retired read flag surface; that is mostly
   deletion rather than correction.
 
@@ -409,3 +407,48 @@ collection was allocated during a discarded first lowering pass — and that is
 fixed in the same commit (journal 265).
 
 Specs `spec/commands.sh` 14.37–14.46.
+
+## Converter (2026-09-11) — the bash mapping is not this DD's rename table
+
+`sash-convert` now rewrites the read family. The important correction is that
+**the "What is retired" table above is a sash → sash rename map, not a
+bash → sash conversion map.** Its rows describe migrating in-tree sash code
+off the old spellings — the 26 `read -a` uses it counts were *sash* `read -a`,
+which already split on NUL. Bash's `read -a arr` splits **one line on IFS**.
+Feeding this table to the converter would have produced silently-wrong
+programs, which is the one outcome the converter exists to prevent.
+
+The bash mapping, re-derived:
+
+| bash | sash |
+|---|---|
+| `read VAR`, `read -r VAR` | `readline VAR` + a `# CHECK:` (below) |
+| `IFS= read -r VAR` | `readline VAR` — exact, no CHECK |
+| `mapfile -t A` / `readarray -t A` | `/usr/bin/tr "\n" "\0" \| read A` |
+| `mapfile -t A < f` | `/usr/bin/tr "\n" "\0" < f \| read A` |
+| everything else | `# MANUAL:`, command left in place |
+
+"Everything else" is `read a b c`, `read -a`/`-ra`, `-p/-s/-n/-N/-t/-u/-d`,
+bare `read` (`$REPLY`), and `mapfile` without `-t`. DG's ruling was to annotate
+rather than expand those: the `-a` and multi-target rewrites both require
+guessing that `IFS` is default whitespace, and a guess is the failure mode
+worth avoiding. The `mapfile` rewrites guess nothing, so they are mechanical.
+
+### `readline` is `IFS= read -r`, not `read -r`
+
+Measured: on the line `"   spaced   "`, bash `read -r ln` yields `[spaced]` and
+sash `readline ln` yields `[   spaced   ]`. Bash strips leading and trailing
+**IFS** whitespace; `readline` takes the line verbatim. `IFS= read -r` is the
+byte-for-byte equivalent, which is also the spelling careful bash already uses.
+
+DG's ruling: convert both, and emit a `# CHECK:` on the non-`IFS=` form only.
+The `IFS=` prefix is part of the replaced command node, so it disappears with
+it — `IFS= readline x` is never emitted.
+
+### The `# ATTEST:` hint names a form, not just a variable
+
+`readline` binds a scalar and `read`/`mapfile` bind a collection, so the hint
+now emits `attest NAME [[ … ]]` or `attest x in NAME [[ … ]]` to match. This is
+not cosmetic: a converted `mapfile` target that the reader attests with the
+scalar form still fails SB5020, and the hint would have been the thing that
+sent them there.

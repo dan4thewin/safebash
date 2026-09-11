@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=71
+plan=88
 echo "1..$plan" >&3
 
 set +e
@@ -319,10 +319,10 @@ run_convert '#!/bin/bash
 result=$(some_unknown_command arg1)'
 [[ $rc = 0 && $out == *'# ATTEST:'*'some_unknown_command'* && $out == *'result=$(some_unknown_command arg1)'* && -z $err ]]; chk 57.36
 
-# 57.52 read → ATTEST hint
+# 57.52 read -r VAR → readline VAR (DD#99)
 run_convert '#!/bin/bash
 read -r line'
-[[ $rc = 0 && $out == *'# ATTEST:'*'line'*'read'* && $out == *'read -r line'* && -z $err ]]; chk 57.37
+[[ $rc = 0 && $out == *'readline line'* && $out != *'read -r line'* && -z $err ]]; chk 57.37
 
 # --- DD#57: I/O ---
 
@@ -433,6 +433,108 @@ PATH=~/bin:~/lib'
 run_convert '#!/bin/bash
 ~/bin/prog foo'
 [[ $rc = 0 && $out == *'# MANUAL:'*'command position'* && $out == *'~/bin/prog foo'* && -z $err ]]; chk 57.55
+
+# --- DD#99: the read family ---
+
+# 57.56 plain `read VAR` (no -r) also becomes readline
+run_convert '#!/bin/bash
+read line'
+[[ $rc = 0 && $out == *'readline line'* && -z $err ]]; chk 57.56
+
+# 57.57 the trim difference gets a CHECK — readline keeps the line verbatim
+run_convert '#!/bin/bash
+read -r line'
+[[ $rc = 0 && $out == *'# CHECK:'*'IFS whitespace'* && -z $err ]]; chk 57.57
+
+# 57.58 `IFS= read -r` is the exact equivalent — no CHECK, and IFS= is dropped
+run_convert '#!/bin/bash
+IFS= read -r line'
+[[ $rc = 0 && $out == *'readline line'* && $out != *'IFS='* && $out != *'# CHECK:'* && -z $err ]]; chk 57.58
+
+# 57.59 `while IFS= read -r x` converts in place (do/done is accepted sugar)
+run_convert '#!/bin/bash
+while IFS= read -r x; do
+  echo "$x"
+done'
+[[ $rc = 0 && $out == *'while readline x; do'* && -z $err ]]; chk 57.59
+
+# 57.61 multi-target read has no equivalent → MANUAL, left alone
+run_convert '#!/bin/bash
+read a b c'
+[[ $rc = 0 && $out == *'# MANUAL:'*'multi-target'* && $out == *'read a b c'* && -z $err ]]; chk 57.61
+
+# 57.62 read -a splits on IFS, sash read splits on NUL → MANUAL, never a guess
+run_convert '#!/bin/bash
+read -a arr'
+[[ $rc = 0 && $out == *'# MANUAL:'*'read -a'*'NUL'* && $out == *'read -a arr'* && -z $err ]]; chk 57.62
+
+# 57.63 a combined flag carrying -a is caught too
+run_convert '#!/bin/bash
+read -ra arr'
+[[ $rc = 0 && $out == *'# MANUAL:'*'read -a'* && -z $err ]]; chk 57.63
+
+# 57.64 any other read flag → MANUAL naming it
+run_convert '#!/bin/bash
+read -p "name? " ans'
+[[ $rc = 0 && $out == *'# MANUAL:'*'read -p'* && $out == *'read -p'* && -z $err ]]; chk 57.64
+
+# 57.65 bare read fills $REPLY, which sash does not have → MANUAL
+run_convert '#!/bin/bash
+read'
+[[ $rc = 0 && $out == *'# MANUAL:'*'REPLY'* && -z $err ]]; chk 57.65
+
+# 57.66 mapfile -t A < f → tr | read, with the redirect moved onto tr
+run_convert '#!/bin/bash
+mapfile -t names < f'
+[[ $rc = 0 && $out == *'/usr/bin/tr "\n" "\0" < f | read names'* && $out != *'mapfile'* && -z $err ]]; chk 57.66
+
+# 57.67 readarray is the same builtin
+run_convert '#!/bin/bash
+readarray -t L'
+[[ $rc = 0 && $out == *'/usr/bin/tr "\n" "\0" | read L'* && $out != *'readarray'* && -z $err ]]; chk 57.67
+
+# 57.68 mapfile as a pipeline stage keeps the upstream producer
+run_convert '#!/bin/bash
+cat z | mapfile -t P'
+[[ $rc = 0 && $out == *'cat z | /usr/bin/tr "\n" "\0" | read P'* && -z $err ]]; chk 57.68
+
+# 57.69 without -t bash keeps the trailing newline — no sash equivalent
+run_convert '#!/bin/bash
+mapfile lines < f'
+[[ $rc = 0 && $out == *'# MANUAL:'*'without -t'* && $out == *'mapfile lines < f'* && -z $err ]]; chk 57.69
+
+# 57.70 the ATTEST hint names the collection form for a bulk target
+run_convert '#!/bin/bash
+mapfile -t names < f'
+[[ $rc = 0 && $out == *'# ATTEST: names'*'attest x in names'* && -z $err ]]; chk 57.70
+
+# 57.71 and the scalar form for readline
+run_convert '#!/bin/bash
+read -r line'
+[[ $rc = 0 && $out == *'# ATTEST: line'*'attest line [['* && -z $err ]]; chk 57.71
+
+# 57.72 an after-hint sorts before the next line's before-hint, so a MANUAL
+# note never reads as belonging to the preceding command
+run_convert '#!/bin/bash
+read -r x
+read a b c'
+[[ $rc = 0 && $out == *'# ATTEST: x'*'# MANUAL:'*'multi-target'* && -z $err ]]; chk 57.72
+
+# 57.73 converted read output compiles and runs
+cat > .input.sh << 'SH'
+#!/bin/bash
+while IFS= read -r line; do
+  echo "[$line]"
+done
+SH
+rc=-1 out="" err=""
+sash-convert .input.sh 2>err \
+  | sed 's|^# ATTEST: line.*|attest line [[ $line =~ ^.*$ ]]|' > .converted.sash
+sash .converted.sash -o .binary 2>>err
+printf 'aa\nbb\n' | ./.binary > out 2>>err
+rc=$?; out=$(<out); err=$(<err)
+[[ $rc = 0 && $out == '[aa]
+[bb]' && -z $err ]]; chk 57.73
 
 
 set -e

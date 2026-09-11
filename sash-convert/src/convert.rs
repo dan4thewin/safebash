@@ -49,6 +49,14 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
     let mut patches: Vec<Patch> = Vec::new();
     let mut prefix_lines: Vec<(usize, String)> = Vec::new(); // (line_number, text)
 
+    // Ordering matters: `inject_attest_hints` places a hint *after* the
+    // line it refers to (line + 1), while `walk_node` and the SC2086 pass
+    // place theirs *before* (line). Those are the same insertion point,
+    // and `apply_patches` keeps intra-line hints in push order — so the
+    // after-hints must go in first or a MANUAL note reads as belonging to
+    // the preceding command.
+    inject_attest_hints(tree.root_node(), src, &mut prefix_lines);
+
     // Walk the CST
     walk_node(
         tree.root_node(),
@@ -57,9 +65,6 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         &mut prefix_lines,
         annotate,
     );
-
-    // Inject attest hints for command substitution assignments
-    inject_attest_hints(tree.root_node(), src, &mut prefix_lines);
 
     // Add CHECK hints from shellcheck SC2086 findings
     add_sc2086_hints(sc_findings, &mut prefix_lines);
@@ -364,6 +369,12 @@ fn convert_command(
             prefix_lines.push((line, "# MANUAL: coproc — not supported in sash".into()));
         }
 
+        // DD#99: the read family. `read [-r] VAR` is the one mechanical
+        // rewrite; every other spelling gets a MANUAL note rather than a
+        // guess.
+        "read" => convert_read(node, name_node, source, patches, prefix_lines),
+        "mapfile" | "readarray" => convert_mapfile(node, name_node, source, patches, prefix_lines),
+
         // Mechanical: trap → signal N DISPOSITION
         "trap" => {
             let mut cursor = node.walk();
@@ -419,6 +430,173 @@ fn convert_command(
 
         _ => {}
     }
+}
+
+// ── DD#99: the read family ────────────────────────────────────
+
+/// One `read`/`mapfile` argument, classified.
+enum ReadArg {
+    Flag(String),
+    Name(String),
+    Other,
+}
+
+fn classify_read_arg(text: &str) -> ReadArg {
+    if text.starts_with('-') && text.len() > 1 {
+        return ReadArg::Flag(text.to_string());
+    }
+    if !text.is_empty()
+        && text.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && !text.starts_with(|c: char| c.is_ascii_digit())
+    {
+        return ReadArg::Name(text.to_string());
+    }
+    ReadArg::Other
+}
+
+/// Split a command's arguments into flags and bare target names. `other`
+/// is set when an argument is neither — a quoted string, an expansion, a
+/// flag's own operand — which always forces a MANUAL note.
+fn read_args(node: Node, name_node: Node, source: &[u8]) -> (Vec<String>, Vec<String>, bool) {
+    let mut flags = Vec::new();
+    let mut names = Vec::new();
+    let mut other = false;
+    let mut cursor = node.walk();
+    let args = node
+        .children(&mut cursor)
+        .filter(|c| c.is_named() && *c != name_node && c.kind() != "variable_assignment");
+    for child in args {
+        match classify_read_arg(node_text(child, source)) {
+            ReadArg::Flag(f) => flags.push(f),
+            ReadArg::Name(n) => names.push(n),
+            ReadArg::Other => other = true,
+        }
+    }
+    (flags, names, other)
+}
+
+/// `IFS= read -r x` is the spelling `readline` matches exactly; every
+/// other spelling of `read` trims leading/trailing IFS whitespace, which
+/// `readline` does not.
+fn has_empty_ifs_prefix(node: Node, source: &[u8]) -> bool {
+    let mut cursor = node.walk();
+    let found = node
+        .children(&mut cursor)
+        .filter(|c| c.kind() == "variable_assignment")
+        .any(|c| node_text(c, source) == "IFS=");
+    found
+}
+
+/// Why this `read` cannot be rewritten, or None if it can.
+fn read_manual_reason(flags: &[String], names: &[String], other: bool) -> Option<String> {
+    if let Some(f) = flags.iter().find(|f| f.as_str() != "-r") {
+        return Some(read_flag_reason(f));
+    }
+    if other {
+        return Some("# MANUAL: read target is not a plain name — sash binds a declared name, not a computed one (DD#99)".into());
+    }
+    match names.len() {
+        1 => None,
+        0 => Some(
+            "# MANUAL: bare `read` fills $REPLY — sash has no REPLY, name a target: `readline VAR` (DD#99)"
+                .into(),
+        ),
+        _ => Some(
+            "# MANUAL: multi-target `read a b c` — no sash equivalent; use `readline ln` then `matchall $ln \"[^ ]+\" arr` (DD#99)"
+                .into(),
+        ),
+    }
+}
+
+fn read_flag_reason(flag: &str) -> String {
+    if flag.contains('a') {
+        return "# MANUAL: `read -a` splits one line on IFS; sash `read` slurps all of stdin on NUL — use `readline ln` then `matchall $ln \"[^ ]+\" arr` (DD#99)".to_string();
+    }
+    format!(
+        "# MANUAL: `read {}` — DD#99 retires every read flag; sash has only `readline VAR` and `read ARR`",
+        flag
+    )
+}
+
+fn convert_read(
+    node: Node,
+    name_node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let line = node.start_position().row;
+    let (flags, names, other) = read_args(node, name_node, source);
+    if let Some(reason) = read_manual_reason(&flags, &names, other) {
+        prefix_lines.push((line, reason));
+        return;
+    }
+    let original = node_text(node, source).to_string();
+    let replacement = format!("readline {}", names[0]);
+    patches.push(Patch::replace_node(node, replacement, Some(original)));
+    if !has_empty_ifs_prefix(node, source) {
+        prefix_lines.push((line, "# CHECK: bash `read` strips leading/trailing IFS whitespace; `readline` keeps the line verbatim (`IFS= read -r` was the exact equivalent)".into()));
+    }
+}
+
+/// The node a `mapfile` rewrite must replace, plus the redirect text to
+/// carry onto `tr`. `mapfile -t a < f` is a `redirected_statement`, and
+/// replacing only the command would re-bind `< f` to `read`. None means
+/// the redirect shape is not one we can move.
+fn mapfile_target<'a>(node: Node<'a>, source: &[u8]) -> Option<(Node<'a>, String)> {
+    let Some(parent) = node.parent() else {
+        return Some((node, String::new()));
+    };
+    if parent.kind() != "redirected_statement" {
+        return Some((node, String::new()));
+    }
+    let mut cursor = parent.walk();
+    let redirects: Vec<Node> = parent
+        .children_by_field_name("redirect", &mut cursor)
+        .collect();
+    let [redirect] = redirects[..] else {
+        return None;
+    };
+    let text = node_text(redirect, source);
+    text.starts_with('<')
+        .then(|| (parent, format!(" {}", text)))
+}
+
+fn convert_mapfile(
+    node: Node,
+    name_node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let line = node.start_position().row;
+    let cmd = node_text(name_node, source);
+    let (flags, names, other) = read_args(node, name_node, source);
+    let convertible = flags == ["-t"] && names.len() == 1 && !other;
+    let target = mapfile_target(node, source).filter(|_| convertible);
+    let Some((span, redirect)) = target else {
+        prefix_lines.push((line, mapfile_manual_reason(cmd, &flags)));
+        return;
+    };
+    let original = node_text(span, source).to_string();
+    let replacement = format!(
+        "/usr/bin/tr \"\\n\" \"\\0\"{} | read {}",
+        redirect, names[0]
+    );
+    patches.push(Patch::replace_node(span, replacement, Some(original)));
+}
+
+fn mapfile_manual_reason(cmd: &str, flags: &[String]) -> String {
+    if !flags.iter().any(|f| f.contains('t')) {
+        return format!(
+            "# MANUAL: `{}` without -t keeps each trailing newline — sash `read` splits on NUL and cannot retain the separator (DD#99)",
+            cmd
+        );
+    }
+    format!(
+        "# MANUAL: `{}` — the convertible form is `{} -t ARR [< file]`, which becomes `/usr/bin/tr \"\\n\" \"\\0\" [< file] | read ARR` (DD#99)",
+        cmd, cmd
+    )
 }
 
 // ── Test command conversion: [ ] → [[ ]] ─────────────────────
@@ -961,25 +1139,14 @@ fn inject_attest_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize,
         }
     }
 
-    // Check for read commands
+    // Check for read-family commands. The converted target is tainted
+    // either way; only the attest *form* differs (DD#99: `readline` binds
+    // a scalar, `read`/`mapfile` bind a collection).
     if node.kind() == "command" {
         if let Some(name_node) = node.child_by_field_name("name") {
             let name = node_text(name_node, source);
-            if name == "read" {
-                let line = node.start_position().row;
-                // Extract variable names from read arguments
-                let mut cursor = node.walk();
-                for child in node.children(&mut cursor) {
-                    if child.is_named() && child != name_node {
-                        let t = node_text(child, source);
-                        if !t.starts_with('-') && t.chars().all(|c| c.is_alphanumeric() || c == '_')
-                        {
-                            prefix_lines.push((line + 1, format!(
-                                "# ATTEST: {} is read from input — add a attest with appropriate pattern", t
-                            )));
-                        }
-                    }
-                }
+            if matches!(name, "read" | "mapfile" | "readarray") {
+                push_read_attest_hints(node, name_node, source, prefix_lines);
             }
         }
     }
@@ -991,8 +1158,37 @@ fn inject_attest_hints(node: Node, source: &[u8], prefix_lines: &mut Vec<(usize,
     }
 }
 
-// ── SC2086 CHECK hints ────────────────────────────────────────
+/// A collection target needs `attest x in NAME [[ … ]]`; a scalar needs
+/// `attest NAME [[ … ]]`. Naming the wrong one would send the reader at a
+/// diagnostic they cannot satisfy.
+fn push_read_attest_hints(
+    node: Node,
+    name_node: Node,
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let line = node.start_position().row;
+    let cmd = node_text(name_node, source);
+    let (flags, names, _) = read_args(node, name_node, source);
+    let collection = cmd != "read" || flags.iter().any(|f| f.contains('a'));
+    let form = if collection {
+        "attest x in {} [[ … ]]"
+    } else {
+        "attest {} [[ … ]]"
+    };
+    for target in names {
+        prefix_lines.push((
+            line + 1,
+            format!(
+                "# ATTEST: {} is read from input — add `{}`",
+                target,
+                form.replace("{}", &target)
+            ),
+        ));
+    }
+}
 
+// ── SC2086 CHECK hints ────────────────────────────────────────
 fn add_sc2086_hints(findings: &[ScFinding], prefix_lines: &mut Vec<(usize, String)>) {
     for f in findings {
         // SC2086: double quote to prevent globbing/word splitting

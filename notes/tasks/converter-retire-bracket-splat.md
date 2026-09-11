@@ -37,3 +37,13 @@ Open converter questions to raise with DG before implementing:
   maps-only (DD#75 §3). No index-range sugar exists — emit a CHECK comment and
   leave the original as an SB4038 compile-blocker to force review (same policy
   as converter-case-to-dispatch).
+
+## Note (2026-09-11)
+
+`${names[@]}` currently draws a **wrong** MANUAL note — `${var@X} parameter
+transformation not supported in sash — use ${var^^}/${var,,} for case`. The
+expansion converter sees the `@` and reads it as the `@X` transformation
+operator rather than the `[@]` subscript. Found while converting the DD#99
+read family (a converted `mapfile` target is naturally iterated with
+`${names[@]}` in the bash original). Whatever rewrites `[@]` here should also
+stop that misfire.
