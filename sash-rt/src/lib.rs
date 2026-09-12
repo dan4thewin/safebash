@@ -991,7 +991,30 @@ pub extern "C" fn sash_trace_init() {
 
 #[no_mangle]
 pub unsafe extern "C" fn sash_alloc(n: usize) -> *mut u8 {
-    sash_malloc(n)
+    let p = sash_malloc(n);
+    if p.is_null() {
+        sash_panic_oom(n);
+    }
+    p
+}
+
+/// heap_4 returns NULL when the heap cannot satisfy a request. Nothing used
+/// to check, so the next write — typically `alloc_cstr`'s NUL terminator —
+/// dereferenced NULL and the program died with SIGSEGV, no message, and no
+/// status a script could test. Fail loudly instead.
+#[cold]
+#[inline(never)]
+fn sash_panic_oom(n: usize) -> ! {
+    let mut buf = [0u8; 128];
+    let msg = b"sash: out of memory (requested ";
+    let mut pos = msg.len();
+    buf[..pos].copy_from_slice(msg);
+    pos += write_i64(&mut buf[pos..], n as i64);
+    let tail = b" bytes)\n";
+    buf[pos..pos + tail.len()].copy_from_slice(tail);
+    pos += tail.len();
+    sash_write(2, buf.as_ptr(), pos as i64);
+    sash_exit(1);
 }
 
 /// DD#87 invariant: every sash **string** buffer is NUL-terminated at `[len]`,
@@ -1447,6 +1470,7 @@ fn table_find_slot_inner(
 }
 
 unsafe fn table_grow(t: *mut SashTable) {
+    let old_indices = (*t).indices;
     let new_index_size = ((*t).index_mask + 1) * 2;
     let new_mask = new_index_size - 1;
     let new_indices = sash_alloc((new_index_size as usize) * 4) as *mut i32;
@@ -1488,6 +1512,13 @@ unsafe fn table_grow(t: *mut SashTable) {
     (*t).index_mask = new_mask;
     (*t).entry_count = new_count;
     (*t).live_count = new_count;
+    // The old index array is unreachable once `(*t).indices` is replaced.
+    // It used to be leaked on every doubling, so a growing table burned the
+    // heap at roughly twice its live size and heap_4's coalescing could not
+    // reclaim blocks nothing had freed.
+    if !old_indices.is_null() {
+        sash_free_c(old_indices as *mut u8);
+    }
 }
 
 #[no_mangle]
@@ -1552,8 +1583,16 @@ pub unsafe extern "C" fn sash_table_set(
             let new_entries = sash_alloc((new_cap as usize) * core::mem::size_of::<TableEntry>())
                 as *mut TableEntry;
             core::ptr::copy_nonoverlapping((*t).entries, new_entries, (*t).entry_count as usize);
+            let old_entries = (*t).entries;
             (*t).entries = new_entries;
             (*t).entry_capacity = new_cap;
+            // Freeing the previous generation: it was leaked on every
+            // doubling. Entries own no memory themselves — `key_ptr` blocks
+            // are copied by pointer into the new array — so only the array
+            // itself is released.
+            if !old_entries.is_null() {
+                sash_free_c(old_entries as *mut u8);
+            }
         }
         let ei = (*t).entry_count as usize;
         let e = &mut *(*t).entries.add(ei);
@@ -3616,20 +3655,33 @@ unsafe fn table_index_get(t: *const SashTable, i: i64) -> (*const u8, i64) {
     (ptr, len)
 }
 
-/// Read all available data from fd into a heap-allocated buffer.
+/// Read fd to EOF into a heap-allocated buffer.
+///
+/// This used to read into a fixed 64 KiB **stack** buffer and stop there, so
+/// anything larger was silently truncated to a prefix and the caller had no
+/// way to tell. A read error was likewise indistinguishable from EOF. Both
+/// are the same defect: answering plausibly instead of failing. The buffer
+/// now grows on the heap, `EINTR` retries, and a real error aborts.
 #[no_mangle]
 pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
-    let mut buf = [0u8; 65536];
+    const INITIAL: usize = 8192;
+    let mut cap = INITIAL;
+    let mut buf = unsafe { sash_alloc(cap) };
     let mut total = 0usize;
     loop {
-        if total >= buf.len() {
-            break;
+        if total == cap {
+            let new_cap = cap * 2;
+            let grown = unsafe { sash_crealloc(buf, new_cap) };
+            if grown.is_null() {
+                sash_panic_oom(new_cap);
+            }
+            buf = grown;
+            cap = new_cap;
         }
-        let chunk = total + 1024.min(buf.len() - total);
         let n = unsafe {
             rustix::io::read(
                 rustix::fd::BorrowedFd::borrow_raw(fd as i32),
-                &mut buf[total..chunk],
+                core::slice::from_raw_parts_mut(buf.add(total), cap - total),
             )
         };
         match n {
@@ -3637,15 +3689,33 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
             Ok(count) => {
                 total += count;
             }
-            Err(_) => break,
+            Err(rustix::io::Errno::INTR) => continue,
+            Err(_) => sash_panic_read(),
         }
     }
     if total == 0 {
+        unsafe { sash_free_c(buf) };
         return (core::ptr::null_mut(), 0);
     }
-    let out = unsafe { alloc_cstr(total) };
-    unsafe {
-        core::ptr::copy_nonoverlapping(buf.as_ptr(), out, total);
+    // DD#87: the value crosses into string contexts, so it must be
+    // NUL-terminated at [len]. Reserve the terminator explicitly.
+    if total == cap {
+        let grown = unsafe { sash_crealloc(buf, cap + 1) };
+        if grown.is_null() {
+            sash_panic_oom(cap + 1);
+        }
+        buf = grown;
     }
-    (out, total)
+    unsafe { *buf.add(total) = 0 };
+    (buf, total)
+}
+
+/// A failed `read` is not EOF. Reporting it as EOF handed the caller a
+/// short value that looked like a complete one.
+#[cold]
+#[inline(never)]
+fn sash_panic_read() -> ! {
+    let msg = b"sash: read failed\n";
+    sash_write(2, msg.as_ptr(), msg.len() as i64);
+    sash_exit(1);
 }

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=27
+plan=32
 echo "1..$plan" >&3
 
 set +e
@@ -167,6 +167,60 @@ fi
 # spv.4 $! and $(getcpid) are the same value (empty with no background job)
 run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
+
+# ── Heap exhaustion and slurp limits (bug-heap-exhaustion-silent-segv) ──
+# The runtime heap is a fixed region and heap_4 returns NULL when it is
+# exhausted. Nothing checked, so the next write dereferenced NULL and the
+# program died with SIGSEGV, silently. These pin "fail loudly" — the
+# capacity question itself is a separate, open decision for DG.
+# native,c only: janet runs on the Janet VM, not sash-rt.
+if in_modes native,c; then
+  /usr/bin/printf 'a\0%.0s' $(seq 1 20000) > hp_big.nul
+  /usr/bin/printf 'x%.0s' $(seq 1 70000) > hp_wide.nul
+  /usr/bin/printf '\0' >> hp_wide.nul
+  /usr/bin/printf 'y%.0s' $(seq 1 30000) >> hp_wide.nul
+
+  # hp.1 exceeding the heap is a clean diagnostic, not a segfault. 139 is
+  # SIGSEGV; the point of the test is that the status is NOT 139.
+  run_sash 'array a=()
+int i=0
+while (( i < 30000 )) {
+  a[$i]="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  i=$(( i + 1 ))
+}
+echo $(len a)'
+  [[ $rc != 0 && $rc != 139 && $rerr == *"out of memory"* ]]; chk hp.1
+
+  # hp.2 ...and nothing reaches stdout, so a partial result is never
+  # mistaken for a complete one
+  [[ -z $out ]]; chk hp.2
+
+  # hp.3 a bulk `read` past the heap goes the same way rather than segfaulting
+  run_sash 'array a=()
+read a < hp_big.nul
+echo $(len a)'
+  [[ $rc != 0 && $rc != 139 && $rerr == *"out of memory"* ]]; chk hp.3
+
+  # hp.4 `sash_read_all` used to stop at a fixed 64 KiB, silently handing
+  # back a prefix. A 100 KB stream with one separator must yield BOTH
+  # elements — under the cap the tail was simply gone.
+  run_sash 'array a=()
+read a < hp_wide.nul
+attest x in a [[ -n $x ]]
+str e="${a[1]}"
+echo "$(len a) $(strlen e)"'
+  [[ $rc = 0 && $out = "2 30000" && -z $err ]]; chk hp.4
+
+  # hp.5 ...and the first element is its full 70000 bytes, not 65536
+  run_sash 'array a=()
+read a < hp_wide.nul
+attest x in a [[ -n $x ]]
+str e="${a[0]}"
+echo $(strlen e)'
+  [[ $rc = 0 && $out = "70000" && -z $err ]]; chk hp.5
+else
+  skip_chk hp.1; skip_chk hp.2; skip_chk hp.3; skip_chk hp.4; skip_chk hp.5
+fi
 
 set -e
 tally

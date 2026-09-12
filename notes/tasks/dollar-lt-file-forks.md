@@ -1,9 +1,9 @@
 ---
 title: "`$(<file)` forks instead of reading the file directly"
-status: ready
+status: blocked
 priority: P2
 kind: bug
-depends: []
+depends: [bug-heap-exhaustion-silent-segv]
 gates:
   - "`s=$(<f)` emits an open/read/close, with no fork and no pipe"
   - "the value is byte-identical to today's (trailing newline stripped)"
@@ -101,3 +101,20 @@ highest-risk part of the change, hence the explicit gate above.
 (`codegen/dispatch.rs:1506`, `codegen/setup.rs:798`). The work is to stop
 desugaring to `cat` in `parse_slurp_form` and emit a real slurp node that
 lowers to open/read-to-EOF/close.
+
+## Blocked 2026-09-12 — `sash_read_all` is not fit to build on yet
+
+The "shape of the fix" above says to lower this through `sash_read_all`.
+Reading that function first found that it **silently truncates at 64 KiB**
+and treats a read error as EOF (`sash-rt/src/lib.rs:3621`). Building
+`$(<file)` on it as it stands would trade one bug (forks `/usr/bin/cat`)
+for a worse one (`s=$(<f)` silently yields a 64 KiB prefix of a larger
+file) — and `cat` has no such limit, so it would be a straight regression
+against today's behaviour.
+
+Testing the existing `sash_read_all` caller — DD#99 `read <fd> ARRAY` —
+against a large stream then turned up a **silent SIGSEGV** from heap
+exhaustion at ~12 KB of payload. Both are filed together as
+`bug-heap-exhaustion-silent-segv` (P1), which must land first.
+
+The rest of this filing stands unchanged, including the taint gate.
