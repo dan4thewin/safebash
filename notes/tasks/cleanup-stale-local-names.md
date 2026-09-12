@@ -1,6 +1,6 @@
 ---
 title: "cleanup: `local`-era names and doc comments outlived DD#86"
-status: ready
+status: done
 priority: P4
 kind: cleanup
 depends: []
@@ -39,3 +39,20 @@ Both traces still present. Line numbers drifted from the filing:
   (filing said 1409 / 1427).
 
 Cosmetic, no behaviour change. Confirmed still worth doing exactly as filed.
+
+## DONE 2026-09-12
+
+Both traces removed, exactly as filed.
+
+1. The two `parse_local` mentions in `sash/src/parse/parser.rs` (module doc
+   list and the `declaration_axes` comment) are gone. The function had not
+   existed since DD#86 phase 2.
+2. `save_locals` -> **`snapshot_assigned`**, `restore_locals` ->
+   **`restore_snapshot`**, with doc comments that say what they do (snapshot
+   the variables a body capture assigns, so a body capture's writes can be
+   undone for subshell isolation) and an explicit note that they have nothing
+   to do with the removed `local` keyword.
+
+Rename + comments only. 3-mode sweep at 5305 passing / 41 failing / 559
+skipped with **zero flips**, which is the evidence the change is behaviour-
+neutral.

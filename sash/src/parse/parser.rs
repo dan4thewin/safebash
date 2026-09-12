@@ -11,7 +11,7 @@
 //! Structure:
 //!   - `parse()` — top-level entry: statement loop with error recovery
 //!   - Control flow: parse_if, parse_while, parse_for, parse_case
-//!   - Declarations: parse_function, parse_local, parse_declaration
+//!   - Declarations: parse_function, parse_declaration
 //!   - Commands: parse_simple_or_assignment, parse_command
 //!   - Composition: maybe_wrap_redirects (pipes, list ops, redirects)
 //!   - Test expressions: parse_test_expr (recursive descent for [[ ]])
@@ -644,10 +644,9 @@ fn parse_declaration(
 
 /// Resolve a declaration's (keyword, type, structure-flags) axes, consuming any
 /// stacked modifier keyword. Handles `const int` and — DD#76 — the top-level
-/// `int array` / `int map` stack (DD#35 order: type then structure; a
-/// `local int array` already stacks via parse_local). const+structure is
-/// intentionally left as a compile error (spec 35.2), so it is not stacked
-/// here.
+/// `int array` / `int map` stack (DD#35 order: type then structure).
+/// const+structure is intentionally left as a compile error (spec 35.2), so it
+/// is not stacked here.
 fn declaration_axes(scanner: &mut Scanner, keyword: &str) -> (DeclKeyword, VarType, Vec<String>) {
     if keyword == "const" && matches!(scanner.peek().token, Tok::Int) {
         scanner.next();

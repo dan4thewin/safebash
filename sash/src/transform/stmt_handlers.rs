@@ -1277,7 +1277,7 @@ pub(super) fn capture_body_into(
 
     // Subshell isolation: snapshot every var the body assigns, restore after.
     let assigned = collect_assigned_vars(body);
-    let saved_vars = save_locals("bodycap", &assigned, state, ssa, block);
+    let saved_vars = snapshot_assigned("bodycap", &assigned, state, ssa, block);
 
     let call_block = ssa.new_block("cap_body");
     ssa.block_mut(block).terminator = Terminator::Goto(call_block);
@@ -1299,7 +1299,7 @@ pub(super) fn capture_body_into(
             tainted: crate::validate::cmdsub_is_taint_source(body),
         });
 
-    restore_locals(&saved_vars, state, ssa, restore_block);
+    restore_snapshot(&saved_vars, state, ssa, restore_block);
     restore_block
 }
 
@@ -1334,8 +1334,9 @@ fn push_unique(vars: &mut Vec<String>, name: &str) {
     }
 }
 
-/// Restore saved vars (from `save_locals`) to their pre-capture versions.
-fn restore_locals(
+/// Restore the variables captured by [`snapshot_assigned`] to their
+/// pre-capture versions — the `$(f)` subshell-isolation half.
+fn restore_snapshot(
     saved: &[(String, VarRef)],
     state: &mut VersionState,
     ssa: &mut SsaProgram,
@@ -1350,10 +1351,12 @@ fn restore_locals(
     }
 }
 
-/// Save each of `locals` into a fresh `__save_<fname>_<lname>`
-/// variable in `block`. Returns the (name, save-ref) pairs for the
-/// later restore.
-fn save_locals(
+/// Snapshot each variable a body capture ASSIGNS into a fresh
+/// `__save_<fname>_<name>` variable in `block`, so the capture's writes can be
+/// undone afterwards (`$(f)` runs in a subshell and must not leak). Returns the
+/// (name, save-ref) pairs for the later restore. Nothing to do with the
+/// DD#86-removed `local` keyword, which this was named for.
+fn snapshot_assigned(
     fname: &str,
     locals: &[String],
     state: &mut VersionState,
