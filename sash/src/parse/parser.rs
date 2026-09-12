@@ -22,7 +22,8 @@ use super::arith::{
 };
 use super::error::parse_error;
 use super::expr::{
-    parse_array_literal, parse_assignment_value, parse_expr, parse_operand_word, span_from,
+    is_identifier, parse_array_literal, parse_assignment_value, parse_expr, parse_operand_word,
+    span_from,
 };
 use super::lexer::{Scanner, Tok};
 use crate::diagnostic::Diagnostic;
@@ -2493,16 +2494,22 @@ fn reject_nonscalar_redirect_target(target: &Expr, span: Span) -> Result<(), Dia
 
 // ── Helpers ──────────────────────────────────────────────────
 
-/// A word that is a valid identifier: [a-zA-Z_][a-zA-Z0-9_]*
-fn is_identifier(s: &str) -> bool {
-    !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-}
-
-/// A word that is a valid identifier or subscript: name or name[idx]
+/// A word that is an identifier or a subscripted one: `name` or `name[idx]`.
+///
+/// This used to be a flat character-set test (alphanumeric plus `_ [ ]`), which
+/// accepted `9x`, `123`, `][`, and `a]b[` as assignment targets — so `9x=1`
+/// parsed as an assignment to a name bash will not accept. It now checks the
+/// two parts separately: [`is_identifier`] for the name, and a single
+/// well-formed `[…]` for the subscript.
 fn is_identifier_or_subscript(s: &str) -> bool {
-    !s.is_empty()
-        && s.chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '[' || c == ']')
+    let Some(open) = s.find('[') else {
+        return is_identifier(s);
+    };
+    let Some(rest) = s.strip_suffix(']') else {
+        return false;
+    };
+    let subscript = &rest[open + 1..];
+    is_identifier(&s[..open]) && !subscript.is_empty() && !subscript.contains(['[', ']'])
 }
 
 /// A word that looks like a file descriptor number (1-2 digits).
