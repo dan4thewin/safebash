@@ -1,6 +1,6 @@
 ---
 title: "cleanup: remove dead sash_toupper_first/sash_tolower_first runtime"
-status: ready
+status: done
 priority: P4
 kind: cleanup
 depends: []
@@ -39,3 +39,15 @@ runtime deletion: it must be sequenced with
 `remove-retired-surface-implementations` and
 `rust-tests-hang-on-retired-surfaces`, or the sash-rt deletion breaks that
 test.
+
+## DONE 2026-09-12
+
+Done as part of `remove-retired-surface-implementations`, which is what made it
+standalone-able: `sash/tests/c_tests.rs::c_pe_toupper_first` — the one reference
+the original filing missed — was deleted with the rest of the retired-surface
+test fixtures, and only then were `sash_toupper_first` / `sash_tolower_first`
+removed from `sash-rt/src/lib.rs`.
+
+Three more dead runtime entry points went in the same pass (`sash_read_delim`,
+`sash_split_first_word`, `sash_split_field`). `libsash_rt.a` rebuilt; `nm`
+confirms all five symbols are absent. c-mode links and sweeps clean.

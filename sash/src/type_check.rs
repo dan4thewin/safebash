@@ -1264,14 +1264,13 @@ fn check_int_collection_elements(
 }
 
 fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
-    // DD#60/DD#61: argv/mapfile/read auto-declare their target collection —
+    // DD#60/DD#61: argv/read auto-declare their target collection —
     // register it so a later attest-all / len / element read sees a collection,
     // not a scalar (the front-end analogue of the transform's auto-declare).
     match expr_to_name(&c.name).as_str() {
         "unset" => check_unset_args(c, span, env, errors),
         "attest" => check_attest_form(c, span, env, errors),
         "argv" => register_argv_target(c, env),
-        "mapfile" | "readarray" => register_bulk_read_target(c, env),
         // DD#99: `read [SRC] ARRAY` — the target is always the last arg.
         "read" => register_newread_target(c, env),
         // DD#63: `match S P ARR` / `matchall S P ARR` fill (and auto-declare)
@@ -1300,22 +1299,6 @@ fn register_argv_target(c: &Command, env: &mut TypeEnv) {
 fn register_newread_target(c: &Command, env: &mut TypeEnv) {
     if let Some(last) = c.args.last() {
         env.collections.insert(expr_to_name(last));
-    }
-}
-
-/// Register a `mapfile`/`readarray` target as a collection (indexed array, or
-/// an assoc array for `-m`) — the type-check analogue of the transform's
-/// `autodeclare_bulk_target`. Without this, an auto-declared bulk-read array
-/// (no prior `array a=()`) is seen as a scalar by attest-all / len / element
-/// reads (SB4030), while `argv` — which does register — works.
-fn register_bulk_read_target(c: &Command, env: &mut TypeEnv) {
-    let args: Vec<String> = c.args.iter().map(expr_to_name).collect();
-    let Some(name) = args.iter().find(|a| !a.starts_with('-')) else {
-        return;
-    };
-    env.collections.insert(name.clone());
-    if args.iter().any(|a| a == "-m") {
-        env.assoc_arrays.insert(name.clone());
     }
 }
 

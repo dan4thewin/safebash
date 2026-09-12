@@ -713,22 +713,17 @@ pub fn arith_references_var(a: &ArithExpr, name: &str) -> bool {
     found
 }
 
-/// Decoded `read` command flags — the SINGLE source of truth for how a
-/// `read`'s argument words are classified, shared by the transform (SSA
-/// lowering), validation (target collection + taint), and type checking.
-/// Recognized flags: `-a ARR` (array target), `-d DELIM` (record delimiter),
-/// `-f SEP` (field separator). A byte flag's value is joined (`-dX`) or split
-/// (`-d X`); an EMPTY value (`-d ''`, or a bare trailing `-d`) means NUL
-/// (`\0`) — the bash `read -d ''` convention. `-r` (raw) is accepted as an
-/// ignored no-op (sash reads are always raw). Any other `-flag` is recorded in
-/// `unknown_flag` (the transform turns that into SB5015).
+/// The target name of a `readline` command — the SINGLE source of truth,
+/// shared by the transform (SSA lowering), validation (target collection +
+/// taint) and type checking.
+///
+/// DD#99 retired the whole flag surface (`-a`, `-d`, `-f`, `-r`) and the
+/// multi-target form; SB5057 rejects every one of them at validation, so by
+/// the time a program reaches lowering a `readline` is exactly one bare
+/// target name. This struct is what is left of `ReadFlags`.
 #[derive(Debug, Default)]
-pub struct ReadFlags {
-    pub delim: Option<u8>,
-    pub field_sep: Option<u8>,
-    pub array_name: Option<String>,
+pub struct ReadTarget {
     pub var_names: Vec<String>,
-    pub unknown_flag: Option<String>,
 }
 
 /// The literal VALUE of a `read` argument word (unwrapping one layer of
@@ -749,65 +744,12 @@ fn read_arg_value(e: &Expr) -> String {
     }
 }
 
-/// Classify a `read` command's argument words. See [`ReadFlags`].
-pub fn classify_read_flags(args: &[Expr]) -> ReadFlags {
-    let words: Vec<String> = args.iter().map(read_arg_value).collect();
-    let mut f = ReadFlags::default();
-    let mut i = 0;
-    while i < words.len() {
-        i += 1 + classify_read_word(&words, i, &mut f);
-    }
-    f
-}
-
-/// Classify ONE `read` argument word at `words[i]`, updating `f`. Returns the
-/// number of EXTRA words consumed (the value that follows a split `-a ARR` or
-/// `-d DELIM`/`-f SEP`).
-fn classify_read_word(words: &[String], i: usize, f: &mut ReadFlags) -> usize {
-    let w = &words[i];
-    if w == "-a" {
-        take_read_str_flag(words, i, &mut f.array_name)
-    } else if let Some(rest) = w.strip_prefix("-d") {
-        take_read_byte_flag(rest, words, i, &mut f.delim)
-    } else if let Some(rest) = w.strip_prefix("-f") {
-        take_read_byte_flag(rest, words, i, &mut f.field_sep)
-    } else if w == "-r" {
-        // sash reads are ALWAYS raw (no backslash processing), so `-r`
-        // requests the default — accept it as an ignored no-op.
-        0
-    } else if w.starts_with('-') {
-        f.unknown_flag.get_or_insert_with(|| w.clone());
-        0
-    } else {
-        f.var_names.push(w.clone());
-        0
-    }
-}
-
-/// Resolve a split string-valued flag (`-a ARR`) into `*slot`, returning EXTRA
-/// words consumed (1 if a value word follows, else 0).
-fn take_read_str_flag(words: &[String], i: usize, slot: &mut Option<String>) -> usize {
-    if i + 1 < words.len() {
-        *slot = Some(words[i + 1].clone());
-        1
-    } else {
-        0
-    }
-}
-
-/// Resolve a `-X` byte flag value into `*slot`, returning EXTRA words consumed
-/// (0 for joined `-dX`, 1 for split `-d VALUE`). An empty value (`-d ''` or a
-/// bare trailing `-d`) means NUL (`0`).
-fn take_read_byte_flag(joined: &str, words: &[String], i: usize, slot: &mut Option<u8>) -> usize {
-    if !joined.is_empty() {
-        *slot = Some(joined.as_bytes()[0]);
-        0
-    } else if i + 1 < words.len() {
-        *slot = Some(words[i + 1].as_bytes().first().copied().unwrap_or(0));
-        1
-    } else {
-        *slot = Some(0);
-        0
+/// Collect a `readline` command's target names. See [`ReadTarget`].
+/// SB5057 has already guaranteed there is exactly one and that it is a bare
+/// identifier, so every word is a target.
+pub fn readline_targets(args: &[Expr]) -> ReadTarget {
+    ReadTarget {
+        var_names: args.iter().map(read_arg_value).collect(),
     }
 }
 

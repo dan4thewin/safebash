@@ -410,11 +410,6 @@ fn c_pe_substring_to_end() {
 }
 
 #[test]
-fn c_pe_toupper_first() {
-    assert_c_matches_bash("pe_toupper1", "#!/bin/bash\nx=hello\necho \"${x^}\"");
-}
-
-#[test]
 fn c_pe_tolower_all() {
     assert_c_matches_bash("pe_tolower_all", "#!/bin/bash\nx=HELLO\necho \"${x,,}\"");
 }

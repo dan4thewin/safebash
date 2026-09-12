@@ -138,16 +138,6 @@ fn classify_inst_def(
         } => {
             taint.insert(var_key(target), read_line_taint(*clean_pipe));
         }
-        SsaInst::ReadLineMulti {
-            targets,
-            clean_pipe,
-            ..
-        } => {
-            let t = read_line_taint(*clean_pipe);
-            for tg in targets {
-                taint.insert(var_key(tg), t);
-            }
-        }
         SsaInst::CaptureEnd { target, tainted } => {
             // A `$(user_fn)` capture is optimistically Clean (DD#24); a
             // multi-statement/pipeline `$(…)` body captures external output
@@ -162,15 +152,14 @@ fn classify_inst_def(
             taint.insert(var_key(target), t);
         }
 
-        // Instructions that don't define a VarRef. Array taint (mapfile /
-        // read -a / argv fills) and capture-form builtins are governed by the
+        // Instructions that don't define a VarRef. Array taint (`read` /
+        // argv fills) and capture-form builtins are governed by the
         // CST pass; the SSA backstop does not yet re-derive them (see task
         // ssa-taint-cmdsub-operand-propagation for the capture/array work).
         SsaInst::Command { .. }
         | SsaInst::Test(_)
         | SsaInst::SubscriptAssign { .. }
         | SsaInst::ArrayAppend { .. }
-        | SsaInst::Mapfile { .. }
         | SsaInst::ReadArray { .. }
         | SsaInst::SplitValue { .. } // DD#99: array taint governed by the CST pass, like ReadArray
         | SsaInst::MapFromArray { .. } // DD#99: ditto — the map is as tainted as its source array

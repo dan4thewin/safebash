@@ -1065,13 +1065,11 @@ echo "$x"'
 # (The SSA-backstop half of this fix is pinned by taint_switch.sh sw.9.)
 # The split is NUL-only (DD#99), so "p q\n" is ONE field — the subject here is
 # that a clean producer needs no attest, not the field count.
-if in_modes native,c; then
-    run_sash 'echo "p q" | read a
+# Un-gated for janet 2026-09-12: janet's lastpipe used to bind an array target
+# as a scalar string, which made `len` count bytes.
+run_sash 'echo "p q" | read a
 echo "$(len a)"'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk tl.8
-else
-    skip_chk tl.8
-fi
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk tl.8
 
 # --- DD#99: SB5021 names a route that still exists ---
 # The advice used to read "external data enters arrays via read/mapfile" for

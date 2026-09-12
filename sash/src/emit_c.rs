@@ -346,17 +346,6 @@ fn emit_prologue(out: &mut String) {
     .unwrap();
     // Phase 5 — read
     writeln!(out, "extern sash_pair sash_read_line(i64 fd);").unwrap();
-    writeln!(out, "extern sash_pair sash_read_delim(i64 fd, i64 delim);").unwrap();
-    writeln!(
-        out,
-        "extern sash_pair sash_split_first_word(const char* p, i64 l, const char** rp, i64* rl);"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "extern sash_pair sash_split_field(const char* p, i64 l, i64 delim, const char** rp, i64* rl);"
-    )
-    .unwrap();
     writeln!(out, "extern sash_pair sash_read_all(i64 fd);").unwrap();
     writeln!(
         out,
@@ -489,9 +478,6 @@ fn collect_inst_var_types(inst: &SsaInst, types: &mut VarTypes) {
         // c emits an assignment to an undeclared `_ptr`/`_len`).
         SsaInst::ReadLine { target, .. } => {
             insert_read_target_types(std::slice::from_ref(target), types);
-        }
-        SsaInst::ReadLineMulti { targets, .. } => {
-            insert_read_target_types(targets, types);
         }
         // DD#61 attest-all: the loop binders are set inside the emitted loop, so
         // they need C slot declarations (as String ptr/len). c_var_name
@@ -682,43 +668,26 @@ fn is_catching_construct_exit(label: &str) -> bool {
     )
 }
 
-/// I/O-read family (read / mapfile / read -a) sub-dispatcher for `emit_inst`.
+/// I/O-read family (`readline` / `read`) sub-dispatcher for `emit_inst`.
 /// Returns true when it handled `inst`. Kept separate so the main SsaInst
 /// dispatcher stays under the complexity gate.
 fn emit_read_inst(e: &mut Emit, inst: &SsaInst, types: &VarTypes) -> bool {
     match inst {
-        // Phase 5: SsaInst::ReadLine → sash_read_line/sash_read_delim.
+        // Phase 5: SsaInst::ReadLine → sash_read_line.
         // Single-target read (read VAR). fd=-1 is the lastpipe sentinel
         // (read from the captured pipe fd). __read_eof tracks EOF.
         SsaInst::ReadLine {
             target,
             fd,
-            delim,
             redirects,
             ..
-        } => emit_readline(e, target, *fd, *delim, redirects, types),
-        // read VAR1 VAR2 … [-f<sep>] — split one line across N targets.
-        SsaInst::ReadLineMulti {
-            targets,
-            fd,
-            delim,
-            field_sep,
-            ..
-        } => emit_readline_multi(e, targets, *fd, *delim, *field_sep, types),
-        // mapfile -t ARR / mapfile -m MAP — bulk-read fd into an array/map.
-        SsaInst::Mapfile {
-            array,
-            fd,
-            map_mode,
-            separator,
-        } => emit_mapfile(e, array, *fd, *map_mode, *separator, types),
-        // read -a ARR — split one line into an array by delimiter.
+        } => emit_readline(e, target, *fd, redirects, types),
+        // DD#99 `read ARRAY` — split the fd's bytes on NUL into an array.
         SsaInst::ReadArray {
             array,
             fd,
-            delim,
             redirects,
-        } => emit_read_array(e, array, *fd, *delim, redirects, types),
+        } => emit_read_array(e, array, *fd, redirects, types),
         // DD#99 `read $SRC ARRAY` — the same split with the bytes coming
         // from a value rather than a fd.
         SsaInst::SplitValue { source, array } => emit_split_value(e, source, array, types),
@@ -3775,15 +3744,13 @@ fn emit_guarded_body(
     writeln!(e.out, "    }}").unwrap();
 }
 
-/// `read VAR` — assigns one line from `fd` to `target`. Mirrors
-/// emit_readline (codegen/dispatch.rs:876). delim=None uses
-/// newline; delim=Some(b) uses that byte. Sets __exit_status = 1
+/// `readline VAR` — assign one newline-terminated record from `fd` to
+/// `target`. Mirrors the native `emit_readline`. Sets __exit_status = 1
 /// on EOF, 0 otherwise.
 fn emit_readline(
     e: &mut Emit,
     target: &VarRef,
     fd: i64,
-    delim: Option<u8>,
     redirects: &[crate::ir::Redirect],
     types: &VarTypes,
 ) {
@@ -3791,18 +3758,20 @@ fn emit_readline(
     // (e.g. herestring → fd 0) around the read, then restore. DD#55: a
     // failed open aborts rather than reading an empty line.
     emit_guarded_body(e, redirects, types, |e, _types| {
-        emit_readline_body(e, target, fd, delim)
+        emit_readline_body(e, target, fd)
     });
 }
 
-fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64, delim: Option<u8>) {
+fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64) {
     let t = e.fresh();
     let fdx = c_read_fd(fd);
-    let call = match delim {
-        None => format!("sash_read_line({})", fdx),
-        Some(b) => format!("sash_read_delim({}, {})", fdx, b),
-    };
-    writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
+    writeln!(
+        e.out,
+        "    sash_pair {t} = sash_read_line({fd});",
+        t = t,
+        fd = fdx
+    )
+    .unwrap();
     let base = c_var_name(&target.name, target.version);
     writeln!(e.out, "    {0}_ptr = {1}.ptr;", base, t).unwrap();
     writeln!(e.out, "    {0}_len = {1}.len;", base, t).unwrap();
@@ -3825,165 +3794,23 @@ fn c_read_fd(fd: i64) -> String {
     }
 }
 
-/// `read VAR1 VAR2 …` — read one line and split it across N targets.
-/// Mirrors emit_readline_multi (codegen/dispatch.rs:432): each target but
-/// the last takes one field (by `field_sep`, else whitespace); the last
-/// takes the remainder. Sets __test_result = (line non-empty).
-fn emit_readline_multi(
-    e: &mut Emit,
-    targets: &[VarRef],
-    fd: i64,
-    delim: Option<u8>,
-    field_sep: Option<u8>,
-    _types: &VarTypes,
-) {
-    let t = e.fresh();
-    let fdx = c_read_fd(fd);
-    let call = match delim {
-        None => format!("sash_read_line({})", fdx),
-        Some(b) => format!("sash_read_delim({}, {})", fdx, b),
-    };
-    writeln!(e.out, "    sash_pair {t} = {call};", t = t, call = call).unwrap();
-    writeln!(e.out, "    __test_result = ({t}.len > 0) ? 1 : 0;", t = t).unwrap();
-    // Running cursor over the line: (cur_p, cur_l).
-    writeln!(
-        e.out,
-        "    const char* {t}_cp = {t}.ptr; i64 {t}_cl = {t}.len;",
-        t = t
-    )
-    .unwrap();
-    let last = targets.len().saturating_sub(1);
-    for (i, target) in targets.iter().enumerate() {
-        let base = c_var_name(&target.name, target.version);
-        if i == last {
-            emit_readline_last(e, &base, &t);
-        } else {
-            emit_readline_field(e, &base, &t, field_sep);
-        }
-    }
-}
-
-/// Assign the remainder cursor (`{t}_cp/{t}_cl`) to the last read target.
-fn emit_readline_last(e: &mut Emit, base: &str, t: &str) {
-    writeln!(
-        e.out,
-        "    {0}_ptr = {t}_cp; {0}_len = {t}_cl;",
-        base,
-        t = t
-    )
-    .unwrap();
-}
-
-/// Split the next field off the `{t}_cp/{t}_cl` cursor into `base` and
-/// advance the cursor to the remainder (by `field_sep`, else whitespace).
-fn emit_readline_field(e: &mut Emit, base: &str, t: &str, field_sep: Option<u8>) {
-    let w = e.fresh();
-    let split = match field_sep {
-        Some(sep) => format!(
-            "sash_split_field({t}_cp, {t}_cl, {sep}, &{w}_rp, &{w}_rl)",
-            t = t,
-            sep = sep,
-            w = w
-        ),
-        None => format!(
-            "sash_split_first_word({t}_cp, {t}_cl, &{w}_rp, &{w}_rl)",
-            t = t,
-            w = w
-        ),
-    };
-    writeln!(e.out, "    const char* {w}_rp; i64 {w}_rl;", w = w).unwrap();
-    writeln!(e.out, "    sash_pair {w} = {split};", w = w, split = split).unwrap();
-    writeln!(
-        e.out,
-        "    {0}_ptr = {w}.ptr; {0}_len = {w}.len;",
-        base,
-        w = w
-    )
-    .unwrap();
-    writeln!(e.out, "    {t}_cp = {w}_rp; {t}_cl = {w}_rl;", t = t, w = w).unwrap();
-}
-
-/// `mapfile -t ARR` / `mapfile -m MAP` — bulk-read lines from `fd` into an
-/// array (key = next integer index) or a map (split KEY<sep>VALUE, skip
-/// blank keys). Mirrors handle_mapfile (codegen/inst_handlers.rs:1037).
-fn emit_mapfile(
-    e: &mut Emit,
-    array: &str,
-    fd: i64,
-    map_mode: bool,
-    separator: char,
-    types: &VarTypes,
-) {
-    let table_expr = lookup_table_var(array, types);
-    let fdx = c_read_fd(fd);
-    let t = e.fresh();
-    writeln!(
-        e.out,
-        "    SashTable* {t}_tbl = (SashTable*){tbl};",
-        t = t,
-        tbl = table_expr
-    )
-    .unwrap();
-    writeln!(e.out, "    for (;;) {{").unwrap();
-    writeln!(
-        e.out,
-        "        sash_pair {t}_ln = sash_read_line({fd});",
-        t = t,
-        fd = fdx
-    )
-    .unwrap();
-    writeln!(
-        e.out,
-        "        if ({t}_ln.ptr == (const char*)0) break;",
-        t = t
-    )
-    .unwrap();
-    if map_mode {
-        writeln!(e.out, "        const char* {t}_vp; i64 {t}_vl;", t = t).unwrap();
-        writeln!(
-            e.out,
-            "        sash_pair {t}_k = sash_split_field({t}_ln.ptr, {t}_ln.len, {sep}, &{t}_vp, &{t}_vl);",
-            t = t,
-            sep = separator as u32
-        )
-        .unwrap();
-        writeln!(e.out, "        if ({t}_k.len == 0) continue;", t = t).unwrap();
-        writeln!(
-            e.out,
-            "        sash_table_set({t}_tbl, {t}_k.ptr, {t}_k.len, {t}_vp, {t}_vl);",
-            t = t
-        )
-        .unwrap();
-    } else {
-        writeln!(e.out, "        i64 {t}_k = sash_table_len({t}_tbl);", t = t).unwrap();
-        writeln!(
-            e.out,
-            "        sash_table_set({t}_tbl, (const char*)&{t}_k, 8, {t}_ln.ptr, {t}_ln.len);",
-            t = t
-        )
-        .unwrap();
-    }
-    writeln!(e.out, "    }}").unwrap();
-}
-
-/// `read -a ARR` — slurp `fd` and split it into `array` by `delim`
-/// (default space). Mirrors emit_read_array (codegen/dispatch.rs:1219):
-/// sash_read_all + sash_split_into_array.
+/// DD#99 `read ARRAY` — slurp `fd` and split it on NUL into `array`.
+/// Mirrors the native `emit_read_array`: sash_read_all +
+/// sash_split_into_array.
 fn emit_read_array(
     e: &mut Emit,
     array: &str,
     fd: i64,
-    delim: Option<u8>,
     redirects: &[crate::ir::Redirect],
     types: &VarTypes,
 ) {
     // DD#55: `read ARR < nosuch` aborts rather than yielding an empty array.
     emit_guarded_body(e, redirects, types, |e, types| {
-        emit_read_array_body(e, array, fd, delim, types)
+        emit_read_array_body(e, array, fd, types)
     });
 }
 
-fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, types: &VarTypes) {
+fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, types: &VarTypes) {
     let table_expr = lookup_table_var(array, types);
     let fdx = c_read_fd(fd);
     let t = e.fresh();
@@ -3995,14 +3822,11 @@ fn emit_read_array_body(e: &mut Emit, array: &str, fd: i64, delim: Option<u8>, t
     )
     .unwrap();
     writeln!(e.out, "    __test_result = ({t}.len > 0) ? 1 : 0;", t = t).unwrap();
-    let d = delim.map(|b| b as i64).unwrap_or(b' ' as i64);
-    let term = i64::from(delim.is_some());
+    // DD#99: NUL is the only separator, with terminator semantics.
     writeln!(
         e.out,
-        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, {d}, {term}, (unsigned char*){tbl});",
+        "    if ({t}.ptr) sash_split_into_array({t}.ptr, {t}.len, 0, 1, (unsigned char*){tbl});",
         t = t,
-        d = d,
-        term = term,
         tbl = table_expr
     )
     .unwrap();

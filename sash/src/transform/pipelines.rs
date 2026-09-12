@@ -309,30 +309,33 @@ pub(super) fn lower_pipe_while_read(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    if let StmtKind::While(w) = &stmt.kind {
-        // The while condition should be `read -r var` — extract the var name
-        // and reuse the standard while lowering, but patch ReadLine fd to -1
-        let exit = lower_while(w, ssa, state, block);
-
-        // Patch all ReadLine instructions in the loop to use fd=-1 (pipe fd sentinel)
-        // Walk all blocks from header (block+1) to exit
-        for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
-            for inst in &mut ssa.block_mut(bid).insts {
-                match inst {
-                    SsaInst::ReadLine { fd, .. } if *fd == 0 => {
-                        *fd = -1;
-                    }
-                    SsaInst::ReadLineMulti { fd, .. } if *fd == 0 => {
-                        *fd = -1;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        exit
-    } else {
+    let StmtKind::While(w) = &stmt.kind else {
         // Shouldn't happen — caller verified this is a While
-        lower_one(stmt, ssa, state, block)
+        return lower_one(stmt, ssa, state, block);
+    };
+    // The while condition should be `read var` — reuse the standard while
+    // lowering, then repoint the ReadLine fd to the pipe sentinel.
+    let exit = lower_while(w, ssa, state, block);
+    repoint_readlines_to_pipe(ssa);
+    exit
+}
+
+/// Point every stdin `ReadLine` at fd -1, the pipe-fd sentinel the pipeline
+/// instruction installs. Walks every block, not just the loop body, because
+/// the header/body split is not known here.
+fn repoint_readlines_to_pipe(ssa: &mut SsaProgram) {
+    for bid in ssa.blocks.keys().cloned().collect::<Vec<_>>() {
+        repoint_block_readlines(&mut ssa.block_mut(bid).insts);
+    }
+}
+
+fn repoint_block_readlines(insts: &mut [SsaInst]) {
+    for inst in insts {
+        let SsaInst::ReadLine { fd, .. } = inst else {
+            continue;
+        };
+        if *fd == 0 {
+            *fd = -1;
+        }
     }
 }

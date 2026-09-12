@@ -47,7 +47,7 @@ pub(super) fn handle_command(
 }
 
 /// Dispatch a `BuiltinCmd` to its handler. Most builtins always
-/// consume the statement (return `Some`); `Test` and `Mapfile` may
+/// consume the statement (return `Some`); `Test` and `Argv` may
 /// return `None` to fall through to the regex / general handler.
 fn try_builtin(
     kind: BuiltinCmd,
@@ -64,16 +64,14 @@ fn try_builtin(
         BuiltinCmd::Break => Some(handle_break_stmt(c, state, ssa, *block)),
         BuiltinCmd::Continue => Some(handle_continue_stmt(c, state, ssa, *block)),
         BuiltinCmd::Return => Some(handle_return_stmt(c, ssa, state, block)),
-        BuiltinCmd::Mapfile | BuiltinCmd::Argv => try_fill_array(kind, c, ssa, state, *block),
+        BuiltinCmd::Argv => try_handle_argv(c, ssa, state, *block),
         BuiltinCmd::Signal => Some(super::cmd_handlers::handle_signal(
             name, c, stmt, ssa, state, *block,
         )),
         BuiltinCmd::Unset => Some(super::cmd_handlers::handle_unset(
             name, c, stmt, ssa, state, *block,
         )),
-        BuiltinCmd::Read => Some(super::cmd_handlers::handle_read(
-            c, stmt, ssa, state, *block,
-        )),
+        BuiltinCmd::Read => Some(super::cmd_handlers::handle_read(c, ssa, state, *block)),
         _ => None,
     }
 }
@@ -442,29 +440,11 @@ fn try_int_tail_call(
     ))
 }
 
-/// `mapfile -t arr` / `readarray -t arr` → Mapfile instruction.
-/// Returns `None` if no array name is present (caller falls through to
-/// general command handling).
-/// Array out-param fills: `mapfile`/`readarray` and DD#60 `argv [N] a`.
-fn try_fill_array(
-    kind: BuiltinCmd,
-    c: &Command,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> Option<BlockId> {
-    match kind {
-        BuiltinCmd::Mapfile => try_handle_mapfile(c, ssa, state, block),
-        BuiltinCmd::Argv => try_handle_argv(c, ssa, state, block),
-        _ => None,
-    }
-}
-
 /// DD#60: `argv [N] a` out-param builtin. The trailing positional is the
 /// destination array; an optional leading non-negative integer is the
 /// slice start (`argv a` = whole argv, `argv N a` = argv[N:]). Emits an
-/// `ArgvFill` instruction (auto-declares + taints the array, like
-/// mapfile / read -a). Returns `None` for any other shape.
+/// `ArgvFill` instruction (auto-declares + taints the array, like `read`).
+/// Returns `None` for any other shape.
 fn try_handle_argv(
     c: &Command,
     ssa: &mut SsaProgram,
@@ -490,10 +470,10 @@ fn try_handle_argv(
 
 /// Auto-declare a bulk-read target array (mirrors argv, DG 2026-07-08): if
 /// `name` isn't already a collection, emit the empty-array/-map Assign that
-/// creates the versioned `name_0` slot — so the fill (argv/mapfile/read -a) and
-/// any later `len`/iteration/element read resolve without a prior `array
+/// creates the versioned `name_0` slot — so the fill (`argv`/`read`) and any
+/// later `len`/iteration/element read resolve without a prior `array
 /// name=()`. Without this the codegen `find_array_slot` panics (ICE). `as_map`
-/// creates an associative array (`mapfile -m`).
+/// creates an associative array.
 pub(super) fn autodeclare_bulk_target(
     name: &str,
     as_map: bool,
@@ -515,44 +495,6 @@ pub(super) fn autodeclare_bulk_target(
     ssa.block_mut(block)
         .insts
         .push(SsaInst::Assign { target, value });
-}
-
-fn try_handle_mapfile(
-    c: &Command,
-    ssa: &mut SsaProgram,
-    state: &mut VersionState,
-    block: BlockId,
-) -> Option<BlockId> {
-    let args: Vec<String> = c.args.iter().map(expr_to_string).collect();
-    let (map_mode, separator) = parse_mapfile_flags(&args);
-    let var_names: Vec<&String> = args.iter().filter(|a| !a.starts_with('-')).collect();
-    let arr_name = &super::expressions::resolve_args_name(var_names.first()?, state);
-    // Auto-declare the target so `find_array_slot` resolves it with no prior
-    // `array a=()` / `map a=()` (else a codegen ICE). `-m` → an assoc array.
-    autodeclare_bulk_target(arr_name, map_mode, ssa, state, block);
-    ssa.block_mut(block).insts.push(SsaInst::Mapfile {
-        array: arr_name.to_string(),
-        fd: 0,
-        map_mode,
-        separator,
-    });
-    Some(block)
-}
-
-/// Parse `mapfile` flags: `-m` (map mode) and `-f<c>` / `-f <c>` (the map
-/// key/value separator, default `=`).
-fn parse_mapfile_flags(args: &[String]) -> (bool, char) {
-    let map_mode = args.iter().any(|a| a == "-m");
-    (map_mode, mapfile_separator(args).unwrap_or('='))
-}
-
-/// The `-f<c>` (inline) or `-f <c>` (next arg) map separator, if present.
-fn mapfile_separator(args: &[String]) -> Option<char> {
-    let pos = args.iter().position(|a| a.starts_with("-f"))?;
-    args[pos]
-        .strip_prefix("-f")
-        .and_then(|rest| rest.chars().next())
-        .or_else(|| args.get(pos + 1).and_then(|next| next.chars().next()))
 }
 
 /// Handle StmtKind::Pipeline — multi-command pipe chains.
@@ -609,9 +551,9 @@ fn dispatch_multistage_pipeline(
 ) -> BlockId {
     let last = &p.commands[p.commands.len() - 1];
     let is_while_read = matches!(&last.kind, StmtKind::While(_));
-    let is_mapfile = is_mapfile_last(last);
-    if is_while_read || is_mapfile {
-        return handle_pipe_while_or_mapfile(p, last, is_mapfile, ssa, state, block);
+    let is_array_read = is_array_read_last(last);
+    if is_while_read || is_array_read {
+        return handle_pipe_while_or_array_read(p, last, is_array_read, ssa, state, block);
     }
     if is_lastpipe_read_last(last) {
         handle_lastpipe_read(p, last, ssa, state, block);
@@ -637,12 +579,9 @@ fn check_negation_must_consume(stmt: &Statement, state: &mut VersionState) {
 /// The ARRAY-filling lastpipe consumers. DD#99 stage 6: `read` is now the
 /// array form, so it belongs here rather than with the scalar reads —
 /// `readline` is the only scalar one left.
-fn is_mapfile_last(last: &Statement) -> bool {
+fn is_array_read_last(last: &Statement) -> bool {
     match &last.kind {
-        StmtKind::Command(c) => {
-            let n = expr_to_string(&c.name);
-            n == "mapfile" || n == "readarray" || n == "read"
-        }
+        StmtKind::Command(c) => expr_to_string(&c.name) == "read",
         _ => false,
     }
 }
@@ -709,13 +648,13 @@ fn push_command_stage(
     stages.push((resolve_pipeline_command(&name, state), args, redirects));
 }
 
-/// `cmd1 | ... | while read -r var` or `cmd1 | ... | mapfile`.
+/// `cmd1 | ... | while readline var` or `cmd1 | ... | read arr`.
 /// Emit producer stages as a pipeline that returns a pipe fd,
 /// then lower the last stage with fd = -1 (pipe-fd sentinel).
-fn handle_pipe_while_or_mapfile(
+fn handle_pipe_while_or_array_read(
     p: &Pipeline,
     last: &Statement,
-    is_mapfile: bool,
+    is_array_read: bool,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     mut block: BlockId,
@@ -728,7 +667,7 @@ fn handle_pipe_while_or_mapfile(
         suppressed: vec![],
         negated: vec![],
     });
-    if is_mapfile {
+    if is_array_read {
         block = lower_one(last, ssa, state, block);
         rewrite_lastpipe_consumer_fds(ssa);
     } else {
@@ -737,7 +676,7 @@ fn handle_pipe_while_or_mapfile(
     block
 }
 
-/// After lowering a mapfile lastpipe consumer, repoint its read fd
+/// After lowering an array-read lastpipe consumer, repoint its read fd
 /// (currently 0 = stdin) to -1 (pipe sentinel) so codegen reads from
 /// the captured pipe fd instead of the inherited stdin.
 fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram) {
@@ -749,10 +688,10 @@ fn rewrite_lastpipe_consumer_fds(ssa: &mut SsaProgram) {
 }
 
 fn repoint_stdin_to_pipe_sentinel(inst: &mut SsaInst) {
-    match inst {
-        SsaInst::Mapfile { fd, .. } if *fd == 0 => *fd = -1,
-        SsaInst::ReadArray { fd, .. } if *fd == 0 => *fd = -1,
-        _ => {}
+    if let SsaInst::ReadArray { fd, .. } = inst {
+        if *fd == 0 {
+            *fd = -1;
+        }
     }
 }
 
@@ -780,35 +719,17 @@ fn handle_lastpipe_read(
         suppressed: vec![],
         negated: vec![],
     });
+    // An array read is peeled off earlier by `is_array_read_last`, so only
+    // `readline` reaches here — one target, no flags (DD#99/SB5057).
     if let StmtKind::Command(c) = &last.kind {
-        let flags = crate::ir::classify_read_flags(&c.args);
-        if let Some(bad) = &flags.unknown_flag {
-            state.diagnostics.push(format!(
-                "{}:{}: error [SB5015] read: unknown flag '{}'",
-                last.span.line, last.span.col, bad
-            ));
-            return;
-        }
-        // An array read (`-a`) in a pipeline is peeled off earlier by
-        // `is_mapfile_last`, so only scalar reads reach here.
-        if flags.var_names.len() == 1 {
-            let target = state.define(&flags.var_names[0]);
+        let flags = crate::ir::readline_targets(&c.args);
+        if let [name] = flags.var_names.as_slice() {
+            let target = state.define(name);
             ssa.block_mut(block).insts.push(SsaInst::ReadLine {
                 target,
                 fd: -1,
-                delim: flags.delim,
                 redirects: vec![],
                 clean_pipe,
-            });
-        } else if flags.var_names.len() > 1 {
-            let targets: Vec<VarRef> = flags.var_names.iter().map(|n| state.define(n)).collect();
-            ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
-                targets,
-                fd: -1,
-                delim: flags.delim,
-                redirects: vec![],
-                clean_pipe,
-                field_sep: flags.field_sep,
             });
         }
     }

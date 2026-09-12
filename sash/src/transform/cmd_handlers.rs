@@ -7,10 +7,10 @@ use super::statements::lower_stmts;
 use crate::ir::*;
 use crate::ssa::*;
 
-/// Handle `read` command — emit ReadLine/ReadLineMulti instructions.
+/// Handle the `read` / `readline` family — emit `ReadArray`/`SplitValue`
+/// (DD#99 `read`) or `ReadLine` (`readline`).
 pub(super) fn handle_read(
     c: &Command,
-    stmt: &Statement,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
@@ -21,22 +21,7 @@ pub(super) fn handle_read(
     if expr_to_string(&c.name) == "read" {
         return lower_newread(c, ssa, state, block);
     }
-    let flags = crate::ir::classify_read_flags(&c.args);
-    if let Some(bad) = &flags.unknown_flag {
-        state.diagnostics.push(format!(
-            "{}:{}: error [SB5015] read: unknown flag '{}'",
-            stmt.span.line, stmt.span.col, bad
-        ));
-        return block;
-    }
-    if flags.field_sep.is_some() && flags.var_names.len() <= 1 && flags.array_name.is_none() {
-        state.diagnostics.push(format!(
-            "{}:{}: error [SB5016] read -f: field separator requires multiple target variables",
-            stmt.span.line, stmt.span.col
-        ));
-        return block;
-    }
-    emit_read_inst(&flags, ssa, state, block);
+    emit_readline_inst(&crate::ir::readline_targets(&c.args), ssa, state, block);
     block
 }
 
@@ -65,7 +50,6 @@ fn lower_newread(
         None => SsaInst::ReadArray {
             array: target,
             fd: 0,
-            delim: Some(0),
             redirects: vec![],
         },
     };
@@ -73,50 +57,24 @@ fn lower_newread(
     block
 }
 
-/// Emit the right `Read*` SSA instruction for the parsed flags.
-fn emit_read_inst(
-    flags: &crate::ir::ReadFlags,
+/// Emit the `ReadLine` SSA instruction for a `readline`. DD#99: exactly one
+/// target, no flags, newline-terminated — SB5057 has already enforced that.
+fn emit_readline_inst(
+    flags: &crate::ir::ReadTarget,
     ssa: &mut SsaProgram,
     state: &mut VersionState,
     block: BlockId,
 ) {
-    if let Some(arr) = &flags.array_name {
-        let arr = super::expressions::resolve_args_name(arr, state);
-        // Auto-declare (mirrors argv/mapfile) so a later len/element read on an
-        // undeclared `read -a a` target resolves instead of an ICE.
-        super::stmt_handlers::autodeclare_bulk_target(&arr, false, ssa, state, block);
-        ssa.block_mut(block).insts.push(SsaInst::ReadArray {
-            array: arr,
-            fd: 0,
-            delim: flags.delim,
-            redirects: vec![],
-        });
+    let [name] = flags.var_names.as_slice() else {
         return;
-    }
-    match flags.var_names.len() {
-        0 => {}
-        1 => {
-            let target = state.define(&flags.var_names[0]);
-            ssa.block_mut(block).insts.push(SsaInst::ReadLine {
-                target,
-                fd: 0,
-                delim: flags.delim,
-                redirects: vec![],
-                clean_pipe: false,
-            });
-        }
-        _ => {
-            let targets: Vec<VarRef> = flags.var_names.iter().map(|n| state.define(n)).collect();
-            ssa.block_mut(block).insts.push(SsaInst::ReadLineMulti {
-                targets,
-                fd: 0,
-                delim: flags.delim,
-                redirects: vec![],
-                clean_pipe: false,
-                field_sep: flags.field_sep,
-            });
-        }
-    }
+    };
+    let target = state.define(name);
+    ssa.block_mut(block).insts.push(SsaInst::ReadLine {
+        target,
+        fd: 0,
+        redirects: vec![],
+        clean_pipe: false,
+    });
 }
 
 /// Handle `signal` command — emit signal configuration instructions.

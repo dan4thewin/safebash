@@ -120,10 +120,13 @@ pub enum BuiltinCmd {
     /// fallback paths (no TestExpr arg).
     Attest,
     Read,
-    /// `mapfile` / `readarray` (same builtin).
+    /// `mapfile` / `readarray` — RECOGNITION ONLY. DD#99 retired both and
+    /// `retired_bulk_read_diag` rejects them (SB5060); this variant exists so
+    /// `is_resolvable_external` does not treat the names as external programs
+    /// and preempt that diagnostic with SB5011 "command not found". There is
+    /// deliberately no lowering, no `SsaInst`, and no dispatch arm behind it.
     Mapfile,
-    /// DD#60: `argv [N] a` fills array `a` with the program argv slice
-    /// (out-param builtin like mapfile / read -a).
+    /// DD#60: `argv [N] a` fills array `a` with the program argv slice.
     Argv,
     Break,
     Continue,
@@ -194,6 +197,7 @@ impl BuiltinCmd {
             // DD#99: `readline` is the line-terminated scalar read. It shares
             // the scalar lowering; stage 3 gives `read` the array-only form.
             "read" | "readline" => Self::Read,
+            // Recognition only — see `BuiltinCmd::Mapfile`.
             "mapfile" | "readarray" => Self::Mapfile,
             "argv" => Self::Argv,
             "break" => Self::Break,
@@ -262,26 +266,15 @@ pub enum SsaInst {
     /// can emit inline comparisons instead of shelling out.
     Test(SsaTest),
 
-    /// read -r line: reads one line from fd, assigns to target, sets __read_eof
+    /// `readline VAR`: read one newline-terminated record from `fd` into
+    /// `target` and set `__test_result` (0 at EOF). DD#99 retired the
+    /// delimiter flag — a `readline` is always newline-terminated.
     ReadLine {
         target: VarRef,
-        fd: i64,           // 0 = stdin
-        delim: Option<u8>, // None = newline (default), Some(byte) = custom delimiter
+        fd: i64, // 0 = stdin
         redirects: Vec<crate::ir::Redirect>,
         /// True when read is in a lastpipe position with clean producer stages
         clean_pipe: bool,
-    },
-    /// read -r var1 var2 ... varN: read line, split on whitespace into N vars
-    /// Last var gets the remainder.
-    ReadLineMulti {
-        targets: Vec<VarRef>,
-        fd: i64,
-        delim: Option<u8>,
-        redirects: Vec<crate::ir::Redirect>,
-        /// True when read is in a lastpipe position with clean producer stages
-        clean_pipe: bool,
-        /// DD#22: field separator byte (-f flag). None = whitespace split.
-        field_sep: Option<u8>,
     },
     /// arr[i]=val or map[key]=val — subscript assignment
     SubscriptAssign {
@@ -292,14 +285,6 @@ pub enum SsaInst {
     },
     /// arr+=(val) — append to indexed array
     ArrayAppend { array: String, value: SsaValue },
-    /// mapfile -t arr — read all lines from fd into indexed array
-    Mapfile {
-        array: String,
-        fd: i64,
-        /// DD#36: map mode — split lines on separator, populate as key=value
-        map_mode: bool,
-        separator: char,
-    },
     /// DD#99: `map m = @{a:DISP}` — fill a map from an array, consumed
     /// PAIRWISE. `mode` is the odd-count disposition: 0 `:-KEY` (the trailing
     /// element becomes the value of `key`), 1 `:?` (abort), 2 `:~`/`:!`
@@ -315,7 +300,8 @@ pub enum SsaInst {
     /// indexed array. The stdin form is `ReadArray`; this is the same split
     /// with the bytes coming from a value rather than a fd.
     SplitValue { source: SsaValue, array: String },
-    /// Read a line, split by delimiter, store into indexed array.
+    /// DD#99 `read ARRAY`: slurp `fd` and split it on NUL into an indexed
+    /// array. NUL is the only separator — there is no delimiter flag.
     ///
     /// Carries its own `redirects` (as `ReadLine` does) so the DD#55
     /// open(2) guard can wrap the read itself. Bracketing it with
@@ -324,7 +310,6 @@ pub enum SsaInst {
     ReadArray {
         array: String,
         fd: i64,
-        delim: Option<u8>,
         redirects: Vec<crate::ir::Redirect>,
     },
     /// DD#63: `match S P ARR` out-array form. Fills `array` with
@@ -344,7 +329,7 @@ pub enum SsaInst {
     },
     /// DD#60: `argv [N] a` — fill `array` with the program argv slice
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array
-    /// (a bulk-read source like mapfile / read -a; DD#61).
+    /// (a bulk-read source, like `read`; DD#61).
     ArgvFill { array: String, start: i64 },
     /// Start capturing stdout (for $(func) capture)
     CaptureStart,
@@ -854,7 +839,6 @@ pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
         SsaInst::Command { .. }
         | SsaInst::Pipeline { .. }
         | SsaInst::ReadLine { .. }
-        | SsaInst::ReadLineMulti { .. }
         | SsaInst::ReadArray { .. } => true,
         _ => false,
     })

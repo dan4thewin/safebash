@@ -565,16 +565,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_read_line", Linkage::Import, &read_line_sig)
         .expect("declare sash_read_line");
 
-    // sash_read_delim(fd, delim_byte) -> (ptr, len)
-    let mut read_delim_sig = Signature::new(CallConv::SystemV);
-    read_delim_sig.params.push(AbiParam::new(I64)); // fd
-    read_delim_sig.params.push(AbiParam::new(I64)); // delim byte
-    read_delim_sig.returns.push(AbiParam::new(I64)); // ptr
-    read_delim_sig.returns.push(AbiParam::new(I64)); // len
-    let read_delim_func = module
-        .declare_function("sash_read_delim", Linkage::Import, &read_delim_sig)
-        .expect("declare sash_read_delim");
-
     // sash_splice_argv(prefix, argv, argc) -> merged_argv
     let mut splice_argv_sig = module.make_signature();
     splice_argv_sig.params.push(AbiParam::new(I64)); // prefix (null-terminated array)
@@ -747,31 +737,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_capture_end", Linkage::Import, &cap_end_sig)
         .expect("declare");
 
-    // sash_split_first_word(ptr, len, rest_ptr_out, rest_len_out) -> (word_ptr, word_len)
-    let mut split_sig = module.make_signature();
-    split_sig.params.push(AbiParam::new(I64)); // ptr
-    split_sig.params.push(AbiParam::new(I64)); // len
-    split_sig.params.push(AbiParam::new(I64)); // rest_ptr_out
-    split_sig.params.push(AbiParam::new(I64)); // rest_len_out
-    split_sig.returns.push(AbiParam::new(I64)); // word_ptr
-    split_sig.returns.push(AbiParam::new(I64)); // word_len
-    let split_first_word_func = module
-        .declare_function("sash_split_first_word", Linkage::Import, &split_sig)
-        .expect("declare");
-
-    // sash_split_field(ptr, len, delim, rest_ptr_out, rest_len_out) -> (field_ptr, field_len)
-    let mut split_field_sig = module.make_signature();
-    split_field_sig.params.push(AbiParam::new(I64)); // ptr
-    split_field_sig.params.push(AbiParam::new(I64)); // len
-    split_field_sig.params.push(AbiParam::new(I64)); // delim byte
-    split_field_sig.params.push(AbiParam::new(I64)); // rest_ptr_out
-    split_field_sig.params.push(AbiParam::new(I64)); // rest_len_out
-    split_field_sig.returns.push(AbiParam::new(I64)); // field_ptr
-    split_field_sig.returns.push(AbiParam::new(I64)); // field_len
-    let split_field_func = module
-        .declare_function("sash_split_field", Linkage::Import, &split_field_sig)
-        .expect("declare");
-
     // sash_split_into_array(ptr, len, delim, terminator, table) → void
     let mut split_arr_sig = module.make_signature();
     split_arr_sig.params.push(AbiParam::new(I64)); // ptr
@@ -852,7 +817,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         table_key: table_key_func,
         table_delete: table_delete_func,
         read_line: read_line_func,
-        read_delim: read_delim_func,
         file_test: file_test_func,
         pow: pow_func,
         substring: substring_func,
@@ -872,8 +836,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         glob_regex: glob_regex_func,
         capture_start: capture_start_func,
         capture_end: capture_end_func,
-        split_first_word: split_first_word_func,
-        split_field: split_field_func,
         split_into_array: split_into_array_func,
         map_from_array: map_from_array_func,
         read_all: read_all_func,
@@ -1088,9 +1050,7 @@ impl<'a> Interner<'a> {
                 self.intern_value(subject);
                 self.intern_value(pattern);
             }
-            SsaInst::ReadLine { redirects, .. }
-            | SsaInst::ReadLineMulti { redirects, .. }
-            | SsaInst::ReadArray { redirects, .. } => {
+            SsaInst::ReadLine { redirects, .. } | SsaInst::ReadArray { redirects, .. } => {
                 self.intern_redirect_targets(redirects);
             }
             SsaInst::Attest { test, source, .. } | SsaInst::AttestAll { test, source, .. } => {
@@ -1249,16 +1209,7 @@ fn declare_inst_bases(
     base_vars: &mut HashMap<String, super::types::VarSlot>,
 ) {
     match inst {
-        SsaInst::ReadLineMulti { targets, .. } => {
-            for target in targets {
-                base_vars
-                    .entry(target.name.clone())
-                    .or_insert_with(|| make_str_slot(builder));
-            }
-        }
-        SsaInst::Mapfile { array, .. }
-        | SsaInst::ReadArray { array, .. }
-        | SsaInst::MatchInto { array, .. } => {
+        SsaInst::ReadArray { array, .. } | SsaInst::MatchInto { array, .. } => {
             base_vars
                 .entry(array.clone())
                 .or_insert_with(|| make_str_slot(builder));
@@ -1335,12 +1286,6 @@ fn map_inst_versioned(
     vars: &mut HashMap<String, super::types::VarSlot>,
 ) {
     match inst {
-        SsaInst::ReadLineMulti { targets, .. } => {
-            for target in targets {
-                vars.entry(target.display())
-                    .or_insert_with(|| base_vars[&target.name]);
-            }
-        }
         SsaInst::Assign { target, .. }
         | SsaInst::ReadLine { target, .. }
         | SsaInst::CaptureEnd { target, .. } => {

@@ -237,13 +237,13 @@ fn lower_redirected_stmt(
     state: &mut VersionState,
     block: BlockId,
 ) -> BlockId {
-    // Compound bodies and bulk reads (mapfile / readarray / read -a) bracket
-    // with __redirect_push/pop. Bulk reads lower to Mapfile / ReadArray, which
-    // carry no redirect list, so attaching to the last inst (below) would
-    // silently drop a `< file` redirect (DD#61 fix — matches `read < file`).
+    // A compound body brackets its redirects with __redirect_push/pop.
+    // DD#99 `read` lowers to `ReadArray`, which carries its own redirect list
+    // (and therefore gets the DD#55 open(2) guard), so it is attached to the
+    // last inst below rather than bracketed.
     // (A redirect on a function definition / declaration / assignment is
     // rejected at parse time — SB4046 — so those never reach here.)
-    let needs_bracket = is_compound_stmt(&r.body.kind) || is_bulk_read_cmd(&r.body.kind);
+    let needs_bracket = is_compound_stmt(&r.body.kind);
     let redirects = spill_scalar_redirect_targets(&r.redirects, ssa, state, block);
     if needs_bracket && !redirects.is_empty() {
         return bracket_compound_with_redirects(r, &redirects, ssa, state, block);
@@ -325,25 +325,6 @@ fn attach_redirects_to_result(
     }
 }
 
-/// True for the bulk (array-filling) reads whose lowered SSA instruction
-/// carries no redirect list — so the redirect has to be applied around it by
-/// the caller rather than by the instruction.
-///
-/// DD#99 stage 6: `read` lowers to `ReadArray`, which *does* carry its own
-/// redirects (and therefore gets the DD#55 open(2) guard), so it is no longer
-/// bracketed here. Only the retired `mapfile`/`readarray` spellings — which
-/// validate rejects before they reach codegen — still lower to the
-/// redirect-less `Mapfile`.
-fn is_bulk_read_cmd(kind: &StmtKind) -> bool {
-    let StmtKind::Command(c) = kind else {
-        return false;
-    };
-    let ExprKind::Literal(name) = &c.name.kind else {
-        return false;
-    };
-    matches!(name.as_str(), "mapfile" | "readarray")
-}
-
 fn is_compound_stmt(kind: &StmtKind) -> bool {
     matches!(
         kind,
@@ -385,7 +366,7 @@ fn bracket_compound_with_redirects(
 }
 
 /// Simple command + redirects: attach the redirects directly to the last
-/// emitted inst (Command/Pipeline last-stage/ReadLine/ReadLineMulti).
+/// emitted inst (Command / Pipeline last-stage / ReadLine / ReadArray).
 fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirects: &[Redirect]) {
     let blk = ssa.block_mut(blk_id);
     let Some(inst) = blk.insts.last_mut() else {
@@ -394,8 +375,7 @@ fn attach_redirects_to_last_inst(ssa: &mut SsaProgram, blk_id: BlockId, redirect
     match inst {
         SsaInst::Command { redirects: r, .. }
         | SsaInst::ReadLine { redirects: r, .. }
-        | SsaInst::ReadArray { redirects: r, .. }
-        | SsaInst::ReadLineMulti { redirects: r, .. } => {
+        | SsaInst::ReadArray { redirects: r, .. } => {
             *r = redirects.to_vec();
         }
         SsaInst::Pipeline { stages, .. } => {

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=74
+plan=88
 echo "1..$plan" >&3
 
 set +e
@@ -605,6 +605,90 @@ got b" && -z $rerr ]]; chk 14.46
 else
     skip_chk 14.46
 fi
+
+# ── DD#99: the retired read/mapfile surfaces have no implementation ──
+#
+# The validator rejects them (SB5057 / SB5060); these assert that the
+# rejection is the ONLY thing left — no flag is silently accepted, and no
+# retired spelling has a working lowering behind it.
+
+# rt99.1 `read` takes no flags at all
+run_sash 'array a=()
+read -a a'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.1
+
+# rt99.2 the flagless `readline NAME` is the surviving spelling
+printf 'one\ntwo\n' > rt99.lines
+run_sash 'readline x < rt99.lines
+attest x [[ -n $x ]]
+echo "$x"'
+[[ $rc = 0 && $out = "one" && -z $err ]]; chk rt99.2
+
+# rt99.3 `readline -r` is rejected, not accepted as a no-op
+run_sash 'readline -r x'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.3
+
+# rt99.4 `-d` (record delimiter) is gone
+run_sash 'readline -d: x'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.4
+
+# rt99.5 `-f` (field separator) is gone
+run_sash 'readline -f: x y'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.5
+
+# rt99.6 the multi-target form is gone — no whitespace field splitting
+run_sash 'readline x y'
+[[ $rc != 0 && $err = *SB5057* ]]; chk rt99.6
+
+# rt99.7 mapfile is retired
+run_sash 'array l=()
+mapfile -t l'
+[[ $rc != 0 && $err = *SB5060* ]]; chk rt99.7
+
+# rt99.8 readarray likewise
+run_sash 'array l=()
+readarray -t l'
+[[ $rc != 0 && $err = *SB5060* ]]; chk rt99.8
+
+# rt99.9 `mapfile -m` (the retired map mode) is retired with it
+run_sash 'map m=()
+mapfile -m m'
+[[ $rc != 0 && $err = *SB5060* ]]; chk rt99.9
+
+# rt99.10 `echo -n` is retired at the SOURCE level (SB5059)...
+run_sash 'echo -n hi'
+[[ $rc != 0 && $err = *SB5059* ]]; chk rt99.10
+
+# rt99.11 ...but `write` still suppresses the newline — the `-n` lowering is
+#         INTERNAL (rewrite_write_as_echo), which is why it is not removed.
+run_sash 'write a
+write b
+echo'
+[[ $rc = 0 && $out = "ab" && -z $err ]]; chk rt99.11
+
+# rt99.12 DD#99 `read ARRAY` reads NUL-separated fields — the surviving form
+printf 'p\0q\0' > rt99.nul
+run_sash 'array a=()
+read a < rt99.nul
+attest x in a [[ -n $x ]]
+echo "${a[0]}-${a[1]}"'
+[[ $rc = 0 && $out = "p-q" && -z $err ]]; chk rt99.12
+
+# rt99.13 ...and a trailing NUL does not add an empty field
+run_sash 'array a=()
+read a < rt99.nul
+attest x in a [[ -n $x ]]
+echo $(len a)'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk rt99.13
+
+# rt99.14 a lastpipe `read ARRAY` fills an ARRAY, not a scalar (janet bound
+#         the capture as a string and subscripted it into bytes)
+run_sash 'array a=()
+/usr/bin/printf "p\0q\0" | read a
+attest x in a [[ -n $x ]]
+echo "${a[0]}-${a[1]}"'
+[[ $rc = 0 && $out = "p-q" && -z $err ]]; chk rt99.14
+
 
 set -e
 tally

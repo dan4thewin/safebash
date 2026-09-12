@@ -3249,7 +3249,6 @@ fn command_writes_args(c: &Command) -> bool {
             c.args.len() == 3 && c.args.last().map(expr_literal_str) == Some("args")
         }
         "argv" => argv_target_name(&c.args) == Some("args"),
-        "mapfile" | "readarray" => mapfile_target_name(&c.args) == Some("args"),
         "attest" => attest_array_target(&c.args) == Some("args"),
         _ => false,
     }
@@ -3260,13 +3259,6 @@ fn argv_target_name(args: &[Expr]) -> Option<&str> {
     args.iter()
         .map(expr_literal_str)
         .rfind(|s| !s.starts_with('-'))
-}
-
-/// The target array of `mapfile [-flags] a` — the first positional (non-flag) arg.
-fn mapfile_target_name(args: &[Expr]) -> Option<&str> {
-    args.iter()
-        .map(expr_literal_str)
-        .find(|s| !s.starts_with('-'))
 }
 
 /// The array/map name of a `attest x in a` / `attest k v in m` (the taint-clearing
@@ -4595,14 +4587,13 @@ fn collect_child_scope_names(stmt: &Statement, set: &mut HashSet<String>) {
     }
 }
 
-/// `read x`, `read -a a`, `mapfile -t a`, `readarray a` introduce their
-/// non-flag literal argument names. DD#60 `argv [N] ARR` snapshots the argv
-/// (slice) into the array named by its LAST argument.
+/// `readline x` / `read [SRC] a` introduce their last literal argument name.
+/// DD#60 `argv [N] ARR` snapshots the argv (slice) into the array named by
+/// its LAST argument.
 fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
     match name {
         "read" | "readline" => insert_last_target_arg(&c.args, set),
-        "mapfile" | "readarray" => insert_all_target_args(&c.args, set),
         // DD#99: `read [SRC] ARRAY` — only the last arg is a binding.
         // DD#63: `match S P ARR` / `matchall S P ARR` fill ARR, so they
         // introduce it — the same bulk-fill precedent as argv / read. The
@@ -4610,12 +4601,6 @@ fn collect_read_targets(c: &Command, set: &mut HashSet<String>) {
         "matchall" | "match" if c.args.len() == 3 => insert_last_target_arg(&c.args, set),
         "argv" => insert_last_literal_arg(&c.args, set),
         _ => {}
-    }
-}
-
-fn insert_all_target_args(args: &[Expr], set: &mut HashSet<String>) {
-    for arg in args {
-        insert_read_target_arg(arg, set);
     }
 }
 
@@ -4631,8 +4616,8 @@ fn insert_last_literal_arg(args: &[Expr], set: &mut HashSet<String>) {
     }
 }
 
-/// A non-flag literal argument to `read`/`mapfile`/`readarray` names a
-/// variable the command introduces.
+/// A non-flag literal argument to `read`/`readline` names a variable the
+/// command introduces.
 fn insert_read_target_arg(arg: &Expr, set: &mut HashSet<String>) {
     if let ExprKind::Literal(s) = &arg.kind {
         if !s.starts_with('-') {

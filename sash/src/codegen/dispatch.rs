@@ -68,23 +68,12 @@ impl SsaInst {
             SsaInst::ArrayAppend { array, value } => {
                 return self.emit_array_append(array, value, builder, module, ctx);
             }
-            SsaInst::Mapfile {
-                array,
-                fd,
-                map_mode,
-                separator,
-            } => {
-                return super::inst_handlers::handle_mapfile(
-                    array, fd, map_mode, separator, builder, module, ctx,
-                );
-            }
             SsaInst::ReadArray {
                 array,
                 fd,
-                delim,
                 redirects,
             } => {
-                return self.emit_read_array(array, fd, delim, redirects, builder, module, ctx);
+                return self.emit_read_array(array, fd, redirects, builder, module, ctx);
             }
             SsaInst::SplitValue { source, array } => {
                 return self.emit_split_value(source, array, builder, module, ctx);
@@ -139,23 +128,10 @@ impl SsaInst {
             SsaInst::ReadLine {
                 target,
                 fd,
-                delim,
                 redirects,
                 ..
             } => {
-                return self.emit_readline(target, fd, delim, redirects, builder, module, ctx);
-            }
-            SsaInst::ReadLineMulti {
-                targets,
-                fd,
-                delim,
-                redirects,
-                field_sep,
-                ..
-            } => {
-                return self.emit_readline_multi(
-                    targets, fd, delim, redirects, field_sep, builder, module, ctx,
-                );
+                return self.emit_readline(target, fd, redirects, builder, module, ctx);
             }
             SsaInst::Pipeline {
                 stages,
@@ -445,66 +421,6 @@ impl SsaInst {
             emit_exec_static_argv(args, builder, module, ctx);
             true
         }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn emit_readline_multi(
-        &self,
-        targets: &[VarRef],
-        fd: &i64,
-        delim: &Option<u8>,
-        redirects: &[crate::ir::Redirect],
-        field_sep: &Option<u8>,
-        builder: &mut FunctionBuilder,
-        module: &mut ObjectModule,
-        ctx: &mut InstCtx,
-    ) -> bool {
-        let vars = &mut *ctx.vars;
-        let literals = ctx.literals;
-        let externs = ctx.externs;
-        let exit_status_var = ctx.exit_status_var;
-        let test_result_var = ctx.test_result_var;
-        let pipe_read_fd_var = ctx.pipe_read_fd_var;
-        let saved = emit_redirects(
-            redirects,
-            builder,
-            module,
-            externs,
-            literals,
-            vars,
-            Some(exit_status_var),
-        );
-        let fd_val = if *fd == -1 {
-            builder.use_var(pipe_read_fd_var)
-        } else {
-            builder.ins().iconst(I64, *fd)
-        };
-        let (line_ptr, line_len) = emit_read_line_call(builder, module, externs, fd_val, delim);
-
-        let zero = builder.ins().iconst(I64, 0);
-        let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, line_len, zero);
-        let result = builder.ins().uextend(I64, got_data);
-        builder.def_var(test_result_var, result);
-
-        let refs = ReadSplitRefs {
-            word: module.declare_func_in_func(externs.split_first_word, builder.func),
-            field: module.declare_func_in_func(externs.split_field, builder.func),
-        };
-        let mut cur = (line_ptr, line_len);
-        let last = targets.len() - 1;
-        for (i, target) in targets.iter().enumerate() {
-            let (sp, sl) = {
-                let sv = &vars[&target.display()];
-                (sv.str_ptr(), sv.str_len())
-            };
-            if i == last {
-                emit_read_last_var(builder, sp, sl, cur);
-            } else {
-                cur = emit_read_field_split(builder, &refs, sp, sl, cur, field_sep);
-            }
-        }
-        emit_restore(saved, builder, module, externs);
-        false
     }
 
     /// TRUST: attest is the ONLY mechanism to move tainted → clean.
@@ -896,7 +812,6 @@ impl SsaInst {
         &self,
         target: &VarRef,
         fd: &i64,
-        delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -904,7 +819,7 @@ impl SsaInst {
     ) -> bool {
         // Set up redirects (e.g. herestring <<< "text"). DD#55: a failed
         // open aborts rather than binding an empty line.
-        let (target, fd, delim) = (target.clone(), *fd, *delim);
+        let (target, fd) = (target.clone(), *fd);
         let in_condition = ctx.in_condition;
         super::inst_handlers::emit_redirect_guarded_body(
             redirects,
@@ -912,7 +827,7 @@ impl SsaInst {
             builder,
             module,
             ctx,
-            |builder, module, ctx| emit_readline_body(&target, fd, delim, builder, module, ctx),
+            |builder, module, ctx| emit_readline_body(&target, fd, builder, module, ctx),
         );
         false
     }
@@ -1158,7 +1073,6 @@ impl SsaInst {
         &self,
         array: &str,
         fd: &i64,
-        delim: &Option<u8>,
         redirects: &[crate::ir::Redirect],
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -1166,7 +1080,7 @@ impl SsaInst {
     ) -> bool {
         // DD#55: a failed `read a < nosuch` open must abort rather than
         // yield an empty array, exactly as `readline v < nosuch` does.
-        let (array, fd, delim) = (array.to_string(), *fd, *delim);
+        let (array, fd) = (array.to_string(), *fd);
         let in_condition = ctx.in_condition;
         super::inst_handlers::emit_redirect_guarded_body(
             redirects,
@@ -1174,7 +1088,7 @@ impl SsaInst {
             builder,
             module,
             ctx,
-            |builder, module, ctx| emit_read_array_body(&array, fd, delim, builder, module, ctx),
+            |builder, module, ctx| emit_read_array_body(&array, fd, builder, module, ctx),
         );
         false
     }
@@ -1216,85 +1130,6 @@ impl SsaInst {
         }
         false
     }
-}
-
-/// Read one line into `(ptr, len)` from `fd_val`: `sash_read_delim` when a
-/// custom delimiter is set (`read -d`), else `sash_read_line` (newline).
-/// Shared by single- and multi-target read codegen.
-fn emit_read_line_call(
-    builder: &mut FunctionBuilder,
-    module: &mut ObjectModule,
-    externs: &ExternFuncs,
-    fd_val: cranelift_codegen::ir::Value,
-    delim: &Option<u8>,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    if let Some(d) = delim {
-        let read_delim_ref = module.declare_func_in_func(externs.read_delim, builder.func);
-        let delim_val = builder.ins().iconst(I64, *d as i64);
-        let call = builder.ins().call(read_delim_ref, &[fd_val, delim_val]);
-        (builder.inst_results(call)[0], builder.inst_results(call)[1])
-    } else {
-        let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
-        let call = builder.ins().call(read_line_ref, &[fd_val]);
-        (builder.inst_results(call)[0], builder.inst_results(call)[1])
-    }
-}
-
-/// Cranelift `FuncRef`s for the read-split runtime entry points, declared
-/// once per `emit_readline_multi` and reused per target.
-struct ReadSplitRefs {
-    word: cranelift_codegen::ir::FuncRef,
-    field: cranelift_codegen::ir::FuncRef,
-}
-
-/// Assign the whole remaining cursor to the last read target.
-fn emit_read_last_var(
-    builder: &mut FunctionBuilder,
-    str_ptr: cranelift_frontend::Variable,
-    str_len: cranelift_frontend::Variable,
-    cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
-) {
-    let (cur_ptr, cur_len) = cur;
-    builder.def_var(str_ptr, cur_ptr);
-    builder.def_var(str_len, cur_len);
-}
-
-/// Split one field off the `cur` cursor into a non-last read target and
-/// return the new `(cur_ptr, cur_len)` cursor over the remainder. Uses
-/// `field_sep` when set, else a whitespace word.
-fn emit_read_field_split(
-    builder: &mut FunctionBuilder,
-    refs: &ReadSplitRefs,
-    str_ptr: cranelift_frontend::Variable,
-    str_len: cranelift_frontend::Variable,
-    cur: (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value),
-    field_sep: &Option<u8>,
-) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
-    let (cur_ptr, cur_len) = cur;
-    let rest_ptr_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let rest_len_slot =
-        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
-    let rest_ptr_addr = builder.ins().stack_addr(I64, rest_ptr_slot, 0);
-    let rest_len_addr = builder.ins().stack_addr(I64, rest_len_slot, 0);
-    let (word_ptr, word_len) = if let Some(sep) = field_sep {
-        let delim_val = builder.ins().iconst(I64, *sep as i64);
-        let call = builder.ins().call(
-            refs.field,
-            &[cur_ptr, cur_len, delim_val, rest_ptr_addr, rest_len_addr],
-        );
-        (builder.inst_results(call)[0], builder.inst_results(call)[1])
-    } else {
-        let call = builder
-            .ins()
-            .call(refs.word, &[cur_ptr, cur_len, rest_ptr_addr, rest_len_addr]);
-        (builder.inst_results(call)[0], builder.inst_results(call)[1])
-    };
-    builder.def_var(str_ptr, word_ptr);
-    builder.def_var(str_len, word_len);
-    let np = builder.ins().stack_load(I64, rest_ptr_slot, 0);
-    let nl = builder.ins().stack_load(I64, rest_len_slot, 0);
-    (np, nl)
 }
 
 /// `exec` with no args: standalone fd manipulation. Applies the
@@ -1487,7 +1322,6 @@ fn emit_echo_body(
 fn emit_read_array_body(
     array: &str,
     fd: i64,
-    delim: Option<u8>,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -1508,12 +1342,11 @@ fn emit_read_array_body(
     let data_ptr = builder.inst_results(call)[0];
     let data_len = builder.inst_results(call)[1];
 
-    // Split by delimiter into array. An explicit `-d` (delim.is_some())
-    // uses terminator semantics (drop a trailing empty); the default
-    // space split keeps separator semantics.
+    // DD#99: NUL is the only separator, with terminator semantics (a
+    // trailing empty field is dropped).
     let split_ref = module.declare_func_in_func(externs.split_into_array, builder.func);
-    let delim_val = builder.ins().iconst(I64, delim.unwrap_or(b' ') as i64);
-    let terminator = builder.ins().iconst(I64, delim.is_some() as i64);
+    let delim_val = builder.ins().iconst(I64, 0);
+    let terminator = builder.ins().iconst(I64, 1);
     builder.ins().call(
         split_ref,
         &[data_ptr, data_len, delim_val, terminator, table_ptr],
@@ -1525,7 +1358,6 @@ fn emit_read_array_body(
 fn emit_readline_body(
     target: &VarRef,
     fd: i64,
-    delim: Option<u8>,
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
     ctx: &mut InstCtx,
@@ -1537,7 +1369,9 @@ fn emit_readline_body(
     } else {
         builder.ins().iconst(I64, fd)
     };
-    let (ptr, len) = emit_read_line_call(builder, module, externs, fd_val, &delim);
+    let read_line_ref = module.declare_func_in_func(externs.read_line, builder.func);
+    let call = builder.ins().call(read_line_ref, &[fd_val]);
+    let (ptr, len) = (builder.inst_results(call)[0], builder.inst_results(call)[1]);
     let sv = &ctx.vars[&target.display()];
     builder.def_var(sv.str_ptr(), ptr);
     builder.def_var(sv.str_len(), len);

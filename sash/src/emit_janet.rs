@@ -851,20 +851,15 @@ fn emit_pipeline_do(out: &mut String, ctx: &mut EmitCtx, p: &Pipeline, depth: us
 }
 
 /// A pipeline whose last stage is an in-process builtin consumer
-/// (`read` / `mapfile` / `readarray`) — DD#20 lastpipe.
+/// (`read` / `readline`) — DD#20 lastpipe.
 enum Lastpipe {
-    /// `read VAR…` (with optional `-f<sep>` field separator).
-    Read {
-        vars: Vec<String>,
-        field_sep: Option<u8>,
-    },
-    /// `mapfile -t ARR` — one array element per input line.
-    MapfileArray { name: String },
-    /// `mapfile -m MAP` — split each line KEY<sep>VALUE into a map.
-    MapfileMap { name: String, sep: u8 },
+    /// `readline VAR` — the first line of the captured output, as a scalar.
+    Readline { name: String },
+    /// DD#99 `read ARRAY` — the captured output split on NUL into an array.
+    ReadArray { name: String },
 }
 
-/// Classify a pipeline's final stage as an in-process `read`/`mapfile`
+/// Classify a pipeline's final stage as an in-process `read`/`readline`
 /// consumer, or `None` if it is an ordinary spawned command / compound.
 fn detect_lastpipe(commands: &[Statement]) -> Option<Lastpipe> {
     if commands.len() < 2 {
@@ -873,67 +868,17 @@ fn detect_lastpipe(commands: &[Statement]) -> Option<Lastpipe> {
     let StmtKind::Command(c) = &commands.last()?.kind else {
         return None;
     };
-    match BuiltinCmd::from_name(&expr_to_literal(&c.name)) {
-        BuiltinCmd::Read => Some(parse_read_consumer(c)),
-        BuiltinCmd::Mapfile => Some(parse_mapfile_consumer(c)),
-        _ => None,
+    let name = expr_to_literal(&c.name);
+    if BuiltinCmd::from_name(&name) != BuiltinCmd::Read {
+        return None;
     }
-}
-
-/// Parse `read [-f<sep>] VAR…` target vars + field separator.
-fn parse_read_consumer(c: &Command) -> Lastpipe {
-    let args: Vec<String> = c.args.iter().map(expr_to_literal).collect();
-    let field_sep = field_sep_of(&args);
-    let mut vars = read_target_vars(&args);
-    if vars.is_empty() {
-        vars.push("REPLY".to_string());
-    }
-    Lastpipe::Read { vars, field_sep }
-}
-
-/// `read`'s target variable names: non-flag args, skipping the argument
-/// after a separate-form `-f`/`-d` (its separator/delimiter).
-fn read_target_vars(args: &[String]) -> Vec<String> {
-    let mut vars = vec![];
-    let mut skip = false;
-    for a in args {
-        if skip {
-            skip = false;
-        } else if a == "-f" || a == "-d" {
-            skip = true;
-        } else if !a.starts_with('-') {
-            vars.push(a.clone());
-        }
-    }
-    vars
-}
-
-/// `-f<sep>` (joined) or `-f <sep>` (separate) → the field-separator byte.
-fn field_sep_of(args: &[String]) -> Option<u8> {
-    let i = args.iter().position(|a| a.starts_with("-f"))?;
-    let a = &args[i];
-    if a.len() > 2 {
-        Some(a.as_bytes()[2])
+    // DD#99/SB5057: both take exactly one bare target and no flags.
+    let target = c.args.last().map(expr_to_literal)?;
+    Some(if name == "read" {
+        Lastpipe::ReadArray { name: target }
     } else {
-        args.get(i + 1).and_then(|n| n.bytes().next())
-    }
-}
-
-/// Parse `mapfile [-m] [-f<sep>] NAME` mode + separator + target.
-fn parse_mapfile_consumer(c: &Command) -> Lastpipe {
-    let args: Vec<String> = c.args.iter().map(expr_to_literal).collect();
-    let map_mode = args.iter().any(|a| a == "-m");
-    let sep = field_sep_of(&args).unwrap_or(b'=');
-    let name = args
-        .iter()
-        .find(|a| !a.starts_with('-'))
-        .cloned()
-        .unwrap_or_default();
-    if map_mode {
-        Lastpipe::MapfileMap { name, sep }
-    } else {
-        Lastpipe::MapfileArray { name }
-    }
+        Lastpipe::Readline { name: target }
+    })
 }
 
 /// Emit a lastpipe pipeline: run producer stages (all but the last) as
@@ -972,13 +917,8 @@ fn emit_lastpipe_pipeline(
 /// as a map so later `${m[key]}` subscripts use string keys.
 fn predeclare_lastpipe_targets(out: &mut String, ctx: &mut EmitCtx, lp: &Lastpipe, depth: usize) {
     match lp {
-        Lastpipe::Read { vars, .. } => {
-            for v in vars {
-                predeclare_one(out, ctx, v, "\"\"", false, depth);
-            }
-        }
-        Lastpipe::MapfileArray { name } => predeclare_one(out, ctx, name, "@[]", false, depth),
-        Lastpipe::MapfileMap { name, .. } => predeclare_one(out, ctx, name, "@{}", true, depth),
+        Lastpipe::Readline { name } => predeclare_one(out, ctx, name, "\"\"", false, depth),
+        Lastpipe::ReadArray { name } => predeclare_one(out, ctx, name, "@[]", false, depth),
     }
 }
 
@@ -1002,91 +942,27 @@ fn predeclare_one(
     writeln!(out, "(var {} {})", name, init).unwrap();
 }
 
-/// Bind the consumer target(s) from the captured producer output `_cap`.
+/// Bind the consumer target from the captured producer output `_cap`.
+/// DD#99: `readline` takes the first line as a scalar; `read` splits the
+/// whole capture on NUL into an array (terminator semantics — a final NUL
+/// does not produce a trailing empty element).
 fn emit_lastpipe_bind(out: &mut String, lp: &Lastpipe, depth: usize) {
+    indent(out, depth);
     match lp {
-        Lastpipe::Read { vars, field_sep } => emit_lastpipe_read(out, vars, *field_sep, depth),
-        Lastpipe::MapfileArray { name } => {
-            indent(out, depth);
-            writeln!(
-                out,
-                "(set {} (let [_ls (string/split \"\\n\" _cap)] \
-                 (if (and (> (length _ls) 0) (= \"\" (array/peek _ls))) \
-                 (array/slice _ls 0 -2) _ls)))",
-                name
-            )
-            .unwrap();
-        }
-        Lastpipe::MapfileMap { name, sep } => {
-            indent(out, depth);
-            writeln!(out, "(set {} @{{}})", name).unwrap();
-            indent(out, depth);
-            writeln!(
-                out,
-                "(each _l (string/split \"\\n\" _cap) (when (not (empty? _l)) \
-                 (def _e (string/find (string/from-bytes {sep}) _l)) \
-                 (when _e (put {name} (string/slice _l 0 _e) (string/slice _l (+ _e 1))))))",
-                sep = sep,
-                name = name
-            )
-            .unwrap();
-        }
-    }
-}
-
-/// Bind `read VAR…`: the single-var case takes the whole first line; the
-/// multi-var case splits the first line, one field per var, the last var
-/// taking the remainder (mirrors codegen's split_first_word / split_field).
-fn emit_lastpipe_read(out: &mut String, vars: &[String], field_sep: Option<u8>, depth: usize) {
-    if vars.len() == 1 {
-        indent(out, depth);
-        writeln!(
+        Lastpipe::Readline { name } => writeln!(
             out,
             "(set {} (string/trimr (get (string/split \"\\n\" _cap) 0 \"\")))",
-            vars[0]
+            name
         )
-        .unwrap();
-        return;
-    }
-    let sep_str = janet_sep_str(field_sep);
-    indent(out, depth);
-    writeln!(out, "(def _line (get (string/split \"\\n\" _cap) 0 \"\"))").unwrap();
-    indent(out, depth);
-    writeln!(out, "(def _flds {})", janet_split_fields(field_sep)).unwrap();
-    let last = vars.len() - 1;
-    for (i, v) in vars.iter().enumerate() {
-        indent(out, depth);
-        writeln!(out, "{}", janet_read_bind_field(v, i, last, &sep_str)).unwrap();
-    }
-}
-
-/// The janet string form of a field separator: a byte for `-f<sep>`, else a
-/// literal space (whitespace splitting).
-fn janet_sep_str(field_sep: Option<u8>) -> String {
-    match field_sep {
-        Some(b) => format!("(string/from-bytes {})", b),
-        None => "\" \"".to_string(),
-    }
-}
-
-/// The janet expression splitting `_line` into `_flds` — by the field
-/// separator, or on whitespace (dropping empty runs).
-fn janet_split_fields(field_sep: Option<u8>) -> String {
-    match field_sep {
-        Some(b) => format!("(string/split (string/from-bytes {}) _line)", b),
-        None => "(filter (fn [_x] (not (empty? _x))) (string/split \" \" _line))".to_string(),
-    }
-}
-
-/// Bind one `read` target: field `i`, or the joined remainder for the last.
-fn janet_read_bind_field(v: &str, i: usize, last: usize, sep: &str) -> String {
-    if i == last {
-        format!(
-            "(set {} (string/join (array/slice _flds {}) {}))",
-            v, last, sep
+        .unwrap(),
+        Lastpipe::ReadArray { name } => writeln!(
+            out,
+            "(set {} (let [_fs (string/split (string/from-bytes 0) _cap)] \
+             (if (and (> (length _fs) 0) (= \"\" (array/peek _fs))) \
+             (array/slice _fs 0 -2) _fs)))",
+            name
         )
-    } else {
-        format!("(set {} (get _flds {} \"\"))", v, i)
+        .unwrap(),
     }
 }
 
@@ -1219,6 +1095,7 @@ fn emit_value_builtin(
 ) {
     match kind {
         BuiltinCmd::Echo => emit_janet_echo(out, ctx, c),
+        BuiltinCmd::Write => emit_janet_write(out, ctx, c),
         BuiltinCmd::Test => emit_janet_test_cmd(out, ctx, c),
         BuiltinCmd::Match => emit_janet_match(out, ctx, c, "captures"),
         BuiltinCmd::MatchAll => emit_janet_match(out, ctx, c, "captures-all"),
@@ -1243,7 +1120,11 @@ fn janet_cmd_defaults_success(kind: &BuiltinCmd, cmd_name: &str) -> bool {
     }
     matches!(
         kind,
-        BuiltinCmd::Echo | BuiltinCmd::Read | BuiltinCmd::Unset | BuiltinCmd::Attest
+        BuiltinCmd::Echo
+            | BuiltinCmd::Write
+            | BuiltinCmd::Read
+            | BuiltinCmd::Unset
+            | BuiltinCmd::Attest
     )
 }
 
@@ -1502,16 +1383,34 @@ fn janet_arg_splat(kind: &ExprKind) -> Option<String> {
     }
 }
 
-fn emit_janet_echo(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+/// The single janet expression carrying `echo`/`write` arguments: one argument
+/// emits itself, several join with a space. `None` means no arguments at all.
+fn janet_echo_arg(ctx: &mut EmitCtx, c: &Command) -> Option<String> {
     if c.args.is_empty() {
-        writeln!(out, "(print)").unwrap();
-    } else {
-        let parts: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
-        if parts.len() == 1 {
-            writeln!(out, "(print {})", parts[0]).unwrap();
-        } else {
-            writeln!(out, "(print (string {}))", parts.join(" \" \" ")).unwrap();
-        }
+        return None;
+    }
+    let mut parts: Vec<String> = c.args.iter().map(|a| emit_expr_inline(a, ctx)).collect();
+    if parts.len() == 1 {
+        return parts.pop();
+    }
+    Some(format!("(string {})", parts.join(" \" \" ")))
+}
+
+fn emit_janet_echo(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    match janet_echo_arg(ctx, c) {
+        Some(arg) => writeln!(out, "(print {arg})").unwrap(),
+        None => writeln!(out, "(print)").unwrap(),
+    }
+}
+
+/// DD#99 `write` — `echo` without the trailing newline. This had no arm at all
+/// until 2026-09-12, so `write a` fell through to the general-command path and
+/// FORKED the external `write(1)`: a builtin silently became someone else's
+/// program. Bare `write` emits nothing, which is correct — it has no newline to
+/// print.
+fn emit_janet_write(out: &mut String, ctx: &mut EmitCtx, c: &Command) {
+    if let Some(arg) = janet_echo_arg(ctx, c) {
+        writeln!(out, "(prin {arg})").unwrap();
     }
 }
 

@@ -678,7 +678,6 @@ fn emit_cmdsubst_pipe_while_read(
     ssa.block_mut(header).insts.push(SsaInst::ReadLine {
         target,
         fd: -1,
-        delim: None,
         redirects: vec![],
         clean_pipe: false,
     });
