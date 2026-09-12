@@ -41,6 +41,12 @@ struct TypeEnv {
     known_slots: HashSet<String>,
     /// Variables declared as map (associative array) — string keys
     assoc_arrays: HashSet<String>,
+    /// `for v in …` variables. An element of a collection is always a scalar,
+    /// but the inference pass has no `For` arm, so these never reach `vars`.
+    /// Tracked separately rather than declared, so that adding them cannot
+    /// perturb the string/int rules for a name the pass deliberately leaves
+    /// untyped.
+    loop_vars: HashSet<String>,
 }
 
 impl TypeEnv {
@@ -65,6 +71,7 @@ impl TypeEnv {
             slot_kinds: HashMap::new(),
             known_slots: HashSet::new(),
             assoc_arrays: HashSet::new(),
+            loop_vars: HashSet::new(),
         }
     }
 
@@ -909,6 +916,7 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
             check_join_operand(c, stmt.span, env, errors);
             check_keys_operand(c, stmt.span, env, errors);
             check_strlen_operand(c, stmt.span, env, errors);
+            check_len_operand(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
             }
@@ -972,8 +980,8 @@ fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
 /// DD#75 §2 amendment: `strlen` is scalar-only. On a collection it read the
 /// scalar slot of a name that has none and silently answered `0`, so it is a
 /// compile error. It deliberately does **not** mirror bash's `${#a}` =
-/// "byte length of element 0" — `sash-convert` spells that case
-/// `$(strlen a[0])` explicitly, so nothing needs the implicit form.
+/// "byte length of element 0"; the spelling for that case is still open
+/// (see `notes/tasks/strlen-cell-operand-spelling.md`).
 fn check_strlen_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     if expr_to_name(&c.name) != "strlen" {
         return;
@@ -985,15 +993,50 @@ fn check_strlen_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec
     if name.is_empty() || !env.collections.contains(&name) {
         return;
     }
-    let what = if env.assoc_arrays.contains(&name) {
-        "a map"
+    let (what, count) = if env.assoc_arrays.contains(&name) {
+        ("a map", "entry count")
     } else {
-        "an array"
+        ("an array", "element count")
     };
     errors.push(TypeError {
         message: format!(
             "`strlen` needs a scalar — `{name}` is {what}; use `$(len {name})` for the \
-             entry count, or `$(strlen {name}[i])` for the byte length of one element"
+             {count}"
+        ),
+        span,
+    });
+}
+
+/// DD#75 §2 amendment: `len` is collection-only. It used to dispatch on the
+/// operand's type — *bytes* for a string, *elements* for a collection — so two
+/// different questions shared one spelling with nothing at the call site to
+/// say which was being asked. The compiler could tell them apart; a reader
+/// looking at `$(len x)`, with `x` declared far away, could not. `strlen`
+/// names the byte-length question, and `len` now answers only the count one.
+fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if expr_to_name(&c.name) != "len" {
+        return;
+    }
+    let Some(arg) = c.args.first() else {
+        return;
+    };
+    let name = join_operand_name(arg);
+    // Fire only on a name known to be a scalar. "Absent from `collections`"
+    // is not the same question: an undeclared name is SB5039's or SB5055's to
+    // report, and answering it here masked the real diagnostic with a
+    // misleading one ("`f` is a scalar" when `f` was never declared at all).
+    if name.is_empty()
+        || !(env.vars.contains_key(&name) || env.loop_vars.contains(&name))
+        || env.collections.contains(&name)
+        || env.is_slot(&name)
+        || name == "args"
+    {
+        return;
+    }
+    errors.push(TypeError {
+        message: format!(
+            "`len` needs an array or map — `{name}` is a scalar; use `$(strlen {name})` \
+             for its byte length"
         ),
         span,
     });
@@ -1060,6 +1103,7 @@ fn check_stmt(stmt: &Statement, env: &mut TypeEnv, errors: &mut Vec<TypeError>) 
 }
 
 fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    record_bare_collection_value(a, env);
     // DD#75 §4: a subscript index is a numeric literal or a `$`-sigilled
     // value; a bare word is a string key (map-only). Enforce on the write
     // path as on the read path (check_subscript_key_kind), so `a[i]=…` on an
@@ -1067,32 +1111,51 @@ fn check_assignment(a: &Assignment, span: Span, env: &mut TypeEnv, errors: &mut 
     if let Some(idx) = &a.index {
         check_subscript_key_kind(&a.name, idx, span, env, errors);
     }
+    check_assign_type_match(a, span, env, errors);
+}
+
+/// A bare `f=(…)` is a collection VALUE on an undeclared name. The keyword is
+/// what makes a collection, so the transform rejects it (SB5055) — but the env
+/// must still record what it is, or a later collection check reads `f` as a
+/// scalar and reports something untrue ("`len` needs an array — `f` is a
+/// scalar") ahead of the diagnostic that names the real problem.
+fn record_bare_collection_value(a: &Assignment, env: &mut TypeEnv) {
+    if a.index.is_none() && matches!(a.value.kind, ExprKind::Array(_)) {
+        env.collections.insert(a.name.clone());
+    }
+}
+
+/// Bare assignment: a new variable gets the RHS type on first use. An
+/// already-typed variable must match — except (DD#30 refinement) an already-int
+/// LHS accepts a bare numeric literal (`int x=0; x=5` aligns with `int x=5`;
+/// `int array a=(…); a[i]=99` matches int-init), mirroring the
+/// declaration-init `is_numeric_literal` exception. The variable keeps its
+/// declared int type (no re-declare).
+fn check_assign_type_match(
+    a: &Assignment,
+    span: Span,
+    env: &mut TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
     let rtype = expr_type(&a.value, env);
     let ltype = env.var_type(&a.name);
-    let known = env.vars.contains_key(&a.name);
-    // Bare assignment: a new variable gets the RHS type on first use.
-    // An already-typed variable must match — except (DD#30 refinement) an
-    // already-int LHS accepts a bare numeric literal (`int x=0; x=5` aligns
-    // with `int x=5`; `int array a=(…); a[i]=99` matches int-init), mirroring
-    // the declaration-init `is_numeric_literal` exception. The variable keeps
-    // its declared int type (no re-declare).
-    if known && ltype != rtype {
-        let int_literal_ok = ltype == VarType::Int && is_numeric_literal(&a.value);
-        if !int_literal_ok {
-            errors.push(TypeError {
-                message: format!(
-                    "cannot assign {} value to {} variable `{}`{}",
-                    type_name(rtype),
-                    type_name(ltype),
-                    a.name,
-                    conversion_hint(rtype, ltype),
-                ),
-                span,
-            });
-        }
-    } else if !known {
+    if !env.vars.contains_key(&a.name) {
         env.declare(&a.name, rtype);
+        return;
     }
+    if ltype == rtype || (ltype == VarType::Int && is_numeric_literal(&a.value)) {
+        return;
+    }
+    errors.push(TypeError {
+        message: format!(
+            "cannot assign {} value to {} variable `{}`{}",
+            type_name(rtype),
+            type_name(ltype),
+            a.name,
+            conversion_hint(rtype, ltype),
+        ),
+        span,
+    });
 }
 
 fn check_declaration(d: &Declaration, span: Span, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
@@ -1352,6 +1415,7 @@ fn check_unset_args(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Typ
 }
 
 fn check_for(f: &For, env: &mut TypeEnv, errors: &mut Vec<TypeError>) {
+    env.loop_vars.insert(f.variable.clone());
     // The for-in header words are expressions, not a child body — visit them so
     // a `$(keys …)` / `$(join …)` splat source (or a bad subscript) in the
     // header is type-checked (DD#75 §3), then descend into the loop body.

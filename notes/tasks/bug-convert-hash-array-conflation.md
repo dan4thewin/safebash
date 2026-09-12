@@ -3,7 +3,7 @@ status: ready
 absorbed-by: dd75-len-collection-only-strlen
 priority: P2
 kind: bug
-depends: []
+depends: [strlen-cell-operand-spelling]
 gates:
   - "bash `${#a}` on an array converts to the length of element 0, not the element count"
   - "bash `${#a[@]}` / `${#a[*]}` convert to the element count"
@@ -66,3 +66,12 @@ this on the way.
 Fixed **inside** `dd75-len-collection-only-strlen` rather than separately, so
 the four-row mapping is written once. This filing stays as the record of the
 defect and its reproduction; the gates above are the split task's to satisfy.
+
+## Blocked on a spelling (2026-09-12)
+
+Two of the four rows need the byte length of one array element, and that
+question has no spelling yet: `$(strlen a[0])` does not parse as a cell, and
+`$(strlen ${a[0])}` is rejected SB5062 along with every other value form.
+Filed as `strlen-cell-operand-spelling` for DG. The other two rows
+(`${#a[@]}` / `${#a[*]}` -> `$(len a)`) are unblocked but are not worth
+landing alone -- the point of the four-row table is that it is written once.

@@ -1,6 +1,6 @@
 ---
 title: "DD#75 §2 amendment: `len` is collection-only; add `strlen` for scalars"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
@@ -161,3 +161,60 @@ short, unrelated to it. Corrected to the real count.
 Found and filed `janet-intrinsic-dollar-operand`: janet emits an intrinsic's
 `$name` operand verbatim, so `$(len $s)` fails to compile there. Pre-existing
 and not specific to `strlen`; 75.58 is guarded `native,c` and pins it.
+
+## Stage 2 — DONE
+
+`len` is now collection-only, and DD#100 Part D landed with it.
+
+- `type_check.rs::check_len_operand` (SB4030) rejects `len <scalar>` and
+  names `strlen`. It is a **positive** test — it fires only when the name is
+  a known scalar — because "absent from `collections`" wrongly includes "not
+  known at all", which masked SB5055 (see below).
+- `TypeEnv` gained `loop_vars`, populated in `check_for`. `infer_stmt` has no
+  `For` arm, so a for-in variable was never in `env.vars` and `len <loop var>`
+  slipped through. Tracked separately from `vars` on purpose: declaring a loop
+  variable `String` would risk false string/int errors over an `int array`.
+- `validate.rs::flag_operand_spelling` gained `("join", Splat)` and
+  `("len", Splat)`; SB5025's message now says `$(join a)`.
+- 21 spec sites migrated (18 `join @` + 3 `len @`), plus the scalar `len`
+  sites in `types.sh`, `errors.sh`, `commands.sh`, `var_modifiers.sh`.
+- Specs 75.66–75.76; `types.sh` plan 184 → 195.
+
+### Bugs found en route
+
+1. **`len f` masked SB5055.** `f=(a b c); echo $(len f)` reported "`f` is a
+   scalar" instead of "collection value without a declaration". SB5055 is
+   emitted in the *transform*, which runs after type_check, so any new
+   type_check diagnostic that can fire on an undeclared name will mask it.
+   Fixed twice over: the check is positive, and `check_assignment` now records
+   a bare `f=(…)` in `env.collections` so the env is truthful.
+2. **Janet's `join` never lowered its bare-name operand.** It matched only the
+   retired `@a` splat, so DD#100 Part D's `join a` fell through to the generic
+   exec fallback and **forked an external `join`** — against the explicit
+   invariant in `cmdsub_data_intrinsic`'s own doc comment.
+3. **Janet's 2-arg `join` had its operands reversed** (`args[1]` read as the
+   array). It has *never* lowered — `join a ,` always forked. Pre-existing,
+   surfaced by fixing (2).
+4. **Three SB5062 messages recommended the splat this task removes**, telling
+   the user to write a spelling the validator now rejects.
+
+All four are the same class this batch keeps producing: something that could
+not be resolved resolved to a plausible answer instead of failing.
+
+### Split out
+
+The subscripted-cell operand (`strlen a[i]`) is **not** in this task's gates
+and needs a language-surface decision from DG — filed as
+`strlen-cell-operand-spelling`, with a working implementation parked in the
+session workspace. `bug-convert-hash-array-conflation` now depends on it.
+
+### Incidental
+
+`types.sh` `chk 75.35` had been silently swallowed by a lost newline
+(`chk 75.35# 75.36 …`), so it had not run since. Restored; plan and ran now
+agree at 195.
+
+Filed `dup-is-identifier-leading-digit`: promoting `parse::expr::is_identifier`
+to `pub(crate)` for the Janet fix (rather than writing a third copy) surfaced
+that `parse::parser::is_identifier` accepts a leading digit, contradicting its
+own doc comment.

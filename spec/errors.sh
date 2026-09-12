@@ -598,7 +598,7 @@ run_sash 'echo $(toupper)'
 run_sash 'a=x; echo $(len a b)'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk 55.44
 # 55.45 a correct-arity call still compiles + runs
-run_sash 's=hello; echo $(len s)'
+run_sash 's=hello; echo $(strlen s)'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk 55.45
 
 # ── via.*: every value intrinsic has an arity, and none is a statement ──

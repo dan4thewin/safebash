@@ -96,7 +96,7 @@ run_sash 'array a=(x y); echo @{a:-w}'
 [[ $rc != 0 && $err == *SB5030* ]]; chk gs.15
 
 # gs.16 DD#69 addendum: a splat is not a scalar — `x=@a` in scalar-assignment
-#       context is SB5025 (use `$(join @a)` for a string, `${a[i]}` for one).
+#       context is SB5025 (use `$(join a)` for a string, `${a[i]}` for one).
 run_sash 'array a=(x y); x=@a; /bin/echo "$x"'
 [[ $rc != 0 && $err == *SB5025* ]]; chk gs.16
 

@@ -359,7 +359,7 @@ fn parse_trusted_splat_op(
 }
 
 /// A plausible `[A-Za-z_][A-Za-z0-9_]*` identifier.
-fn is_identifier(s: &str) -> bool {
+pub(crate) fn is_identifier(s: &str) -> bool {
     let mut chars = s.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
         && chars.all(|c| c.is_ascii_alphanumeric() || c == '_')

@@ -472,7 +472,7 @@ if in_modes native,c; then
     run_sash 'nul=$'"'"'\0'"'"'
 s="a${nul}b"
 read $s f
-echo "$(len s):$(len f):${f[1]}"'
+echo "$(strlen s):$(len f):${f[1]}"'
     [[ $rc = 0 && $out = "3:2:b" && -z $err ]]; chk an.5
 else
     skip_chk an.5

@@ -43,7 +43,7 @@ int k=3
     [[ $rc = 0 && $out = "one-two-3" && -z $rerr ]]; chk xa.5
 
     # xa.6 join of argv into an external arg
-    run_sash 'fn f { /bin/echo "$(join @args)" }
+    run_sash 'fn f { /bin/echo "$(join args)" }
 f x y z'
     [[ $rc = 0 && $out = "x y z" && -z $rerr ]]; chk xa.6
 

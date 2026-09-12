@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=184
+plan=195
 echo "1..$plan" >&3
 
 set +e
@@ -33,16 +33,16 @@ run_sash 'int x=5
 x=hello | /bin/cat'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 0.4
 
-# 12.1 string length ($(len x); the ${#x} sugar is retired — DD#75 §4)
-run_sash 'x="hello"; echo $(len x)'
+# 12.1 string length ($(strlen x); the ${#x} sugar is retired — DD#75 §4)
+run_sash 'x="hello"; echo $(strlen x)'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 12.1
 
 # 12.2 null-terminated for C interop
 run_sash 'x="hello"; /usr/bin/printf "%s\n" "$x"'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 12.2
 
-# 12.3 O(1) length — $(len x) is a counted-string read, no scan
-run_sash 'x="hello world test"; echo $(len x)'
+# 12.3 O(1) length — $(strlen x) is a counted-string read, no scan
+run_sash 'x="hello world test"; echo $(strlen x)'
 [[ $rc = 0 && $out = "16" && -z $err ]]; chk 12.3
 
 # 12.4 string interpolation in assignment (Concat in value position): the c
@@ -80,7 +80,7 @@ else
 fi
 
 # 30.3 x=5 is a string (one byte long)
-run_sash 'x=5; echo $(len x)'
+run_sash 'x=5; echo $(strlen x)'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 30.3
 
 # 30.4 int x=5 required for integer
@@ -440,12 +440,12 @@ run_sash 'map m=([k]=ab); m[k]+=cd; echo ${m[k]}'
 
 # 33.42 `echo @a` is a clean compile error (SB5030), not an ICE — echo joins
 # its args, so an array splat there would flatten the array (DD#22/DD#69 §3);
-# the user writes the explicit `echo $(join @a)`.
+# the user writes the explicit `echo $(join a)`.
 run_sash 'array a=(one two three); echo @a'
 [[ $rc != 0 && -z $out && $err == *SB5030* ]]; chk 33.42
 
 # 33.43 the directed-to explicit join compiles and prints the joined string
-run_sash 'array a=(one two three); echo $(join @a)'
+run_sash 'array a=(one two three); echo $(join a)'
 [[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 33.43
 
 # 33.23 `$(join)` with no args is a clean SB5040 (was a compiler ICE panic)
@@ -474,7 +474,7 @@ run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
 if in_modes native,c; then
     run_sash 'array a=(x y z); echo $(join a ",")'
     [[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 33.19
-    run_sash 'array a=(x y z); echo $(join @a ", ")'
+    run_sash 'array a=(x y z); echo $(join a ", ")'
     [[ $rc = 0 && $out = "x, y, z" && -z $err ]]; chk 33.20
     run_sash 'array a=(x y z); echo $(join a)'
     [[ $rc = 0 && $out = "x y z" && -z $err ]]; chk 33.21
@@ -487,8 +487,8 @@ run_sash 's=hi; echo $(join s ",")'
 
 # DD#75 §2 — polymorphic `len`: dispatch on the operand's TYPE, not the `$`
 # sigil (array/map → count; string → byte length; undefined → compile error).
-# 75.1 len on a string → byte length (was garbage: arrlen on a non-table)
-run_sash 's=hello; int n=$(len s); echo $n'
+# 75.1 strlen on a string → byte length (was garbage: arrlen on a non-table)
+run_sash 's=hello; int n=$(strlen s); echo $n'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.1
 # 75.2 len on an array → element count
 run_sash 'array a=(1 2 3); int n=$(len a); echo $n'
@@ -623,12 +623,13 @@ run_sash 'for x in @args; do echo "$x"; done'
 # 75.27 DD#75 §2: `len <undefined>` is a compile error (SB5039), not a silent 0
 run_sash 'echo $(len nope)'
 [[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.27
-# 75.28 no false positive: `len` of a declared scalar and array both compile
-run_sash 's=hi; array a=(1 2 3); echo "$(len s) $(len a)"'
+# 75.28 no false positive: `strlen` of a declared scalar and `len` of an
+#       array both compile
+run_sash 's=hi; array a=(1 2 3); echo "$(strlen s) $(len a)"'
 [[ $rc = 0 && $out = "2 3" && -z $err ]]; chk 75.28
 # 75.29 a loop variable is a valid len operand (the type_check-side gap this
 # avoids: SB5031's scope machinery already tracks `for` variables)
-run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
+run_sash 'array a=(hi bye); for e in @a; do echo $(strlen e); done'
 [[ $rc = 0 && $out = $'2\n3' && -z $err ]]; chk 75.29
 # 75.30 `len <typo>` inside a function is also rejected
 run_sash 'fn f { echo $(len bogus); }
@@ -655,22 +656,24 @@ run_sash 'array a=(x y); echo $(join $a ",")'
 # 75.35 a quoted operand to `join` was not even counted as a read of `a`
 run_sash 'array a=(x y); echo $(len a); echo $(join "a" ",")'
 [[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.35
+
 # 75.36 `keys @m` ICEd the compiler — a splat is not a map reference
 run_sash 'map m=([k]=v); for k in $(keys @m); do echo "$k"; done'
 [[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.36
 # 75.37 `keys $m` ICEd the same way
 run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 [[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.37
-# 75.38 control: every spelling that already worked still works.
-# (janet resolves only bare names and the `@a` space-join — `len $s`, `len $a`,
-# `len @a` emit the sigil as a bare symbol, and `join a SEP` execs /usr/bin/join.
-# See notes/tasks/janet-join-intrinsic-gaps.md; guard to native,c.)
+# 75.38 control: every spelling that survives still works. Three that used to
+# be here no longer exist: `len s` / `len $s` are `strlen` now (a scalar is not
+# a collection), and `len @a` / `join @a SEP` are gone with DD#100 Part D.
+# (janet emits a `$`-sigilled operand as a bare symbol and execs /usr/bin/join
+# for `join a SEP`; see notes/tasks/janet-join-intrinsic-gaps.md. native,c.)
 if in_modes native,c; then
     run_sash 's=hi; array a=(x y z); map m=([k]=v)
-echo "$(len s) $(len $s) $(len a) $(len @a) $(len m)"
-echo "$(join a ",") $(join @a ",")"
+echo "$(strlen s) $(strlen $s) $(len a) $(len m)"
+echo "$(join a ",")"
 for k in $(keys m); do echo "$k"; done'
-    [[ $rc = 0 && $out = $'2 2 3 3 1\nx,y,z x,y,z\nk' && -z $err ]]; chk 75.38
+    [[ $rc = 0 && $out = $'2 2 3 1\nx,y,z\nk' && -z $err ]]; chk 75.38
 else
     skip_chk 75.38
 fi
@@ -703,7 +706,7 @@ run_sash 'array a=(x y z); echo $(len $a)'
 # 75.38).
 if in_modes native,c; then
     run_sash 'array a=(x y z); str s=hi
-echo "${a[1]} $(len a) $(join a ",") $s $(len $s)"'
+echo "${a[1]} $(len a) $(join a ",") $s $(strlen $s)"'
     [[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
 else
     skip_chk 75.43
@@ -963,6 +966,66 @@ run_sash 'int n=512; echo ${n:1:2}'
 # ice.13 an int variable as a redirect target is a type error, not a panic
 run_sash 'int n=5; echo hi > $n'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err != *ICE* ]]; chk ice.13
+
+# ── DD#75 §2 amendment + DD#100 Part D: one spelling per question ──
+# `len` dispatched on the operand's TYPE — bytes for a scalar, elements for a
+# collection — so two questions shared one spelling with nothing at the call
+# site to say which was being asked. `len` is collection-only now and `strlen`
+# asks for bytes. Separately, DD#100 Part D drops the splat operand: `len @a`
+# and `join @a SEP` were exact synonyms of the bare-name forms.
+
+# 75.66 `len <scalar>` names the replacement
+run_sash 'str s = hello
+echo $(len s)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'$(strlen s)'* ]]; chk 75.66
+
+# 75.67 a loop variable is a scalar too — this was the polymorphic case
+run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.67
+
+# 75.68 `len` still counts an array, and `strlen` still measures a string
+run_sash 'array a=(x y z); str s=hello
+echo "$(len a) $(strlen s)"'
+[[ $rc = 0 && $out = "3 5" && -z $err ]]; chk 75.68
+
+# 75.69 DD#100 Part D: the splat operand is gone from `len`
+run_sash 'array a=(x y z); echo $(len @a)'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.69
+
+# 75.70 …and from `join`
+run_sash 'array a=(x y z); echo $(join @a ",")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.70
+
+# 75.71 `for … in @a` is NOT affected — a splat is still a for-in source and a
+# command argument; only the name-resolving builtins stopped taking one.
+run_sash 'array a=(x y z); for e in @a; do echo $e; done'
+[[ $rc = 0 && $out = $'x\ny\nz' && -z $err ]]; chk 75.71
+
+# 75.72 SB5025 used to recommend the spelling DD#100 Part D removes
+run_sash 'array a=(x y); x=@a; /bin/echo "$x"'
+[[ $rc != 0 && $err == *SB5025* && $err == *'$(join a)'* && $err != *'$(join @a)'* ]]; chk 75.72
+
+# 75.73 an undeclared name given a collection value reports THAT, not a
+# misleading "`f` is a scalar" from the new `len` check running first
+run_sash 'f=(a b c); echo $(len f)'
+[[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk 75.73
+
+# 75.74 `join ARRAY SEP` joins with the separator in every backend. The Janet
+# emitter read the two operands in the wrong order (`args[1]` as the array),
+# so this never matched its intrinsic and silently forked an external `join`.
+run_sash 'array a=(x y z); echo $(join a ,)'
+[[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 75.74
+
+# 75.75 the one-arg bare-name form likewise lowers in every backend. Janet
+# only recognised the retired `@a` splat, so DD#100 Part D's bare name fell
+# through to the generic exec fallback the intrinsic table exists to prevent.
+run_sash 'array a=(one two three); echo $(join a)'
+[[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 75.75
+
+# 75.76 the SB5062 advice no longer recommends the splat DD#100 Part D
+# removed — telling the user to write a spelling the validator rejects
+run_sash 'array a=(x y); echo $(join "a b" ,)'
+[[ $rc != 0 && $err == *SB5062* && $err != *splat* ]]; chk 75.76
 
 set -e
 tally

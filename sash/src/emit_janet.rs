@@ -2107,17 +2107,31 @@ fn cmdsub_num_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String
     None
 }
 
-/// DD#41: `join @arr` → space-separated; `join SEP @arr` → SEP-separated.
+/// DD#41: `join arr` → space-separated; `join SEP arr` → SEP-separated.
 fn cmdsub_join_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
     if name != "join" {
         return None;
     }
     match c.args.len() {
-        1 => janet_arg_splat(&c.args[0].kind).map(|a| format!("(string/join {a} \" \")")),
-        2 => janet_arg_splat(&c.args[1].kind).map(|array| {
-            let sep = emit_expr_inline(&c.args[0], ctx);
+        1 => janet_collection_operand(&c.args[0]).map(|a| format!("(string/join {a} \" \")")),
+        2 => janet_collection_operand(&c.args[0]).map(|array| {
+            let sep = emit_expr_inline(&c.args[1], ctx);
             format!("(string/join {array} {sep})")
         }),
+        _ => None,
+    }
+}
+
+/// The collection operand of a DD#41/DD#100 collection builtin, as a Janet
+/// variable name. DD#100 Part D made this a bare name (`join a`); the
+/// retired `@a` splat spelling is still accepted here so that a stale
+/// program lowers rather than silently forking an external `join`.
+fn janet_collection_operand(e: &Expr) -> Option<String> {
+    if let Some(n) = janet_arg_splat(&e.kind) {
+        return Some(n);
+    }
+    match &e.kind {
+        ExprKind::Literal(s) if crate::parse::expr::is_identifier(s) => Some(s.clone()),
         _ => None,
     }
 }

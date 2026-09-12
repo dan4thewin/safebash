@@ -122,7 +122,7 @@ run_sash 'argv 1 a; argv b; echo $(len a) $(len b)' a b
 [[ $rc = 0 && $out = "2 3" && -z $err ]]; chk av.n3
 
 # av.n4 join over a attested snapshot (DD#41 collection builtin)
-run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join @a)' a b c
+run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' a b c
 [[ $rc = 0 && $out = "a b c" && -z $err ]]; chk av.n4
 
 # av.n5 iterating a tainted snapshot @a without attest-all is a clean error,
@@ -132,7 +132,7 @@ run_sash 'argv 1 a; for x in @a; do echo "$x"; done' a b c
 
 # av.n6 joining a tainted snapshot @a without attest-all is a clean error
 # (negative for av.n4) — the cmdsub arg `@a` is a use site of tainted data.
-run_sash 'argv 1 a; echo $(join @a)' a b c
+run_sash 'argv 1 a; echo $(join a)' a b c
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk av.n6
 
 # av.n7 subscripting a tainted snapshot without attest-all is a clean error

@@ -16,7 +16,7 @@
 
 mod arith;
 mod error;
-mod expr;
+pub(crate) mod expr;
 mod lexer;
 mod logos_tokens;
 mod parser;

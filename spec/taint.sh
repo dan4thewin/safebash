@@ -217,12 +217,12 @@ run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; for x in @a; do echo $x; do
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.32
 
 # 60.33 tainted array joined without attest-all → reject (cmdsub-arg use site)
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; echo $(join @a)'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; echo $(join a)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.33
 
 # 60.34 DG (2026-09-10): "the read of the array must have a clean array, so
 # no tainted maps." `map m = @{a:DISP}` is an ordinary READ of `a` — measurably
-# identical to `join @a` and `for x in @a` — so DD#24's no-propagation applies
+# identical to `join a` and `for x in @a` — so DD#24's no-propagation applies
 # and a TAINTED array cannot be paired into a map at all. The gate that used to
 # sit on the map now sits one step earlier, on the array, and it is the SAME
 # gate rather than a new rule.
@@ -525,17 +525,17 @@ fi
 # wherever the `$(join …)` appears. Previously only argument/for-word position
 # was checked; assignment RHS / subscript / array-literal / test / redirect /
 # nested all silently compiled and leaked the args at runtime.
-run_sash 'argv 1 a; x=$(join @a); echo $x' a b
+run_sash 'argv 1 a; x=$(join a); echo $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.37
-run_sash 'argv 1 a; array b=(); b[0]=$(join @a); echo ${b[0]}' a b
+run_sash 'argv 1 a; array b=(); b[0]=$(join a); echo ${b[0]}' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.38
-run_sash 'argv 1 a; array c=($(join @a)); echo hi' a b
+run_sash 'argv 1 a; array c=($(join a)); echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.39
-run_sash 'argv 1 a; [[ $(join @a) = x ]] && echo hi' a b
+run_sash 'argv 1 a; [[ $(join a) = x ]] && echo hi' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.40
-run_sash 'argv 1 a; x=$(join @a); echo z > $x' a b
+run_sash 'argv 1 a; x=$(join a); echo z > $x' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.41
-run_sash 'argv 1 a; s=$(echo $(join @a)); echo $s' a b
+run_sash 'argv 1 a; s=$(echo $(join a)); echo $s' a b
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.42
 # 60.43 bare-name reader `join a` (not `@a`) reads element data too (DD#24)
 run_sash 'argv 1 a; x=$(join a); echo $x' a b
@@ -561,7 +561,7 @@ fi
 run_sash 'x=$(getenv HOME); y=$(echo $x); echo $y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.47
 # 60.48 mapfile-sourced (not argv) tainted array joined in assignment RHS
-run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; x=$(join @a); echo $x'
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a; x=$(join a); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.48
 # 60.49 the same relocation in a value position: `keys` of a map built from an
 # UNVOUCHED array is rejected at the pairing, before `keys` is ever reached.

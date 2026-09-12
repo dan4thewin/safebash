@@ -388,7 +388,7 @@ echo $s'
 if in_modes native,c; then
     run_sash 's=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
-echo $(len s)'
+echo $(strlen s)'
     [[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
 else
     skip_chk sr.6
@@ -745,7 +745,7 @@ fi
 # there is NOT this error — they stay as they were (DD#75 open questions)
 if in_modes native,c; then
     run_sash 'array a=(x y z)
-echo "$(len @a):$(join @a)"'
+echo "$(len a):$(join a)"'
     [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
 else
     skip_chk 96.22

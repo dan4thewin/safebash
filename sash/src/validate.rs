@@ -3414,7 +3414,7 @@ fn named_splat_scalar_diag(span: Span) -> Diagnostic {
         span,
         "SB5025",
         "an array splat `@a` is not a scalar — it is valid only as a command \
-         argument or a for-in source; use `$(join @a)` for a joined string, \
+         argument or a for-in source; use `$(join a)` for a joined string, \
          or `${a[i]}` for a single element"
             .to_string(),
     )
@@ -6039,19 +6039,25 @@ fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         return;
     };
     let accepted = match (builtin, classify_operand(arg)) {
-        ("len", OperandForm::Other) => {
-            "a variable name (`len a`, `len $a`, or `len @a`)".to_string()
-        }
+        ("len", OperandForm::Other) => "a variable name (`len a` or `len $a`)".to_string(),
         // `strlen` resolves a name exactly as `len` does, so every spelling
         // `len` cannot resolve, `strlen` cannot either — it read the scalar
         // slot of whatever `expr_to_string` rendered and answered 0.
         ("strlen", OperandForm::Other) => "a variable name (`strlen s` or `strlen $s`)".to_string(),
         ("join", OperandForm::Dollar(n)) => {
-            format!("a collection name (`join {n} SEP`) or a splat (`join @{n} SEP`)")
+            format!("a collection name (`join {n} SEP`) — a builtin takes the name")
         }
-        ("join", OperandForm::Other) => {
-            "a collection name (`join a SEP`) or a splat (`join @a SEP`)".to_string()
+        // DD#100 Part D: a builtin's name operand takes a bare name and no
+        // splat. `join @a SEP` and `join a SEP` were exact synonyms, and
+        // likewise `len @a` / `len a` — the sigil asked for values that were
+        // then immediately re-joined or re-counted. One spelling per question.
+        ("join", OperandForm::Splat(n)) => {
+            format!("a collection name (`join {n} SEP`) — a builtin takes the name, not a splat")
         }
+        ("len", OperandForm::Splat(n)) => {
+            format!("a collection name (`len {n}`) — a builtin takes the name, not a splat")
+        }
+        ("join", OperandForm::Other) => "a collection name (`join a SEP`)".to_string(),
         ("keys", OperandForm::Dollar(n) | OperandForm::Splat(n)) => {
             format!("a bare map name (`keys {n}`) — a splat carries values, which have no keys")
         }
