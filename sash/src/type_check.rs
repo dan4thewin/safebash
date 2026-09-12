@@ -915,7 +915,6 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
             check_subscript_types(&c.name, env, errors);
             check_join_operand(c, stmt.span, env, errors);
             check_keys_operand(c, stmt.span, env, errors);
-            check_strlen_operand(c, stmt.span, env, errors);
             check_len_operand(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
@@ -977,36 +976,6 @@ fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
     });
 }
 
-/// DD#75 §2 amendment: `strlen` is scalar-only. On a collection it read the
-/// scalar slot of a name that has none and silently answered `0`, so it is a
-/// compile error. It deliberately does **not** mirror bash's `${#a}` =
-/// "byte length of element 0"; the spelling for that case is still open
-/// (see `notes/tasks/strlen-cell-operand-spelling.md`).
-fn check_strlen_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    if expr_to_name(&c.name) != "strlen" {
-        return;
-    }
-    let Some(arg) = c.args.first() else {
-        return;
-    };
-    let name = join_operand_name(arg);
-    if name.is_empty() || !env.collections.contains(&name) {
-        return;
-    }
-    let (what, count) = if env.assoc_arrays.contains(&name) {
-        ("a map", "entry count")
-    } else {
-        ("an array", "element count")
-    };
-    errors.push(TypeError {
-        message: format!(
-            "`strlen` needs a scalar — `{name}` is {what}; use `$(len {name})` for the \
-             {count}"
-        ),
-        span,
-    });
-}
-
 /// DD#75 §2 amendment: `len` is collection-only. It used to dispatch on the
 /// operand's type — *bytes* for a string, *elements* for a collection — so two
 /// different questions shared one spelling with nothing at the call site to
@@ -1035,7 +1004,7 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     }
     errors.push(TypeError {
         message: format!(
-            "`len` needs an array or map — `{name}` is a scalar; use `$(strlen {name})` \
+            "`len` needs an array or map — `{name}` is a scalar; use `$(strlen ${name})` \
              for its byte length"
         ),
         span,

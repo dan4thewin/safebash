@@ -1157,7 +1157,41 @@ fn emit_concat_value(e: &mut Emit, parts: &[SsaValue], types: &VarTypes) -> CStr
     (acc_ptr, acc_len)
 }
 
+/// The string-transform family: regex replace/match (DD#63), case fold
+/// (DD#65) and byte length (DD#102). Split out of `lower_value_as_str` so
+/// that dispatcher stays under the complexity gate; each arm lowers its
+/// operands as strings and hands them to the matching runtime call.
+fn lower_string_transform_c(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> Option<CStr> {
+    Some(match value {
+        // Real Plan 9 engine via the sash runtime (the same
+        // sash_regex_replace native uses), called with the sash_pair ABI
+        // like sash_substring.
+        SsaValue::RegexReplace {
+            subject,
+            pattern,
+            replacement,
+            global,
+        } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
+        // $(match S P) — whole match via sash_regex_match_str.
+        SsaValue::RegexMatch { subject, pattern } => emit_regex_match_c(e, subject, pattern, types),
+        // $(toupper s) / $(tolower s) — reuse the case-conversion runtime.
+        SsaValue::CaseConvert { subject, upper } => {
+            let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
+            emit_case_conversion_c(e, *upper, &s_ptr, &s_len)
+        }
+        // $(strlen X) — the lowered value carries its own length.
+        SsaValue::StrLen { subject } => {
+            let (_s_ptr, s_len) = lower_value_as_str(e, subject, types);
+            emit_itoa_temp(e, &s_len)
+        }
+        _ => return None,
+    })
+}
+
 fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr {
+    if let Some(transformed) = lower_string_transform_c(e, value, types) {
+        return transformed;
+    }
     match value {
         SsaValue::Literal(s) | SsaValue::Expr(s) => {
             (format!("\"{}\"", c_escape(s)), format!("{}", s.len()))
@@ -1185,22 +1219,6 @@ fn lower_value_as_str(e: &mut Emit, value: &SsaValue, types: &VarTypes) -> CStr 
         // left-fold the parts through sash_concat, mirroring native
         // lower_concat_value (codegen/values.rs:314).
         SsaValue::Concat(parts) => emit_concat_value(e, parts, types),
-        // DD#63: $(sub/gsub S P R) → real Plan 9 engine via the sash
-        // runtime (the same sash_regex_replace native uses), called with
-        // the sash_pair ABI like sash_substring.
-        SsaValue::RegexReplace {
-            subject,
-            pattern,
-            replacement,
-            global,
-        } => emit_regex_replace_c(e, subject, pattern, replacement, *global, types),
-        // DD#63: $(match S P) → whole match via sash_regex_match_str.
-        SsaValue::RegexMatch { subject, pattern } => emit_regex_match_c(e, subject, pattern, types),
-        // DD#65: $(toupper s) / $(tolower s) — reuse the case-conversion runtime.
-        SsaValue::CaseConvert { subject, upper } => {
-            let (s_ptr, s_len) = lower_value_as_str(e, subject, types);
-            emit_case_conversion_c(e, *upper, &s_ptr, &s_len)
-        }
         // DD#65: ${var:-DEFAULT} — var if set, else the interpolated default.
         SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = disposition_source_c(e, source, types);

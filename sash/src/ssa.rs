@@ -563,6 +563,14 @@ pub enum SsaValue {
         subject: Box<SsaValue>,
         upper: bool,
     },
+    /// DD#102: `$(strlen X)` — byte length of an ordinary value operand,
+    /// exactly like `$(toupper X)` takes one. `strlen` used to resolve its
+    /// operand as a *name* while every other non-collection intrinsic
+    /// resolved a value, so `strlen s` asked about the variable `s` while the
+    /// adjacent `toupper s` asked about the two-letter string `"s"`.
+    StrLen {
+        subject: Box<SsaValue>,
+    },
     /// DD#65: `${var:-DEFAULT}` — `source` if set/non-empty, else the DEFAULT.
     /// The default is a full interpolating value (unlike the literal-only
     /// `ParamExpansion` operand), so `${foo:-$bar}` interpolates `bar`.
@@ -716,6 +724,7 @@ impl SsaValue {
         Some(match self {
             SsaValue::Subscript { index, .. } => vec![index],
             SsaValue::CaseConvert { subject, .. } => vec![subject],
+            SsaValue::StrLen { subject } => vec![subject],
             SsaValue::ElideEmpty { source, .. } => vec![source],
             SsaValue::Trusted { source } => vec![source],
             SsaValue::Substring { source, .. } => vec![source],

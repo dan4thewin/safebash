@@ -34,7 +34,7 @@ x=hello | /bin/cat'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 0.4
 
 # 12.1 string length ($(strlen x); the ${#x} sugar is retired — DD#75 §4)
-run_sash 'x="hello"; echo $(strlen x)'
+run_sash 'x="hello"; echo $(strlen $x)'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 12.1
 
 # 12.2 null-terminated for C interop
@@ -42,7 +42,7 @@ run_sash 'x="hello"; /usr/bin/printf "%s\n" "$x"'
 [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 12.2
 
 # 12.3 O(1) length — $(strlen x) is a counted-string read, no scan
-run_sash 'x="hello world test"; echo $(strlen x)'
+run_sash 'x="hello world test"; echo $(strlen $x)'
 [[ $rc = 0 && $out = "16" && -z $err ]]; chk 12.3
 
 # 12.4 string interpolation in assignment (Concat in value position): the c
@@ -80,7 +80,7 @@ else
 fi
 
 # 30.3 x=5 is a string (one byte long)
-run_sash 'x=5; echo $(strlen x)'
+run_sash 'x=5; echo $(strlen $x)'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 30.3
 
 # 30.4 int x=5 required for integer
@@ -488,7 +488,7 @@ run_sash 's=hi; echo $(join s ",")'
 # DD#75 §2 — polymorphic `len`: dispatch on the operand's TYPE, not the `$`
 # sigil (array/map → count; string → byte length; undefined → compile error).
 # 75.1 strlen on a string → byte length (was garbage: arrlen on a non-table)
-run_sash 's=hello; int n=$(strlen s); echo $n'
+run_sash 's=hello; int n=$(strlen $s); echo $n'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.1
 # 75.2 len on an array → element count
 run_sash 'array a=(1 2 3); int n=$(len a); echo $n'
@@ -625,11 +625,11 @@ run_sash 'echo $(len nope)'
 [[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 75.27
 # 75.28 no false positive: `strlen` of a declared scalar and `len` of an
 #       array both compile
-run_sash 's=hi; array a=(1 2 3); echo "$(strlen s) $(len a)"'
+run_sash 's=hi; array a=(1 2 3); echo "$(strlen $s) $(len a)"'
 [[ $rc = 0 && $out = "2 3" && -z $err ]]; chk 75.28
 # 75.29 a loop variable is a valid len operand (the type_check-side gap this
 # avoids: SB5031's scope machinery already tracks `for` variables)
-run_sash 'array a=(hi bye); for e in @a; do echo $(strlen e); done'
+run_sash 'array a=(hi bye); for e in @a; do echo $(strlen $e); done'
 [[ $rc = 0 && $out = $'2\n3' && -z $err ]]; chk 75.29
 # 75.30 `len <typo>` inside a function is also rejected
 run_sash 'fn f { echo $(len bogus); }
@@ -670,10 +670,10 @@ run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 # for `join a SEP`; see notes/tasks/janet-join-intrinsic-gaps.md. native,c.)
 if in_modes native,c; then
     run_sash 's=hi; array a=(x y z); map m=([k]=v)
-echo "$(strlen s) $(strlen $s) $(len a) $(len m)"
+echo "$(strlen $s) $(len a) $(len m)"
 echo "$(join a ",")"
 for k in $(keys m); do echo "$k"; done'
-    [[ $rc = 0 && $out = $'2 2 3 1\nx,y,z\nk' && -z $err ]]; chk 75.38
+    [[ $rc = 0 && $out = $'2 3 1\nx,y,z\nk' && -z $err ]]; chk 75.38
 else
     skip_chk 75.38
 fi
@@ -779,90 +779,94 @@ else
     skip_chk 75.54
 fi
 
-# ── DD#75 §2 amendment: `strlen` names the byte-length question ──
+# ── DD#75 §2 / DD#102: `strlen` names the byte-length question, of a VALUE ──
 # `len` dispatched on the operand's TYPE — bytes for a scalar, elements for a
 # collection — so two different questions shared one spelling with nothing at
 # the call site to say which was being asked. `strlen` asks for bytes outright
 # and does not dispatch. It is int-typed like `len`, so it is legal in `$( )`,
 # as an `int` initialiser, and as an arith sexpr operand.
+#
+# DD#102: the operand is a VALUE, lowered exactly as `toupper`'s is. `strlen`
+# was the only non-collection intrinsic that resolved a NAME, so the adjacent
+# `toupper s` and `strlen s` asked about different things — the first about the
+# one-character string "s", the second about the variable `s`.
 run_sash 'str s = hello
-echo $(strlen s)'
+echo $(strlen $s)'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.55
 
 # 75.56 int-typed: assigning to an `int` is not SB4030
 run_sash 'str s = hello
-int n = $(strlen s)
+int n = $(strlen $s)
 echo $n'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.56
 
 # 75.57 empty scalar is 0 bytes, not an error
 run_sash 'str s = ""
-echo $(strlen s)'
+echo $(strlen $s)'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 75.57
 
-# 75.58 `$s` spells the same operand as `s` (the sigil is not the dispatch).
-# native,c: janet emits the operand verbatim, so `$s` reaches the script as a
-# bare symbol and it fails to compile. Pre-existing and not specific to
-# `strlen` — `$(len $s)` fails there identically. See
-# notes/tasks/janet-intrinsic-dollar-operand.md.
-if in_modes native,c; then
-    run_sash 'str s = abcd
-echo $(strlen $s)'
-    [[ $rc = 0 && $out = "4" && -z $err ]]; chk 75.58
-else
-    skip_chk 75.58
-fi
+# 75.58 `$s` and `s` are DIFFERENT operands, exactly as they are to `toupper`:
+# the sigil is the whole difference between the variable and a literal word.
+# Before DD#102 both spellings named the variable and this printed "5 5".
+run_sash 'str s = hello
+echo "$(strlen $s) $(strlen s)"'
+[[ $rc = 0 && $out = "5 1" && -z $err ]]; chk 75.58
 
 # 75.59 arith sexpr operand (DD#58). janet has no sexpr intrinsic call at all
 # — `(len a)` fails there identically — so this is native,c.
 if in_modes native,c; then
     run_sash 'str s = hello
-int n = $(( (strlen s) * 2 ))
+int n = $(( (strlen $s) * 2 ))
 echo $n'
     [[ $rc = 0 && $out = "10" && -z $err ]]; chk 75.59
 else
     skip_chk 75.59
 fi
 
-# 75.60/75.61 `strlen <collection>` is a compile error. It used to read the
-# scalar slot of a name that has none and answer `0` — a silently wrong
-# number, which is the whole reason the spelling was split. It deliberately
-# does NOT mirror bash's `${#a}` = "byte length of element 0"; the converter
-# spells that `$(strlen a[0])` explicitly.
+# 75.60 the sexpr operand keeps the same distinction. The rebuild that feeds
+# an int intrinsic from sexpr args collapsed `Var` and `DollarVar` into one
+# `Literal` — lossless while every int intrinsic resolved a name, and silently
+# wrong the moment `strlen` took a value: `(strlen $s)` measured the name.
+if in_modes native,c; then
+    run_sash 'str s = hello
+echo "$s" > /dev/null
+int n = $(( (strlen s) * 2 ))
+echo $n'
+    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.60
+else
+    skip_chk 75.60
+fi
+
+# 75.61 a collection name is a word like any other — `strlen a` measures the
+# one-character string "a", just as `toupper a` yields "A". This used to be
+# SB4030 ("needs a scalar"), which only made sense while the operand was a
+# name. `len` remains the way to count a collection.
 run_sash 'array a = ( x y z )
-echo $(strlen a)'
-[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"needs a scalar"* ]]; chk 75.60
+echo "$(strlen a) $(len a)"'
+[[ $rc = 0 && $out = "1 3" && -z $err ]]; chk 75.61
 
-run_sash 'map m
-m[k] = v
-echo $(strlen m)'
-[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk 75.61
-
-# 75.62-75.65 `strlen` resolves a NAME, so every spelling `len` cannot resolve
-# it cannot resolve either. Each of these compiled and printed `0` when
-# `strlen` was first wired: `expr_to_string` rendered the operand as source
-# text (quotes and all), the text was looked up as a name, nothing was found,
-# and the empty scalar slot measured 0 bytes. `len` had guarded all four since
-# DD#75 §2 (SB5062 for a non-name spelling, SB5039 for an unknown name);
-# `strlen` was simply missing from both tables.
+# 75.62-75.65 every spelling `len` cannot resolve as a name, `strlen` now
+# takes as a value. All four were SB5062/SB5039 rejections under the name
+# operand; under DD#102 each is an ordinary argument evaluation.
 run_sash 'str s = hello
 echo $(strlen "$s")'
-[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.62
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.62
 
+# a bare word is its own text, not a missing variable
 run_sash 'echo $(strlen hello)'
-[[ $rc != 0 && -z $out && $err == *SB5039* && $err == *'`strlen hello`'* ]]; chk 75.63
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.63
 
 run_sash 'echo $(strlen $(echo hi))'
-[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.64
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.64
 
-# A cell is a scalar, so `$(strlen a[0])` is a coherent question — but the
-# operand is resolved by name, and `a[0]` is not one. It reads 0 rather than
-# the element's length, so it is rejected until the cell form is built (the
-# converter needs it for bash's `${#a}` / `${#a[i]}`).
+# 75.65 the cell form, which the name operand could not express at all. A cell
+# is a scalar, so `${a[0]}` was always a coherent question; it was rejected
+# only because `a[0]` is not a name. DD#102 dissolves the question — a cell
+# interpolates like any other value. (The converter needs this for bash's
+# `${#a[i]}`.)
 run_sash 'array a = ( hello xy )
-echo ${a[1]}
-echo $(strlen a[0])'
-[[ $rc != 0 && $err == *SB5062* ]]; chk 75.65
+echo $(strlen ${a[0]})'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.65
 
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
@@ -977,7 +981,7 @@ run_sash 'int n=5; echo hi > $n'
 # 75.66 `len <scalar>` names the replacement
 run_sash 'str s = hello
 echo $(len s)'
-[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'$(strlen s)'* ]]; chk 75.66
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *'$(strlen $s)'* ]]; chk 75.66
 
 # 75.67 a loop variable is a scalar too — this was the polymorphic case
 run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
@@ -985,7 +989,7 @@ run_sash 'array a=(hi bye); for e in @a; do echo $(len e); done'
 
 # 75.68 `len` still counts an array, and `strlen` still measures a string
 run_sash 'array a=(x y z); str s=hello
-echo "$(len a) $(strlen s)"'
+echo "$(len a) $(strlen $s)"'
 [[ $rc = 0 && $out = "3 5" && -z $err ]]; chk 75.68
 
 # 75.69 DD#100 Part D: the splat operand is gone from `len`

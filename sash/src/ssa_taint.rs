@@ -337,6 +337,7 @@ fn value_is_tainted(
         | SsaValue::RegexReplace { .. }
         | SsaValue::RegexMatch { .. }
         | SsaValue::CaseConvert { .. }
+        | SsaValue::StrLen { .. }
         | SsaValue::Ternary { .. }
         | SsaValue::DefaultValue { .. } => any_tainted(value.child_values(), taint, user_functions),
 

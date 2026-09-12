@@ -388,7 +388,7 @@ echo $s'
 if in_modes native,c; then
     run_sash 's=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
-echo $(strlen s)'
+echo $(strlen $s)'
     [[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
 else
     skip_chk sr.6

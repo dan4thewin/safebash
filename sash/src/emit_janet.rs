@@ -1940,21 +1940,28 @@ fn cmdsub_path_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
 /// generic exec fallback. Three unrelated families, each in its own
 /// function: the length pair, the DD#60 argv trio, and DD#41 `join`.
 fn cmdsub_data_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
-    cmdsub_length_intrinsic(name, c)
+    cmdsub_length_intrinsic(name, c, ctx)
         .or_else(|| cmdsub_argv_intrinsic(name, c, ctx))
         .or_else(|| cmdsub_join_intrinsic(name, c, ctx))
 }
 
-/// `$(len ARR)` → element count; `$(strlen s)` → byte length. Janet's
-/// `length` serves both; only the operand's kind differs.
-fn cmdsub_length_intrinsic(name: &str, c: &Command) -> Option<String> {
+/// `$(len ARR)` → element count; `$(strlen X)` → byte length. Janet's
+/// `length` serves both, but the operands differ in kind: DD#102 made
+/// `strlen` take a *value* (lowered like `toupper`'s operand), while `len`
+/// still names a collection.
+fn cmdsub_length_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
     if c.args.len() != 1 {
         return None;
     }
-    let operand = expr_to_literal(&c.args[0]);
     match name {
-        "len" => Some(format!("(string (length {operand}))")),
-        "strlen" => Some(format!("(string (length (or {operand} \"\")))")),
+        "len" => {
+            let operand = expr_to_literal(&c.args[0]);
+            Some(format!("(string (length {operand}))"))
+        }
+        "strlen" => {
+            let subj = emit_expr_inline(&c.args[0], ctx);
+            Some(format!("(string (length {subj}))"))
+        }
         _ => None,
     }
 }

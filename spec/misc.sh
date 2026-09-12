@@ -208,7 +208,7 @@ echo $(len a)'
 read a < hp_wide.nul
 attest x in a [[ -n $x ]]
 str e="${a[1]}"
-echo "$(len a) $(strlen e)"'
+echo "$(len a) $(strlen $e)"'
   [[ $rc = 0 && $out = "2 30000" && -z $err ]]; chk hp.4
 
   # hp.5 ...and the first element is its full 70000 bytes, not 65536
@@ -216,7 +216,7 @@ echo "$(len a) $(strlen e)"'
 read a < hp_wide.nul
 attest x in a [[ -n $x ]]
 str e="${a[0]}"
-echo $(strlen e)'
+echo $(strlen $e)'
   [[ $rc = 0 && $out = "70000" && -z $err ]]; chk hp.5
 else
   skip_chk hp.1; skip_chk hp.2; skip_chk hp.3; skip_chk hp.4; skip_chk hp.5

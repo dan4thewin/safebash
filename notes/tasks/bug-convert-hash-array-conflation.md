@@ -1,9 +1,9 @@
 title: bug: sash-convert conflates hashes and arrays
-status: blocked
+status: ready
 absorbed-by: dd75-len-collection-only-strlen
 priority: P2
 kind: bug
-depends: [strlen-cell-operand-spelling]
+depends: []
 gates:
   - "bash `${#a}` on an array converts to the length of element 0, not the element count"
   - "bash `${#a[@]}` / `${#a[*]}` convert to the element count"
@@ -75,3 +75,15 @@ question has no spelling yet: `$(strlen a[0])` does not parse as a cell, and
 Filed as `strlen-cell-operand-spelling` for DG. The other two rows
 (`${#a[@]}` / `${#a[*]}` -> `$(len a)`) are unblocked but are not worth
 landing alone -- the point of the four-row table is that it is written once.
+
+
+## Unblocked 2026-09-12
+
+DD#102 gave `strlen` a value operand, so the spelling this needed now exists
+and works in all three backends:
+
+    echo "${#a}"     # bash: bytes of element 0  ->  $(strlen ${a[0]})
+    echo "${#a[i]}"  # bash: bytes of element i  ->  $(strlen ${a[i]})
+    echo "${#a[@]}"  # bash: element count       ->  $(len a)
+
+No language-surface work remains; this is now a converter-only change.

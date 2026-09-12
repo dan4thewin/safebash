@@ -182,6 +182,21 @@ pub(super) fn lower_value(
                 op, s_ptr, s_len, builder, module, externs,
             )
         }
+        // DD#102: `$(strlen X)` — `lower_value` already yields the operand's
+        // length alongside its pointer, so the byte count needs no runtime
+        // call of its own.
+        SsaValue::StrLen { subject } => {
+            let (_s_ptr, s_len) = lower_value(
+                subject,
+                builder,
+                module,
+                vars,
+                literals,
+                externs,
+                exit_status_var,
+            );
+            super::types::emit_int_to_str(builder, module, externs, s_len)
+        }
         SsaValue::DefaultValue { source, default } => {
             let (s_ptr, s_len) = lower_value(
                 source,
@@ -1477,46 +1492,37 @@ pub(super) fn scan_value_for_vars(val: &SsaValue, refs: &mut std::collections::H
 /// behavior is identical (ArithBinOp/Ternary intentionally not recursed, as
 /// before).
 fn scan_composite_children(val: &SsaValue, refs: &mut std::collections::HashSet<String>) {
+    for child in composite_children(val) {
+        scan_value_for_vars(child, refs);
+    }
+}
+
+/// The owned sub-values `scan_composite_children` recurses into. Naming them
+/// rather than recursing inline flattens the walk to a single loop: every arm
+/// used to carry its own `for` or its own repeated calls, which is nesting
+/// the cognitive metric charges for and which said nothing about the shape.
+///
+/// Deliberately *not* `SsaValue::child_values()`, which is a different set:
+/// it recurses `ArithBinOp`/`Ternary` (never scanned here) and omits
+/// `IntCell` (always scanned here).
+fn composite_children(val: &SsaValue) -> Vec<&SsaValue> {
     match val {
-        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => {
-            for p in parts {
-                scan_value_for_vars(p, refs);
-            }
-        }
-        SsaValue::CmdSubst { argv, .. } => {
-            for a in argv {
-                scan_value_for_vars(a, refs);
-            }
-        }
-        SsaValue::AssocArray(pairs) => {
-            for (_, v) in pairs {
-                scan_value_for_vars(v, refs);
-            }
-        }
-        SsaValue::Subscript { index, .. } => {
-            scan_value_for_vars(index, refs);
-        }
-        SsaValue::IntCell(inner) => {
-            scan_value_for_vars(inner, refs);
-        }
+        SsaValue::Concat(parts) | SsaValue::IndexedArray(parts) => parts.iter().collect(),
+        SsaValue::CmdSubst { argv, .. } => argv.iter().collect(),
+        SsaValue::AssocArray(pairs) => pairs.iter().map(|(_, v)| v).collect(),
+        // Every single-operand wrapper recurses identically.
+        SsaValue::Subscript { index: inner, .. }
+        | SsaValue::IntCell(inner)
+        | SsaValue::CaseConvert { subject: inner, .. }
+        | SsaValue::StrLen { subject: inner } => vec![inner],
         SsaValue::RegexReplace {
             subject,
             pattern,
             replacement,
             ..
-        } => {
-            scan_value_for_vars(subject, refs);
-            scan_value_for_vars(pattern, refs);
-            scan_value_for_vars(replacement, refs);
-        }
-        SsaValue::RegexMatch { subject, pattern } => {
-            scan_value_for_vars(subject, refs);
-            scan_value_for_vars(pattern, refs);
-        }
-        SsaValue::CaseConvert { subject, .. } => {
-            scan_value_for_vars(subject, refs);
-        }
-        _ => {}
+        } => vec![subject, pattern, replacement],
+        SsaValue::RegexMatch { subject, pattern } => vec![subject, pattern],
+        _ => Vec::new(),
     }
 }
 

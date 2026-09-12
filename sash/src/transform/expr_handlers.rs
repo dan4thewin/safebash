@@ -247,19 +247,21 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
     argv
 }
 
-/// `$(strlen s)` — byte length, always. Amends DD#75 §2: `len` dispatched on
-/// the operand's type, so *bytes* and *elements* shared one spelling and the
-/// call site could not say which was meant. `strlen` names the byte-length
-/// question outright and does not dispatch.
+/// `$(strlen X)` — byte length of an ordinary value operand. Amends DD#75 §2
+/// (`len` dispatched on the operand's type, so *bytes* and *elements* shared
+/// one spelling) and DD#102 (the operand is a value, not a name).
+///
+/// The operand is lowered by `expr_to_value` exactly as `toupper`'s is, so
+/// quoting and interpolation are normal argument evaluation: `strlen s` is
+/// the length of the string `"s"`, `strlen $s` the length of `s`'s value, and
+/// `strlen ${a[0]}` the length of that cell. `None` on wrong arity, which
+/// falls through to the generic cmdsub path.
 fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
-    let arg = c.args.first()?;
-    let s = expr_to_string(arg);
-    let name = s.strip_prefix('$').unwrap_or(&s).to_string();
-    let name = super::expressions::resolve_args_name(&name, state);
-    Some(SsaValue::ParamExpansion {
-        var: state.lookup(&name),
-        operator: "strlen".to_string(),
-        operand: String::new(),
+    if c.args.len() != 1 {
+        return None;
+    }
+    Some(SsaValue::StrLen {
+        subject: Box::new(expr_to_value(&c.args[0], state)),
     })
 }
 
@@ -656,16 +658,24 @@ fn is_arith_int_intrinsic(name: &str) -> bool {
 /// normal intrinsic builder can consume it. Only simple name/number operands
 /// are supported (`len a`, `len $a`); a complex operand returns `None` (the
 /// caller falls back to the IntFuncCall path).
+///
+/// `Var` and `DollarVar` rebuild to *different* expressions. Both spellings
+/// name the same variable to `len`, so collapsing them to one `Literal` was
+/// lossless while every int intrinsic resolved a name — but DD#102 gave
+/// `strlen` a value operand, where `s` is a one-character string and `$s` is
+/// the variable's contents. Flattening made `$(( (strlen $s) ))` measure the
+/// name.
 fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Command> {
     let mut cmd_args = Vec::with_capacity(args.len());
     for a in args {
-        let lit = match a {
-            ArithExpr::Var(n) | ArithExpr::DollarVar(n) => n.clone(),
-            ArithExpr::Literal(n) => n.to_string(),
+        let kind = match a {
+            ArithExpr::Var(n) => ExprKind::Literal(n.clone()),
+            ArithExpr::DollarVar(n) => ExprKind::SimpleExpansion(n.clone()),
+            ArithExpr::Literal(n) => ExprKind::Literal(n.to_string()),
             _ => return None,
         };
         cmd_args.push(Expr {
-            kind: ExprKind::Literal(lit),
+            kind,
             span: Span::new(0, 0),
         });
     }

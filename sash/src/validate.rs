@@ -5035,7 +5035,10 @@ fn record_cmdsub_value_fn_operands(e: &Expr, set: &mut HashSet<String>) {
 
 fn record_value_fn_operand(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
-    if name == "len" || name == "strlen" {
+    // DD#102: `strlen` is absent here because its operand is a value, not a
+    // name — `strlen s` reads no variable `s`, and `strlen $s` is an ordinary
+    // expansion the generic scan already records.
+    if name == "len" {
         record_len_operand(c, set);
     } else if name == "join" || name == "keys" {
         record_collection_operand(c, set);
@@ -6040,10 +6043,6 @@ fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     };
     let accepted = match (builtin, classify_operand(arg)) {
         ("len", OperandForm::Other) => "a variable name (`len a` or `len $a`)".to_string(),
-        // `strlen` resolves a name exactly as `len` does, so every spelling
-        // `len` cannot resolve, `strlen` cannot either — it read the scalar
-        // slot of whatever `expr_to_string` rendered and answered 0.
-        ("strlen", OperandForm::Other) => "a variable name (`strlen s` or `strlen $s`)".to_string(),
         ("join", OperandForm::Dollar(n)) => {
             format!("a collection name (`join {n} SEP`) — a builtin takes the name")
         }
@@ -6175,8 +6174,7 @@ fn check_len_in_scope(
     }
 }
 
-/// If `expr` is a `$(len NAME)` / `$(strlen NAME)` command substitution,
-/// check its operand.
+/// If `expr` is a `$(len NAME)` command substitution, check its operand.
 fn flag_len_cmdsub(
     expr: &Expr,
     known: &HashSet<String>,
@@ -6208,9 +6206,10 @@ fn flag_len_cmdsub(
     ));
 }
 
-/// The builtin name and its bare-identifier operand, for a `$(len NAME)` or
-/// `$(strlen NAME)` command substitution. Both resolve the operand as a name
-/// and both read 0 from a slot that does not exist, so both need the check.
+/// The builtin name and its bare-identifier operand, for a `$(len NAME)`
+/// command substitution: it resolves the operand as a name and reads 0 from a
+/// slot that does not exist. DD#102 moved `strlen` to a value operand, where
+/// an unknown bare word is a string literal rather than a missing variable.
 fn len_cmdsub_operand(expr: &Expr) -> Option<(String, String)> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
@@ -6219,7 +6218,7 @@ fn len_cmdsub_operand(expr: &Expr) -> Option<(String, String)> {
         return None;
     };
     let builtin = expr_literal_str(&c.name);
-    if builtin != "len" && builtin != "strlen" {
+    if builtin != "len" {
         return None;
     }
     // subscript cell / expansion / cmdsub operand — resolved elsewhere

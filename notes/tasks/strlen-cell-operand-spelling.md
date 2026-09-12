@@ -1,6 +1,6 @@
 ---
 title: "How is a cell spelled as a `strlen` operand?"
-status: question
+status: done
 priority: P2
 kind: decision
 depends: []
@@ -95,3 +95,26 @@ unchanged. Janet lowers from the AST rather than the SSA, so it needs a
 Until this is settled, `$(strlen <any cell spelling>)` is rejected SB5062
 (spec `types.sh` 75.65), which is correct-but-unbuilt rather than silently
 wrong.
+
+
+# DONE — dissolved by DD#102 (2026-09-12)
+
+DG settled the larger question this was a corner of: *"strlen should behave
+like toupper."* `strlen` resolves its operand as a **value**, so a cell needs
+no spelling of its own — `$(strlen ${a[0]})` is an ordinary value read, like
+`${a[i]:-x}` and the rest of the series this filing pointed at.
+
+None of options A-D was taken. A was the right recommendation *given* a
+name-resolving `strlen`, and its stated cost — "`strlen` becomes the one
+name-resolving builtin that also accepts a value form, so the SB5062 message
+has to explain a narrower rule" — is exactly what disappears when the operand
+is a value throughout. The question was downstream of the exception, not of
+the cell.
+
+The parked `strlen-cell-ssa-node.patch` was not applied; the shipped
+`SsaValue::StrLen { subject }` takes any value rather than a cell
+specifically, and native codegen needs no `emit_strlen` call at all because
+`lower_value` already returns the operand's length beside its pointer.
+
+Verified: `$(strlen ${a[0]})` returns the element's byte length in all three
+backends (`spec/types.sh` 75.65).
