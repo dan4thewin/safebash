@@ -54,3 +54,13 @@ known coverage.
 
 - Re-implementing any rule.
 - Re-architecting the file. Tests first; structure later.
+
+## Re-measured 2026-09-12 — the filing's sizing is off by 6.6x
+
+`validate.rs` is **7222 lines**, not the 1087 the filing states. The scope
+described ("one test file per SB code") is therefore far larger than the
+estimate it was filed under. `sash/tests/validate/` still does not exist.
+
+Re-derive the SB-code inventory and re-estimate before scheduling; the listed
+codes (SB5001, SB4001, SB5006, …) were enumerated against a file less than a
+sixth of the current size.

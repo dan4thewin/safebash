@@ -1,6 +1,6 @@
 ---
 title: "SSA taint backstop: make it a complete gate (capture path + arrays + positions)"
-status: ready
+status: deferred
 priority: P2
 kind: hardening
 depends: []
@@ -49,3 +49,32 @@ This is a bigger architectural change than the original
 superseded by this one). The CST pass remains the authoritative, complete,
 position-uniform gate (DD#24 amendment, taint.sh 60.37–60.55); this task is
 defense-in-depth so `--no-taint-cst` is a genuine second gate.
+
+## DG's ruling (2026-09-12) — deferred, conditionally
+
+> "So long as all scenarios are caught by the earlier taint pass, all
+> defense-in-depth should be deferred."
+
+The condition is testable, so it is recorded here rather than assumed.
+
+**Measured 2026-09-12.** Three laundering shapes on a `read` array —
+`$(join a ,)`, `${a[0]}`, and `[[ "${a[0]}" = … ]]` — each compile to a
+**working binary** under `--no-taint-cst` and print the tainted data. Scalar
+taint is caught in both the direct (`$(getenv HOME)` → `echo`) and laundered
+(`$(dtoi $s)`) forms. So the backstop today covers scalars and not
+collections, exactly as the three gaps above describe.
+
+**The condition holds.** Every one of those shapes is rejected **SB5020** by
+the CST pass in a normal compile, and the position-uniformity specs that pin
+CST completeness (`taint.sh` 60.37-60.55) pass in native and c, with a single
+janet skip.
+
+**What would reopen this.** The deferral rests entirely on the CST pass being
+complete. Any CST taint hole found — of the kind SB5021 and the two-arg `read`
+taint bug both were — invalidates the premise and makes this urgent again,
+because nothing else catches array-shaped laundering.
+
+Worth noting for whoever picks it up: `run_ssa_taint_gate` skips only on
+`--no-taint`, so the SSA gate **does** run during ordinary compilation. This is
+a live second gate with a collection-shaped hole, not merely a `--no-taint-cst`
+debugging aid.

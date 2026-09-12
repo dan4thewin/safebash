@@ -196,3 +196,63 @@ regressions, commit.
    clean taint clear, SB4030 exemption; specs.
 
 See notes/tasks/dd93-attest-ergonomics.md for the live tracker.
+
+## Considered and not pursued (2026-09-12)
+
+Four extensions were noted while the four stages landed and carried on the
+tracker as follow-ups. DG closed all four rather than hold them as backlog:
+
+- **A UTF-8-aware shape test.** Would need its own spelling, and the existing
+  shape tests are deliberately byte-oriented ASCII classes.
+- **The remaining POSIX-class shape tests** (`a?` alnum, `d?` digit, `l?`
+  alpha, `s?` space). Mechanical — the `?`-suffix namespace is reserved in
+  `is_unary_test_op` and each class is one `all_bytes_match` predicate plus a
+  wrapper and three dispatch arms — but not wanted absent a real use.
+- **An array analogue of the arith-assign form**, `attest e in a (( … ))`.
+- **Same-name in-place retype**, `attest s (( s = s ))`. S4 deliberately
+  requires distinct names (SB5053); this would relax that.
+
+The reserved `?` namespace and the `all_bytes_match` template stay in place,
+so any of these remains cheap if a use appears. Nothing is filed.
+
+## The map 2-binder form is validation-only (2026-09-12)
+
+`attest k v in m [[ … ]]` **no longer has a taint role**. DG kept the form
+(2026-09-10) on its own merits; this records why its original justification
+is gone, so it is not later mistaken for dead code.
+
+Every route to a tainted map is closed at construction, measured against the
+release binary:
+
+| route | result |
+|---|---|
+| `cfg[b] = $(getenv X)` — tainted value into a clean map | SB5021 |
+| `map cfg = @{arr:~}` from a tainted `read` array | SB5020 |
+| `matchall` on an unattested tainted scalar, then `@{p:~}` | SB5020 |
+
+And the decisive one: **`attest k v in cfg` cannot clear a tainted map even
+if written**, because the map construction is rejected before the attest is
+reached — the same SB5020. There is no program in which the 2-binder form
+clears taint.
+
+It remains a live **runtime gate** on a clean map:
+
+```sh
+attest k v in cfg [[ $k =~ ^[a-z]+$ && $v =~ ^[0-9]+$ ]]
+```
+
+An entry failing the predicate aborts with `attest: cfg failed the gate`.
+That is worth keeping because **`attest` is the only assert-with-diagnostic
+in the language**: DD#70 makes a bare `[[ ]]` a must-consume compile error
+(SB4018), and `[[ … ]] || exit 1` aborts silently. Removing the map form
+would delete the only way to validate a map's contents with a message, for
+no safety gain.
+
+For **scalars and arrays** the taint role is still live. The asymmetry is
+deliberate.
+
+### Naming note
+
+"attest" reads as vouching for untrusted data, which is precisely what the
+map form no longer does. No rename is proposed — recorded so the mismatch is
+understood rather than rediscovered.

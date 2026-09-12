@@ -1,54 +1,74 @@
----
-title: "bug: native and c disagree on a redirect open failure in a while condition"
 status: ready
 priority: P2
 kind: bug
 depends: []
 gates:
-  - "`while echo hi > /nonexistent_dir/f { … }` behaves identically in native and c"
-  - "a spec pins whichever behaviour DG rules correct, in both modes"
----
+  - "`while echo hi > /nonexistent/f { … }` catches in native, as it already does in c"
+  - "the loop condition is false, the body does not run, rc is 0, and nothing is printed"
+  - "a spec pins the `while` form beside the existing `if` and `||` ones (55.60-55.64)"
 
-## What
-
-DD#55 says a redirect `open(2)` failure aborts unless an enclosing condition
-catches it. `if` and `||` catch it in both backends (spec 55.25, 55.50). A
-`while` condition does not agree:
+# bug: native aborts on a failed redirect open in a `while` condition
 
 ```sh
-int i=0
-while echo hi > /nonexistent_dir_55/f { i=$(( i + 1 )); if (( i > 2 )) { break } }
-echo "after i=$i"
+int n = 0
+while echo hi > /nonexistent_dir_55/f {
+  n = $(( n + 1 ))
+  if (( n > 2 )) { break }
+}
+echo "done n=$n"
 ```
 
-| mode   | result                                                     |
-|--------|------------------------------------------------------------|
-| native | rc=1, `<argv0>: /nonexistent_dir_55/f: No such file or directory` |
-| c      | rc=0, `after i=0` — caught, loop never runs                |
+| | result |
+|---|---|
+| **native** | `<argv0>: /nonexistent_dir_55/f: No such file or directory`, **rc 1** |
+| **c** | `done n=0`, rc 0 |
+| bash | diagnostic, then `done n=0`, rc 0 |
 
-(janet aborts on nothing at all — separate, filed as
-`c-janet-dd55-abort-channel`.)
+c is correct and native is wrong.
 
-## Root
+## This is settled, not a design question
 
-The two backends compute `in_condition` differently:
+It was originally filed as a DD#55 behaviour question for DG. It is not one —
+DD#55 already answers it twice:
 
-- native `codegen/entry.rs::emit_block_insts` — `Terminator::Branch` only,
-  and the *last Command/Pipeline/read* of the block.
-- c `emit_c.rs::emit_block` — `Terminator::Branch | Terminator::Loop`, and
-  the *last inst* of the block.
+- line 39 tabulates `cmd || action` / **`if cmd`** / **`while cmd`** together
+  as "Explicit handling — `$?` available in handling position";
+- line 96 defines **condition position** as "`if` / `while` / `until` test,
+  operand of `!`".
 
-So a loop-condition block is a catching context in c and not in native.
+`while` is a condition position, so a failed open there is caught. The `if`
+form already behaves that way in both backends (verified), and specs
+55.60-55.64 pin it for the read family. `while` was simply missed.
 
-## Not caused by the read-family guard
+## The silence is deliberate — do not "fix" it
 
-Found while fixing `read-family-redirect-open-not-guarded` (the read family
-had no guard at all, so the divergence was unreachable through a read). The
-`echo` reproducer above predates that work — verified at `c1e9807`.
+sash prints nothing on a *caught* open failure where bash prints its
+diagnostic. That divergence is intentional and shipped: the accepted gates on
+`abort-diagnostics-remaining` include
 
-## Decision needed
+> "diagnostics fire only on the actual abort — caught (if/||) and
+> `-`-suppressed stay silent"
 
-Which is right? A `while` condition reads like a catching context by analogy
-with `if` (the loop simply does not run), but `while` is also the one
-construct where an uncatchable setup failure would otherwise spin. DG rules;
-then make both backends agree and pin it with a spec in `native,c`.
+So the target behaviour is c's exactly — catch, stay silent, rc 0.
+
+## Mechanism
+
+The two backends compute `in_condition` from different terminator sets:
+
+| backend | site | test |
+|---|---|---|
+| native | `codegen/entry.rs::emit_block_insts:293` | `Terminator::Branch { .. }` |
+| c | `emit_c.rs:660` | `Terminator::Branch { .. } \| Terminator::Loop { .. }` |
+
+Native never treats a `Loop`-terminated block as a condition, so the guard in
+`emit_redirect_guarded_body` takes the abort path instead of the catch path.
+
+A second, smaller difference sits next to it and should be checked while
+there: c takes the last *instruction* of the block (`i == last`), native takes
+the last Command/Pipeline/read by `rposition`. They agree on every case tested
+so far, but they are not the same rule.
+
+## Found
+
+2026-09-11, fixing `read-family-redirect-open-not-guarded`. Independent of it:
+reproduces at `c1e9807` with a plain `echo` and no reads at all.

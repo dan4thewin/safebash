@@ -147,3 +147,10 @@ filed.
 - AGENTS.md "Bug policy" — zero tolerance; ICE fire is a
   stop-everything event, which is exactly what compile-time would
   prevent
+
+## Re-measured 2026-09-12
+
+**16 sites**, down from the 23 in the 2026-06-11 snapshot. The cohort A–D
+structure and the per-site decision protocol still apply; the file
+distribution should be re-derived before starting, since seven sites have
+gone.

@@ -1,6 +1,7 @@
 ---
 title: "record: the map 2-binder `attest` is validation-only now (its taint role is dead)"
-status: ready
+status: done
+completed: 2026-09-12
 priority: P3
 kind: docs
 depends: []
@@ -8,6 +9,10 @@ gates:
   - "DD#93 (and/or DD#99) records that `attest k v in m` no longer has a taint role"
   - "no behaviour change — DG decided 2026-09-10 to keep the form"
 ---
+
+> **DONE 2026-09-12** — recorded in `notes/decisions/DD93-attest-ergonomics.md`
+> under "The map 2-binder form is validation-only". All four routes were
+> re-measured; see the note below on the stronger finding.
 
 ## What
 
@@ -51,3 +56,23 @@ there.
 "attest" reads as vouching for untrusted data, which is precisely what the map
 form no longer does. A rename is not proposed — noting it so the asymmetry is
 deliberate rather than forgotten.
+
+## Verified 2026-09-12
+
+All routes re-measured against the release binary. The filing's table holds,
+with one correction and one addition:
+
+| route | filing said | measured |
+|---|---|---|
+| tainted value into a map by subscript | SB5021 | **SB5021** |
+| `map m = @{arr:DISP}` from a tainted array | SB5020 | **SB5020** |
+| matchall on an unattested tainted scalar → map | (not listed) | **SB5020** |
+| **`attest k v in m` on a tainted map** | (not listed) | **SB5020 — the attest is never reached** |
+
+That last row is stronger evidence than the filing offered: it is not merely
+that taint *does not* reach a map, but that the 2-binder form **cannot** clear
+one even when written, because construction is rejected first. There is no
+program in which its taint-clearing role is reachable.
+
+Confirmed still live on a clean map: a passing 2-binder attest compiles and
+the map is readable afterwards.

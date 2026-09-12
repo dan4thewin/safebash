@@ -1,6 +1,7 @@
 ---
 title: "DD#75 §5 args model — remaining polish (len/join/keys on args, $* removal, $@→@args for >9, recursion guard)"
-status: ready
+status: closed
+closed: 2026-09-12
 priority: P3
 kind: task
 depends: []
@@ -13,6 +14,12 @@ gates:
 ---
 
 # DD#75 §5 args model — remaining polish
+
+> **CLOSED (2026-09-12).** Items 1–4 are done (verified by probe, table
+> below). Item 5 is superseded: DG ruled the removed-builtin keyword table
+> goes away entirely, which makes SB5011 the uniform unknown-command answer,
+> so `shift` needs no special case. See
+> `notes/tasks/drop-removed-builtin-table.md`.
 
 The **core** args model shipped 2026-08-21 (unique-name per-invocation array;
 `$1..$9`/`$@`/`$#` desugar; nested/recursive calls no longer leak positionals;
@@ -71,3 +78,54 @@ friendlier. Nice-to-have.
 - **top-level `args` reject** — `@args`/`${args[i]}`/`${#args}` outside a function
   → SB5024 (function-local, like `$1`), via `flag_args_toplevel` in
   `validate.rs::check_positionals`. Specs 75.25/75.26.
+
+## Verified 2026-09-12 — 4 of 5 items are done
+
+Probed against the release binary, not read off the filing:
+
+| item | state | evidence |
+|---|---|---|
+| 1. `len`/`join`/`keys` on `args` | **done** | `f(){ echo $(len args); echo $(join args ,); }; f a b c` → `3` / `a,b,c` |
+| 2. `$*` removal | **done** | `$*` → SB5045 "sash has no `$*` — use `@args` … or `$(join args)`" |
+| 3. `$@` → `@args` splat (>9) | **done** | `$@` is now rejected outright (SB5045); `for x in @args` with 12 args emits all 12. The ">9 drops the tail" cap the filing described is gone with the construct. |
+| 4. recursion guard | **done, better than asked** | SB5037, a clean diagnostic rather than a compiler stack overflow — and it documents that a direct self tail-call is supported. `return down $(( … ))` compiles and runs. |
+| 5. friendlier `shift` diagnostic | **open** | `shift` still gives generic SB5011 "command 'shift' not found — use absolute path or define as function" |
+
+## Item 5 is a fork, not a one-liner
+
+There is an existing removed-builtin table at
+`sash/src/parse/parser.rs:1722–1746` (`source`/`.`, `export`,
+`declare`/`typeset`, `readonly`, `select`). Adding `shift` there is four
+lines — but it **reserves the name**, and that is a behaviour change:
+
+    $ cat a.sash
+    shift() { echo "my shift"; }
+    shift
+    $ sash a.sash && ./a.out
+    my shift                      # works today
+
+    $ cat b.sash
+    select() { echo "my select"; }
+    select
+    $ sash b.sash
+    b.sash:2:1: error [SB5001] sash has no `select`     # name is reserved
+
+So the two options are:
+
+- **(a) parser table**, like `select` — consistent with the rest of the
+  removed-bash-builtin family, but a user-defined `shift()` stops working.
+- **(b) special-case the message at command resolution**, where SB5011 fires
+  — purely additive, better wording when `shift` is undefined, and a
+  user-defined `shift()` still wins. This is what the filing's own wording
+  ("SB5011 → a hint") envisioned, and it does not contradict SB5011's own
+  advice to "define as function".
+
+DD#75 §5 drops `shift` as a *builtin*; nothing in it reserves the *name*.
+
+## Item 5 resolution (DG, 2026-09-12)
+
+Neither option. DG: *"drop the removed-builtin table altogether. error just
+as for any other unknown token in cmd position."* `shift` already gets
+SB5011; once `export`/`declare`/`typeset`/`readonly`/`select` join it, the
+generic message **is** the answer and no per-word hint is wanted. Tracked in
+`notes/tasks/drop-removed-builtin-table.md`.

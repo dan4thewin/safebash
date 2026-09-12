@@ -28,3 +28,14 @@ what they do. The call site already passes the tag `"bodycap"`.
 
 Neither affects behaviour. Filed so the next reader of that code is not sent
 looking for a scope feature that was deleted.
+
+## Verified 2026-09-12
+
+Both traces still present. Line numbers drifted from the filing:
+
+- `parse_local` in comments only — `sash/src/parse/parser.rs:14` and `:648`.
+  The function does not exist.
+- `restore_locals` @ `transform/stmt_handlers.rs:1417`, `save_locals` @ `:1435`
+  (filing said 1409 / 1427).
+
+Cosmetic, no behaviour change. Confirmed still worth doing exactly as filed.

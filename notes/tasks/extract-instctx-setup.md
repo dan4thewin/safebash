@@ -113,3 +113,16 @@ additions follow a one-line pattern, and demonstrates the
 
 2026-05-31, via indexnudge v7 `block_dupes` view (see
 `INDEXNUDGE_UPDATES_2026-05-31.md` from the indexnudge agent).
+
+## Re-measured 2026-09-12 — unchanged, no new information
+
+`block_dupes` still reports the same clusters at the same magnitude
+(28 / 16 / 16 / 12 / 12 occurrences). Nothing has shifted since the
+2026-06-08 investigation, which already established that the filing's
+recommended fix (a method on `InstCtx` returning a tuple) **cannot work** —
+`&mut self` mutably borrows all of `ctx`, so any later `ctx.other_field`
+access is E0503, whereas the current per-field `let` bindings are split
+borrows.
+
+No new evidence; the options remain the two the investigation named (rewrite
+17 handler bodies, or a macro), neither a clear win.

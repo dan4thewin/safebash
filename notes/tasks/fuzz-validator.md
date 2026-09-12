@@ -66,3 +66,15 @@ as the two failure conditions; (d) minimise + fold each finding into a spec.
 **Open (DG decision before building):** differential-vs-bash as the primary
 oracle (recommended) vs. a cheaper accept/reject-only property; grammar-aware
 vs. coverage-guided byte fuzzing (or both); whether to gate `mk test` on it.
+
+## Verified 2026-09-12 — nothing built, and the premise was just confirmed
+
+No harness exists: no `sash/fuzz/`, and no `cargo-fuzz` / `proptest` /
+`arbitrary` dependency in `sash/Cargo.toml`.
+
+The filing's central argument — that the dangerous class is
+**accepted-but-divergent**, not panics or taint bypasses — was independently
+confirmed this session. `[[ -N f ]]` compiles cleanly and returns the wrong
+answer versus bash (`bug-file-test-N-diverges-from-bash`), found by exactly
+the differential-vs-bash method this task proposes, run by hand over one
+operator family. A crash-only or taint-only fuzzer would not have flagged it.

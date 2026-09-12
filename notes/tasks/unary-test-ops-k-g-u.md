@@ -33,3 +33,27 @@ match. Add spec coverage.
 
 Parser-vs-codegen unary-test-op set diff, journal 177. The reverse direction
 (parser over-accepts) was the `-o`/`-R` bug already fixed.
+
+## Verified 2026-09-12 — confirmed exactly as filed
+
+Set-diff of the two functions:
+
+- `codegen/tests.rs::file_test_op_code` (227–249) implements **20** ops
+  including `-k`→10, `-g`→12, `-u`→13.
+- `parse/parser.rs::is_unary_test_op` (1488–1520) omits **exactly those
+  three** and no others from the file-test family.
+
+Measured: `[[ -k f ]]`, `[[ -g f ]]`, `[[ -u f ]]` → **SB4014**. The
+capability is implemented and unreachable, as filed.
+
+Also checked the reverse direction the filing cites: `-o`, `-R`, and `-v` are
+still listed in `is_unary_test_op`, but they now produce a clean **SB5028**
+rather than an ICE — journal 177's fix holds. No action there.
+
+### Found while sweeping: `-N` is wrong
+
+Sweeping all 18 file-test operators against bash (3 target types each) turned
+up exactly one divergence, and it is not in this task's three: `[[ -N f ]]`
+answers `no` where bash answers `yes`. Filed separately as
+`bug-file-test-N-diverges-from-bash` (P2). Worth doing that sweep as a spec
+while adding `-k`/`-g`/`-u` coverage here.

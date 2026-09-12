@@ -626,9 +626,16 @@ silent until edited, at which point they must come down to spec.
 retired 2026-06-06: deferral was entrenching the violation rather
 than driving it down.)
 
-Plan: start at 3× mean, tighten to 2× then 1.5× as the cohort
-clears. Full rubric and pattern library: `notes/journal/108-cog-cc-
-rubric.md`.
+**The gate holds at 3× (DG, 2026-09-12).** The earlier plan was to
+tighten to 2× then 1.5× "as the cohort clears". Measured, the cohort
+is not clearing and the tightening does not survive contact: 80
+functions violate at 3×, **357 at 2×, 518 at 1.5×** — a third of the
+codebase in violation at the first step. Since the gate is
+grandfather-on-modify, the 80 are fixed exactly when someone touches
+them, which is the mechanism working as designed rather than a
+backlog to burn down. Do not re-propose tightening without fresh
+numbers showing the cohort has actually shrunk. Full rubric and
+pattern library: `notes/journal/108-cog-cc-rubric.md`.
 
 Bypass for one commit: `SKIP_COMPLEXITY_GATE=1 git commit ...`
 (prefer fixing the function or amending the surrounding code if at

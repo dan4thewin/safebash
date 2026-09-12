@@ -78,3 +78,24 @@ is legitimate or a missed cleanup.
 2026-05-31, via indexnudge v7 `string_literals` view (see
 `feature-request-string-literal-index.md` filed earlier — this is
 the exact use case it was filed for).
+
+## Re-measured 2026-09-12 — much larger than filed
+
+The filing's 2026-05-31 snapshot counted **36** sites. A comparable query over
+the current tree (builtin/intrinsic names matched by `==` or `match` pattern,
+excluding test files and the canonical `from_name` / `sigil_str` entry
+points) returns **153**, with `validate.rs` alone holding **69**.
+
+| file | sites |
+|---|---|
+| `sash/src/validate.rs` | 69 |
+| `sash/src/emit_janet.rs` | 13 |
+| `sash/src/type_check.rs` | 11 |
+| `sash-convert/src/convert.rs` | 9 |
+| `sash/src/emit_janet_map.rs` | 8 |
+| `sash/src/ssa_taint.rs` | 7 |
+| (13 more files) | ≤ 4 each |
+
+Whatever the exact overlap with the original methodology, the surface has
+grown several-fold rather than shrunk. Scope this against the current number
+before committing to a sweep.

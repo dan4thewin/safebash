@@ -1,3 +1,80 @@
+## ══ STATUS (2026-09-12) — native backlog reviewed end to end ══
+
+**DG: "let's review each one at a time, finalize any decisions, normalize
+status, and queue for the next implementation batch."** All 19 open
+native-only tasks reviewed against the **live binary and the current index**,
+not against their filings. 25 ledger rows now (19 + 5 filed during the pass +
+1 bug found at the end), all reviewed. **13 queued to `next`, 5 of them bugs.**
+
+**Nine of nineteen filings were materially wrong.** Not carelessness — a
+filing is a snapshot of a moving tree and nothing ages it. `validate.rs` grew
+from a filed 1087 lines to **7222** (6.6×) while a task sat open describing its
+size. `audit-string-keyed-builtin-dispatch` went 36 → **153** sites;
+`eliminate-ice-arms-via-types` went 23 → **16**. Two tasks dissolved entirely
+(`dd75-args-model-polish`: 4 of 5 items already done;
+`attest-map-form-validation-only`: done 2026-09-10, docs-only remainder).
+`refactor-dd93-rename-complexity` had 4 of 7 violators self-clear.
+
+**Four bugs, none of them the task being reviewed.** All four came from
+probing the binary to check a filing's claim. `getenv`/`status` are the only
+two intrinsics with **no `type_check.rs` entry** — where arity is enforced —
+while also being exempt from SB5011, so `$(getenv)` compiles and the binary
+dies on `bug: bare command passed to sash_exec` (P1). `$(<file)` does not
+merely fork: `parse_slurp_form` **desugars it to `$(cat file)` at parse time**,
+so the static binary embeds `/usr/bin/cat` and makes two execve calls (P3→P2).
+`sash-convert` conflates hashes and arrays (P2). And `[[ -N f ]]` **disagrees
+with bash** (P2).
+
+**`-N` is the one that matters.** Sweeping all 18 file-test operators × 3
+target types against bash found exactly one divergence. `sash-rt` uses strict
+`>` with a nanosecond tiebreak; bash uses `>=` on whole seconds. A freshly
+written, never-read file has mtime **exactly** equal to atime — same second,
+same nanosecond — which is precisely the case `-N` exists to report true. sash
+answers `no`, compiles clean, no diagnostic. That is the
+**accepted-but-divergent** class `fuzz-validator` has argued for months is the
+real threat and the one the adversarial audit's threat model misses — found by
+hand, by exactly the differential-vs-bash method that task proposes, in about
+ninety seconds. Nothing has been built for it (no `sash/fuzz/`, no fuzz deps).
+Strongest argument yet; recorded in the filing.
+
+**DG's rulings.** The complexity ratchet **holds at 3× indefinitely** — I
+brought the "3× → 2× → 1.5×" plan back with numbers (80 violators at 3×,
+**357 at 2×, 518 at 1.5×**) and the plan does not survive contact;
+grandfather-on-modify is the mechanism working, not a backlog. **No reserved
+builtin names** — drop the removed-builtin table, unknown tokens in command
+position get the ordinary SB5011 (three separate "nothing is lost" proofs:
+`source`/`.` keep SB4001 via `check_dynexec`, the `export` arm is already dead
+code, `lexer.rs:1706-1711` are no-ops). **`--no-taint` documented,
+`--no-taint-cst` a testing aid**, accepted but unadvertised. **getenv presence
+is a lookup status, not a default arg** — *"the intrinsic isn't failing, but
+the lookup of a particular env var fails"*, which dissolves the SB4025
+objection that intrinsics cannot fail. Forced consequence recorded, not
+deferred: DD#42's *"no silent empty return"* means an uncaught
+`$(getenv NOPE)` must **abort** — a breaking change, awaiting DG.
+
+**The CLI task is three defects, not one.** Two contradictory usage strings,
+no `--help` (falls through to the error branch — stderr, exit 1), and unknown
+`--` flags **silently ignored**: `sash --emit-C h.sash` and `sash --jannet
+h.sash` both produce a native ELF and exit 0. `docs/sash.1` is complete and
+correct — the binary is what disagrees with it, and `sash.1` already lists
+this in its own table of inconsistencies. `parse_cli_args` is cc=11/**cog=10**
+against a 12.46/6.58 gate, so the fix **will** trip the complexity gate;
+recorded in the filing so it is known before starting rather than discovered
+at commit time.
+
+**Next up.** The `next` batch: 5 bugs (`bug-getenv-status-unvalidated` P1,
+`bug-file-test-N-diverges-from-bash` P2, `bug-convert-hash-array-conflation`
+P2, `dollar-lt-file-forks` P2, `cli-usage-and-unknown-flags` P2) then the P4
+cleanups. `remove-dead-case-first-runtime` is **not standalone** —
+`sash/tests/c_tests.rs:413` still exercises the retired `${var^}`, so it
+sequences with the retired-surface cohort. Three tasks left unqueued pending
+honest re-estimation (`r47-validate-rs-per-rule-tests`,
+`audit-string-keyed-builtin-dispatch`, `eliminate-ice-arms-via-types`).
+`extract-instctx-setup` stays deferred — unchanged, and the 2026-06-08
+investigation already proved the recommended fix cannot work (E0503).
+
+Journal: `notes/journal/269-native-backlog-review.md`.
+
 ## ══ STATUS (2026-09-11) — three P2 native bugs fixed ══
 
 **DG: "fix P2 native bugs now".** The census had turned up exactly three P2s

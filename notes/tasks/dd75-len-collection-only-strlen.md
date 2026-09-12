@@ -85,3 +85,37 @@ Scope to absorb:
   removed — "use `$(join @a)` for a string, `${a[i]}` for one" (recorded at
   `spec/glob_splat.sh:99`). That guidance must become `$(join a)`.
 - `keys` already accepts bare names only (SB5062), so it needs no change.
+
+## Addendum (2026-09-12) — the converter gets *simpler*, and a bug closes
+
+The scope note above says `sash-convert` "must now choose `strlen` for a
+scalar", implying it needs type knowledge it does not have. It does not:
+**bash already distinguishes the two questions by spelling**, so the mapping is
+mechanical.
+
+| bash | meaning | emit |
+|---|---|---|
+| `${#s}` | byte length of a scalar | `$(strlen s)` |
+| `${#a}` | byte length of element 0 | `$(strlen a[0])` |
+| `${#a[@]}`, `${#a[*]}` | element count | `$(len a)` |
+| `${#a[i]}` | byte length of element i | `$(strlen a[i])` |
+
+Today `convert.rs:980-986` strips the subscript and emits `$(len base)` for
+every one of those rows, because `len` is the only spelling available. That is
+a live conversion bug — `a=(x y z); echo "${#a}"` prints `1` under bash and
+`3` after conversion. Filed as `bug-convert-hash-array-conflation`, and it
+should be **fixed here**: writing the mapping once, as part of this split, is
+strictly less work than fixing it against the polymorphic `len` and then
+rewriting it.
+
+Counts re-measured 2026-09-12: `len @` is **3** sites (not 2) and `join @` is
+**18** (not 17).
+
+## Confirmed (DG, 2026-09-12)
+
+- **Next implementation batch.**
+- **`strlen <collection>` is a compile error** — it does not mirror bash's
+  `${#a}` = "element 0". The converter spells that case `$(strlen a[0])`
+  explicitly, so nothing needs the implicit form.
+- **`bug-convert-hash-array-conflation` is fixed inside this task**, not
+  separately.

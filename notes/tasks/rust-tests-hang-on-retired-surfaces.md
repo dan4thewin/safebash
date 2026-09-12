@@ -1,58 +1,79 @@
----
-status: open
+status: deferred
 priority: P1
----
+depends: []
+gates:
+  - "`mk test` completes"
+  - "every retained behaviour has a spec test; the Rust integration suites keep only what a spec cannot express"
 
-# Rust integration tests hang on retired DD#99 surfaces
+# Rust integration tests: migrate to specs, discard the rest
 
-`cargo test --test codegen_tests` never terminates. `mk test` therefore
-cannot complete, which disables step 1 of the completion checklist
-entirely.
+`cargo test --test codegen_tests` never terminates, so `mk test` cannot
+complete and step 1 of the completion checklist is unavailable.
 
-## Cause
+## DG's ruling (2026-09-12)
 
-`codegen_tests::run_bash_native` calls `sash::codegen::compile_to_object`
-directly, bypassing `validate`. Fixtures written before DD#99 still use
-surfaces that DD#99 retired:
+> "It's not clear these tests have any value at all. We should discard any
+> that language changes have left behind or that have spec tests exercising
+> the same code. For any that do not have spec tests, spec tests should be
+> added and the rust test discarded. Only if that's not possible, the test
+> should be rehabilitated. This work should come after other code changes to
+> the compiler, as otherwise it's a moving target."
 
-    echo -n "one:two:three" | while read -d: -r word; do ... done   # read_delim_colon
+So this is **not** a bug fix — it is a migration, with a fixed order:
 
-The real compiler rejects this (`SB5059`: ``echo -n`` is retired). The test
-does not go through that gate, so the retired form lowers to something
-whose loop never terminates, and the compiled binary spins forever. Killed
-after 47 minutes; reproduced at `fff2a1b` with the working tree stashed, so
-it is not a DD#100 regression.
+1. **Discard** any test a language change left behind.
+2. **Discard** any test whose code a spec test already exercises.
+3. **Add a spec test, then discard the Rust test**, where coverage is real but
+   spec-side absent.
+4. **Rehabilitate** only where a spec test cannot express the case.
 
-`read_delim_colon` is the confirmed hang. The same cohort is larger:
+**Sequenced after the other compiler changes** — running it first makes it a
+moving target. In the meantime `mk test` stays blocked and the spec suite
+(which is authoritative anyway) carries verification.
 
-| surface  | codegen_tests | brush_compat | taint_spec |
-|----------|--------------:|-------------:|-----------:|
-| `read -` |            10 |            2 |          1 |
-| `echo -n`|             7 |            0 |          0 |
-| `mapfile -` |          1 |            0 |          1 |
+## Measured state (2026-09-12, not estimated)
 
-## Why it is filed rather than fixed
+16 tests in `codegen_tests` touch DD#99-retired surfaces. Run individually
+under a 15 s timeout:
 
-Two forks, both DG's call:
+| outcome | n | tests |
+|---|---:|---|
+| **hang** | 3 | `read_delim_colon`, `test_read_multi_vars`, `test_read_three_vars` |
+| fail | 8 | `while_read_*`, `pipe_while_read_*`, `read_into_array_*`, `cmdsub_with_args` |
+| pass | 5 | `echo_n_no_newline`, `echo_n_no_args`, `echo_n_multiple_args`, `noop_colon_in_if`, `mapfile_basic` |
 
-1. **What replaces each fixture.** `read -d:` has no DD#99 equivalent —
-   `read` splits on NUL (`wordsplit.sh` nr.9). So the choice is rewrite to
-   a different behaviour, or delete the test. Deleting a codegen test is
-   not a mechanical edit.
-2. **Whether the harness should validate.** Making `run_bash_native` run
-   `validate` first would convert every one of these hangs into a clean
-   failure, and would stop future retired surfaces from silently producing
-   garbage binaries. But it changes what "codegen test" means — some of
-   these may exist precisely to exercise codegen paths the validator
-   refuses to reach.
+The filing previously named one hang; there are three, all multi-target or
+`-d` reads.
 
-Option 2 is the one that prevents recurrence; option 1 is needed either
-way for the fixtures that are simply stale.
+**The retired flags silently became literal data.** `read -a arr` now yields a
+one-element array holding the string `-a`; `echo -n foo` prints `-n foo`. The
+hang is the same cause: `read -d: -r word` consumes nothing, so the enclosing
+`while` never terminates. Nothing crashes — the tests assert bash behaviour the
+language no longer has.
+
+Suite-wide retired-surface counts: `codegen_tests` 10 read-flag / 7 `echo -n` /
+3 mapfile; `brush_compat_tests` 2 read-flag; `taint_spec_tests` 4 mapfile.
+
+## Two things found while measuring
+
+**The harness has no timeout.** `run_bash_native` ends in `cmd.output()` and no
+test file mentions `Duration` or `timeout`. Any codegen bug that produces an
+infinite loop hangs the suite forever rather than failing it. Whatever happens
+to these fixtures, that property is worth not keeping.
+
+**The 5 passing tests are live retired-surface codegen.** `echo -n` and
+`mapfile -t` still work end-to-end in codegen; only the validator refuses them
+(SB5059 / SB5060). Filed separately as
+`remove-retired-surface-implementations` — DG ruled remove.
+
+That also answers the old "should `run_bash_native` run `validate` first?"
+fork: moot. The question only mattered for tests that reach past the
+validator, and those surfaces are being removed.
 
 ## Related
 
-The wider cohort: ~141 Rust integration test failures at `fff2a1b` across
-`brush_compat` (4), `e2e` (54), `oracle` (17), `janet` (16), `taint_spec`
-(26), mostly diagnostic-code drift (`expected SB4020, got SB5020`) and
-fixtures predating rules like SB5018. The spec suite — which is the
-authoritative one — is green apart from known janet gaps.
+The wider cohort is ~140 failures across the five completing suites
+(`e2e` 54, `brush_compat` 28, `taint_spec` 26, `oracle` 17, `janet` 15) —
+a stable baseline, mostly diagnostic-code drift (`expected SB4020, got
+SB5020`) and fixtures predating rules like SB5018. All of it is in scope for
+the same migration. See `audit-rust-test-suites`.

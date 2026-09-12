@@ -1,4 +1,4 @@
-status: in-progress
+status: done
 depends: DD93
 gates:
 
@@ -42,13 +42,11 @@ Bundle from the 2026-09-06 bless-ergonomics thread. See
 
 **DD#93 is complete** — all four stages landed.
 
-## Follow-ups (not this bundle)
+## Follow-ups — considered, not pursued
 
-- UTF-8-aware shape test (distinct spelling).
-- Remaining POSIX-class shape tests (`a?` alnum, `d?` digit, `l?` alpha,
-  `s?` space, …) — token/dispatch designed to make each a one-liner.
-- Array analogue of the arith-assign form: `attest e in a (( … ))`.
-- Same-name in-place retype for the arith form (`attest s (( s = s ))`).
+DG closed all four on 2026-09-12 rather than carrying them as backlog. They
+are recorded in `DD93-attest-ergonomics.md` under "Considered and not
+pursued"; nothing is filed.
 
 ## Implementation map (file:line pointers, post-S1 rename)
 

@@ -1,13 +1,44 @@
 ---
 title: "multiple assignment via return; external capture as (stdout, status, stderr) trio"
-status: ready
+status: closed
 priority: P2
+closed: 2026-09-12
 kind: decision
 depends: []
 gates:
   - "DG decides the design of general multiple-value return + multi-target binding, and the external-capture trio (stdout/status/stderr) that reuses it — see the axes below. Blocks any implementation; capture the resolution of the SB4025/DD#55 conflict here too."
   - "PARTIAL (2026-09-02, DD#88): the external-command capture-CONDITION subset shipped — `if x=$(cmd)` / `while x=$(cmd)` (and `$(a|b)` pipeline) bind stdout + branch on the command's status. This resolves the SB4025/DD#55 conflict for the condition case. The GENERAL multi-value return + the (stdout, status, stderr) trio remain open (axes below)."
 ---
+
+# CLOSED (DG, 2026-09-12)
+
+**DD#88 solved the real problem; the residual capabilities have no driver.**
+
+The "Motivating gap" table below is **obsolete** — every row in it was
+re-tested on 2026-09-12 and all of them work:
+
+| form | filed as | today |
+|---|---|---|
+| `if ! out = $(cmd) { … }` | SB4025 | **compiles, branches correctly** |
+| `out = $(cmd) \|\| { … }` | SB4025 | **compiles, catches** |
+| `out = $(cmd); <branch on status>` | aborted before the `if` | `st = $(status)` works |
+| stderr | only via tempfiles | `2>&1` merge works |
+
+So the **SB4025 ↔ DD#55 conflict listed under "Also resolve here" is already
+resolved** — `||` on a capture is no longer rejected, and DD#55's documented
+idiom works as written.
+
+Of the proposed `(stdout, status, stderr)` trio, two thirds already exist as
+ordinary language (`out = $(cmd)`, `st = $(status)`), and the third — stderr
+captured *separately* from stdout — has no current driver; `2>&1` covers the
+observed need. General multi-value `return a, b, c` likewise has no caller
+waiting on it.
+
+DG closed it rather than design six axes for a feature nothing needs. The
+analysis below is kept for the record: if a genuine need for separate stderr
+capture or N-ary return appears, this is the starting point, and the axes are
+still the right ones. Nothing is blocked in the meantime.
+
 
 > **Update 2026-09-02:** the narrow capture-**condition** case (`if ! out=$(cmd)`)
 > shipped as **DD#88** (`notes/decisions/DD88-capture-condition.md`,
