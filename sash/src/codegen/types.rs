@@ -120,8 +120,6 @@ pub(super) struct ExternFuncs {
     pub(super) splat_disposition: cranelift_module::FuncId,
     pub(super) require_value: cranelift_module::FuncId,
     pub(super) signal_flag: cranelift_module::FuncId,
-    pub(super) dtoi: cranelift_module::FuncId,
-    pub(super) itod: cranelift_module::FuncId,
     pub(super) signum: cranelift_module::DataId,
     pub(super) trace_flag: cranelift_module::DataId,
 }

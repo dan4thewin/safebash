@@ -149,10 +149,10 @@ fn command_substitution_type(parts: &[Statement], env: &TypeEnv) -> VarType {
 
 /// A `$(…)` command substitution is int-typed when its command is one of
 /// the sash-native value functions that yield an integer: `len`/`argc`
-/// (counts), `random` (i64 draw), `dtoi` (fixed-point decimal→int),
-/// `epochseconds` (unix time), `signum` (DD#56 last-signal number), `status`
-/// (`$?`), and the `getpid`/`getppid`/`getcpid` process ids. String-valued
-/// functions (`toupper`, `join`, `basename`, `itod`, …) are not listed, so
+/// (counts), `random` (i64 draw), `epochseconds` (unix time), `signum`
+/// (DD#56 last-signal number), `status` (`$?`), and the
+/// `getpid`/`getppid`/`getcpid` process ids. String-valued functions
+/// (`toupper`, `join`, `basename`, …) are not listed, so
 /// `int n=$(toupper s)` stays a type error (SB4030).
 fn is_int_returning_intrinsic(name: &str) -> bool {
     matches!(
@@ -162,7 +162,6 @@ fn is_int_returning_intrinsic(name: &str) -> bool {
             | "argc"
             | "random"
             | "signum"
-            | "dtoi"
             | "epochseconds"
             | "status"
             | "getpid"
@@ -297,7 +296,7 @@ fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
 }
 
 /// Walk an `ArithExpr` tree; for every sexpr `FuncCall` whose callee produces a
-/// string (or is dtoi/itod — Q2), emit a type error.
+/// string, emit a type error.
 fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
     walk_arith_funccalls(a, &mut |name| {
         if is_sexpr_string_producer(name, env) {
@@ -580,14 +579,14 @@ fn check_int_pe_default(
     });
 }
 
-/// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic
-/// (or dtoi/itod — Q2: capture via `$()`), or a user string/void function. Int
+/// A sexpr callee that is NOT a valid int producer: a string-returning intrinsic,
+/// or a user string/void function. Int
 /// intrinsics (`len`, `getpid`, `argc`, …), user `-> int` functions, and a bare
 /// variable `(x)` (arithmetic grouping) are all valid and return `false`.
 fn is_sexpr_string_producer(name: &str, env: &TypeEnv) -> bool {
     const STRING_INTRINSICS: &[&str] = &[
         "toupper", "tolower", "join", "keys", "basename", "dirname", "getcwd", "getenv", "arg",
-        "sub", "gsub", "match", "itod", "dtoi",
+        "sub", "gsub", "match",
     ];
     STRING_INTRINSICS.contains(&name) || matches!(env.funcs.get(name), Some(VarType::String))
 }
@@ -763,7 +762,7 @@ pub fn type_check(program: &Program) -> Vec<TypeError> {
 
     // Third pass (DD#58/Option C): a string producer used in an arithmetic
     // sexpr `(f …)` is a type error — it belongs in a `$()` capture, not
-    // `$(( ))`. Covers the string intrinsics + dtoi/itod (Q2) + user string
+    // `$(( ))`. Covers the string intrinsics + user string
     // functions; closes the getenv/arg validator-bypass (they silently compiled
     // to 0 in a sexpr, sidestepping SB5020). bug-arith-sexpr-intrinsics-zero.
     run_stmt_pass(program, &env, &mut errors, check_sexpr_string_producers);

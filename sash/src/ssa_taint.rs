@@ -419,7 +419,7 @@ fn any_tainted<'a>(
 /// - `getenv` / `argv` / `arg` — external input, always tainted.
 /// - Pure generators (`argc`, `epochseconds`, `random`, `getpid`, `getcwd`,
 ///   …) and `len` (cardinality only, DD#24-exempt) — always clean.
-/// - **Pass-through transforms** (`echo`, `dtoi`, `itod`) — the output derives
+/// - **Pass-through transforms** (`echo`) — the output derives
 ///   from the operands, so it is tainted iff any operand is, exactly like every
 ///   other transform value (`Concat`, `RegexReplace`, …). (`join`/`keys` never
 ///   reach here: the transform lowers them to intrinsics, not a command
@@ -439,7 +439,7 @@ fn cmd_subst_taint(
         "getenv" | "argv" | "arg" => Taint::Tainted,
         "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
         | "getcpid" | "getcwd" | "status" | "signum" => Taint::Clean,
-        "echo" | "dtoi" | "itod" => any_tainted(&argv[1..], taint, user_functions),
+        "echo" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
             if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {
                 Taint::Clean

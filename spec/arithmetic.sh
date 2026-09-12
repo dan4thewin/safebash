@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=184
+plan=190
 echo "1..$plan" >&3
 
 set +e
@@ -417,10 +417,42 @@ run_sash 'map m=([a]=1); echo $(( (keys m) ))'
 run_sash 'fn g { echo hi; }; echo $(( (g) ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.16
 
-# Q2 — dtoi/itod rejected in a sexpr (capture via $(): `int n=$(dtoi 2 "3.14")`).
-# sx.17 itod (string result) in a sexpr → reject
+# ── an unrecognized symbol in arithmetic context is an error (DG 2026-09-13) ──
+# The only exception is an assignment target: `(( x = 5 ))` introduces x. Every
+# read spelling of an undefined name already reported SB5031 — `$(( zz ))`,
+# `$zz`, `${zz}`, `zz[0]`, `a[zz]` — but the DD#58 sexpr node `(name …)` was a
+# hole: validate blanket-skipped the name (it *might* be an intrinsic) while the
+# transform resolved it as a variable read or an empty int-func, both yielding a
+# silent 0. Found 2026-09-13 while retiring dtoi/itod, which had been masking the
+# with-args half behind SB4030.
+#
+# The rule, applied at that one node:
+#   nullary, not an intrinsic   → a variable read → SB5031 if undefined
+#   with args, not an intrinsic → not callable at all → SB5011
+# sx.17 an undefined name, parenthesised, is still an undefined read
+run_sash 'int n=$(( (zz) )); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk sx.17
+# sx.18 ... and as a bare `(( ))` statement, not only in `$(( ))`
+run_sash '(( (zz) )); echo done'
+[[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk sx.18
+# sx.19 arguments make it unambiguously a call — an unknown callee is SB5011
+run_sash 'int n=$(( (nosuchfn 1) )); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk sx.19
+# sx.20 a *defined* variable is still not callable
+run_sash 'int zz=4
+int n=$(( (zz 1) )); echo $n'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk sx.20
+# sx.21 no false positive: `(x)` on a defined variable is arithmetic grouping
+run_sash 'int x=7
+int n=$(( (x) + 1 )); echo $n'
+[[ $rc = 0 && $out = 8 && -z $err ]]; chk sx.21
+# sx.22 no false positive: a nullary user int function is a legal sexpr callee
+run_sash 'fn g -> int { return 7; }
+int n=$(( (g) )); echo $n'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk sx.22
+# sx.23 retired dtoi/itod take the ordinary unknown-callee path, not SB4030
 run_sash 'echo $(( (itod 2 5) ))'
-[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sx.17
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk sx.23
 
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a

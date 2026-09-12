@@ -99,10 +99,6 @@
 33.7	33	${arr[@]%%suffix} SHALL strip suffix from each element
 35.1	35	Declaration axes SHALL be freely stackable: local const int x=5 is valid
 35.2	35	const SHALL apply to scalars only
-36.1	36	dtoi(digits, string) SHALL convert a decimal string to integer with explicit scale (e.g., dtoi(2, "3.14") → 314)
-36.2	36	itod(digits, int) SHALL convert an integer to decimal string with explicit scale (e.g., itod(2, 314) → "3.14")
-36.3	36	Scale SHALL be explicit — no silent truncation
-36.4	36	dtoi and itod SHALL be runtime builtins alongside atoi/itoa
 37.1	37	<(cmd) process substitution SHALL be rejected with diagnostic SB5004
 37.2	37	>(cmd) process substitution SHALL be rejected with diagnostic SB5004
 38.1	38	Sash-native ( cmd ) subshell syntax SHALL be a compile error

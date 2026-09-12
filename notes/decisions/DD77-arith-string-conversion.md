@@ -14,7 +14,7 @@ DD#72 made *parse-format* leniency (leading zeros, `0x`/`0o`/`0b`) the rule for
 runtime data — but that was never a blank check to swallow a *failed*
 conversion. Today `s=hello; $(( s + 1 ))` silently yields `1` (atoi→0), the last
 silent-miscompile class in arithmetic (DD#72 already closed the constant side).
-`dtoi` already aborts on bad input — arithmetic should be equally accountable.
+`atoi` already aborts on bad input — arithmetic should be equally accountable.
 
 This DD tightens DD#30 from "wrap it in `$(( ))`" to "wrap it *with* a
 disposition", and repurposes the (currently silent-0, buggy — see

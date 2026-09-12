@@ -617,8 +617,8 @@ run_sash 'x=$(getpid 7); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.3
 run_sash 'x=$(argc 7); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.4
-# dtoi takes 2 (digits, value) — one arg is as wrong as three
-run_sash 'x=$(dtoi 2); echo $x'
+# match takes 2 (string, regex) — one arg is as wrong as three
+run_sash 'x=$(match 2); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.5
 
 # via.6-9 a value intrinsic in STATEMENT position is SB5073, never an ICE

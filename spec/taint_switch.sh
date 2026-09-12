@@ -45,8 +45,8 @@ if in_modes native; then
     run_sash 'y=$(getenv HOME); x=$(echo $y); echo $x'
     [[ $rc != 0 && -z $out ]]; chk sw.5
     # sw.8 the SSA backstop catches an operand propagated through a transform
-    # builtin ($(dtoi …)) — cmd_subst_taint propagates operand taint (DD#82)
-    run_sash 'y=$(getenv HOME); x=$(dtoi $y); echo $x'
+    # builtin ($(toupper …)) — cmd_subst_taint propagates operand taint (DD#82)
+    run_sash 'y=$(getenv HOME); x=$(toupper $y); echo $x'
     [[ $rc != 0 && -z $out ]]; chk sw.8
     # sw.9 the SSA backstop rejects a pipeline laundered through a leading
     # builtin (`echo ig | /bin/cat f | read x`). It could not: `clean_pipe` was

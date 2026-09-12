@@ -2094,9 +2094,6 @@ const BUILTINS: &[&str] = &[
     "getcpid",
     "getcwd",
     "epochseconds",
-    // Conversion
-    "dtoi",
-    "itod",
     // Regex (DD#63): match/matchall are boolean commands (sub/gsub are
     // value-only). `matchall` fills its out-array with every match.
     "match",
@@ -2126,8 +2123,6 @@ const VALUE_ONLY_INTRINSICS: &[&str] = &[
     "argc",
     "arg",
     "signum",
-    "dtoi",
-    "itod",
 ];
 
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
@@ -4654,7 +4649,15 @@ pub fn check_undeclared_reads(program: &Program) -> Vec<Diagnostic> {
     if let Some(ref end) = program.end_block {
         collect_functions(end, &mut globals);
     }
-    let mut sink = ReadSink::Flag(&mut diags);
+    let mut funcs = HashSet::new();
+    collect_functions(&program.statements, &mut funcs);
+    if let Some(ref end) = program.end_block {
+        collect_functions(end, &mut funcs);
+    }
+    let mut sink = ReadSink {
+        mode: SinkMode::Flag(&mut diags),
+        funcs: &funcs,
+    };
     check_reads_in_scope(&program.statements, &globals, &mut sink);
     if let Some(ref end) = program.end_block {
         check_reads_in_scope(end, &globals, &mut sink);
@@ -5003,7 +5006,11 @@ fn push_read_target_writes(c: &Command, span: Span, out: &mut Vec<(String, Span)
 /// so `collect_value_fn_operands` adds them.
 fn collect_reads(stmts: &[Statement], set: &mut HashSet<String>) {
     let empty = HashSet::new();
-    let mut sink = ReadSink::Collect(set);
+    let no_funcs = HashSet::new();
+    let mut sink = ReadSink {
+        mode: SinkMode::Collect(set),
+        funcs: &no_funcs,
+    };
     check_reads_in_scope(stmts, &empty, &mut sink);
     collect_value_fn_operands(stmts, set);
 }
@@ -6266,16 +6273,32 @@ fn len_operand_name(c: &Command) -> Option<String> {
 /// SB5050 dead-variable check (collect every read). The one traversal below
 /// drives a single `record` per variable read; the sink decides what to do —
 /// so the two passes can never diverge on "what counts as a read".
-enum ReadSink<'a> {
+enum SinkMode<'a> {
     /// SB5031: flag a read whose name is not in the current scope's `known`.
     Flag(&'a mut Vec<Diagnostic>),
     /// SB5050: collect every read name (scope-agnostic superset).
     Collect(&'a mut HashSet<String>),
 }
 
+struct ReadSink<'a> {
+    mode: SinkMode<'a>,
+    /// Program-wide function names. `known` deliberately merges functions with
+    /// variables so a nullary sexpr `(g)` is not flagged as an undeclared read —
+    /// but DD#103's with-args rule has to tell them apart again, because a
+    /// function is callable and a variable is not. Empty in `Collect` mode,
+    /// where every branch records the name and the distinction cannot matter
+    /// (the same reasoning that lets `collect_reads` pass an empty `known`).
+    funcs: &'a HashSet<String>,
+}
+
 impl ReadSink<'_> {
     fn record(&mut self, name: &str, span: Span, known: &HashSet<String>) {
         self.record_param(name, span, known, false);
+    }
+
+    /// DD#103: is `name` a legal *callee* for an arith sexpr `(name …)`?
+    fn is_sexpr_callee(&self, name: &str) -> bool {
+        crate::resolve::is_intrinsic(name) || self.funcs.contains(name)
     }
 
     /// Record a name only for dead-var (Collect mode); a no-op for SB5031
@@ -6285,8 +6308,27 @@ impl ReadSink<'_> {
     /// (`(random)`, `(len m)`); only the first is a variable read, and SB5031
     /// must not flag the intrinsic/function names.
     fn collect_only(&mut self, name: &str) {
-        if let ReadSink::Collect(set) = self {
+        if let SinkMode::Collect(set) = &mut self.mode {
             set.insert(name.to_string());
+        }
+    }
+
+    /// SB5011: an arith sexpr `(name args…)` that carries arguments is
+    /// unambiguously a *call*, never `(x)` grouping — and a user function with
+    /// arguments does not even parse there (SB4014), so the only legal callee is
+    /// an intrinsic. An unrecognized name therefore names nothing. It used to
+    /// lower to `IntFuncCall`, find no user body, and yield a silent 0.
+    fn flag_unknown_sexpr_callee(&mut self, name: &str, span: Span) {
+        if let SinkMode::Flag(diags) = &mut self.mode {
+            diags.push(Diagnostic::error_span(
+                span,
+                "SB5011",
+                format!(
+                    "'{name}' is not a sash intrinsic — an arithmetic sexpr \
+                     `({name} …)` can only call one. Capture an external command \
+                     first: `x=$(/path/to/{name} …)`, then use `x` in `$(( … ))`"
+                ),
+            ));
         }
     }
 
@@ -6295,11 +6337,11 @@ impl ReadSink<'_> {
     /// explicit "intentional default / transform" opt-out and does NOT flag it,
     /// but dead-var still counts it as a read of the variable.
     fn record_param(&mut self, name: &str, span: Span, known: &HashSet<String>, opt_out: bool) {
-        match self {
-            ReadSink::Collect(set) => {
+        match &mut self.mode {
+            SinkMode::Collect(set) => {
                 set.insert(name.to_string());
             }
-            ReadSink::Flag(diags) => {
+            SinkMode::Flag(diags) => {
                 if opt_out
                     || !is_plain_identifier(name)
                     || handled_elsewhere(name)
@@ -6464,11 +6506,32 @@ fn check_arith_reads(
         }
         // DD#58 sexpr: a bare `(name …)` parses as a `FuncCall`; the name may be
         // a variable read (`$(( (x) ))`), a user function (`$((f))`), or an
-        // intrinsic (`(random)`, `(len m)`). Only the first is a variable read;
-        // collect it for dead-var but never flag it for SB5031 (the intrinsic /
-        // function names are not undeclared reads).
+        // intrinsic (`(random)`, `(len m)`).
+        //
+        // DG's rule: an unrecognized symbol in arithmetic context is an error
+        // (an assignment target is the only exception). Every other spelling of
+        // an undefined read — `$(( zz ))`, `$zz`, `${zz}`, `zz[0]`, `a[zz]` —
+        // already reports SB5031; this node was the sole hole, because it
+        // blanket-`collect_only`'d the name on the grounds that it *might* be an
+        // intrinsic. Decide instead:
+        //
+        //   an intrinsic or a user function → a real callee, not a variable
+        //                                read. Record for dead-var only, and
+        //                                leave arity/type to SB4045 / SB4030.
+        //   nullary, neither             → the transform resolves it as a
+        //                                variable read (`resolve_nullary_sexpr`),
+        //                                so it is one → SB5031 when undefined.
+        //   with args, neither           → unambiguously a call, to something
+        //                                that is not callable → SB5011.
         FuncCall { name, args } => {
-            sink.collect_only(name);
+            if sink.is_sexpr_callee(name) {
+                sink.collect_only(name);
+            } else if args.is_empty() {
+                sink.record(name, span, known);
+            } else {
+                sink.collect_only(name);
+                sink.flag_unknown_sexpr_callee(name, span);
+            }
             check_arith_each(args, span, known, sink);
         }
         // `${…}` import — normal-parse rvalue, checked by the ordinary path.

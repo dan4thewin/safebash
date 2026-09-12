@@ -221,16 +221,6 @@ fn emit_prologue(out: &mut String) {
     )
     .unwrap();
     writeln!(out, "extern sash_pair sash_epochseconds(void);").unwrap();
-    writeln!(
-        out,
-        "extern i64 sash_dtoi(i64 digits, const char* p, i64 len);"
-    )
-    .unwrap();
-    writeln!(
-        out,
-        "extern const char* sash_itod(i64 digits, i64 value, i64* out_len);"
-    )
-    .unwrap();
     writeln!(out, "extern i64 sash_getpid(void);").unwrap();
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
     writeln!(out, "extern i64 sash_random(void);").unwrap();
@@ -2869,8 +2859,8 @@ fn emit_cmdsub_exec_c(
 /// Mirrors `try_native_intrinsic` (codegen/value_handlers.rs:736).
 /// Returns Some when the command is a sash-native intrinsic.
 /// Phase 3 implements: getenv, epochseconds, getpid, getppid, getcwd.
-/// Deferred to Phase 4: argc, argv, signum, dtoi, itod (need argv
-/// access plumbing or are tied to status handling).
+/// Deferred to Phase 4: argc, argv, signum (need argv access plumbing
+/// or are tied to status handling).
 fn try_native_intrinsic_c(
     e: &mut Emit,
     name: &str,
@@ -2930,39 +2920,6 @@ fn try_native_intrinsic_c(
             // the pointer — never the length — is what separates unset from
             // set-to-empty. Mirrors value_handlers::emit_getenv_lookup_status.
             writeln!(e.out, "    __exit_status = ({t}_p == 0) ? 1 : 0;", t = t).unwrap();
-            Some((format!("{}_p", t), format!("{}_l", t)))
-        }
-        "dtoi" if argv.len() >= 3 => {
-            // $(dtoi DIGITS DECIMAL) — fixed-point parse. Mirrors
-            // value_handlers.rs:759 (sash_dtoi → i64, rendered as a string).
-            let digits = lower_value_as_int(e, &argv[1], types);
-            let (sp, sl) = lower_value_as_str(e, &argv[2], types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_d = sash_dtoi({dg}, {sp}, {sl});",
-                t = t,
-                dg = digits,
-                sp = sp,
-                sl = sl
-            )
-            .unwrap();
-            Some(emit_itoa_temp(e, &format!("{}_d", t)))
-        }
-        "itod" if argv.len() >= 3 => {
-            // $(itod DIGITS VALUE) — fixed-point render. Mirrors
-            // value_handlers.rs:787 (sash_itod → (ptr, len)).
-            let digits = lower_value_as_int(e, &argv[1], types);
-            let value = lower_value_as_int(e, &argv[2], types);
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    i64 {t}_l; const char* {t}_p = sash_itod({dg}, {val}, &{t}_l);",
-                t = t,
-                dg = digits,
-                val = value
-            )
-            .unwrap();
             Some((format!("{}_p", t), format!("{}_l", t)))
         }
         _ => None,

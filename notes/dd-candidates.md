@@ -102,7 +102,7 @@ No existing DD enumerates what's a builtin vs what execs.
 **Builtins** (no exec, inline): echo, true, false, :, read, mapfile,
 bless, getenv, argv, argc, shift, unset, [[, trap, signal, wait,
 kill, signum, cd, status, getpid, getppid, getcpid, getcwd,
-epochseconds, dtoi, itod.
+epochseconds.
 
 **NOT builtins** (resolve via PATH, exec): printf, cat, grep, sed,
 awk, wc, sort, head, tail, tee, date, hostname, etc.

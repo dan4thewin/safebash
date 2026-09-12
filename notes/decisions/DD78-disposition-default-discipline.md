@@ -29,7 +29,7 @@ A disposition default must be a **clean, non-`random` value**:
 Allowed defaults: literals, clean variable/subscript reads, `$(( … ))`, and
 clean **stateless** intrinsic substitutions (`$(getcwd)`, `$(getpid)`,
 `$(epochseconds)`, `$(len …)`, `$(keys …)`, `$(join …)`, `$(status)`,
-`$(signum …)`, `$(dtoi …)`, `$(itod …)`, user functions).
+`$(signum …)`, user functions).
 
 Rejected (→ capture into a variable and bless, or inline a literal):
 `$(getenv X)`, `$(arg N)`, `$(argv)`, external `$(cmd)`, `$(random)`, and any

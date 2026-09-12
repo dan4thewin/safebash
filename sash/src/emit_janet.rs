@@ -1871,9 +1871,6 @@ fn emit_expr_cmdsub_command(c: &Command, ctx: &EmitCtx) -> String {
     if let Some(s) = cmdsub_data_intrinsic(&name, c, ctx) {
         return s;
     }
-    if let Some(s) = cmdsub_num_intrinsic(&name, c, ctx) {
-        return s;
-    }
     // Generic fallback: shell out to the named command and capture stdout.
     let mut parts = vec![format!("\"{}\"", name)];
     for arg in &c.args {
@@ -1989,28 +1986,6 @@ fn cmdsub_argv_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
         "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
          (get (dyn :args) _ai) {miss}))"
     ))
-}
-
-/// DD (fixed-point) numeric intrinsics. `$(dtoi DIGITS DECIMAL)` parses a
-/// fixed-point decimal to a scaled integer; `$(itod DIGITS VALUE)` renders
-/// it back. Janet is illustration (not the numeric oracle), so this uses
-/// idiomatic float arithmetic rather than the byte-exact runtime routines.
-fn cmdsub_num_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
-    if name == "dtoi" && c.args.len() == 2 {
-        let digits = emit_expr_as_int(&c.args[0], ctx);
-        let dec = emit_expr_inline(&c.args[1], ctx);
-        return Some(format!(
-            "(let [_dg {digits}] (string (math/round (* (scan-number {dec}) (math/pow 10 _dg)))))"
-        ));
-    }
-    if name == "itod" && c.args.len() == 2 {
-        let digits = emit_expr_as_int(&c.args[0], ctx);
-        let value = emit_expr_as_int(&c.args[1], ctx);
-        return Some(format!(
-            "(let [_dg {digits}] (string/format (string \"%.\" _dg \"f\") (/ {value} (math/pow 10 _dg))))"
-        ));
-    }
-    None
 }
 
 /// DD#41: `join arr` → space-separated; `join SEP arr` → SEP-separated.
@@ -2413,7 +2388,12 @@ fn arith_var_to_janet(name: &str, ctx: &EmitCtx) -> String {
 fn arith_funccall_to_janet(name: &str, args: &[crate::ir::ArithExpr], ctx: &EmitCtx) -> String {
     let arg_strs: Vec<String> = args.iter().map(|e| arith_expr_to_janet(e, ctx)).collect();
     if arg_strs.is_empty() {
-        format!("({})", name)
+        // DD#58: a nullary `(name)` is a call only when `name` is an int
+        // function — otherwise it is arithmetic GROUPING of a variable read,
+        // exactly the decision `arith_var_to_janet` already makes for the bare
+        // spelling. Emitting `(x)` verbatim made janet call the variable's
+        // value: "7 called with 0 arguments".
+        arith_var_to_janet(name, ctx)
     } else {
         format!("({} {})", name, arg_strs.join(" "))
     }

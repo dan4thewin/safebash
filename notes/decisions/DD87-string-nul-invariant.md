@@ -41,8 +41,10 @@ there is one uniform rule instead of a boundary to remember.
   must instead **copy** into an `alloc_cstr` buffer — a partial slice is
   terminated only when it happens to reach the source's end. This trades a copy
   for correctness (accepted).
-- Producers backed by a **reused static buffer** (`sash_itod`) must re-write the
-  terminator at `[len]` each call (a shorter value leaves a stale byte).
+- Producers backed by a **reused static buffer** must re-write the terminator
+  at `[len]` each call (a shorter value leaves a stale byte). The rule's
+  original subject, `sash_itod`, was removed with DD#36; the invariant stands
+  for any future static-buffer producer.
 - Strings that already inherit a NUL from their source keep passing pointers:
   environ values (`sash_getenv`), argv entries (`sash_argv_get`), the
   getcwd/readlink syscall buffers. Table **values** store the caller's pointer

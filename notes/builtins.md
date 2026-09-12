@@ -54,9 +54,8 @@ clean (not tainted). This list may evolve.
 - `getcwd` — current working directory
 - `epochseconds` — unix timestamp
 
-## Conversion
-- `dtoi` — decimal string to integer
-- `itod` — integer to decimal string
+(DD#36's `dtoi`/`itod` conversion pair was removed 2026-09-13 as YAGNI —
+they are ordinary unknown tokens now. See DD#36, superseded.)
 
 ---
 

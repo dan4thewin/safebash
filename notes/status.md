@@ -1,3 +1,58 @@
+## ══ STATUS (2026-09-13) — dtoi/itod dropped; DD#103 ══
+
+**DG: "dtoi and itod are YAGNI."** Removed — ~190 lines over 17 files,
+all table rows plus two runtime functions. No removed-builtin table:
+they are ordinary unknown tokens now (SB5011 everywhere). DD#36
+superseded. Journal 271.
+
+**Verifying the removal surfaced a pre-existing hole**, and DG reframed
+it as a rule rather than a bug: *"Shouldn't any unrecognized symbol in
+arithmetic context be an error except an assignment?"* Yes — and every
+spelling already obeyed it (`$(( zz ))`, `$zz`, `${zz}`, `zz[0]`,
+`a[zz]`, `(( zz ))` all SB5031) **except the DD#58 sexpr node**, where
+`$(( (zz) ))` and `$(( (nosuchfn 1) ))` both silently yielded 0.
+`validate.rs` abstained at that node while the transform resolved it
+positively — two passes disagreeing, an unresolved name falling through
+as a plausible constant. **DD#103** writes the rule down:
+
+- nullary, not a callee → a variable read → **SB5031**
+- with args, not a callee → not callable → **SB5011**
+- a callee is an intrinsic or a user function (`resolve::is_intrinsic`)
+
+`dtoi`/`itod` had been *masking* the with-args half: `(dtoi 2 3)` was
+rejected only because `dtoi` was a **known** string producer.
+
+**Suite: 5381 passing, 41 failing (all janet), 567 skipped. Zero
+non-janet failures.** Flips vs the DD#102 baseline: `36.2`/`36.3`
+retired, `sx.18`–`sx.23` new and passing — in all three modes. Fail-first
+verified.
+
+### I got the rule wrong first, and the suite caught it
+
+My probe used `fn g(int a) -> int` — typed parameters, which fail in a
+sexpr for an unrelated reason (SB4014) — so I concluded user functions
+with arguments are not callable there and rejected them. Twelve specs
+disagreed: DD#58's convention is positional `$1`/`$2`, and `16.2`,
+`27.3`, `58.2`, `58.3`, `58.34`, `58.35` had been pinning `(add 3 4)` all
+along. **A probe I write is a hypothesis; the suite is the record.**
+
+### Also fixed
+
+janet emitted `(x)` verbatim for nullary grouping, so janet called the
+variable's value. `arith_var_to_janet` already made the right decision
+for the bare spelling — one-line reuse, rather than guarding the new spec
+to `native,c` and entrenching the gap.
+
+### Still open from the native batch
+
+`getenv-presence-handling` (awaiting DG on the forced abort) and
+`dd55-while-condition-redirect-divergence` (DG's DD#55 call). The
+approved `HEAP_SIZE` bump is applied-pending; `sash_capture`/
+`sash_capture_status`/`sash_capture_end` still truncate at 64 KiB and
+strip only one trailing newline (route through `sash_read_all`).
+
+---
+
 ## ══ STATUS (2026-09-12) — the native batch, run unattended ══
 
 **DG: "do the whole batch unattended."** Thirteen items from the backlog

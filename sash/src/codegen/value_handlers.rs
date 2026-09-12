@@ -641,8 +641,8 @@ fn emit_getenv_lookup_status(
 }
 
 /// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
-/// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`,
-/// `$(dtoi N "s")`, `$(itod N V)`. Returns `Some((ptr, len))` when
+/// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`.
+/// Returns `Some((ptr, len))` when
 /// `name` matches a known intrinsic and the arity check passes; `None`
 /// to fall through to the external-command exec path.
 #[allow(clippy::too_many_arguments)]
@@ -694,67 +694,6 @@ fn try_native_intrinsic(
             externs,
             exit_status_var,
         ),
-        "dtoi" if argv_values.len() >= 3 => {
-            let (digits_ptr, digits_len) = lower_value(
-                &argv_values[1],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let digits = atoi_call(builder, module, externs, digits_ptr, digits_len);
-
-            let (str_ptr, str_len) = lower_value(
-                &argv_values[2],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let dtoi_ref = module.declare_func_in_func(externs.dtoi, builder.func);
-            let call = builder.ins().call(dtoi_ref, &[digits, str_ptr, str_len]);
-            let int_val = builder.inst_results(call)[0];
-            Some(emit_int_to_str(builder, module, externs, int_val))
-        }
-        "itod" if argv_values.len() >= 3 => {
-            let (digits_ptr, digits_len) = lower_value(
-                &argv_values[1],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let digits = atoi_call(builder, module, externs, digits_ptr, digits_len);
-
-            let (val_ptr, val_len) = lower_value(
-                &argv_values[2],
-                builder,
-                module,
-                vars,
-                literals,
-                externs,
-                exit_status_var,
-            );
-            let value = atoi_call(builder, module, externs, val_ptr, val_len);
-
-            let out_len_slot = builder.create_sized_stack_slot(StackSlotData::new(
-                StackSlotKind::ExplicitSlot,
-                8,
-                3,
-            ));
-            let out_len_addr = builder.ins().stack_addr(I64, out_len_slot, 0);
-            let itod_ref = module.declare_func_in_func(externs.itod, builder.func);
-            let call = builder.ins().call(itod_ref, &[digits, value, out_len_addr]);
-            let ptr = builder.inst_results(call)[0];
-            let len = builder.ins().stack_load(I64, out_len_slot, 0);
-            Some((ptr, len))
-        }
         _ => None,
     }
 }

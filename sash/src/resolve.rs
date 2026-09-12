@@ -41,9 +41,16 @@ const INTRINSICS: &[&str] = &[
     "getcpid",
     "getcwd",
     "signum",
-    "dtoi",
-    "itod",
 ];
+
+/// True for any sash-native intrinsic — the `BuiltinCmd` set plus the
+/// command-head-only names in [`INTRINSICS`]. The single source of truth for
+/// "is this name the compiler's, rather than a PATH lookup or a user
+/// function"; `validate` uses it to decide whether an arith sexpr `(name …)`
+/// names anything at all.
+pub(crate) fn is_intrinsic(name: &str) -> bool {
+    BuiltinCmd::from_name(name) != BuiltinCmd::Other || INTRINSICS.contains(&name)
+}
 
 /// Resolve every external command head in `program` to an absolute path.
 /// Returns fatal diagnostics for any command that cannot be resolved.

@@ -1,9 +1,9 @@
 #!/bin/bash
-# spec/types.sh — type system: strings, ints, arrays, maps, qualifiers, dtoi/itod
+# spec/types.sh — type system: strings, ints, arrays, maps, qualifiers
 set -eu
 . common.sh
 setup types
-plan=199
+plan=197
 echo "1..$plan" >&3
 
 set +e
@@ -209,21 +209,16 @@ run_sash 'const x=1; readline x'
 run_sash 'const x=1; echo $x'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk 35.9
 
-# 36.1 dtoi
+# DD#36 (fixed-point dtoi/itod) is SUPERSEDED — the pair was dropped as YAGNI
+# (DG 2026-09-13). They are now ordinary unknown tokens: SB5011 everywhere, with
+# no removed-builtin special case. 36.2/36.3 retired with them.
+# 36.1 dtoi is gone — an unknown command, in every position
 run_sash 'int x=$(dtoi 2 "3.14"); echo $x'
-[[ $rc = 0 && $out = "314" && -z $err ]]; chk 36.1
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 36.1
 
-# 36.2 itod
+# 36.4 itod likewise — value position and statement position alike
 run_sash 'int x=314; echo $(itod 2 $x)'
-[[ $rc = 0 && $out = "3.14" && -z $err ]]; chk 36.2
-
-# 36.3 roundtrip
-run_sash 'int x=$(dtoi 2 "3.14"); echo $(itod 2 $x)'
-[[ $rc = 0 && $out = "3.14" && -z $err ]]; chk 36.3
-
-# 36.4 dtoi/itod are builtins
-run_sash 'echo $(dtoi 0 "42")'
-[[ $rc = 0 && $out = "42" && -z $err ]]; chk 36.4
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 36.4
 
 # 36.5 $(len arr) is int-typed — assignable to an int var (was wrongly typed
 #      string → SB4030). len yields an array's element count.

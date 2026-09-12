@@ -164,26 +164,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_signal_flag", Linkage::Import, &signal_flag_sig)
         .expect("declare sash_signal_flag");
 
-    // sash_dtoi(digits, ptr, len) -> i64
-    let mut dtoi_sig = Signature::new(CallConv::SystemV);
-    dtoi_sig.params.push(AbiParam::new(I64)); // digits
-    dtoi_sig.params.push(AbiParam::new(I64)); // str ptr
-    dtoi_sig.params.push(AbiParam::new(I64)); // str len
-    dtoi_sig.returns.push(AbiParam::new(I64)); // int result
-    let dtoi_func = module
-        .declare_function("sash_dtoi", Linkage::Import, &dtoi_sig)
-        .expect("declare sash_dtoi");
-
-    // sash_itod(digits, value, &out_len) -> ptr
-    let mut itod_sig = Signature::new(CallConv::SystemV);
-    itod_sig.params.push(AbiParam::new(I64)); // digits
-    itod_sig.params.push(AbiParam::new(I64)); // int value
-    itod_sig.params.push(AbiParam::new(I64)); // &out_len
-    itod_sig.returns.push(AbiParam::new(I64)); // str ptr
-    let itod_func = module
-        .declare_function("sash_itod", Linkage::Import, &itod_sig)
-        .expect("declare sash_itod");
-
     // sash_signum global
     let signum_data = module
         .declare_data("sash_signum", Linkage::Import, true, false)
@@ -849,8 +829,6 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         splat_disposition: splat_disposition_func,
         require_value: require_value_func,
         signal_flag: signal_flag_func,
-        dtoi: dtoi_func,
-        itod: itod_func,
         signum: signum_data,
         trace_flag: trace_flag_data,
     }

@@ -1737,34 +1737,6 @@ pub unsafe extern "C" fn sash_table_value(
     core::ptr::null()
 }
 
-// ═══════════════════════════════════════════════════════════════
-// Fixed-point conversion (DD#36)
-// ═══════════════════════════════════════════════════════════════
-
-/// dtoi(digits, string) → int
-/// Convert decimal string to fixed-point integer with `digits` decimal places.
-#[no_mangle]
-pub unsafe extern "C" fn sash_dtoi(digits: i64, ptr: *const u8, len: i64) -> i64 {
-    let bytes = core::slice::from_raw_parts(ptr, len as usize);
-    dtoi_inner(digits, bytes)
-}
-
-/// itod(digits, value) → (ptr, len)
-/// Convert fixed-point integer to decimal string with `digits` decimal places.
-#[no_mangle]
-pub unsafe extern "C" fn sash_itod(digits: i64, value: i64, out_len: *mut i64) -> *const u8 {
-    static mut ITOD_BUF: [u8; 32] = [0u8; 32];
-    let len = itod_inner(digits, value, &mut ITOD_BUF);
-    // DD#87 invariant: the static buffer is reused across calls, so a shorter
-    // value could leave a stale byte at [len]; re-terminate for the C boundary.
-    // (Guarded against a full 32-byte buffer — a pathological padding width.)
-    if len < ITOD_BUF.len() {
-        ITOD_BUF[len] = 0;
-    }
-    *out_len = len as i64;
-    ITOD_BUF.as_ptr()
-}
-
 // ── C-callable memory wrappers for Plan 9 regexp ───────────────────────
 // Route to heap4 via sash_alloc/sash_free_ptr.
 
