@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=195
+plan=199
 echo "1..$plan" >&3
 
 set +e
@@ -1026,6 +1026,30 @@ run_sash 'array a=(one two three); echo $(join a)'
 # removed — telling the user to write a spelling the validator rejects
 run_sash 'array a=(x y); echo $(join "a b" ,)'
 [[ $rc != 0 && $err == *SB5062* && $err != *splat* ]]; chk 75.76
+
+# ── `len` is collection-only for BOTH spellings of a name (DG 2026-09-12) ──
+# DD#75 §2 made `len` answer only the element-count question, and `len s` was
+# rejected. `len $s` was not: the type check resolved an operand name through
+# `join_operand_name`, which returned "" for a `$`-sigilled expansion, so the
+# guard never ran and the byte length came back — the exact dispatch-on-type
+# behaviour DD#75 removed, reachable by adding one character.
+
+# 75.77 the spelling that slipped through
+run_sash 'str s=hello; echo $(len $s)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.77
+
+# 75.78 it reports the same thing as the bare spelling, naming the variable
+run_sash 'str s=hello; echo $(len $s)'
+[[ $err == *'`s` is a scalar'* && $err == *strlen* ]]; chk 75.78
+
+# 75.79 an int scalar is equally not a collection through the `$` spelling
+run_sash 'int n=42; echo $(len $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 75.79
+
+# 75.80 control: the guard still fires on the bare spelling, and neither
+# spelling disturbs a real collection operand
+run_sash 'array a=(x y z); map m=([k]=v); echo "$(len a) $(len m)"'
+[[ $rc = 0 && $out = "3 1" && -z $err ]]; chk 75.80
 
 set -e
 tally

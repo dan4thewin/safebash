@@ -1042,14 +1042,22 @@ fn check_len_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<Ty
     });
 }
 
-/// The collection name a `join` operand refers to: `@a` (arrvals splat) → `a`;
-/// a bare name → itself; anything else → empty (not a simple name operand).
+/// The variable name an operand refers to: `@a` (arrvals splat) → `a`; a bare
+/// name → itself; `$a` → `a`; anything else → empty (not a simple name
+/// operand).
+///
+/// `$a` resolves to the same name as `a` because the operand slot of
+/// `len`/`strlen`/`join` resolves a *name*, and both spellings name the same
+/// variable. Leaving `$a` unresolved here let `len $s` past the
+/// collection-only check while `len s` was rejected — the sigil silently
+/// decided whether the guard ran.
 pub(crate) fn join_operand_name(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::ParameterExpansion(pe) if pe.operator.as_deref() == Some("arrvals") => {
             pe.name.clone()
         }
         ExprKind::Literal(s) => s.clone(),
+        ExprKind::SimpleExpansion(s) => s.clone(),
         _ => String::new(),
     }
 }
