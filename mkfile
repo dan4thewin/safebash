@@ -54,8 +54,8 @@ cov-clean:V:
 
 cov-unit:V:
 	(cd $SASH && cargo llvm-cov --no-report --release \
-		--test e2e_tests --test oracle_tests --test taint_spec_tests \
-		--test janet_tests --test codegen_tests \
+		--test e2e_tests --test taint_spec_tests \
+		--test codegen_tests \
 		--ignore-run-fail) 2>&1 | tail -1
 
 cov-spec:V:

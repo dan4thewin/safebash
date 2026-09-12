@@ -1,5 +1,6 @@
 title: "bug: janet emits an intrinsic's `$name` operand as a bare symbol"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -54,3 +55,11 @@ inherits it verbatim, which is how it was found.
 
 2026-09-12, adding `strlen`. Spec `types.sh` 75.58 pins the `$` form and is
 guarded `native,c` with a pointer here; unguarding it is the gate.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

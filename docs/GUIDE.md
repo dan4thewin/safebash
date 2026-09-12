@@ -102,15 +102,14 @@ safebash/
 │   │   ├── rule.rs        — Rule trait
 │   │   ├── rules/         — Validation rules (SB4001–SB5002)
 │   │   ├── diagnostic.rs  — Error reporting
-│   │   ├── emit_janet.rs  — Janet backend
+│   │   ├── emit_ir.rs     — IR capture (inert Janet data)
 │   │   ├── emit_source.rs — Source emission modes
 │   │   ├── printer.rs     — Source printer
 │   │   └── known_externals.rs — Auto-attest patterns
 │   └── tests/
 │       ├── codegen_tests.rs  — codegen correctness
 │       ├── e2e_tests.rs      — end-to-end compilation and execution
-│       ├── janet_tests.rs    — Janet round-trip
-│       └── oracle_tests.rs   — oracle validation
+│       └── taint_spec_tests.rs — taint model
 ├── sash-convert/          — Bash → sash-native converter
 │   └── src/
 │       ├── main.rs        — CLI entry point
@@ -381,8 +380,7 @@ sugar. **Captures** (DD#63): `match S P ARR` fills `ARR` with
 via the engine's `Reprog.nsub`; a non-participating group is empty),
 clears the array on entry, and returns the boolean. `sub`/`gsub`
 replacements expand `\0`–`\9` backrefs and `\\`; any other `\<char>` is a
-compile error (SB4033). The Janet backend shells to the `sash-regex` CLI
-(`captures` op) so the oracle uses the same engine.
+compile error (SB4033).
 
 ### I/O
 
@@ -416,15 +414,22 @@ associative arrays (DD#33).
 Cranelift → static ELF binary. No libc, no dynamic linker. Result
 is a ~16KB statically linked executable.
 
-### Janet
+### IR capture
 
-`emit_janet.rs` — transpile IR to Janet for oracle testing. 37
-round-trip tests compile to both Janet and native, run both, and
-compare output.
+`emit_ir.rs` — `--emit-ir` writes the IR as an **inert Janet data
+literal**: a value the reader builds, not a program to execute.
 
-The Janet oracle is the normative semantics of safebash (DD#15).
-When the oracle and bash disagree, the question is not "which is
-right?" but "which behavior does safebash want, and why?"
+This is the decoupling seam (DD#104). The in-tree Janet backend was
+removed because it had stopped gating (41 permanently-tolerated
+failures) while still taxing every new spec (~28% skipped). A future
+oracle is a separate program that reads a capture, so it can lag the
+compiler without blocking it.
+
+Two properties are load-bearing: every match is exhaustive with no
+`_` arm, so a new IR variant is a compile error rather than a silent
+omission; and tags are IR node names, never an interpretation
+(`attest` is `{:kind :command :name "attest"}`) — interpretation
+belongs to the consumer.
 
 ### Source emission
 
@@ -441,8 +446,6 @@ Test files in `sash/tests/`:
 |------|---------------|
 | `codegen_tests.rs` | Compile bash snippets to native, run, check output |
 | `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-attest |
-| `janet_tests.rs` | Compile to Janet, run both bash and Janet, compare output |
-| `oracle_tests.rs` | Additional validation tests |
 | `taint_spec_tests.rs` | Taint model: rejection of tainted reads, attest runtime enforcement, DD#46 positionals |
 | `brush_compat_tests.rs` | Brush shell compatibility |
 
@@ -458,7 +461,7 @@ architecturally significant:
 | # | Decision | Impact |
 |---|----------|--------|
 | 12 | Strings are (ptr, len) with null terminator | C interop without copying |
-| 15 | Janet oracle defines safebash semantics | Model is the specification |
+| 104 | Janet oracle decoupled via `--emit-ir` (supersedes DD#15) | Oracle is out-of-tree, post-beta |
 | 24 | Taint quarantine | All external input tainted |
 | 30 | Typed variables (int) | `declare int`, `fn -> int` |
 | 33 | Unified hash table | SashTable for indexed + associative arrays |

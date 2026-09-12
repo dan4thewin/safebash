@@ -1,6 +1,7 @@
 ---
 title: "janet: join intrinsic gaps — bare-name join a, and separator join @a SEP"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -82,3 +83,11 @@ Found while pinning the `=`-leading-word fix (spec `86.23`, guarded
 native,c). Note this is the *function-call* surface, not an intrinsic, so
 `emit-janet-from-ssa` has to cover parameter binding too — worth checking
 that the overhaul's scope includes it.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

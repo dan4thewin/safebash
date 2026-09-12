@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=36
+plan=34
 echo "1..$plan" >&3
 
 set +e
@@ -17,31 +17,6 @@ EOF'
 # 6.1 ${!var} indirect expansion → compile error
 run_sash 'x=HOME; echo ${!x}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 6.1
-
-# 15.1 --janet flag accepted (native-only — tests the --janet CLI surface
-# directly; rerunning under SASH_MODE=janet would be redundant)
-run_sash_janet() {
-    rc=-1 out="" err=""
-    echo "$1" > .input.sash
-    sash --janet .input.sash > out 2> err
-    rc=$?
-    out=$(<out)
-    err=$(<err)
-}
-if in_modes native; then
-    run_sash_janet 'echo hello'
-    [[ $rc = 0 && -z $err ]]; chk 15.1
-else
-    skip_chk 15.1
-fi
-
-# 15.2 janet reflects sash semantics
-if in_modes native; then
-    run_sash_janet 'x="hello world"; echo $x'
-    [[ $rc = 0 && -z $err ]]; chk 15.2
-else
-    skip_chk 15.2
-fi
 
 # ── DD#104: --emit-ir, the structural IR capture ──────────────────────────
 # An inert janet data literal — data, not a program. These pin the CLI

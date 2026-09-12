@@ -1,6 +1,7 @@
 ---
 title: "janet: capture-condition (`if x=$(cmd)`) support"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: feature
 depends: []
@@ -29,3 +30,11 @@ validate/taint).
   status→condition sync is janet-specific.
 
 Ungate `spec/capture_cond.sh` 88.1–88.8 to all modes once done.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

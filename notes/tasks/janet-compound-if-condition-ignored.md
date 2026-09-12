@@ -1,6 +1,7 @@
 ---
 title: "janet: a compound `if` condition is emitted as `(if true …)`"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P1
 kind: bug
 depends: []
@@ -67,3 +68,11 @@ rather than defaulting to `true`. Compare `lower_if` in
 
 Express the compound inside a single `[[ ]]` (`[[ a || b ]]`), which is
 correct in all three backends. Spec 93.16 is written that way.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

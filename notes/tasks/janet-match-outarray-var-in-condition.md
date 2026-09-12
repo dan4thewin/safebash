@@ -1,6 +1,7 @@
 ---
 title: "bug: janet emits the out-array `var` inside the if-condition expression"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -51,3 +52,11 @@ the enclosing statement stream ahead of the `(if …)`, the way
 pending-preamble channel on `EmitCtx` (or the caller emitting the
 declaration before it starts writing the condition), not a write to the
 current `out`.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

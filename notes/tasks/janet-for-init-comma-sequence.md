@@ -1,6 +1,7 @@
 ---
 title: "janet: a comma-sequenced C-style for-init is not emitted"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -50,3 +51,11 @@ the step slot (`i++, j--`), which is worth checking at the same time.
 ## Specs
 
 `arithmetic.sh` 94.10 is gated `native,c`.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

@@ -1,5 +1,5 @@
 ---
-title: "C and janet backends lack the DD#55 (A)-channel implicit-exit abort"
+title: "C backend lacks the DD#55 (A)-channel implicit-exit abort"
 status: ready
 scope: c/janet backends only (native complete)
 priority: P2
@@ -53,3 +53,10 @@ precondition for un-guarding them.
   own stderr diagnostic. Coordinate with `abort-diagnostics-remaining`.
 - janet `cd` is separately wrong: `if cd /tmp` aborts (observed during
   W3). Fix alongside the abort channel.
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

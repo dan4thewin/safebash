@@ -1,6 +1,7 @@
 ---
 title: "janet: builtin echo lacks -n flag handling and :~/:! elide"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -39,3 +40,11 @@ Specs `wordsplit.sh` 22.29–22.31 (and the multi-arg echo-elide) are gated
 Companion to the native/c builtin-echo-elide fix (journal 244) and the
 janet-elide family (`janet-positional-default-present`, etc.). janet is the
 non-gate backend.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

@@ -1,6 +1,7 @@
 ---
 title: "janet: the read family ignores an input redirect and reads stdin instead"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -53,3 +54,11 @@ Distinct from `c-janet-dd55-abort-channel` (janet has no abort channel for a
 *failed* open) and from `janet-read-a-element-count` (a count discrepancy on a
 pipeline, not a redirect). This one is about the redirect never being applied
 at all. Likely subsumed by `emit-janet-from-ssa`.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

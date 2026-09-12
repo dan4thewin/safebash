@@ -1,3 +1,61 @@
+## ══ STATUS (2026-09-13) — janet decoupled: `--emit-ir` in, backend out ══
+
+**DG: split janet off entirely so native/c stop paying the janet tax.**
+Done, in four steps DG specified: `--emit-ir`, tag `janet-babel`,
+**DD#104**, removal. Journal 272.
+
+**Measured before agreeing.** janet ran 1366 passing / **41 failing** /
+**540 skipped**; native 2095/0/0, c 1920/0/27. Skip ratio **flat at
+27.7–28.0% on every commit sampled** — so the tax was constant, not
+accelerating (the weaker form of the claim; I said so). The fact that
+decides it is different: **janet was not gating.** "41 failing (all
+janet, unchanged)" appears in every sweep for months, and the pre-commit
+hook checks fmt/clippy/complexity only. Full coupling cost, zero oracle
+benefit.
+
+**`--emit-ir` emits the IR as an inert janet data literal** — data, not
+a program. Nothing to execute and nothing to version-match, so a
+consumer weeks behind the compiler can still read a capture. That is
+also why it was complete on day one: no semantics to defer, hence no
+`(sash/TODO …)` — the flaw that stopped `--janet-map` rendering a
+7-line program.
+
+Two properties are load-bearing and a change breaking either is a bug:
+**no `_` arm anywhere** (a new IR variant must be a compile error, not a
+silent drop — including across the `expr` split, whose halves name each
+other's variants and route to `unreachable!`), and **tags are IR node
+names, never an interpretation** (`attest` is `{:kind :command :name
+"attest"}`; interpretation belongs to the consumer).
+
+Verified over the whole corpus, not by sampling: **1974 emissions, every
+one parsed by janet** — after first catching that the initial zero came
+from a probe that had barely fired.
+
+**Removed:** `emit_janet.rs`, `emit_janet_map.rs`, `sash-rt.janet`,
+`janet_tests.rs`, the flags, the `SASH_MODE`. Also `oracle.rs` +
+`oracle_tests.rs` — neutral names, entirely janet, nothing else used
+them. `cli.13` ("usage covers every advertised flag") failed on the
+removal, which is what it is for. Old code preserved at tag
+**`janet-babel`** (a quarry, not a branch — see its tag message).
+
+**Sweep: 4019 passing, 0 failing, 31 skipped.** Zero flips.
+
+### Next up — two cleanups awaiting DG
+
+1. **~300 `in_modes native,c` guard sites** — now harmless no-ops, but
+   stale conditionals and comments naming a dead mode. Un-guarding is
+   behaviour-neutral but a large mechanical diff across 28 files.
+2. **`spec.db` stale rows — a gate integrity issue, not cosmetics.**
+   `test_status` **never forgets a removed test**: `native:15.1` still
+   reads `passing` at `2c850ae`, and 565k janet rows still report 41
+   phantom failures. General to any deleted test, not janet-specific.
+   Stale rows do carry an old `commit_hash`, so they are detectable.
+
+Then the pinned native work: `string-intrinsics-reject-int-vars`
+(DG's decision #3), the two `sash-rt` capture bugs (64 KiB truncation;
+one-newline-vs-all strip), and the approved-but-unapplied `HEAP_SIZE`
+bump.
+
 ## ══ STATUS (2026-09-13) — dtoi/itod dropped; DD#103 ══
 
 **DG: "dtoi and itod are YAGNI."** Removed — ~190 lines over 17 files,

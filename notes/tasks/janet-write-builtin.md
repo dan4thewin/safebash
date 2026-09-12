@@ -1,6 +1,7 @@
 ---
 title: "janet: `write` (DD#99 echo-without-newline) is not emitted"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -26,3 +27,11 @@ Related to `janet-echo-flags-and-elide` (janet's builtin echo lacks `-n`
 handling): if that lands, this may follow for free. Same root as every other
 janet gap this week — the front end is shared, the emitters are not, and
 `emit-janet-from-ssa` would retire the class.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

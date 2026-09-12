@@ -1,6 +1,7 @@
 ---
 title: "janet: array append `a+=(x)` is emitted as string concatenation"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P1
 kind: bug
 depends: []
@@ -55,3 +56,11 @@ Independent of DD#97: `emit_janet` renders from the AST (`emit_janet(program)`),
 not from SSA, so the transform-side collection registration that DD#97 fixed
 never reaches this path. Left failing rather than `skip_chk`'d so it stays
 visible, consistent with the other janet-only failures.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

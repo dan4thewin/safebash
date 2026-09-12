@@ -1,10 +1,7 @@
-// Modules used by tests (oracle_tests.rs) — must be pub
+// Modules used by integration tests — must be pub
 pub mod emit_c;
 pub mod emit_ir;
-pub mod emit_janet;
-pub mod emit_janet_map;
 pub mod ir;
-pub mod oracle;
 pub mod parse;
 
 // Internal modules — not used outside the crate
@@ -82,8 +79,6 @@ Usage: sash [OPTION]... <script.sh>
   -c 'script'         compile SCRIPT, given inline
   -o <output>         write the binary to OUTPUT
   -h, --help          print this help on stdout and exit 0
-  --janet             emit Janet source on stdout instead of a binary
-  --janet-map         emit the structural Janet map on stdout
   --emit-c            emit C source on stdout instead of a binary
   --emit-ir           emit the IR as inert janet data on stdout (DD#104)
   --manifest          print the program manifest on stdout
@@ -98,8 +93,6 @@ Usage: sash [OPTION]... <script.sh>
 /// `--sysroot=` is prefix-matched rather than listed, since it carries a
 /// value in the same token.
 const KNOWN_FLAGS: &[&str] = &[
-    "--janet",
-    "--janet-map",
     "--emit-c",
     "--emit-ir",
     "--manifest",
@@ -164,8 +157,8 @@ pub fn cli_main(args: Vec<String>) {
 
     // Transform-time compile errors (SB4016/17/18 ignored non-void results,
     // SB4044 const-reassign, SB5015/16 read-flags, SB5041 command/function
-    // collision, …). Enforce them for every backend so the c/janet/manifest
-    // oracles reject exactly what native does — AND so they precede the
+    // collision, …). Enforce them for every backend so the c/manifest
+    // paths reject exactly what native does — AND so they precede the
     // dead-variable gate below.
     enforce_transform_diags(input, &program);
 
@@ -336,24 +329,10 @@ fn enforce_transform_diags(input: &str, program: &crate::ir::Program) {
 }
 
 /// Handle the terminal "emit an alternative output and exit" flags
-/// (`--janet`, `--emit-c`, `--manifest`). Returns `true` if one
+/// (`--emit-ir`, `--emit-c`, `--manifest`). Returns `true` if one
 /// fired (caller should return); `false` if none matched (caller
 /// proceeds to native codegen).
 fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
-    if flags.contains(&"--janet-map") {
-        // Structural janet map (DD#15 amended) — the sash-rt.janet primitive
-        // library is prepended so the emitted file is self-contained.
-        print!(
-            "{}\n{}",
-            include_str!("../janet/sash-rt.janet"),
-            emit_janet_map::emit_janet_map(program)
-        );
-        return true;
-    }
-    if flags.contains(&"--janet") {
-        print!("{}", emit_janet::emit_janet(program));
-        return true;
-    }
     if flags.contains(&"--emit-ir") {
         print!("{}", emit_ir::emit_ir(program));
         return true;

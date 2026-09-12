@@ -1,6 +1,7 @@
 ---
 title: "janet: `map m = @{a:DISP}` (DD#99 array→map) is not emitted"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -32,3 +33,11 @@ skipped in janet: `wordsplit.sh` 22.6, 22.8, 22.9, 22.10 and `misc.sh` 54.1.
 Nothing is wrong with those programs — janet simply cannot express the route
 DD#99 requires for building a map. Until this lands, janet has no way to
 construct a map from external data at all.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

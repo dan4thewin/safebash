@@ -1,6 +1,7 @@
 ---
 title: "janet backend: $(len a) after unset crashes on nil"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -38,3 +39,11 @@ the native/c "unset clears the collection" semantics (DD#75).
 - Make the janet `arrlen`/`strlen` emit nil-safe (e.g. `(length (or a @[]))`
   for the array case, or normalize `unset` to store an empty collection).
 - Re-run spec/types.sh janet; un-guard 30.11.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

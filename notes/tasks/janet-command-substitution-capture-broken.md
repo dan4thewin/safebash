@@ -1,6 +1,7 @@
 ---
 title: "janet: command-substitution capture is broken (user fns exec'd, multi-statement bodies truncated)"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P1
 kind: bug
 depends: []
@@ -59,3 +60,11 @@ Related: `emit-janet-from-ssa` would remove this whole class by construction.
 Pre-existing and independent of the ICE fix — janet never panicked, it just
 emitted the wrong thing. The specs are left **failing** rather than `skip_chk`'d
 so the gap stays visible, consistent with the other janet-only failures.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

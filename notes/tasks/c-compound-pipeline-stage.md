@@ -1,5 +1,5 @@
 ---
-title: "c/janet: implement compound (group/for/if/function) pipeline stages"
+title: "c backend: implement compound (group/for/if/function) pipeline stages"
 status: ready
 priority: P2
 kind: bug
@@ -52,3 +52,10 @@ c/janet gap. `spec/pipe_functions.sh` is therefore **native-only guarded**
 - Sibling to `bug-function-in-pipeline` (native half — done). This is the
   c/janet half of the same DD#14 compound-pipeline-stage story.
 - Related pre-existing c/janet backend gaps: `cf-backend-gaps-brace-surfaced`.
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

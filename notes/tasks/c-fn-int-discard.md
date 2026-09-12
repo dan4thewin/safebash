@@ -1,5 +1,5 @@
 ---
-title: "c/janet parity: a `-> int` function used in `|| :` (discard) fails to compile/run"
+title: "c parity: a `-> int` function used in `|| :` (discard) fails to compile/run"
 status: ready
 scope: c/janet backends only (native complete)
 priority: P3
@@ -47,3 +47,10 @@ it through the SSA `||` path correctly; the c/janet emitters need the same.
 - `sash/src/emit_janet.rs` — same.
 - Compare against the native SSA lowering (`transform` + `codegen`) which
   handles it.
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

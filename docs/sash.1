@@ -63,13 +63,12 @@ Print the usage summary on standard output and exit 0.
 .SS Alternative backends
 Each writes to standard output and exits; no binary is produced.
 .TP
-.B \-\-janet
-Emit Janet source.
-.TP
-.B \-\-janet\-map
-Emit the structural Janet map, with the
-.B sash\-rt.janet
-primitive library prepended so the result is self-contained.
+.B \-\-emit\-ir
+Emit the IR as an inert Janet data literal \(em data, not a program.
+Intended for out-of-tree consumers such as the decoupled oracle
+(DD#104); the leading
+.B :ir\-version
+key lets a consumer refuse a capture it does not understand.
 .TP
 .B \-\-emit\-c
 Emit C source. Link against

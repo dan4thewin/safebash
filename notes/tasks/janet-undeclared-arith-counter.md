@@ -1,6 +1,7 @@
 ---
 title: "janet: an undeclared arith counter `(( f++ ))` emits `unknown symbol f`"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -37,3 +38,11 @@ name not yet declared, emit its declaration first (default 0).
 ## Provenance
 
 Found during arith-subscript Stage 2 + B2 (journal 150).
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

@@ -1,6 +1,7 @@
 ---
 title: "bug: janet backend can't use `$$` (pid) as an arithmetic operand — emits unknown symbol `$`"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -56,3 +57,11 @@ Beyond arithmetic, janet has two word-context runtime gaps for the specials:
 specs misc.sh spv.1–3 are therefore guarded `in_modes native,c`; widen to all
 modes once janet implements the intrinsics + arith-status. Part of the janet
 backend-parity effort.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

@@ -1,6 +1,7 @@
 ---
 title: "EFFORT (architecture): janet backend = thin IR lowering + `sash-rt.janet` primitive library"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: effort
 depends: []
@@ -121,3 +122,11 @@ janet fail count down. `effort-janet-backend-parity`'s bundled sub-tasks
 The "assembly-like / SSA target-neutral IR" reading (a canonical sash-IR both
 backends consume via runtimes) stays a separately-decided future option — only
 if janet's purpose shifts from oracle to portable execution target. Not now.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

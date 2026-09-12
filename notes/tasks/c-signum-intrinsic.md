@@ -1,5 +1,5 @@
 ---
-title: "c/janet backends don't implement the `signum` value intrinsic (emit a TODO stub)"
+title: "c backend doesn't implement the `signum` value intrinsic (emits a TODO stub)"
 status: ready
 scope: c/janet backends only (native complete)
 priority: P3
@@ -44,3 +44,10 @@ c (they pass the native,c spec `sx.1`–`sx.6`, `sx.8`); only `signum` is stubbe
 spec arithmetic.sh `sx.7` is therefore gated `in_modes native`; widen to all
 modes once c/janet load the `sash_signum` global (the runtime symbol exists —
 native uses `externs.signum`).
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

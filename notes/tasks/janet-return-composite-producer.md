@@ -1,5 +1,6 @@
 ---
-status: ready
+status: deferred
+deferred-by: DD104
 depends: []
 gates: [janet]
 ---
@@ -40,3 +41,11 @@ all three modes.
 
 - `notes/decisions/DD74-predicate-functions.md` (return-producer semantics)
 - `notes/tasks/janet-optional-args-elision.md` (sibling janet AST-emit gap)
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

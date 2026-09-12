@@ -33,7 +33,7 @@ setup() {
     declare -g rc out err
 }
 
-# in_modes "native,janet,c" — returns 0 if SASH_MODE is in the CSV list,
+# in_modes "native,c" — returns 0 if SASH_MODE is in the CSV list,
 # 1 otherwise. Use to guard test bodies for mode-specific behavior.
 in_modes() {
     case ",$1," in
@@ -101,14 +101,12 @@ _hang_msg() {
 # Compile sash source with the current backend, run, capture rc/out/err.
 # Modes:
 #   native — sash -c "$src" -o ./test_bin; ./test_bin
-#   janet  — sash --janet writes Janet to stdout; pipe to janet
 #   c      — sash --emit-c writes C to stdout; gcc -static + libsash_rt.a
 run_sash() {
     rc=-1 out="" err="" rerr=""
     local src=$1; shift
     case $SASH_MODE in
         native) _run_sash_native "$src" "$@" ;;
-        janet)  _run_sash_janet "$src" "$@" ;;
         c)      _run_sash_c "$src" "$@" ;;
         *) echo "run_sash: unknown SASH_MODE=$SASH_MODE" >&2; exit 1 ;;
     esac
@@ -135,26 +133,6 @@ _run_sash_native() {
         err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
     fi
     rm -f err.raw
-}
-
-_run_sash_janet() {
-    local src=$1; shift
-    printf '%s\n' "$src" > .input.sash
-    timeout "$SPEC_TIMEOUT" ${SASH:-sash} ${SASH_CFLAGS:-} --janet .input.sash \
-        </dev/null > .out.janet 2> err.raw
-    rc=$?
-    if [[ $rc = 0 ]]; then
-        out=$(timeout "$SPEC_TIMEOUT" janet .out.janet "$@" </dev/null 2>/dev/null)
-        rc=$?
-        err=""
-        if (( rc == 124 )); then err=$(_hang_msg "the janet program"); fi
-    elif (( rc == 124 )); then
-        out="" err=$(_hang_msg "the compiler")
-    else
-        out=""
-        err=$(grep -E '^\S+:[0-9]+:[0-9]+:|^sash:|: (ICE|tainted)' err.raw | grep -v 'static binary' || true)
-    fi
-    rm -f .input.sash .out.janet err.raw
 }
 
 _run_sash_c() {

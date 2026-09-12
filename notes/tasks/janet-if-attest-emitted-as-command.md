@@ -1,6 +1,7 @@
 ---
 title: "janet: `if attest …` is emitted as an external command"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -61,3 +62,11 @@ it is declared-but-unassigned (`0`) on the else path (DG, 2026-09-07).
 ## Specs
 
 `taint.sh` 93.33/93.34 (the Part D `if` form) are gated `native,c` for this.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

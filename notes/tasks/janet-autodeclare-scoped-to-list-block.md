@@ -1,6 +1,7 @@
 ---
 title: "janet: an auto-declared collection inside a list/`||` is scoped to that block"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: backend-parity
 depends: []
@@ -52,3 +53,11 @@ already carries the auto-declaration as an explicit instruction.
 
 `regex.sh` 63.ma6 is gated `native,c` for this reason. Found while adding
 `matchall` (DD#63), by checking whether the failure was mine — it was not.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

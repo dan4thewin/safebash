@@ -1,6 +1,7 @@
 ---
 title: "janet: arith VALUE path doesn't read an embedded `${…}` expansion (reads 0)"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: bug
 depends: []
@@ -67,3 +68,11 @@ janet's `:-` disposition *value* semantics diverging from native on a set-but-
 non-int subject (`s=x`): native uses the default, janet uses `_num(s)`=0. So the
 d4.3–d4.6 value assertions stay guarded to native,c. Un-guarding pex.1-3 / dsp.*
 needs that semantic aligned.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

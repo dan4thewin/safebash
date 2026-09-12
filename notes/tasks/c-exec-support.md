@@ -1,5 +1,5 @@
 ---
-title: "c/janet backends: emit the `exec` builtin (currently native-only)"
+title: "c backend: emit the `exec` builtin (currently native-only)"
 status: ready
 priority: P2
 kind: feature
@@ -42,3 +42,10 @@ this session (journal 201) and is native-only:
 The transform + validation are backend-independent (already done): the c/janet
 work is purely the emit step. Native `emit_exec` in `codegen/dispatch.rs` is the
 reference.
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

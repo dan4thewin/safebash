@@ -1,5 +1,5 @@
 ---
-title: "c/janet: function stdout capture ($(f)) unimplemented — CaptureStart/End TODO (c), exec (janet)"
+title: "c: function stdout capture ($(f)) unimplemented — CaptureStart/End TODO"
 status: ready
 priority: P3
 kind: bug
@@ -31,3 +31,10 @@ backends do not:
 Guarded `spec/functions.sh` 17.3 / 17.4 to native meanwhile. The native
 transform (`capture_func_into`) is backend-shared; only the codegen of
 CaptureStart/CaptureEnd is missing in c/janet.
+
+
+## Rescoped to c-only (DD#104, 2026-09-12)
+
+The janet backend is removed. This task was filed against both
+backends; the **c** half is still real and still open — it shows up
+as one of the c-mode skips. The janet half is gone, not fixed.

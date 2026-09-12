@@ -1,6 +1,7 @@
 ---
 title: "janet backend: int-valued collections (int array / int map)"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P3
 kind: backend-parity
 depends: []
@@ -45,3 +46,11 @@ site.
 Widen the `if in_modes native,c` guard around ivc.1-8,11 in
 spec/arithmetic.sh to include janet once green. ivc.9/ivc.10 (compile-rejects)
 already run in every mode.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

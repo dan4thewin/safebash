@@ -1,5 +1,6 @@
 ---
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 ---
 
@@ -45,3 +46,11 @@ collection the callee receives rather than declares".
 
 `f() { echo "${args[0]}"; }` + `f one` prints `one` under `--janet`, and
 `spec/types.sh` 75.54 runs unguarded in all three modes.
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

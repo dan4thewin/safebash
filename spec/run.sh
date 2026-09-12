@@ -26,7 +26,7 @@ sqlite3 spec.db -cmd ".mode tabs" \
 
 # Modes to run each spec file under. Override via SPEC_MODES env var
 # (e.g. SPEC_MODES="native" for fast iteration).
-MODES=${SPEC_MODES:-"native janet c"}
+MODES=${SPEC_MODES:-"native c"}
 
 cd spec
 for mode in $MODES; do

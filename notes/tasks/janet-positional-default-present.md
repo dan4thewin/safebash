@@ -1,6 +1,7 @@
 ---
 title: "janet: positional ${N:-DEF} returns the default even when the arg is present"
-status: ready
+status: deferred
+deferred-by: DD104
 priority: P2
 kind: bug
 depends: []
@@ -28,3 +29,11 @@ correct in janet — `vm.bl2`/`vm.bl7` pass) and the c backend (correct).
 
 Companion to `bug-cjanet-default-on-int-var` / `janet-int-array-and-cell-default`
 (the janet `:-` default family has had several holes).
+
+
+## Deferred to post-beta (DD#104, 2026-09-12)
+
+The in-tree janet backend is removed; `--emit-ir` replaces it with an
+inert IR capture that an out-of-tree oracle can consume. This gap is
+**not fixed** — it is recorded here as part of the diagnosis a restart
+should read. The code it describes lives at tag `janet-babel`.

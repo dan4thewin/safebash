@@ -1,5 +1,6 @@
 title: DD#15 — Janet Oracle Defines Semantics
-status: implemented
+status: superseded
+superseded-by: DD104
 
 The Janet backend is the reference implementation for what sash programs
 should do. Discrepancies between native and Janet output are bugs.

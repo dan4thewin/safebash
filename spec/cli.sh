@@ -92,7 +92,7 @@ extract_text=$($SASH --extract 2>&1 >/dev/null)
 
 # cli.13 the usage text covers every advertised flag
 missing=""
-for f in -c -o --janet --janet-map --emit-c --manifest --extract --no-taint --trace --sysroot=; do
+for f in -c -o --emit-ir --emit-c --manifest --extract --no-taint --trace --sysroot=; do
     [[ $help_text == *"$f"* ]] || missing="$missing $f"
 done
 [[ -z $missing ]]; chk cli.13
