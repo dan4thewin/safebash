@@ -122,3 +122,12 @@ external `(stdout, status, stderr)` trio — remains in
 capture-condition subset only. A related open idea: extending presence-testing
 to the getenv intrinsic (`getenv-presence-handling`) — either as a
 capture-condition or via an optional getenv default argument.
+
+## Addendum 2026-09-12 — `getenv` joins the capture-condition
+
+The rule above is restricted to a single **external** command substitution,
+on the grounds that a sash intrinsic "can't fail". [DD#101](DD101-getenv-lookup-status.md)
+carves out one exception: `$(getenv NAME)` interrogates external state and can
+report a not-found **result**, so it composes with both `x=$(getenv N) || …`
+and `if ! x=$(getenv N) { … }`. All other intrinsics remain can't-fail, and
+SB4025's advice text still applies to them.

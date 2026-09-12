@@ -85,27 +85,76 @@ So the work is: give `getenv` a meaningful exit status (0 = present,
 nonzero = absent) and let it through the capture-condition / `||` path that
 SB4025 currently reserves for external commands.
 
-### Forced consequence: uncaught absence must abort
+### RESOLVED 2026-09-12 — see DD#101
 
-Today `h = $(getenv NOPE)` silently yields `""`. Once absence is a *failure*,
-DD#55's error model makes an uncaught failure an abort, and DD#42 already
-states the principle for the sibling intrinsic:
+DG settled both open points:
+
+- **Uncaught is allowed** (option A: status-only). A bare
+  `home=$(getenv NOPE)` compiles, binds `""`, sets a failure status nothing
+  reads. Handling is *not* mandatory — taint already forces an `attest`
+  before any use, and a second mandatory gate would break every existing
+  `x=$(getenv HOME)` for no added safety.
+- **Present-but-empty reports success.** `NAME=""` is a successful lookup
+  (POSIX `getenv` semantics); only *unset* fails. Without this the
+  unset/set-to-empty distinction — the entire point of the feature — stays
+  unrecoverable.
+
+No default argument (contrast DD#60's `$(arg N DEFAULT)`); no abort (which
+would be incompatible with `||`). Written up as
+**`notes/decisions/DD101-getenv-lookup-status.md`**.
+
+### Correction 2026-09-12: abort is NOT forced (and is self-contradictory)
+
+An earlier revision of this file claimed DD#42 forced uncaught absence to
+abort. **That was a misreading.** DD#42's sentence —
 
 > Out-of-range `$(argv N)` aborts with a clear error message, consistent
-> with integer overflow behavior (DD#26). **There is no silent empty
-> return.**
+> with integer overflow behavior (DD#26). There is no silent empty return.
 
-`getenv` returning silent-empty for an absent variable is precisely the
-behaviour DD#42 forbids for `argv`. Applying the decision consistently:
+— is scoped to **`$(argv N)` out-of-range bounds**, the sentence it follows.
+It is a statement about array bounds, not a general principle about intrinsic
+results, and it says nothing about `getenv` presence.
 
-- `h = $(getenv NOPE)` — uncaught → **abort** with a diagnostic naming the
-  variable.
-- `h = $(getenv NOPE) || h = /default` — caught → `h` is `/default`.
+Worse, abort-by-default **contradicts the shape DG chose**:
 
-This is a **breaking change** for any script that reads an optional env var
-without a fallback, and it is the direct consequence of the decision rather
-than a separate choice. Flagged rather than deferred; DG to veto if the
-silent-empty case should somehow survive.
+    home=$(getenv HOME) || home=/home/dg
+
+`||` branches on an exit status. An abort tears down the program, so the
+fallback could never fire. Picking the `||` form already rules out abort. No
+decision needed — the two are incompatible.
+
+### Measured: handling is ALREADY required, via taint
+
+The interesting finding. `getenv` results are tainted (DD#24/#53), so the
+value cannot be used at all without an `attest`:
+
+    str home=$(getenv NOPE1)
+    echo "[$home]"
+    → SB5020 tainted variable $home used without attest
+
+And when the attest predicate rejects the empty string, **absence already
+aborts at runtime** — no getenv-specific rule required:
+
+    str home=$(getenv NOPE1)
+    attest home [[ -d $home ]]
+    → attest: home failed the gate     (rc=1)
+
+So `getenv` already sits much closer to the "handling required" model than to
+the external-command model. The enforcement simply lives in the taint system
+rather than in `getenv`.
+
+**The residual hole is narrow.** An attest predicate that *admits* empty lets
+absence through silently:
+
+    attest home [[ $home != /root ]]
+    → got:[]     (rc=0)
+
+That is a general property of weak attest predicates, not a `getenv` defect.
+
+**What no predicate can fix:** unset and set-to-empty are indistinguishable —
+measured identical output for `NOPE1` unset and `NOPE1=''`. The information
+never reaches the program. This, not safety, is the real argument for a
+presence mechanism: taint already covers safety.
 
 ### Open sub-questions for implementation
 

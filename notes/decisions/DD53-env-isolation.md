@@ -63,3 +63,13 @@ The implicit getenv fallback from experiment 027.
 - DD#24 — Taint quarantine and bless (getenv as taint source)
 - DD#42 — getenv and argv as builtins (explicit-origin forms)
 - DD#45 — Export rejection amendment (SB5001)
+
+## Addendum 2026-09-12 — getenv reports a lookup status
+
+`$(getenv NAME)` now carries a **lookup status**: unset is a failure, set
+(including set-to-empty) is a success. This makes unset and `NAME=""`
+distinguishable, which they were not before. Uncaught is allowed; the value is
+`""` either way and taint still gates every use. See
+[DD#101](DD101-getenv-lookup-status.md).
+
+Note the examples above use `bless`, which DD#93 renamed to **`attest`**.
