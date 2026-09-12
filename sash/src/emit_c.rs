@@ -654,15 +654,12 @@ fn emit_block(e: &mut Emit, id: BlockId, block: &BasicBlock, types: &VarTypes) {
     if is_catching_construct_exit(&block.label) {
         writeln!(e.out, "    __exit_status = 0;").unwrap();
     }
-    // The final command of a Branch/Loop-terminated block is the condition —
-    // a redirect open(2) failure there is caught, not aborted (in_condition).
-    let cond_block = matches!(
-        block.terminator,
-        Terminator::Branch { .. } | Terminator::Loop { .. }
-    );
-    let last = block.insts.len().saturating_sub(1);
+    // DD#55: the instruction in condition position has its redirect open(2)
+    // failure caught, not aborted. Shared with codegen/entry.rs so the two
+    // backends cannot disagree about which instruction that is.
+    let cond_idx = crate::ssa::condition_inst_index(block);
     for (i, inst) in block.insts.iter().enumerate() {
-        e.in_condition = cond_block && i == last;
+        e.in_condition = cond_idx == Some(i);
         emit_inst(e, inst, types);
     }
     e.in_condition = false;

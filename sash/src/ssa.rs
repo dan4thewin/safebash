@@ -816,6 +816,47 @@ pub enum Terminator {
     },
 }
 
+/// DD#55: index of the instruction sitting in **condition position**, or
+/// `None` if this block has none.
+///
+/// A redirect `open(2)` failure on that instruction is *caught* by the
+/// enclosing construct rather than aborting the program, so both backends
+/// must agree on which instruction it is. They previously did not, and each
+/// disagreement was a bug:
+///
+/// - the terminator must be `Branch` **or** `Loop`. `if`/`&&`/`||` end in a
+///   `Branch`, `while`/`until` in a `Loop`; DD#55 lists them together as
+///   condition position. Native tested `Branch` alone, so a failed open in a
+///   `while` condition aborted instead of ending the loop.
+/// - the scan runs in reverse and **skips `__negate_test_result`**. DD#70
+///   places that sigil *after* the operand it negates, and DD#55 counts the
+///   operand of `!` as condition position. Both backends took the sigil for
+///   the condition, so `if ! cmd > /bad/f` aborted in both.
+///
+/// The reads are included alongside Command/Pipeline because they carry
+/// their own redirects and run the same open(2) guard: `if read a < f` must
+/// catch exactly as `if echo > f` does. This is deliberately a wider set
+/// than transform's `uncheck_last_condition_inst`, which answers a different
+/// question — whether a nonzero *status* aborts — and so covers only the
+/// status-bearing Command/Pipeline.
+pub(crate) fn condition_inst_index(block: &BasicBlock) -> Option<usize> {
+    if !matches!(
+        block.terminator,
+        Terminator::Branch { .. } | Terminator::Loop { .. }
+    ) {
+        return None;
+    }
+    block.insts.iter().rposition(|i| match i {
+        SsaInst::Command { name, .. } if name == "__negate_test_result" => false,
+        SsaInst::Command { .. }
+        | SsaInst::Pipeline { .. }
+        | SsaInst::ReadLine { .. }
+        | SsaInst::ReadLineMulti { .. }
+        | SsaInst::ReadArray { .. } => true,
+        _ => false,
+    })
+}
+
 /// The complete SSA representation of a program.
 #[derive(Debug)]
 pub struct SsaProgram {

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=144
+plan=150
 echo "1..$plan" >&3
 
 set +e
@@ -857,6 +857,62 @@ echo "v=$v"'
   [[ $rc = 0 && $out = "v=alpha beta" && -z $err ]]; chk 55.66
 else
   skip_chk 55.65; skip_chk 55.66
+fi
+
+# --- DD#55 condition position: `while`/`until` and the operand of `!` ---
+# DD#55 tabulates `cmd || action` / `if cmd` / `while cmd` together as
+# explicit handling, and defines condition position as "if / while / until
+# test, operand of `!`". A failed redirect open there is CAUGHT, silently
+# (caught failures print no diagnostic — see abort-diagnostics-remaining).
+# Both backends previously got two of these wrong: native treated only
+# Branch-terminated blocks as conditions, so `while` aborted; and both took
+# the DD#70 `__negate_test_result` sigil for the condition, so `!` aborted.
+if in_modes native,c; then
+  # 55.67 failed open in a `while` condition ends the loop, body never runs
+  run_sash 'int n = 0
+while echo hi > /nonexistent_dir_55/f { n = $(( n + 1 )); if (( n > 2 )) { break } }
+echo "done n=$n"'
+  [[ $rc = 0 && $out = "done n=0" && -z $err && -z $rerr ]]; chk 55.67
+
+  # 55.68 same for a read in a `while` condition (carries its own redirect).
+  # `while read` is rejected outright (SB5069 — it consumes the whole stream),
+  # so the loop form of the read family is `while readline`.
+  run_sash 'int n = 0
+while readline v < /nonexistent_dir_55/f { attest v [[ -n $v ]]; n = $(( n + 1 )); echo "got $v" }
+echo "done n=$n"'
+  [[ $rc = 0 && $out = "done n=0" && -z $err && -z $rerr ]]; chk 55.68
+
+  # 55.69 `until` is condition position too, and terminates in a Loop just as
+  # `while` does — the failed open is caught, so the condition is false and
+  # the body DOES run (once, then break)
+  run_sash 'int n = 0
+until echo hi > /nonexistent_dir_55/f { n = $(( n + 1 )); break }
+echo "done n=$n"'
+  [[ $rc = 0 && $out = "done n=1" && -z $err && -z $rerr ]]; chk 55.69
+
+  # 55.70 operand of `!`: the open fails, `!` negates the false condition,
+  # so the then-branch runs. The sigil sits AFTER the command it negates
+  # (DD#70), so a naive "last instruction" rule marks the wrong one.
+  run_sash 'if ! echo hi > /nonexistent_dir_55/f { echo caught }
+echo done'
+  [[ $rc = 0 && $out = "caught
+done" && -z $err && -z $rerr ]]; chk 55.70
+
+  # 55.71 ... and with a read as the negated operand
+  run_sash 'if ! read a < /nonexistent_dir_55/f { echo caught }
+echo "n=$(len a)"'
+  [[ $rc = 0 && $out = "caught
+n=0" && -z $err && -z $rerr ]]; chk 55.71
+
+  # 55.72 REGRESSION GUARD: widening condition position must not swallow an
+  # uncaught failure. A bare redirect still aborts with its diagnostic.
+  run_sash 'echo hi > /nonexistent_dir_55/f
+echo done'
+  [[ $rc != 0 && -z $out && -z $err \
+     && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.72
+else
+  skip_chk 55.67; skip_chk 55.68; skip_chk 55.69
+  skip_chk 55.70; skip_chk 55.71; skip_chk 55.72
 fi
 
 set -e

@@ -284,28 +284,16 @@ fn emit_block_insts(
     redirect_stack: &mut Vec<Vec<SavedFd>>,
 ) -> bool {
     let mut block_terminated = false;
-    // DD#55: the command in condition position is the last Command/Pipeline
-    // of a Branch-terminated block (mirrors transform's
-    // mark_unchecked_in_conditions). Its redirect open(2) failure is caught
-    // by if/||, not aborted — distinct from `-` suppression. The reads count
-    // too: they carry their own redirects and run the same open(2) guard, so
-    // `if read a < f` must catch exactly as `if echo > f` does.
-    let is_branch = matches!(ssa_block.terminator, crate::ssa::Terminator::Branch { .. });
-    let last_cmd_idx = ssa_block.insts.iter().rposition(|i| {
-        matches!(
-            i,
-            crate::ssa::SsaInst::Command { .. }
-                | crate::ssa::SsaInst::Pipeline { .. }
-                | crate::ssa::SsaInst::ReadLine { .. }
-                | crate::ssa::SsaInst::ReadLineMulti { .. }
-                | crate::ssa::SsaInst::ReadArray { .. }
-        )
-    });
+    // DD#55: the instruction in condition position has its redirect open(2)
+    // failure caught by if/||/while, not aborted — distinct from `-`
+    // suppression. `ssa::condition_inst_index` is shared with emit_c so the
+    // two backends cannot disagree about which instruction that is.
+    let cond_idx = crate::ssa::condition_inst_index(ssa_block);
     for (idx, inst) in ssa_block.insts.iter().enumerate() {
         if block_terminated {
             break;
         }
-        let in_condition = is_branch && Some(idx) == last_cmd_idx;
+        let in_condition = cond_idx == Some(idx);
         block_terminated = inst.emit(
             ctx.builder,
             ctx.module,
