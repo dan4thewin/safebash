@@ -9,8 +9,6 @@
 14.4	14	for...done > file SHALL redirect the loop body output to file
 14.5	14	while...done | cmd SHALL pipe the loop body output to cmd
 14.6	14	if...fi > file SHALL redirect the conditional output to file
-15.1	15	Native codegen output SHALL match Janet backend output for all test inputs
-15.2	15	When sash deliberately diverges from bash, Janet SHALL reflect sash semantics, not bash semantics
 16.1	16	int variables SHALL store machine-width integers
 16.2	16	fn name -> int { } SHALL declare integer return type
 16.3	16	There SHALL be no implicit conversion between int and string
