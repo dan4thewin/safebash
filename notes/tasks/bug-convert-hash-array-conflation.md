@@ -1,5 +1,5 @@
 title: bug: sash-convert conflates hashes and arrays
-status: ready
+status: blocked
 absorbed-by: dd75-len-collection-only-strlen
 priority: P2
 kind: bug

@@ -1,3 +1,88 @@
+## ══ STATUS (2026-09-12) — the native batch, run unattended ══
+
+**DG: "do the whole batch unattended."** Thirteen items from the backlog
+review worked in priority order. **Eleven landed; two are blocked on DG.**
+Fifteen commits, `cc9aea5..999e014`. Journal 270.
+
+**Suite: 5194 → 5351 passing, 41 failing, 567 skipped. Zero non-janet
+failures throughout.** All 41 failures are janet. Every fix was fail-first
+verified (stash, rebuild, confirm the new specs fail, restore) — four times
+that changed what got written.
+
+### Five bugs nobody had filed, all found by probing the binary
+
+- **Heap exhaustion was a silent SIGSEGV** (P1) — null returned, caller wrote
+  through it. `$(<file)` was also truncating at 64 KiB.
+- **The C backend was stubbing file tests entirely** — found while fixing the
+  `-N` divergence, which was the smaller half of what was wrong.
+- **janet's `write` forked `/usr/bin/write`** — no `BuiltinCmd::Write` arm had
+  ever existed, so a builtin became the `wall`-style messaging program.
+- **janet's lastpipe `| read ARRAY` bound a scalar** — `detect_lastpipe` keyed
+  on `BuiltinCmd::from_name`, which maps both `read` and `readline` to `Read`.
+- **`9x =~ s/a/b/` compiled to a working binary** — `parser.rs`'s private
+  `is_identifier` never checked the first character, contradicting its own doc
+  comment. Bash answers "command not found" to that line.
+
+### Three more filings were wrong on contact
+
+Journal 269 found nine of nineteen wrong at review time. Implementation added
+three: `remove-retired-surface-implementations` confused a retired *source
+spelling* (`echo -n`) with a live *internal lowering* (`write`);
+`janet-read-a-element-count` blamed a trailing newline for a
+scalar-vs-array binding; `bug-convert-hash-array-conflation` was filed as a
+bug and is really a decision. **A filing is a snapshot and nothing ages it.**
+
+### Recognition is not implementation
+
+Removing `BuiltinCmd::Mapfile` looked free — nothing lowers it, the name stays
+in `BUILTINS`. But `is_resolvable_external` classifies a head as external
+exactly when `from_name` returns `Other`, so `mapfile` became a PATH lookup
+and SB5011 preempted SB5060. The variant is back as recognition-only. **A
+retired surface keeps its name and its diagnostic; everything between goes.**
+
+### The recurring class is at eleven
+
+Every bug this batch is "a value that could not be resolved resolved to a
+plausible constant instead of failing" — null as address, missing opcode as
+`false`, unknown builtin as external program, array as string, digit as name.
+**Two copies of one predicate accounts for four of the eleven.** Three commits
+are literally "one shared definition": the DD#55 condition predicate, the
+`strlen` operand guard, `is_identifier`.
+
+### Complexity gate: refactored three times, bypassed zero
+
+`validate_stmt_ctx` (extracted `validate_declaration_stmt`),
+`lower_pipe_while_read` (cog 16 → 0), the janet echo/write emitter
+(`janet_echo_arg`). Note that touching a **call site** counts as touching the
+function.
+
+## ▸ TWO DECISIONS WAITING ON DG
+
+Each blocks exactly one batch item and nothing else.
+
+1. **Heap capacity** (`dollar-lt-file-forks`, `bug-heap-exhaustion-silent-segv`)
+   — what should `$(<file)` do when the file exceeds the arena? (A) grow, or
+   (B) fail loudly with a diagnostic.
+2. **The `strlen` cell spelling** (`strlen-cell-operand-spelling`) — bash's
+   `${#a}` means "bytes of element 0" and sash cannot ask that. `${a[0]}`
+   already parses as a cell; it is rejected only because `classify_operand`
+   buckets it as "not a name", which is correct for `len`/`join`/`keys` and
+   open for `strlen`. Blocks the four-row converter mapping.
+
+## ▸ NEXT UP
+
+The `next` queue is **empty**. Remaining backlog is the janet-parity and
+converter cohorts (~54 and ~12 filings), plus:
+
+- `rust-tests-hang-on-retired-surfaces` — shrunk by this batch (the `read -d`,
+  `read -f`, `mapfile_basic` and `${x^}` fixtures are gone) but not closed.
+- `sb5011-misdiagnoses-malformed-assignment` (P4, new) — `a-b=1` is blamed on
+  "a variable or expansion" it does not contain. Pre-existing; measured.
+- `guide-architecture-stale-cst`, `bug-regex-blind-past-interior-nul` (P1),
+  `janet-map-from-array` (P2).
+- A second adversarial review is still unscheduled; validator bypass remains
+  the highest-value target.
+
 ## ══ STATUS (2026-09-12) — native backlog reviewed end to end ══
 
 **DG: "let's review each one at a time, finalize any decisions, normalize
