@@ -1,6 +1,6 @@
 ---
 title: "[[ ]] parser under-accepts file tests -k/-g/-u (setuid/setgid/sticky)"
-status: ready
+status: done
 priority: P4
 kind: feature-gap
 depends: []
@@ -57,3 +57,30 @@ up exactly one divergence, and it is not in this task's three: `[[ -N f ]]`
 answers `no` where bash answers `yes`. Filed separately as
 `bug-file-test-N-diverges-from-bash` (P2). Worth doing that sweep as a spec
 while adding `-k`/`-g`/`-u` coverage here.
+
+## DONE 2026-09-12
+
+Parser-only, exactly as the filing predicted. `-k`, `-g`, and `-u` added to
+`is_unary_test_op`; `file_test_op_code` (10/12/13) and the `sash-rt` stat-mode
+paths needed no change at all.
+
+Verified against bash directly before writing the assertions: all nine
+combinations of the three operators against a set-bit file, a clear-bit file,
+and a missing path agree.
+
+New spec section D in `spec/filetest.sh`, `ft.29`–`ft.36` (plan 28 -> 36),
+gated native,c to match the rest of the file (janet lowers only -d/-e/-f).
+Each bit is tested both **set and clear**, so a constant-`no` implementation
+cannot pass. `ft.36` is a regression guard that `-g` the mode bit does not
+collide with `g?`, the DD#93 content-shape test sharing the letter.
+
+Fail-first verified: `ft.29`–`ft.35` all fail on the pre-change compiler
+(SB4014); `ft.36` passes on both, which is what a guard should do.
+
+Sweep: 5321 passing / 41 failing / 567 skipped, zero non-janet failures, and
+the only flips are the 24 new rows.
+
+### The reverse-direction note in the filing still holds
+
+`-o`, `-R`, `-v` remain listed in `is_unary_test_op` and still produce a clean
+SB5028 rather than an ICE. No action taken.

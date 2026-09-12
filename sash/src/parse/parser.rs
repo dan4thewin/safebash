@@ -1506,6 +1506,13 @@ fn is_unary_test_op(op: &str) -> bool {
             | "-b"
             | "-c"
             | "-p"
+            // stat-mode bits. `file_test_op_code` has implemented these as
+            // codes 10/12/13 all along; they were simply never listed here,
+            // so `[[ -k f ]]` parsed as two words and reported SB4014.
+            // (`-g` is the mode bit; the content-shape test is `g?` above.)
+            | "-k"
+            | "-g"
+            | "-u"
             | "-S"
             | "-t"
             | "-O"

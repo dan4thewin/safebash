@@ -8,7 +8,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=28
+plan=36
 echo "1..$plan" >&3
 
 set +e
@@ -128,6 +128,42 @@ else
     skip_chk ft.17; skip_chk ft.18; skip_chk ft.19; skip_chk ft.20
     skip_chk ft.21; skip_chk ft.22; skip_chk ft.23; skip_chk ft.24
     skip_chk ft.25; skip_chk ft.26; skip_chk ft.27; skip_chk ft.28
+fi
+
+# ── D. stat-mode bits: -u / -g / -k (native,c) ───────────────────────
+# The codegen table has implemented these as codes 13/12/10 since it was
+# written; the PARSER simply never listed them, so `[[ -k f ]]` reported
+# SB4014 and the capability was unreachable. Each bit is checked both set
+# and clear, so a constant-`no` implementation cannot pass.
+if in_modes native,c; then
+    printf 'x\n' > modef
+    chmod u+s,g+s,+t modef
+    run_sash 'if [[ -u modef ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.29
+    run_sash 'if [[ -g modef ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.30
+    run_sash 'if [[ -k modef ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.31
+
+    # `plain` carries none of the three
+    run_sash 'if [[ -u plain ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.32
+    run_sash 'if [[ -g plain ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.33
+    run_sash 'if [[ -k plain ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.34
+
+    # a missing path is "no", not an error
+    run_sash 'if [[ -u nosuch ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.35
+
+    # `-g` the mode bit must not collide with `g?`, the DD#93 content-shape
+    # test that shares the letter.
+    run_sash 'if [[ g? "hi" ]]; then echo yes; else echo no; fi'
+    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.36
+else
+    skip_chk ft.29; skip_chk ft.30; skip_chk ft.31; skip_chk ft.32
+    skip_chk ft.33; skip_chk ft.34; skip_chk ft.35; skip_chk ft.36
 fi
 
 tally
