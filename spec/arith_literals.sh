@@ -72,15 +72,11 @@ run_sash 'echo $((5 # 3))'
 [[ $rc != 0 && -z $out && -n $err ]]; chk nl.r10
 
 # ── Runtime string→int coercion (data path) ─────────────────────────
-# native/c use sash_atoi (DD#72); janet coerces string-vars-in-arith via its
-# own runtime and can't `:+` a string var (pre-existing janet limitation — it
-# illustrates the IR, native/c are the numeric oracles). Guard to native,c.
 # DD#72 numeric-literal data coercion in arithmetic — under DD#77 D1 a bare
 # string operand in arith is a compile error, so the conversion carries a `:?`
 # disposition (`${x:?…}` validates + converts via the strict grammar, which
 # still honors 0x/0o/0b and leading-zero-decimals; DD#72's bare-coercion is
-# superseded). native,c — janet's arith VALUE path doesn't apply the
-# disposition (janet-arith-subscript-read).
+# superseded).
 # honors 0x/0o/0b prefixes
 run_sash 'x=0xff; echo $(( ${x:?nan} + 0 ))'
 [[ $rc = 0 && $out = "255" && -z $err ]]; chk nl.s1

@@ -32,9 +32,6 @@ run_sash 'echo "a:b:c" | read -f: a b c; echo $a $b $c'
 [[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.5
 
 # 22.6 mapfile -t reads lines into array
-# native,c: janet does not emit `map m = @{a:DISP}` at all (task
-# `janet-map-from-array`), so the array->map route DD#99 requires costs
-# janet coverage these had under `mapfile -m`. Honest gap, filed.
 run_sash 's="a
 b
 c"
@@ -111,9 +108,6 @@ run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
 # --- DD#22 mapfile -m ---
 
 # 22.8 mapfile -m reads KEY=VALUE into map
-# native,c: janet does not emit `map m = @{a:DISP}` at all (task
-# `janet-map-from-array`), so the array->map route DD#99 requires costs
-# janet coverage these had under `mapfile -m`. Honest gap, filed.
 run_sash 's="name=Alice
 age=30"
 - matchall $s "([^=\x0a]*)=([^\x0a]*)" p
@@ -122,9 +116,6 @@ echo ${m[name]} ${m[age]}'
 [[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
 
 # 22.9 mapfile -m skips blank lines
-# native,c: janet does not emit `map m = @{a:DISP}` at all (task
-# `janet-map-from-array`), so the array->map route DD#99 requires costs
-# janet coverage these had under `mapfile -m`. Honest gap, filed.
 run_sash 's="a=1
 
 b=2"
@@ -134,9 +125,6 @@ echo ${m[a]} ${m[b]}'
 [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
 
 # 22.10 mapfile -m splits on first = only
-# native,c: janet does not emit `map m = @{a:DISP}` at all (task
-# `janet-map-from-array`), so the array->map route DD#99 requires costs
-# janet coverage these had under `mapfile -m`. Honest gap, filed.
 run_sash 's="key=val=ue"
 - matchall $s "([^=\x0a]*)=([^\x0a]*)" p
 map m = @{p:~}
@@ -246,9 +234,8 @@ run_sash 'x=5; if [[ -n $x ]]; then echo y; fi'
 run_sash 'false && echo A || echo B'
 [[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.7
 
-# 62.8-62.10 nested && / || chains. Now correct in all three backends
-# (bug-andor-backend-chain-status fixed): janet/c branch on exit status,
-# not language value-truthiness, and every command sets the status var.
+# 62.8-62.10 nested && / || chains. Branch on exit status, not language
+# value-truthiness, and every command sets the status var.
 # 62.9/62.10 are likewise superseded by DD#95 — both mix the two operators.
 run_sash 'if [[ 1 = 1 ]] { echo A } else { echo B }'
 [[ $rc = 0 && $out = A && -z $err ]]; chk 62.8
@@ -257,7 +244,7 @@ run_sash 'false && echo A || echo B && echo C'
 run_sash 'true || echo A && echo B'
 [[ $rc != 0 && -z $out && $err == *SB4053* ]]; chk 62.10
 # 62.30 per-command status pin: a successful echo must leave status 0 so a
-# following `&& cmd` runs (the c/janet regression this fix closes).
+# following `&& cmd` runs.
 run_sash 'echo A && echo B && echo C'
 [[ $rc = 0 && $out = $'A\nB\nC' && -z $err ]]; chk 62.30
 
@@ -313,7 +300,7 @@ run_sash 'str s="aaa"; if [[ $s =~ ^a{33}$ ]]; then echo m; fi'
 
 # 22.12 echo|read is clean (builtin pipe, no exec). `echo | read` is the
 # lastpipe inline-pipe: the read builtin consumes the pipe and sets a PARENT
-# variable, in-process (no fork). Native, c, and janet all support it.
+# variable, in-process (no fork).
 run_sash 'echo "clean" | readline x; echo $x'
 [[ $rc = 0 && $out = "clean" && -z $err ]]; chk 22.12
 
@@ -325,7 +312,7 @@ echo ${arr[0]}'
 # 22.14 @a command-arg splat → one verbatim arg per element (DD#20/#22).
 # DD#69: an external splat needs a disposition even for a literal array;
 # `@{a:?…}` requires non-empty (never fires here). /usr/bin/printf runs as a
-# real external in all three backends.
+# real external in both backends.
 run_sash 'array a=(one two three); /usr/bin/printf "[%s]\n" @{a:?empty}'
 [[ $rc = 0 && $out = $'[one]\n[two]\n[three]' && -z $err ]]; chk 22.14
 
@@ -347,7 +334,7 @@ run_sash 'array a=(x); array b=(y z); /usr/bin/printf "%s|" @{a:?e} @{b:?e}'
 run_sash 'array e=(); /usr/bin/printf STDIN | cat @{e:~}'
 [[ $rc = 0 && $out = "STDIN" && -z $err ]]; chk 22.18
 
-# 22.19 splat in a pipeline stage (janet pipe plumbing fixed: os/pipe :WR)
+# 22.19 splat in a pipeline stage
 run_sash 'array a=(p q r); /usr/bin/printf "[%s]\n" @{a:?e} | cat'
 [[ $rc = 0 && $out = $'[p]\n[q]\n[r]' && -z $err ]]; chk 22.19
 
@@ -368,12 +355,11 @@ run_sash 'echo "*"'
 run_sash 'array a=(*); : @a; echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 20.4
 
-# 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69). native/c
-#      only — Janet lowers from IR and does not expand globs.
+# 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69).
 run_sash 'for f in *.nomatchZZZ; do echo "$f"; done; echo done'
 [[ $rc = 0 && $out = "done" && -z $err ]]; chk 20.5
 
-# 20.6 for-in glob: iterates per matched entry, no word splitting (native/c).
+# 20.6 for-in glob: iterates per matched entry, no word splitting.
 #      DD#73: the element is a normalized absolute path `<cwd>/only.www`.
 run_sash '/usr/bin/touch only.www; for f in *.www; do echo "[$f]"; done'
 cwd=$(pwd -P)
@@ -407,8 +393,7 @@ run_sash 'echo x | readc a'
 
 # 22.21 `-d ''` (empty delimiter) = NUL: `read -a arr -d ''` splits
 # NUL-separated fields into an array (bash's read -d '' convention). This is
-# the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`. janet lacks
-# custom-delimiter array reads, so gate native,c.
+# the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`.
 run_sash 'printf "a\0b c\0d" > f22_21; read arr < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
 [[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
 
@@ -436,8 +421,7 @@ run_sash 'echo hi | read -r x; echo "[$x]"'
 # 22.26 `-d` uses TERMINATOR semantics: a trailing delimiter does NOT create a
 # trailing empty element (bash `mapfile -d ''` / `find -print0` / `xargs -0`).
 # NUL-terminated input (the sash-getopt idiom) yields only the real fields, so
-# every element is non-empty and a attest-all `[[ -n $x ]]` succeeds. janet lacks
-# custom-delimiter array reads, so gate native,c.
+# every element is non-empty and a attest-all `[[ -n $x ]]` succeeds.
 run_sash 'printf "x\0y\0" | read arr; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
 
@@ -451,14 +435,12 @@ run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e
 # The function is lowered twice (dead template + inline); the autodeclared array
 # table registration used to leak from the template into the inline, so the
 # inline skipped the table `Assign` and the runtime read filled a NULL table.
-# native,c (janet splits the trailing newline differently — pre-existing).
 run_sash 'fn f { echo hi | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
 [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
 
 # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
 # contributes NOTHING (no value, no separator), matching the external argv
-# builder. Previously ICE'd (native) / double-spaced (c). native,c: janet's
-# builtin echo lacks `-n`/elide (task janet-echo-flags-and-elide).
+# builder. Previously ICE'd (native) / double-spaced (c).
 run_sash 'fn f { x=""; echo a $x:~ b }; f'
 [[ $rc = 0 && $out = "a b" && -z $err ]]; chk 22.29
 
@@ -546,8 +528,8 @@ echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk rl.6
 
 # rl.7 works as a `while` condition, one line per iteration.
-# native only: the identical `while read v` shape also fails in c/janet, so
-# this is a pre-existing backend gap, not a `readline` one.
+# Native only: the identical `while read v` shape also fails in c, so this is
+# a pre-existing backend gap, not a `readline` one.
 if in_modes native; then
     run_sash 'printf "a\nb\n" | while readline v { attest v p?; echo "[$v]" }'
     [[ $rc = 0 && $out = "[a]

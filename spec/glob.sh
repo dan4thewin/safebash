@@ -5,7 +5,7 @@
 # for referential stability across a chdir, and to close glob-sourced
 # option-injection (a `-`-leading filename becomes `/abs/-name`, which no
 # external command parses as an option). Lexical (no realpath); no relative
-# segment survives. native+c only — Janet does not expand file globs.
+# segment survives.
 #
 # NOTE: `run_sash` (native) leaves `./test_bin` in the cwd during the run,
 # so these tests use suffixed patterns (`*.www`, never bare `*`) to avoid

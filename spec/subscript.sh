@@ -51,7 +51,7 @@ run_sash 'int array a=(2 0 9); echo ${a[i]}'
 run_sash 'int array a=(2 0 9); echo ${a["5"]}'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 80.8
 
-# ── C. explicit array indices accepted (native,c — janet subscript-value gap) ──
+# ── C. explicit array indices accepted ──
 
 # 80.9 integer literal
 run_sash 'int array a=(2 0 9); echo ${a[2]}'
@@ -91,7 +91,7 @@ run_sash 'map m=([5]=five); echo ${m["5"]}'
 run_sash 'map src=([k]=2); map m=([2]=two); echo ${m[${src[k]}]}'
 [[ $rc = 0 && $out = "two" && -z $err ]]; chk 80.17
 
-# ── E. nesting unrolls (native,c) ──
+# ── E. nesting unrolls ──
 
 # 80.18 a map key that is itself a map read: inner[k]=foo → outer[foo]=win
 run_sash 'map inner=([k]=foo); map outer=([foo]=win); echo ${outer[${inner[k]}]}'

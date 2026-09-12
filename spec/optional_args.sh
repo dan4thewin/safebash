@@ -1,9 +1,8 @@
 #!/bin/bash
 # spec/optional_args.sh — DD#84 optional trailing args (`:-`/`:~`) and the
-# scalar elision operator `:~`. Positive behavior (optional arity, elision) is
-# native,c — janet has no `args`-array model and does not elide (its `_args`
-# model is a separate gap, filed janet-optional-args-elision). The parse
-# (SB4051) and validate (SB5046) rejects are backend-independent (all modes).
+# scalar elision operator `:~`. Positive behavior pins optional arity and
+# elision. The parse (SB4051) and validate (SB5046) rejects are
+# backend-independent.
 set -eu
 . common.sh
 setup optional_args
@@ -86,7 +85,7 @@ run_sash 'x=hi; [[ ${x:~} = y ]] && echo z'
 run_sash 'x=hi; /bin/echo foo${x:~}'
 [[ $rc != 0 && $err == *SB5046* ]]; chk 84.16
 
-# ── Rejects: arity structural (transform → native,c) ──
+# ── Rejects: arity structural (transform) ──
 # 84.17 an index read both bare and via a disposition → SB5047 (mixing)
 run_sash 'fn f { /bin/echo ${args[0]} ${args[0]:-x} }
 f a'
@@ -164,8 +163,7 @@ run_sash 'fn f { - matchall "a b" "[a-z]" ok; /bin/echo x }; f'
 run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 [[ $rc != 0 && -z $out && $err == *SB5052* ]]; chk 84.29
 # 84.30 control: a differently-named local array is fine (only `args` is
-# reserved) — reading `@args` is never a write, so it stays valid. native,c:
-# janet's read-array-from-pipe / `@a` splat is a pre-existing gap.
+# reserved) — reading `@args` is never a write, so it stays valid.
 run_sash 'fn f { echo hi | read norm; /bin/echo @{norm:?} }; f'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
 

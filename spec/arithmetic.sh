@@ -119,10 +119,6 @@ run_sash 'int x=5; (( x > 0 ))'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 31.14
 
 # --- DD#25 overflow ---
-# The janet backend uses float/bignum arithmetic with no i64 overflow trap; it
-# previously "passed" these only via an unrelated codegen crash. native/c are
-# the reference. See bug-janet-int-overflow.
-#
 # bug-runtime-arith-overflow-wraps: runtime (non-const) overflow must TRAP,
 # not silently wrap. 25.2/25.3 are the const path; 25.4-25.6 are the genuine
 # runtime path (fn-arg operands, not const-foldable) for *, +, -. 25.7 guards
@@ -174,8 +170,8 @@ run_sash 'int x=-9223372036854775808; (( c = -x )); echo $c'
 run_sash 'int x=-9223372036854775808; int y=-1; (( c = x % y )); echo $c'
 [[ $rc = 0 && $out = "0" ]]; chk 25.12
 
-# 25.8 native+c: overflow prints `<argv0>: arithmetic overflow` to stderr,
-# which the harness now captures as $rerr. janet deferred.
+# 25.8 overflow prints `<argv0>: arithmetic overflow` to stderr, which the
+# harness now captures as $rerr.
 run_sash 'fn mul { int a=$(($1)); int b=$(($2)); (( c = a * b )); echo $c; }
 mul 3037000500 3037000500'
 [[ $rc != 0 && $rerr == *"arithmetic overflow"* ]]; chk 25.8
@@ -192,8 +188,7 @@ run_sash 'if (( 3 <= 7 )); then echo y; else echo n; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.16
 
 # 31.17 <= is false when greater. 31.18 >= mixed. The false case exercises
-# the else/skip branch (janet now threads `(( ))` comparison conditions as
-# 1/0 integers — bug-janet-arith-condition fixed).
+# the else/skip branch.
 run_sash 'if (( 7 <= 3 )); then echo n; else echo y; fi'
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 31.17
 run_sash 'int x=5
@@ -208,8 +203,7 @@ if (( x >= 6 )); then echo BAD; fi'
 # BIT-PATTERNS — reinterpreted u64->i64 at scan time, so
 # 0xFFFFFFFFFFFFFFFF == -1 — and only error when wider than 64 bits; i64::MIN
 # is expressible as an arith literal via the unary-neg peephole. Compile-error
-# cases are front-end (all modes); the i64::MAX/MIN value cases are guarded
-# native,c (janet's double rounds the boundary values).
+# cases are front-end; the i64::MAX/MIN value cases check runtime lowering.
 # NB: based literals (base#digits) are excluded here — they are separately
 # broken (the `#` is eaten as a comment before the scanner), see
 # bug-arith-based-literal-hash-comment.
@@ -248,7 +242,7 @@ run_sash 'echo $(( 017 ))'
 run_sash 'echo $(( 0o17 ))'
 [[ $rc = 0 && $out = "15" && -z $err ]]; chk 26.7b
 
-# 26.8-26.10 i64::MAX / i64::MIN magnitudes — guarded native,c
+# 26.8-26.10 i64::MAX / i64::MIN magnitudes
 # 26.8 decimal i64::MAX is in range
 run_sash 'echo $(( 9223372036854775807 ))'
 [[ $rc = 0 && $out = "9223372036854775807" && -z $err ]]; chk 26.8
@@ -263,9 +257,6 @@ run_sash 'echo $(( 0x8000000000000000 ))'
 
 # --- DD#58/#75: int-returning intrinsics evaluate in $(( )) sexpr calls ---
 # DG demo: `$(( (len a) + 1 ))` must yield count+1 (was len→0 → 1).
-# (janet lacks the `len` intrinsic in arith-operand position — it emits an
-# undefined `(len …)` symbol; pre-existing class, cf. janet join/keys gaps.
-# Guard the runtime to native,c; the transform/parse work is backend-shared.)
 # 58.10 (len a) in arith yields the element count
 run_sash 'array a=(x y z); int n=$(( (len a) + 1 )); echo $n'
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk 58.10
@@ -294,8 +285,7 @@ run_sash 'map m=([a]=1 [b]=2 [c]=3); int n=$(( (len m) + 1 )); echo $n'
 # `$(( ))` operands, including inside a *compound* expression (not just
 # standalone). Native regression: `$$`/`$?` read 0 as a compound-arith operand
 # because the int-lowering path missed the getpid / exit-status specials that
-# the string path already handles ($# worked — it is a materialized slot). c
-# handles all three; janet lacks `$$` in arith (filed janet-special-var-arith).
+# the string path already handles ($# worked — it is a materialized slot).
 # 31.20 $$ (pid) as a comparison operand — a pid is always positive
 run_sash 'echo $(( $$ > 0 ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 31.20
@@ -317,8 +307,7 @@ run_sash 'f() { echo $(( $# * 2 )); }; f a b c'
 # and the $(( (f) )) sexpr. Previously ONLY `len` worked in the sexpr; every
 # other intrinsic silently evaluated to 0. See bug-arith-sexpr-intrinsics-zero.
 
-# Category A — int intrinsics compute (not silent 0). native+c (janet execs
-# the intrinsics / emits invalid sexpr — filed, same gap as len 58.10-16).
+# Category A — int intrinsics compute (not silent 0).
 # sx.1 argc in a sexpr (C argc = 1: program name only, no extra args)
 run_sash 'echo $(( (argc) ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.1
@@ -340,8 +329,7 @@ run_sash 'echo $(( (argc) + 10 ))'
 # sx.8 random in a sexpr, captured to int — two draws differ (buggy → 0,0)
 run_sash 'int a=$(( (random) )); int b=$(( (random) )); echo $(( a != b ))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk sx.8
-# sx.7 signum — native+c: both read the sash_signum global. janet still
-# emits a TODO stub for the signum intrinsic (janet deferred).
+# sx.7 signum — read the sash_signum global.
 # signum with no signal received → 0 (pins it computes in a sexpr)
 run_sash 'echo $(( (signum) ))'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk sx.7
@@ -349,8 +337,7 @@ run_sash 'echo $(( (signum) ))'
 # Grouping — `(x)` on a plain variable is arithmetic grouping, not a nullary
 # call. The arith parser emits FuncCall for every `(name)` and defers the
 # decision; a name that is neither an intrinsic nor a known function is a
-# variable. Regression: `$(( (x) ))` silently returned 0. native,c (janet
-# sexpr-resolution parity filed).
+# variable. Regression: `$(( (x) ))` silently returned 0.
 # sx.9 grouped int variable
 run_sash 'int x=5; echo $(( (x) ))'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk sx.9
@@ -420,9 +407,7 @@ run_sash 'echo $(( (itod 2 5) ))'
 
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a
-# normal-parse rvalue value-import into arith; fixes the silent-0. native,c —
-# janet's arith VALUE path doesn't read the embedded subscript (filed
-# janet-arith-subscript-read; its condition path does — see asx.5).
+# normal-parse rvalue value-import into arith; fixes the silent-0.
 # asx.1 ${a[0]} literal index read
 run_sash 'array a=(10 20 30); echo $(( ${a[0]} + 1 ))'
 [[ $rc = 0 && $out = "11" && -z $err ]]; chk asx.1
@@ -439,13 +424,12 @@ run_sash 'array a=(10 20 30); (( x = ${a[1]} + 5 )); echo $x'
 # the cell is string-typed so the int result needs DD#30 `"…"` conversion.
 run_sash 'map m=([k]=5); m[k]="$(( ${m[k]} + 1 ))"; echo ${m[k]}'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk asx.6
-# asx.5 subscript rvalue in a condition (janet's condition path handles it)
+# asx.5 subscript rvalue in a condition
 run_sash 'array a=(10 20 30); if (( ${a[0]} > 5 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk asx.5
 
 # ── arith-subscript model B Stage 2: BARE `a[i]` (int-array cell, rvalue +
-# lvalue). native,c — janet's arith VALUE path doesn't read the embedded
-# subscript (janet-arith-subscript-read). ──
+# lvalue). ──
 # bsx.1 bare a[i] read, literal index
 run_sash 'int array a=(7 13 21); int x=$(( a[1] + 1 )); echo $x'
 [[ $rc = 0 && $out = "14" && -z $err ]]; chk bsx.1
@@ -498,9 +482,7 @@ run_sash 'int array a=(7 13 21); int i=1; echo $(( $a[$i] ))'
 
 # ── arith-bare-subscript-followups edge 2: a bare nested cell read `a[a[0]]`
 # ends in `]]`; the lexer now tracks subscript depth so that `]]` closes two
-# subscripts rather than breaking as a `[[ ]]` dispatch delimiter. native,c —
-# janet's arith VALUE path doesn't read the embedded subscript
-# (janet-arith-subscript-read). ──
+# subscripts rather than breaking as a `[[ ]]` dispatch delimiter. ──
 # nsx.1 nested rvalue read: a[0]=2 → a[a[0]] = a[2] = 9
 run_sash 'int array a=(2 0 9); echo $(( a[a[0]] ))'
 [[ $rc = 0 && $out = "9" && -z $err ]]; chk nsx.1
@@ -521,16 +503,14 @@ run_sash 'echo $(( y + 1 ))'
 run_sash 'int array a=(7 13 21); (( a[i]++ ))'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk b2a.2
 # b2a.3 a name assigned by the arith itself (`(( f++ )`) is in scope → no
-# SB5031. native,c — janet doesn't auto-declare an undeclared arith counter
-# (janet-undeclared-arith-counter); the sash compile is correct in all modes.
+# SB5031. The sash compile is correct in all modes.
 run_sash '(( f++ )); echo $f'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk b2a.3
 
 # ── DD#77 D1 for string-array cells: a bare string cell / string index in arith
 # is the same string→int crossing as a bare string scalar → SB4030, needing a
 # disposition (`${a[i]:-N}` / `${a[i]:?msg}`). int-array cells (int) are fine.
-# The reject checks are compile-time (mode-independent); the disposition escape
-# hatch runs, so it's native,c (janet arith-value subscript gap). ──
+# The reject checks are compile-time; the disposition escape hatch runs. ──
 # scx.1 bare string-array cell operand → SB4030
 run_sash 'array a=(hi 13 21); int x=$(( a[0] + 1 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk scx.1
@@ -551,9 +531,8 @@ run_sash 'array a=(hi 13 21); v=$a[1]; int x=$(( ${v:-99} )); echo $x'
 run_sash 'array a=(hi 13 21); v=$a[0]; int x=$(( ${v:?nan} )); echo $x'
 [[ $rc != 0 && -z $out ]]; chk scx.6
 # ── Direct-form cell dispositions (DG: a string cell behaves like a string
-# variable). scx.7-11 WORD context, all modes; scx.12-14 ARITH context, the
-# DD#77 strict-int gate applies to the cell string (native,c — janet arith-value
-# subscript gap); scx.15-16 operator parity. ──
+# variable). scx.7-11 WORD context; scx.12-14 ARITH context, the DD#77
+# strict-int gate applies to the cell string; scx.15-16 operator parity. ──
 # scx.7 `:-` returns the cell when set
 run_sash 'array a=(hi 13 21); echo ${a[0]:-DEF}'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk scx.7
@@ -608,10 +587,8 @@ run_sash 'array a=(hi 13 21); echo ${a[0]:+x}'
 # ── DD#76 int-valued collections (`int array` / `int map`) ──
 # An int collection stores each element as an int cell (val_len double-duty);
 # `${a[i]}` types Int (feeds `int x=${a[i]}` and arithmetic with no atoi),
-# renders as decimal in string context. native,c — janet treats the collection
-# variable as a scalar int (filed janet-int-valued-collections; its is_int model
-# conflates the collection var with its element type). Compile-rejects (ivc.9,
-# ivc.10) are backend-independent and run in every mode.
+# renders as decimal in string context. Compile-rejects (ivc.9, ivc.10) are
+# backend-independent and run in every mode.
 # ivc.1 int array element read in string context → decimal
 run_sash 'int array a=(10 20 30); echo ${a[0]}'
 [[ $rc = 0 && $out = "10" && -z $err ]]; chk ivc.1
@@ -637,8 +614,6 @@ run_sash 'int map m=([k]=1); m[k]=$(( ${m[k]} + 4 )); echo ${m[k]}'
 run_sash 'int array a=(10 20 30); a[1]=$(( ${a[0]} * 2 )); echo ${a[1]}'
 [[ $rc = 0 && $out = "20" && -z $err ]]; chk ivc.11
 # ivc.8 axis stacking: `int array` inside a function (DD#86: `local` retired).
-# native+c — emit_c declares the function-local int-collection as a table slot
-# (declare_vars "String wins"). janet deferred.
 run_sash 'fn f { int array a=(7 8); echo ${a[1]}; }; f'
 [[ $rc = 0 && $out = "8" && -z $err ]]; chk ivc.8
 # ivc.9 a non-numeric element in an int collection → SB4030 (compile-reject)
@@ -646,7 +621,7 @@ run_sash 'int array a=(hi 2); echo ${a[0]}'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk ivc.9
 # ivc.10 bare `a[i]=99` (numeric literal) on an int collection stores the int
 # cell — DD#77/DD#30-refine: a bare numeric literal to a known-int LHS aligns
-# with `int x=5` (see types.sh 30.5/30.8). native,c (janet int-collection gap).
+# with `int x=5` (see types.sh 30.5/30.8).
 run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
 [[ $rc = 0 && $out = "99" && -z $err ]]; chk ivc.10
 
@@ -656,9 +631,6 @@ run_sash 'int array a=(10 20 30); a[1]=99; echo ${a[1]}'
 # the body goes through parse_parameter_expansion. These assert the fix with
 # stable cases (a valid-int read + an unset default — unchanged by DD#77 C).
 # pex.1 ${s:-N} reads a set valid-int operand (was silently 0)
-# native,c — janet's arith VALUE path doesn't read an embedded ${…} expansion
-# (reads 0); its condition path does (pex.4). Same gap as asx.* subscripts —
-# janet-arith-subscript-read (extended to ${var:OP}).
 run_sash 's=5; echo $(( ${s:-9} ))'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk pex.1
 # pex.2 ${s:-N} default fires on unset
@@ -667,8 +639,7 @@ run_sash 'echo $(( ${s:-9} ))'
 # pex.3 composes with an operator (was 1 via bogus-var 0)
 run_sash 's=5; echo $(( ${s:-9} + 1 ))'
 [[ $rc = 0 && $out = "6" && -z $err ]]; chk pex.3
-# pex.4 in a (( )) condition (was reading 0 → wrong branch); janet's condition
-# path reads the embedded expansion, so this runs in every mode.
+# pex.4 in a (( )) condition (was reading 0 → wrong branch)
 run_sash 's=5; if (( ${s:-9} > 3 )); then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk pex.4
 # pex.5 a DD#65-pruned operator embedded in arith must still SB4034-reject (not
@@ -685,22 +656,21 @@ run_sash 's=x; if (( ${s:+1} > 0 )); then echo y; fi'
 # CLEANLY (`<prog>: msg`), not a Rust panic (was "sash: panic", rc 99). Bare
 # `$(( s ))` is now a compile error (SB4030, D1) — the disposition is the
 # sanctioned string operand. This is the out-of-range companion to dsp.4
-# (non-numeric); it exercises parse_strict_i64's range check. native,c —
-# message native-only (janet arith disposition gap, janet-arith-subscript-read).
+# (non-numeric); it exercises parse_strict_i64's range check. The message is
+# checked only in native mode because the c harness does not expose $rerr here.
 run_sash 's=9223372036854775808; echo $(( ${s:?not a number} + 0 ))'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": not a number"* ]]; }; chk pex.7
 # pex.8 DD#77: out-of-range input via `:-N` yields the default (treated as
 # not-a-valid-integer), not an overflow trap — the out-of-range companion to
-# dsp.1 (non-numeric). native,c.
+# dsp.1 (non-numeric).
 run_sash 's=9223372036854775808; echo $(( ${s:-0} + 0 ))'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk pex.8
 
 # ── DD#77 C2: arith strict-disposition semantics for :- / :? ──
 # In arithmetic the trigger is "not a valid integer" (unset/empty/non-numeric/
 # out-of-range), gated by sash_is_int: `${s:-N}` → is_int(s)?s:N ; `${s:?M}` →
-# is_int(s)?s:abort(M). native,c — janet's arith VALUE path doesn't apply the
-# disposition (janet-arith-subscript-read, extended to :- / :?).
+# is_int(s)?s:abort(M).
 # dsp.1 :- default fires on a non-numeric value (was lenient atoi → 0)
 run_sash 's=hello; echo $(( ${s:-9} + 0 ))'
 [[ $rc = 0 && $out = "9" && -z $err ]]; chk dsp.1
@@ -722,25 +692,23 @@ run_sash 's=42; int n=$(( ${s:?bad} )); echo $n'
 # arithmetic must be a DD#72 INTEGER LITERAL (decimal or `0x`/`0o`/`0b`).
 # A non-literal (interpolation, `base#digits`, leading-zero octal) still rejects
 # at compile time (SB4030, mode-independent) — it would silently atoi to 0. The
-# literal is lowered as its integer value (native/c convert at the SSA level;
-# janet coerces via `_num`). ──
+# literal is lowered as its integer value. ──
 # d4.1 a non-numeric default rejects (was a silent 0)
 run_sash 's=x; echo $(( ${s:-hello} + 0 ))'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk d4.1
 # d4.2 a hex default is now ACCEPTED (was rejected) — compiles in every mode
 run_sash 's=x; echo $(( ${s:-0xff} + 0 ))'
 [[ $rc = 0 && -z $err ]]; chk d4.2
-# d4.3 a decimal (incl. negative) literal default is accepted + lowered. native,c
-# (janet's `:-` disposition value semantics differ — janet-arith-subscript-read).
+# d4.3 a decimal (incl. negative) literal default is accepted + lowered.
 run_sash 's=x; echo $(( ${s:--7} + 0 ))'
 [[ $rc = 0 && $out = "-7" && -z $err ]]; chk d4.3
-# d4.4 hex default lowers to its value (255). native,c (janet disposition gap)
+# d4.4 hex default lowers to its value (255).
 run_sash 's=x; echo $(( ${s:-0xff} + 0 ))'
 [[ $rc = 0 && $out = "255" && -z $err ]]; chk d4.4
-# d4.5 octal default lowers to its value (0o17 = 15). native,c
+# d4.5 octal default lowers to its value (0o17 = 15).
 run_sash 's=x; echo $(( ${s:-0o17} + 0 ))'
 [[ $rc = 0 && $out = "15" && -z $err ]]; chk d4.5
-# d4.6 binary default lowers to its value (0b101 = 5). native,c
+# d4.6 binary default lowers to its value (0b101 = 5).
 run_sash 's=x; echo $(( ${s:-0b101} + 0 ))'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk d4.6
 # d4.7 leading-zero octal (`010`) and `base#digits` are NOT DD#72 literals → reject
@@ -868,8 +836,7 @@ echo $x'
 run_sash 'echo $(( 16#ff ))'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 94.9
 # 94.10 the C-style for-header is unaffected: `;` still delimits its three
-# slots, and `,` sequences within a slot. native,c — janet does not implement a
-# comma-sequenced for-init (janet-for-init-comma-sequence), pre-existing.
+# slots, and `,` sequences within a slot.
 run_sash 'for (( i = 0, j = 10; i < 3; i++ )); do echo $i$j; done'
 [[ $rc = 0 && $out = "010
 110

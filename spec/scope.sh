@@ -166,9 +166,7 @@ echo "ok"'
 # dc.3 `_` may repeat — two binders in one program, each independently bound
 # and discarded. (It used to repeat within a single multi-target read binder
 # list; DD#99 stage 6 removed that form, so repetition is shown across
-# binders instead. Deliberately two for-binders rather than one plus a
-# `read _`: janet cannot declare `_` from a read target, a pre-existing gap
-# unrelated to what this pins.)
+# binders instead.)
 run_sash 'array a=(p q)
 for _ in @a { echo tick }
 for _ in @a { echo tock }

@@ -1,5 +1,5 @@
 #!/bin/bash
-# spec/cli.sh — CLI-switch behaviors that the -c/--janet/--emit-c spec runner
+# spec/cli.sh — CLI-switch behaviors that the -c/--emit-c spec runner
 # never reaches: --manifest (emit_manifest), --extract (dump_sash_source), and
 # --sysroot= (set_sysroot + sysroot_file_exists). These are front-end/CLI and
 # mode-independent, so each check runs identically under every SASH_MODE; the

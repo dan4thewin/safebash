@@ -11,8 +11,8 @@
 # The target CMD is resolved and constrained exactly like a command head
 # (DD#23): a literal, compile-time-resolvable external path; a variable /
 # expansion target is rejected (SB5011), as are tainted args without attest
-# (DD#24). `exec` is native-only for now (the c/janet backends emit no exec —
-# task c-janet-exec-support), so this suite runs only in native mode.
+# (DD#24). `exec` is native-only for now (the c backend emits no exec), so
+# this suite runs only in native mode.
 set -eu
 . common.sh
 setup exec

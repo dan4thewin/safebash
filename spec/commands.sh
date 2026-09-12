@@ -22,16 +22,12 @@ run_sash 'x=$(echo hello); echo $x'
 run_sash 'x=$(printf hi); echo "$x"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.2b
 
-# 14.2c attested, the external capture is usable. native only: the C cmdsub
-#        exec is a Phase-4 TODO and the Janet os/spawn capture pipe is racy
-#        (janet-pipeline-eagain-flaky).
+# 14.2c attested, the external capture is usable.
 run_sash 'x=$(printf hi); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
 
 # 14.3 multi-statement / pipeline command substitution (DG 2026-08-19: implement
-#      — run the body, capture stdout). Capture-into-var is native-only (the C
-#      CaptureStart/End capture and the Janet cmdsub are gaps, like $(f)); the
-#      taint rejects are compile-time (all modes).
+#      — run the body, capture stdout). The taint rejects are compile-time.
 # 14.3a a clean multi-statement body captures its full stdout
 run_sash 'x=$(echo a; echo b); echo "[$x]"'
 [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
@@ -181,8 +177,7 @@ run_sash 'f() { echo hi }; f'
 # the compiler can't know the resulting filename, and the old fallthrough
 # silently redirected to an *empty* target (bug-redirect-nonsimple-target-empty).
 # Scalar reads beyond a bare `$x` (a `:-` default, a subscript) are supported by
-# spilling the lowered value to a temp before the redirect. janet has no file
-# redirects (it emits a no-op comment), so the positives are native,c only.
+# spilling the lowered value to a temp before the redirect.
 
 # 14.19 reject: command-substitution redirect target → SB4049 (all modes: parse)
 run_sash 'echo x > $(echo f)'
@@ -557,8 +552,7 @@ attest x in a [[ -n $x ]]
 echo $(len a)'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk rt99.13
 
-# rt99.14 a lastpipe `read ARRAY` fills an ARRAY, not a scalar (janet bound
-#         the capture as a string and subscripted it into bytes)
+# rt99.14 a lastpipe `read ARRAY` fills an ARRAY, not a scalar.
 run_sash 'array a=()
 /usr/bin/printf "p\0q\0" | read a
 attest x in a [[ -n $x ]]

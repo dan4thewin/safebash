@@ -64,7 +64,6 @@ run_sash 'x=b; [[ $x =~ ^(a|b|c)$ { echo abc } || { echo other } ]]'
 [[ $rc = 0 && $out = "abc" && -z $err ]]; chk cf.c5
 
 # cf.c5b regex alternation with a NON-matching subject falls through to ||
-# (regression gate for the janet a|b -> `_` catch-all bug).
 run_sash 'x=q; [[ $x =~ ^(a|b|c)$ { echo abc } || { echo other } ]]'
 [[ $rc = 0 && $out = "other" && -z $err ]]; chk cf.c5b
 
@@ -151,9 +150,8 @@ run_sash 'for x in a b c; do :; done; echo $x'
 
 # --- inside-function positionals stay clean (DD#46) ---
 
-# cf.f11 the args joined into a string via `$(join args)` (was `"$@"`, dropped
-# by DD#75/DD#81 — `$@` looks scalar but splats). native,c — janet's own _args
-# model does not expose the `args` name for `$(join args)`.
+# cf.f11 the args joined into a string via `$(join args)` (was `"$@"`,
+# dropped by DD#75/DD#81 — `$@` looks scalar but splats).
 run_sash 'fn greet { echo $(join args); }; greet alpha beta gamma'
 [[ $rc = 0 && $out = "alpha beta gamma" && -z $err ]]; chk cf.f11
 

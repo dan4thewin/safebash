@@ -6,9 +6,9 @@ set -eu
 setup brace
 # DD#68 is a PARSER-ONLY feature: the brace and `then/do` forms build the
 # identical If/While/For IR, so native (the IR reference) is authoritative.
-# Run native only — the c/janet backends have pre-existing control-flow gaps
-# (janet elif/continue, c until/`(( ))`) that the keyword forms hit
-# identically; see cf-backend-gaps-brace-surfaced. (Same native-only pattern
+# Run native only — the c backend has a pre-existing control-flow gap
+# (until / `(( ))`) that the keyword forms hit identically; see
+# cf-backend-gaps-brace-surfaced. (Same native-only pattern
 # as convert.sh.)
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 plan=27

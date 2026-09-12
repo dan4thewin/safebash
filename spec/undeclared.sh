@@ -30,13 +30,10 @@ run_sash 'echo ${x:-def}'
 
 # ud.5 Model B: a KNOWN but maybe-unassigned read COMPILES (meaningful zero
 #      on the else path) — NOT rejected. `x` is introduced by the then-branch.
-#      native,c: janet diverges on scalar zero values (env-fallback; see
-#      janet-scalar-zero-value).
 run_sash 'if [[ -z zzz ]]; then x=1; fi; echo [$x]'
 [[ $rc = 0 && $out = "[]" && -z $err ]]; chk ud.5
 
-# ud.6 a typed declaration introduces the name (and zero-inits). native,c:
-#      janet emits `(var n )` (no typed zero-init) — janet-scalar-zero-value.
+# ud.6 a typed declaration introduces the name (and zero-inits).
 run_sash 'int n; echo $n'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk ud.6
 
@@ -58,7 +55,6 @@ run_sash 'fn f { val=1; echo $vla; }; f'
 
 # ud.11 order-insensitive: a read before the assignment in the same scope is
 #       fine (the name is introduced in scope; reads the zero value first).
-#       native,c: janet scalar zero-value divergence.
 run_sash 'echo [$x]; x=5; echo [$x]'
 [[ $rc = 0 && $out = $'[]\n[5]' && -z $err ]]; chk ud.11
 
@@ -142,10 +138,7 @@ run_sash 'x=hi; x+=(a)'
 run_sash 'array f=(a b c); f=(x y); echo $(len f)'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk ud.28
 
-# ud.29 …and so does appending to one. (Fails in janet: the emitter renders
-# `f+=(d)` on an array as STRING concatenation — see the task
-# janet-array-append-string-concat. Left failing, not skipped, so it stays
-# visible; it is independent of DD#97, as janet emits from the AST.)
+# ud.29 …and so does appending to one.
 run_sash 'array f=(a b c); f+=(d); echo $(len f)'
 [[ $rc = 0 && $out = "4" && -z $err ]]; chk ud.29
 

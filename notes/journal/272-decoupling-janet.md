@@ -157,3 +157,42 @@ Two cleanups I stopped short of and took to DG rather than deciding:
   The stale rows do carry an old `commit_hash`, so they are detectable.
 
 Sweep after removal: **4019 passing, 0 failing, 31 skipped**, zero flips.
+
+## Addendum — the two cleanups
+
+DG: strip the guards now; purge the DB (option C, over the
+self-cleaning view).
+
+**The guards.** Behaviour-neutral by construction, and I verified it
+rather than asserting it: byte-identical sweep, zero status diffs, zero
+rows gained or lost. What made it interesting was the failure modes. My
+first pass asserted that every `else` branch was pure `skip_chk` before
+dropping it, and 109 of 300 failed that assertion — `;`-chained skips,
+`for n in …; do skip_chk cov.$n; done` loops, and inline
+`else skip_chk X; fi`.
+
+The one worth recording: **`run_sash '…'` payloads contain `if`, `else`
+and `fi` as string content.** A depth counter that reads lines
+positionally sees those as real block structure and closes the guard in
+the wrong place — silently, producing a file that still passes
+`bash -n`. Quote-parity tracking fixed most; the last 13 I did by hand
+with line-number assertions. Strict assertions turned what would have
+been a silent corruption into a list.
+
+**The comments.** 221 orphaned lines. Mostly they mix a real
+explanation with a janet aside — `# ivc.9 an int-valued collection cell
+renders as decimal in string context. native,c — janet treats the
+collection variable as a scalar int (filed …)` — so a line-granular
+delete would have destroyed the test descriptions. Rule: excise the
+clause, keep the sentence. Verified two ways: every added/removed diff
+line is a comment or blank, and all 47 touched ids still have a
+description line.
+
+**The DB.** 565k janet rows, plus 8 for tests deleted earlier. Those 8
+are the part I'd flag: `native:15.1` was still reporting `passing` at
+`2c850ae` — two commits after I deleted the test. The view has no notion
+of a deleted test. We purged rather than fixed that, so it will recur;
+stale rows are detectable by a `commit_hash` older than the newest in
+`runs`.
+
+Final: **4013 passing, 29 skipped, 0 failing, 0 stale rows.**

@@ -40,21 +40,52 @@ removal, which is what it is for. Old code preserved at tag
 
 **Sweep: 4019 passing, 0 failing, 31 skipped.** Zero flips.
 
-### Next up — two cleanups awaiting DG
+### Both cleanups landed (DG: strip now; purge)
 
-1. **~300 `in_modes native,c` guard sites** — now harmless no-ops, but
-   stale conditionals and comments naming a dead mode. Un-guarding is
-   behaviour-neutral but a large mechanical diff across 28 files.
-2. **`spec.db` stale rows — a gate integrity issue, not cosmetics.**
-   `test_status` **never forgets a removed test**: `native:15.1` still
-   reads `passing` at `2c850ae`, and 565k janet rows still report 41
-   phantom failures. General to any deleted test, not janet-specific.
-   Stale rows do carry an old `commit_hash`, so they are detectable.
+**The 300 `in_modes native,c` guards are gone** (`6d4eba1`) — with janet
+removed they guarded nothing, so this was behaviour-neutral, and
+verified as such: the sweep before and after was byte-identical, zero
+status diffs, zero rows gained or lost. Four passes, not one regex: the
+first pass's strict assertions caught `else skip_chk X; fi` one-liners
+and, more dangerously, `run_sash '…'` payloads whose *string content*
+holds `if`/`else`/`fi` tokens — a naive depth counter closes the guard
+in the wrong place. The 13 it could not prove were done by hand. The ~35
+`in_modes native` sites stay: those are real c-backend gaps (the 29
+remaining skips).
 
-Then the pinned native work: `string-intrinsics-reject-int-vars`
-(DG's decision #3), the two `sash-rt` capture bugs (64 KiB truncation;
-one-newline-vs-all strip), and the approved-but-unapplied `HEAP_SIZE`
-bump.
+**The 221 orphaned janet comments are cleaned** — every one referenced a
+guard that no longer exists or a task now deferred. Comment-only,
+mechanically verified (every added/removed line is a comment or blank),
+and all 47 touched test-description lines confirmed intact.
+
+**`spec.db` purged** (DG chose C over the self-cleaning view): janet
+gone from `tests` and `runs` — 565k rows — plus 8 rows for tests deleted
+earlier (15.1/15.2, 36.2/36.3) that were still reporting verdicts at
+commits two and three back. `test_status` is now exactly the live suite:
+**4013 passing, 29 skipped, 0 failing, 0 stale rows.**
+
+Worth remembering: the phantom-row problem is *general*, not a janet
+artefact. The view has no notion of a deleted test, so any test we
+remove lingers with its last verdict. We purged rather than fixed the
+view, so this will recur — stale rows are detectable by a `commit_hash`
+older than the newest in `runs`.
+
+### Next up — DG's order
+
+**Finish the native work, then close the c gaps, then the test work.**
+
+1. **Native** — `string-intrinsics-reject-int-vars` (DG's decision #3:
+   `toupper $n` where `n=42` silently yields `"42"`; `join n ","` already
+   errors SB4030 and is the model), the two `sash-rt` capture bugs
+   (64 KiB truncation; one-newline-vs-all strip, both routing through
+   `sash_read_all`), and the approved-but-unapplied `HEAP_SIZE` bump.
+   Also still open from the backlog review: `bug-getenv-status-unvalidated`
+   (P1), `bug-regex-blind-past-interior-nul` (P1).
+2. **The c gaps** — the 29 c-mode skips, tracked by the eight ready
+   `c-*` tasks, six of which were rescoped out of the old `c-janet-*`
+   filings in `47af108`.
+3. **The test work** — `r47-validate-rs-per-rule-tests` and the other
+   two filings still awaiting honest re-estimation.
 
 ## ══ STATUS (2026-09-13) — dtoi/itod dropped; DD#103 ══
 

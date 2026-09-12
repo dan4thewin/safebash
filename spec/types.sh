@@ -46,8 +46,7 @@ run_sash 'x="hello world test"; echo $(strlen $x)'
 [[ $rc = 0 && $out = "16" && -z $err ]]; chk 12.3
 
 # 12.4 string interpolation in assignment (Concat in value position): the c
-# backend lowers it via sash_concat (bug-c-janet-concat-in-value); native and
-# janet already did.
+# backend lowers it via sash_concat.
 run_sash 'b=world; a=hello$b; echo $a'
 [[ $rc = 0 && $out = "helloworld" && -z $err ]]; chk 12.4
 
@@ -70,8 +69,7 @@ run_sash 'x="hello"; int y=$x'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 30.1
 
 # 30.2 $(( )) is explicit string-to-int — DD#77 D1: the bare string operand
-# now needs a disposition (`${x:?…}` validates + converts). native,c (janet
-# arith-value disposition gap, janet-arith-subscript-read).
+# now needs a disposition (`${x:?…}` validates + converts).
 run_sash 'x="42"; int y=$(( ${x:?nan} )); echo $y'
 [[ $rc = 0 && $out = "42" && -z $err ]]; chk 30.2
 
@@ -94,8 +92,6 @@ run_sash 'int x=0; x=-3; echo $x'
 run_sash 'int x=4; x+=3; echo $x'
 [[ $rc = 0 && $out = "7" && -z $err ]]; chk 30.7
 # 30.8 DD#76 int-collection cell accepts a bare numeric literal (like init).
-# native,c — janet treats the int-collection var as a scalar int
-# (janet-int-valued-collections).
 run_sash 'int array a=(1 2); a[1]=99; echo ${a[1]}'
 [[ $rc = 0 && $out = "99" && -z $err ]]; chk 30.8
 # 30.9 boundary: a bare arith EXPRESSION (not a literal) still needs $(( ))
@@ -104,8 +100,7 @@ run_sash 'int x=0; x=5+1'
 # 30.10 a NEW (untyped) var stays a string — `y=5` is not int (DD#30 unchanged)
 run_sash 'y=5; int z=$y'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 30.10
-# 30.11 scalar string `+=` accumulates (was a janet silent-miscompile: it
-# dropped the += and emitted a plain set → "cd"; now "abcd" in all modes)
+# 30.11 scalar string `+=` accumulates ("abcd", not a plain set).
 run_sash 's=ab; s+=cd; echo $s'
 [[ $rc = 0 && $out = "abcd" && -z $err ]]; chk 30.11
 
@@ -135,8 +130,7 @@ run_sash 'map m=([a]=1 [b]=2); k=b; echo ${m[$k]}'
 
 # 33.14 non-brace dynamic integer index $a[$i] reads like ${a[$i]} (decision B,
 # 2026-06-21 — deliberately diverging from bash, where $a[$i] is ${a[0]} plus
-# literal "[$i]"). native is the reference; c/janet lack dynamic-subscript value
-# reads (same pre-existing gap as 33.5/33.6).
+# literal "[$i]").
 run_sash 'array a=(x y z); i=2; echo $a[$i]'
 [[ $rc = 0 && $out = "z" && -z $err ]]; chk 33.14
 
@@ -217,9 +211,7 @@ run_sash 'int x=314; echo $(itod 2 $x)'
 run_sash 'array a=(x y z); int n=$(len a); echo $n'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 36.5
 
-# 36.6 $(epochseconds) is int-typed too. (The janet backend does not implement
-#      the epochseconds intrinsic yet — it tries to exec it — so guard the
-#      runtime to native,c; the int-typing fix itself is backend-independent.)
+# 36.6 $(epochseconds) is int-typed too.
 run_sash 'int n=$(epochseconds); echo $((n > 0))'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk 36.6
 
@@ -343,8 +335,6 @@ run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 30.42
 
 # 30.43 unset arr clears collection (canonical length $(len a); DD#75 §4).
-# Guarded native,c: janet's unset leaves the slot nil and `(length nil)`
-# crashes (pre-existing janet backend gap — task janet-unset-len-nil).
 run_sash 'array a=(one two three); unset a; echo $(len a)'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.43
 
@@ -396,15 +386,11 @@ run_sash 'map m=([a]=1 [b]=2); k=b; if [[ ${m[$k]} != 1 ]]; then echo yes; fi'
 run_sash 'map m=([a]=x); k=a; if [[ ${m[$k]} ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.15
 
-# 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]]. janet now
-# coerces the array index to an integer in emit_expr_subscript
-# (bug-janet-array-dynamic-subscript-read), so this works in all backends.
+# 62.14 indexed dynamic key ${a[$i]} stays integer-keyed in [[ ]].
 run_sash 'array a=(10 20 30); i=2; if [[ ${a[$i]} == 30 ]]; then echo yes; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 62.14
 
-# --- subscript append a[i]+=v (read-modify-write). All backends: c lowers the
-# Concat value (bug-c-janet-concat-in-value) and janet lowers indexed
-# assignment via `put` (bug-janet-indexed-assignment).
+# --- subscript append a[i]+=v (read-modify-write).
 # 33.40 indexed literal-index append concatenates onto the current element
 run_sash 'array a=(1 2 3); a[0]+=9; echo ${a[0]}'
 [[ $rc = 0 && $out = "19" && -z $err ]]; chk 33.40
@@ -447,9 +433,6 @@ run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
 [[ $rc != 0 && -z $out && $err == *SB5025* ]]; chk 33.46
 
 # 33.19–33.21 join arr SEP — DD#75: array first, separator second.
-# (janet's join intrinsic only handles the `@a` space-join today: it execs
-# a bare-name `join a` as an external command, and errors on a separator —
-# guard to native,c; the arg-order + native reject are backend-independent.)
 run_sash 'array a=(x y z); echo $(join a ",")'
 [[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 33.19
 run_sash 'array a=(x y z); echo $(join a ", ")'
@@ -484,8 +467,6 @@ run_sash 'array a=(x y z w); echo $(( ${#a} + 1 ))'
 # DD#75 §3 — `keys` is map-only (an indexed array's keys are trivially
 # 0..len-1; a scalar has none). Only maps have non-trivial string keys.
 # 75.7 keys on a map → the string keys (still works)
-# (janet lacks the keys intrinsic — it execs `keys m` as an external command,
-# same class as the join gap; pre-existing, cf. janet:33.10. Guard to native,c.)
 run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k"; done'
 [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.7
 # 75.8 keys on an indexed array → compile error (was blank/null output)
@@ -538,29 +519,27 @@ run_sash 'fn g { echo $1; }
 fn f { g Z; echo $1; }
 f A'
 [[ $rc = 0 && $out = $'Z\nA' && -z $err ]]; chk 75.19
-# 75.20 user-written ${args[i]} reads the same array (native,c — janet uses its
-# own _args model and does not expose the `args` name). DD#81: `: ${args[1]}`
+# 75.20 user-written ${args[i]} reads the same array. DD#81: `: ${args[1]}`
 # acknowledges the skipped middle param (fixed arity must read args in order).
 run_sash 'fn f { : ${args[1]}; echo ${args[0]} ${args[2]}; }
 f a b c'
 [[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
-# 75.21 @args splat iterates every argument (native,c)
+# 75.21 @args splat iterates every argument
 run_sash 'fn f { for x in @args; do echo "$x"; done; }
 f a b'
 [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.21
 # 75.22 more than 9 args are reachable via ${args[N]} (the old scalar model
-# capped at $9) (native,c). DD#81: reaching a high index without the lower ones
+# capped at $9). DD#81: reaching a high index without the lower ones
 # makes the function variadic — `: @args` marks it (takes any number).
 run_sash 'fn f { : @args; echo ${args[10]}; }
 f a b c d e f g h i j k'
 [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
 # 75.23 `$(len args)` is the arg count (= $#), reading the implicit array — the
-# intrinsic must resolve `args`. native,c (janet's `_args` model doesn't expose
-# the `args` name; see janet-arith-subscript-read / the 75.20-22 guards).
+# intrinsic must resolve `args`.
 run_sash 'fn f { echo $(len args); }
 f a b c'
 [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
-# 75.24 `$(join args SEP)` joins the implicit array. native,c
+# 75.24 `$(join args SEP)` joins the implicit array.
 run_sash 'fn f { echo $(join args ,); }
 f a b c'
 [[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk 75.24
@@ -617,8 +596,6 @@ run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 # 75.38 control: every spelling that survives still works. Three that used to
 # be here no longer exist: `len s` / `len $s` are `strlen` now (a scalar is not
 # a collection), and `len @a` / `join @a SEP` are gone with DD#100 Part D.
-# (janet emits a `$`-sigilled operand as a bare symbol and execs /usr/bin/join
-# for `join a SEP`; see notes/tasks/janet-join-intrinsic-gaps.md. native,c.)
 run_sash 's=hi; array a=(x y z); map m=([k]=v)
 echo "$(strlen $s) $(len a) $(len m)"
 echo "$(join a ",")"
@@ -648,9 +625,6 @@ run_sash 'array a=(x y z); echo $(len $a)'
 [[ $rc != 0 && -z $out && $err == *SB5064* ]]; chk 75.42
 
 # 75.43 control: the correct spellings are unaffected.
-# native,c — janet execs /usr/bin/join for `join a SEP` and emits `$s` as a
-# bare symbol; see notes/tasks/janet-join-intrinsic-gaps.md (same guard as
-# 75.38).
 run_sash 'array a=(x y z); str s=hi
 echo "${a[1]} $(len a) $(join a ",") $s $(strlen $s)"'
 [[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
@@ -709,11 +683,8 @@ run_sash 'argv g; echo "${g[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* && $err != *SB5068* ]]; chk 75.53
 
 # 75.54 control: `args` is the other undeclared collection, and subscripts.
-# native,c -- the janet backend emits a bare `(get args 0)` against a `defn`
-# that declares no such binding, so the program does not compile. Pre-existing
-# and unrelated to SB5068; see notes/tasks/janet-args-subscript-unbound.md.
 # (The DD#100 slots A..E are the third undeclared case; spec/collparam.sh
-# covers them under the same guard.)
+# covers them.)
 run_sash 'f() { echo "${args[0]}"; }
 f one'
 [[ $rc = 0 && $out = "one" && -z $err ]]; chk 75.54
@@ -751,8 +722,7 @@ run_sash 'str s = hello
 echo "$(strlen $s) $(strlen s)"'
 [[ $rc = 0 && $out = "5 1" && -z $err ]]; chk 75.58
 
-# 75.59 arith sexpr operand (DD#58). janet has no sexpr intrinsic call at all
-# — `(len a)` fails there identically — so this is native,c.
+# 75.59 arith sexpr operand (DD#58).
 run_sash 'str s = hello
 int n = $(( (strlen $s) * 2 ))
 echo $n'
@@ -802,7 +772,7 @@ echo $(strlen ${a[0]})'
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
 # a 0x/0o/0b prefix with valid digits; empty/unset → false). Lets an author
-# validate/branch before converting. All backends (sash_is_int / janet _isint).
+# validate/branch before converting.
 # DD#93 Part C renamed this operator from `-i` to `i?` (hard, no alias).
 # 77.1 literal integer → true
 run_sash 'if [[ i? 42 ]]; then echo yes; else echo no; fi'
@@ -829,8 +799,6 @@ run_sash 's=42abc; [[ i? $s ]] || s =~ s/\D//g; echo $s'
 run_sash 'if [[ i? 9223372036854775807 ]] && ! [[ i? 9223372036854775808 ]]; then echo ok; else echo no; fi'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 77.8
 # 77.9 a validated value converts safely; `i?` guarantees no overflow trap.
-# native,c — janet's arith VALUE path misreads an embedded ${…}
-# (janet-arith-subscript-read).
 run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
 [[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
 
@@ -839,7 +807,7 @@ run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
 # bash's saturated `-X` namespace). Each is "non-empty AND every byte in an
 # ASCII class": `p?` printable (0x20–0x7E), `g?` graph (0x21–0x7E, printable
 # non-space). General operators — valid anywhere a unary test is, not only in
-# `attest`. All backends (sash_is_print/sash_is_graph / janet _isprint/_isgraph).
+# `attest`.
 # 93.10 p? on printable text → true
 run_sash 'if [[ p? hello ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 93.10
@@ -860,11 +828,7 @@ run_sash 's=; if [[ g? $s ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.15
 # 93.16 ASCII-only: high bytes (≥ 0x80) are rejected by both. A UTF-8-aware
 # variant would get a distinct spelling (DD#93); ambiguous non-ASCII is part
-# of what a shape test screens out. NB: the `||` is written *inside* the
-# `[[ ]]` — a compound `if` condition (`[[ … ]] || [[ … ]]`) is silently
-# emitted as `(if true …)` by the janet backend
-# (task janet-compound-if-condition-ignored), which would make this pass
-# vacuously there.
+# of what a shape test screens out.
 run_sash 'if [[ p? café || g? café ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk 93.16
 # 93.17 general operators: compose with ! and && like any unary test
@@ -941,15 +905,11 @@ run_sash 'array a=(x y); x=@a; /bin/echo "$x"'
 run_sash 'f=(a b c); echo $(len f)'
 [[ $rc != 0 && -z $out && $err == *SB5055* ]]; chk 75.73
 
-# 75.74 `join ARRAY SEP` joins with the separator in every backend. The Janet
-# emitter read the two operands in the wrong order (`args[1]` as the array),
-# so this never matched its intrinsic and silently forked an external `join`.
+# 75.74 `join ARRAY SEP` joins with the separator in every backend.
 run_sash 'array a=(x y z); echo $(join a ,)'
 [[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 75.74
 
-# 75.75 the one-arg bare-name form likewise lowers in every backend. Janet
-# only recognised the retired `@a` splat, so DD#100 Part D's bare name fell
-# through to the generic exec fallback the intrinsic table exists to prevent.
+# 75.75 the one-arg bare-name form likewise lowers in every backend.
 run_sash 'array a=(one two three); echo $(join a)'
 [[ $rc = 0 && $out = "one two three" && -z $err ]]; chk 75.75
 

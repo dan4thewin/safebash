@@ -54,10 +54,7 @@ run_sash '- /bin/false | echo ok'
 run_sash '/bin/false | echo ok'
 [[ $rc != 0 && -z $err ]]; chk 21.3
 
-# 25.1 integer overflow traps at runtime. The janet backend uses float/bignum
-# arithmetic with no i64 overflow trap (it previously "passed" only because an
-# unrelated codegen crash aborted the program); native/c are the reference.
-# See bug-janet-int-overflow.
+# 25.1 integer overflow traps at runtime.
 run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
 [[ $rc != 0 && -z $err ]]; chk 25.1
 
@@ -107,8 +104,7 @@ run_sash 'x=$(- /bin/echo hello); attest x [[ -n $x ]]; echo $x'
 # 55.9b x=$(- cmd) does NOT abort when the captured command FAILS (55.9 only
 # tested a succeeding /bin/echo). DD#55: `-` discards the exit status, so a
 # failed `$(- /bin/false)` yields empty output and continues — mirroring the
-# statement-position `- /bin/false` (55.4). native,c: janet's `$(- cmd)`
-# capture is a separate TODO.
+# statement-position `- /bin/false` (55.4).
 run_sash 'x=$(- /bin/false); attest x [[ -z $x ]]; echo "survived[$x]"'
 [[ $rc = 0 && $out = "survived[]" && -z $err ]]; chk 55.9b
 
@@ -246,10 +242,10 @@ run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 # the implicit `exec N>file` that runs FIRST, so `-` (which binds to the
 # command) does NOT suppress it; and a failed open must never silently
 # misroute output to the original fd.
-# native+c: c now implements the DD#55 cd + echo-write(2) syscall aborts
+# The c backend now implements the DD#55 cd + echo-write(2) syscall aborts
 # with descriptive diagnostics (2026-08-20), and the harness captures c's
 # runtime stderr into $rerr. Redirect open(2)-failure abort is still c-TODO
-# (nested guard below). janet deferred.
+# (nested guard below).
 # Abort cases emit a descriptive diagnostic to stderr (captured as
 # $rerr), prefixed with the program name (argv[0], here ./test_bin):
 #   <argv0>: cd: <path>: <reason>
@@ -299,9 +295,9 @@ echo after'
 # and `-` both abort (the `-` binds to the command's write verdict,
 # not the prior open); an enclosing condition (if/||) catches it via
 # the failed final-command result.
-# NESTED native+c: redirect open(2)-failure abort is now implemented in c
+# Nested c backend: redirect open(2)-failure abort is now implemented
 # (emit_redirects_guarded + emit_command skip-body + in_condition, so
-# `- echo > /bad` still aborts while `if`/`||` catch). janet deferred.
+# `- echo > /bad` still aborts while `if`/`||` catch).
 # 55.24 bare redirect open failure aborts — no misroute + diagnostic
 run_sash 'echo hi > /nonexistent_dir_55/f
 echo after'
@@ -391,7 +387,7 @@ run_sash 'false || x=set; : $x; echo done'
 # `|| :` and `-` both discard it (DD#70 addendum 2026-09-09 — `-` is an
 # explicit discard, so it carries the same weight as `|| :`).
 # SB4018/SB4019 are transform diagnostics — native-only (not surfaced on
-# --emit-c / --janet yet; see c-janet-dd55-abort-channel).
+# --emit-c yet).
 
 # e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
 # e.b70.tdash `-` on a `[[ … ]]` discards the result — legal
@@ -417,8 +413,7 @@ run_sash '[[ a = b ]] || echo miss'
 
 # ── `!` precedence + pipeline + suppress (DG 2026-08-19). `!` binds its
 # immediate unit (bash-consistent `(!X) && Y`); it cannot negate a pipeline
-# (reviewability, SB4040). Runtime negation is native-only
-# (c/janet `!` backend gap); the parse-time rejects are all modes. ──
+# (reviewability, SB4040). The parse-time rejects are all modes. ──
 # bng.1 `! X && Y` reassociates to `(!X) && Y` (was wrongly SB4018)
 run_sash 'if ! /bin/false && /bin/true; then echo Y; else echo N; fi'
 [[ $rc = 0 && $out = "Y" && -z $rerr ]]; chk bng.1
@@ -446,7 +441,7 @@ echo after'
 # pipeline stage (`a | ! b`), which supplies the pipeline's result — the same
 # `!` a standalone simple command allows. Its status is inverted (0↔nonzero)
 # before the DD#55 worst-of. A `!` on a non-terminal stage is SB4040 (a
-# plumbing status a reviewer can't trace). All three backends implement it. ──
+# plumbing status a reviewer can't trace). Both backends implement it. ──
 # bng.7 `a | ! b` — b fails (no match) → `!` true → the branch is taken
 run_sash 'if /bin/echo abc | ! /bin/grep -q z; then echo T; else echo F; fi'
 [[ $rc = 0 && $out = "T" && -z $rerr ]]; chk bng.7
@@ -471,8 +466,6 @@ if f; then echo T; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.12
 
 # e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
-# native+c: janet doesn't yet compile a `-> int` function used in `|| :`
-# position (see c-janet-fn-int-discard). janet deferred.
 run_sash 'fn f -> int { return 3 }
 f || :
 echo done'
@@ -486,8 +479,7 @@ run_sash 'if /bin/false; then echo y; else echo n; fi'
 
 # (A) dynamic (interpolated) bad regex → runtime regcomp abort with the
 # `regexp error: …` diagnostic (compile-time validation only covers a
-# static pattern). native+c: c emits the runtime diagnostic and the harness
-# now captures its stderr into $rerr. janet deferred.
+# static pattern). Runtime diagnostics are captured into $rerr.
 # e.a70.regcomp
 run_sash 'p="[bad"
 if match hello "$p"; then echo y; else echo n; fi'
@@ -531,8 +523,7 @@ run_sash './tool a | /bin/cat'
 
 # ── Compound-condition catch (DD#55; DG 2026-08-19). `&&`/`||` operands in a
 # condition are caught (not aborted); a `;` list's non-final member and an
-# if-body's final command are bare → they abort. native,c (janet emits
-# conditions from the AST — pre-existing control-flow gap, brace.sh native-only).
+# if-body's final command are bare → they abort.
 # cc.1 `&&` RHS failure is caught → else branch
 run_sash 'if /bin/true && /bin/false; then echo Y; else echo N; fi'
 [[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.1
@@ -592,8 +583,6 @@ run_sash 'epochseconds'
 [[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.9
 
 # via.10-12 the legitimate forms are untouched
-# native,c only: janet exec's the getpid-class instead of implementing it
-# (filed, deferred: janet-getpid-class-intrinsics).
 run_sash 'x=$(getenv HOME)
 attest x [[ -n $x ]]
 echo ok'
@@ -734,8 +723,7 @@ run_sash '/bin/sh -c "exit 42"'
 # ReadArray/ReadLine), so a failed open aborts instead of silently yielding
 # an empty array / empty line — a mistyped path used to be indistinguishable
 # from an empty file. Context governs the abort exactly as for `echo > f`
-# (55.24-55.26, 55.50). native,c: janet has no DD#55 abort channel at all
-# (task `c-janet-dd55-abort-channel`).
+# (55.24-55.26, 55.50).
 # 55.60 bare `read ARR < nosuch` aborts — no empty array, + diagnostic
 run_sash 'read a < /nonexistent_dir_55/f
 echo "n=$(len a)"'
@@ -774,8 +762,6 @@ echo "n=$(len a)"'
 n=0" && -z $err && -z $rerr ]]; chk 55.64
 
 # 55.65/55.66 the guard does not disturb a redirect that opens fine.
-# native,c only: janet drops the redirect and reads stdin instead —
-# janet-read-family-ignores-input-redirect (pre-existing, not this guard).
   # DD#99 `read ARR` splits the whole stream on NUL, so two NUL-terminated
   # fields are two elements.
   printf 'alpha\0beta\0' > /tmp/sash_spec_55_65.txt

@@ -5,7 +5,7 @@
 # the builtin `echo` is length-based and never exercised the C-string boundary,
 # which is exactly why this class of corruption went unnoticed. `[[ $out = … ]]`
 # with an exact match catches any garbage the external command would append.
-# native + c only: janet doesn't link sash-rt (it runs on the janet VM).
+# These runtime checks exercise native and c argument boundaries.
 set -eu
 . common.sh
 setup extern_args

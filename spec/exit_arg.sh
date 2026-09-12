@@ -1,8 +1,8 @@
 #!/bin/bash
 # DD#89 — `exit` accepts any int value/variable/return. The value is a full i64
 # internally (readable in END via `$?`) and truncated to 8 bits only at the
-# process boundary (POSIX `exit_group`). Codegen behavior → native,c; the
-# full-value-to-END case is native (the c backend's main-body `exit N` skips
+# process boundary (POSIX `exit_group`). The full-value-to-END case is native
+# (the c backend's main-body `exit N` skips
 # END — bug-emit-c-exit-skips-end).
 . common.sh
 plan=8

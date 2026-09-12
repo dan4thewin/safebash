@@ -3,9 +3,8 @@
 # A single external command substitution (or pipeline) as an assignment RHS in a
 # boolean context is the CONDITION: the command's exit status is the truth value
 # (no abort), and its stdout is captured into the target (tainted, attest before
-# use). Positive behavior is native,c (janet's `$(cmd)` capture is a stub, filed
-# janet-capture-condition). The rejects (SB4025 / SB5050 / SB5020) are
-# validate/taint and backend-independent (all modes).
+# use). The rejects (SB4025 / SB5050 / SB5020) are validate/taint and
+# backend-independent.
 set -eu
 . common.sh
 setup capture_cond
@@ -116,9 +115,7 @@ run_sash 'if x=$(echo hi) { /bin/echo $x }'
 # Unset is a failed lookup; set — INCLUDING set to the empty string — is a
 # successful one. Present-but-empty succeeding is the entire point: without
 # it, unset and set-to-empty stay indistinguishable, which no amount of
-# validation can recover. janet emits `(os/spawn ["getenv" …])` — it forks an
-# external `getenv` — so the positive checks are native,c; filed as
-# janet-getpid-class-intrinsics.
+# validation can recover.
 
 export SASH_SPEC_SET=/spec/value
 export SASH_SPEC_EMPTY=""

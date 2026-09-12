@@ -88,8 +88,8 @@ echo done'
 # runtime verdict to suppress; but `|| :` was always allowed, so the rule only
 # dictated WHICH explicit discard you had to write, and mandated the oblique
 # one. SB4018 still catches the SILENT discard, which is the real hazard.
-# native+c: the SB40xx must-consume diagnostics are transform-time (before
-# codegen), so they surface on --emit-c too. janet deferred.
+# The SB40xx must-consume diagnostics are transform-time (before codegen), so
+# they surface on --emit-c too.
 run_sash 'match abc abc'
 [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
 
@@ -138,7 +138,7 @@ if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
 # 63.cap6 bare 3-arg `match S P ARR` is a must-consume compile error (SB4018)
 # 63.cap7 `- match S P ARR` — `-` discards the boolean and KEEPS the array,
 # which is the point: the out-array form is side-effect-primary
-# Native-only (transform diagnostics not surfaced on --emit-c/--janet).
+# Native-only (transform diagnostics not surfaced on --emit-c).
 run_sash 'array g=()
 match abc abc g'
 [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
@@ -191,8 +191,6 @@ echo ${v:s/b/$r/}'
 [[ $rc = 0 && $out = "aYc" && -z $err ]]; chk 63.d8
 
 # ── E. `\xnn` hex escape in the regex pattern (vendored engine). ──────
-# native,c only: the janet backend uses its own regex, not the vendored
-# Plan 9 engine that grows \xnn (see janet regex parity).
 
 # 63.e1 `\x20` matches a literal space
 run_sash 'if match "a b" "a\x20b"; then echo y; else echo n; fi'
@@ -325,8 +323,7 @@ k2=v2" "([^=\x0a]*)=([^\x0a]*)" a; then echo "$(len a):${a[0]}:${a[1]}:${a[2]}:$
 
 # 63.ma3 the `mapfile -m` replacement end to end. Note the value keeps its
 # own `=` (only the FIRST is a separator), which the NUL-substitution route
-# could not express at all. native,c: janet does not emit `map m = @{a:DISP}`
-# at all (task `janet-map-from-array`).
+# could not express at all.
 run_sash 'array pairs=()
 matchall "name=Alice
 key=val=ue" "([^=\x0a]*)=([^\x0a]*)" pairs || :
@@ -344,10 +341,7 @@ run_sash 'array a=()
 if matchall "abc" "b" a; then echo "$(len a):${a[0]}"; fi'
 [[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.ma5
 
-# 63.ma6 the target auto-declares (argv / read / read precedent). native,c:
-# janet emits the `var` inside the `||` block so the later read cannot see it
-# — generic to every auto-declaring builtin there, not to `matchall` (`argv 1
-# fresh || :` fails identically); task `janet-autodeclare-scoped-to-list-block`.
+# 63.ma6 the target auto-declares (argv / read / read precedent).
 run_sash 'matchall "a b" "[a-z]" fresh || :
 echo "$(len fresh)"'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk 63.ma6
@@ -399,9 +393,7 @@ run_sash 'if matchall "abc" "[a-c]"; then echo y; fi'
 # for the side-effect-primary forms, where the boolean is incidental and the
 # ARRAY is the point.
 
-# 63.dash1 the DD#99 mapfile line, in its preferred spelling. native,c: janet
-# scopes an auto-declared collection's `var` to the enclosing block
-# (task `janet-autodeclare-scoped-to-list-block`, not specific to `-`).
+# 63.dash1 the DD#99 mapfile line, in its preferred spelling.
 run_sash '- matchall "a
 b" "[^\x0a]+" arr
 echo "$(len arr):${arr[1]}"'
@@ -424,9 +416,6 @@ echo "$(len arr)"'
 # precedent as `matchall` / `read` / `argv`. It used to require a prior
 # `array g=()`, and without one SB5039 claimed `g` was "introduced nowhere".
 
-# 63.mi1-63.mi3 are native,c: janet emits the auto-declaring `var` INSIDE the
-# if-condition expression, so the program does not compile. Pre-existing for
-# `matchall`; task `janet-match-outarray-var-in-condition`.
 # 63.mi1 `match` auto-declares its out-array — `len` resolves with no `array`
 run_sash 'if match abc "(a)(b)" g { echo hit }
 echo "n=$(len g)"'

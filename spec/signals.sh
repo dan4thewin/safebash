@@ -125,8 +125,7 @@ run_sash 'trap "" SIGINT; echo hi'
 # --- DD#56: `$?` in the END block is the TRIGGERING status (first action) ---
 # The END block is entered because of a status — an abort's failing code, an
 # `exit N`, or the last command's status on normal exit — so that status is
-# available as its FIRST action, like a handling branch. (janet's END block is
-# a separate pre-existing gap — 56.1/56.4 already fail there — so native,c.)
+# available as its FIRST action, like a handling branch.
 
 # 56.30 abort (failed command) → `$?` in END is the failing exit code
 run_sash 'END { /bin/echo "s=$?" }

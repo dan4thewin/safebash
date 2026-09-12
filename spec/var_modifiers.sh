@@ -117,8 +117,7 @@ run_sash 'foo=hi; echo "${foo:+x}"'
 # vm.req1 DD#77 `${var:?MESSAGE}` — set/non-empty yields the value (all modes)
 run_sash 'foo=hi; echo "${foo:?x}"'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.req1
-# vm.req2 unset → abort, exit 1, stderr `<prog>: MESSAGE` (message text checked
-# native-only — janet's argv0 is the script path, not the binary).
+# vm.req2 unset → abort, exit 1, stderr `<prog>: MESSAGE`.
 run_sash 'echo "${foo:?must be set}"'
 [[ $rc != 0 && -z $out ]] \
   && { ! in_modes native || [[ $rerr == *": must be set"* ]]; }; chk vm.req2
@@ -200,10 +199,7 @@ run_sash 'str x=""; /bin/echo $x:-foo'
 # vm.bl3 positional `$N:-` brace-less, empty → default
 run_sash 'fn f { /bin/echo $1:-DEF }; f'
 [[ $rc = 0 && $out = "DEF" && -z $err ]]; chk vm.bl3
-# vm.bl4 positional `$N:-` brace-less, present → the arg. native,c: janet has a
-# pre-existing positional-default bug — braced `${1:-DEF}` with an arg present
-# ALSO returns DEF (identical janet output), so gate this to the correct
-# backends (task janet-positional-default-present).
+# vm.bl4 positional `$N:-` brace-less, present → the arg.
 run_sash 'fn f { /bin/echo $1:-DEF }; f VAL'
 [[ $rc = 0 && $out = "VAL" && -z $err ]]; chk vm.bl4
 # vm.bl5 brace-less `:~` elide, value present → the value
@@ -233,9 +229,7 @@ run_sash 'str x=hi; /bin/echo "$x:-foo"'
 run_sash 'str x=""; /bin/echo $x:-a b'
 [[ $rc = 0 && $out = "a b" && -z $err ]]; chk vm.bl12
 # vm.bl13 DD#91 follow-up: a `$( )` command substitution IS a valid brace-less
-# operand now (DG 2026-09-04) — a clean builtin cmdsub default. native,c: janet
-# has the pre-existing positional-default bug (janet-positional-default-present),
-# so a positional with a cmdsub default is gated like vm.bl4.
+# operand now (DG 2026-09-04) — a clean builtin cmdsub default.
 run_sash 'fn f { /bin/echo $1:-$(getpid) }; f RUN'
 [[ $rc = 0 && $out = "RUN" && -z $err ]]; chk vm.bl13
 # vm.bl14 `$(( ))` arithmetic operand brace-less
@@ -560,8 +554,6 @@ echo "$(len m):${m[k]}"'
 # reading, and `join-map-reject` was closed as not-a-bug. The behaviour below
 # was already what the compiler did; it was pinned by nothing.
 #
-# native,c only: these need `map m = @{a:DISP}`, which the janet backend does
-# not emit (`janet-map-from-array`, P2) — the same gap that gates af.4.
 
 # af.5 `join` on a map joins its values, exactly as on an array
 run_sash 'array p=(k1 v1 k2 v2)

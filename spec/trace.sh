@@ -8,8 +8,8 @@
 # `+ <kind> \u2192 <label>` to stderr (captured here as `$rerr`).
 #
 # Native-only: tracing is a native-backend feature; `--trace` is a no-op for
-# the c and janet emitters, so this suite exits for those modes (like
-# convert.sh) and its plan is counted in native alone.
+# the c emitter, so this suite exits there (like convert.sh) and its plan is
+# counted in native alone.
 set -eu
 . common.sh
 setup trace

@@ -59,8 +59,7 @@ run_sash 'x=$(arg 1 fallback); attest x [[ -n $x ]]; echo "$x"'
 run_sash 'x=$(arg 5 mydef); attest x [[ -n $x ]]; echo "$x"' one two
 [[ $rc = 0 && $out = "mydef" && -z $err ]]; chk av.d3
 
-# av.d4 a clean intrinsic default (quoted) is accepted and used on OOB. native,c
-# (janet exec's $(getcwd) as a fake external command — janet-getpid-class-intrinsics).
+# av.d4 a clean intrinsic default (quoted) is accepted and used on OOB.
 run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
 [[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
 

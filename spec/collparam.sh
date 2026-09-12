@@ -11,11 +11,8 @@
 # The slot IS the caller's collection (Part E) — not a copy — so mutation is
 # visible to the caller, and taint crosses the boundary in both directions.
 #
-# native,c — the janet backend renders from the AST, so it never sees the
-# transform's slot binding: it emits `(show "nums" (string "=" "nums"))` and
-# leaves `A` an undefined symbol. Every *runtime* slot test is therefore
-# guarded; the compile-time diagnostics all run in janet too, since those are
-# front-end. See notes/tasks/janet-collection-parameters.md.
+# Runtime slot tests exercise the transform's slot binding; compile-time
+# diagnostics stay front-end checks.
 set -eu
 . common.sh
 setup collparam
@@ -94,7 +91,6 @@ two =a =a'
 # 100.10 a bulk fill through a slot is an out-parameter. Unresolved, `read A`
 # filled a function-local array named `A` and the caller's collection was left
 # untouched — silently, which is the whole point of Part E.
-# native,c — janet lacks the DD#99 split (wordsplit.sh nr.9).
 run_sash 'fn split_into { read $1 A }
 sep=$'"'"'\0'"'"'
 str s=a:b:c

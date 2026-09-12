@@ -40,9 +40,7 @@ run_sash 'array a=(x y); /bin/echo @{a:?oops}'
 [[ $rc = 0 && $out = "x y" && -z $err ]]; chk gs.5
 
 # gs.6 `@{a:?WORD}` empty → runtime abort, exit 1, stderr `<progname>: WORD`.
-#      native-only: the c/janet spec harnesses discard runtime stderr, so
-#      the abort diagnostic (rerr) can only be asserted natively. Assert the
-#      message SUFFIX (after the program's own argv[0]).
+#      Assert the message suffix after the program's own argv[0].
 run_sash 'array a=(); /bin/echo @{a:?no args!}'
 [[ $rc = 1 && -z $out && $rerr == *"no args!" ]]; chk gs.6
 
@@ -162,9 +160,7 @@ run_sash 'array a=(); /bin/echo @a:-none @{a:-none}'
 # disposition — it implies the function takes ≥1 arg (the arity records a
 # required index 0, so `tool @args` ≈ `: $1; tool @args`). A 0-arg call is
 # SB5042; a general `@a` still needs a disposition (SB5032); for-in / `@{args:-}`
-# keep their empty-safe behaviour. The runtime `@args`-splat cases are native,c:
-# janet's function-args splat is unimplemented ("unknown symbol args" — a
-# PRE-EXISTING gap; `@{args:?}` fails there too).
+# keep their empty-safe behaviour.
 # gs.32 a 0-arg call to such a function is too few args → SB5042 (compile-time,
 # all backends). The arity floor makes the splat provably non-empty (no SB5032).
 run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f'

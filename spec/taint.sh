@@ -158,8 +158,8 @@ run_sash 'echo $PATH'
 #
 # Construction-restriction and attest-form checks are front-end (validate /
 # type_check) and fire in every backend, so they run cross-mode. The
-# attest-all *runtime* tests need mapfile + attest enforcement, which the
-# janet (IR) and c (SSA) oracles elide; those are guarded to native.
+# attest-all *runtime* tests need mapfile + attest enforcement, which the c
+# (SSA) oracle elides; those are guarded to native.
 
 # --- Cross-mode: construction restriction (a tainted value may not enter
 #     an array via literal, += append, or a[i]= subscript). ---
@@ -277,10 +277,9 @@ attest k v in m [[ $k =~ ^[A-Z]+$ ]]
 echo ${m[NAME]}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 60.30
 
-# --- native+c: clean-construction + attest-all runtime semantics.
+# --- clean-construction + attest-all runtime semantics.
 #     The c oracle now implements mapfile + RedirectPush/Pop + AttestAll
-#     (2026-08-20). janet still elides attest enforcement / lacks mapfile, so
-#     it stays skipped (janet deferred). ---
+#     (2026-08-20). ---
 printf 'alpha\nbeta\n' > d60a.txt
 printf 'alpha\nbeta\ngamma\n' > d60b.txt
 printf 'alpha\n123\ngamma\n' > d60c.txt
@@ -413,9 +412,8 @@ run_sash 'echo ~/x'
 run_sash "echo '~' \"~\" a~b"
 [[ $rc = 0 && $out = "~ ~ a~b" && -z $err ]]; chk tilde.3
 
-# 24.20 a failed attest names the variable and shows its value (native only —
-#       the c/janet harnesses discard runtime stderr). Regression for the
-#       terse `attest: validation failed`.
+# 24.20 a failed attest names the variable and shows its value. Regression
+#       for the terse `attest: validation failed`.
 run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
@@ -465,10 +463,9 @@ run_sash 'y=$(getenv HOME); z="pre${y}post"'
 run_sash 'y=$(getenv HOME); s=clean; s+=$y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.4
 # np.5 attest at the SOURCE, then the copy is a clean read (the DD#24 idiom).
-# native,c — janet fakes runtime getenv (janet-getpid-class-intrinsics).
 run_sash 'y=$(getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
 [[ $rc = 0 && -z $err ]]; chk np.5
-# np.6 assignment straight from a source is allowed (taints the target). native,c.
+# np.6 assignment straight from a source is allowed (taints the target).
 run_sash 'z=$(getenv HOME); attest z [[ -n $z ]]; echo "$z"'
 [[ $rc = 0 && -z $err ]]; chk np.6
 # np.7 a clean copy chain is unaffected
@@ -488,7 +485,7 @@ run_sash 'echo $(y=1; cat /etc/hostname)'
 # mcs.3 a purely-clean body (builtins only) is NOT tainted — capture is usable
 run_sash 'x=$(echo a; echo b); echo "[$x]"'
 [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk mcs.3
-# mcs.4 attesting the tainted pipeline capture makes it usable (native+c)
+# mcs.4 attesting the tainted pipeline capture makes it usable
 run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
 [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
 
@@ -519,8 +516,7 @@ run_sash 'x=$(getenv HOME); [[ $x = y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.44
 run_sash 'x=$(getenv HOME); echo hi > $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
-# 60.46 control: a attested-all snapshot joined is clean and runs (native+c;
-# janet's _args model doesn't expose the named-array join at runtime)
+# 60.46 control: a attested-all snapshot joined is clean and runs.
 run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
 [[ $rc = 0 && $out = "one two" && -z $err ]]; chk 60.46
 
@@ -565,7 +561,7 @@ run_sash 'x=hello; [[ $x = hello ]] && echo yes'
 # A attest as the left operand of `&&`/`||` is a *caught* gate (like `if attest`),
 # not a bare abort. `attest V [[t]] || V=dflt` = "V validated, else the default"
 # — a clean, usable value either way. The fallback is trusted, not re-validated
-# (caveat programmer). native,c: attest is a native/c runtime construct.
+# (caveat programmer). Attest is a runtime construct.
 # bfb.1 valid input passes the gate → V keeps its value (was wrongly the
 #       default before the fix)
 run_sash 'v=$(arg 1)
@@ -606,20 +602,17 @@ attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate
 # (the middle ground between `attest` and `--no-taint`).
-# 91.1 tainted `${x:!}` compiles & runs (the bypass). native,c: janet lacks
-# `getenv` (pre-existing gap — it runs `getenv` as an external), so the
-# runtime-executing getenv tests are gated (the compile-time bypass is checked
-# uniformly by 91.2's control and the argv-based 91.5/91.6).
+# 91.1 tainted `${x:!}` compiles & runs (the bypass).
 run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.1
 # 91.2 control: `${x:~}` on the SAME tainted value is rejected (SB5020) — a
 # compile-time check, so it holds in every backend.
 run_sash 'x=$(getenv HOME); /bin/echo ${x:~}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.2
-# 91.3 brace-less `$x:!` bypasses too (native,c — runs getenv)
+# 91.3 brace-less `$x:!` bypasses too
 run_sash 'x=$(getenv HOME); /bin/echo $x:!'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.3
-# 91.4 the `:!` value propagates CLEAN into an array literal (native,c — getenv)
+# 91.4 the `:!` value propagates CLEAN into an array literal
 run_sash 'x=$(getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 91.4
 # 91.5 tainted array splat `@a:!~` bypasses attest-all
@@ -654,15 +647,12 @@ run_sash 'x=hi; /bin/echo ${x:!}'
 # is the word "foo!" and a trailing modifier could never be seen.
 
 # 91.12 `:!` alone is "bare, but trusted" — an EMPTY value contributes an empty
-# argument, exactly as bare `$u` does. It does NOT elide any more. (janet agrees
-# here, but only because it never elides; 91.13 is where that shows.)
+# argument, exactly as bare `$u` does. It does NOT elide any more.
 run_sash 'u=""
 /usr/bin/printf "[%s]" A ${u:!} B'
 [[ $rc = 0 && $out = "[A][][B]" && -z $err ]]; chk 91.12
 
-# 91.13 …and `:!~` is the old `:!`: trusted AND elided when empty. native,c:
-# janet renders a scalar `:~` as the plain variable and so does not elide at
-# all (pre-existing DD#84 gap — task `janet-optional-args-elision`).
+# 91.13 …and `:!~` is the old `:!`: trusted AND elided when empty.
 run_sash 'u=""
 /usr/bin/printf "[%s]" A ${u:!~} B'
 [[ $rc = 0 && $out = "[A][B]" && -z $err ]]; chk 91.13
@@ -722,8 +712,7 @@ read $ckd:! opts
 # 93.1 `bless` is no longer a keyword — it is just an unknown command now
 run_sash 'x=hi; bless x'
 [[ $rc != 0 && $err == *SB5011* ]]; chk 93.1
-# 93.2 `attest` clears taint end-to-end (the renamed primitive works). native,c
-# (janet elides attest validation and lacks getenv — see janet gaps).
+# 93.2 `attest` clears taint end-to-end (the renamed primitive works).
 run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 /bin/echo $x'
@@ -737,7 +726,6 @@ run_sash 'x=$(getenv HOME); /bin/echo $x'
 # by construction, so a wrong-var predicate (SB5020) cannot be written in this
 # form — strictly safer than the full form, and still greppable.
 # 93.20 the scalar shorthand declassifies, exactly like the full predicate.
-# native,c — janet elides attest validation and lacks getenv.
 run_sash 'x=$(getenv HOME)
 attest x -n
 /bin/echo $x'
@@ -802,9 +790,7 @@ run_sash 's=abc
 attest s (( c = s ))
 echo $(( c ))'
 [[ $rc != 0 && -z $out ]]; chk 93.31
-# 93.31b …with the same attest-fail message the [[ ]] forms produce. native,c —
-# the janet harness discards runtime stderr (no `rerr`), though janet does
-# print the identical message.
+# 93.31b …with the same attest-fail message the [[ ]] forms produce.
 run_sash 's=abc
 attest s (( c = s ))
 echo $(( c ))'
@@ -816,8 +802,6 @@ attest n (( c = n ))
 /bin/echo $n $(( c ))' 42
 [[ $rc = 0 && $out = "42 42" && -z $err ]]; chk 93.32
 # 93.33 the `if` form branches instead of aborting (DG 2026-09-07).
-# native,c — janet emits `if attest` as an external command
-# (janet-if-attest-emitted-as-command).
 run_sash 's=abc
 if attest s (( c = s )); then echo "ok $(( c ))"; else echo "not an int"; fi'
 [[ $rc = 0 && $out = "not an int" && -z $err ]]; chk 93.33
@@ -880,7 +864,7 @@ attest x (( y = x + k ))
 echo $(( y ))'
 [[ $rc = 0 && $out = "133" && -z $err ]]; chk 93.44
 # 93.45 a TAINTED extra operand is rejected — the value would be laundered into
-# the clean target. native,c — janet lacks getenv.
+# the clean target.
 run_sash 'x=$(getenv HOME)
 z=$(getenv PATH)
 attest x (( y = x + z ))
@@ -957,8 +941,8 @@ echo "$x"'
 # (The SSA-backstop half of this fix is pinned by taint_switch.sh sw.9.)
 # The split is NUL-only (DD#99), so "p q\n" is ONE field — the subject here is
 # that a clean producer needs no attest, not the field count.
-# Un-gated for janet 2026-09-12: janet's lastpipe used to bind an array target
-# as a scalar string, which made `len` count bytes.
+# Lastpipe used to bind an array target as a scalar string, which made `len`
+# count bytes.
 run_sash 'echo "p q" | read a
 echo "$(len a)"'
 [[ $rc = 0 && $out = "1" && -z $err ]]; chk tl.8

@@ -19,9 +19,9 @@ run_sash 'x=HOME; echo ${!x}'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 6.1
 
 # ── DD#104: --emit-ir, the structural IR capture ──────────────────────────
-# An inert janet data literal — data, not a program. These pin the CLI
-# surface and the shape; they deliberately do NOT shell out to janet, so the
-# suite carries no janet dependency (the emitter's parseability is verified
+# An inert data literal — data, not a program. These pin the CLI surface and
+# shape; they deliberately do NOT shell out to an interpreter, so the suite
+# carries no runtime dependency (the emitter's parseability is verified
 # separately, over the whole corpus, not per-commit).
 run_sash_emit_ir() {
     rc=-1 out="" err=""
@@ -50,9 +50,9 @@ else
     skip_chk 104.2
 fi
 
-# 104.3 arithmetic and loops are captured. `--janet-map` rendered these as
-#       `(sash/TODO …)`; a capture has no semantics to defer, so it is
-#       complete from the start. This is the property that distinguishes it.
+# 104.3 arithmetic and loops are captured. A capture has no semantics to defer,
+#       so it is complete from the start. This is the property that
+#       distinguishes it.
 if in_modes native; then
     run_sash_emit_ir 'int n=3
 while (( n > 0 )); do
@@ -64,7 +64,7 @@ else
     skip_chk 104.3
 fi
 
-# 104.4 a literal containing a quote and a backslash is escaped for janet's
+# 104.4 a literal containing a quote and a backslash is escaped for the data
 #       reader rather than terminating the string early
 if in_modes native; then
     run_sash_emit_ir 'x="a\"b"; echo $x'
@@ -164,8 +164,7 @@ run_sash 'x=HELLO; echo ${x,,}'
 
 # 54.1 sash-expand output parsed into a config map (DD#99: `mapfile -m` is
 # replaced by `matchall` + array->map, which also splits on the FIRST `=`
-# only, so a value may contain one). native,c: janet does not emit
-# `map m = @{a:DISP}` (task `janet-map-from-array`).
+# only, so a value may contain one).
 printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
 EXPAND=$(which sash-expand)
 run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - matchall \$s \"([^=\\x0a]*)=([^\\x0a]*)\" p; map config = @{p:~}; echo \${config[GREETING]}"
@@ -175,8 +174,6 @@ run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - mat
 # Both spellings compile to the same node/behaviour: $$ ≡ $(getpid),
 # $? ≡ $(status), $! ≡ $(getcpid). The keyword form is canonical (docs,
 # diagnostics, sash-convert); the punctuation form is accepted input sugar.
-# spv.1-3 are native,c: janet execs the getpid intrinsic and mis-tracks the
-# arith-false status (filed bug-janet-special-var-arith).
 # spv.1 $$ and $(getpid) are the same value (this process's pid)
 run_sash 'p=$$; q=$(getpid); [[ $p == $q ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.1
@@ -195,7 +192,6 @@ run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 # exhausted. Nothing checked, so the next write dereferenced NULL and the
 # program died with SIGSEGV, silently. These pin "fail loudly" — the
 # capacity question itself is a separate, open decision for DG.
-# native,c only: janet runs on the Janet VM, not sash-rt.
   /usr/bin/printf 'a\0%.0s' $(seq 1 20000) > hp_big.nul
   /usr/bin/printf 'x%.0s' $(seq 1 70000) > hp_wide.nul
   /usr/bin/printf '\0' >> hp_wide.nul

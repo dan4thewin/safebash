@@ -235,7 +235,7 @@ fi
 # cov.62 a backtick inside "…" is a LITERAL char (lexer scan_dq_backtick emits a
 # Literal, not a CommandSub): backticks are only top-level `$( )` sugar and have
 # no special meaning in quotes (DG 2026-08-28). The command is never run — the
-# backticks and their contents render verbatim. Works in all three backends.
+# backticks and their contents render verbatim. Works in both backends.
 run_sash 'echo "x`/bin/echo BOOM`y"'
 [[ $rc = 0 && $out = 'x`/bin/echo BOOM`y' && -z $err ]]; chk cov.62
 # cov.63 ANSI-C `$'\nnn'` octal escapes (lexer scan_ansi_c_octal): each `\ooo`
@@ -249,7 +249,7 @@ run_sash '[[ ( -n x ) ]] && echo y'
 # cov.65-67 binary bitwise operators in $(( )) with runtime operands
 # (codegen/arithmetic.rs emit_arith_op BitAnd/BitOr/BitXor → band/bor/bxor).
 # The compound-assign forms (&=,|=,^=) are cov.44-46; the BINARY forms were
-# untested. a=6,b=3 → &=2, |=7, ^=5. native+c.
+# untested. a=6,b=3 → &=2, |=7, ^=5.
 run_sash 'int a=6; int b=3; echo $(( a & b ))'
 [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.65
 run_sash 'int a=6; int b=3; echo $(( a | b ))'
@@ -329,8 +329,7 @@ run_sash 'echo "$(/bin/echo "q")"'
 
 # cov.78 `${x:-0}` on an int `x` triggers the default on the additive identity
 # `0` (DG's identity-element semantic — the int analogue of "" for strings), not
-# on "unset". So a non-zero `x` yields the value. All three backends now
-# (bug-cjanet-default-on-int-var, fixed).
+# on "unset". So a non-zero `x` yields the value.
 run_sash 'int x=5; int n=${x:-0}; echo $n'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.78
 
@@ -360,8 +359,7 @@ run_sash 'int array a=(1 2 3); echo ${a[0]:-hi}'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk cov.84
 
 # cov.85 an int-array cell with a literal default is accepted and lowers to the
-# identity-element ternary — native/c only (int arrays are a pre-existing janet
-# gap: `scan-number` on the array literal; janet-int-array-and-cell-default).
+# identity-element ternary.
 run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
 [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.85
 
@@ -371,8 +369,8 @@ run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
 run_sash 'echo $(( 16#ff ))'
 [[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk cov.79
 
-# cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test) — native,c only
-# (janet has no `-t`). Captured stdout in the harness is not a tty → notty.
+# cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test).
+# Captured stdout in the harness is not a tty → notty.
 run_sash 'if [[ -t 1 ]] { echo tty } else { echo notty }'
 [[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
 # cov.90 a full-line comment inside a compiled program — comments are lexical

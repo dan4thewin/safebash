@@ -4,8 +4,8 @@
 # compound child (like a `{ }` group), not be exec'd as a bare command.
 #
 # NATIVE-ONLY: compound pipeline stages (DD#14) are native-only infra; the
-# c/janet backends have no compound-pipeline-stage support at all (a group
-# stage already fails there) — tracked by c-janet-compound-pipeline-stage.
+# c backend has no compound-pipeline-stage support at all (a group stage
+# already fails there).
 # Same native-only pattern as brace.sh / convert.sh.
 set -eu
 . common.sh

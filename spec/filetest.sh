@@ -3,8 +3,7 @@
 # semantics for the whole operator set. Section A pins -N, which compares
 # WHOLE SECONDS with `>=` and ignores nanoseconds entirely (bash test.c);
 # sash previously used a strict `>` plus a nanosecond tiebreak and answered
-# "no" to the two cases -N exists to report. Janet lowers only -d/-e/-f, so
-# everything else is guarded to native,c.
+# "no" to the two cases -N exists to report.
 set -eu
 . common.sh
 setup filetest
@@ -50,7 +49,7 @@ run_sash 'if [[ -N n5 ]]; then echo yes; else echo no; fi'
 run_sash 'if [[ -N nosuch ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.6
 
-# ── B. portable core: -e / -f / -d (all three backends) ──────────────
+# ── B. portable core: -e / -f / -d ─────────────────────────────────
 printf 'x\n' > plain; mkdir -p adir
 
 run_sash 'if [[ -e plain ]]; then echo yes; else echo no; fi'
@@ -67,7 +66,7 @@ run_sash 'if [[ -d adir ]]; then echo yes; else echo no; fi'
 run_sash 'if [[ -d plain ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.12
 
-# ── C. the remaining operators (native,c) ────────────────────────────
+# ── C. the remaining operators ──────────────────────────────────────
 : > empty; ln -sf plain slink; mkfifo afifo 2>/dev/null
 printf '#!/bin/sh\n' > execf; chmod +x execf
 
@@ -118,7 +117,7 @@ run_sash 'if [[ -S plain ]]; then echo yes; else echo no; fi'
 run_sash 'if [[ -O plain ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.28
 
-# ── D. stat-mode bits: -u / -g / -k (native,c) ───────────────────────
+# ── D. stat-mode bits: -u / -g / -k ─────────────────────────────────
 # The codegen table has implemented these as codes 13/12/10 since it was
 # written; the PARSER simply never listed them, so `[[ -k f ]]` reported
 # SB4014 and the capability was unreachable. Each bit is checked both set
