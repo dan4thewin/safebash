@@ -5035,7 +5035,7 @@ fn record_cmdsub_value_fn_operands(e: &Expr, set: &mut HashSet<String>) {
 
 fn record_value_fn_operand(c: &Command, set: &mut HashSet<String>) {
     let name = expr_literal_str(&c.name);
-    if name == "len" {
+    if name == "len" || name == "strlen" {
         record_len_operand(c, set);
     } else if name == "join" || name == "keys" {
         record_collection_operand(c, set);

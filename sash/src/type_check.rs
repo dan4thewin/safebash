@@ -151,6 +151,7 @@ fn is_int_returning_intrinsic(name: &str) -> bool {
     matches!(
         name,
         "len"
+            | "strlen"
             | "argc"
             | "random"
             | "signum"
@@ -907,6 +908,7 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
             check_subscript_types(&c.name, env, errors);
             check_join_operand(c, stmt.span, env, errors);
             check_keys_operand(c, stmt.span, env, errors);
+            check_strlen_operand(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
             }
@@ -962,6 +964,36 @@ fn check_join_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<T
         message: format!(
             "`join` needs an array or map as its first operand — `{name}` is not a \
              collection; declare it with `array`/`map` (or splat a collection with `@{name}`)"
+        ),
+        span,
+    });
+}
+
+/// DD#75 §2 amendment: `strlen` is scalar-only. On a collection it read the
+/// scalar slot of a name that has none and silently answered `0`, so it is a
+/// compile error. It deliberately does **not** mirror bash's `${#a}` =
+/// "byte length of element 0" — `sash-convert` spells that case
+/// `$(strlen a[0])` explicitly, so nothing needs the implicit form.
+fn check_strlen_operand(c: &Command, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
+    if expr_to_name(&c.name) != "strlen" {
+        return;
+    }
+    let Some(arg) = c.args.first() else {
+        return;
+    };
+    let name = join_operand_name(arg);
+    if name.is_empty() || !env.collections.contains(&name) {
+        return;
+    }
+    let what = if env.assoc_arrays.contains(&name) {
+        "a map"
+    } else {
+        "an array"
+    };
+    errors.push(TypeError {
+        message: format!(
+            "`strlen` needs a scalar — `{name}` is {what}; use `$(len {name})` for the \
+             entry count, or `$(strlen {name}[i])` for the byte length of one element"
         ),
         span,
     });

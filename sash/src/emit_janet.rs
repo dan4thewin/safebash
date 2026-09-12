@@ -2038,39 +2038,51 @@ fn cmdsub_path_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<Strin
 }
 
 /// Data/collection value intrinsics that must NOT fall through to the
-/// generic exec fallback: `len` (array length), the DD#60 argv trio
-/// (`argc`/`arg`), and DD#41 `join`.
+/// generic exec fallback. Three unrelated families, each in its own
+/// function: the length pair, the DD#60 argv trio, and DD#41 `join`.
 fn cmdsub_data_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
-    // `$(len ARR)` → element count of the named array.
-    if name == "len" && c.args.len() == 1 {
-        let arr = expr_to_literal(&c.args[0]);
-        return Some(format!("(string (length {}))", arr));
+    cmdsub_length_intrinsic(name, c)
+        .or_else(|| cmdsub_argv_intrinsic(name, c, ctx))
+        .or_else(|| cmdsub_join_intrinsic(name, c, ctx))
+}
+
+/// `$(len ARR)` → element count; `$(strlen s)` → byte length. Janet's
+/// `length` serves both; only the operand's kind differs.
+fn cmdsub_length_intrinsic(name: &str, c: &Command) -> Option<String> {
+    if c.args.len() != 1 {
+        return None;
     }
-    // DD#60: `$(argc)` is C argc (program-name slot + user args); the emitted
-    // script runs as `janet .out.janet ARGS…`, so `(dyn :args)` = [script, …].
+    let operand = expr_to_literal(&c.args[0]);
+    match name {
+        "len" => Some(format!("(string (length {operand}))")),
+        "strlen" => Some(format!("(string (length (or {operand} \"\")))")),
+        _ => None,
+    }
+}
+
+/// DD#60 argv trio. `$(argc)` is C argc (program-name slot + user args); the
+/// emitted script runs as `janet .out.janet ARGS…`, so `(dyn :args)` =
+/// [script, …]. `$(arg N)` is the 0-based scalar arg (index 0 = program
+/// name) and aborts out of range; `$(arg N DEFAULT)` (DD#60 addendum)
+/// substitutes DEFAULT instead.
+fn cmdsub_argv_intrinsic(name: &str, c: &Command, ctx: &EmitCtx) -> Option<String> {
     if name == "argc" {
         return Some("(string (length (dyn :args)))".to_string());
     }
-    // `$(arg N)` — 0-based scalar program arg (index 0 = program name);
-    // out-of-range aborts at runtime (negative literal is a validator error).
-    if name == "arg" && c.args.len() == 1 {
-        let idx = emit_expr_as_int(&c.args[0], ctx);
-        return Some(format!(
-            "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
-             (get (dyn :args) _ai) \
-             (do (eprint (get (dyn :args) 0) \": arg: index out of range\") (os/exit 1))))"
-        ));
+    if name != "arg" {
+        return None;
     }
-    // `$(arg N DEFAULT)` (DD#60 addendum) — argv[N], or DEFAULT if out of range.
-    if name == "arg" && c.args.len() == 2 {
-        let idx = emit_expr_as_int(&c.args[0], ctx);
-        let def = emit_expr_inline(&c.args[1], ctx);
-        return Some(format!(
-            "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
-             (get (dyn :args) _ai) {def}))"
-        ));
-    }
-    cmdsub_join_intrinsic(name, c, ctx)
+    let idx = emit_expr_as_int(c.args.first()?, ctx);
+    let miss = match c.args.len() {
+        1 => "(do (eprint (get (dyn :args) 0) \": arg: index out of range\") (os/exit 1))"
+            .to_string(),
+        2 => emit_expr_inline(&c.args[1], ctx),
+        _ => return None,
+    };
+    Some(format!(
+        "(let [_ai {idx}] (if (and (>= _ai 0) (< _ai (length (dyn :args)))) \
+         (get (dyn :args) _ai) {miss}))"
+    ))
 }
 
 /// DD (fixed-point) numeric intrinsics. `$(dtoi DIGITS DECIMAL)` parses a

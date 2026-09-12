@@ -31,6 +31,7 @@ const INTRINSICS: &[&str] = &[
     "argc",
     "status",
     "len",
+    "strlen",
     "keys",
     "join",
     "epochseconds",

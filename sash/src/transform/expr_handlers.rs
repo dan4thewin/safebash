@@ -129,17 +129,30 @@ fn unwrap_subst_wrappers(mut s: &StmtKind) -> &StmtKind {
     }
 }
 
-/// Native-builtin shortcut for `$(name args…)` — len / keys / join
-/// (DD#41) and echo (DD#14). Returns `None` for any other builtin
-/// (or unknown name), letting the caller fall through to the regular
+/// Native-builtin shortcut for `$(name args…)` — the DD#41 collection
+/// intrinsics, the DD#65 string sugar (delegated to
+/// `try_string_intrinsic`), and echo (DD#14). Returns `None` for any other
+/// builtin (or unknown name), letting the caller fall through to the regular
 /// `CmdSubst` argv path.
 fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option<SsaValue> {
     match BuiltinCmd::from_name(name) {
         BuiltinCmd::Len => try_len_intrinsic(c, state),
+        BuiltinCmd::Strlen => try_strlen_intrinsic(c, state),
         // `keys` is not a scalar value intrinsic: a value-context `$(keys m)` is
         // rejected SB5025 in validate, and `for … in $(keys m)` uses the splat
-        // path — so it falls to `_ => None` here (was a dead `try_keys_intrinsic`).
+        // path — so it falls through here (was a dead `try_keys_intrinsic`).
         BuiltinCmd::Join => Some(join_intrinsic(c, state)),
+        BuiltinCmd::Echo => Some(echo_concat(c, state)),
+        other => try_string_intrinsic(other, c, state),
+    }
+}
+
+/// DD#65 string sugar: the intrinsics that lower to a `RegexReplace`,
+/// `RegexMatch` or `CaseConvert` value rather than touching a collection.
+/// Split from `try_native_intrinsic` because the two families share nothing
+/// but the dispatch.
+fn try_string_intrinsic(cmd: BuiltinCmd, c: &Command, state: &VersionState) -> Option<SsaValue> {
+    match cmd {
         BuiltinCmd::Sub => regex_replace_intrinsic(c, state, false),
         BuiltinCmd::Gsub => regex_replace_intrinsic(c, state, true),
         BuiltinCmd::Match => regex_match_intrinsic(c, state),
@@ -147,7 +160,6 @@ fn try_native_intrinsic(name: &str, c: &Command, state: &VersionState) -> Option
         BuiltinCmd::Tolower => case_convert_intrinsic(c, state, false),
         BuiltinCmd::Basename => path_sugar_intrinsic(c, state, ".*/"),
         BuiltinCmd::Dirname => path_sugar_intrinsic(c, state, "/[^/]*$"),
-        BuiltinCmd::Echo => Some(echo_concat(c, state)),
         _ => None,
     }
 }
@@ -233,6 +245,22 @@ fn build_argv(c: &Command, state: &VersionState) -> Vec<SsaValue> {
         argv.push(arg_to_value(arg, state));
     }
     argv
+}
+
+/// `$(strlen s)` — byte length, always. Amends DD#75 §2: `len` dispatched on
+/// the operand's type, so *bytes* and *elements* shared one spelling and the
+/// call site could not say which was meant. `strlen` names the byte-length
+/// question outright and does not dispatch.
+fn try_strlen_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
+    let arg = c.args.first()?;
+    let s = expr_to_string(arg);
+    let name = s.strip_prefix('$').unwrap_or(&s).to_string();
+    let name = super::expressions::resolve_args_name(&name, state);
+    Some(SsaValue::ParamExpansion {
+        var: state.lookup(&name),
+        operator: "strlen".to_string(),
+        operand: String::new(),
+    })
 }
 
 fn try_len_intrinsic(c: &Command, state: &VersionState) -> Option<SsaValue> {
@@ -617,10 +645,11 @@ fn resolve_nullary_sexpr(name: &str, state: &VersionState) -> Option<SsaValue> {
 }
 
 /// Int-returning intrinsics that evaluate as an arith sexpr operand. `len`
-/// (element/entry count or byte length) is the one in `try_native_intrinsic`;
-/// the string intrinsics (join/keys/toupper/…) are not int and are excluded.
+/// (element/entry count) and `strlen` (byte length) are the ones in
+/// `try_native_intrinsic`; the string intrinsics (join/keys/toupper/…) are
+/// not int and are excluded.
 fn is_arith_int_intrinsic(name: &str) -> bool {
-    name == "len"
+    name == "len" || name == "strlen"
 }
 
 /// Rebuild a `Command` for an int intrinsic from its arith sexpr args, so the

@@ -134,6 +134,8 @@ pub enum BuiltinCmd {
     // ─── Sash-native intrinsics ───
     /// `$(len ...)` — string or array length.
     Len,
+    /// `$(strlen s)` — byte length of a scalar (DD#75 §2 amendment).
+    Strlen,
     /// `$(keys arr)` — associative-array key list.
     Keys,
     /// `$(join [sep] @arr)` — join elements.
@@ -200,6 +202,7 @@ impl BuiltinCmd {
             "signal" => Self::Signal,
             "unset" => Self::Unset,
             "len" => Self::Len,
+            "strlen" => Self::Strlen,
             "keys" => Self::Keys,
             "join" => Self::Join,
             "sub" => Self::Sub,
@@ -1051,7 +1054,9 @@ pub(crate) fn value_intrinsic_arity(name: &str) -> Option<usize> {
         // discarded (`$(getpid X)` yielded the pid).
         "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
         | "random" => Some(0),
-        "len" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => Some(1),
+        "len" | "strlen" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => {
+            Some(1)
+        }
         "match" | "dtoi" | "itod" => Some(2),
         "sub" | "gsub" => Some(3),
         // `arg` is genuinely variadic (DD#60: `$(arg N)` / `$(arg N DEFAULT)`),

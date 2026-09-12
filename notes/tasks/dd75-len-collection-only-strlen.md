@@ -119,3 +119,45 @@ Counts re-measured 2026-09-12: `len @` is **3** sites (not 2) and `join @` is
   explicitly, so nothing needs the implicit form.
 - **`bug-convert-hash-array-conflation` is fixed inside this task**, not
   separately.
+
+## Progress (2026-09-12) — `strlen` exists; `len` not yet narrowed
+
+Staged deliberately. This commit is **purely additive**: nothing that
+compiled before compiles differently. The breaking half is separate.
+
+### Done
+
+- `strlen` is a value intrinsic: `BuiltinCmd::Strlen`, arity 1,
+  int-returning, PATH-exempt (`resolve.rs` INTRINSICS), clean for taint.
+- `strlen <scalar>` → byte length in all three backends.
+- `strlen <collection>` → **SB4030**, per DG's confirmation that it must not
+  mirror bash's `${#a}`. This shipped in the same commit on purpose: without
+  it `strlen a` silently answered `0`, which is the exact defect the split
+  exists to remove. Adding the spelling and leaving it silently wrong for a
+  commit would have been worse than not adding it.
+- Specs `types.sh` 75.55-75.61.
+
+Most of the wiring was free because `len <scalar>` already lowered to the
+internal `strlen` ParamExpansion operator, so all three backends implemented
+byte-length before this task began. The new `try_strlen_intrinsic` differs
+from `try_len_intrinsic` only in not consulting `state.collections`.
+
+### Not yet done
+
+- `len <scalar>` → compile error naming `strlen`, and the ~16 scalar `len`
+  spec sites that must migrate with it. **Breaking**, hence separate.
+- DD#100 Part D: reject `len @a` (3) and `join @a` (18); update SB5025's
+  message, which currently recommends the spelling being removed.
+- The converter's four-row `${#…}` mapping, which closes
+  `bug-convert-hash-array-conflation`. Needs `strlen a[0]` / `strlen a[i]` to
+  parse — today `len a[0]` is rejected by SB5062, so subscripted operands are
+  new surface for this family and are the first thing to build.
+
+### Incidental
+
+`types.sh` `plan=` was 162 against 173 actual before this change — already 11
+short, unrelated to it. Corrected to the real count.
+
+Found and filed `janet-intrinsic-dollar-operand`: janet emits an intrinsic's
+`$name` operand verbatim, so `$(len $s)` fails to compile there. Pre-existing
+and not specific to `strlen`; 75.58 is guarded `native,c` and pins it.

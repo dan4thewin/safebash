@@ -447,8 +447,8 @@ fn cmd_subst_taint(
     let basename = cmd.rsplit('/').next().unwrap_or(cmd);
     match basename {
         "getenv" | "argv" | "arg" => Taint::Tainted,
-        "len" | "epochseconds" | "random" | "argc" | "getpid" | "getppid" | "getcpid"
-        | "getcwd" | "status" | "signum" => Taint::Clean,
+        "len" | "strlen" | "epochseconds" | "random" | "argc" | "getpid" | "getppid"
+        | "getcpid" | "getcwd" | "status" | "signum" => Taint::Clean,
         "echo" | "dtoi" | "itod" => any_tainted(&argv[1..], taint, user_functions),
         _ => {
             if user_functions.contains(cmd.as_str()) || user_functions.contains(basename) {

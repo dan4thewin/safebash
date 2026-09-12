@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=162
+plan=180
 echo "1..$plan" >&3
 
 set +e
@@ -775,6 +775,65 @@ f one'
 else
     skip_chk 75.54
 fi
+
+# ── DD#75 §2 amendment: `strlen` names the byte-length question ──
+# `len` dispatched on the operand's TYPE — bytes for a scalar, elements for a
+# collection — so two different questions shared one spelling with nothing at
+# the call site to say which was being asked. `strlen` asks for bytes outright
+# and does not dispatch. It is int-typed like `len`, so it is legal in `$( )`,
+# as an `int` initialiser, and as an arith sexpr operand.
+run_sash 'str s = hello
+echo $(strlen s)'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.55
+
+# 75.56 int-typed: assigning to an `int` is not SB4030
+run_sash 'str s = hello
+int n = $(strlen s)
+echo $n'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk 75.56
+
+# 75.57 empty scalar is 0 bytes, not an error
+run_sash 'str s = ""
+echo $(strlen s)'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 75.57
+
+# 75.58 `$s` spells the same operand as `s` (the sigil is not the dispatch).
+# native,c: janet emits the operand verbatim, so `$s` reaches the script as a
+# bare symbol and it fails to compile. Pre-existing and not specific to
+# `strlen` — `$(len $s)` fails there identically. See
+# notes/tasks/janet-intrinsic-dollar-operand.md.
+if in_modes native,c; then
+    run_sash 'str s = abcd
+echo $(strlen $s)'
+    [[ $rc = 0 && $out = "4" && -z $err ]]; chk 75.58
+else
+    skip_chk 75.58
+fi
+
+# 75.59 arith sexpr operand (DD#58). janet has no sexpr intrinsic call at all
+# — `(len a)` fails there identically — so this is native,c.
+if in_modes native,c; then
+    run_sash 'str s = hello
+int n = $(( (strlen s) * 2 ))
+echo $n'
+    [[ $rc = 0 && $out = "10" && -z $err ]]; chk 75.59
+else
+    skip_chk 75.59
+fi
+
+# 75.60/75.61 `strlen <collection>` is a compile error. It used to read the
+# scalar slot of a name that has none and answer `0` — a silently wrong
+# number, which is the whole reason the spelling was split. It deliberately
+# does NOT mirror bash's `${#a}` = "byte length of element 0"; the converter
+# spells that `$(strlen a[0])` explicitly.
+run_sash 'array a = ( x y z )
+echo $(strlen a)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"needs a scalar"* ]]; chk 75.60
+
+run_sash 'map m
+m[k] = v
+echo $(strlen m)'
+[[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk 75.61
 
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or
