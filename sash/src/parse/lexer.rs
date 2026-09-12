@@ -1702,13 +1702,6 @@ fn classify_word_token(word: String) -> Tok {
         "return" => Tok::Word("return".to_string()),
         "break" => Tok::Word("break".to_string()),
         "continue" => Tok::Word("continue".to_string()),
-        "eval" => Tok::Word("eval".to_string()),
-        "source" => Tok::Word("source".to_string()),
-        "export" => Tok::Word("export".to_string()),
-        "declare" => Tok::Word("declare".to_string()),
-        "typeset" => Tok::Word("typeset".to_string()),
-        "readonly" => Tok::Word("readonly".to_string()),
-        "select" => Tok::Word("select".to_string()),
         _ => Tok::Word(word),
     }
 }

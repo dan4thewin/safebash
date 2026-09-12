@@ -143,15 +143,15 @@ sash extensions (int, const, array, map, attest, fn,
        │
   [1]  │  Parse
        ▼
- tree-sitter-bash-safebash → CST
+ parse/ (logos lexer + recursive descent) → Program (AST)
        │
   [2]  │  Validate
        ▼
- rule.rs + rules/*.rs → diagnostics (SB4001–SB5002)
+ validate.rs → diagnostics (SB4001–SB50xx)
        │
   [3]  │  Taint
        ▼
- taint.rs → per-definition taint classification (SB4020)
+ validate.rs::check_taint → per-definition taint (SB4020/SB5020)
        │
   [4]  │  Lower
        ▼
@@ -182,26 +182,34 @@ sash extensions (int, const, array, map, attest, fn,
 
 ### Phase 1: Parse
 
-tree-sitter-bash-safebash produces a concrete syntax tree (CST) —
-every token, every piece of punctuation preserved losslessly.
+A hand-written lexer (`parse/logos_tokens.rs` + `parse/lexer.rs`) and
+recursive-descent parser (`parse/parser.rs`) produce the AST directly.
+There is no CST and no tree-sitter dependency in the compiler — commit
+`1c0e64a` removed both. (`sash-convert` still uses stock
+`tree-sitter-bash` on *bash* input; that is a separate crate.)
 
 ### Phase 2: Validate
 
-Walks the CST once, dispatching each node to registered rules.
-Rules implement the `Rule` trait. Only subset gate rules remain —
-coercion rules were removed because sash handles those constructs
-silently (DD#40).
+`validate.rs` walks the AST once. (The old `rules/` directory and its
+`Rule` trait are gone — commit `1c0e64a` folded them, the standalone
+taint pass, and the CST itself into this single module.)
 
-| Rule file | Codes | What it catches |
-|-----------|-------|-----------------|
-| `dynamic_execution.rs` | SB4001 | `eval` (reject) |
-| `dynamic_execution.rs` | SB4002 | `source`/`.` (marker) |
-| `export_rejected.rs` | SB5001 | `export` (reject, DD#45) |
-| `heredoc_cmdsub.rs` | SB5002 | Command substitution in heredocs |
+| Check | Codes | What it catches |
+|-------|-------|-----------------|
+| `check_dynexec` | SB4001 | `eval`, `source`, `.`, `command`, `coproc` |
+| `check_heredoc` | SB5002 | heredocs / here-strings |
+| `check_command_head` | SB5011 | an unknown name in command position |
+| `check_taint` | SB5020 | a tainted value used without `attest` |
 
-Wrapper unwrapping: `builtin`, `command`, and `env` prefixes are
-stripped before checking the effective command. ANSI-C quoted
-strings (`$'\x65\x76\x61\x6c'`) are decoded before comparison.
+There are **no reserved words.** A bash builtin sash does not implement
+(`export`, `declare`, `typeset`, `readonly`, `select`, `shift`, …) is
+simply an unknown command and gets SB5011 like any other unresolvable
+name — so any of them can be defined as a user function and called.
+(A parser table used to intercept six of them with bespoke diagnostics;
+DG retired it on 2026-09-12 because it both reserved the names and made
+the unknown-command story non-uniform.) `eval` / `source` / `.` are the
+exception: they are *rejected*, not merely unknown, and cannot be
+redefined away.
 
 ### Phase 3: Taint
 

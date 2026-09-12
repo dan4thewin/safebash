@@ -45,20 +45,23 @@ mod test {
         assert!(matches!(p.statements[0].kind, StmtKind::For(_)));
     }
 
+    // `eval` is rejected by validate (SB4001, dynamic execution), not by the
+    // parser — the removed-builtin table that used to reject it at parse time
+    // is gone. Spec cov.98 / cov.100 pin the rejection end-to-end.
     #[test]
-    fn test_eval_rejected() {
-        let result = parse("eval echo hi\n");
-        assert!(result.is_err());
-        let diags = result.unwrap_err();
-        assert!(diags.iter().any(|d| d.code == "SB4001"));
+    fn test_eval_parses_as_plain_command() {
+        let p = parse_ok("eval echo hi\n");
+        assert_eq!(p.statements.len(), 1);
     }
 
+    // `export` / `declare` / `readonly` / `select` are NOT reserved words: the
+    // parser's removed-builtin table is gone (DG 2026-09-12), so they parse as
+    // ordinary commands and validate rejects them with the same SB5011 every
+    // other unknown name gets. Covered end-to-end by spec cov.24 / cov.94.
     #[test]
-    fn test_export_rejected() {
-        let result = parse("export FOO=bar\n");
-        assert!(result.is_err());
-        let diags = result.unwrap_err();
-        assert!(diags.iter().any(|d| d.code == "SB5001"));
+    fn test_export_parses_as_plain_command() {
+        let p = parse_ok("export FOO=bar\n");
+        assert_eq!(p.statements.len(), 1);
     }
 
     #[test]

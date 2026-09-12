@@ -380,14 +380,14 @@ fn brush_rejected_param_default_undeclared() {
     );
 }
 
-// --- SB5001: export ---
+// --- SB5011: export (an ordinary unknown command; not reserved) ---
 
 #[test]
 fn brush_rejected_export() {
     assert_rejected(
         "rej_export",
         "MY_TEST_VAR=\"value\"\nexport MY_TEST_VAR",
-        "SB5001",
+        "SB5011",
     );
 }
 
@@ -396,7 +396,7 @@ fn brush_rejected_declare_export() {
     assert_rejected(
         "rej_declare_export",
         "declare -x myexportedvar=\"exported variable\"",
-        "SB5001",
+        "SB5011",
     );
 }
 

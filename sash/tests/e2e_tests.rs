@@ -407,7 +407,8 @@ fn pos_lowercase() {
 fn neg_export_rejected() {
     let script = "#!/bin/bash\nexport FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("export", script);
-    common::expect_diag(&stderr, "SB5001");
+    // `export` is not a reserved word — it is an unknown command (SB5011).
+    common::expect_diag(&stderr, "SB5011");
 }
 
 #[test]
@@ -488,7 +489,7 @@ fn sample_gg_rejects_export() {
     let out = sash_cmd(&["-o", "/tmp/sash_e2e_gg", &src]);
     let stderr = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(
-        stderr.contains("SB5001") || stderr.contains("SB4020"),
+        stderr.contains("SB5011") || stderr.contains("SB4020"),
         "gg should fail with export or taint error, got:\n{}",
         stderr
     );
@@ -547,7 +548,8 @@ fn neg_tainted_all_args() {
 fn neg_export_declare_x() {
     let script = "#!/bin/bash\ndeclare -x FOO=bar\necho $FOO";
     let stderr = compile_expect_fail("decl_x", script);
-    common::expect_diag(&stderr, "SB5001");
+    // `declare` is not a reserved word — it is an unknown command (SB5011).
+    common::expect_diag(&stderr, "SB5011");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1185,10 +1187,10 @@ fn brush_indirect_rejected() {
 
 #[test]
 fn brush_export_rejected() {
-    // export — SB5001
+    // export — SB5011 (an ordinary unknown command; not reserved)
     let script = "#!/bin/bash\nexport MY_VAR=hello";
     let stderr = compile_expect_fail("brush_export", script);
-    common::expect_diag(&stderr, "SB5001");
+    common::expect_diag(&stderr, "SB5011");
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -1234,14 +1236,16 @@ fn pos_case_bare_star() {
 fn neg_source_dot_rejected() {
     let script = "#!/bin/bash\n. ./file.sh";
     let stderr = compile_expect_fail("source_dot", script);
-    common::expect_diag(&stderr, "SB4002");
+    // SB4001 (dynamic execution) — SB4002 had only one emitter, the parser's
+    // removed-builtin table, and retired with it.
+    common::expect_diag(&stderr, "SB4001");
 }
 
 #[test]
 fn neg_source_keyword_rejected() {
     let script = "#!/bin/bash\nsource ./file.sh";
     let stderr = compile_expect_fail("source_kw", script);
-    common::expect_diag(&stderr, "SB4002");
+    common::expect_diag(&stderr, "SB4001");
 }
 
 // ── DD#55: suppress prefix (- cmd) ──────────────────────────

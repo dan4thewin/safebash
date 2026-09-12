@@ -556,19 +556,7 @@ fn validate_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
 fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition: bool) {
     match &stmt.kind {
         StmtKind::Command(c) => validate_command(c, stmt.span, diags),
-        StmtKind::Declaration(d) => {
-            // DD#70/#71: a typed declaration is a value binding, not a
-            // boolean/exit-status — it cannot be a condition.
-            if in_condition {
-                let is_capture = d.assignments.iter().any(|a| value_is_capture(&a.value));
-                diags.push(nonstatus_in_condition_diag(
-                    stmt.span,
-                    "a declaration",
-                    is_capture,
-                ));
-            }
-            validate_declaration(d, stmt.span, diags)
-        }
+        StmtKind::Declaration(d) => validate_declaration_stmt(d, stmt.span, in_condition, diags),
         StmtKind::Assignment(a) => validate_assignment_stmt(a, stmt.span, in_condition, diags),
         StmtKind::If(i) => validate_if(i, diags),
         StmtKind::While(w) => validate_while(w, diags),
@@ -584,6 +572,25 @@ fn validate_stmt_ctx(stmt: &Statement, diags: &mut Vec<Diagnostic>, in_condition
     }
     // Validate all expressions in the statement
     walk_exprs_in_stmt(stmt, &mut |expr, span| validate_expr(expr, span, diags));
+}
+
+/// DD#70/#71: a typed declaration is a value binding, not a boolean/exit
+/// status, so it cannot serve as a condition. Mirrors `validate_assignment_stmt`.
+fn validate_declaration_stmt(
+    d: &Declaration,
+    span: Span,
+    in_condition: bool,
+    diags: &mut Vec<Diagnostic>,
+) {
+    if in_condition {
+        let is_capture = d.assignments.iter().any(|a| value_is_capture(&a.value));
+        diags.push(nonstatus_in_condition_diag(
+            span,
+            "a declaration",
+            is_capture,
+        ));
+    }
+    validate_declaration(d, diags);
 }
 
 /// Recurse into a wrapper statement's children with the correct condition
@@ -1033,8 +1040,9 @@ fn check_dynexec(name: &str, span: Span, diags: &mut Vec<Diagnostic>) {
             span,
             "SB4001",
             format!(
-                "`{}` is rejected — sash forbids dynamic command execution",
-                name
+                "`{name}` is rejected — sash forbids dynamic command execution; a program's \
+                 behavior is fixed at compile time and there is no runtime interpreter to run \
+                 constructed code"
             ),
         ));
     } else if name == "coproc" {
@@ -1081,17 +1089,7 @@ fn check_test_constructs(name: &str, c: &Command, span: Span, diags: &mut Vec<Di
     }
 }
 
-fn validate_declaration(d: &Declaration, span: Span, diags: &mut Vec<Diagnostic>) {
-    // SB5001: export/declare -x
-    if matches!(d.keyword, DeclKeyword::Export) {
-        diags.push(Diagnostic::error_span(
-            span,
-            "SB5001",
-            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
-             variable for a command"
-                .to_string(),
-        ));
-    }
+fn validate_declaration(d: &Declaration, diags: &mut Vec<Diagnostic>) {
     // SB4031 (DD#33): a map literal must use the `[key]=value` form.
     if d.flags.iter().any(|f| f == "-A") {
         for a in &d.assignments {

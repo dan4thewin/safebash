@@ -1,5 +1,5 @@
 title: Drop the parser removed-builtin table (no reserved names)
-status: ready
+status: done
 priority: P3
 kind: task
 depends: []
@@ -83,3 +83,63 @@ worth chasing.
 
 SB4002 may be left with no remaining emitter after this. Check before
 assuming the code is still live.
+
+## DONE — 2026-09-12
+
+Implemented exactly as scoped. The table is gone; all six words now take the
+ordinary unknown-command path.
+
+**What landed**
+
+- `parse/parser.rs` — `try_rejected_keyword` + `rejected_keyword_msg` deleted
+  with their call site in `parse_simple_or_assignment` (which fell from 11 cc
+  to 3).
+- `parse/lexer.rs` — the seven no-op `Tok::Word(same)` arms deleted from
+  `classify_word_token` (35 cc → 28; the filing said six, there were seven —
+  `eval` was in the list too).
+- `validate.rs` — the unreachable `DeclKeyword::Export` arm deleted. That left
+  `validate_declaration`'s `span` parameter unused, so it was removed as well
+  (one call site, line 570).
+- `validate.rs::check_dynexec` — **message enriched**. The parser table's
+  SB4002 text carried a clause SB4001 did not: *"a sash program's behavior is
+  fixed at compile time"*. Rather than lose it, SB4001 now explains there is
+  no runtime interpreter to run constructed code.
+
+**Verified behavior**
+
+    source / . / eval / command                        SB4001  (dynamic execution)
+    export / declare / typeset / readonly / select / shift
+                                                       SB5011  (command not found)
+
+and user functions named `select`, `export`, `readonly`, `typeset` and
+`shift` are all callable — the capability this change restores.
+
+**SB4002 now has no emitter.** It was retired along with its sole call site.
+The code is not referenced anywhere in `sash/src/`.
+
+**The `DeclKeyword::Export` variant is still alive but unreachable**, as the
+filing scoped it. It survives in `emit_janet.rs:403` and
+`emit_janet_map.rs:262`. Out of scope here.
+
+**Specs.** `spec/coverage.sh` cov.11 → SB4001, cov.24 → SB5011, plus
+cov.94–cov.100 (plan 92 → 99): uniform SB5011 for each removed builtin, and
+a user function named `select` called successfully. Fail-first verified.
+Rust assertions updated in `parse/tests.rs` (2), `e2e_tests.rs` (6) and
+`brush_compat_tests.rs` (2).
+
+**Closes item 5 of `dd75-args-model-polish`** — `shift` needs no
+special-casing now that SB5011 is the uniform answer.
+
+**Also fixed in passing:** `docs/GUIDE.md`'s Phase 1 / Phase 2 sections and
+the pipeline diagram still described `rules/*.rs`, `rule.rs`, `taint.rs`,
+`lower.rs` and a tree-sitter CST — all deleted in `1c0e64a`. Rewritten for
+the hand-written parser and the consolidated `validate.rs`. The remaining
+stale passages are filed as `guide-architecture-stale-cst`.
+
+**Known consequence of the uniformity DG chose.** A removed builtin now falls
+through to `resolve_on_path(name)`. If a binary named `export` or `select`
+existed on PATH, `select foo` would resolve and run it instead of erroring.
+None of the six exists in `/usr/bin` or `/bin` here, and the same hazard
+already applies to every other unknown word, which is precisely the point of
+making them uniform — but it is a real behavior change from "always an error"
+to "an error unless PATH says otherwise".

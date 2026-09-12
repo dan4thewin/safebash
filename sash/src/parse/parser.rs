@@ -1682,9 +1682,6 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
     let sp = scanner.peek().span;
     let span = span_from(scanner, sp.start);
 
-    if let Some(diag) = try_rejected_keyword(scanner, span) {
-        return Err(diag);
-    }
     if looks_like_assignment(scanner) {
         return parse_assignment(scanner, span);
     }
@@ -1692,59 +1689,6 @@ fn parse_simple_or_assignment(scanner: &mut Scanner) -> Result<Option<Statement>
         return parse_regex_mutation(scanner, span, &name);
     }
     parse_command(scanner, span)
-}
-
-/// If the next word is a banned builtin, consume it and synthesize the
-/// rejection diagnostic. Returns `None` to fall through to normal
-/// command parsing.
-fn try_rejected_keyword(scanner: &mut Scanner, span: Span) -> Option<Diagnostic> {
-    let Tok::Word(w) = &scanner.peek().token else {
-        return None;
-    };
-    let w = w.clone();
-    let (code, msg) = rejected_keyword_msg(&w)?;
-    scanner.next();
-    Some(parse_error(span, code, msg))
-}
-
-/// Lookup table for banned builtins (eval, source/., export, declare/
-/// typeset, readonly, select). Returns the diagnostic code and the
-/// human message, or `None` if the word is not banned. `declare` and
-/// `typeset` share a format string that interpolates the actual word.
-fn rejected_keyword_msg(w: &str) -> Option<(&'static str, String)> {
-    match w {
-        "eval" => Some((
-            "SB4001",
-            "`eval` is rejected — a sash program's behavior is fixed at compile \
-             time; there is no runtime interpreter to run constructed code"
-                .to_string(),
-        )),
-        "source" | "." => Some((
-            "SB4002",
-            "`source` / `.` is rejected — a sash program's behavior is fixed at \
-             compile time"
-                .to_string(),
-        )),
-        "export" => Some((
-            "SB5001",
-            "sash has no `export` — use `/usr/bin/env NAME=value …` to set a \
-             variable for a command"
-                .to_string(),
-        )),
-        "declare" | "typeset" => Some((
-            "SB5001",
-            format!(
-                "sash declares with `int` / `const` / `array` / `map`, not `{}`",
-                w
-            ),
-        )),
-        "readonly" => Some((
-            "SB5001",
-            "sash declares read-only values with `const`, not `readonly`".to_string(),
-        )),
-        "select" => Some(("SB5001", "sash has no `select`".to_string())),
-        _ => None,
-    }
 }
 
 /// `name = value` / `name += value` / `name[idx] = value` shape probe.

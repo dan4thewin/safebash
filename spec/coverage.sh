@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup coverage
-plan=92
+plan=99
 echo "1..$plan" >&3
 
 set +e
@@ -42,9 +42,11 @@ run_sash 'case $x in a) echo m;; esac'
 # cov.10 a tainted value placed into an array via subscript assign → SB5021
 run_sash 'array a=(); a[0]=$(getenv HOME)'
 [[ $rc != 0 && -z $out && $err == *SB5021* ]]; chk cov.10
-# cov.11 `source` / `.` is rejected (fixed-at-compile-time) → SB4002
+# cov.11 `source` / `.` is rejected as dynamic execution → SB4001. (Was SB4002
+# from the parser's removed-builtin table; that table is gone and SB4001 from
+# validate::check_dynexec — which always fired too — is now the only answer.)
 run_sash 'source f'
-[[ $rc != 0 && -z $out && $err == *SB4002* ]]; chk cov.11
+[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.11
 # cov.12 indirect expansion `${!x}` is rejected → SB4003
 run_sash 'x=y; echo ${!x}'
 [[ $rc != 0 && -z $out && $err == *SB4003* ]]; chk cov.12
@@ -82,9 +84,11 @@ run_sash 'eval "echo hi"'
 # cov.23 a prefix `++`/`--` in `(( ))` is an arith syntax error → SB4020
 run_sash 'int x=0; (( ++x ))'
 [[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk cov.23
-# cov.24 `export` is rejected (parser) → SB5001
+# cov.24 `export` is not a reserved word — it is simply an unknown command, so
+# it gets the ordinary SB5011 every other unknown name gets (was a bespoke
+# SB5001 from the parser's removed-builtin table).
 run_sash 'export A=1'
-[[ $rc != 0 && -z $out && $err == *SB5001* ]]; chk cov.24
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.24
 # cov.25 compact dispatch with the `=~` operator (no spaces) — existing specs
 # only exercise compact `==`; this covers the `=~` compact-parse path
 if in_modes native,c; then
@@ -421,6 +425,64 @@ run_sash 'echo ${y:-$(random)}'
 # allowed, but the nested default is a read; `x=$(arg 1 cleanlit)` compiles.
 run_sash 'argv 1 a; t=$(getenv HOME); x=$(arg 1 $t)' one
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk cov.93
+
+# ── The removed-builtin table is gone (DG 2026-09-12) ───────────────
+# Six bash words used to be intercepted in command position with bespoke
+# diagnostics, which both reserved the names and made the unknown-command
+# story non-uniform (`shift`, also removed, always got the generic SB5011).
+# Now every one of them lands on SB5011, and all are usable as function names.
+
+# cov.94 every removed builtin gives the SAME unknown-command error
+for w in export declare typeset readonly select shift; do
+    run_sash "$w x"
+    [[ $rc != 0 && -z $out && $err == *SB5011* && $err == *"'$w'"* ]] || break
+done
+[[ $rc != 0 && $err == *SB5011* && $err == *"'shift'"* ]]; chk cov.94
+
+# cov.95 ...and `select` is now usable as a user-defined function — the
+# capability the table took away (it parsed, but was unusable at the call site)
+if in_modes native,c; then
+    run_sash 'select() {
+  /bin/echo picked
+}
+select'
+    [[ $rc = 0 && $out = "picked" && -z $err ]]; chk cov.95
+else skip_chk cov.95; fi
+
+# cov.96 ...same for `export`
+if in_modes native,c; then
+    run_sash 'export() {
+  /bin/echo exported
+}
+export'
+    [[ $rc = 0 && $out = "exported" && -z $err ]]; chk cov.96
+else skip_chk cov.96; fi
+
+# cov.97 ...and `readonly`
+if in_modes native,c; then
+    run_sash 'readonly() {
+  /bin/echo ro
+}
+readonly'
+    [[ $rc = 0 && $out = "ro" && -z $err ]]; chk cov.97
+else skip_chk cov.97; fi
+
+# cov.98 `eval` is still rejected — SB4001, dynamic execution (validate, not
+# the parser), and the message keeps the "no runtime interpreter" clause the
+# parser table used to carry
+run_sash 'eval x'
+[[ $rc != 0 && -z $out && $err == *SB4001* && $err == *"runtime interpreter"* ]]; chk cov.98
+
+# cov.99 `.` is still rejected too
+run_sash '. f'
+[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.99
+
+# cov.100 `eval` is a reject, not a reserved word: it cannot be redefined away
+run_sash 'eval() {
+  /bin/echo nope
+}
+eval'
+[[ $rc != 0 && -z $out && $err == *SB4001* ]]; chk cov.100
 
 set -e
 tally
