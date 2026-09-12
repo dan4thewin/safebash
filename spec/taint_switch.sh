@@ -22,17 +22,12 @@ run_sash 'echo "$@"'
 # sw.7 a clean program is unaffected by the switch
 run_sash 'echo hello'
 [[ $rc = 0 && $out = hello && -z $err ]]; chk sw.7
-if in_modes native,c; then
-    # sw.2 a tainted scalar compiles & runs (leaks) under full bypass
-    run_sash 'x=$(arg 1); echo $x' hello
-    [[ $rc = 0 && $out = hello && -z $err ]]; chk sw.2
-    # sw.3 a tainted join compiles & runs under full bypass
-    run_sash 'argv 1 a; echo $(join a)' one two
-    [[ $rc = 0 && $out = "one two" && -z $err ]]; chk sw.3
-else
-    skip_chk sw.2
-    skip_chk sw.3
-fi
+# sw.2 a tainted scalar compiles & runs (leaks) under full bypass
+run_sash 'x=$(arg 1); echo $x' hello
+[[ $rc = 0 && $out = hello && -z $err ]]; chk sw.2
+# sw.3 a tainted join compiles & runs under full bypass
+run_sash 'argv 1 a; echo $(join a)' one two
+[[ $rc = 0 && $out = "one two" && -z $err ]]; chk sw.3
 unset SASH_CFLAGS
 
 # ── --no-taint-cst: CST off, SSA backstop remains (native only) ──

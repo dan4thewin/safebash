@@ -25,43 +25,27 @@ run_sash 'x=$(printf hi); echo "$x"'
 # 14.2c attested, the external capture is usable. native only: the C cmdsub
 #        exec is a Phase-4 TODO and the Janet os/spawn capture pipe is racy
 #        (janet-pipeline-eagain-flaky).
-if in_modes native,c; then
-    run_sash 'x=$(printf hi); attest x [[ -n $x ]]; echo "$x"'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
-else
-    skip_chk 14.2c
-fi
+run_sash 'x=$(printf hi); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.2c
 
 # 14.3 multi-statement / pipeline command substitution (DG 2026-08-19: implement
 #      — run the body, capture stdout). Capture-into-var is native-only (the C
 #      CaptureStart/End capture and the Janet cmdsub are gaps, like $(f)); the
 #      taint rejects are compile-time (all modes).
 # 14.3a a clean multi-statement body captures its full stdout
-if in_modes native,c; then
-    run_sash 'x=$(echo a; echo b); echo "[$x]"'
-    [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
-else
-    skip_chk 14.3a
-fi
+run_sash 'x=$(echo a; echo b); echo "[$x]"'
+[[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk 14.3a
 # 14.3b subshell isolation — an assignment inside the body does NOT leak
-if in_modes native,c; then
-    run_sash 'x=outer; y=$(x=inner; echo $x); echo "y=$y x=$x"'
-    [[ $rc = 0 && $out = "y=inner x=outer" && -z $err ]]; chk 14.3b
-else
-    skip_chk 14.3b
-fi
+run_sash 'x=outer; y=$(x=inner; echo $x); echo "y=$y x=$x"'
+[[ $rc = 0 && $out = "y=inner x=outer" && -z $err ]]; chk 14.3b
 # 14.3c a pipeline body with an external stage captures TAINTED output — using
 #       it without a attest is SB5020 (compile-time, all modes). Closes the
 #       silent `$(...)` placeholder bug.
 run_sash 'echo $(echo hi | tr h H)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 14.3c
 # 14.3d attested, the pipeline capture is usable (native)
-if in_modes native,c; then
-    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
-    [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk 14.3d
-else
-    skip_chk 14.3d
-fi
+run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
+[[ $rc = 0 && $out = "Hi" && -z $err ]]; chk 14.3d
 # 14.3e the `$(- cmd)` suppression wrapper no longer hides an external from the
 #       taint scan (a closed hole) — its capture is tainted, needs attest
 run_sash 'x=$(- /bin/echo hi); echo $x'
@@ -209,36 +193,20 @@ run_sash 'echo x > $(( 1 + 1 ))'
 [[ $rc != 0 && -z $out && $err == *SB4049* ]]; chk 14.20
 
 # 14.21 support: `${x:-default}` target (x unset) opens the DEFAULT filename
-if in_modes native,c; then
-    run_sash 'echo d > ${miss:-r14def}; cat r14def'
-    [[ $rc = 0 && $out = "d" && -z $err ]]; chk 14.21
-else
-    skip_chk 14.21
-fi
+run_sash 'echo d > ${miss:-r14def}; cat r14def'
+[[ $rc = 0 && $out = "d" && -z $err ]]; chk 14.21
 
 # 14.22 support: `${x:-default}` target (x set) opens the SET value, not default
-if in_modes native,c; then
-    run_sash 'f=r14set; echo s > ${f:-r14fallback}; cat r14set'
-    [[ $rc = 0 && $out = "s" && -z $err ]]; chk 14.22
-else
-    skip_chk 14.22
-fi
+run_sash 'f=r14set; echo s > ${f:-r14fallback}; cat r14set'
+[[ $rc = 0 && $out = "s" && -z $err ]]; chk 14.22
 
 # 14.23 support: `$a[i]` subscript redirect target opens the element's filename
-if in_modes native,c; then
-    run_sash 'array a=(r14zero r14one); echo sub > $a[1]; cat r14one'
-    [[ $rc = 0 && $out = "sub" && -z $err ]]; chk 14.23
-else
-    skip_chk 14.23
-fi
+run_sash 'array a=(r14zero r14one); echo sub > $a[1]; cat r14one'
+[[ $rc = 0 && $out = "sub" && -z $err ]]; chk 14.23
 
 # 14.24 support: append `>> $a[i]` accumulates to the element's filename
-if in_modes native,c; then
-    run_sash 'array a=(x r14ap); echo l1 > $a[1]; echo l2 >> $a[1]; cat r14ap'
-    [[ $rc = 0 && $out == *l1* && $out == *l2* && -z $err ]]; chk 14.24
-else
-    skip_chk 14.24
-fi
+run_sash 'array a=(x r14ap); echo l1 > $a[1]; echo l2 >> $a[1]; cat r14ap'
+[[ $rc = 0 && $out == *l1* && $out == *l2* && -z $err ]]; chk 14.24
 
 # 14.25 reject: here-strings are dropped (DD#83) → SB4050 (all modes: parse).
 # `<<<` is exactly a pipe in sash (no subshell, provenance-based taint, no
@@ -249,55 +217,31 @@ run_sash 'cat <<< hi'
 # --- more redirect-target forms (never-run coverage + a stage-redirect bug) ---
 
 # 14.26 support: `&>file` (parse_ampgt_redirect) — stdout+stderr to a scalar
-if in_modes native,c; then
-    run_sash 'echo amp &> r14amp; cat r14amp'
-    [[ $rc = 0 && $out = "amp" && -z $err ]]; chk 14.26
-else
-    skip_chk 14.26
-fi
+run_sash 'echo amp &> r14amp; cat r14amp'
+[[ $rc = 0 && $out = "amp" && -z $err ]]; chk 14.26
 
 # 14.27 support: single-quoted target `> '…'` (redirect_expr_literal)
-if in_modes native,c; then
-    run_sash "echo sq > 'r14sq'; cat r14sq"
-    [[ $rc = 0 && $out = "sq" && -z $err ]]; chk 14.27
-else
-    skip_chk 14.27
-fi
+run_sash "echo sq > 'r14sq'; cat r14sq"
+[[ $rc = 0 && $out = "sq" && -z $err ]]; chk 14.27
 
 # 14.28 support: double-quoted concat target `> "$x.txt"` (redirect_expr_concat)
-if in_modes native,c; then
-    run_sash 'x=r14dq; echo dq > "$x.txt"; cat r14dq.txt'
-    [[ $rc = 0 && $out = "dq" && -z $err ]]; chk 14.28
-else
-    skip_chk 14.28
-fi
+run_sash 'x=r14dq; echo dq > "$x.txt"; cat r14dq.txt'
+[[ $rc = 0 && $out = "dq" && -z $err ]]; chk 14.28
 
 # 14.29 BUG FIX: a pipeline-stage redirect with a `$var` target was silently
 # DROPPED (the stage went to the pipe instead of the file) — the stage path had
 # its own ad-hoc target lowering (ir_expr_to_ssa_value) that hardcoded SSA
 # version 0. Now it reuses the top-level lower_ir_redirect_expr.
-if in_modes native,c; then
-    run_sash 'f=r14st; echo hi > $f | cat; cat r14st'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.29
-else
-    skip_chk 14.29
-fi
+run_sash 'f=r14st; echo hi > $f | cat; cat r14st'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.29
 
 # 14.30 BUG FIX: a pipeline-stage redirect with a `${x:-f}` target (spilled)
-if in_modes native,c; then
-    run_sash 'echo hi > ${miss:-r14sd} | cat; cat r14sd'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.30
-else
-    skip_chk 14.30
-fi
+run_sash 'echo hi > ${miss:-r14sd} | cat; cat r14sd'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.30
 
 # 14.31 BUG FIX: a pipeline-stage redirect with a `$a[i]` target (spilled)
-if in_modes native,c; then
-    run_sash 'array a=(x r14se); echo hi > $a[1] | cat; cat r14se'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.31
-else
-    skip_chk 14.31
-fi
+run_sash 'array a=(x r14se); echo hi > $a[1] | cat; cat r14se'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 14.31
 
 
 # ════════ DD#99 stage 4: `write` — echo without the trailing newline ════════
@@ -306,23 +250,15 @@ fi
 # flag. Stage 7 removes the `echo -n` spelling.
 
 # wr.1 writes with no trailing newline
-if in_modes native,c; then
-    run_sash 'write "a"
+run_sash 'write "a"
 write "b"
 echo "|"'
-    [[ $rc = 0 && $out = "ab|" && -z $err ]]; chk wr.1
-else
-    skip_chk wr.1
-fi
+[[ $rc = 0 && $out = "ab|" && -z $err ]]; chk wr.1
 
 # wr.2 several arguments are space-joined, as echo does
-if in_modes native,c; then
-    run_sash 'write "x" "y"
+run_sash 'write "x" "y"
 echo "|"'
-    [[ $rc = 0 && $out = "x y|" && -z $err ]]; chk wr.2
-else
-    skip_chk wr.2
-fi
+[[ $rc = 0 && $out = "x y|" && -z $err ]]; chk wr.2
 
 # wr.3 `echo` still terminates — the two differ only in the newline
 run_sash 'echo "a"
@@ -331,23 +267,15 @@ echo "b"'
 b" && -z $err ]]; chk wr.3
 
 # wr.4 interpolates like echo
-if in_modes native,c; then
-    run_sash 'v=hi
+run_sash 'v=hi
 write "[$v]"
 echo "|"'
-    [[ $rc = 0 && $out = "[hi]|" && -z $err ]]; chk wr.4
-else
-    skip_chk wr.4
-fi
+[[ $rc = 0 && $out = "[hi]|" && -z $err ]]; chk wr.4
 
 # wr.5 no arguments writes nothing at all
-if in_modes native,c; then
-    run_sash 'write
+run_sash 'write
 echo "|"'
-    [[ $rc = 0 && $out = "|" && -z $err ]]; chk wr.5
-else
-    skip_chk wr.5
-fi
+[[ $rc = 0 && $out = "|" && -z $err ]]; chk wr.5
 
 # wr.6 a tainted value still needs attest (DD#24 is unaffected)
 run_sash 'v=$(getenv HOME)
@@ -376,13 +304,9 @@ run_sash 'echo -n "a"'
 # canonical idiom (`tr SEP '\0' < f | read arr`).
 
 # 14.32 the first stage's input redirect feeds it
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x\ny\n" > rd1.txt; /bin/cat < rd1.txt | /bin/cat'
-    [[ $rc = 0 && $out = "x
+run_sash '/usr/bin/printf "x\ny\n" > rd1.txt; /bin/cat < rd1.txt | /bin/cat'
+[[ $rc = 0 && $out = "x
 y" && -z $err ]]; chk 14.32
-else
-    skip_chk 14.32
-fi
 
 # 14.33 …and a middle stage's, overriding what the pipe would have supplied.
 # The producing stage is suppressed with `-`: because stage 2 redirects stdin
@@ -391,40 +315,24 @@ fi
 # responsibility — use `- cmd` on the producing side"), so without the `-`
 # this test failed about 2.5% of runs. Found 2026-09-12; it had already flaked
 # once at fe71aa1.
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "m\n" > rd2.txt; - echo ignored | /bin/cat < rd2.txt | /bin/cat'
-    [[ $rc = 0 && $out = "m" && -z $err ]]; chk 14.33
-else
-    skip_chk 14.33
-fi
+run_sash '/usr/bin/printf "m\n" > rd2.txt; - echo ignored | /bin/cat < rd2.txt | /bin/cat'
+[[ $rc = 0 && $out = "m" && -z $err ]]; chk 14.33
 
 # 14.34 the DD#99 idiom: turn a separator into NUL upstream, then split
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\nb\nc\n" > rd3.txt
+run_sash '/usr/bin/printf "a\nb\nc\n" > rd3.txt
 /usr/bin/tr "\n" "\0" < rd3.txt | read arr
 attest e in arr [[ $e = $e ]]
 echo "$(len arr):${arr[1]}"'
-    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk 14.34
-else
-    skip_chk 14.34
-fi
+[[ $rc = 0 && $out = "3:b" && -z $err ]]; chk 14.34
 
 # 14.35 the OUTPUT direction still lands on fd 1, not fd 0
-if in_modes native,c; then
-    run_sash 'echo captured > rd4.txt | /bin/cat
+run_sash 'echo captured > rd4.txt | /bin/cat
 /bin/cat rd4.txt'
-    [[ $rc = 0 && $out = "captured" && -z $err ]]; chk 14.35
-else
-    skip_chk 14.35
-fi
+[[ $rc = 0 && $out = "captured" && -z $err ]]; chk 14.35
 
 # 14.36 a redirect on a NON-pipeline command is unaffected
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "solo\n" > rd5.txt; /bin/cat < rd5.txt'
-    [[ $rc = 0 && $out = "solo" && -z $err ]]; chk 14.36
-else
-    skip_chk 14.36
-fi
+run_sash '/usr/bin/printf "solo\n" > rd5.txt; /bin/cat < rd5.txt'
+[[ $rc = 0 && $out = "solo" && -z $err ]]; chk 14.36
 
 
 # ── DD#99 stage 7: an argv entry may not contain an interior NUL ──────────
@@ -436,26 +344,18 @@ fi
 # pass the whole thing). It aborts instead (DD#55).
 
 # an.1 a scalar argument carrying a NUL aborts rather than truncating
-if in_modes native,c; then
-    run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\0'"'"'
 s="abc${nul}HIDDEN"
 /usr/bin/printf "[%s]" $s'
-    [[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk an.1
-else
-    skip_chk an.1
-fi
+[[ $rc != 0 && -z $out && $rerr == *NUL* ]]; chk an.1
 
 # an.2 …and so does a SPLAT ELEMENT. Guarding only scalars would be worse
 # than no guard: it would imply argv NULs abort while `@a` still truncated.
-if in_modes native,c; then
-    run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\0'"'"'
 s="abc${nul}HID"
 array a=($s x)
 /usr/bin/printf "[%s]" @{a:~}'
-    [[ $rc != 0 && $rerr == *NUL* ]]; chk an.2
-else
-    skip_chk an.2
-fi
+[[ $rc != 0 && $rerr == *NUL* ]]; chk an.2
 
 # an.3 control: a clean scalar is unaffected
 run_sash '/usr/bin/printf "[%s]" ok'
@@ -468,15 +368,11 @@ run_sash 'array a=(p q)
 
 # an.5 the NUL is only rejected AT argv — it remains a legitimate value
 # in-process, which is the whole basis of DD#99's split
-if in_modes native,c; then
-    run_sash 'nul=$'"'"'\0'"'"'
+run_sash 'nul=$'"'"'\0'"'"'
 s="a${nul}b"
 read $s f
 echo "$(strlen $s):$(len f):${f[1]}"'
-    [[ $rc = 0 && $out = "3:2:b" && -z $err ]]; chk an.5
-else
-    skip_chk an.5
-fi
+[[ $rc = 0 && $out = "3:2:b" && -z $err ]]; chk an.5
 
 # ── an auto-declared bulk-read target inside a `while` body ───────────────
 # `lower_while` lowers the body twice: pass 1 discovers loop-carried vars,
@@ -487,54 +383,41 @@ fi
 # answer. Only `read`'s two DD#99 forms reach it; `argv` was unaffected.
 
 # 14.37 `read ARR` auto-declared inside a while body
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x y" > wl1.txt
+run_sash '/usr/bin/printf "x y" > wl1.txt
 int n=0
 while (( n < 1 )) {
   (( n = n + 1 ))
   read ARR < wl1.txt
   echo "n=$(len ARR)"
 }'
-    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.37
-else
-    skip_chk 14.37
-fi
+[[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.37
 
 # 14.38 `read $s ARR` (the split form) likewise — no I/O involved, so this
 # isolates the missing allocation from anything the redirect does
-if in_modes native,c; then
-    run_sash 'int n=0
+run_sash 'int n=0
 while (( n < 1 )) {
   (( n = n + 1 ))
   s="p q"
   read $s ARR
   echo "e=${ARR[0]}"
 }'
-    [[ $rc = 0 && $out = "e=p q" && -z $rerr ]]; chk 14.38
-else
-    skip_chk 14.38
-fi
+[[ $rc = 0 && $out = "e=p q" && -z $rerr ]]; chk 14.38
 
 # 14.39 the slot stays valid on every iteration, not just the first
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x y" > wl2.txt
+run_sash '/usr/bin/printf "x y" > wl2.txt
 int n=0
 while (( n < 3 )) {
   (( n = n + 1 ))
   read ARR < wl2.txt
   echo "n=$(len ARR)"
 }'
-    [[ $rc = 0 && $out = "n=1
+[[ $rc = 0 && $out = "n=1
 n=1
 n=1" && -z $rerr ]]; chk 14.39
-else
-    skip_chk 14.39
-fi
 
 # 14.40 control: an explicit declaration in the same position was never
 # affected — it emits its own Assign, which pass 2 re-emits
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x y" > wl3.txt
+run_sash '/usr/bin/printf "x y" > wl3.txt
 int n=0
 while (( n < 1 )) {
   (( n = n + 1 ))
@@ -542,10 +425,7 @@ while (( n < 1 )) {
   read ARR < wl3.txt
   echo "n=$(len ARR)"
 }'
-    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.40
-else
-    skip_chk 14.40
-fi
+[[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.40
 
 # ── SB5069: a loop whose condition is a `read` (DD#99) ────────────────────
 # `read` consumes the whole stream, so the loop has no second read to make.
@@ -578,15 +458,11 @@ while /usr/bin/tr "\n" "\0" < wl4.txt | read ARR {
 
 # 14.45 `if read ARR` is NOT rejected — testing whether a read produced
 # anything is meaningful; only iterating on it is the category error
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x y" > wl5.txt
+run_sash '/usr/bin/printf "x y" > wl5.txt
 if read ARR < wl5.txt {
   echo "n=$(len ARR)"
 }'
-    [[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.45
-else
-    skip_chk 14.45
-fi
+[[ $rc = 0 && $out = "n=1" && -z $rerr ]]; chk 14.45
 
 # 14.46 control: `while readline v` is the replacement and still compiles.
 # The redirect goes on the producing side — `while readline v < f` re-opens

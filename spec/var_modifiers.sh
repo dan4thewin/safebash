@@ -204,12 +204,8 @@ run_sash 'fn f { /bin/echo $1:-DEF }; f'
 # pre-existing positional-default bug — braced `${1:-DEF}` with an arg present
 # ALSO returns DEF (identical janet output), so gate this to the correct
 # backends (task janet-positional-default-present).
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo $1:-DEF }; f VAL'
-    [[ $rc = 0 && $out = "VAL" && -z $err ]]; chk vm.bl4
-else
-    skip_chk vm.bl4
-fi
+run_sash 'fn f { /bin/echo $1:-DEF }; f VAL'
+[[ $rc = 0 && $out = "VAL" && -z $err ]]; chk vm.bl4
 # vm.bl5 brace-less `:~` elide, value present → the value
 run_sash 'str x=hi; /bin/echo $x:~'
 [[ $rc = 0 && $out = "hi" && -z $err ]]; chk vm.bl5
@@ -240,12 +236,8 @@ run_sash 'str x=""; /bin/echo $x:-a b'
 # operand now (DG 2026-09-04) — a clean builtin cmdsub default. native,c: janet
 # has the pre-existing positional-default bug (janet-positional-default-present),
 # so a positional with a cmdsub default is gated like vm.bl4.
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo $1:-$(getpid) }; f RUN'
-    [[ $rc = 0 && $out = "RUN" && -z $err ]]; chk vm.bl13
-else
-    skip_chk vm.bl13
-fi
+run_sash 'fn f { /bin/echo $1:-$(getpid) }; f RUN'
+[[ $rc = 0 && $out = "RUN" && -z $err ]]; chk vm.bl13
 # vm.bl14 `$(( ))` arithmetic operand brace-less
 run_sash 'fn f { /bin/echo $1:-$((2 + 3)) }; f'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk vm.bl14
@@ -385,27 +377,19 @@ echo $s'
 
 # sr.6 `$'\0'` directly in the replacement — DD#64's escape, and the DD#99
 # separator conversion. The result carries an interior NUL, so compare length.
-if in_modes native,c; then
-    run_sash 's=a:b:c
+run_sash 's=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
 echo $(strlen $s)'
-    [[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
-else
-    skip_chk sr.6
-fi
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk sr.6
 
 # sr.7 …and the bytes really are NUL (round-trips through a NUL-split read)
-if in_modes native,c; then
-    run_sash 'array f=()
+run_sash 'array f=()
 s=a:b:c
 s =~ s/:/$'"'"'\0'"'"'/g
 echo $s | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[1]}"'
-    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7
-else
-    skip_chk sr.7
-fi
+[[ $rc = 0 && $out = "3:b" && -z $err ]]; chk sr.7
 
 # sr.8 the expansion form agrees (it always worked — pin it so they cannot drift)
 run_sash 's=NAME=x
@@ -483,55 +467,35 @@ echo "$(len m)"'
 [[ $rc != 0 && -z $out && $err == *SB5058* ]]; chk mp.1
 
 # mp.2 an even count pairs up; the disposition is simply unused
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1 k2 v2)
+run_sash 'array a=(k1 v1 k2 v2)
 map m = @{a:-X}
 echo "$(len m):${m[k1]}:${m[k2]}"'
-    [[ $rc = 0 && $out = "2:v1:v2" && -z $err ]]; chk mp.2
-else
-    skip_chk mp.2
-fi
+[[ $rc = 0 && $out = "2:v1:v2" && -z $err ]]; chk mp.2
 
 # mp.3 `:-KEY` — the trailing element becomes the VALUE of KEY. DG: supplying
 # the key gives a landmark (${m[KEY]}); supplying a value would force a scan.
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1 k2)
+run_sash 'array a=(k1 v1 k2)
 map m = @{a:-EXTRA}
 echo "$(len m):${m[k1]}:${m[EXTRA]}"'
-    [[ $rc = 0 && $out = "2:v1:k2" && -z $err ]]; chk mp.3
-else
-    skip_chk mp.3
-fi
+[[ $rc = 0 && $out = "2:v1:k2" && -z $err ]]; chk mp.3
 
 # mp.4 `:~` discards the trailing element
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1 k2)
+run_sash 'array a=(k1 v1 k2)
 map m = @{a:~}
 echo "$(len m):${m[k1]}"'
-    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.4
-else
-    skip_chk mp.4
-fi
+[[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.4
 
 # mp.5 `:?MSG` aborts at runtime on an odd count, with the message
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1 k2)
+run_sash 'array a=(k1 v1 k2)
 map m = @{a:?uneven}
 echo "$(len m)"'
-    [[ -z $out && $rerr == *uneven* ]]; chk mp.5
-else
-    skip_chk mp.5
-fi
+[[ -z $out && $rerr == *uneven* ]]; chk mp.5
 
 # mp.6 …and does NOT abort on an even count
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1)
+run_sash 'array a=(k1 v1)
 map m = @{a:?uneven}
 echo "$(len m):${m[k1]}"'
-    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.6
-else
-    skip_chk mp.6
-fi
+[[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.6
 
 # mp.7 an EMPTY array is a valid empty map — zero is even, nothing is missing,
 # so DD#69's empty-array reading does not apply in this position
@@ -541,29 +505,21 @@ echo "$(len m)"'
 [[ $rc = 0 && $out = "0" && -z $err ]]; chk mp.7
 
 # mp.8 the whole DD#99 map pipeline, in-process: k=v text → NUL → array → map
-if in_modes native,c; then
-    run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\0'"'"'
 s=NAME:sash
 s =~ s/:/$sep/g
 read $s a
 attest e in a [[ $e = $e ]]
 map m = @{a:?uneven}
 echo "${m[NAME]}"'
-    [[ $rc = 0 && $out = "sash" && -z $err ]]; chk mp.8
-else
-    skip_chk mp.8
-fi
+[[ $rc = 0 && $out = "sash" && -z $err ]]; chk mp.8
 
 # mp.9 `:!~` discards like `:~` and additionally trusts the elements (DD#91).
 # `!` is the modifier, `~` the disposition — a splat must still state one.
-if in_modes native,c; then
-    run_sash 'array a=(k1 v1 k2)
+run_sash 'array a=(k1 v1 k2)
 map m = @{a:!~}
 echo "$(len m):${m[k1]}"'
-    [[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.9
-else
-    skip_chk mp.9
-fi
+[[ $rc = 0 && $out = "1:v1" && -z $err ]]; chk mp.9
 
 
 # ── DD#99 stage 8: an array is not built from a splat ─────────────────────
@@ -593,14 +549,10 @@ echo "$(len a)"'
 [[ $rc = 0 && $out = "2" && -z $err ]]; chk af.3
 
 # af.4 control: the SUPPORTED direction still works
-if in_modes native,c; then
-    run_sash 'array p=(k v)
+run_sash 'array p=(k v)
 map m = @{p:~}
 echo "$(len m):${m[k]}"'
-    [[ $rc = 0 && $out = "1:v" && -z $err ]]; chk af.4
-else
-    skip_chk af.4
-fi
+[[ $rc = 0 && $out = "1:v" && -z $err ]]; chk af.4
 
 # ── DD#75 (2026-09-11, DG): a splat yields VALUES, not indices ──────────────
 # `@a` does not produce `0 1 2`, so `@m` does not produce keys. Map keys are
@@ -610,7 +562,6 @@ fi
 #
 # native,c only: these need `map m = @{a:DISP}`, which the janet backend does
 # not emit (`janet-map-from-array`, P2) — the same gap that gates af.4.
-if in_modes native,c; then
 
 # af.5 `join` on a map joins its values, exactly as on an array
 run_sash 'array p=(k1 v1 k2 v2)
@@ -663,9 +614,6 @@ values: v1,v2
 remapped entries: 1
 remapped key: v1" && -z $err ]]; chk af.10
 
-else
-    for t in af.5 af.6 af.7 af.8 af.9 af.10; do skip_chk $t; done
-fi
 
 # ── SB5070: an array splat in a scalar operand of a value intrinsic ───────
 # DD#22/#69 give a splat one argument per element, so a splat in a scalar
@@ -722,34 +670,22 @@ f a:1'
 [[ $rc != 0 && -z $out && $err == *SB5070* ]]; chk 96.19
 
 # 96.20 control: the advice actually works — joining first compiles and runs
-if in_modes native,c; then
-    run_sash 'array a=(x:1 y:2)
+run_sash 'array a=(x:1 y:2)
 t=$(gsub "$(join a " ")" ":" "-")
 echo "[$t]"'
-    [[ $rc = 0 && $out = "[x-1 y-2]" && -z $rerr ]]; chk 96.20
-else
-    skip_chk 96.20
-fi
+[[ $rc = 0 && $out = "[x-1 y-2]" && -z $rerr ]]; chk 96.20
 
 # 96.21 control: a scalar subject is untouched
-if in_modes native,c; then
-    run_sash 's="x:1:2"
+run_sash 's="x:1:2"
 t=$(gsub $s ":" "-")
 echo "[$t]"'
-    [[ $rc = 0 && $out = "[x-1-2]" && -z $rerr ]]; chk 96.21
-else
-    skip_chk 96.21
-fi
+[[ $rc = 0 && $out = "[x-1-2]" && -z $rerr ]]; chk 96.21
 
 # 96.22 control: `len` and `join` take a collection by name, so a splat
 # there is NOT this error — they stay as they were (DD#75 open questions)
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 echo "$(len a):$(join a)"'
-    [[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
-else
-    skip_chk 96.22
-fi
+[[ $rc = 0 && $out = "3:x y z" && -z $rerr ]]; chk 96.22
 
 set -e
 tally

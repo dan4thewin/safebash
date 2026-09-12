@@ -26,145 +26,97 @@ echo "1..$plan" >&3
 # ── Part A: binding and reading ───────────────────────────────────
 
 # 100.1 the DD's own example
-if in_modes native,c; then
-    run_sash 'fn show {
-      echo "$1 has $(len A) items: $(join A ,)"
-    }
-    array nums=(3 1 4)
-    show "nums" =nums'
-    [[ $rc = 0 && $out = "nums has 3 items: 3,1,4" && -z $err ]]; chk 100.1
-else
-    skip_chk 100.1
-fi
+run_sash 'fn show {
+  echo "$1 has $(len A) items: $(join A ,)"
+}
+array nums=(3 1 4)
+show "nums" =nums'
+[[ $rc = 0 && $out = "nums has 3 items: 3,1,4" && -z $err ]]; chk 100.1
 
 # 100.2 subscript read through a slot
-if in_modes native,c; then
-    run_sash 'fn first { echo "${A[0]}" }
-    array a=(p q r)
-    first =a'
-    [[ $rc = 0 && $out = "p" && -z $err ]]; chk 100.2
-else
-    skip_chk 100.2
-fi
+run_sash 'fn first { echo "${A[0]}" }
+array a=(p q r)
+first =a'
+[[ $rc = 0 && $out = "p" && -z $err ]]; chk 100.2
 
 # 100.3 splat a slot in for-in
-if in_modes native,c; then
-    run_sash 'fn each { for v in @A; do echo "$v"; done }
+run_sash 'fn each { for v in @A; do echo "$v"; done }
 array a=(x y)
 each =a'
-    [[ $rc = 0 && $out = "x
+[[ $rc = 0 && $out = "x
 y" && -z $err ]]; chk 100.3
-else
-    skip_chk 100.3
-fi
 
 # 100.4 two slots bind in order
-if in_modes native,c; then
-    run_sash 'fn both { echo "$(len A)/$(len B)" }
-    array a=(1 2 3)
-    array b=(9)
-    both =a =b'
-    [[ $rc = 0 && $out = "3/1" && -z $err ]]; chk 100.4
-else
-    skip_chk 100.4
-fi
+run_sash 'fn both { echo "$(len A)/$(len B)" }
+array a=(1 2 3)
+array b=(9)
+both =a =b'
+[[ $rc = 0 && $out = "3/1" && -z $err ]]; chk 100.4
 
 # 100.5 scalars and collections together — scalars keep their `$1` positions
-if in_modes native,c; then
-    run_sash 'fn mix { echo "$1 $2 $(len A)" }
-    array a=(1 2)
-    mix one two =a'
-    [[ $rc = 0 && $out = "one two 2" && -z $err ]]; chk 100.5
-else
-    skip_chk 100.5
-fi
+run_sash 'fn mix { echo "$1 $2 $(len A)" }
+array a=(1 2)
+mix one two =a'
+[[ $rc = 0 && $out = "one two 2" && -z $err ]]; chk 100.5
 
 # 100.6 forwarding: a slot may be passed on as a collection argument
-if in_modes native,c; then
-    run_sash 'fn inner { echo "i=$(len A)" }
-    fn outer { inner =A }
-    array a=(1 2 3)
-    outer =a'
-    [[ $rc = 0 && $out = "i=3" && -z $err ]]; chk 100.6
-else
-    skip_chk 100.6
-fi
+run_sash 'fn inner { echo "i=$(len A)" }
+fn outer { inner =A }
+array a=(1 2 3)
+outer =a'
+[[ $rc = 0 && $out = "i=3" && -z $err ]]; chk 100.6
 
 # 100.7 five slots is the maximum, and all five bind
-if in_modes native,c; then
-    run_sash 'fn five { echo "$(len A)$(len B)$(len C)$(len D)$(len E)" }
-    array a=(1)
-    array b=(1 2)
-    array c=(1 2 3)
-    array d=(1 2 3 4)
-    array e=(1 2 3 4 5)
-    five =a =b =c =d =e'
-    [[ $rc = 0 && $out = "12345" && -z $err ]]; chk 100.7
-else
-    skip_chk 100.7
-fi
+run_sash 'fn five { echo "$(len A)$(len B)$(len C)$(len D)$(len E)" }
+array a=(1)
+array b=(1 2)
+array c=(1 2 3)
+array d=(1 2 3 4)
+array e=(1 2 3 4 5)
+five =a =b =c =d =e'
+[[ $rc = 0 && $out = "12345" && -z $err ]]; chk 100.7
 
 # ── Part E: the slot is the caller's collection ───────────────────
 
 # 100.8 a write through a slot is visible to the caller
-if in_modes native,c; then
-    run_sash 'fn setit { A[0] = z }
-    array a=(k)
-    setit =a
-    echo "${a[0]}"'
-    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.8
-else
-    skip_chk 100.8
-fi
+run_sash 'fn setit { A[0] = z }
+array a=(k)
+setit =a
+echo "${a[0]}"'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.8
 
 # 100.9 the same collection in two slots is one object, not two copies
-if in_modes native,c; then
-    run_sash 'fn two { A[0] = z; echo "${B[0]}" }
-    array a=(k)
-    two =a =a'
-    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.9
-else
-    skip_chk 100.9
-fi
+run_sash 'fn two { A[0] = z; echo "${B[0]}" }
+array a=(k)
+two =a =a'
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 100.9
 
 # 100.10 a bulk fill through a slot is an out-parameter. Unresolved, `read A`
 # filled a function-local array named `A` and the caller's collection was left
 # untouched — silently, which is the whole point of Part E.
 # native,c — janet lacks the DD#99 split (wordsplit.sh nr.9).
-if in_modes native,c; then
-    run_sash 'fn split_into { read $1 A }
+run_sash 'fn split_into { read $1 A }
 sep=$'"'"'\0'"'"'
 str s=a:b:c
 s =~ s/:/$sep/g
 array f=()
 split_into $s =f
 echo "$(len f):${f[0]}:${f[2]}"'
-    [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk 100.10
-else
-    skip_chk 100.10
-fi
+[[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk 100.10
 
 # ── Part B: a slot's kind comes from its call sites ───────────────
 
 # 100.11 a map slot indexes by string key
-if in_modes native,c; then
-    run_sash 'fn get { echo "${A[x]}" }
-    map m=([x]=hi)
-    get =m'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 100.11
-else
-    skip_chk 100.11
-fi
+run_sash 'fn get { echo "${A[x]}" }
+map m=([x]=hi)
+get =m'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 100.11
 
 # 100.12 `keys` works on a map slot
-if in_modes native,c; then
-    run_sash 'fn ks { for k in $(keys A); do echo "k=$k"; done }
-    map m=([x]=1)
-    ks =m'
-    [[ $rc = 0 && $out = "k=x" && -z $err ]]; chk 100.12
-else
-    skip_chk 100.12
-fi
+run_sash 'fn ks { for k in $(keys A); do echo "k=$k"; done }
+map m=([x]=1)
+ks =m'
+[[ $rc = 0 && $out = "k=x" && -z $err ]]; chk 100.12
 
 # 100.13 `keys` on an ARRAY slot is still the DD#75 §3 error — the permissive
 # reading (skip kind checks on a slot) printed garbage here
@@ -219,13 +171,9 @@ run_sash 'echo =a'
 [[ $rc = 0 && $out = "=a" && -z $err ]]; chk 100.20
 
 # 100.21 quoting is the escape hatch — `f "=nums"` passes the literal word
-if in_modes native,c; then
-    run_sash 'fn f { echo ${args[0]} }
-    f "=nums"'
-    [[ $rc = 0 && $out = "=nums" && -z $err ]]; chk 100.21
-else
-    skip_chk 100.21
-fi
+run_sash 'fn f { echo ${args[0]} }
+f "=nums"'
+[[ $rc = 0 && $out = "=nums" && -z $err ]]; chk 100.21
 
 # 100.22 Part C: every scalar argument comes before every collection one
 run_sash 'fn f { echo "$1 $(len A)" }
@@ -265,28 +213,20 @@ f =a'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 100.27
 
 # 100.28 Part E: the attest may be deferred INTO the callee
-if in_modes native,c; then
-    run_sash 'fn f {
-      attest v in A [[ $v =~ ^.*$ ]]
-      echo "ok"
-    }
-    argv a
-    f =a'
-    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.28
-else
-    skip_chk 100.28
-fi
+run_sash 'fn f {
+  attest v in A [[ $v =~ ^.*$ ]]
+  echo "ok"
+}
+argv a
+f =a'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.28
 
 # 100.29 attesting BEFORE the call also clears the slot
-if in_modes native,c; then
-    run_sash 'fn f { echo "ok${A[9]}" }
-    argv a
-    attest v in a [[ $v =~ ^.*$ ]]
-    f =a'
-    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.29
-else
-    skip_chk 100.29
-fi
+run_sash 'fn f { echo "ok${A[9]}" }
+argv a
+attest v in a [[ $v =~ ^.*$ ]]
+f =a'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.29
 
 # 100.30 outward: a callee that bulk-fills a slot taints the CALLER's
 # collection — this leaked unattested argv to the caller's `echo`
@@ -297,16 +237,12 @@ echo "${a[1]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 100.30
 
 # 100.31 the caller may attest what the callee filled
-if in_modes native,c; then
-    run_sash 'fn fill { argv A }
-    array a=()
-    fill =a
-    attest v in a [[ $v =~ ^.*$ ]]
-    echo "ok"'
-    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.31
-else
-    skip_chk 100.31
-fi
+run_sash 'fn fill { argv A }
+array a=()
+fill =a
+attest v in a [[ $v =~ ^.*$ ]]
+echo "ok"'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk 100.31
 
 # 100.32 outward taint propagates through a forwarding call too
 run_sash 'fn fill { argv A }
@@ -317,14 +253,10 @@ echo "${a[1]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 100.32
 
 # 100.33 a clean collection stays clean through a slot (no false positive)
-if in_modes native,c; then
-    run_sash 'fn f { echo "${A[0]}" }
-    array a=(x y)
-    f =a'
-    [[ $rc = 0 && $out = "x" && -z $err ]]; chk 100.33
-else
-    skip_chk 100.33
-fi
+run_sash 'fn f { echo "${A[0]}" }
+array a=(x y)
+f =a'
+[[ $rc = 0 && $out = "x" && -z $err ]]; chk 100.33
 
 # 100.34 `f =a` is not itself a read: passing a tainted collection is fine so
 # long as the callee attests (contrast `f @a`, which IS a read — SB5020)
@@ -345,35 +277,23 @@ f @a'
 
 # 100.35 the asymmetry itself: one bare word, two meanings, no diagnostic.
 # `show a` gets the STRING "a"; `len a` gets the COLLECTION.
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 show() { echo "arg1=${args[0]}"; }
 show a
 echo "len=$(len a)"'
-    [[ $rc = 0 && $out = $'arg1=a\nlen=3' && -z $err ]]; chk 100.35
-else
-    skip_chk 100.35
-fi
+[[ $rc = 0 && $out = $'arg1=a\nlen=3' && -z $err ]]; chk 100.35
 
 # 100.36 `=a` is the one spelling that binds the collection
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 show() { echo "slot=${A[0]} n=$(len A)"; }
 show =a'
-    [[ $rc = 0 && $out = "slot=x n=3" && -z $err ]]; chk 100.36
-else
-    skip_chk 100.36
-fi
+[[ $rc = 0 && $out = "slot=x n=3" && -z $err ]]; chk 100.36
 
 # 100.37 a bare word that names NOTHING is still just a string -- the rule
 # does not depend on a variable existing, which is what makes it regular
-if in_modes native,c; then
-    run_sash 'show() { echo "arg1=${args[0]}"; }
+run_sash 'show() { echo "arg1=${args[0]}"; }
 show hello'
-    [[ $rc = 0 && $out = "arg1=hello" && -z $err ]]; chk 100.37
-else
-    skip_chk 100.37
-fi
+[[ $rc = 0 && $out = "arg1=hello" && -z $err ]]; chk 100.37
 
 set -e
 tally

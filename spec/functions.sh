@@ -23,17 +23,13 @@ greet'
 # string-func-capture-in-arg-ice, DG: lift-and-print). Prints greet's stdout,
 # same as the two-step `s=$(greet); echo $s`. native+c (c implements
 # CaptureStart/End via sash_capture_start/end, 2026-08-20). janet deferred.
-if in_modes native,c; then
-    run_sash 'fn greet { echo hi; }
+run_sash 'fn greet { echo hi; }
 echo $(greet)'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 17.3
-    # 17.4 inline capture concatenated with a literal argument
-    run_sash 'fn greet { echo world; }
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 17.3
+# 17.4 inline capture concatenated with a literal argument
+run_sash 'fn greet { echo world; }
 echo "hello-$(greet)"'
-    [[ $rc = 0 && $out = "hello-world" && -z $err ]]; chk 17.4
-else
-    skip_chk 17.3; skip_chk 17.4
-fi
+[[ $rc = 0 && $out = "hello-world" && -z $err ]]; chk 17.4
 
 # 18.1 DD#86: `local` keyword removed — a bare `local` is now an unknown command
 run_sash 'fn f { local x=5; echo $x }
@@ -145,26 +141,14 @@ run_sash 'x=$(arg 99); attest x [[ -n $x ]]; echo $x' hello
 
 # 42.7 $(getpid) — in-process intrinsic, positive int, CLEAN capture (usable
 #      without a attest). native,c only: janet lacks the getpid-class.
-if in_modes native,c; then
-    run_sash 'x=$(getpid); if [[ $x =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
-    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7
-else
-    skip_chk 42.7
-fi
+run_sash 'x=$(getpid); if [[ $x =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.7
 # 42.8 $(random) — non-negative i64 (0..i64::MAX), clean capture
-if in_modes native,c; then
-    run_sash 'a=$(random); if [[ $a =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
-    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.8
-else
-    skip_chk 42.8
-fi
+run_sash 'a=$(random); if [[ $a =~ ^[0-9]+$ ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.8
 # 42.9 two $(random) draws differ (distinct entropy)
-if in_modes native,c; then
-    run_sash 'a=$(random); b=$(random); if [[ $a != $b ]] { echo Y } else { echo N }'
-    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.9
-else
-    skip_chk 42.9
-fi
+run_sash 'a=$(random); b=$(random); if [[ $a != $b ]] { echo Y } else { echo N }'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 42.9
 
 # 46.1 top-level $1..$N → compile error
 run_sash 'echo $1'
@@ -260,13 +244,9 @@ if is_ok; then echo yes; else echo no; fi'
 # 74.3 `! f` negates the return value. (janet: `!` in a condition is a
 #      separate pre-existing gap — it lowers to `true`; see the janet-predicate
 #      task — so guard the runtime to native,c.)
-if in_modes native,c; then
-    run_sash 'is_ok() { return 0; }
+run_sash 'is_ok() { return 0; }
 if ! is_ok; then echo neg; else echo pos; fi'
-    [[ $rc = 0 && $out = "pos" && -z $err ]]; chk 74.3
-else
-    skip_chk 74.3
-fi
+[[ $rc = 0 && $out = "pos" && -z $err ]]; chk 74.3
 
 # 74.4 the return value drives the branch even when a prior [[ ]] disagrees —
 #      [[ false ]] but the function falls through to `return 0` → then
@@ -375,31 +355,19 @@ if has; then echo yes; else echo no; fi'
 # 74.21 `return A && B` — an and-list producer (both true → true).
 # Gated native,c: janet emits return-producers from the AST and collapses an
 # `&&`/`||` list to a single operand (filed: janet-return-composite-producer).
-if in_modes native,c; then
-    run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 2 ]] }
+run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 2 ]] }
 if both; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.21
-else
-    skip_chk 74.21
-fi
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.21
 
 # 74.22 `return A && B` — second false → false
-if in_modes native,c; then
-    run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 3 ]] }
+run_sash 'both() { return [[ 1 = 1 ]] && [[ 2 = 3 ]] }
 if both; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.22
-else
-    skip_chk 74.22
-fi
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk 74.22
 
 # 74.23 `return A || B` — an or-list producer (first false, second true → true)
-if in_modes native,c; then
-    run_sash 'either() { return [[ 1 = 2 ]] || [[ 3 = 3 ]] }
+run_sash 'either() { return [[ 1 = 2 ]] || [[ 3 = 3 ]] }
 if either; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.23
-else
-    skip_chk 74.23
-fi
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk 74.23
 
 # ── DD#81 function-call discipline: one name, one meaning ──────────────
 # 81.1 dynamic shadowing rejected: a name used as a command, then defined as
@@ -423,24 +391,16 @@ fn f { echo hi; }'
 # 81.4 KEPT: a helper defined below its caller — `b` is only ever a function
 # (called when `a` runs, after `b` is defined), never an external. (janet
 # resolves a plain in-body call as an external exec; native+c only.)
-if in_modes native,c; then
-    run_sash 'fn a { b; }
+run_sash 'fn a { b; }
 fn b { echo hi; }
 a'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 81.4
-else
-    skip_chk 81.4
-fi
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 81.4
 
 # 81.5 KEPT: static override — define `fn cat` first, then use it; the name is
 # the function throughout (call the real one via an absolute path).
-if in_modes native,c; then
-    run_sash 'fn cat { echo W; }
+run_sash 'fn cat { echo W; }
 cat'
-    [[ $rc = 0 && $out = "W" && -z $err ]]; chk 81.5
-else
-    skip_chk 81.5
-fi
+[[ $rc = 0 && $out = "W" && -z $err ]]; chk 81.5
 
 # 81.6 shadowing through `$( )` is rejected too (same gate).
 run_sash 'x=$(cat /etc/hostname)
@@ -451,24 +411,16 @@ y=$(cat /etc/hostname)'
 # 81.7 DD#81: `$(f arg)` passes positional args to the captured function
 # (was a codegen ICE — the capture dropped the args and the body's `$1`/
 # `${args[0]}` hit an undefined args array). native+c (janet: no capture).
-if in_modes native,c; then
-    run_sash 'fn greet { echo "hi $1"; }
+run_sash 'fn greet { echo "hi $1"; }
 s=$(greet World)
 echo $s'
-    [[ $rc = 0 && $out = "hi World" && -z $err ]]; chk 81.7
-else
-    skip_chk 81.7
-fi
+[[ $rc = 0 && $out = "hi World" && -z $err ]]; chk 81.7
 
 # 81.8 multi-arg capture, read via the `args` array
-if in_modes native,c; then
-    run_sash 'fn pair { echo "${args[0]}-${args[1]}"; }
+run_sash 'fn pair { echo "${args[0]}-${args[1]}"; }
 s=$(pair a b)
 echo $s'
-    [[ $rc = 0 && $out = "a-b" && -z $err ]]; chk 81.8
-else
-    skip_chk 81.8
-fi
+[[ $rc = 0 && $out = "a-b" && -z $err ]]; chk 81.8
 
 # 81.9 DD#81 Part B: too few args → SB5042
 run_sash 'fn f { echo "$1$2"; }
@@ -486,13 +438,9 @@ f a b c'
 [[ $rc != 0 && -z $out && $err == *SB5044* ]]; chk 81.11
 
 # 81.12 @args makes the function variadic — any count is accepted (native,c)
-if in_modes native,c; then
-    run_sash 'fn f { for x in @args; do echo "$x"; done; }
+run_sash 'fn f { for x in @args; do echo "$x"; done; }
 f a b c'
-    [[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk 81.12
-else
-    skip_chk 81.12
-fi
+[[ $rc = 0 && $out = $'a\nb\nc' && -z $err ]]; chk 81.12
 
 # 81.13 arity is checked on the $() capture path too → SB5042
 run_sash 'fn f { echo "$1"; }
@@ -616,72 +564,48 @@ L" && -z $err ]]; chk ice.6
 # sp.1 a function receives one argument per ELEMENT
 # native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
 # unrelated to splatting — the no-splat control sp.8 fails there identically.
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 fn f { echo "n=$(len args)" }
 f @a'
-    [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.1
-else
-    skip_chk sp.1
-fi
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.1
 
 # sp.2 …and they are the elements, in order
 # native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
 # unrelated to splatting — the no-splat control sp.8 fails there identically.
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 fn f { for v in @args { echo "<$v>" } }
 f @a'
-    [[ $rc = 0 && $out = $'<x>\n<y>\n<z>' && -z $err ]]; chk sp.2
-else
-    skip_chk sp.2
-fi
+[[ $rc = 0 && $out = $'<x>\n<y>\n<z>' && -z $err ]]; chk sp.2
 
 # sp.3 element boundaries survive: two DIFFERENT arrays must not collapse to
 # the same thing (this is the lossy half of the bug)
 # native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
 # unrelated to splatting — the no-splat control sp.8 fails there identically.
-if in_modes native,c; then
-    run_sash 'array two=("a b" "c")
+run_sash 'array two=("a b" "c")
 fn f { echo "n=$(len args) first=[${args[0]}]" }
 f @two'
-    [[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.3
-else
-    skip_chk sp.3
-fi
+[[ $rc = 0 && $out = "n=2 first=[a b]" && -z $err ]]; chk sp.3
 
 # sp.4 a splat inside an ARRAY LITERAL splices too
 # native,c: janet array-literal splat parity is unimplemented.
-if in_modes native,c; then
-    run_sash 'array a=(x y z)
+run_sash 'array a=(x y z)
 array b=(@a q)
 echo "$(len b):${b[0]}:${b[3]}"'
-    [[ $rc = 0 && $out = "4:x:q" && -z $err ]]; chk sp.4
-else
-    skip_chk sp.4
-fi
+[[ $rc = 0 && $out = "4:x:q" && -z $err ]]; chk sp.4
 
 # sp.5 a splat BEFORE and AFTER other elements keeps its position
 # native,c: janet array-literal splat parity is unimplemented.
-if in_modes native,c; then
-    run_sash 'array a=(m n)
+run_sash 'array a=(m n)
 array b=(p @a q)
 echo "$(len b):${b[0]}:${b[1]}:${b[2]}:${b[3]}"'
-    [[ $rc = 0 && $out = "4:p:m:n:q" && -z $err ]]; chk sp.5
-else
-    skip_chk sp.5
-fi
+[[ $rc = 0 && $out = "4:p:m:n:q" && -z $err ]]; chk sp.5
 
 # sp.6 an EMPTY array splats to nothing (it must not contribute an element)
 # native,c: janet array-literal splat parity is unimplemented.
-if in_modes native,c; then
-    run_sash 'array e=()
+run_sash 'array e=()
 array b=(p @{e:~} q)
 echo "$(len b):${b[0]}:${b[1]}"'
-    [[ $rc = 0 && $out = "2:p:q" && -z $err ]]; chk sp.6
-else
-    skip_chk sp.6
-fi
+[[ $rc = 0 && $out = "2:p:q" && -z $err ]]; chk sp.6
 
 # sp.7 the external path is unchanged (control — it was always correct)
 run_sash 'array a=(x y z)
@@ -691,13 +615,9 @@ run_sash 'array a=(x y z)
 # sp.8 an explicit argument list is unchanged (control)
 # native,c: janet does not resolve `$(len args)` (task dd75-args-model-polish);
 # unrelated to splatting — the no-splat control sp.8 fails there identically.
-if in_modes native,c; then
-    run_sash 'fn f { echo "n=$(len args)" }
+run_sash 'fn f { echo "n=$(len args)" }
 f x y z'
-    [[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
-else
-    skip_chk sp.8
-fi
+[[ $rc = 0 && $out = "n=3" && -z $err ]]; chk sp.8
 
 set -e
 tally

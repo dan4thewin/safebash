@@ -61,12 +61,8 @@ run_sash 'x=$(arg 5 mydef); attest x [[ -n $x ]]; echo "$x"' one two
 
 # av.d4 a clean intrinsic default (quoted) is accepted and used on OOB. native,c
 # (janet exec's $(getcwd) as a fake external command — janet-getpid-class-intrinsics).
-if in_modes native,c; then
-    run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
-else
-    skip_chk av.d4
-fi
+run_sash 'x=$(arg 9 "$(getcwd)"); attest x [[ -n $x ]]; echo "$x"'
+[[ $rc = 0 && -n $out && -z $err ]]; chk av.d4
 
 # av.d5 DD#78: a tainted default is rejected (a read must not sneak through)
 run_sash 'y=$(getenv HOME); x=$(arg 1 $y); attest x [[ -n $x ]]; echo "$x"'

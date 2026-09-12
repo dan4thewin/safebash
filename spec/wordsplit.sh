@@ -35,16 +35,12 @@ run_sash 'echo "a:b:c" | read -f: a b c; echo $a $b $c'
 # native,c: janet does not emit `map m = @{a:DISP}` at all (task
 # `janet-map-from-array`), so the array->map route DD#99 requires costs
 # janet coverage these had under `mapfile -m`. Honest gap, filed.
-if in_modes native,c; then
-    run_sash 's="a
+run_sash 's="a
 b
 c"
 - matchall $s "[^\x0a]+" arr
 echo ${arr[1]}'
-    [[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
-else
-    skip_chk 22.6
-fi
+[[ $rc = 0 && $out = "b" && -z $err ]]; chk 22.6
 
 # 22.7 -r always implied on read
 run_sash 'echo "hello" | readline line; echo $line'
@@ -118,46 +114,34 @@ run_sash 'int x=5; if [[ $x -eq 5 ]]; then echo yes; fi'
 # native,c: janet does not emit `map m = @{a:DISP}` at all (task
 # `janet-map-from-array`), so the array->map route DD#99 requires costs
 # janet coverage these had under `mapfile -m`. Honest gap, filed.
-if in_modes native,c; then
-    run_sash 's="name=Alice
+run_sash 's="name=Alice
 age=30"
 - matchall $s "([^=\x0a]*)=([^\x0a]*)" p
 map m = @{p:~}
 echo ${m[name]} ${m[age]}'
-    [[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
-else
-    skip_chk 22.8
-fi
+[[ $rc = 0 && $out = "Alice 30" && -z $err ]]; chk 22.8
 
 # 22.9 mapfile -m skips blank lines
 # native,c: janet does not emit `map m = @{a:DISP}` at all (task
 # `janet-map-from-array`), so the array->map route DD#99 requires costs
 # janet coverage these had under `mapfile -m`. Honest gap, filed.
-if in_modes native,c; then
-    run_sash 's="a=1
+run_sash 's="a=1
 
 b=2"
 - matchall $s "([^=\x0a]*)=([^\x0a]*)" p
 map m = @{p:~}
 echo ${m[a]} ${m[b]}'
-    [[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
-else
-    skip_chk 22.9
-fi
+[[ $rc = 0 && $out = "1 2" && -z $err ]]; chk 22.9
 
 # 22.10 mapfile -m splits on first = only
 # native,c: janet does not emit `map m = @{a:DISP}` at all (task
 # `janet-map-from-array`), so the array->map route DD#99 requires costs
 # janet coverage these had under `mapfile -m`. Honest gap, filed.
-if in_modes native,c; then
-    run_sash 's="key=val=ue"
+run_sash 's="key=val=ue"
 - matchall $s "([^=\x0a]*)=([^\x0a]*)" p
 map m = @{p:~}
 echo ${m[key]}'
-    [[ $rc = 0 && $out = "val=ue" && -z $err ]]; chk 22.10
-else
-    skip_chk 22.10
-fi
+[[ $rc = 0 && $out = "val=ue" && -z $err ]]; chk 22.10
 
 # 22.11 an EXTERNAL producer taints the array, and a tainted array cannot be
 # paired into a map at all (DG 2026-09-10: "the read of the array must have a
@@ -386,22 +370,14 @@ run_sash 'array a=(*); : @a; echo ok'
 
 # 20.5 for-in glob: 0 matches → loop body never runs (DD#20/#69). native/c
 #      only — Janet lowers from IR and does not expand globs.
-if in_modes native,c; then
-    run_sash 'for f in *.nomatchZZZ; do echo "$f"; done; echo done'
-    [[ $rc = 0 && $out = "done" && -z $err ]]; chk 20.5
-else
-    skip_chk 20.5
-fi
+run_sash 'for f in *.nomatchZZZ; do echo "$f"; done; echo done'
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 20.5
 
 # 20.6 for-in glob: iterates per matched entry, no word splitting (native/c).
 #      DD#73: the element is a normalized absolute path `<cwd>/only.www`.
-if in_modes native,c; then
-    run_sash '/usr/bin/touch only.www; for f in *.www; do echo "[$f]"; done'
-    cwd=$(pwd -P)
-    [[ $rc = 0 && $out = "[$cwd/only.www]" && -z $err ]]; chk 20.6
-else
-    skip_chk 20.6
-fi
+run_sash '/usr/bin/touch only.www; for f in *.www; do echo "[$f]"; done'
+cwd=$(pwd -P)
+[[ $rc = 0 && $out = "[$cwd/only.www]" && -z $err ]]; chk 20.6
 
 # 14.7 && on compound command rejected (SB4023)
 run_sash 'if true; then echo x; fi && echo y'
@@ -433,18 +409,14 @@ run_sash 'echo x | readc a'
 # NUL-separated fields into an array (bash's read -d '' convention). This is
 # the sash-getopt consumer: `sash-getopt … | read -a arr -d ''`. janet lacks
 # custom-delimiter array reads, so gate native,c.
-if in_modes native,c; then
-    run_sash 'printf "a\0b c\0d" > f22_21; read arr < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
-    [[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
+run_sash 'printf "a\0b c\0d" > f22_21; read arr < f22_21; attest x in arr [[ -n $x ]]; echo "$(len arr):${arr[1]}"; rm -f f22_21'
+[[ $rc = 0 && $out = "3:b c" && -z $err ]]; chk 22.21
 
-    # 22.22 a `-d` delimiter VALUE (`:`) is not mistaken for a target variable
-    # (the shared classifier skips flag values — previously a dead-var false
-    # positive on `:`). `-d :` reads one record up to the first `:`.
-    run_sash 'printf "a:b" | read -d : x; attest x [[ -n $x ]]; echo "[$x]"'
-    [[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.22
-else
-    skip_chk 22.21; skip_chk 22.22
-fi
+# 22.22 a `-d` delimiter VALUE (`:`) is not mistaken for a target variable
+# (the shared classifier skips flag values — previously a dead-var false
+# positive on `:`). `-d :` reads one record up to the first `:`.
+run_sash 'printf "a:b" | read -d : x; attest x [[ -n $x ]]; echo "[$x]"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.22
 
 # 22.23 an unknown read flag is rejected consistently in BOTH the standalone
 # and lastpipe paths (the two parsers are unified) — `-z` is not a read flag
@@ -466,17 +438,13 @@ run_sash 'echo hi | read -r x; echo "[$x]"'
 # NUL-terminated input (the sash-getopt idiom) yields only the real fields, so
 # every element is non-empty and a attest-all `[[ -n $x ]]` succeeds. janet lacks
 # custom-delimiter array reads, so gate native,c.
-if in_modes native,c; then
-    run_sash 'printf "x\0y\0" | read arr; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
+run_sash 'printf "x\0y\0" | read arr; attest e in arr [[ -n $e ]]; echo "$(len arr)"'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 22.26
 
-    # 22.27 interior empty records are KEPT under terminator semantics; only the
-    # single trailing empty from a final delimiter is dropped (`a::b:` → a,"",b).
-    run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
-    [[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.27
-else
-    skip_chk 22.26; skip_chk 22.27
-fi
+# 22.27 interior empty records are KEPT under terminator semantics; only the
+# single trailing empty from a final delimiter is dropped (`a::b:` → a,"",b).
+run_sash 'array arr=(); printf "a::b:" | read -a arr -d :; attest e in arr [[ $e = $e ]]; echo "$(len arr):[${arr[1]}]"'
+[[ $rc != 0 && -z $out && $err == *SB5057* ]]; chk 22.27
 
 # ── read -a / builtin-echo elide bug fixes (DG 2026-09-04, journal 244) ──
 # 22.28 a FRESH `read -a` target inside a called function no longer segfaults.
@@ -484,28 +452,24 @@ fi
 # table registration used to leak from the template into the inline, so the
 # inline skipped the table `Assign` and the runtime read filled a NULL table.
 # native,c (janet splits the trailing newline differently — pre-existing).
-if in_modes native,c; then
-    run_sash 'fn f { echo hi | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
-    [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
+run_sash 'fn f { echo hi | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+[[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.28
 
-    # 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
-    # contributes NOTHING (no value, no separator), matching the external argv
-    # builder. Previously ICE'd (native) / double-spaced (c). native,c: janet's
-    # builtin echo lacks `-n`/elide (task janet-echo-flags-and-elide).
-    run_sash 'fn f { x=""; echo a $x:~ b }; f'
-    [[ $rc = 0 && $out = "a b" && -z $err ]]; chk 22.29
+# 22.29 builtin `echo` with an elide arg (`${x:~}`/`${x:!~}`) — an empty value
+# contributes NOTHING (no value, no separator), matching the external argv
+# builder. Previously ICE'd (native) / double-spaced (c). native,c: janet's
+# builtin echo lacks `-n`/elide (task janet-echo-flags-and-elide).
+run_sash 'fn f { x=""; echo a $x:~ b }; f'
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk 22.29
 
-    # 22.30 a non-empty elide arg is written normally
-    run_sash 'fn f { x=hi; echo a $x:~ b }; f'
-    [[ $rc = 0 && $out = "a hi b" && -z $err ]]; chk 22.30
+# 22.30 a non-empty elide arg is written normally
+run_sash 'fn f { x=hi; echo a $x:~ b }; f'
+[[ $rc = 0 && $out = "a hi b" && -z $err ]]; chk 22.30
 
-    # 22.31 the reported line (DD#99: `echo -n` is now `write`)
-    # of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
-    run_sash 'fn f { x=hi; write $x:! | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
-    [[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
-else
-    skip_chk 22.28; skip_chk 22.29; skip_chk 22.30; skip_chk 22.31
-fi
+# 22.31 the reported line (DD#99: `echo -n` is now `write`)
+# of a `:!`-trusted value piped into a fresh array read) now works end-to-end.
+run_sash 'fn f { x=hi; write $x:! | read norm; /bin/echo "$(len norm):${norm[0]}" }; f'
+[[ $rc = 0 && $out = "1:hi" && -z $err ]]; chk 22.31
 
 
 
@@ -519,44 +483,28 @@ fi
 # which is exactly the case spec 22.26 covered.
 
 # 22.40 an element passed to an EXTERNAL command is the element, not a suffix
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\0b\0c" | read x
+run_sash '/usr/bin/printf "a\0b\0c" | read x
 attest e in x [[ $e = $e ]]
 /usr/bin/printf "[%s]" ${x[0]}'
-    [[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.40
-else
-    skip_chk 22.40
-fi
+[[ $rc = 0 && $out = "[a]" && -z $err ]]; chk 22.40
 
 # 22.41 …for every element, via a for-in splat
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\0b\0c" | read x
+run_sash '/usr/bin/printf "a\0b\0c" | read x
 attest e in x [[ $e = $e ]]
 for v in @x { /usr/bin/printf "[%s]" $v }'
-    [[ $rc = 0 && $out = "[a][b][c]" && -z $err ]]; chk 22.41
-else
-    skip_chk 22.41
-fi
+[[ $rc = 0 && $out = "[a][b][c]" && -z $err ]]; chk 22.41
 
 # 22.42 whitespace-split elements likewise
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\0b\0c" | read x
+run_sash '/usr/bin/printf "a\0b\0c" | read x
 attest e in x [[ $e = $e ]]
 /usr/bin/printf "[%s]" ${x[1]}'
-    [[ $rc = 0 && $out = "[b]" && -z $err ]]; chk 22.42
-else
-    skip_chk 22.42
-fi
+[[ $rc = 0 && $out = "[b]" && -z $err ]]; chk 22.42
 
 # 22.43 the length-based consumers stay correct (no regression from the copy)
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\0b\0c" | read x
+run_sash '/usr/bin/printf "a\0b\0c" | read x
 attest e in x [[ $e = $e ]]
 echo "$(len x)|$(join x)|${x[2]}"'
-    [[ $rc = 0 && $out = "3|a b c|c" && -z $err ]]; chk 22.43
-else
-    skip_chk 22.43
-fi
+[[ $rc = 0 && $out = "3|a b c|c" && -z $err ]]; chk 22.43
 
 
 # ════════ DD#99 stage 1: `readline` — one line into one scalar ════════
@@ -629,58 +577,38 @@ run_sash 'echo hi | readline'
 # NUL is the only separator; the target is always an array, auto-declared.
 
 # nr.1 splits a NUL-separated stream into an array
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "a\0b\0c" | read f
+run_sash '/usr/bin/printf "a\0b\0c" | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[0]}:${f[2]}"'
-    [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.1
-else
-    skip_chk nr.1
-fi
+[[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.1
 
 # nr.2 does NOT split on whitespace — NUL is the only separator (DD#22)
-if in_modes native,c; then
-    run_sash 'echo "a b c" | read f
+run_sash 'echo "a b c" | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[0]}"'
-    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.2
-else
-    skip_chk nr.2
-fi
+[[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.2
 
 # nr.3 …nor on newlines
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "x\ny\n" | read f
+run_sash '/usr/bin/printf "x\ny\n" | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f)"'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.3
-else
-    skip_chk nr.3
-fi
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.3
 
 # nr.4 auto-declares its target (no prior `array f=()`)
-if in_modes native,c; then
-    run_sash '/usr/bin/printf "p\0q" | read fresh
+run_sash '/usr/bin/printf "p\0q" | read fresh
 attest e in fresh [[ $e = $e ]]
 echo "$(len fresh)"'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.4
-else
-    skip_chk nr.4
-fi
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.4
 
 # nr.5 the whole pipeline round-trip DD#99 is built on: convert a separator to
 # NUL in-process, then split on it — no external `tr`, no flags
-if in_modes native,c; then
-    run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\0'"'"'
 s=a:b:c
 s =~ s/:/$sep/g
 echo $s | read f
 attest e in f [[ $e = $e ]]
 echo "$(len f):${f[1]}"'
-    [[ $rc = 0 && $out = "3:b" && -z $err ]]; chk nr.5
-else
-    skip_chk nr.5
-fi
+[[ $rc = 0 && $out = "3:b" && -z $err ]]; chk nr.5
 
 # nr.6 targets are tainted like every read target (DD#24)
 run_sash '/bin/cat /etc/hostname | read f
@@ -703,39 +631,27 @@ echo "${f[0]}"'
 # (sigil), reference out (bare name).
 
 # nr.9 splits a NUL-bearing scalar into an array, no pipeline, no fork
-if in_modes native,c; then
-    run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\0'"'"'
 s=a:b:c
 s =~ s/:/$sep/g
 read $s f
 echo "$(len f):${f[0]}:${f[2]}"'
-    [[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.9
-else
-    skip_chk nr.9
-fi
+[[ $rc = 0 && $out = "3:a:c" && -z $err ]]; chk nr.9
 
 # nr.10 a scalar with no NUL is a single element
-if in_modes native,c; then
-    run_sash 's="a b c"
+run_sash 's="a b c"
 read $s f
 echo "$(len f):${f[0]}"'
-    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.10
-else
-    skip_chk nr.10
-fi
+[[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.10
 
 # nr.11 auto-declares the target
-if in_modes native,c; then
-    run_sash 'sep=$'"'"'\0'"'"'
+run_sash 'sep=$'"'"'\0'"'"'
 s=p:q
 s =~ s/:/$sep/g
 read $s brandnew
 attest e in brandnew [[ $e = $e ]]
 echo "$(len brandnew)"'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.11
-else
-    skip_chk nr.11
-fi
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk nr.11
 
 # nr.12 taint flows from the source scalar to the array (DD#24)
 run_sash 's=$(/bin/cat /etc/hostname)
@@ -744,14 +660,10 @@ echo "${f[0]}"'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk nr.12
 
 # nr.13 …and a clean source stays clean
-if in_modes native,c; then
-    run_sash 's="x y"
+run_sash 's="x y"
 read $s f
 echo "$(len f)"'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.13
-else
-    skip_chk nr.13
-fi
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk nr.13
 
 # nr.14 the second argument is a binding, so it takes no sigil (DD#99)
 run_sash 's="a"
@@ -769,14 +681,10 @@ echo "$(len f)"'
 # author toward a needless `attest`, which is laundering by habit.
 
 # nr.15 a clean source yields a CLEAN array — no attest required
-if in_modes native,c; then
-    run_sash 's="a b c"
+run_sash 's="a b c"
 read $s f
 echo "$(len f):${f[0]}"'
-    [[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.15
-else
-    skip_chk nr.15
-fi
+[[ $rc = 0 && $out = "1:a b c" && -z $err ]]; chk nr.15
 
 # nr.16 …and a TAINTED source is rejected at the source READ, not laundered
 # into the target. DD#24: there is no taint flow inside the program.
@@ -803,14 +711,10 @@ echo "${f[0]}"'
 # nr.19 …but `:!` alone is NOT an elide (DD#91 addendum) — it is the value,
 # trusted — so it is legal in the source slot. This is the spelling DG
 # reported; it used to be a spurious SB5020, then a misdirected SB5046.
-if in_modes native,c; then
-    run_sash 'u=""
+run_sash 'u=""
 read ${u:!} f
 echo "$(len f)"'
-    [[ $rc = 0 && -z $err ]]; chk nr.19
-else
-    skip_chk nr.19
-fi
+[[ $rc = 0 && -z $err ]]; chk nr.19
 
 # nr.20 the ELIDING combination is still rejected there, for the reason nr.18
 # gives: eliding the source would silently re-read stdin instead

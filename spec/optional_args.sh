@@ -13,85 +13,61 @@ echo "1..$plan" >&3
 
 # ── Optional trailing args via `:-` (a trailing `${args[i]:-D}` is optional) ──
 # 84.1 called with 0 args → the default fires (arity [0,1])
-if in_modes native,c; then
-    run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
+run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
 greet'
-    [[ $rc = 0 && $out = "Hi world" && -z $err ]]; chk 84.1
-else skip_chk 84.1; fi
+[[ $rc = 0 && $out = "Hi world" && -z $err ]]; chk 84.1
 
 # 84.2 called with 1 arg → the arg
-if in_modes native,c; then
-    run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
+run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
 greet Sam'
-    [[ $rc = 0 && $out = "Hi Sam" && -z $err ]]; chk 84.2
-else skip_chk 84.2; fi
+[[ $rc = 0 && $out = "Hi Sam" && -z $err ]]; chk 84.2
 
 # 84.3 too many args → SB5043 (arity max is 1)
-if in_modes native,c; then
-    run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
+run_sash 'fn greet { /bin/echo Hi ${args[0]:-world} }
 greet a b'
-    [[ $rc != 0 && $err == *SB5043* ]]; chk 84.3
-else skip_chk 84.3; fi
+[[ $rc != 0 && $err == *SB5043* ]]; chk 84.3
 
 # 84.4 a required arg followed by an optional one — arity [1,2]
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo ${args[0]} ${args[1]:-D} }
+run_sash 'fn f { /bin/echo ${args[0]} ${args[1]:-D} }
 f one'
-    [[ $rc = 0 && $out = "one D" && -z $err ]]; chk 84.4
-else skip_chk 84.4; fi
+[[ $rc = 0 && $out = "one D" && -z $err ]]; chk 84.4
 
 # 84.5 the same fn, too few (needs >= 1) → SB5042
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo ${args[0]} ${args[1]:-D} }
+run_sash 'fn f { /bin/echo ${args[0]} ${args[1]:-D} }
 f'
-    [[ $rc != 0 && $err == *SB5042* ]]; chk 84.5
-else skip_chk 84.5; fi
+[[ $rc != 0 && $err == *SB5042* ]]; chk 84.5
 
 # ── The elide operator `:~` — the token disappears when identity/absent ──
 # 84.6 absent optional arg → elided (ls report, not ls "" report)
-if in_modes native,c; then
-    run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
+run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
 foo'
-    [[ $rc = 0 && $out = "ls report" && -z $err ]]; chk 84.6
-else skip_chk 84.6; fi
+[[ $rc = 0 && $out = "ls report" && -z $err ]]; chk 84.6
 
 # 84.7 present arg → kept
-if in_modes native,c; then
-    run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
+run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
 foo -l'
-    [[ $rc = 0 && $out = "ls -l report" && -z $err ]]; chk 84.7
-else skip_chk 84.7; fi
+[[ $rc = 0 && $out = "ls -l report" && -z $err ]]; chk 84.7
 
 # 84.8 passed empty string → elided (empty = identity)
-if in_modes native,c; then
-    run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
+run_sash 'fn foo { /bin/echo ls ${args[0]:~} report }
 foo ""'
-    [[ $rc = 0 && $out = "ls report" && -z $err ]]; chk 84.8
-else skip_chk 84.8; fi
+[[ $rc = 0 && $out = "ls report" && -z $err ]]; chk 84.8
 
 # 84.9 runtime empty scalar in an arg list → elided
-if in_modes native,c; then
-    run_sash 'x=; /bin/echo a ${x:~} b'
-    [[ $rc = 0 && $out = "a b" && -z $err ]]; chk 84.9
-else skip_chk 84.9; fi
+run_sash 'x=; /bin/echo a ${x:~} b'
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk 84.9
 
 # 84.10 runtime non-empty scalar → kept
-if in_modes native,c; then
-    run_sash 'x=MID; /bin/echo a ${x:~} b'
-    [[ $rc = 0 && $out = "a MID b" && -z $err ]]; chk 84.10
-else skip_chk 84.10; fi
+run_sash 'x=MID; /bin/echo a ${x:~} b'
+[[ $rc = 0 && $out = "a MID b" && -z $err ]]; chk 84.10
 
 # 84.11 array literal: an empty `${…:~}` element is elided, indices compact
-if in_modes native,c; then
-    run_sash 'y=; array c=(x ${y:~} z); /bin/echo $(len c) : $(join c)'
-    [[ $rc = 0 && $out = "2 : x z" && -z $err ]]; chk 84.11
-else skip_chk 84.11; fi
+run_sash 'y=; array c=(x ${y:~} z); /bin/echo $(len c) : $(join c)'
+[[ $rc = 0 && $out = "2 : x z" && -z $err ]]; chk 84.11
 
 # 84.12 array literal: a non-empty element is kept
-if in_modes native,c; then
-    run_sash 'y=MID; array c=(x ${y:~} z); /bin/echo $(len c) : $(join c)'
-    [[ $rc = 0 && $out = "3 : x MID z" && -z $err ]]; chk 84.12
-else skip_chk 84.12; fi
+run_sash 'y=MID; array c=(x ${y:~} z); /bin/echo $(len c) : $(join c)'
+[[ $rc = 0 && $out = "3 : x MID z" && -z $err ]]; chk 84.12
 
 # ── Rejects: parse (SB4051) + validate (SB5046) are backend-independent ──
 # 84.13 `:~` takes no word → SB4051 (all modes: parse)
@@ -112,64 +88,48 @@ run_sash 'x=hi; /bin/echo foo${x:~}'
 
 # ── Rejects: arity structural (transform → native,c) ──
 # 84.17 an index read both bare and via a disposition → SB5047 (mixing)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo ${args[0]} ${args[0]:-x} }
+run_sash 'fn f { /bin/echo ${args[0]} ${args[0]:-x} }
 f a'
-    [[ $rc != 0 && $err == *SB5047* ]]; chk 84.17
-else skip_chk 84.17; fi
+[[ $rc != 0 && $err == *SB5047* ]]; chk 84.17
 
 # 84.18 a required arg after an optional one → SB5048 (optional must be trailing)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo ${args[0]:-x} ${args[1]} }
+run_sash 'fn f { /bin/echo ${args[0]:-x} ${args[1]} }
 f a b'
-    [[ $rc != 0 && $err == *SB5048* ]]; chk 84.18
-else skip_chk 84.18; fi
+[[ $rc != 0 && $err == *SB5048* ]]; chk 84.18
 
 # ── Positional `${N:OP}` == `${args[N-1]:OP}` (regression: `${N:~}`/`${N:-}`
 # were mis-analyzed as REQUIRED, giving a spurious SB5042, and lowered as a
 # scalar var "N" so they always elided/defaulted even when $N was present). ──
 
 # 84.19 `${2:~}`, called with 1 arg → $2 elided, NO spurious SB5042 (the bug)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo A $1 ${2:~} B }
+run_sash 'fn f { /bin/echo A $1 ${2:~} B }
 f one'
-    [[ $rc = 0 && $out = "A one B" && -z $err ]]; chk 84.19
-else skip_chk 84.19; fi
+[[ $rc = 0 && $out = "A one B" && -z $err ]]; chk 84.19
 
 # 84.20 `${2:~}`, called with 2 args → $2 KEPT (value actually read)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo A $1 ${2:~} B }
+run_sash 'fn f { /bin/echo A $1 ${2:~} B }
 f one two'
-    [[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.20
-else skip_chk 84.20; fi
+[[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.20
 
 # 84.21 `${2:-D}`, called with 1 arg → the default fires
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
+run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
 f one'
-    [[ $rc = 0 && $out = "A one D B" && -z $err ]]; chk 84.21
-else skip_chk 84.21; fi
+[[ $rc = 0 && $out = "A one D B" && -z $err ]]; chk 84.21
 
 # 84.22 `${2:-D}`, called with 2 args → $2 read (not the default)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
+run_sash 'fn f { /bin/echo A $1 ${2:-D} B }
 f one two'
-    [[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.22
-else skip_chk 84.22; fi
+[[ $rc = 0 && $out = "A one two B" && -z $err ]]; chk 84.22
 
 # 84.23 positional `${2:?}` is REQUIRED (like `${args[1]:?}`): too few → SB5042
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo $1 ${2:?need} }
+run_sash 'fn f { /bin/echo $1 ${2:?need} }
 f one'
-    [[ $rc != 0 && $err == *SB5042* ]]; chk 84.23
-else skip_chk 84.23; fi
+[[ $rc != 0 && $err == *SB5042* ]]; chk 84.23
 
 # 84.24 positional mixing: bare `$2` AND `${2:~}` → SB5047 (one or the other)
-if in_modes native,c; then
-    run_sash 'fn f { /bin/echo $1 $2 ${2:~} }
+run_sash 'fn f { /bin/echo $1 $2 ${2:~} }
 f a b'
-    [[ $rc != 0 && $err == *SB5047* ]]; chk 84.24
-else skip_chk 84.24; fi
+[[ $rc != 0 && $err == *SB5047* ]]; chk 84.24
 
 # 84.25-30 DD#92 addendum: the `args` array is IMMUTABLE + always clean — a
 # tainted value can never be passed as an argument (passing is a read → SB5020),
@@ -206,10 +166,8 @@ run_sash 'fn f { attest w in args [[ -n $w ]]; /bin/echo z }; f'
 # 84.30 control: a differently-named local array is fine (only `args` is
 # reserved) — reading `@args` is never a write, so it stays valid. native,c:
 # janet's read-array-from-pipe / `@a` splat is a pre-existing gap.
-if in_modes native,c; then
-    run_sash 'fn f { echo hi | read norm; /bin/echo @{norm:?} }; f'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
-else skip_chk 84.30; fi
+run_sash 'fn f { echo hi | read norm; /bin/echo @{norm:?} }; f'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 84.30
 
 set -e
 tally

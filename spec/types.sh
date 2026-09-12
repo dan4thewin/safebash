@@ -72,12 +72,8 @@ run_sash 'x="hello"; int y=$x'
 # 30.2 $(( )) is explicit string-to-int — DD#77 D1: the bare string operand
 # now needs a disposition (`${x:?…}` validates + converts). native,c (janet
 # arith-value disposition gap, janet-arith-subscript-read).
-if in_modes native,c; then
-    run_sash 'x="42"; int y=$(( ${x:?nan} )); echo $y'
-    [[ $rc = 0 && $out = "42" && -z $err ]]; chk 30.2
-else
-    skip_chk 30.2
-fi
+run_sash 'x="42"; int y=$(( ${x:?nan} )); echo $y'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk 30.2
 
 # 30.3 x=5 is a string (one byte long)
 run_sash 'x=5; echo $(strlen $x)'
@@ -100,12 +96,8 @@ run_sash 'int x=4; x+=3; echo $x'
 # 30.8 DD#76 int-collection cell accepts a bare numeric literal (like init).
 # native,c — janet treats the int-collection var as a scalar int
 # (janet-int-valued-collections).
-if in_modes native,c; then
-    run_sash 'int array a=(1 2); a[1]=99; echo ${a[1]}'
-    [[ $rc = 0 && $out = "99" && -z $err ]]; chk 30.8
-else
-    skip_chk 30.8
-fi
+run_sash 'int array a=(1 2); a[1]=99; echo ${a[1]}'
+[[ $rc = 0 && $out = "99" && -z $err ]]; chk 30.8
 # 30.9 boundary: a bare arith EXPRESSION (not a literal) still needs $(( ))
 run_sash 'int x=0; x=5+1'
 [[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk 30.9
@@ -228,12 +220,8 @@ run_sash 'array a=(x y z); int n=$(len a); echo $n'
 # 36.6 $(epochseconds) is int-typed too. (The janet backend does not implement
 #      the epochseconds intrinsic yet — it tries to exec it — so guard the
 #      runtime to native,c; the int-typing fix itself is backend-independent.)
-if in_modes native,c; then
-    run_sash 'int n=$(epochseconds); echo $((n > 0))'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 36.6
-else
-    skip_chk 36.6
-fi
+run_sash 'int n=$(epochseconds); echo $((n > 0))'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 36.6
 
 # 36.7 a string-returning value function stays string: `int n=$(toupper s)` is
 #      still a type error (SB4030) — the int whitelist wasn't over-broadened.
@@ -357,12 +345,8 @@ run_sash 'map m=([a]=1 [b]=2); unset m[a]; echo ${m[b]}'
 # 30.43 unset arr clears collection (canonical length $(len a); DD#75 §4).
 # Guarded native,c: janet's unset leaves the slot nil and `(length nil)`
 # crashes (pre-existing janet backend gap — task janet-unset-len-nil).
-if in_modes native,c; then
-    run_sash 'array a=(one two three); unset a; echo $(len a)'
-    [[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.43
-else
-    skip_chk 30.43
-fi
+run_sash 'array a=(one two three); unset a; echo $(len a)'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 30.43
 
 # 30.44 the unset target is a BINDING, not a value. A quoted target slipped
 # past the scalar rejection (30.40) entirely: `unset "x"` compiled clean and
@@ -466,16 +450,12 @@ run_sash 'map m=([a]=1 [b]=2); x=$(keys m); echo $x'
 # (janet's join intrinsic only handles the `@a` space-join today: it execs
 # a bare-name `join a` as an external command, and errors on a separator —
 # guard to native,c; the arg-order + native reject are backend-independent.)
-if in_modes native,c; then
-    run_sash 'array a=(x y z); echo $(join a ",")'
-    [[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 33.19
-    run_sash 'array a=(x y z); echo $(join a ", ")'
-    [[ $rc = 0 && $out = "x, y, z" && -z $err ]]; chk 33.20
-    run_sash 'array a=(x y z); echo $(join a)'
-    [[ $rc = 0 && $out = "x y z" && -z $err ]]; chk 33.21
-else
-    skip_chk 33.19; skip_chk 33.20; skip_chk 33.21
-fi
+run_sash 'array a=(x y z); echo $(join a ",")'
+[[ $rc = 0 && $out = "x,y,z" && -z $err ]]; chk 33.19
+run_sash 'array a=(x y z); echo $(join a ", ")'
+[[ $rc = 0 && $out = "x, y, z" && -z $err ]]; chk 33.20
+run_sash 'array a=(x y z); echo $(join a)'
+[[ $rc = 0 && $out = "x y z" && -z $err ]]; chk 33.21
 # 33.22 join on a NON-array operand is a clean compile error, never a segfault
 run_sash 's=hi; echo $(join s ",")'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 33.22
@@ -506,12 +486,8 @@ run_sash 'array a=(x y z w); echo $(( ${#a} + 1 ))'
 # 75.7 keys on a map → the string keys (still works)
 # (janet lacks the keys intrinsic — it execs `keys m` as an external command,
 # same class as the join gap; pre-existing, cf. janet:33.10. Guard to native,c.)
-if in_modes native,c; then
-    run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k"; done'
-    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.7
-else
-    skip_chk 75.7
-fi
+run_sash 'map m=([a]=1 [b]=2); for k in $(keys m); do echo "$k"; done'
+[[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.7
 # 75.8 keys on an indexed array → compile error (was blank/null output)
 run_sash 'array a=(x y z); for k in $(keys a); do echo "$k"; done'
 [[ $rc != 0 && -z $out && -n $err ]]; chk 75.8
@@ -565,49 +541,29 @@ f A'
 # 75.20 user-written ${args[i]} reads the same array (native,c — janet uses its
 # own _args model and does not expose the `args` name). DD#81: `: ${args[1]}`
 # acknowledges the skipped middle param (fixed arity must read args in order).
-if in_modes native,c; then
-    run_sash 'fn f { : ${args[1]}; echo ${args[0]} ${args[2]}; }
+run_sash 'fn f { : ${args[1]}; echo ${args[0]} ${args[2]}; }
 f a b c'
-    [[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
-else
-    skip_chk 75.20
-fi
+[[ $rc = 0 && $out = "a c" && -z $err ]]; chk 75.20
 # 75.21 @args splat iterates every argument (native,c)
-if in_modes native,c; then
-    run_sash 'fn f { for x in @args; do echo "$x"; done; }
+run_sash 'fn f { for x in @args; do echo "$x"; done; }
 f a b'
-    [[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.21
-else
-    skip_chk 75.21
-fi
+[[ $rc = 0 && $out = $'a\nb' && -z $err ]]; chk 75.21
 # 75.22 more than 9 args are reachable via ${args[N]} (the old scalar model
 # capped at $9) (native,c). DD#81: reaching a high index without the lower ones
 # makes the function variadic — `: @args` marks it (takes any number).
-if in_modes native,c; then
-    run_sash 'fn f { : @args; echo ${args[10]}; }
+run_sash 'fn f { : @args; echo ${args[10]}; }
 f a b c d e f g h i j k'
-    [[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
-else
-    skip_chk 75.22
-fi
+[[ $rc = 0 && $out = "k" && -z $err ]]; chk 75.22
 # 75.23 `$(len args)` is the arg count (= $#), reading the implicit array — the
 # intrinsic must resolve `args`. native,c (janet's `_args` model doesn't expose
 # the `args` name; see janet-arith-subscript-read / the 75.20-22 guards).
-if in_modes native,c; then
-    run_sash 'fn f { echo $(len args); }
+run_sash 'fn f { echo $(len args); }
 f a b c'
-    [[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
-else
-    skip_chk 75.23
-fi
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 75.23
 # 75.24 `$(join args SEP)` joins the implicit array. native,c
-if in_modes native,c; then
-    run_sash 'fn f { echo $(join args ,); }
+run_sash 'fn f { echo $(join args ,); }
 f a b c'
-    [[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk 75.24
-else
-    skip_chk 75.24
-fi
+[[ $rc = 0 && $out = "a,b,c" && -z $err ]]; chk 75.24
 # 75.25 `args` is function-local — a top-level `${args[0]}` reference is
 # rejected (SB5024), like `$1`. Compile-time, mode-independent.
 run_sash 'echo ${args[0]}'
@@ -663,15 +619,11 @@ run_sash 'map m=([k]=v); for k in $(keys $m); do echo "$k"; done'
 # a collection), and `len @a` / `join @a SEP` are gone with DD#100 Part D.
 # (janet emits a `$`-sigilled operand as a bare symbol and execs /usr/bin/join
 # for `join a SEP`; see notes/tasks/janet-join-intrinsic-gaps.md. native,c.)
-if in_modes native,c; then
-    run_sash 's=hi; array a=(x y z); map m=([k]=v)
+run_sash 's=hi; array a=(x y z); map m=([k]=v)
 echo "$(strlen $s) $(len a) $(len m)"
 echo "$(join a ",")"
 for k in $(keys m); do echo "$k"; done'
-    [[ $rc = 0 && $out = $'2 3 1\nx,y,z\nk' && -z $err ]]; chk 75.38
-else
-    skip_chk 75.38
-fi
+[[ $rc = 0 && $out = $'2 3 1\nx,y,z\nk' && -z $err ]]; chk 75.38
 
 # ── SB5064: `$a` on a collection is an error (DG 2026-09-11) ──
 # It was neither rejected nor meaningful: every value context silently
@@ -699,13 +651,9 @@ run_sash 'array a=(x y z); echo $(len $a)'
 # native,c — janet execs /usr/bin/join for `join a SEP` and emits `$s` as a
 # bare symbol; see notes/tasks/janet-join-intrinsic-gaps.md (same guard as
 # 75.38).
-if in_modes native,c; then
-    run_sash 'array a=(x y z); str s=hi
+run_sash 'array a=(x y z); str s=hi
 echo "${a[1]} $(len a) $(join a ",") $s $(strlen $s)"'
-    [[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
-else
-    skip_chk 75.43
-fi
+[[ $rc = 0 && $out = "y 3 x,y,z hi 2" && -z $err ]]; chk 75.43
 
 # ── SB5068: a subscript on a scalar is an error (2026-09-12) ──
 # The exact dual of SB5064. `${s[0]}` was neither supported nor rejected: it
@@ -766,13 +714,9 @@ run_sash 'argv g; echo "${g[0]}"'
 # and unrelated to SB5068; see notes/tasks/janet-args-subscript-unbound.md.
 # (The DD#100 slots A..E are the third undeclared case; spec/collparam.sh
 # covers them under the same guard.)
-if in_modes native,c; then
-    run_sash 'f() { echo "${args[0]}"; }
+run_sash 'f() { echo "${args[0]}"; }
 f one'
-    [[ $rc = 0 && $out = "one" && -z $err ]]; chk 75.54
-else
-    skip_chk 75.54
-fi
+[[ $rc = 0 && $out = "one" && -z $err ]]; chk 75.54
 
 # ── DD#75 §2 / DD#102: `strlen` names the byte-length question, of a VALUE ──
 # `len` dispatched on the operand's TYPE — bytes for a scalar, elements for a
@@ -809,28 +753,20 @@ echo "$(strlen $s) $(strlen s)"'
 
 # 75.59 arith sexpr operand (DD#58). janet has no sexpr intrinsic call at all
 # — `(len a)` fails there identically — so this is native,c.
-if in_modes native,c; then
-    run_sash 'str s = hello
+run_sash 'str s = hello
 int n = $(( (strlen $s) * 2 ))
 echo $n'
-    [[ $rc = 0 && $out = "10" && -z $err ]]; chk 75.59
-else
-    skip_chk 75.59
-fi
+[[ $rc = 0 && $out = "10" && -z $err ]]; chk 75.59
 
 # 75.60 the sexpr operand keeps the same distinction. The rebuild that feeds
 # an int intrinsic from sexpr args collapsed `Var` and `DollarVar` into one
 # `Literal` — lossless while every int intrinsic resolved a name, and silently
 # wrong the moment `strlen` took a value: `(strlen $s)` measured the name.
-if in_modes native,c; then
-    run_sash 'str s = hello
+run_sash 'str s = hello
 echo "$s" > /dev/null
 int n = $(( (strlen s) * 2 ))
 echo $n'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.60
-else
-    skip_chk 75.60
-fi
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 75.60
 
 # 75.61 a collection name is a word like any other — `strlen a` measures the
 # one-character string "a", just as `toupper a` yields "A". This used to be
@@ -895,12 +831,8 @@ run_sash 'if [[ i? 9223372036854775807 ]] && ! [[ i? 9223372036854775808 ]]; the
 # 77.9 a validated value converts safely; `i?` guarantees no overflow trap.
 # native,c — janet's arith VALUE path misreads an embedded ${…}
 # (janet-arith-subscript-read).
-if in_modes native,c; then
-    run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
-    [[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
-else
-    skip_chk 77.9
-fi
+run_sash 's=100; [[ i? $s ]] && echo $(( ${s:-0} * 2 ))'
+[[ $rc = 0 && $out = "200" && -z $err ]]; chk 77.9
 
 # ── DD#93 Part C: content-shape tests `p?` / `g?` ──
 # Sibling shape tests to `i?`, spelled with the same `?` suffix (kept out of

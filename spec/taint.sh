@@ -281,133 +281,126 @@ echo ${m[NAME]}'
 #     The c oracle now implements mapfile + RedirectPush/Pop + AttestAll
 #     (2026-08-20). janet still elides attest enforcement / lacks mapfile, so
 #     it stays skipped (janet deferred). ---
-if in_modes native,c; then
-    printf 'alpha\nbeta\n' > d60a.txt
-    printf 'alpha\nbeta\ngamma\n' > d60b.txt
-    printf 'alpha\n123\ngamma\n' > d60c.txt
-    printf '' > d60empty.txt
-    printf 'NAME=Alice\nCITY=Paris\n' > d60m.txt
-    printf 'NAME=Alice\nAGE=30\n' > d60m2.txt
+printf 'alpha\nbeta\n' > d60a.txt
+printf 'alpha\nbeta\ngamma\n' > d60b.txt
+printf 'alpha\n123\ngamma\n' > d60c.txt
+printf '' > d60empty.txt
+printf 'NAME=Alice\nCITY=Paris\n' > d60m.txt
+printf 'NAME=Alice\nAGE=30\n' > d60m2.txt
 
-    # 60.9 array of clean literals
-    run_sash 'array a=( one two ); echo ${a[0]}'
-    [[ $rc = 0 && $out = "one" && -z $err ]]; chk 60.9
+# 60.9 array of clean literals
+run_sash 'array a=( one two ); echo ${a[0]}'
+[[ $rc = 0 && $out = "one" && -z $err ]]; chk 60.9
 
-    # 60.10 escape hatch: array built from a attested scalar
-    run_sash 'h=$(getenv HOME)
+# 60.10 escape hatch: array built from a attested scalar
+run_sash 'h=$(getenv HOME)
 attest h [[ $h =~ ^/ ]]
 array a=( "$h" ); echo ${a[0]}'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 60.10
+[[ $rc = 0 && -n $out && -z $err ]]; chk 60.10
 
-    # 60.11 append of a clean element
-    run_sash 'array a=(one); a+=( two ); echo ${a[1]}'
-    [[ $rc = 0 && $out = "two" && -z $err ]]; chk 60.11
+# 60.11 append of a clean element
+run_sash 'array a=(one); a+=( two ); echo ${a[1]}'
+[[ $rc = 0 && $out = "two" && -z $err ]]; chk 60.11
 
-    # 60.12 subscript-assign of a clean value
-    run_sash 'array a=(one two); a[0]=zero; echo ${a[0]}'
-    [[ $rc = 0 && $out = "zero" && -z $err ]]; chk 60.12
+# 60.12 subscript-assign of a clean value
+run_sash 'array a=(one two); a[0]=zero; echo ${a[0]}'
+[[ $rc = 0 && $out = "zero" && -z $err ]]; chk 60.12
 
-    # 60.15 attest-all clears taint; element readable (runtime pass)
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
+# 60.15 attest-all clears taint; element readable (runtime pass)
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[1]}'
-    [[ $rc = 0 && $out = "beta" && -z $err ]]; chk 60.15
+[[ $rc = 0 && $out = "beta" && -z $err ]]; chk 60.15
 
-    # 60.16 attest-all then read a different element
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
+# 60.16 attest-all then read a different element
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[2]}'
-    [[ $rc = 0 && $out = "gamma" && -z $err ]]; chk 60.16
+[[ $rc = 0 && $out = "gamma" && -z $err ]]; chk 60.16
 
-    # 60.17 attest-all runtime failure: one element fails → exit 1, no stdout
-    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
+# 60.17 attest-all runtime failure: one element fails → exit 1, no stdout
+run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo ${a[0]}'
-    [[ $rc != 0 && -z $out ]]; chk 60.17
+[[ $rc != 0 && -z $out ]]; chk 60.17
 
-    # 60.18 if-form attest-all failure → false branch, no abort
-    run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
+# 60.18 if-form attest-all failure → false branch, no abort
+run_sash '/usr/bin/tr "\n" "\0" < d60c.txt | read a
 if attest x in a [[ $x =~ ^[a-z]+$ ]]; then echo ${a[0]}; fi
 echo done'
-    [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.18
 
-    # 60.21 empty array → vacuous pass (∀ over ∅ is true)
-    run_sash '/usr/bin/tr "\n" "\0" < d60empty.txt | read a
+# 60.21 empty array → vacuous pass (∀ over ∅ is true)
+run_sash '/usr/bin/tr "\n" "\0" < d60empty.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo done'
-    [[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.21
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk 60.21
 
-    # 60.22 binder shadows outer var; outer untouched afterward
-    run_sash 'x=outer; /usr/bin/tr "\n" "\0" < d60b.txt | read a
+# 60.22 binder shadows outer var; outer untouched afterward
+run_sash 'x=outer; /usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 echo $x'
-    [[ $rc = 0 && $out = "outer" && -z $err ]]; chk 60.22
+[[ $rc = 0 && $out = "outer" && -z $err ]]; chk 60.22
 
-    # 60.23 attest-all with a unary predicate on the binder
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
+# 60.23 attest-all with a unary predicate on the binder
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ -n $x ]]
 echo ${a[0]}'
-    [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk 60.23
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk 60.23
 
-    # 60.25 attest-all enables iteration over the cleaned array
-    run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
+# 60.25 attest-all enables iteration over the cleaned array
+run_sash '/usr/bin/tr "\n" "\0" < d60b.txt | read a
 attest x in a [[ $x =~ ^[a-z]+$ ]]
 for w in @a; do echo $w; done'
-    [[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
+[[ $rc = 0 && $out = $'alpha\nbeta\ngamma' && -z $err ]]; chk 60.25
 
-    # 60.35 …and the consequence, stated positively: once the array is vouched
-    # for, the map built from it is CLEAN — no map-level attest-all, because there
-    # is no longer any way for a map to be tainted. This is what makes 60.34 a
-    # relocation of the gate rather than a hole in it.
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
-    attest e in p [[ -n $e ]]
-    map m = @{p:~}
-    for k in $(keys m); do echo "$k=${m[$k]}"; done'
-    [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.35
+# 60.35 …and the consequence, stated positively: once the array is vouched
+# for, the map built from it is CLEAN — no map-level attest-all, because there
+# is no longer any way for a map to be tainted. This is what makes 60.34 a
+# relocation of the gate rather than a hole in it.
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p
+attest e in p [[ -n $e ]]
+map m = @{p:~}
+for k in $(keys m); do echo "$k=${m[$k]}"; done'
+[[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.35
 
-    # 60.29 map attest-all clears, value readable (runtime pass)
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
+# 60.29 map attest-all clears, value readable (runtime pass)
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
-    [[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
+[[ $rc = 0 && $out = "Alice" && -z $err ]]; chk 60.29
 
-    # 60.36 attested map: keys + dynamic subscript idiom iterates pairs
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
+# 60.36 attested map: keys + dynamic subscript idiom iterates pairs
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 for k in $(keys m); do echo "$k=${m[$k]}"; done'
-    [[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
+[[ $rc = 0 && $out = $'NAME=Alice\nCITY=Paris' && -z $err ]]; chk 60.36
 
-    # 60.31 map attest-all runtime failure: a value fails its predicate → exit 1
-    run_sash '/usr/bin/tr "\n=" "\0\0" < d60m2.txt | read p_m
+# 60.31 map attest-all runtime failure: a value fails its predicate → exit 1
+run_sash '/usr/bin/tr "\n=" "\0\0" < d60m2.txt | read p_m
 attest e in p_m [[ -n $e ]]
 map m = @{p_m:~}
 attest k v in m [[ $k =~ ^[A-Z]+$ && $v =~ ^[A-Za-z]+$ ]]
 echo ${m[NAME]}'
-    [[ $rc != 0 && -z $out ]]; chk 60.31
+[[ $rc != 0 && -z $out ]]; chk 60.31
 
-    # ad.1 mapfile into an UNDECLARED array (no prior `array a=()`) auto-declares
-    #      it (mirrors argv, DG 2026-07-08). `$(len a)` was a codegen ICE
-    #      (`undefined array: a`); now it is the count.
-    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; echo $(len a)'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
-    # ad.2 same for `read -a` into an undeclared array
-    run_sash 'read a < d60a.txt; echo $(len a)'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
-    # ad.3 attest-all + element read on an AUTO-declared mapfile array (the
-    #      front-end must register the target as a collection, else `attest e in
-    #      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
-    run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; attest e in a [[ -n $e ]]; echo ${a[0]}'
-    [[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
-else
-    for id in 60.9 60.10 60.11 60.12 60.15 60.16 60.17 60.18 \
-              60.21 60.22 60.23 60.25 60.29 60.31 60.35 60.36 ad.1 ad.2 ad.3; do
-        skip_chk "$id"
-    done
-fi
+# ad.1 mapfile into an UNDECLARED array (no prior `array a=()`) auto-declares
+#      it (mirrors argv, DG 2026-07-08). `$(len a)` was a codegen ICE
+#      (`undefined array: a`); now it is the count.
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; echo $(len a)'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk ad.1
+# ad.2 same for `read -a` into an undeclared array
+run_sash 'read a < d60a.txt; echo $(len a)'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk ad.2
+# ad.3 attest-all + element read on an AUTO-declared mapfile array (the
+#      front-end must register the target as a collection, else `attest e in
+#      a` sees a scalar → SB4030). Mirrors the explicit-decl path.
+run_sash '/usr/bin/tr "\n" "\0" < d60a.txt | read a; attest e in a [[ -n $e ]]; echo ${a[0]}'
+[[ $rc = 0 && $out = "alpha" && -z $err ]]; chk ad.3
 
 # tilde.1 unquoted leading `~` → focused SB4036 (not the misleading $HOME
 # SB5018); DD#53 no home-directory magic. Compile-time reject, all modes.
@@ -423,14 +416,10 @@ run_sash "echo '~' \"~\" a~b"
 # 24.20 a failed attest names the variable and shows its value (native only —
 #       the c/janet harnesses discard runtime stderr). Regression for the
 #       terse `attest: validation failed`.
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^NEVER$ ]]
 echo $x'
-    [[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
-else
-    skip_chk 24.20
-fi
+[[ $rc = 1 && $rerr == *"attest: x = '"* && $rerr == *"failed the gate" ]]; chk 24.20
 
 # ── DD#78 disposition-default discipline: a `:-` default is a read position,
 # so a tainted value may not sneak through it, and it must be side-effect-free.
@@ -477,19 +466,11 @@ run_sash 'y=$(getenv HOME); s=clean; s+=$y'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk np.4
 # np.5 attest at the SOURCE, then the copy is a clean read (the DD#24 idiom).
 # native,c — janet fakes runtime getenv (janet-getpid-class-intrinsics).
-if in_modes native,c; then
-    run_sash 'y=$(getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
-    [[ $rc = 0 && -z $err ]]; chk np.5
-else
-    skip_chk np.5
-fi
+run_sash 'y=$(getenv HOME); attest y [[ -n $y ]]; z=$y; echo "$z"'
+[[ $rc = 0 && -z $err ]]; chk np.5
 # np.6 assignment straight from a source is allowed (taints the target). native,c.
-if in_modes native,c; then
-    run_sash 'z=$(getenv HOME); attest z [[ -n $z ]]; echo "$z"'
-    [[ $rc = 0 && -z $err ]]; chk np.6
-else
-    skip_chk np.6
-fi
+run_sash 'z=$(getenv HOME); attest z [[ -n $z ]]; echo "$z"'
+[[ $rc = 0 && -z $err ]]; chk np.6
 # np.7 a clean copy chain is unaffected
 run_sash 'a=5; b=$a; c=$b; echo $c'
 [[ $rc = 0 && $out = "5" && -z $err ]]; chk np.7
@@ -505,19 +486,11 @@ run_sash 'x=$(cat /etc/hostname | tr a b); echo $x'
 run_sash 'echo $(y=1; cat /etc/hostname)'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk mcs.2
 # mcs.3 a purely-clean body (builtins only) is NOT tainted — capture is usable
-if in_modes native,c; then
-    run_sash 'x=$(echo a; echo b); echo "[$x]"'
-    [[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk mcs.3
-else
-    skip_chk mcs.3
-fi
+run_sash 'x=$(echo a; echo b); echo "[$x]"'
+[[ $rc = 0 && $out == $'[a\nb]' && -z $err ]]; chk mcs.3
 # mcs.4 attesting the tainted pipeline capture makes it usable (native+c)
-if in_modes native,c; then
-    run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
-    [[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
-else
-    skip_chk mcs.4
-fi
+run_sash 'x=$(/bin/echo hi | /usr/bin/tr h H); attest x [[ -n $x ]]; echo $x'
+[[ $rc = 0 && $out = "Hi" && -z $err ]]; chk mcs.4
 
 # ── DD#24: a `$( )` that READS already-tainted data is a use-site in EVERY
 # value position, not just argument position (a laundering-bypass class). A
@@ -548,12 +521,8 @@ run_sash 'x=$(getenv HOME); echo hi > $x'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.45
 # 60.46 control: a attested-all snapshot joined is clean and runs (native+c;
 # janet's _args model doesn't expose the named-array join at runtime)
-if in_modes native,c; then
-    run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
-    [[ $rc = 0 && $out = "one two" && -z $err ]]; chk 60.46
-else
-    skip_chk 60.46
-fi
+run_sash 'argv 1 a; attest x in a [[ -n $x ]]; echo $(join a)' one two
+[[ $rc = 0 && $out = "one two" && -z $err ]]; chk 60.46
 
 # ── Gap-fill: same laundering-bypass class across read-form × source × more
 # positions, so a regression in any one path is caught (DG 2026-08-26).
@@ -585,12 +554,8 @@ run_sash 'x=$(getenv HOME); [[ $(echo $x) = y ]] && echo z'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 60.53
 # 60.54 control (positive): a CLEAN `$(echo …)` capture still compiles & runs
 # — guards the assignment-RHS cmdsub read-check against over-rejection.
-if in_modes native,c; then
-    run_sash 'y=$(echo hello); echo $y'
-    [[ $rc = 0 && $out = "hello" && -z $err ]]; chk 60.54
-else
-    skip_chk 60.54
-fi
+run_sash 'y=$(echo hello); echo $y'
+[[ $rc = 0 && $out = "hello" && -z $err ]]; chk 60.54
 # 60.55 control (positive): a CLEAN var in a `[[ ]]` operand still runs — guards
 # the new Test-operand read-check against over-rejecting clean values.
 run_sash 'x=hello; [[ $x = hello ]] && echo yes'
@@ -601,47 +566,42 @@ run_sash 'x=hello; [[ $x = hello ]] && echo yes'
 # not a bare abort. `attest V [[t]] || V=dflt` = "V validated, else the default"
 # — a clean, usable value either way. The fallback is trusted, not re-validated
 # (caveat programmer). native,c: attest is a native/c runtime construct.
-if in_modes native,c; then
-    # bfb.1 valid input passes the gate → V keeps its value (was wrongly the
-    #       default before the fix)
-    run_sash 'v=$(arg 1)
+# bfb.1 valid input passes the gate → V keeps its value (was wrongly the
+#       default before the fix)
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' 5000
-    [[ $rc = 0 && $out = "5000" && -z $rerr ]]; chk bfb.1
+[[ $rc = 0 && $out = "5000" && -z $rerr ]]; chk bfb.1
 
-    # bfb.2 invalid input fails the gate → the default (no abort)
-    run_sash 'v=$(arg 1)
+# bfb.2 invalid input fails the gate → the default (no abort)
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' abc
-    [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.2
+[[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.2
 
-    # bfb.3 empty input fails the gate → the default
-    run_sash 'v=$(arg 1)
+# bfb.3 empty input fails the gate → the default
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v"' ""
-    [[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.3
+[[ $rc = 0 && $out = "8080" && -z $rerr ]]; chk bfb.3
 
-    # bfb.4 V is clean and reusable after the fallback (both branches clean)
-    run_sash 'v=$(arg 1)
+# bfb.4 V is clean and reusable after the fallback (both branches clean)
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] || v=8080
 /bin/echo "$v $v"' abc
-    [[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
+[[ $rc = 0 && $out = "8080 8080" && -z $rerr ]]; chk bfb.4
 
-    # bfb.5 `attest && X` runs X only on pass
-    run_sash 'v=$(arg 1)
+# bfb.5 `attest && X` runs X only on pass
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 /bin/echo done' 42
-    [[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
+[[ $rc = 0 && $out = $'valid 42\ndone' && -z $rerr ]]; chk bfb.5
 
-    # bfb.6 `attest && X` on fail: X skipped, execution continues (caught, no abort)
-    run_sash 'v=$(arg 1)
+# bfb.6 `attest && X` on fail: X skipped, execution continues (caught, no abort)
+run_sash 'v=$(arg 1)
 attest v [[ $v =~ ^[0-9]+$ ]] && /bin/echo "valid $v"
 /bin/echo reached' abc
-    [[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
-else
-    skip_chk bfb.1; skip_chk bfb.2; skip_chk bfb.3
-    skip_chk bfb.4; skip_chk bfb.5; skip_chk bfb.6
-fi
+[[ $rc = 0 && $out = "reached" && -z $rerr ]]; chk bfb.6
 
 # ── DD#91: the `:!` taint-off MODIFIER (orthogonal to the dispositions) ──
 # A sanctioned per-use bypass — use a tainted value without a attest predicate
@@ -650,30 +610,18 @@ fi
 # `getenv` (pre-existing gap — it runs `getenv` as an external), so the
 # runtime-executing getenv tests are gated (the compile-time bypass is checked
 # uniformly by 91.2's control and the argv-based 91.5/91.6).
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.1
-else
-    skip_chk 91.1
-fi
+run_sash 'x=$(getenv HOME); /bin/echo ${x:!}'
+[[ $rc = 0 && -n $out && -z $err ]]; chk 91.1
 # 91.2 control: `${x:~}` on the SAME tainted value is rejected (SB5020) — a
 # compile-time check, so it holds in every backend.
 run_sash 'x=$(getenv HOME); /bin/echo ${x:~}'
 [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 91.2
 # 91.3 brace-less `$x:!` bypasses too (native,c — runs getenv)
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME); /bin/echo $x:!'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.3
-else
-    skip_chk 91.3
-fi
+run_sash 'x=$(getenv HOME); /bin/echo $x:!'
+[[ $rc = 0 && -n $out && -z $err ]]; chk 91.3
 # 91.4 the `:!` value propagates CLEAN into an array literal (native,c — getenv)
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.4
-else
-    skip_chk 91.4
-fi
+run_sash 'x=$(getenv HOME); array a=(${x:!} lit); /bin/echo @a:?e'
+[[ $rc = 0 && -n $out && -z $err ]]; chk 91.4
 # 91.5 tainted array splat `@a:!~` bypasses attest-all
 run_sash 'argv 1 a; /usr/bin/printf "%s" @a:!~' HELLO
 [[ $rc = 0 && $out = "HELLO" && -z $err ]]; chk 91.5
@@ -715,13 +663,9 @@ run_sash 'u=""
 # 91.13 …and `:!~` is the old `:!`: trusted AND elided when empty. native,c:
 # janet renders a scalar `:~` as the plain variable and so does not elide at
 # all (pre-existing DD#84 gap — task `janet-optional-args-elision`).
-if in_modes native,c; then
-    run_sash 'u=""
+run_sash 'u=""
 /usr/bin/printf "[%s]" A ${u:!~} B'
-    [[ $rc = 0 && $out = "[A][B]" && -z $err ]]; chk 91.13
-else
-    skip_chk 91.13
-fi
+[[ $rc = 0 && $out = "[A][B]" && -z $err ]]; chk 91.13
 
 # 91.14 `:!-WORD` — trusted, with a default when empty
 run_sash 'u=""
@@ -740,12 +684,8 @@ run_sash 'u=""
 
 # 91.17 the whole point: a TAINTED value is trusted through a combination too,
 # not just through bare `:!`
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME); /bin/echo ${x:!-none}'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 91.17
-else
-    skip_chk 91.17
-fi
+run_sash 'x=$(getenv HOME); /bin/echo ${x:!-none}'
+[[ $rc = 0 && -n $out && -z $err ]]; chk 91.17
 
 # 91.18 a splat still must state its emptiness behaviour — taint-off is not
 # such a statement, so bare `@a:!` is SB5032 exactly as bare `@a` is. Under the
@@ -773,14 +713,10 @@ run_sash 'x=hi; /bin/echo ${x:~!}'
 
 # 91.23 DG's reported line: split a tainted scalar into a CLEAN array with a
 # per-use trust, no attest predicate
-if in_modes native,c; then
-    run_sash 'ckd=$(getenv HOME)
+run_sash 'ckd=$(getenv HOME)
 read $ckd:! opts
 /bin/echo "$(len opts)"'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk 91.23
-else
-    skip_chk 91.23
-fi
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 91.23
 
 # ── DD#93 Part A: `bless` renamed to `attest` (hard rename, no alias) ──
 # 93.1 `bless` is no longer a keyword — it is just an unknown command now
@@ -788,14 +724,10 @@ run_sash 'x=hi; bless x'
 [[ $rc != 0 && $err == *SB5011* ]]; chk 93.1
 # 93.2 `attest` clears taint end-to-end (the renamed primitive works). native,c
 # (janet elides attest validation and lacks getenv — see janet gaps).
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 attest x [[ $x =~ ^/[a-zA-Z0-9/]+$ ]]
 /bin/echo $x'
-    [[ $rc = 0 && -z $err ]]; chk 93.2
-else
-    skip_chk 93.2
-fi
+[[ $rc = 0 && -z $err ]]; chk 93.2
 # 93.3 diagnostic wording follows the rename ("without attest")
 run_sash 'x=$(getenv HOME); /bin/echo $x'
 [[ $rc != 0 && $err == *"without attest"* ]]; chk 93.3
@@ -806,67 +738,43 @@ run_sash 'x=$(getenv HOME); /bin/echo $x'
 # form — strictly safer than the full form, and still greppable.
 # 93.20 the scalar shorthand declassifies, exactly like the full predicate.
 # native,c — janet elides attest validation and lacks getenv.
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 attest x -n
 /bin/echo $x'
-    [[ $rc = 0 && -n $out && -z $err ]]; chk 93.20
-else
-    skip_chk 93.20
-fi
+[[ $rc = 0 && -n $out && -z $err ]]; chk 93.20
 # 93.21 …and is exactly equivalent to spelling the predicate out
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 attest x [[ -n $x ]]
 /bin/echo $x'
-    short=$out
-    run_sash 'x=$(getenv HOME)
+short=$out
+run_sash 'x=$(getenv HOME)
 attest x -n
 /bin/echo $x'
-    [[ $rc = 0 && $out = "$short" && -z $err ]]; chk 93.21
-else
-    skip_chk 93.21
-fi
+[[ $rc = 0 && $out = "$short" && -z $err ]]; chk 93.21
 # 93.22 attest-all (array): the operator binds the element binder
-if in_modes native,c; then
-    run_sash 'array a=(1 2 3)
+run_sash 'array a=(1 2 3)
 attest e in a i?
 /bin/echo @{a:?empty}'
-    [[ $rc = 0 && $out = "1 2 3" && -z $err ]]; chk 93.22
-else
-    skip_chk 93.22
-fi
+[[ $rc = 0 && $out = "1 2 3" && -z $err ]]; chk 93.22
 # 93.22b …and the shorthand really is checked per element: one non-integer
 # element aborts the attest-all at runtime.
-if in_modes native,c; then
-    run_sash 'array a=(1 x 3)
+run_sash 'array a=(1 x 3)
 attest e in a i?
 /bin/echo @{a:?empty}'
-    [[ $rc != 0 && -z $out ]]; chk 93.22b
-else
-    skip_chk 93.22b
-fi
+[[ $rc != 0 && -z $out ]]; chk 93.22b
 # 93.23 the map form binds BOTH binders — `attest k v in m OP` is
 # `[[ OP $k && OP $v ]]` (DG 2026-09-07), since a map predicate that references
 # only one binder is SB5020.
-if in_modes native,c; then
-    run_sash 'map m
+run_sash 'map m
 m[K]=V
 attest k v in m g?
 /bin/echo ${m[K]}'
-    [[ $rc = 0 && $out = "V" && -z $err ]]; chk 93.23
-else
-    skip_chk 93.23
-fi
+[[ $rc = 0 && $out = "V" && -z $err ]]; chk 93.23
 # 93.24 a shorthand whose predicate fails aborts at runtime, like the full form
-if in_modes native,c; then
-    run_sash 'x=$(getenv SASH_SPEC_UNSET_VAR)
+run_sash 'x=$(getenv SASH_SPEC_UNSET_VAR)
 attest x -n
 /bin/echo $x'
-    [[ $rc != 0 && -z $out ]]; chk 93.24
-else
-    skip_chk 93.24
-fi
+[[ $rc != 0 && -z $out ]]; chk 93.24
 # 93.25 `-v`/`-o`/`-R` stay SB5028-rejected in the shorthand (DD#93). These
 # reach codegen otherwise, which has no lowering for them and ICEs.
 run_sash 'x=$(getenv HOME)
@@ -897,14 +805,10 @@ echo $(( c ))'
 # 93.31b …with the same attest-fail message the [[ ]] forms produce. native,c —
 # the janet harness discards runtime stderr (no `rerr`), though janet does
 # print the identical message.
-if in_modes native,c; then
-    run_sash 's=abc
+run_sash 's=abc
 attest s (( c = s ))
 echo $(( c ))'
-    [[ $rc != 0 && $rerr == *"attest: s = 'abc' failed the gate"* ]]; chk 93.31b
-else
-    skip_chk 93.31b
-fi
+[[ $rc != 0 && $rerr == *"attest: s = 'abc' failed the gate"* ]]; chk 93.31b
 # 93.32 both names are declassified: the tainted SOURCE (here `$(arg 1)`) is
 # usable afterwards too, not just the bound int it was converted into.
 run_sash 'n=$(arg 1)
@@ -914,22 +818,14 @@ attest n (( c = n ))
 # 93.33 the `if` form branches instead of aborting (DG 2026-09-07).
 # native,c — janet emits `if attest` as an external command
 # (janet-if-attest-emitted-as-command).
-if in_modes native,c; then
-    run_sash 's=abc
+run_sash 's=abc
 if attest s (( c = s )); then echo "ok $(( c ))"; else echo "not an int"; fi'
-    [[ $rc = 0 && $out = "not an int" && -z $err ]]; chk 93.33
-else
-    skip_chk 93.33
-fi
+[[ $rc = 0 && $out = "not an int" && -z $err ]]; chk 93.33
 # 93.34 …and on the else path the target is declared but unassigned, reading as
 # `0` — what a declared-but-unassigned int reads as everywhere else in sash.
-if in_modes native,c; then
-    run_sash 's=abc
+run_sash 's=abc
 if attest s (( c = s )); then echo "ok"; else echo "c=[$(( c ))] [$c]"; fi'
-    [[ $rc = 0 && $out = "c=[0] [0]" && -z $err ]]; chk 93.34
-else
-    skip_chk 93.34
-fi
+[[ $rc = 0 && $out = "c=[0] [0]" && -z $err ]]; chk 93.34
 # 93.35 distinct names are required — same-name in-place retype is deferred
 run_sash 's=42
 attest s (( s = s ))
@@ -985,15 +881,11 @@ echo $(( y ))'
 [[ $rc = 0 && $out = "133" && -z $err ]]; chk 93.44
 # 93.45 a TAINTED extra operand is rejected — the value would be laundered into
 # the clean target. native,c — janet lacks getenv.
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 z=$(getenv PATH)
 attest x (( y = x + z ))
 echo $(( y ))'
-    [[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 93.45
-else
-    skip_chk 93.45
-fi
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk 93.45
 # 93.46 an attest `[[ ]]` predicate may not read another TAINTED name either
 # (DG 2026-09-07): even a boolean gate should not be influenced by data the
 # author has not vouched for. The attested name itself is tainted by

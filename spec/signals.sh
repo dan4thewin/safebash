@@ -129,11 +129,9 @@ run_sash 'trap "" SIGINT; echo hi'
 # a separate pre-existing gap — 56.1/56.4 already fail there — so native,c.)
 
 # 56.30 abort (failed command) → `$?` in END is the failing exit code
-if in_modes native,c; then
-    run_sash 'END { /bin/echo "s=$?" }
+run_sash 'END { /bin/echo "s=$?" }
 /bin/false'
-    [[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk 56.30
-else skip_chk 56.30; fi
+[[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk 56.30
 
 # 56.31 `exit N` → `$?` in END is N (the requested exit code). native only: the
 # c backend's `exit N` in the main body skips the END block (a pre-existing DD#56
@@ -145,11 +143,9 @@ exit 5'
 else skip_chk 56.31; fi
 
 # 56.32 normal exit → `$?` in END is the last command's status (0 here)
-if in_modes native,c; then
-    run_sash 'END { /bin/echo "s=$?" }
+run_sash 'END { /bin/echo "s=$?" }
 /bin/echo hi'
-    [[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.32
-else skip_chk 56.32; fi
+[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.32
 
 # 56.33 guard: the END-entry status does NOT leak into a regular function — a
 # `$?` as the first action of an ordinary function is still SB5012 (all modes).

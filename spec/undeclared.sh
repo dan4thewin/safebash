@@ -32,21 +32,13 @@ run_sash 'echo ${x:-def}'
 #      on the else path) — NOT rejected. `x` is introduced by the then-branch.
 #      native,c: janet diverges on scalar zero values (env-fallback; see
 #      janet-scalar-zero-value).
-if in_modes native,c; then
-    run_sash 'if [[ -z zzz ]]; then x=1; fi; echo [$x]'
-    [[ $rc = 0 && $out = "[]" && -z $err ]]; chk ud.5
-else
-    skip_chk ud.5
-fi
+run_sash 'if [[ -z zzz ]]; then x=1; fi; echo [$x]'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk ud.5
 
 # ud.6 a typed declaration introduces the name (and zero-inits). native,c:
 #      janet emits `(var n )` (no typed zero-init) — janet-scalar-zero-value.
-if in_modes native,c; then
-    run_sash 'int n; echo $n'
-    [[ $rc = 0 && $out = "0" && -z $err ]]; chk ud.6
-else
-    skip_chk ud.6
-fi
+run_sash 'int n; echo $n'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk ud.6
 
 # ud.7 a for-loop variable is introduced
 run_sash 'for i in a b c; do echo $i; done'
@@ -67,12 +59,8 @@ run_sash 'fn f { val=1; echo $vla; }; f'
 # ud.11 order-insensitive: a read before the assignment in the same scope is
 #       fine (the name is introduced in scope; reads the zero value first).
 #       native,c: janet scalar zero-value divergence.
-if in_modes native,c; then
-    run_sash 'echo [$x]; x=5; echo [$x]'
-    [[ $rc = 0 && $out = $'[]\n[5]' && -z $err ]]; chk ud.11
-else
-    skip_chk ud.11
-fi
+run_sash 'echo [$x]; x=5; echo [$x]'
+[[ $rc = 0 && $out = $'[]\n[5]' && -z $err ]]; chk ud.11
 
 # ud.12 a typo inside a double-quoted interpolation is caught
 run_sash 'name=world; echo "hello $naem"'
@@ -95,12 +83,8 @@ run_sash 'echo $(echo $cs_typo)'
 #       the validator must NOT flag the read of `csx`. Asserts only that
 #       validation is clean (no SB5031); the multi-statement cmdsub runtime
 #       path is a separate known gap (bug-multistatement-cmdsub-placeholder).
-if in_modes native,c; then
-    run_sash 'echo $(csx=1; echo $csx)'
-    [[ $rc = 0 && $err != *SB5031* ]]; chk ud.16
-else
-    skip_chk ud.16
-fi
+run_sash 'echo $(csx=1; echo $csx)'
+[[ $rc = 0 && $err != *SB5031* ]]; chk ud.16
 
 # ud.17 `$LINENO` gets no special handling (DG: no magic vars) — an unassigned
 #       magic var is rejected as an undefined variable, like any other name

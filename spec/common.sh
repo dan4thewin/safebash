@@ -33,7 +33,7 @@ setup() {
     declare -g rc out err
 }
 
-# in_modes "native,c" — returns 0 if SASH_MODE is in the CSV list,
+# in_modes "native" — returns 0 if SASH_MODE is in the CSV list,
 # 1 otherwise. Use to guard test bodies for mode-specific behavior.
 in_modes() {
     case ",$1," in

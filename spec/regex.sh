@@ -90,16 +90,12 @@ echo done'
 # one. SB4018 still catches the SILENT discard, which is the real hazard.
 # native+c: the SB40xx must-consume diagnostics are transform-time (before
 # codegen), so they surface on --emit-c too. janet deferred.
-if in_modes native,c; then
-    run_sash 'match abc abc'
-    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
+run_sash 'match abc abc'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.2e
 
-    run_sash '- match abc abc
+run_sash '- match abc abc
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err ]]; chk 63.2f
-else
-    skip_chk 63.2e; skip_chk 63.2f
-fi
+[[ $rc = 0 && $out = "after" && -z $err ]]; chk 63.2f
 
 # ── D. captures: out-array form `match S P ARR` (DD#63) ───────────────
 # `match S P ARR` fills ARR with [whole, g1..gN] (array is the trailing
@@ -143,18 +139,14 @@ if match "abc" "zzz" g; then echo "y ${g[0]}"; else echo "n $(len g)"; fi'
 # 63.cap7 `- match S P ARR` — `-` discards the boolean and KEEPS the array,
 # which is the point: the out-array form is side-effect-primary
 # Native-only (transform diagnostics not surfaced on --emit-c/--janet).
-if in_modes native,c; then
-    run_sash 'array g=()
+run_sash 'array g=()
 match abc abc g'
-    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk 63.cap6
 
-    run_sash 'array g=()
+run_sash 'array g=()
 - match abc b g
 echo "$(len g):${g[0]}"'
-    [[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.cap7
-else
-    skip_chk 63.cap6; skip_chk 63.cap7
-fi
+[[ $rc = 0 && $out = "1:b" && -z $err ]]; chk 63.cap7
 
 # ── E. captures: replacement backrefs \0..\9 in sub/gsub (DD#63) ──────
 # In a sub/gsub REPLACEMENT, `\0`=whole match, `\1`..`\9`=capture groups,
@@ -203,20 +195,12 @@ echo ${v:s/b/$r/}'
 # Plan 9 engine that grows \xnn (see janet regex parity).
 
 # 63.e1 `\x20` matches a literal space
-if in_modes native,c; then
-    run_sash 'if match "a b" "a\x20b"; then echo y; else echo n; fi'
-    [[ $rc = 0 && $out = "y" && -z $err ]]; chk 63.e1
-else
-    skip_chk 63.e1
-fi
+run_sash 'if match "a b" "a\x20b"; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 63.e1
 
 # 63.e2 `\x` + a non-hex digit is rejected (not silently literal)
-if in_modes native,c; then
-    run_sash 'if match "axb" "a\xZZb"; then echo y; else echo n; fi'
-    [[ $rc != 0 ]]; chk 63.e2
-else
-    skip_chk 63.e2
-fi
+run_sash 'if match "axb" "a\xZZb"; then echo y; else echo n; fi'
+[[ $rc != 0 ]]; chk 63.e2
 
 # ── G. `${var:s/RE/SUB/[g]}` brace handling (Path B) + malformed → err ─
 # The lexer scans the three `/`-delimited fields, so a bare `{`/`}` inside
@@ -239,13 +223,9 @@ echo "${var:s/x/}/}"'
 #       (2026-07-08): `{`/`[` require their escape for a literal, bash-faithful
 #       (glibc regcomp errors on a bare `{` too). This exercises Path B: the
 #       `{` byte in `a\{b` must not truncate the expansion.
-if in_modes native,c; then
-    run_sash "var='a{b'
+run_sash "var='a{b'
 echo \"\${var:s/a\{b/z/}\""
-    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g3
-else
-    skip_chk 63.g3
-fi
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g3
 
 # 63.g4 literal text after a valid close concatenates (NOT an error)
 run_sash 'var=axb
@@ -258,13 +238,9 @@ echo "${var:s/a}"'
 [[ $rc != 0 && -z $out && $err == *SB4032* ]]; chk 63.g5
 
 # 63.g6 the delimiter `/` itself, escaped as `\x2f`, is a literal slash
-if in_modes native,c; then
-    run_sash "var='a/b'
+run_sash "var='a/b'
 echo \"\${var:s/a\x2fb/z/}\""
-    [[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g6
-else
-    skip_chk 63.g6
-fi
+[[ $rc = 0 && $out = "z" && -z $err ]]; chk 63.g6
 
 # 63.g7 no-brace baseline unchanged (Path B scans the 3 fields identically)
 run_sash 'x="hello world"
@@ -351,16 +327,12 @@ k2=v2" "([^=\x0a]*)=([^\x0a]*)" a; then echo "$(len a):${a[0]}:${a[1]}:${a[2]}:$
 # own `=` (only the FIRST is a separator), which the NUL-substitution route
 # could not express at all. native,c: janet does not emit `map m = @{a:DISP}`
 # at all (task `janet-map-from-array`).
-if in_modes native,c; then
-    run_sash 'array pairs=()
+run_sash 'array pairs=()
 matchall "name=Alice
 key=val=ue" "([^=\x0a]*)=([^\x0a]*)" pairs || :
 map m = @{pairs:~}
 echo "$(len m):${m[name]}:${m[key]}"'
-    [[ $rc = 0 && $out = "2:Alice:val=ue" && -z $err ]]; chk 63.ma3
-else
-    skip_chk 63.ma3
-fi
+[[ $rc = 0 && $out = "2:Alice:val=ue" && -z $err ]]; chk 63.ma3
 
 # 63.ma4 no match → array cleared, non-zero (clear-on-entry like `match`)
 run_sash 'array a=(x y z)
@@ -376,13 +348,9 @@ if matchall "abc" "b" a; then echo "$(len a):${a[0]}"; fi'
 # janet emits the `var` inside the `||` block so the later read cannot see it
 # — generic to every auto-declaring builtin there, not to `matchall` (`argv 1
 # fresh || :` fails identically); task `janet-autodeclare-scoped-to-list-block`.
-if in_modes native,c; then
-    run_sash 'matchall "a b" "[a-z]" fresh || :
+run_sash 'matchall "a b" "[a-z]" fresh || :
 echo "$(len fresh)"'
-    [[ $rc = 0 && $out = "2" && -z $err ]]; chk 63.ma6
-else
-    skip_chk 63.ma6
-fi
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk 63.ma6
 
 # 63.ma7 the out-array is REQUIRED — there is no boolean/value 2-arg form,
 # because "all matches" has no single value to be
@@ -434,24 +402,16 @@ run_sash 'if matchall "abc" "[a-c]"; then echo y; fi'
 # 63.dash1 the DD#99 mapfile line, in its preferred spelling. native,c: janet
 # scopes an auto-declared collection's `var` to the enclosing block
 # (task `janet-autodeclare-scoped-to-list-block`, not specific to `-`).
-if in_modes native,c; then
-    run_sash '- matchall "a
+run_sash '- matchall "a
 b" "[^\x0a]+" arr
 echo "$(len arr):${arr[1]}"'
-    [[ $rc = 0 && $out = "2:b" && -z $err ]]; chk 63.dash1
-else
-    skip_chk 63.dash1
-fi
+[[ $rc = 0 && $out = "2:b" && -z $err ]]; chk 63.dash1
 
 # 63.dash2 `-` on a NO-match matchall still proceeds (nothing to abort on —
 # a false boolean is not a failure, DD#70)
-if in_modes native,c; then
-    run_sash '- matchall "abc" "zzz" arr
+run_sash '- matchall "abc" "zzz" arr
 echo "n=$(len arr)"'
-    [[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 63.dash2
-else
-    skip_chk 63.dash2
-fi
+[[ $rc = 0 && $out = "n=0" && -z $err ]]; chk 63.dash2
 
 # 63.dash3 bare (unmarked) is STILL an error — the protection that matters is
 # against the SILENT discard, and `-` is not silent
@@ -467,30 +427,26 @@ echo "$(len arr)"'
 # 63.mi1-63.mi3 are native,c: janet emits the auto-declaring `var` INSIDE the
 # if-condition expression, so the program does not compile. Pre-existing for
 # `matchall`; task `janet-match-outarray-var-in-condition`.
-if in_modes native,c; then
-    # 63.mi1 `match` auto-declares its out-array — `len` resolves with no `array`
-    run_sash 'if match abc "(a)(b)" g { echo hit }
+# 63.mi1 `match` auto-declares its out-array — `len` resolves with no `array`
+run_sash 'if match abc "(a)(b)" g { echo hit }
 echo "n=$(len g)"'
-    [[ $rc = 0 && $out = "hit
+[[ $rc = 0 && $out = "hit
 n=3" && -z $err ]]; chk 63.mi1
 
-    # 63.mi2 the auto-declared array iterates (whole match + each group)
-    run_sash 'if match abc "(a)(b)" g { - echo hit }
+# 63.mi2 the auto-declared array iterates (whole match + each group)
+run_sash 'if match abc "(a)(b)" g { - echo hit }
 for x in @g { echo "x=$x" }'
-    [[ $rc = 0 && $out = "hit
+[[ $rc = 0 && $out = "hit
 x=ab
 x=a
 x=b" && -z $err ]]; chk 63.mi2
 
-    # 63.mi3 on NO match the array still exists, empty — the declaration is
-    # static, not conditional on the match succeeding
-    run_sash 'if match qq "(z)" g { echo yes } else { echo no }
+# 63.mi3 on NO match the array still exists, empty — the declaration is
+# static, not conditional on the match succeeding
+run_sash 'if match qq "(z)" g { echo yes } else { echo no }
 echo "n=$(len g)"'
-    [[ $rc = 0 && $out = "no
+[[ $rc = 0 && $out = "no
 n=0" && -z $err ]]; chk 63.mi3
-else
-    skip_chk 63.mi1; skip_chk 63.mi2; skip_chk 63.mi3
-fi
 
 # 63.mi4 a PRE-declared array is not double-declared — auto-declare is a
 # no-op when the name is already a collection

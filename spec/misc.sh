@@ -168,12 +168,8 @@ run_sash 'x=HELLO; echo ${x,,}'
 # `map m = @{a:DISP}` (task `janet-map-from-array`).
 printf 'NAME=Alice\nGREETING=Hello ${NAME}\n' > /tmp/sash_test_config.conf
 EXPAND=$(which sash-expand)
-if in_modes native,c; then
-    run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - matchall \$s \"([^=\\x0a]*)=([^\\x0a]*)\" p; map config = @{p:~}; echo \${config[GREETING]}"
-    [[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
-else
-    skip_chk 54.1
-fi
+run_sash "s=\$($EXPAND /tmp/sash_test_config.conf); attest s [[ -n \$s ]]; - matchall \$s \"([^=\\x0a]*)=([^\\x0a]*)\" p; map config = @{p:~}; echo \${config[GREETING]}"
+[[ $rc = 0 && $out = "Hello Alice" && -z $err ]]; chk 54.1
 
 # --- DD#75 §1: punctuation specials are sugar for the keyword forms ---
 # Both spellings compile to the same node/behaviour: $$ ≡ $(getpid),
@@ -181,19 +177,15 @@ fi
 # diagnostics, sash-convert); the punctuation form is accepted input sugar.
 # spv.1-3 are native,c: janet execs the getpid intrinsic and mis-tracks the
 # arith-false status (filed bug-janet-special-var-arith).
-if in_modes native,c; then
-    # spv.1 $$ and $(getpid) are the same value (this process's pid)
-    run_sash 'p=$$; q=$(getpid); [[ $p == $q ]] && echo Y'
-    [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.1
-    # spv.2 $? sugar reads the last status (arith-false → 1)
-    run_sash '(( 0 )); echo $?'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.2
-    # spv.3 $(status) keyword reads the same status
-    run_sash '(( 0 )); echo $(status)'
-    [[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.3
-else
-    skip_chk spv.1; skip_chk spv.2; skip_chk spv.3
-fi
+# spv.1 $$ and $(getpid) are the same value (this process's pid)
+run_sash 'p=$$; q=$(getpid); [[ $p == $q ]] && echo Y'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.1
+# spv.2 $? sugar reads the last status (arith-false → 1)
+run_sash '(( 0 )); echo $?'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.2
+# spv.3 $(status) keyword reads the same status
+run_sash '(( 0 )); echo $(status)'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk spv.3
 # spv.4 $! and $(getcpid) are the same value (empty with no background job)
 run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk spv.4
@@ -204,7 +196,6 @@ run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 # program died with SIGSEGV, silently. These pin "fail loudly" — the
 # capacity question itself is a separate, open decision for DG.
 # native,c only: janet runs on the Janet VM, not sash-rt.
-if in_modes native,c; then
   /usr/bin/printf 'a\0%.0s' $(seq 1 20000) > hp_big.nul
   /usr/bin/printf 'x%.0s' $(seq 1 70000) > hp_wide.nul
   /usr/bin/printf '\0' >> hp_wide.nul
@@ -248,9 +239,6 @@ attest x in a [[ -n $x ]]
 str e="${a[0]}"
 echo $(strlen $e)'
   [[ $rc = 0 && $out = "70000" && -z $err ]]; chk hp.5
-else
-  skip_chk hp.1; skip_chk hp.2; skip_chk hp.3; skip_chk hp.4; skip_chk hp.5
-fi
 
 set -e
 tally

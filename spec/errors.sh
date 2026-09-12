@@ -58,12 +58,8 @@ run_sash '/bin/false | echo ok'
 # arithmetic with no i64 overflow trap (it previously "passed" only because an
 # unrelated codegen crash aborted the program); native/c are the reference.
 # See bug-janet-int-overflow.
-if in_modes native,c; then
-    run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
-    [[ $rc != 0 && -z $err ]]; chk 25.1
-else
-    skip_chk 25.1
-fi
+run_sash 'int x=9223372036854775807; (( x += 1 )); echo $x'
+[[ $rc != 0 && -z $err ]]; chk 25.1
 
 # 55.1 external cmd nonzero aborts (+ DD#55 diagnostic to stderr in native)
 run_sash '/bin/false
@@ -113,10 +109,8 @@ run_sash 'x=$(- /bin/echo hello); attest x [[ -n $x ]]; echo $x'
 # failed `$(- /bin/false)` yields empty output and continues — mirroring the
 # statement-position `- /bin/false` (55.4). native,c: janet's `$(- cmd)`
 # capture is a separate TODO.
-if in_modes native,c; then
-    run_sash 'x=$(- /bin/false); attest x [[ -z $x ]]; echo "survived[$x]"'
-    [[ $rc = 0 && $out = "survived[]" && -z $err ]]; chk 55.9b
-else skip_chk 55.9b; fi
+run_sash 'x=$(- /bin/false); attest x [[ -z $x ]]; echo "survived[$x]"'
+[[ $rc = 0 && $out = "survived[]" && -z $err ]]; chk 55.9b
 
 # 55.10 pipefail always on
 run_sash '/bin/false | /bin/true'
@@ -256,89 +250,79 @@ run_sash '/bin/sleep 0 & p=$!; wait $p; echo done'
 # with descriptive diagnostics (2026-08-20), and the harness captures c's
 # runtime stderr into $rerr. Redirect open(2)-failure abort is still c-TODO
 # (nested guard below). janet deferred.
-if in_modes native,c; then
-    # Abort cases emit a descriptive diagnostic to stderr (captured as
-    # $rerr), prefixed with the program name (argv[0], here ./test_bin):
-    #   <argv0>: cd: <path>: <reason>
-    #   <argv0>: <path>: <reason>              (redirect open)
-    #   <argv0>: echo: write error: <reason>   (echo write)
-    # where <reason> is the OS strerror text. Caught (if/||) and `-`
-    # suppressed failures do NOT abort, so they emit NO diagnostic.
+# Abort cases emit a descriptive diagnostic to stderr (captured as
+# $rerr), prefixed with the program name (argv[0], here ./test_bin):
+#   <argv0>: cd: <path>: <reason>
+#   <argv0>: <path>: <reason>              (redirect open)
+#   <argv0>: echo: write error: <reason>   (echo write)
+# where <reason> is the OS strerror text. Caught (if/||) and `-`
+# suppressed failures do NOT abort, so they emit NO diagnostic.
 
-    # 55.20 bare cd to a bad dir aborts (failed chdir is a failed syscall)
-    run_sash 'echo a
+# 55.20 bare cd to a bad dir aborts (failed chdir is a failed syscall)
+run_sash 'echo a
 cd /nonexistent_xyz_55
 echo b'
-    [[ $rc != 0 && $out = "a" && -z $err \
-       && $rerr == *"test_bin: cd: /nonexistent_xyz_55: No such file or directory"* ]]; chk 55.20
+[[ $rc != 0 && $out = "a" && -z $err \
+   && $rerr == *"test_bin: cd: /nonexistent_xyz_55: No such file or directory"* ]]; chk 55.20
 
-    # 55.21 cd SUCCESS is visible to a condition (regression: was always "no")
-    run_sash 'if cd /tmp; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "yes" && -z $err && -z $rerr ]]; chk 55.21
+# 55.21 cd SUCCESS is visible to a condition (regression: was always "no")
+run_sash 'if cd /tmp; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err && -z $rerr ]]; chk 55.21
 
-    # 55.22 cd failure in a condition is caught — no abort, no diagnostic
-    run_sash 'if cd /nonexistent_xyz_55; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.22
+# 55.22 cd failure in a condition is caught — no abort, no diagnostic
+run_sash 'if cd /nonexistent_xyz_55; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.22
 
-    # 55.23 - cd /bad suppresses the abort (and the diagnostic)
-    run_sash '- cd /nonexistent_xyz_55
+# 55.23 - cd /bad suppresses the abort (and the diagnostic)
+run_sash '- cd /nonexistent_xyz_55
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.23
+[[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.23
 
-    # 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC) + diagnostic
-    run_sash 'echo hi > /dev/full
+# 55.27 bare echo write(2) failure aborts (/dev/full → ENOSPC) + diagnostic
+run_sash 'echo hi > /dev/full
 echo after'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"test_bin: echo: write error: No space left on device"* ]]; chk 55.27
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"test_bin: echo: write error: No space left on device"* ]]; chk 55.27
 
-    # 55.28 echo write failure is catchable with || — no abort, no diagnostic
-    run_sash 'echo hi > /dev/full || echo caught'
-    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.28
+# 55.28 echo write failure is catchable with || — no abort, no diagnostic
+run_sash 'echo hi > /dev/full || echo caught'
+[[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.28
 
-    # 55.29 - echo write failure suppressed — no diagnostic
-    run_sash '- echo hi > /dev/full
+# 55.29 - echo write failure suppressed — no diagnostic
+run_sash '- echo hi > /dev/full
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.29
+[[ $rc = 0 && $out = "after" && -z $err && -z $rerr ]]; chk 55.29
 
-    # ── DD#55 redirect-open(2): the open is a checked syscall that runs
-    # FIRST (the implicit `exec N>file`). On failure the command body is
-    # skipped (no misroute), and the abort is governed by CONTEXT — bare
-    # and `-` both abort (the `-` binds to the command's write verdict,
-    # not the prior open); an enclosing condition (if/||) catches it via
-    # the failed final-command result.
-    # NESTED native+c: redirect open(2)-failure abort is now implemented in c
-    # (emit_redirects_guarded + emit_command skip-body + in_condition, so
-    # `- echo > /bad` still aborts while `if`/`||` catch). janet deferred.
-    if in_modes native,c; then
-    # 55.24 bare redirect open failure aborts — no misroute + diagnostic
-    run_sash 'echo hi > /nonexistent_dir_55/f
+# ── DD#55 redirect-open(2): the open is a checked syscall that runs
+# FIRST (the implicit `exec N>file`). On failure the command body is
+# skipped (no misroute), and the abort is governed by CONTEXT — bare
+# and `-` both abort (the `-` binds to the command's write verdict,
+# not the prior open); an enclosing condition (if/||) catches it via
+# the failed final-command result.
+# NESTED native+c: redirect open(2)-failure abort is now implemented in c
+# (emit_redirects_guarded + emit_command skip-body + in_condition, so
+# `- echo > /bad` still aborts while `if`/`||` catch). janet deferred.
+# 55.24 bare redirect open failure aborts — no misroute + diagnostic
+run_sash 'echo hi > /nonexistent_dir_55/f
 echo after'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.24
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.24
 
-    # 55.25 open failure in an if-condition is caught: the failed final
-    # command makes the condition false → else branch (no misroute, no diag)
-    run_sash 'if echo hi > /nonexistent_dir_55/f; then echo yes; else echo no; fi'
-    [[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.25
+# 55.25 open failure in an if-condition is caught: the failed final
+# command makes the condition false → else branch (no misroute, no diag)
+run_sash 'if echo hi > /nonexistent_dir_55/f; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err && -z $rerr ]]; chk 55.25
 
-    # 55.26 `- echo > /bad` still ABORTS: `-` suppresses echo's write
-    # verdict, not the prior `exec N>file` open, which runs first (+ diagnostic)
-    run_sash '- echo hi > /nonexistent_dir_55/f
+# 55.26 `- echo > /bad` still ABORTS: `-` suppresses echo's write
+# verdict, not the prior `exec N>file` open, which runs first (+ diagnostic)
+run_sash '- echo hi > /nonexistent_dir_55/f
 echo after'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.26
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"test_bin: /nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.26
 
-    # 55.50 open failure is catchable with || too (symmetry with if), no diag
-    run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
-    [[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.50
-    else
-        skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.50
-    fi
-else
-    skip_chk 55.20; skip_chk 55.21; skip_chk 55.22; skip_chk 55.23
-    skip_chk 55.27; skip_chk 55.28; skip_chk 55.29
-    skip_chk 55.24; skip_chk 55.25; skip_chk 55.26; skip_chk 55.50
-fi
+# 55.50 open failure is catchable with || too (symmetry with if), no diag
+run_sash 'echo hi > /nonexistent_dir_55/f || echo caught'
+[[ $rc = 0 && $out = "caught" && -z $err && -z $rerr ]]; chk 55.50
 
 # --- DD#46 top-level positional rejection: directed error text (DD#60) ---
 
@@ -411,16 +395,12 @@ run_sash 'false || x=set; : $x; echo done'
 
 # e.b70.tbare a bare `[[ … ]]` result is unused → SB4018
 # e.b70.tdash `-` on a `[[ … ]]` discards the result — legal
-if in_modes native,c; then
-    run_sash '[[ a = a ]]'
-    [[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
+run_sash '[[ a = a ]]'
+[[ $rc != 0 && -z $out && $err == *SB4018* ]]; chk e.b70.tbare
 
-    run_sash '- [[ a = a ]]
+run_sash '- [[ a = a ]]
 echo after'
-    [[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.tdash
-else
-    skip_chk e.b70.tbare; skip_chk e.b70.tdash
-fi
+[[ $rc = 0 && $out = "after" && -z $err ]]; chk e.b70.tdash
 
 # e.b70.tdisc `[[ … ]] || :` explicitly discards the boolean → ok
 run_sash '[[ a = a ]] || :
@@ -440,22 +420,18 @@ run_sash '[[ a = b ]] || echo miss'
 # (reviewability, SB4040). Runtime negation is native-only
 # (c/janet `!` backend gap); the parse-time rejects are all modes. ──
 # bng.1 `! X && Y` reassociates to `(!X) && Y` (was wrongly SB4018)
-if in_modes native,c; then
-    run_sash 'if ! /bin/false && /bin/true; then echo Y; else echo N; fi'
-    [[ $rc = 0 && $out = "Y" && -z $rerr ]]; chk bng.1
-    # bng.2 `! X && action` runs the action when !X is true
-    run_sash '! /bin/false && /bin/echo ran'
-    [[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.2
-    # bng.3 `! X || action` runs the action when !X is false
-    run_sash '! /bin/true || /bin/echo ran'
-    [[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.3
-    # bng.6 escape hatch: a pipeline wrapped in a predicate function negates
-    run_sash 'f() { if /bin/false | /bin/cat; then return 0; fi; return 1 }
+run_sash 'if ! /bin/false && /bin/true; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $rerr ]]; chk bng.1
+# bng.2 `! X && action` runs the action when !X is true
+run_sash '! /bin/false && /bin/echo ran'
+[[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.2
+# bng.3 `! X || action` runs the action when !X is false
+run_sash '! /bin/true || /bin/echo ran'
+[[ $rc = 0 && $out = "ran" && -z $rerr ]]; chk bng.3
+# bng.6 escape hatch: a pipeline wrapped in a predicate function negates
+run_sash 'f() { if /bin/false | /bin/cat; then return 0; fi; return 1 }
 if ! f; then echo neg; fi'
-    [[ $rc = 0 && $out = "neg" && -z $rerr ]]; chk bng.6
-else
-    skip_chk bng.1; skip_chk bng.2; skip_chk bng.3; skip_chk bng.6
-fi
+[[ $rc = 0 && $out = "neg" && -z $rerr ]]; chk bng.6
 # bng.4 `!` on a pipeline is rejected — reviewer can't see `!`'s scope (SB4040)
 run_sash 'if ! /bin/true | /bin/cat; then echo x; fi'
 [[ $rc != 0 && -z $out && $err == *SB4040* ]]; chk bng.4
@@ -497,37 +473,25 @@ if f; then echo T; fi'
 # e.b70.fndisc `f || :` discards a `-> int` function's return → ok.
 # native+c: janet doesn't yet compile a `-> int` function used in `|| :`
 # position (see c-janet-fn-int-discard). janet deferred.
-if in_modes native,c; then
-    run_sash 'fn f -> int { return 3 }
+run_sash 'fn f -> int { return 3 }
 f || :
 echo done'
-    [[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.fndisc
-else
-    skip_chk e.b70.fndisc
-fi
+[[ $rc = 0 && $out = "done" && -z $err ]]; chk e.b70.fndisc
 
 # (A) abort channel: a CAUGHT failure prints NOTHING to stderr (the
 # `<argv0>: …` diagnostic is only for an *uncaught* abort).
 # e.a70.silent `if /bin/false` → else branch, no runtime diagnostic
-if in_modes native,c; then
-    run_sash 'if /bin/false; then echo y; else echo n; fi'
-    [[ $rc = 0 && $out = "n" && -z $rerr ]]; chk e.a70.silent
-else
-    skip_chk e.a70.silent
-fi
+run_sash 'if /bin/false; then echo y; else echo n; fi'
+[[ $rc = 0 && $out = "n" && -z $rerr ]]; chk e.a70.silent
 
 # (A) dynamic (interpolated) bad regex → runtime regcomp abort with the
 # `regexp error: …` diagnostic (compile-time validation only covers a
 # static pattern). native+c: c emits the runtime diagnostic and the harness
 # now captures its stderr into $rerr. janet deferred.
 # e.a70.regcomp
-if in_modes native,c; then
-    run_sash 'p="[bad"
+run_sash 'p="[bad"
 if match hello "$p"; then echo y; else echo n; fi'
-    [[ $rc != 0 && $rerr == *"regexp error"* ]]; chk e.a70.regcomp
-else
-    skip_chk e.a70.regcomp
-fi
+[[ $rc != 0 && $rerr == *"regexp error"* ]]; chk e.a70.regcomp
 
 # 55.41 an external command in a `while` condition is CAUGHT (a nonzero exit
 #       ends the loop), like `if` — it must not abort. bash: `done`, rc 0.
@@ -569,22 +533,18 @@ run_sash './tool a | /bin/cat'
 # condition are caught (not aborted); a `;` list's non-final member and an
 # if-body's final command are bare → they abort. native,c (janet emits
 # conditions from the AST — pre-existing control-flow gap, brace.sh native-only).
-if in_modes native,c; then
-    # cc.1 `&&` RHS failure is caught → else branch
-    run_sash 'if /bin/true && /bin/false; then echo Y; else echo N; fi'
-    [[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.1
-    # cc.2 `||` both sides fail → condition false → else (the `||` $?-reset fix)
-    run_sash 'if /bin/false || /bin/false; then echo Y; else echo N; fi'
-    [[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.2
-    # cc.3 `if a; b` is `a; if b` — the non-final `a` aborts (bare, discarded)
-    run_sash 'if /bin/false; /bin/true; then echo Y; else echo N; fi'
-    [[ $rc != 0 && -z $out ]]; chk cc.3
-    # cc.4 a failing if-body final command aborts (bare-command-uncaught)
-    run_sash 'if /bin/true; then /bin/false; fi'
-    [[ $rc != 0 && -z $out ]]; chk cc.4
-else
-    skip_chk cc.1; skip_chk cc.2; skip_chk cc.3; skip_chk cc.4
-fi
+# cc.1 `&&` RHS failure is caught → else branch
+run_sash 'if /bin/true && /bin/false; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.1
+# cc.2 `||` both sides fail → condition false → else (the `||` $?-reset fix)
+run_sash 'if /bin/false || /bin/false; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "N" && -z $rerr ]]; chk cc.2
+# cc.3 `if a; b` is `a; if b` — the non-final `a` aborts (bare, discarded)
+run_sash 'if /bin/false; /bin/true; then echo Y; else echo N; fi'
+[[ $rc != 0 && -z $out ]]; chk cc.3
+# cc.4 a failing if-body final command aborts (bare-command-uncaught)
+run_sash 'if /bin/true; then /bin/false; fi'
+[[ $rc != 0 && -z $out ]]; chk cc.4
 
 # --- SB4045: value-intrinsic wrong arity (was: fall-through to a bare command
 # and a runtime "bug: bare command passed to sash_exec"). Front-end — all modes.
@@ -634,16 +594,12 @@ run_sash 'epochseconds'
 # via.10-12 the legitimate forms are untouched
 # native,c only: janet exec's the getpid-class instead of implementing it
 # (filed, deferred: janet-getpid-class-intrinsics).
-if in_modes native,c; then
-    run_sash 'x=$(getenv HOME)
+run_sash 'x=$(getenv HOME)
 attest x [[ -n $x ]]
 echo ok'
-    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.10
-    run_sash 'p=$(getpid); if (( p > 0 )); then echo ok; fi'
-    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.11
-else
-    skip_chk via.10; skip_chk via.11
-fi
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.10
+run_sash 'p=$(getpid); if (( p > 0 )); then echo ok; fi'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.11
 # via.12 `argv` is NOT value-only — DD#60's out-param statement form stays legal
 run_sash 'array a
 argv a
@@ -732,15 +688,11 @@ run_sash '/bin/false || { echo "[$(status)][$(status)]"; }'
 [[ $rc = 0 && $out = "[1][1]" && -z $rerr ]]; chk 55.54
 
 # 55.55 `$(getcpid)` (sugar for `$!`) had the identical bug
-if in_modes native,c; then
-    run_sash '/bin/sleep 0 &
+run_sash '/bin/sleep 0 &
 p="$(getcpid)"
 [[ -n $p ]] || :
 echo ok'
-    [[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk 55.55
-else
-    skip_chk 55.55
-fi
+[[ $rc = 0 && $out = "ok" && -z $rerr ]]; chk 55.55
 
 # 55.56 no spelling reaches sash_exec as a bare command name — the shape of
 # the failure, pinned directly so a regression cannot be silent again
@@ -762,32 +714,20 @@ run_sash '/bin/false || { echo "s=$(status)"; }'
 # with the right status but emits no abort diagnostic.
 
 # 55.57 SIGTERM -> 143, matching bash
-if in_modes native,c; then
-    run_sash '/usr/bin/timeout --preserve-status -s TERM 0.1 /bin/sleep 5'
-    [[ $rc = 143 ]] \
-      && { ! in_modes native || [[ $rerr == *"(exit 143)"* ]]; }; chk 55.57
-else
-    skip_chk 55.57
-fi
+run_sash '/usr/bin/timeout --preserve-status -s TERM 0.1 /bin/sleep 5'
+[[ $rc = 143 ]] \
+  && { ! in_modes native || [[ $rerr == *"(exit 143)"* ]]; }; chk 55.57
 
 # 55.58 SIGPIPE -> 141. DD#55 makes the abort itself deliberate ("SIGPIPE is
 # the programmer's responsibility"); this pins the STATUS it aborts with.
-if in_modes native,c; then
-    run_sash '/usr/bin/timeout --preserve-status -s PIPE 0.1 /bin/sleep 5'
-    [[ $rc = 141 ]] \
-      && { ! in_modes native || [[ $rerr == *"(exit 141)"* ]]; }; chk 55.58
-else
-    skip_chk 55.58
-fi
+run_sash '/usr/bin/timeout --preserve-status -s PIPE 0.1 /bin/sleep 5'
+[[ $rc = 141 ]] \
+  && { ! in_modes native || [[ $rerr == *"(exit 141)"* ]]; }; chk 55.58
 
 # 55.59 a normal exit code is unaffected by the 128+signum path
-if in_modes native,c; then
-    run_sash '/bin/sh -c "exit 42"'
-    [[ $rc = 42 ]] \
-      && { ! in_modes native || [[ $rerr == *"(exit 42)"* ]]; }; chk 55.59
-else
-    skip_chk 55.59
-fi
+run_sash '/bin/sh -c "exit 42"'
+[[ $rc = 42 ]] \
+  && { ! in_modes native || [[ $rerr == *"(exit 42)"* ]]; }; chk 55.59
 
 # --- DD#55 + DD#99: the read family runs the same open(2) guard ---
 # `read ARR < f` / `readline v < f` carry their own redirects (SsaInst::
@@ -796,52 +736,46 @@ fi
 # from an empty file. Context governs the abort exactly as for `echo > f`
 # (55.24-55.26, 55.50). native,c: janet has no DD#55 abort channel at all
 # (task `c-janet-dd55-abort-channel`).
-if in_modes native,c; then
-    # 55.60 bare `read ARR < nosuch` aborts — no empty array, + diagnostic
-    run_sash 'read a < /nonexistent_dir_55/f
+# 55.60 bare `read ARR < nosuch` aborts — no empty array, + diagnostic
+run_sash 'read a < /nonexistent_dir_55/f
 echo "n=$(len a)"'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.60
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.60
 
-    # 55.61 bare `readline v < nosuch` aborts — no empty line, + diagnostic
-    run_sash 'readline v < /nonexistent_dir_55/f
+# 55.61 bare `readline v < nosuch` aborts — no empty line, + diagnostic
+run_sash 'readline v < /nonexistent_dir_55/f
 attest v [[ -n $v ]]
 echo "v=$v"'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.61
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.61
 
-    # 55.62 `- read ARR < nosuch` still ABORTS: `-` suppresses the read's own
-    # verdict, not the prior open, which runs first (mirrors 55.26)
-    run_sash '- read a < /nonexistent_dir_55/f
+# 55.62 `- read ARR < nosuch` still ABORTS: `-` suppresses the read's own
+# verdict, not the prior open, which runs first (mirrors 55.26)
+run_sash '- read a < /nonexistent_dir_55/f
 echo "n=$(len a)"'
-    [[ $rc != 0 && -z $out && -z $err \
-       && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.62
+[[ $rc != 0 && -z $out && -z $err \
+   && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.62
 
-    # 55.63/55.64 are NOT fail-first gates — they passed before the guard
-    # existed too, because the unguarded read fell through to the harness's
-    # `</dev/null` stdin and returned empty. They pin the other half of the
-    # fix: now that the guard DOES fire, `in_condition` must catch it rather
-    # than abort (getting that wrong turns these red).
-    # 55.63 the failure is caught in an if-condition → else branch, no diag
-    run_sash 'if read a < /nonexistent_dir_55/f { echo yes } else { echo no }
+# 55.63/55.64 are NOT fail-first gates — they passed before the guard
+# existed too, because the unguarded read fell through to the harness's
+# `</dev/null` stdin and returned empty. They pin the other half of the
+# fix: now that the guard DOES fire, `in_condition` must catch it rather
+# than abort (getting that wrong turns these red).
+# 55.63 the failure is caught in an if-condition → else branch, no diag
+run_sash 'if read a < /nonexistent_dir_55/f { echo yes } else { echo no }
 echo "n=$(len a)"'
-    [[ $rc = 0 && $out = "no
+[[ $rc = 0 && $out = "no
 n=0" && -z $err && -z $rerr ]]; chk 55.63
 
-    # 55.64 ... and with `||` too (symmetry with if, mirrors 55.50)
-    run_sash 'read a < /nonexistent_dir_55/f || echo caught
+# 55.64 ... and with `||` too (symmetry with if, mirrors 55.50)
+run_sash 'read a < /nonexistent_dir_55/f || echo caught
 echo "n=$(len a)"'
-    [[ $rc = 0 && $out = "caught
+[[ $rc = 0 && $out = "caught
 n=0" && -z $err && -z $rerr ]]; chk 55.64
-else
-    skip_chk 55.60; skip_chk 55.61; skip_chk 55.62
-    skip_chk 55.63; skip_chk 55.64
-fi
 
 # 55.65/55.66 the guard does not disturb a redirect that opens fine.
 # native,c only: janet drops the redirect and reads stdin instead —
 # janet-read-family-ignores-input-redirect (pre-existing, not this guard).
-if in_modes native,c; then
   # DD#99 `read ARR` splits the whole stream on NUL, so two NUL-terminated
   # fields are two elements.
   printf 'alpha\0beta\0' > /tmp/sash_spec_55_65.txt
@@ -855,9 +789,6 @@ echo "n=$(len a)"'
 attest v [[ -n $v ]]
 echo "v=$v"'
   [[ $rc = 0 && $out = "v=alpha beta" && -z $err ]]; chk 55.66
-else
-  skip_chk 55.65; skip_chk 55.66
-fi
 
 # --- DD#55 condition position: `while`/`until` and the operand of `!` ---
 # DD#55 tabulates `cmd || action` / `if cmd` / `while cmd` together as
@@ -867,7 +798,6 @@ fi
 # Both backends previously got two of these wrong: native treated only
 # Branch-terminated blocks as conditions, so `while` aborted; and both took
 # the DD#70 `__negate_test_result` sigil for the condition, so `!` aborted.
-if in_modes native,c; then
   # 55.67 failed open in a `while` condition ends the loop, body never runs
   run_sash 'int n = 0
 while echo hi > /nonexistent_dir_55/f { n = $(( n + 1 )); if (( n > 2 )) { break } }
@@ -909,11 +839,7 @@ n=0" && -z $err && -z $rerr ]]; chk 55.71
   run_sash 'echo hi > /nonexistent_dir_55/f
 echo done'
   [[ $rc != 0 && -z $out && -z $err \
-     && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.72
-else
-  skip_chk 55.67; skip_chk 55.68; skip_chk 55.69
-  skip_chk 55.70; skip_chk 55.71; skip_chk 55.72
-fi
+ && $rerr == *"/nonexistent_dir_55/f: No such file or directory"* ]]; chk 55.72
 
 set -e
 tally

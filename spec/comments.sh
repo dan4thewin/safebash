@@ -65,15 +65,11 @@ run_sash '/bin/echo a
 # cmt.11 an inline comment inside a `$( )` body is dropped; the command runs.
 # Gated native,c: janet doesn't inline a user-function `$(g)` capture (spawns it
 # as an external — a pre-existing backend gap, unrelated to comments).
-if in_modes native,c; then
-    run_sash 'fn g { /bin/echo hi }
+run_sash 'fn g { /bin/echo hi }
 v=$(g # inline comment
 )
 /bin/echo $v'
-    [[ $rc = 0 && $out = "hi" && -z $err ]]; chk cmt.11
-else
-    skip_chk cmt.11
-fi
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk cmt.11
 
 set -e
 tally

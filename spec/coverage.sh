@@ -91,12 +91,8 @@ run_sash 'export A=1'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk cov.24
 # cov.25 compact dispatch with the `=~` operator (no spaces) — existing specs
 # only exercise compact `==`; this covers the `=~` compact-parse path
-if in_modes native,c; then
-    run_sash '[[abc=~b]] && echo match'
-    [[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
-else
-    skip_chk cov.25
-fi
+run_sash '[[abc=~b]] && echo match'
+[[ $rc = 0 && $out = match && -z $err ]]; chk cov.25
 # cov.26 `>&N` dup redirect (emit_dup_output) — only the harness/converter use
 # it; no spec exercises the compiled codegen path. `echo hi >&2` → stderr.
 if in_modes native; then
@@ -135,96 +131,84 @@ fi
 # (unaryop_to_ssa / try_fold_unop / incdec_to_ssa / compound_assign_to_ssa /
 # comma_to_ssa) and validate_arith_comma_in_condition's passing path
 # untested. All compile+run identically in native and c.
-if in_modes native,c; then
-    # unary ops in $(( )) with a runtime (variable) operand — unaryop_to_ssa
-    run_sash 'int x=5; echo $(( -x ))'
-    [[ $rc = 0 && $out = -5 && -z $err ]]; chk cov.29
-    run_sash 'int x=5; echo $(( ~x ))'
-    [[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.30
-    run_sash 'int x=5; echo $(( !x ))'
-    [[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.31
-    run_sash 'int x=0; echo $(( !x ))'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.32
-    # unary ops on a constant operand — try_fold_unop (compile-time fold)
-    run_sash 'echo $(( ~5 ))'
-    [[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.33
-    run_sash 'echo $(( !0 ))'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.34
-    # postfix inc/dec as a (( )) statement — incdec_to_ssa
-    run_sash 'int x=5; (( x++ )); echo $x'
-    [[ $rc = 0 && $out = 6 && -z $err ]]; chk cov.35
-    run_sash 'int x=5; (( x-- )); echo $x'
-    [[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.36
-    # compound-assign statements — compound_assign_to_ssa + each arith op
-    run_sash 'int x=5; (( x += 3 )); echo $x'
-    [[ $rc = 0 && $out = 8 && -z $err ]]; chk cov.37
-    run_sash 'int x=5; (( x -= 3 )); echo $x'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.38
-    run_sash 'int x=5; (( x *= 3 )); echo $x'
-    [[ $rc = 0 && $out = 15 && -z $err ]]; chk cov.39
-    run_sash 'int x=6; (( x /= 3 )); echo $x'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.40
-    run_sash 'int x=7; (( x %= 3 )); echo $x'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.41
-    run_sash 'int x=5; (( x <<= 1 )); echo $x'
-    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.42
-    run_sash 'int x=20; (( x >>= 2 )); echo $x'
-    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.43
-    run_sash 'int x=5; (( x &= 3 )); echo $x'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.44
-    run_sash 'int x=5; (( x |= 2 )); echo $x'
-    [[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.45
-    run_sash 'int x=5; (( x ^= 1 )); echo $x'
-    [[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.46
-    # comma expression in $(( )) — comma_to_ssa (value is the last part)
-    run_sash 'int a=1; int b=2; echo $(( a, b ))'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.47
-    # comma-in-condition PASSING path: a non-final mutation then a final
-    # test — validate_arith_comma_in_condition accepts (cov.1-3 reject)
-    run_sash 'int a=0; if (( a += 1, a )); then echo y; fi'
-    [[ $rc = 0 && $out = y && -z $err ]]; chk cov.48
-else
-    for n in 29 30 31 32 33 34 35 36 37 38 39 40 41 42 43 44 45 46 47 48; do
-        skip_chk cov.$n
-    done
-fi
+# unary ops in $(( )) with a runtime (variable) operand — unaryop_to_ssa
+run_sash 'int x=5; echo $(( -x ))'
+[[ $rc = 0 && $out = -5 && -z $err ]]; chk cov.29
+run_sash 'int x=5; echo $(( ~x ))'
+[[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.30
+run_sash 'int x=5; echo $(( !x ))'
+[[ $rc = 0 && $out = 0 && -z $err ]]; chk cov.31
+run_sash 'int x=0; echo $(( !x ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.32
+# unary ops on a constant operand — try_fold_unop (compile-time fold)
+run_sash 'echo $(( ~5 ))'
+[[ $rc = 0 && $out = -6 && -z $err ]]; chk cov.33
+run_sash 'echo $(( !0 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.34
+# postfix inc/dec as a (( )) statement — incdec_to_ssa
+run_sash 'int x=5; (( x++ )); echo $x'
+[[ $rc = 0 && $out = 6 && -z $err ]]; chk cov.35
+run_sash 'int x=5; (( x-- )); echo $x'
+[[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.36
+# compound-assign statements — compound_assign_to_ssa + each arith op
+run_sash 'int x=5; (( x += 3 )); echo $x'
+[[ $rc = 0 && $out = 8 && -z $err ]]; chk cov.37
+run_sash 'int x=5; (( x -= 3 )); echo $x'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.38
+run_sash 'int x=5; (( x *= 3 )); echo $x'
+[[ $rc = 0 && $out = 15 && -z $err ]]; chk cov.39
+run_sash 'int x=6; (( x /= 3 )); echo $x'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.40
+run_sash 'int x=7; (( x %= 3 )); echo $x'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.41
+run_sash 'int x=5; (( x <<= 1 )); echo $x'
+[[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.42
+run_sash 'int x=20; (( x >>= 2 )); echo $x'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.43
+run_sash 'int x=5; (( x &= 3 )); echo $x'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.44
+run_sash 'int x=5; (( x |= 2 )); echo $x'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.45
+run_sash 'int x=5; (( x ^= 1 )); echo $x'
+[[ $rc = 0 && $out = 4 && -z $err ]]; chk cov.46
+# comma expression in $(( )) — comma_to_ssa (value is the last part)
+run_sash 'int a=1; int b=2; echo $(( a, b ))'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.47
+# comma-in-condition PASSING path: a non-final mutation then a final
+# test — validate_arith_comma_in_condition accepts (cov.1-3 reject)
+run_sash 'int a=0; if (( a += 1, a )); then echo y; fi'
+[[ $rc = 0 && $out = y && -z $err ]]; chk cov.48
 # cov.49-57 arithmetic ternary `cond ? a : b` — no feature spec exercises it,
 # leaving native transform/codegen (SsaValue::Ternary / lower_ternary_value /
 # lower_ternary_int) and the emit_c str/int ternary path untested. cov.49-56
 # use simple branches; cov.57 pins lazy evaluation (both backends short-circuit
 # like bash — the fix for the eager-eval bug).
-if in_modes native,c; then
-    run_sash 'int x=5; echo $(( x>0 ? 1 : 2 ))'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.49
-    run_sash 'int x=-5; echo $(( x>0 ? 1 : 2 ))'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.50
-    # expression branches (arith on each side)
-    run_sash 'int x=5; int y=$(( x>3 ? x*2 : x+1 )); echo $y'
-    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.51
-    # falsy condition (0) selects the else branch
-    run_sash 'int x=0; echo $(( x ? 10 : 20 ))'
-    [[ $rc = 0 && $out = 20 && -z $err ]]; chk cov.52
-    # truthy (non-zero) condition selects the then branch
-    run_sash 'int x=7; echo $(( x ? 10 : 20 ))'
-    [[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.53
-    # nested ternary in the then branch
-    run_sash 'int x=7; echo $(( x>5 ? (x>10 ? 3 : 2) : 1 ))'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.54
-    # ternary in an int-assignment (max of two)
-    run_sash 'int a=1; int b=2; int m=$(( a>b ? a : b )); echo $m'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.55
-    # `!=` condition (spaced) selecting the else branch
-    run_sash 'int x=0; echo $(( x != 0 ? 5 : 9 ))'
-    [[ $rc = 0 && $out = 9 && -z $err ]]; chk cov.56
-    # lazy eval: a div-by-zero in the UNTAKEN branch must NOT fire (bash
-    # short-circuits `?:`). x=0 → else → 42, no `division by 0` on stderr.
-    run_sash 'int x=0; echo $(( x>0 ? 10/x : 42 ))'
-    [[ $rc = 0 && $out = 42 && -z $err ]]; chk cov.57
-else
-    for n in 49 50 51 52 53 54 55 56 57; do
-        skip_chk cov.$n
-    done
-fi
+run_sash 'int x=5; echo $(( x>0 ? 1 : 2 ))'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.49
+run_sash 'int x=-5; echo $(( x>0 ? 1 : 2 ))'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.50
+# expression branches (arith on each side)
+run_sash 'int x=5; int y=$(( x>3 ? x*2 : x+1 )); echo $y'
+[[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.51
+# falsy condition (0) selects the else branch
+run_sash 'int x=0; echo $(( x ? 10 : 20 ))'
+[[ $rc = 0 && $out = 20 && -z $err ]]; chk cov.52
+# truthy (non-zero) condition selects the then branch
+run_sash 'int x=7; echo $(( x ? 10 : 20 ))'
+[[ $rc = 0 && $out = 10 && -z $err ]]; chk cov.53
+# nested ternary in the then branch
+run_sash 'int x=7; echo $(( x>5 ? (x>10 ? 3 : 2) : 1 ))'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.54
+# ternary in an int-assignment (max of two)
+run_sash 'int a=1; int b=2; int m=$(( a>b ? a : b )); echo $m'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.55
+# `!=` condition (spaced) selecting the else branch
+run_sash 'int x=0; echo $(( x != 0 ? 5 : 9 ))'
+[[ $rc = 0 && $out = 9 && -z $err ]]; chk cov.56
+# lazy eval: a div-by-zero in the UNTAKEN branch must NOT fire (bash
+# short-circuits `?:`). x=0 → else → 42, no `division by 0` on stderr.
+run_sash 'int x=0; echo $(( x>0 ? 10/x : 42 ))'
+[[ $rc = 0 && $out = 42 && -z $err ]]; chk cov.57
 # cov.58 the `command` builtin is not in sash-native (DD#23 — "command -v" is
 # `[[ -x /path ]]`); any `command …` is rejected as dynamic execution (SB4001,
 # check_dynexec), same class as eval/source. Pins the removal of the dead
@@ -266,16 +250,12 @@ run_sash '[[ ( -n x ) ]] && echo y'
 # (codegen/arithmetic.rs emit_arith_op BitAnd/BitOr/BitXor → band/bor/bxor).
 # The compound-assign forms (&=,|=,^=) are cov.44-46; the BINARY forms were
 # untested. a=6,b=3 → &=2, |=7, ^=5. native+c.
-if in_modes native,c; then
-    run_sash 'int a=6; int b=3; echo $(( a & b ))'
-    [[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.65
-    run_sash 'int a=6; int b=3; echo $(( a | b ))'
-    [[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.66
-    run_sash 'int a=6; int b=3; echo $(( a ^ b ))'
-    [[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.67
-else
-    skip_chk cov.65; skip_chk cov.66; skip_chk cov.67
-fi
+run_sash 'int a=6; int b=3; echo $(( a & b ))'
+[[ $rc = 0 && $out = 2 && -z $err ]]; chk cov.65
+run_sash 'int a=6; int b=3; echo $(( a | b ))'
+[[ $rc = 0 && $out = 7 && -z $err ]]; chk cov.66
+run_sash 'int a=6; int b=3; echo $(( a ^ b ))'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk cov.67
 # cov.68-69 runtime divide/modulo by zero (codegen/arithmetic.rs
 # emit_div_by_zero_error) — the FIRING path: bash's "division by 0" to stderr,
 # result 0, rc 0 (cov.57 only tested the ternary-UNTAKEN, non-firing case).
@@ -382,12 +362,8 @@ run_sash 'int array a=(1 2 3); echo ${a[0]:-hi}'
 # cov.85 an int-array cell with a literal default is accepted and lowers to the
 # identity-element ternary — native/c only (int arrays are a pre-existing janet
 # gap: `scan-number` on the array literal; janet-int-array-and-cell-default).
-if in_modes native,c; then
-    run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
-    [[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.85
-else
-    skip_chk cov.85
-fi
+run_sash 'int array a=(1 2 3); echo ${a[0]:-0}'
+[[ $rc = 0 && $out = 1 && -z $err ]]; chk cov.85
 
 # cov.79 a direct `base#digits` arith literal (`16#ff`) is rejected SB4035 (bash
 # arbitrary base, DD#72-dropped) — the direct-arith path, distinct from the
@@ -397,12 +373,8 @@ run_sash 'echo $(( 16#ff ))'
 
 # cov.89 `[[ -t N ]]` isatty test (native emit_isatty_test) — native,c only
 # (janet has no `-t`). Captured stdout in the harness is not a tty → notty.
-if in_modes native,c; then
-    run_sash 'if [[ -t 1 ]] { echo tty } else { echo notty }'
-    [[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
-else
-    skip_chk cov.89
-fi
+run_sash 'if [[ -t 1 ]] { echo tty } else { echo notty }'
+[[ $rc = 0 && $out = notty && -z $err ]]; chk cov.89
 # cov.90 a full-line comment inside a compiled program — comments are lexical
 # trivia dropped by the Scanner (see spec/comments.sh); this pins that a
 # standalone comment line still compiles and runs the following statement.
@@ -441,31 +413,25 @@ done
 
 # cov.95 ...and `select` is now usable as a user-defined function — the
 # capability the table took away (it parsed, but was unusable at the call site)
-if in_modes native,c; then
-    run_sash 'select() {
+run_sash 'select() {
   /bin/echo picked
 }
 select'
-    [[ $rc = 0 && $out = "picked" && -z $err ]]; chk cov.95
-else skip_chk cov.95; fi
+[[ $rc = 0 && $out = "picked" && -z $err ]]; chk cov.95
 
 # cov.96 ...same for `export`
-if in_modes native,c; then
-    run_sash 'export() {
+run_sash 'export() {
   /bin/echo exported
 }
 export'
-    [[ $rc = 0 && $out = "exported" && -z $err ]]; chk cov.96
-else skip_chk cov.96; fi
+[[ $rc = 0 && $out = "exported" && -z $err ]]; chk cov.96
 
 # cov.97 ...and `readonly`
-if in_modes native,c; then
-    run_sash 'readonly() {
+run_sash 'readonly() {
   /bin/echo ro
 }
 readonly'
-    [[ $rc = 0 && $out = "ro" && -z $err ]]; chk cov.97
-else skip_chk cov.97; fi
+[[ $rc = 0 && $out = "ro" && -z $err ]]; chk cov.97
 
 # cov.98 `eval` is still rejected — SB4001, dynamic execution (validate, not
 # the parser), and the message keeps the "no runtime interpreter" clause the

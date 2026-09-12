@@ -14,56 +14,40 @@ plan=30
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/echo hi) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo no }'
-    [[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.1
-else skip_chk 88.1; fi
+run_sash 'if x=$(/bin/echo hi) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo no }'
+[[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.1
 
 # 88.2 non-negated failure: else runs; `$?` in else is the REAL exit code (3),
 # as the first action in the handling branch (DD#55 handling-position rule)
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/sh -c "exit 3") { attest x [[ -n $x ]]; /bin/echo "[$x]" } else { /bin/echo "failed $?" }'
-    [[ $rc = 0 && $out = "failed 3" && -z $err ]]; chk 88.2
-else skip_chk 88.2; fi
+run_sash 'if x=$(/bin/sh -c "exit 3") { attest x [[ -n $x ]]; /bin/echo "[$x]" } else { /bin/echo "failed $?" }'
+[[ $rc = 0 && $out = "failed 3" && -z $err ]]; chk 88.2
 
 # 88.3 negated `if ! x=$(cmd)`: the branch is taken on FAILURE; x is used after
-if in_modes native,c; then
-    run_sash 'if ! x=$(/bin/echo hi) { /bin/echo bang }
+run_sash 'if ! x=$(/bin/echo hi) { /bin/echo bang }
 attest x [[ -n $x ]]; /bin/echo "got [$x]"'
-    [[ $rc = 0 && $out = "got [hi]" && -z $err ]]; chk 88.3
-else skip_chk 88.3; fi
+[[ $rc = 0 && $out = "got [hi]" && -z $err ]]; chk 88.3
 
 # 88.4 `$?` as the FIRST action in the then-branch is 0 on success (x still must
 # be read somewhere — here after the if)
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/echo hi) { /bin/echo "status $?" }
+run_sash 'if x=$(/bin/echo hi) { /bin/echo "status $?" }
 attest x [[ -n $x ]]; /bin/echo "$x"'
-    [[ $rc = 0 && $out = $'status 0\nhi' && -z $err ]]; chk 88.4
-else skip_chk 88.4; fi
+[[ $rc = 0 && $out = $'status 0\nhi' && -z $err ]]; chk 88.4
 
 # 88.5 the captured command actually FAILS → else branch (no abort)
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/false) { attest x [[ -n $x ]]; /bin/echo "[$x]" } else { /bin/echo caught }'
-    [[ $rc = 0 && $out = "caught" && -z $err ]]; chk 88.5
-else skip_chk 88.5; fi
+run_sash 'if x=$(/bin/false) { attest x [[ -n $x ]]; /bin/echo "[$x]" } else { /bin/echo caught }'
+[[ $rc = 0 && $out = "caught" && -z $err ]]; chk 88.5
 
 # 88.6 pipeline RHS `$(a | b)`: stdout captured, condition = pipeline status
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/echo hi | /bin/cat) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo no }'
-    [[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.6
-else skip_chk 88.6; fi
+run_sash 'if x=$(/bin/echo hi | /bin/cat) { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo no }'
+[[ $rc = 0 && $out = "ok [hi]" && -z $err ]]; chk 88.6
 
 # 88.7 pipeline failure (pipefail) → else; `$?` is the aggregate status (1)
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/false | /bin/cat) { attest x [[ -n $x ]]; /bin/echo ok } else { /bin/echo "failed $?" }'
-    [[ $rc = 0 && $out = "failed 1" && -z $err ]]; chk 88.7
-else skip_chk 88.7; fi
+run_sash 'if x=$(/bin/false | /bin/cat) { attest x [[ -n $x ]]; /bin/echo ok } else { /bin/echo "failed $?" }'
+[[ $rc = 0 && $out = "failed 1" && -z $err ]]; chk 88.7
 
 # 88.8 `while x=$(cmd)`: same capture-condition form in a loop
-if in_modes native,c; then
-    run_sash 'while x=$(/bin/echo one) { attest x [[ -n $x ]]; /bin/echo "[$x]"; break }'
-    [[ $rc = 0 && $out = "[one]" && -z $err ]]; chk 88.8
-else skip_chk 88.8; fi
+run_sash 'while x=$(/bin/echo one) { attest x [[ -n $x ]]; /bin/echo "[$x]"; break }'
+[[ $rc = 0 && $out = "[one]" && -z $err ]]; chk 88.8
 
 # ── `!` vs `else`: `$?` magnitude under negation (uniform with a plain command
 # condition — `!` = NegateTestResult collapses the stored status to 0/1; the
@@ -72,28 +56,22 @@ else skip_chk 88.8; fi
 # 88.15 negated `if ! x=$(cmd)` on a FAILING command: the bang-branch is taken,
 # and `$?` there is the NEGATED boolean (0), NOT the command's real code — `!`
 # collapses the magnitude, exactly like `if ! cmd`. (x is read after the if.)
-if in_modes native,c; then
-    run_sash 'if ! x=$(/bin/sh -c "/bin/echo o; exit 7") { /bin/echo "neg $?" }
+run_sash 'if ! x=$(/bin/sh -c "/bin/echo o; exit 7") { /bin/echo "neg $?" }
 attest x [[ -n $x ]]; /bin/echo "x=[$x]"'
-    [[ $rc = 0 && $out = $'neg 0\nx=[o]' && -z $err ]]; chk 88.15
-else skip_chk 88.15; fi
+[[ $rc = 0 && $out = $'neg 0\nx=[o]' && -z $err ]]; chk 88.15
 
 # 88.16 the SAME failing command via the non-negated `else` form: `$?` in the
 # else branch is the command's REAL exit code (7). Use this spelling to read the
 # numeric status in-branch.
-if in_modes native,c; then
-    run_sash 'if x=$(/bin/sh -c "/bin/echo o; exit 7") { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo "else $?" }'
-    [[ $rc = 0 && $out = "else 7" && -z $err ]]; chk 88.16
-else skip_chk 88.16; fi
+run_sash 'if x=$(/bin/sh -c "/bin/echo o; exit 7") { attest x [[ -n $x ]]; /bin/echo "ok [$x]" } else { /bin/echo "else $?" }'
+[[ $rc = 0 && $out = "else 7" && -z $err ]]; chk 88.16
 
 # 88.17 a BARE external command name (`printf`, not `/usr/bin/printf`) is a
 # capture-condition too — the external test must not require a `/`. (Regression:
 # `validate` runs before command resolution, so the head is still bare; the
 # external test excludes intrinsics/builtins/functions, not "no slash".)
-if in_modes native,c; then
-    run_sash 'if out=$(printf foo) { attest out [[ -n $out ]]; /bin/echo "y $out" }'
-    [[ $rc = 0 && $out = "y foo" && -z $err ]]; chk 88.17
-else skip_chk 88.17; fi
+run_sash 'if out=$(printf foo) { attest out [[ -n $out ]]; /bin/echo "y $out" }'
+[[ $rc = 0 && $out = "y foo" && -z $err ]]; chk 88.17
 
 # ── Taint + rejects (backend-independent: validate / taint) ──
 
@@ -122,10 +100,8 @@ run_sash 'if x=foo$(/bin/echo bar) { /bin/echo $x }'
 # 88.13 DD#101 carve-out: `$(getenv NAME)` IS a capture-condition. This spec
 # previously pinned the opposite (SB4025) — DD#101 overturned it, because the
 # getenv lookup is the one intrinsic result that can legitimately fail.
-if in_modes native,c; then
-    run_sash 'if x=$(getenv HOME) { attest x [[ -n $x ]]; /bin/echo "got [$x]" }'
-    [[ $rc = 0 && $out == "got ["*"]" && -z $err ]]; chk 88.13
-else skip_chk 88.13; fi
+run_sash 'if x=$(getenv HOME) { attest x [[ -n $x ]]; /bin/echo "got [$x]" }'
+[[ $rc = 0 && $out == "got ["*"]" && -z $err ]]; chk 88.13
 
 # 88.14 a plain literal RHS in a condition is a value binding → SB4025 with the
 # "sequence it" advice (Group A — no capture involved, so NOT the Group-B text)
@@ -150,64 +126,50 @@ unset SASH_SPEC_UNSET 2>/dev/null || true
 
 # dd101.1 the shape DG asked for: `h=$(getenv NAME) || h=DEFAULT`. A present
 # name succeeds, so the fallback does not run.
-if in_modes native,c; then
-    run_sash 'str h=""
+run_sash 'str h=""
 h=$(getenv SASH_SPEC_SET) || h=/fallback
 attest h [[ -n $h ]]; /bin/echo "[$h]"'
-    [[ $rc = 0 && $out = "[/spec/value]" && -z $err ]]; chk dd101.1
-else skip_chk dd101.1; fi
+[[ $rc = 0 && $out = "[/spec/value]" && -z $err ]]; chk dd101.1
 
 # dd101.2 an unset name is a FAILED lookup → the fallback runs
-if in_modes native,c; then
-    run_sash 'str h=""
+run_sash 'str h=""
 h=$(getenv SASH_SPEC_UNSET) || h=/fallback
 attest h [[ -n $h ]]; /bin/echo "[$h]"'
-    [[ $rc = 0 && $out = "[/fallback]" && -z $err ]]; chk dd101.2
-else skip_chk dd101.2; fi
+[[ $rc = 0 && $out = "[/fallback]" && -z $err ]]; chk dd101.2
 
 # dd101.3 set-to-EMPTY is a SUCCESSFUL lookup (POSIX getenv: the variable
 # exists). The fallback must NOT fire, and h must be the empty string. This is
 # the one check that pins unset-vs-empty apart; the runtime distinguishes them
 # by the returned POINTER, since the length is 0 either way.
-if in_modes native,c; then
-    run_sash 'str h="seed"
+run_sash 'str h="seed"
 h=$(getenv SASH_SPEC_EMPTY) || h=/fallback
 attest h [[ $h != /fallback ]]; /bin/echo "[$h]"'
-    [[ $rc = 0 && $out = "[]" && -z $err ]]; chk dd101.3
-else skip_chk dd101.3; fi
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk dd101.3
 
 # dd101.4 the DD#88 negated capture-condition form over getenv
-if in_modes native,c; then
-    run_sash 'str h="seed"
+run_sash 'str h="seed"
 if ! h=$(getenv SASH_SPEC_UNSET) { /bin/echo absent }
 attest h [[ -z $h ]]; /bin/echo "[$h]"'
-    [[ $rc = 0 && $out = $'absent\n[]' && -z $err ]]; chk dd101.4
-else skip_chk dd101.4; fi
+[[ $rc = 0 && $out = $'absent\n[]' && -z $err ]]; chk dd101.4
 
 # dd101.5 non-negated: a present name takes the then-branch and captures
-if in_modes native,c; then
-    run_sash 'str h="seed"
+run_sash 'str h="seed"
 if h=$(getenv SASH_SPEC_SET) { attest h [[ -n $h ]]; /bin/echo "hit [$h]" } else { /bin/echo miss }'
-    [[ $rc = 0 && $out = "hit [/spec/value]" && -z $err ]]; chk dd101.5
-else skip_chk dd101.5; fi
+[[ $rc = 0 && $out = "hit [/spec/value]" && -z $err ]]; chk dd101.5
 
 # dd101.6 ...and an unset name takes the else-branch, where `$?` is the real
 # nonzero lookup status (DD#55 handling-position rule)
-if in_modes native,c; then
-    run_sash 'str h="seed"
+run_sash 'str h="seed"
 if h=$(getenv SASH_SPEC_UNSET) { attest h [[ -n $h ]]; /bin/echo "hit [$h]" } else { /bin/echo "miss $?" }'
-    [[ $rc = 0 && $out = "miss 1" && -z $err ]]; chk dd101.6
-else skip_chk dd101.6; fi
+[[ $rc = 0 && $out = "miss 1" && -z $err ]]; chk dd101.6
 
 # dd101.7 a failed lookup does NOT abort — DD#101 rules abort out by
 # construction, since `||` branches on a status and an abort would tear the
 # program down before the fallback could run
-if in_modes native,c; then
-    run_sash 'str h="seed"
+run_sash 'str h="seed"
 h=$(getenv SASH_SPEC_UNSET) || h=/fallback
 attest h [[ -n $h ]]; /bin/echo done'
-    [[ $rc = 0 && $out = "done" && -z $rerr ]]; chk dd101.7
-else skip_chk dd101.7; fi
+[[ $rc = 0 && $out = "done" && -z $rerr ]]; chk dd101.7
 
 # dd101.8 taint survives the join: the `||` fallback binds a clean literal,
 # but the conservative join keeps h tainted, so a use without attest is still

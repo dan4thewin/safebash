@@ -53,22 +53,18 @@ run_sash 'int array a=(2 0 9); echo ${a["5"]}'
 
 # ── C. explicit array indices accepted (native,c — janet subscript-value gap) ──
 
-if in_modes native,c; then
-    # 80.9 integer literal
-    run_sash 'int array a=(2 0 9); echo ${a[2]}'
-    [[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.9
-    # 80.10 a `$var` index
-    run_sash 'int array a=(2 0 9); int i=2; echo ${a[$i]}'
-    [[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.10
-    # 80.11 an EXPLICIT arithmetic index (the sanctioned computed form)
-    run_sash 'int array a=(2 0 9); int i=1; echo ${a[$(( i + 1 ))]}'
-    [[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.11
-    # 80.12 an explicit nested expansion index: a[0]=2 → a[${a[0]}] = a[2] = 9
-    run_sash 'int array a=(2 0 9); echo ${a[${a[0]}]}'
-    [[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.12
-else
-    skip_chk 80.9; skip_chk 80.10; skip_chk 80.11; skip_chk 80.12
-fi
+# 80.9 integer literal
+run_sash 'int array a=(2 0 9); echo ${a[2]}'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.9
+# 80.10 a `$var` index
+run_sash 'int array a=(2 0 9); int i=2; echo ${a[$i]}'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.10
+# 80.11 an EXPLICIT arithmetic index (the sanctioned computed form)
+run_sash 'int array a=(2 0 9); int i=1; echo ${a[$(( i + 1 ))]}'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.11
+# 80.12 an explicit nested expansion index: a[0]=2 → a[${a[0]}] = a[2] = 9
+run_sash 'int array a=(2 0 9); echo ${a[${a[0]}]}'
+[[ $rc = 0 && $out = "9" && -z $err ]]; chk 80.12
 
 # ── D. map keys accepted (bareword / $var / quoted / integer / expansion) ──
 
@@ -97,16 +93,12 @@ run_sash 'map src=([k]=2); map m=([2]=two); echo ${m[${src[k]}]}'
 
 # ── E. nesting unrolls (native,c) ──
 
-if in_modes native,c; then
-    # 80.18 a map key that is itself a map read: inner[k]=foo → outer[foo]=win
-    run_sash 'map inner=([k]=foo); map outer=([foo]=win); echo ${outer[${inner[k]}]}'
-    [[ $rc = 0 && $out = "win" && -z $err ]]; chk 80.18
-    # 80.19 a double-quoted key interpolates (string-building, not arithmetic)
-    run_sash 'map m=([pX]=hit); s=X; echo ${m["p$s"]}'
-    [[ $rc = 0 && $out = "hit" && -z $err ]]; chk 80.19
-else
-    skip_chk 80.18; skip_chk 80.19
-fi
+# 80.18 a map key that is itself a map read: inner[k]=foo → outer[foo]=win
+run_sash 'map inner=([k]=foo); map outer=([foo]=win); echo ${outer[${inner[k]}]}'
+[[ $rc = 0 && $out = "win" && -z $err ]]; chk 80.18
+# 80.19 a double-quoted key interpolates (string-building, not arithmetic)
+run_sash 'map m=([pX]=hit); s=X; echo ${m["p$s"]}'
+[[ $rc = 0 && $out = "hit" && -z $err ]]; chk 80.19
 
 # ── F. the positional splat `$@` / `$*` isn't subscriptable (was a codegen ICE
 # `undefined array: @`; now a clean reject). Mode-independent (validate). ──

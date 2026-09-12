@@ -81,34 +81,29 @@ run_sash 'echo $((5 # 3))'
 # still honors 0x/0o/0b and leading-zero-decimals; DD#72's bare-coercion is
 # superseded). native,c — janet's arith VALUE path doesn't apply the
 # disposition (janet-arith-subscript-read).
-if in_modes native,c; then
-    # honors 0x/0o/0b prefixes
-    run_sash 'x=0xff; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "255" && -z $err ]]; chk nl.s1
-    run_sash 'x=0o10; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "8" && -z $err ]]; chk nl.s2
-    run_sash 'x=0b101; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "5" && -z $err ]]; chk nl.s3
-    # leading zeros ignored (decimal, NOT octal) — the anti-footgun
-    run_sash 'x=010; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "10" && -z $err ]]; chk nl.s4
-    run_sash 'x=08; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "8" && -z $err ]]; chk nl.s5
-    run_sash 'x=0377; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "377" && -z $err ]]; chk nl.s6
-    # plain decimal data
-    run_sash 'x=42; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "42" && -z $err ]]; chk nl.s7
-    # negative prefixed data
-    run_sash 'x=-0xff; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "-255" && -z $err ]]; chk nl.s8
-    # zero
-    run_sash 'x=0; echo $(( ${x:?nan} + 0 ))'
-    [[ $rc = 0 && $out = "0" && -z $err ]]; chk nl.s10
-else
-    skip_chk nl.s1; skip_chk nl.s2; skip_chk nl.s3; skip_chk nl.s4; skip_chk nl.s5
-    skip_chk nl.s6; skip_chk nl.s7; skip_chk nl.s8; skip_chk nl.s10
-fi
+# honors 0x/0o/0b prefixes
+run_sash 'x=0xff; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "255" && -z $err ]]; chk nl.s1
+run_sash 'x=0o10; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk nl.s2
+run_sash 'x=0b101; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk nl.s3
+# leading zeros ignored (decimal, NOT octal) — the anti-footgun
+run_sash 'x=010; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "10" && -z $err ]]; chk nl.s4
+run_sash 'x=08; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "8" && -z $err ]]; chk nl.s5
+run_sash 'x=0377; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "377" && -z $err ]]; chk nl.s6
+# plain decimal data
+run_sash 'x=42; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "42" && -z $err ]]; chk nl.s7
+# negative prefixed data
+run_sash 'x=-0xff; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "-255" && -z $err ]]; chk nl.s8
+# zero
+run_sash 'x=0; echo $(( ${x:?nan} + 0 ))'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk nl.s10
 
 set -e
 tally

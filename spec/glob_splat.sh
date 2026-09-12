@@ -43,12 +43,8 @@ run_sash 'array a=(x y); /bin/echo @{a:?oops}'
 #      native-only: the c/janet spec harnesses discard runtime stderr, so
 #      the abort diagnostic (rerr) can only be asserted natively. Assert the
 #      message SUFFIX (after the program's own argv[0]).
-if in_modes native,c; then
-    run_sash 'array a=(); /bin/echo @{a:?no args!}'
-    [[ $rc = 1 && -z $out && $rerr == *"no args!" ]]; chk gs.6
-else
-    skip_chk gs.6
-fi
+run_sash 'array a=(); /bin/echo @{a:?no args!}'
+[[ $rc = 1 && -z $out && $rerr == *"no args!" ]]; chk gs.6
 
 # gs.7 `@a` into the `echo` BUILTIN is EXEMPT from the disposition rule
 #      (SB5032 is external-only) — it is still rejected by SB5030 (DD#22
@@ -177,21 +173,17 @@ run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f'
 # disposition (SB5032) — DD#69 has no static-non-empty exemption. (compile-time)
 run_sash 'fn f { array a=(x); /usr/bin/printf "[%s]" @a }; f a'
 [[ $rc != 0 && -z $out && $err == *SB5032* ]]; chk gs.33
-if in_modes native,c; then
-    # gs.31 bare `@args` to external, called with args → splats them (no disposition)
-    run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f a b'
-    [[ $rc = 0 && $out = "[a][b]" && -z $err ]]; chk gs.31
-    # gs.34 for-in over `@args` imposes NO floor (0 iterations on empty) — a
-    # for-in-only function is still 0-arg callable.
-    run_sash 'fn f { for w in @args; do /bin/echo x$w; done }; f'
-    [[ $rc = 0 && -z $out && -z $err ]]; chk gs.34
-    # gs.35 `@{args:-}` still accepts 0 args (empty → zero args), unlike the bare
-    # `@args` floor — the disposition is the opt-in to 0-arg calls.
-    run_sash 'fn f { /usr/bin/printf "%s" @{args:-} }; f'
-    [[ $rc = 0 && -z $out && -z $err ]]; chk gs.35
-else
-    skip_chk gs.31; skip_chk gs.34; skip_chk gs.35
-fi
+# gs.31 bare `@args` to external, called with args → splats them (no disposition)
+run_sash 'fn f { /usr/bin/printf "[%s]" @args }; f a b'
+[[ $rc = 0 && $out = "[a][b]" && -z $err ]]; chk gs.31
+# gs.34 for-in over `@args` imposes NO floor (0 iterations on empty) — a
+# for-in-only function is still 0-arg callable.
+run_sash 'fn f { for w in @args; do /bin/echo x$w; done }; f'
+[[ $rc = 0 && -z $out && -z $err ]]; chk gs.34
+# gs.35 `@{args:-}` still accepts 0 args (empty → zero args), unlike the bare
+# `@args` floor — the disposition is the opt-in to 0-arg calls.
+run_sash 'fn f { /usr/bin/printf "%s" @{args:-} }; f'
+[[ $rc = 0 && -z $out && -z $err ]]; chk gs.35
 
 
 # --------------------------------- an array splat in a scalar position (DD#69)
