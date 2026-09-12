@@ -43,6 +43,12 @@ Three dimensions:
    at all until validated via `attest VAR EXPR`. Environment variables
    are accessed via `$(getenv NAME)`, positional params via `$(argv N)`.
    No "variables just appearing" — every value has a visible origin.
+   `$(getenv NAME)` also reports a *lookup* status (DD#101) — success when
+   the name is present, including when it is set to the empty string;
+   failure when it is unset — so `home=$(getenv HOME) || home=/root`
+   distinguishes absent from empty. It is the one intrinsic admitted to
+   the DD#88 capture-condition; the rest are pure functions of their
+   arguments and cannot fail.
 
 3. **Supply-chain safety.** Compiled artifacts are signed. The system
    refuses to run binaries whose signature or integrity check fails.

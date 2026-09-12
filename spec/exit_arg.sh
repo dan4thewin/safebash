@@ -66,3 +66,6 @@ END { int c=$?
 exit $code'
     [[ $rc = 44 && $out == *"END c=300"* && -z $err ]]; chk 89.8
 else skip_chk 89.8; fi
+
+set -e
+tally

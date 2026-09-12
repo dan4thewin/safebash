@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup capture_cond
 set +e
-plan=18
+plan=30
 echo "1..$plan" >&3
 
 # 88.1 non-negated success: the then-branch runs, stdout captured into x
@@ -119,10 +119,13 @@ run_sash 'fn f { return 0 }; if x=$(f) { /bin/echo $x }'
 run_sash 'if x=foo$(/bin/echo bar) { /bin/echo $x }'
 [[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.12
 
-# 88.13 exclusion: an intrinsic capture `$(getenv …)` is not an external command → SB4025
-# (see task getenv-in-condition-presence for a possible future presence-test form)
-run_sash 'if x=$(getenv HOME) { /bin/echo $x }'
-[[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.13
+# 88.13 DD#101 carve-out: `$(getenv NAME)` IS a capture-condition. This spec
+# previously pinned the opposite (SB4025) — DD#101 overturned it, because the
+# getenv lookup is the one intrinsic result that can legitimately fail.
+if in_modes native,c; then
+    run_sash 'if x=$(getenv HOME) { attest x [[ -n $x ]]; /bin/echo "got [$x]" }'
+    [[ $rc = 0 && $out == "got ["*"]" && -z $err ]]; chk 88.13
+else skip_chk 88.13; fi
 
 # 88.14 a plain literal RHS in a condition is a value binding → SB4025 with the
 # "sequence it" advice (Group A — no capture involved, so NOT the Group-B text)
@@ -133,3 +136,108 @@ run_sash 'if x=hi { /bin/echo $x }'
 # the Group-B message. Pins the DD#88 message: capture-conditions are external-only.
 run_sash 'if x=$(echo hi) { /bin/echo $x }'
 [[ $rc != 0 && -z $out && $err == *SB4025* && $err == *"single external"* ]]; chk 88.18
+# ── DD#101: $(getenv NAME) reports a lookup status ──────────────────
+# Unset is a failed lookup; set — INCLUDING set to the empty string — is a
+# successful one. Present-but-empty succeeding is the entire point: without
+# it, unset and set-to-empty stay indistinguishable, which no amount of
+# validation can recover. janet emits `(os/spawn ["getenv" …])` — it forks an
+# external `getenv` — so the positive checks are native,c; filed as
+# janet-getpid-class-intrinsics.
+
+export SASH_SPEC_SET=/spec/value
+export SASH_SPEC_EMPTY=""
+unset SASH_SPEC_UNSET 2>/dev/null || true
+
+# dd101.1 the shape DG asked for: `h=$(getenv NAME) || h=DEFAULT`. A present
+# name succeeds, so the fallback does not run.
+if in_modes native,c; then
+    run_sash 'str h=""
+h=$(getenv SASH_SPEC_SET) || h=/fallback
+attest h [[ -n $h ]]; /bin/echo "[$h]"'
+    [[ $rc = 0 && $out = "[/spec/value]" && -z $err ]]; chk dd101.1
+else skip_chk dd101.1; fi
+
+# dd101.2 an unset name is a FAILED lookup → the fallback runs
+if in_modes native,c; then
+    run_sash 'str h=""
+h=$(getenv SASH_SPEC_UNSET) || h=/fallback
+attest h [[ -n $h ]]; /bin/echo "[$h]"'
+    [[ $rc = 0 && $out = "[/fallback]" && -z $err ]]; chk dd101.2
+else skip_chk dd101.2; fi
+
+# dd101.3 set-to-EMPTY is a SUCCESSFUL lookup (POSIX getenv: the variable
+# exists). The fallback must NOT fire, and h must be the empty string. This is
+# the one check that pins unset-vs-empty apart; the runtime distinguishes them
+# by the returned POINTER, since the length is 0 either way.
+if in_modes native,c; then
+    run_sash 'str h="seed"
+h=$(getenv SASH_SPEC_EMPTY) || h=/fallback
+attest h [[ $h != /fallback ]]; /bin/echo "[$h]"'
+    [[ $rc = 0 && $out = "[]" && -z $err ]]; chk dd101.3
+else skip_chk dd101.3; fi
+
+# dd101.4 the DD#88 negated capture-condition form over getenv
+if in_modes native,c; then
+    run_sash 'str h="seed"
+if ! h=$(getenv SASH_SPEC_UNSET) { /bin/echo absent }
+attest h [[ -z $h ]]; /bin/echo "[$h]"'
+    [[ $rc = 0 && $out = $'absent\n[]' && -z $err ]]; chk dd101.4
+else skip_chk dd101.4; fi
+
+# dd101.5 non-negated: a present name takes the then-branch and captures
+if in_modes native,c; then
+    run_sash 'str h="seed"
+if h=$(getenv SASH_SPEC_SET) { attest h [[ -n $h ]]; /bin/echo "hit [$h]" } else { /bin/echo miss }'
+    [[ $rc = 0 && $out = "hit [/spec/value]" && -z $err ]]; chk dd101.5
+else skip_chk dd101.5; fi
+
+# dd101.6 ...and an unset name takes the else-branch, where `$?` is the real
+# nonzero lookup status (DD#55 handling-position rule)
+if in_modes native,c; then
+    run_sash 'str h="seed"
+if h=$(getenv SASH_SPEC_UNSET) { attest h [[ -n $h ]]; /bin/echo "hit [$h]" } else { /bin/echo "miss $?" }'
+    [[ $rc = 0 && $out = "miss 1" && -z $err ]]; chk dd101.6
+else skip_chk dd101.6; fi
+
+# dd101.7 a failed lookup does NOT abort — DD#101 rules abort out by
+# construction, since `||` branches on a status and an abort would tear the
+# program down before the fallback could run
+if in_modes native,c; then
+    run_sash 'str h="seed"
+h=$(getenv SASH_SPEC_UNSET) || h=/fallback
+attest h [[ -n $h ]]; /bin/echo done'
+    [[ $rc = 0 && $out = "done" && -z $rerr ]]; chk dd101.7
+else skip_chk dd101.7; fi
+
+# dd101.8 taint survives the join: the `||` fallback binds a clean literal,
+# but the conservative join keeps h tainted, so a use without attest is still
+# SB5020. (validate — all modes.)
+run_sash 'str h=""
+h=$(getenv SASH_SPEC_SET) || h=/fallback
+/bin/echo "$h"'
+[[ $rc != 0 && -z $out && $err == *SB5020* ]]; chk dd101.8
+
+# dd101.9 the carve-out is `getenv` specifically, not intrinsics generally —
+# `$(len a)` is a pure function of its argument and stays SB4025
+run_sash 'array a=(x y)
+if n=$(len a) { /bin/echo "$n" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk dd101.9
+
+# dd101.10 ...and neither is `$(status)`, which genuinely cannot fail
+run_sash 'if s=$(status) { /bin/echo "$s" }'
+[[ $rc != 0 && -z $out && $err == *SB4025* ]]; chk dd101.10
+
+# dd101.11 the carve-out does not weaken arity: `$(getenv)` in condition
+# position is still SB4045, not a silently-admitted condition
+run_sash 'str h=""
+if h=$(getenv) { /bin/echo "$h" }'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk dd101.11
+
+# dd101.12 ...same for a two-argument call (no DEFAULT arg — DD#101 rejected
+# the DD#60 `$(arg N DEFAULT)` shape for getenv)
+run_sash 'str h=""
+if h=$(getenv HOME X) { /bin/echo "$h" }'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk dd101.12
+
+set -e
+tally

@@ -552,21 +552,17 @@ fn lower_arg_intrinsic(
     Some((str_ptr, str_len))
 }
 
-/// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
-/// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`,
-/// `$(dtoi N "s")`, `$(itod N V)`. Returns `Some((ptr, len))` when
-/// `name` matches a known intrinsic and the arity check passes; `None`
-/// to fall through to the external-command exec path.
-#[allow(clippy::too_many_arguments)]
-fn try_native_intrinsic(
+/// The argument-free half of the intrinsic table: `$(epochseconds)`,
+/// `$(getppid)`, `$(getpid)`, `$(random)`, `$(getcwd)`, `$(argc)`,
+/// `$(signum)`. Split out of `try_native_intrinsic` because these arms need
+/// nothing but the builder, the module and the extern table — none of the
+/// operand-lowering context — and because keeping them inline put that
+/// function over the cyclomatic gate.
+fn try_nullary_intrinsic(
     name: &str,
-    argv_values: &[SsaValue],
     builder: &mut FunctionBuilder,
     module: &mut ObjectModule,
-    vars: &HashMap<String, VarSlot>,
-    literals: &HashMap<String, cranelift_module::DataId>,
     externs: &ExternFuncs,
-    exit_status_var: Option<Variable>,
 ) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
     match name {
         "epochseconds" => {
@@ -607,6 +603,63 @@ fn try_native_intrinsic(
             let len = builder.ins().stack_load(I64, out_slot, 0);
             Some((ptr, len))
         }
+        "argc" => {
+            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
+            let argc_base = builder.ins().global_value(I64, argc_gv);
+            let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
+            // DD#60: $(argc) is C argc (includes the program name at argv[0]).
+            Some(emit_int_to_str(builder, module, externs, argc_val))
+        }
+        "signum" => {
+            let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
+            let signum_base = builder.ins().global_value(I64, signum_gv);
+            let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
+            Some(emit_int_to_str(builder, module, externs, signum_val))
+        }
+        _ => None,
+    }
+}
+
+/// DD#101: `$(getenv NAME)` reports a *lookup* status — 0 when NAME is
+/// present (including when it is set to the empty string), 1 when it is
+/// unset. `sash_getenv` already distinguishes the two at the ABI: a present
+/// name yields a pointer into `environ` (possibly to a zero-length value),
+/// an absent one yields NULL. Set-to-empty and unset are therefore told
+/// apart by the *pointer*, never by the length, which is 0 for both.
+fn emit_getenv_lookup_status(
+    val_ptr: cranelift_codegen::ir::Value,
+    builder: &mut FunctionBuilder,
+    exit_status_var: Option<Variable>,
+) {
+    let Some(es_var) = exit_status_var else {
+        return;
+    };
+    let zero = builder.ins().iconst(I64, 0);
+    let absent = builder.ins().icmp(IntCC::Equal, val_ptr, zero);
+    let status = builder.ins().uextend(I64, absent);
+    builder.def_var(es_var, status);
+}
+
+/// Compile-time intrinsic dispatch for `$(epochseconds)`, `$(getppid)`,
+/// `$(getcwd)`, `$(getenv NAME)`, `$(argc)`, `$(signum)`, `$(argv N)`,
+/// `$(dtoi N "s")`, `$(itod N V)`. Returns `Some((ptr, len))` when
+/// `name` matches a known intrinsic and the arity check passes; `None`
+/// to fall through to the external-command exec path.
+#[allow(clippy::too_many_arguments)]
+fn try_native_intrinsic(
+    name: &str,
+    argv_values: &[SsaValue],
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> Option<(cranelift_codegen::ir::Value, cranelift_codegen::ir::Value)> {
+    if let Some(v) = try_nullary_intrinsic(name, builder, module, externs) {
+        return Some(v);
+    }
+    match name {
         "getenv" if argv_values.len() >= 2 => {
             let (name_ptr, name_len) = lower_value(
                 &argv_values[1],
@@ -629,20 +682,8 @@ fn try_native_intrinsic(
                 .call(getenv_ref, &[name_ptr, name_len, out_len_addr]);
             let val_ptr = builder.inst_results(call)[0];
             let val_len = builder.ins().stack_load(I64, out_len_slot, 0);
+            emit_getenv_lookup_status(val_ptr, builder, exit_status_var);
             Some((val_ptr, val_len))
-        }
-        "argc" => {
-            let argc_gv = module.declare_data_in_func(externs.argc, builder.func);
-            let argc_base = builder.ins().global_value(I64, argc_gv);
-            let argc_val = builder.ins().load(I64, MemFlags::new(), argc_base, 0);
-            // DD#60: $(argc) is C argc (includes the program name at argv[0]).
-            Some(emit_int_to_str(builder, module, externs, argc_val))
-        }
-        "signum" => {
-            let signum_gv = module.declare_data_in_func(externs.signum, builder.func);
-            let signum_base = builder.ins().global_value(I64, signum_gv);
-            let signum_val = builder.ins().load(I64, MemFlags::new(), signum_base, 0);
-            Some(emit_int_to_str(builder, module, externs, signum_val))
         }
         "arg" if argv_values.len() >= 2 => lower_arg_intrinsic(
             argv_values,

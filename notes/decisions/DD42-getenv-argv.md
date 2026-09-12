@@ -24,8 +24,28 @@ with integer overflow behavior (DD#26). There is no silent empty return.
 Codegen calls `sash_argv_get` in the runtime, which does bounds
 checking and panics on violation.
 
+## Addendum 2026-09-12 — `$(getenv NAME)` also reports a lookup status
+
+Superseded in one respect by **DD#101**: `$(getenv NAME)` now sets an exit
+status — 0 when the name is present (*including* when it is set to the empty
+string), nonzero when it is unset — so
+
+    home=$(getenv HOME) || home=/root
+
+is a legal capture-condition. The value semantics above are unchanged: the
+result is still a tainted string, still `""` when the name is absent, and
+`getenv` still takes exactly one argument (DD#101 deliberately did **not**
+adopt the `$(arg N DEFAULT)` shape).
+
+Note for readers arriving from the abort discussion: this file's "There is no
+silent empty return" is scoped to `$(argv N)` **out-of-range bounds**, the
+sentence it follows. It is not a general principle about intrinsic results and
+it says nothing about environment lookups — an earlier revision of
+`notes/tasks/getenv-presence-handling.md` misread it that way.
+
 ## See also
 
 - DD#24 — Taint quarantine and bless (getenv results are tainted)
 - DD#26 — Integer overflow traps (same abort philosophy)
 - DD#53 — Env var isolation (getenv is the only way to read env vars)
+- DD#101 — `$(getenv NAME)` lookup status

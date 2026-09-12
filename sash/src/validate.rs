@@ -671,9 +671,16 @@ fn validate_assignment_stmt(
 /// where the command's exit status is the condition and its stdout is captured
 /// into the target. Post-resolution an external command's name is an absolute
 /// path (contains `/`); a user function / intrinsic / builtin stays a bare
-/// name, so this structurally excludes `$(user_fn)` / `$(getenv X)` (which are
-/// NOT capture-conditions). A pipeline / multi-statement / concat RHS is also
+/// name, so this structurally excludes `$(user_fn)` (which is NOT a
+/// capture-condition). A pipeline / multi-statement / concat RHS is also
 /// excluded (a single external command only).
+///
+/// **DD#101 carve-out:** `$(getenv NAME)` also qualifies. It is the one
+/// intrinsic that can *fail* — not by malfunctioning, but by looking up a
+/// name the environment does not contain — so `home=$(getenv HOME) ||
+/// home=/root` is a real condition. The carve-out is `getenv` specifically,
+/// not intrinsics generally: `$(len a)` and friends are pure functions of
+/// their arguments and stay in the can't-fail set.
 fn is_capture_condition_rhs(value: &Expr) -> bool {
     let ExprKind::CommandSubstitution(stmts) = &value.kind else {
         return false;
@@ -690,13 +697,21 @@ fn is_capture_condition_rhs(value: &Expr) -> bool {
         }
     }
     match kind {
-        StmtKind::Command(c) => is_external_command_head(c),
+        StmtKind::Command(c) => is_external_command_head(c) || is_getenv_lookup(c),
         // `$(a | b)` — every stage must be an external command.
         StmtKind::Pipeline(p) => {
             p.commands.len() > 1 && p.commands.iter().all(stmt_is_external_command)
         }
         _ => false,
     }
+}
+
+/// DD#101: `$(getenv NAME)` — the one intrinsic whose status is a real
+/// condition. Arity is pinned at exactly one operand here as well as in
+/// `ssa::value_intrinsic_arity`, so a malformed `$(getenv)` / `$(getenv A B)`
+/// keeps its SB4045 rather than being silently admitted as a condition.
+fn is_getenv_lookup(c: &crate::ir::Command) -> bool {
+    matches!(&c.name.kind, ExprKind::Literal(n) if n == "getenv") && c.args.len() == 1
 }
 
 /// A command whose head is (or resolves to) an external program. `validate`
@@ -731,10 +746,12 @@ fn nonstatus_in_condition_diag(span: Span, what: &str, is_capture: bool) -> Diag
         // intrinsic/builtin (which can't fail) or a concatenation — so there is
         // no single external status to branch on.
         format!(
-            "{what} captures a value, but a capture-condition branches on a single external \
-             command's exit status (`if x=$(cmd) {{ … }}`). This RHS isn't one — it captures a \
-             sash intrinsic/builtin (which can't fail), or concatenates `$(…)` with other text. \
-             Bind it, then test: `x=…; if [[ … ]]`."
+            "{what} captures a value, but a capture-condition branches on an exit status — a \
+             single external command (`if x=$(cmd) {{ … }}`) or `$(getenv NAME)`, whose status \
+             is the lookup result (DD#101). This RHS isn't one — it captures a sash \
+             intrinsic/builtin whose result is a pure function of its arguments and so cannot \
+             fail, or concatenates `$(…)` with other text. Bind it, then test: \
+             `x=…; if [[ … ]]`."
         )
     } else {
         format!(

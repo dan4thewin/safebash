@@ -2938,6 +2938,11 @@ fn try_native_intrinsic_c(
                 nl = nl
             )
             .unwrap();
+            // DD#101: the lookup status. NULL means absent; a present name
+            // yields a pointer into environ even when its value is empty, so
+            // the pointer — never the length — is what separates unset from
+            // set-to-empty. Mirrors value_handlers::emit_getenv_lookup_status.
+            writeln!(e.out, "    __exit_status = ({t}_p == 0) ? 1 : 0;", t = t).unwrap();
             Some((format!("{}_p", t), format!("{}_l", t)))
         }
         "dtoi" if argv.len() >= 3 => {

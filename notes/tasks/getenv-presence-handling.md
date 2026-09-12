@@ -1,6 +1,7 @@
 ---
 title: "getenv: presence handling — capture-condition, or an optional default param"
-status: ready
+status: done
+completed: 2026-09-12
 decided: 2026-09-12
 priority: P3
 kind: task
@@ -173,3 +174,87 @@ presence mechanism: taint already covers safety.
 `notes/decisions/DD42-getenv-argv.md` needs an addendum recording
 status-based presence. DD#42's getenv half is still current (only the
 argv/argc half is superseded by DD#60), so the addendum belongs there.
+
+## DONE 2026-09-12 — DD#101 implemented
+
+Measured before the fix, on the release binary:
+
+| source | before | after |
+|---|---|---|
+| `h=$(getenv HOME) \|\| h=/fallback` | **SB4025** | `/home/dg` |
+| `h=$(getenv NOPE) \|\| h=/fallback` | **SB4025** | `/fallback` |
+| `h=$(getenv EMPTY) \|\| h=/fallback` (`EMPTY=""`) | **SB4025** | `""` — the fallback correctly does **not** fire |
+| `if ! h=$(getenv NOPE) { … }` | **SB4025** | branch taken |
+
+Three changes, one per layer.
+
+**Runtime — none needed.** `sash_getenv` already returns NULL for an absent
+name and a pointer *into `environ`* for a present one, even when its value is
+empty. The found/not-found flag DD#101 asks for was already at the ABI; it was
+simply never read. The consequence stands as DD#101 wrote it, though: the
+*pointer* is what separates unset from set-to-empty, never the length, which
+is 0 in both cases.
+
+**Codegen — set the status.** New
+`value_handlers::emit_getenv_lookup_status` writes `exit_status_var` from
+`val_ptr == 0`, and `emit_c.rs` emits the same `__exit_status = ({t}_p == 0)
+? 1 : 0;`. This is the only new machinery.
+
+**validate — the SB4025 carve-out.** `is_capture_condition_rhs` gained
+`is_getenv_lookup`: a single `getenv` command with **exactly one** argument.
+Pinning the arity here as well as in `ssa::value_intrinsic_arity` keeps
+`$(getenv)` / `$(getenv A B)` on SB4045 rather than letting a malformed call
+in as a condition (dd101.11 / dd101.12).
+
+**The transform needed nothing.** `$(getenv X)` already lowers to
+`SsaValue::CmdSubst { argv: [Literal("getenv"), …] }`, so DD#88's existing
+`try_capture_condition` arm picked it up unchanged once validate stopped
+rejecting it.
+
+### Sub-questions from above, answered by measurement
+
+1. **Set-but-empty succeeds** — dd101.3 pins it. Recommendation adopted.
+2. **Taint survives the join.** Verified, and it needed no work: after
+   `h=$(getenv X) || h=/fallback`, a use without `attest` is still SB5020
+   (dd101.8). The clean literal on the fallback side does not clean the phi.
+3. Arity landed with `bug-getenv-status-unvalidated`.
+
+### Also corrected
+
+`spec/capture_cond.sh` **88.13 pinned the old behavior** — `if x=$(getenv
+HOME)` → SB4025 — and had to be inverted. It is the one spec DD#101
+overturns. The SB4025 advice text was rewritten to name the carve-out, and
+88.12 / 88.18 still match on `single external`.
+
+### Found while writing the specs
+
+`spec/capture_cond.sh` and `spec/exit_arg.sh` **never called `tally`**.
+`run.sh` swallows per-file exit status (`|| true`) and reads the TSV, so
+per-test results were recorded correctly — but neither file printed
+PASSED/FAILED, and more importantly neither emitted the `[plan=N, ran=M]`
+note. That note is the only signal for a silently-swallowed `chk` (it is what
+caught `chk 75.35`). Both now call `tally`.
+
+### Verification
+
+Specs `dd101.1`-`dd101.12` in `spec/capture_cond.sh` (plan 18 → 30), plus the
+inverted 88.13. **Fail-first confirmed**: against a build with
+`validate.rs`/`value_handlers.rs`/`emit_c.rs` stashed, 9 of 13 fail
+(88.13 and dd101.1-dd101.8); dd101.9-dd101.12 pass both before and after —
+they are the carve-out-is-narrow controls (`$(len a)`, `$(status)`,
+`$(getenv)`, `$(getenv A B)` all still rejected).
+
+`dd101.1`-`dd101.7` are guarded `native,c`: janet emits
+`(os/spawn ["getenv" "NAME"])` — it forks an external `getenv` — which is the
+already-filed `janet-getpid-class-intrinsics`.
+
+### Complexity-gate note
+
+`try_native_intrinsic` (cc 13 / cog 1, delta −12) tripped the gate once this
+commit touched it. delta −12 is just short of the −15 pure-dispatcher
+exemption, so it had to come down rather than be exempted. Extracted
+`try_nullary_intrinsic` — the seven arms (`epochseconds`, `getppid`,
+`getpid`, `random`, `getcwd`, `argc`, `signum`) that need nothing but the
+builder, module and extern table. `try_native_intrinsic` is now **7/2** and
+the new dispatcher **9/1**. Re-swept after the refactor: identical
+5247/38/557, zero flips.

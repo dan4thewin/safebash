@@ -1,5 +1,5 @@
 title: DD#101 — `$(getenv NAME)` reports a lookup status
-status: accepted
+status: implemented
 depends: [DD53, DD88, DD24]
 
 Settled with DG 2026-09-12.
