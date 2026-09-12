@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup types
-plan=180
+plan=184
 echo "1..$plan" >&3
 
 set +e
@@ -834,6 +834,32 @@ run_sash 'map m
 m[k] = v
 echo $(strlen m)'
 [[ $rc != 0 && -z $out && $err == *SB4030* && $err == *"is a map"* ]]; chk 75.61
+
+# 75.62-75.65 `strlen` resolves a NAME, so every spelling `len` cannot resolve
+# it cannot resolve either. Each of these compiled and printed `0` when
+# `strlen` was first wired: `expr_to_string` rendered the operand as source
+# text (quotes and all), the text was looked up as a name, nothing was found,
+# and the empty scalar slot measured 0 bytes. `len` had guarded all four since
+# DD#75 §2 (SB5062 for a non-name spelling, SB5039 for an unknown name);
+# `strlen` was simply missing from both tables.
+run_sash 'str s = hello
+echo $(strlen "$s")'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.62
+
+run_sash 'echo $(strlen hello)'
+[[ $rc != 0 && -z $out && $err == *SB5039* && $err == *'`strlen hello`'* ]]; chk 75.63
+
+run_sash 'echo $(strlen $(echo hi))'
+[[ $rc != 0 && -z $out && $err == *SB5062* ]]; chk 75.64
+
+# A cell is a scalar, so `$(strlen a[0])` is a coherent question — but the
+# operand is resolved by name, and `a[0]` is not one. It reads 0 rather than
+# the element's length, so it is rejected until the cell form is built (the
+# converter needs it for bash's `${#a}` / `${#a[i]}`).
+run_sash 'array a = ( hello xy )
+echo ${a[1]}
+echo $(strlen a[0])'
+[[ $rc != 0 && $err == *SB5062* ]]; chk 75.65
 
 # ── DD#77 `[[ i? EXPR ]]` — strict integer-validity test ──
 # True iff the operand's value is a complete integer (sign + decimal digits, or

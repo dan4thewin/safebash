@@ -6042,6 +6042,10 @@ fn flag_operand_spelling(expr: &Expr, diags: &mut Vec<Diagnostic>) {
         ("len", OperandForm::Other) => {
             "a variable name (`len a`, `len $a`, or `len @a`)".to_string()
         }
+        // `strlen` resolves a name exactly as `len` does, so every spelling
+        // `len` cannot resolve, `strlen` cannot either — it read the scalar
+        // slot of whatever `expr_to_string` rendered and answered 0.
+        ("strlen", OperandForm::Other) => "a variable name (`strlen s` or `strlen $s`)".to_string(),
         ("join", OperandForm::Dollar(n)) => {
             format!("a collection name (`join {n} SEP`) or a splat (`join @{n} SEP`)")
         }
@@ -6165,14 +6169,15 @@ fn check_len_in_scope(
     }
 }
 
-/// If `expr` is a `$(len NAME)` command substitution, check its operand.
+/// If `expr` is a `$(len NAME)` / `$(strlen NAME)` command substitution,
+/// check its operand.
 fn flag_len_cmdsub(
     expr: &Expr,
     known: &HashSet<String>,
     in_function: bool,
     diags: &mut Vec<Diagnostic>,
 ) {
-    let Some(name) = len_cmdsub_operand(expr) else {
+    let Some((builtin, name)) = len_cmdsub_operand(expr) else {
         return;
     };
     // Both `args` (the implicit array) and `A`–`E` (caller-bound slots) exist
@@ -6191,25 +6196,28 @@ fn flag_len_cmdsub(
         expr.span,
         "SB5039",
         format!(
-            "`len {name}` — `{name}` is introduced nowhere (not a variable, array, \
+            "`{builtin} {name}` — `{name}` is introduced nowhere (not a variable, array, \
              map, loop variable, or `args`); this reads as 0. Declare it, or fix the typo"
         ),
     ));
 }
 
-/// The bare identifier operand of a `$(len NAME)` command substitution.
-fn len_cmdsub_operand(expr: &Expr) -> Option<String> {
+/// The builtin name and its bare-identifier operand, for a `$(len NAME)` or
+/// `$(strlen NAME)` command substitution. Both resolve the operand as a name
+/// and both read 0 from a slot that does not exist, so both need the check.
+fn len_cmdsub_operand(expr: &Expr) -> Option<(String, String)> {
     let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
         return None;
     };
     let StmtKind::Command(c) = &stmts.first()?.kind else {
         return None;
     };
-    if expr_literal_str(&c.name) != "len" {
+    let builtin = expr_literal_str(&c.name);
+    if builtin != "len" && builtin != "strlen" {
         return None;
     }
     // subscript cell / expansion / cmdsub operand — resolved elsewhere
-    len_operand_name(c)
+    Some((builtin.to_string(), len_operand_name(c)?))
 }
 
 /// `args` and the DD#100 slots are legitimate inside a function and a reject
