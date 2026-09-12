@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=32
+plan=36
 echo "1..$plan" >&3
 
 set +e
@@ -41,6 +41,61 @@ if in_modes native; then
     [[ $rc = 0 && -z $err ]]; chk 15.2
 else
     skip_chk 15.2
+fi
+
+# ── DD#104: --emit-ir, the structural IR capture ──────────────────────────
+# An inert janet data literal — data, not a program. These pin the CLI
+# surface and the shape; they deliberately do NOT shell out to janet, so the
+# suite carries no janet dependency (the emitter's parseability is verified
+# separately, over the whole corpus, not per-commit).
+run_sash_emit_ir() {
+    rc=-1 out="" err=""
+    echo "$1" > .input.sash
+    sash --emit-ir .input.sash > out 2> err
+    rc=$?
+    out=$(<out)
+    err=$(<err)
+    rm -f .input.sash out err
+}
+
+# 104.1 --emit-ir accepted, and stamps a version a consumer can refuse on
+if in_modes native; then
+    run_sash_emit_ir 'echo hello'
+    [[ $rc = 0 && -z $err && $out == *":ir-version 1"* ]]; chk 104.1
+else
+    skip_chk 104.1
+fi
+
+# 104.2 the capture is structural — IR node names, not an interpretation.
+#       `echo` is a :command named "echo", not a dedicated :echo form.
+if in_modes native; then
+    run_sash_emit_ir 'echo hello'
+    [[ $rc = 0 && $out == *":kind :command"* && $out == *'"echo"'* ]]; chk 104.2
+else
+    skip_chk 104.2
+fi
+
+# 104.3 arithmetic and loops are captured. `--janet-map` rendered these as
+#       `(sash/TODO …)`; a capture has no semantics to defer, so it is
+#       complete from the start. This is the property that distinguishes it.
+if in_modes native; then
+    run_sash_emit_ir 'int n=3
+while (( n > 0 )); do
+  n=$(( n - 1 ))
+done'
+    [[ $rc = 0 && $out == *":kind :while"* && $out == *":kind :arith-binop"* \
+       && $out != *"TODO"* ]]; chk 104.3
+else
+    skip_chk 104.3
+fi
+
+# 104.4 a literal containing a quote and a backslash is escaped for janet's
+#       reader rather than terminating the string early
+if in_modes native; then
+    run_sash_emit_ir 'x="a\"b"; echo $x'
+    [[ $rc = 0 && $out == *'\\"'* ]]; chk 104.4
+else
+    skip_chk 104.4
 fi
 
 # 20.30 lastpipe always on

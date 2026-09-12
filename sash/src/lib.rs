@@ -1,5 +1,6 @@
 // Modules used by tests (oracle_tests.rs) — must be pub
 pub mod emit_c;
+pub mod emit_ir;
 pub mod emit_janet;
 pub mod emit_janet_map;
 pub mod ir;
@@ -84,6 +85,7 @@ Usage: sash [OPTION]... <script.sh>
   --janet             emit Janet source on stdout instead of a binary
   --janet-map         emit the structural Janet map on stdout
   --emit-c            emit C source on stdout instead of a binary
+  --emit-ir           emit the IR as inert janet data on stdout (DD#104)
   --manifest          print the program manifest on stdout
   --extract <binary>  print the .sash_source section of BINARY
   --no-taint          disable all taint checking (DD#82 escape hatch)
@@ -99,6 +101,7 @@ const KNOWN_FLAGS: &[&str] = &[
     "--janet",
     "--janet-map",
     "--emit-c",
+    "--emit-ir",
     "--manifest",
     "--no-taint",
     "--no-taint-cst",
@@ -349,6 +352,10 @@ fn maybe_emit_alt_output(flags: &[&str], program: &crate::ir::Program) -> bool {
     }
     if flags.contains(&"--janet") {
         print!("{}", emit_janet::emit_janet(program));
+        return true;
+    }
+    if flags.contains(&"--emit-ir") {
+        print!("{}", emit_ir::emit_ir(program));
         return true;
     }
     if flags.contains(&"--emit-c") {
