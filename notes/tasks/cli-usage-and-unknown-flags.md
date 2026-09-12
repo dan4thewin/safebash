@@ -1,5 +1,5 @@
 title: bug: contradictory usage strings, no --help, unknown flags silently ignored
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -155,3 +155,62 @@ compiler — but it must say plainly that it is a testing aid and not for
 general use.
 
 This means the usage text lists **10** flags, not 11.
+
+## DONE — 2026-09-12
+
+All four defects re-measured against the live binary before the fix, and all
+four reproduced:
+
+- three different usage strings (no-args, unknown-flag, `--extract` misuse);
+- `--help` collected as an unknown flag, so it left no positional input and
+  fell through to the "no input" branch — usage on **stderr**, exit **1**;
+- `sash --emit-C f.sash` compiled a native ELF and exited **0** (the user
+  asked for C source and silently got something else);
+- `sash f.sash -o` ignored the dangling `-o`, wrote to the default path, and
+  exited **0**.
+
+Fixed in `sash/src/lib.rs`:
+
+- one `USAGE` constant — the no-args path, the unknown-flag path, the
+  `--extract` misuse path in `dump_sash_source`, and `--help` all print it;
+- `KNOWN_FLAGS` / `CONVERTER_FLAGS` tables + `is_known_flag` (which handles
+  the `--sysroot=` prefix form);
+- `check_flags`: `--help`/`-h` → stdout, exit 0; a converter flag keeps its
+  DD#57 directing diagnostic; anything else unknown →
+  `sash: unrecognized option '…'` + usage, exit 1;
+- `cli_operand` gives `-o`/`-c` a missing-operand error.
+
+`--no-taint-cst` is accepted but deliberately **absent** from `USAGE` (DG):
+it is a testing aid, not a bypass to reach for. `docs/sash.1` now says so.
+
+The complexity gate would have rejected `parse_cli_args` (cc 11 / cog 10 vs
+the 12.46 / 6.58 bar). Refactored rather than skipped — `parse_cli_args`
+decomposed into `take_cli_arg` + `cli_operand` + `resolve_input` over a new
+`CliAccum`, and the flag scan written as `iter().find()` rather than a
+`for`+`if` nest. Result: `parse_cli_args` **2/1**, `check_flags` 6/3,
+`take_cli_arg` 6/1, `cli_operand` 3/1, `resolve_input` 4/1.
+
+Specs `cli.8`–`cli.19` in `spec/cli.sh` (plan 7 → 19). Fail-first verified:
+with `sash/src/lib.rs` stashed, 9 of the 12 fail; the other 3 are controls
+(`--no-taint-cst` still accepted, still unadvertised, DD#57 wording intact).
+
+`docs/sash.1` also updated: the driver comes out of the "unknown flags are
+handled three different ways" table (`mapfile` is now the lone outlier), the
+"three disagreeing usage strings" section is gone, the stale
+`switch-free-read-family` cross-reference is dropped, and `-h`/`--help` are
+documented. `AGENTS.md` corrected — it described `--emit-source`/`--annotate`
+as `sash` modes; they are sash-convert flags.
+
+Sweep 5219/38/549 — zero non-janet failures, zero flips, +36 rows (12 specs ×
+3 modes), all passing.
+
+### Addendum — a third silent-misreport found while clearing the gate
+
+`dump_sash_source` (cc 7 / cog 7) tripped the complexity gate once this
+commit touched its usage string. Refactoring it — extracting
+`read_sash_source_section` — surfaced the batch's recurring bug class a
+third time in this task: the old `for section { if name { if let Ok(data) } }`
+loop **fell out the bottom on a section-read error** and reported
+`no .sash_source section found`, which is false — the section is there, it
+just could not be read. Now the real error is reported. (dump_sash_source
+5/2, read_sash_source_section 8/0.)

@@ -22,6 +22,9 @@ sash \- compile a safe subset of bash to a static native binary
 .B sash
 .B \-\-extract
 .I binary
+.br
+.B sash
+.B \-\-help
 .
 .SH DESCRIPTION
 .B sash
@@ -53,6 +56,9 @@ given inline instead of reading a file.
 .BI \-o \ output
 Write the binary to
 .IR output .
+.TP
+.B \-h ", " \-\-help
+Print the usage summary on standard output and exit 0.
 .
 .SS Alternative backends
 Each writes to standard output and exits; no binary is produced.
@@ -93,8 +99,15 @@ See DD#82. These weaken the guarantee that
 exists to provide; use them deliberately.
 .TP
 .B \-\-no\-taint\-cst
+.B A testing aid only \(em not for general use.
 Disable the front-end (CST) taint pass only. The SSA taint backstop still
-runs, which is how the backstop is exercised in isolation.
+runs, which is how the backstop is exercised in isolation. Deliberately
+absent from
+.BR "sash \-\-help" :
+it exists to test the compiler, not to be reached for while writing
+programs. Use
+.B \-\-no\-taint
+if you genuinely need a bypass.
 .TP
 .B \-\-no\-taint
 Disable both taint passes.
@@ -395,7 +408,7 @@ backstop, with no
 .B SB
 code at all. See
 .BR notes/tasks/read\-taint\-backstop\-no\-sb\-code.md .
-.SS Unknown flags are handled three different ways
+.SS Unknown flags are handled two different ways
 .RS
 .TP
 .B read
@@ -406,23 +419,19 @@ rejects \(em
 silently ignores.
 .TP
 .B sash
-(the driver) silently ignores:
-.B sash --bogus script.sh
-compiles and exits 0.
+(the driver) rejects.
 .TP
 .B sash\-convert
 rejects.
 .RE
 .PP
-See
-.B notes/tasks/switch\-free\-read\-family.md
-\(em an open decision on whether these flags should become distinct commands
-and sigils instead.
-.SS Three disagreeing usage strings
-.B sash
-with no arguments, with an unrecognized long flag, and on the
-.B \-\-extract
-path each print a different usage line, and none lists every flag.
+.B mapfile
+is the remaining outlier. The driver used to ignore an unknown flag too \(em
+.B sash --bogus script.sh
+compiled and exited 0 \(em so a typo such as
+.B \-\-emit\-C
+silently produced a different artifact than the one requested. Fixed; see
+.BR notes/tasks/cli\-usage\-and\-unknown\-flags.md .
 .
 .SH DIAGNOSTICS
 Every rejection carries an

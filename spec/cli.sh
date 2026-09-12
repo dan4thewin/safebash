@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=7
+plan=19
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -57,6 +57,71 @@ PATH=/bin $SASH --sysroot="$PWD/sr" -c 'mytool' -o sysbin 2>ws.err; rc=$?
 $SASH -c 'echo hi' -o ut >/dev/null 2>&1; rc=$?
 out=$([[ -x ut ]] && ./ut 2>/dev/null)
 [[ $rc = 0 && $out = "hi" ]]; chk cli.7
+
+# ── Usage, --help, and unknown flags (cli-usage-and-unknown-flags) ──
+# There used to be three different usage strings, no --help at all, and any
+# unknown `--` token was collected and never looked at, so a typo silently
+# produced a different artifact than the one requested.
+
+printf 'echo hi\n' > u.sash
+
+# cli.8 --help prints on STDOUT and exits 0. It used to be collected as an
+# unknown flag, leave no positional input, and fall into the "no input"
+# branch: usage on stderr, exit 1.
+out=$($SASH --help 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == Usage:* ]]; chk cli.8
+
+# cli.9 ...and nothing goes to stderr
+err=$($SASH --help 2>&1 >/dev/null); rc=$?
+[[ $rc = 0 && -z $err ]]; chk cli.9
+
+# cli.10 -h is the same thing
+out=$($SASH -h 2>/dev/null); rc=$?
+[[ $rc = 0 && $out == Usage:* ]]; chk cli.10
+
+# cli.11 one usage text: the no-argument error and --help agree verbatim.
+# Previously these were two different strings advertising different flags.
+help_text=$($SASH --help 2>/dev/null)
+noarg_text=$($SASH 2>&1 >/dev/null)
+[[ $help_text = "$noarg_text" ]]; chk cli.11
+
+# cli.12 ...and the --extract misuse path prints it too (it had a third,
+# one-line string of its own)
+extract_text=$($SASH --extract 2>&1 >/dev/null)
+[[ $extract_text = "$noarg_text" ]]; chk cli.12
+
+# cli.13 the usage text covers every advertised flag
+missing=""
+for f in -c -o --janet --janet-map --emit-c --manifest --extract --no-taint --trace --sysroot=; do
+    [[ $help_text == *"$f"* ]] || missing="$missing $f"
+done
+[[ -z $missing ]]; chk cli.13
+
+# cli.14 --no-taint-cst is a testing aid (DG, 2026-09-12) and stays OUT of
+# the usage text, while remaining accepted
+[[ $help_text != *"--no-taint-cst"* ]]; chk cli.14
+
+# cli.15 ...still accepted
+$SASH --no-taint-cst u.sash -o u1 >/dev/null 2>&1; rc=$?
+[[ $rc = 0 ]]; chk cli.15
+
+# cli.16 an unknown long flag is rejected. `--emit-C` (capital C) used to
+# compile a native ELF and exit 0 — the user asked for C source.
+err=$($SASH --emit-C u.sash 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"unrecognized option"* && $err == *"--emit-C"* ]]; chk cli.16
+
+# cli.17 ...and no artifact is produced
+[[ ! -e u.sash.out ]]; chk cli.17
+
+# cli.18 a missing -o operand is an error. It used to be ignored, so the
+# binary landed at the default path and sash exited 0.
+err=$($SASH u.sash -o 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"needs an operand"* ]]; chk cli.18
+
+# cli.19 the DD#57 converter flags keep their own directing diagnostic
+# rather than degrading to a plain "unrecognized option"
+err=$($SASH --annotate u.sash 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"sash-convert"* ]]; chk cli.19
 
 set -e
 tally

@@ -67,11 +67,56 @@ pub(crate) fn sysroot_file_exists(sysroot: &str, path: &str) -> bool {
 
 use std::process::Command;
 
+/// The one usage text. Every call site prints this — there used to be three
+/// different strings, each advertising a different subset of the real flags.
+///
+/// `--no-taint-cst` is deliberately absent (DG, 2026-09-12): it is a testing
+/// aid, not a general-use flag. It is still accepted; it is just not
+/// advertised here. `docs/sash.1` documents it, marked as such.
+const USAGE: &str = "\
+Usage: sash [OPTION]... <script.sh>
+       sash [OPTION]... -c 'script'
+       sash --extract <binary>
+
+  -c 'script'         compile SCRIPT, given inline
+  -o <output>         write the binary to OUTPUT
+  -h, --help          print this help on stdout and exit 0
+  --janet             emit Janet source on stdout instead of a binary
+  --janet-map         emit the structural Janet map on stdout
+  --emit-c            emit C source on stdout instead of a binary
+  --manifest          print the program manifest on stdout
+  --extract <binary>  print the .sash_source section of BINARY
+  --no-taint          disable all taint checking (DD#82 escape hatch)
+  --trace             compile in runtime tracing (DD#32)
+  --sysroot=<path>    resolve external commands under PATH";
+
+/// Every `--` flag the driver accepts. An unknown one used to be collected
+/// and never looked at, so `sash --emit-C f.sash` silently produced a native
+/// ELF and exited 0 — a different artifact than the one asked for.
+/// `--sysroot=` is prefix-matched rather than listed, since it carries a
+/// value in the same token.
+const KNOWN_FLAGS: &[&str] = &[
+    "--janet",
+    "--janet-map",
+    "--emit-c",
+    "--manifest",
+    "--no-taint",
+    "--no-taint-cst",
+    "--trace",
+    "--help",
+];
+
+/// Converter-only flags (DD#57). Recognised so the diagnostic can point at
+/// `sash-convert` rather than reporting a plain unknown flag.
+const CONVERTER_FLAGS: &[&str] = &["--emit-source", "--annotate", "--nolint"];
+
+fn is_known_flag(flag: &str) -> bool {
+    KNOWN_FLAGS.contains(&flag) || flag.starts_with("--sysroot=")
+}
+
 pub fn cli_main(args: Vec<String>) {
     if args.len() < 2 {
-        eprintln!(
-            "Usage: sash <script.sh> [-o <output>] [--janet] [--manifest] [--extract <binary>]"
-        );
+        eprintln!("{USAGE}");
         std::process::exit(1);
     }
 
@@ -145,22 +190,35 @@ pub fn cli_main(args: Vec<String>) {
     );
 }
 
-/// Apply `--sysroot=` and reject converter-only flags (DD#57). Exits on a
-/// rejected flag.
+/// Apply `--sysroot=`. Flag *validity* is checked earlier, in
+/// `check_flags`, so an unknown or converter-only flag is rejected before
+/// the source file is even read.
 fn apply_and_check_flags(flags: &[&str]) {
     for flag in flags {
         if let Some(path) = flag.strip_prefix("--sysroot=") {
             set_sysroot(path.to_string());
         }
     }
-    for flag in flags {
-        if matches!(*flag, "--emit-source" | "--annotate" | "--nolint") {
-            eprintln!(
-                "sash: '{}' is not a valid flag — use sash-convert for source transformations",
-                flag
-            );
-            std::process::exit(1);
-        }
+}
+
+/// Handle `--help` and reject anything not in `KNOWN_FLAGS`.
+///
+/// `--help` used to be collected as an unknown flag, leave no positional
+/// input, and fall into the "no input" branch — usage on *stderr* with exit
+/// 1. It now prints on stdout and exits 0.
+fn check_flags(flags: &[&str]) {
+    if flags.contains(&"--help") {
+        println!("{USAGE}");
+        std::process::exit(0);
+    }
+    if let Some(f) = flags.iter().find(|f| CONVERTER_FLAGS.contains(*f)) {
+        eprintln!("sash: '{f}' is not a valid flag — use sash-convert for source transformations");
+        std::process::exit(1);
+    }
+    if let Some(f) = flags.iter().find(|f| !is_known_flag(f)) {
+        eprintln!("sash: unrecognized option '{f}'");
+        eprintln!("{USAGE}");
+        std::process::exit(1);
     }
 }
 
@@ -318,7 +376,7 @@ fn emit_c_to_stdout(program: &crate::ir::Program) {
 /// `--extract`: dump the `.sash_source` section from a compiled binary.
 fn dump_sash_source(args: &[String]) {
     if args.len() < 3 {
-        eprintln!("Usage: sash --extract <binary>");
+        eprintln!("{USAGE}");
         std::process::exit(1);
     }
     let binary_path = &args[2];
@@ -326,21 +384,33 @@ fn dump_sash_source(args: &[String]) {
         eprintln!("sash: {}: {}", binary_path, e);
         std::process::exit(1);
     });
-    let obj = object::read::File::parse(&*data).unwrap_or_else(|e| {
-        eprintln!("sash: {}: not a valid object file: {}", binary_path, e);
-        std::process::exit(1);
-    });
-    use object::read::{Object, ObjectSection};
-    for section in obj.sections() {
-        if section.name() == Ok(".sash_source") {
-            if let Ok(data) = section.data() {
-                print!("{}", std::str::from_utf8(data).unwrap_or("<binary data>"));
-                return;
-            }
+    match read_sash_source_section(&data) {
+        Ok(source) => print!("{source}"),
+        Err(msg) => {
+            eprintln!("sash: {binary_path}: {msg}");
+            std::process::exit(1);
         }
     }
-    eprintln!("sash: {}: no .sash_source section found", binary_path);
-    std::process::exit(1);
+}
+
+/// Read the `.sash_source` section body out of an object-file image.
+///
+/// An unreadable section reports the underlying error rather than claiming
+/// the section is absent, which is what the previous loop did.
+fn read_sash_source_section(image: &[u8]) -> Result<String, String> {
+    use object::read::{Object, ObjectSection};
+    let obj =
+        object::read::File::parse(image).map_err(|e| format!("not a valid object file: {e}"))?;
+    let section = obj
+        .sections()
+        .find(|s| s.name() == Ok(".sash_source"))
+        .ok_or_else(|| "no .sash_source section found".to_string())?;
+    let body = section
+        .data()
+        .map_err(|e| format!(".sash_source: unreadable: {e}"))?;
+    Ok(std::str::from_utf8(body)
+        .unwrap_or("<binary data>")
+        .to_string())
 }
 
 struct ParsedCli<'a> {
@@ -350,44 +420,77 @@ struct ParsedCli<'a> {
     input: &'a str,
 }
 
+#[derive(Default)]
+struct CliAccum<'a> {
+    flags: Vec<&'a str>,
+    positional: Vec<&'a str>,
+    output_path: Option<&'a str>,
+    inline_source: Option<&'a str>,
+}
+
 fn parse_cli_args(args: &[String]) -> ParsedCli<'_> {
-    let mut flags: Vec<&str> = Vec::new();
-    let mut positional: Vec<&str> = Vec::new();
-    let mut output_path: Option<&str> = None;
-    let mut inline_source: Option<&str> = None;
+    let mut acc = CliAccum::default();
     let mut i = 1;
     while i < args.len() {
-        match args[i].as_str() {
-            "-o" => {
-                i += 1;
-                if i < args.len() {
-                    output_path = Some(&args[i]);
-                }
-            }
-            "-c" => {
-                i += 1;
-                if i < args.len() {
-                    inline_source = Some(&args[i]);
-                }
-            }
-            s if s.starts_with("--") => flags.push(s),
-            s => positional.push(s),
-        }
-        i += 1;
+        i += take_cli_arg(args, i, &mut acc);
     }
-    let input = match positional.first() {
-        Some(f) => *f,
-        None if inline_source.is_some() => "-c",
+    check_flags(&acc.flags);
+    ParsedCli {
+        input: resolve_input(&acc.positional, acc.inline_source),
+        flags: acc.flags,
+        output_path: acc.output_path,
+        inline_source: acc.inline_source,
+    }
+}
+
+/// Consume the argument at `i`, returning how many tokens it used — 2 for an
+/// option that takes an operand, 1 otherwise.
+fn take_cli_arg<'a>(args: &'a [String], i: usize, acc: &mut CliAccum<'a>) -> usize {
+    match args[i].as_str() {
+        "-o" => {
+            acc.output_path = Some(cli_operand(args, i, "-o"));
+            2
+        }
+        "-c" => {
+            acc.inline_source = Some(cli_operand(args, i, "-c"));
+            2
+        }
+        "-h" => {
+            acc.flags.push("--help");
+            1
+        }
+        s if s.starts_with("--") => {
+            acc.flags.push(s);
+            1
+        }
+        s => {
+            acc.positional.push(s);
+            1
+        }
+    }
+}
+
+/// The operand of `-o` / `-c`. A missing `-o` operand used to be silently
+/// ignored, so `sash f.sash -o` compiled to the default path and exited 0.
+fn cli_operand<'a>(args: &'a [String], i: usize, flag: &str) -> &'a str {
+    match args.get(i + 1) {
+        Some(v) => v.as_str(),
         None => {
-            eprintln!("Usage: sash [-c 'script'] [-o output] [--janet] <script.sh>");
+            eprintln!("sash: '{flag}' needs an operand");
+            eprintln!("{USAGE}");
             std::process::exit(1);
         }
-    };
-    ParsedCli {
-        flags,
-        output_path,
-        inline_source,
-        input,
+    }
+}
+
+fn resolve_input<'a>(positional: &[&'a str], inline_source: Option<&str>) -> &'a str {
+    match positional.first() {
+        Some(f) => f,
+        None if inline_source.is_some() => "-c",
+        None => {
+            eprintln!("{USAGE}");
+            std::process::exit(1);
+        }
     }
 }
 

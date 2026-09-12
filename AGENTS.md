@@ -10,8 +10,10 @@ the stamina for incremental implementation.
 
 The compiler works end-to-end: bash source → parse → validate →
 lower → type check → transform → fold → codegen → link → static ELF.
-Output is byte-identical to Bash. Also supports a `--janet` backend
-and `--emit-source`/`--annotate`/`--extract` modes.
+Output is byte-identical to Bash. Also supports `--janet`, `--janet-map`,
+`--emit-c`, `--manifest` and `--extract` modes; `sash --help` lists the
+full set. (`--emit-source`/`--annotate`/`--nolint` are **sash-convert**
+flags — `sash` rejects them, DD#57.)
 
 Read the journal prologue (`notes/journal/001-prologue.md`) before
 your first session. It sets the tone for everything.
