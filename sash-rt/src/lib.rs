@@ -2444,12 +2444,16 @@ pub extern "C" fn sash_file_test(path_ptr: *const u8, path_len: i64, op: i64) ->
             }
         }
         17 => {
-            // -N: modified since last read (mtime > atime)
+            // -N: modified since last read. Bash compares WHOLE SECONDS with
+            // `>=` (test.c: `st_mtime >= st_atime`) and ignores nanoseconds
+            // entirely. Matching that exactly matters twice: a freshly written,
+            // never-read file has mtime == atime to the nanosecond — the very
+            // case -N exists to report true — and a same-second file whose
+            // atime nsec is the larger still reports true in bash. A strict
+            // `>` with an nsec tiebreak answered "no" to both.
             match rustix::fs::stat(path_cstr) {
                 Ok(st) => {
-                    if st.st_mtime > st.st_atime
-                        || (st.st_mtime == st.st_atime && st.st_mtime_nsec > st.st_atime_nsec)
-                    {
+                    if st.st_mtime >= st.st_atime {
                         1
                     } else {
                         0

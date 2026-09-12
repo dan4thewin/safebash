@@ -16,5 +16,9 @@ mod types;
 mod value_handlers;
 mod values;
 
+/// Opcode table for the stat(2) file tests, shared with the C backend so
+/// both emit the same `sash_file_test` call.
+pub(crate) use tests::file_test_op_code;
+
 pub use entry::compile_ssa;
 pub use entry::compile_to_object;

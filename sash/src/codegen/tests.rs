@@ -224,7 +224,11 @@ fn emit_len_cmp(
 
 /// stat(2)-style file test ops → opaque opcode passed to runtime
 /// `sash_file_test(ptr, len, op_code)`. Returns None for non-file-test ops.
-fn file_test_op_code(op: &str) -> Option<i64> {
+///
+/// Shared with `emit_c::lower_test_unary` so the native and C backends ask
+/// the runtime the same question with the same opcode. A second copy of this
+/// table is how the two backends silently drift apart.
+pub(crate) fn file_test_op_code(op: &str) -> Option<i64> {
     Some(match op {
         "-e" | "-a" => 0, // -a is same as -e
         "-f" => 1,

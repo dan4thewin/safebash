@@ -166,6 +166,7 @@ fn emit_prologue(out: &mut String) {
         "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
+    writeln!(out, "extern i64 sash_isatty(i64 fd);").unwrap();
     // Phase 3 — parameter expansion
     writeln!(out, "extern i64 sash_default_value(i64 s_len);").unwrap();
     writeln!(
@@ -2341,8 +2342,12 @@ fn test_rhs_as_str(e: &mut Emit, right: &SsaTestRhs, types: &VarTypes) -> CStr {
     }
 }
 
-/// Lower a unary test. Implements -n / -z (and implicit-? bare word);
-/// file tests (-f, -d, -e, …) are not yet implemented in the C backend.
+/// Lower a unary test: -n / -z (and implicit-? bare word), the DD#93
+/// content-shape tests, `-t fd`, and the stat(2) file tests.
+///
+/// The file-test opcodes come from codegen's `file_test_op_code` rather than
+/// a second table here, so the two backends cannot answer the same operator
+/// differently.
 fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes) -> String {
     let (ptr, len) = lower_value_as_str(e, operand, types);
     match op {
@@ -2353,10 +2358,17 @@ fn lower_test_unary(e: &mut Emit, op: &str, operand: &SsaValue, types: &VarTypes
         "i?" => format!("sash_is_int({}, {})", ptr, len),
         "p?" => format!("sash_is_print({}, {})", ptr, len),
         "g?" => format!("sash_is_graph({}, {})", ptr, len),
-        _ => {
-            writeln!(e.out, "    /* TODO test unary op: {} */", op).unwrap();
-            "0".to_string()
-        }
+        "-t" => format!("sash_isatty(sash_atoi({}, {}))", ptr, len),
+        // INVARIANT: mirrors codegen/tests.rs::lower_unary. The parser's
+        // is_unary_test_op gates which operators reach here; each one is
+        // either handled above or is a file test, except -v/-o/-R which
+        // validate rejects (SB5028). A None means parser/backend drift, not
+        // user input — panic rather than emit a program that silently
+        // answers "false" to every file test.
+        other => match crate::codegen::file_test_op_code(other) {
+            Some(code) => format!("sash_file_test({}, {}, {})", ptr, len, code),
+            None => panic!("ICE: unimplemented unary test operator: {}", other),
+        },
     }
 }
 
