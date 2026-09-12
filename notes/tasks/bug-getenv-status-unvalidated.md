@@ -1,6 +1,7 @@
 title: bug: getenv and status bypass arity validation, ICE at runtime
-status: ready
+status: done
 priority: P1
+completed: 2026-09-12
 kind: bug
 depends: []
 gates:
@@ -84,3 +85,74 @@ Only `getenv`/`status` were found in this blind spot, by comparing every
 intrinsic name's dispatch sites against `type_check.rs`. Worth re-running
 that comparison as part of the fix in case a newer intrinsic lands the same
 way.
+
+
+## DONE 2026-09-12 — and the blind spot was 6x wider than filed
+
+Fixed in two parts. **The filing's scope note was right to ask**: re-running
+the comparison found this was never a `getenv`/`status` pair — it was
+**every value-producing intrinsic**.
+
+Measured before the fix, statement position, one program each:
+
+| intrinsic | before | after |
+|---|---|---|
+| `getenv` `status` `getpid` `getppid` `getcpid` `getcwd` `epochseconds` `argc` `signum` `dtoi` `itod` `arg` | **ICE** (`sash: bug: bare command passed to sash_exec`) | SB5073 |
+| `random` | SB5011 (correct — never in `BUILTINS`) | unchanged |
+
+Eleven ICEs, not two. And in `$( )` position the arity hole was just as wide:
+`$(getpid X)`, `$(argc X)`, `$(epochseconds X)`, `$(getppid X)`,
+`$(getcwd X)`, `$(signum 1 2)`, `$(dtoi 1 2)` and `$(getenv HOME EXTRA)` all
+**silently discarded** the extra arguments.
+
+### Part 1 — arity (`ssa.rs::value_intrinsic_arity`)
+
+`getenv`/`status` were not the only names missing from the table; so were the
+whole nullary family. Added `Some(0)` for `status`/`getpid`/`getppid`/
+`getcwd`/`epochseconds`/`argc`/`signum`/`random`, `Some(1)` for `getenv`, and
+`Some(2)` for `dtoi`/`itod` (both take *digits* plus a value — `$(dtoi 1)` was
+accepted before). `arg` is left out deliberately: DD#60 makes it genuinely
+variadic (`$(arg N)` / `$(arg N DEFAULT)`).
+
+This one table drives both SB4045 *and* the transform's ICE backstop
+(`resolve_single_cmdsubst`), so filling it closes the cmdsub half everywhere.
+
+### Part 2 — statement position (`validate.rs`, new **SB5073**)
+
+The obvious fix — deleting these names from `BUILTINS` so they fall to SB5011
+like `len` does — is **wrong**, and measuring it is what showed why:
+
+- `is_valid_command` falls through to `resolve_on_path(name)`. On a machine
+  with a real `getenv` on `PATH`, a bare `getenv` would then *silently exec
+  it*. The same source would compile to different programs on different
+  machines.
+- `is_external_source` (validate.rs:3627) classifies any non-`BUILTINS` name
+  as external, which is a **taint** classification shared with the transform's
+  `clean_pipe` backstop.
+
+So the names stay in `BUILTINS`, and a separate `VALUE_ONLY_INTRINSICS` list
+drives a dedicated SB5073 in `check_cmd_in_stmt`. `argv` is deliberately
+excluded — DD#60's `argv [N] a` out-param form is a legal statement, and
+via.12 pins that.
+
+### Verification
+
+12 specs `via.1`-`via.12` in `spec/errors.sh`, beside the existing SB4045
+block. **Fail-first confirmed**: exactly via.1-via.9 fail against a stashed
+pre-fix build; via.10-via.12 pass both before and after (they are regression
+guards, not discriminators).
+
+Sweep **5035 / 38 / 514**, zero non-janet failures, **zero flips** vs
+`2e35cc2`.
+
+`via.10`/`via.11` are guarded `native,c`: janet emits
+`(os/spawn ["getenv" "HOME"])` — it tries to exec a `getenv` binary, the same
+bug class on the janet side. Already filed and deferred as
+`janet-getpid-class-intrinsics`; not re-filed.
+
+### Also corrected
+
+The filing claimed `getenv`/`status` have "no `type_check.rs` presence at
+all". `status` is in fact listed there (`is_int_returning_intrinsic:159`) —
+that is a *type* classification, not an arity check, which is why it did not
+help. The root cause stands; the wording did not.

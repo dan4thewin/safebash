@@ -2088,6 +2088,33 @@ const BUILTINS: &[&str] = &[
     "matchall",
 ];
 
+/// Intrinsics that are **value-producing only**: they are legal as a `$( )`
+/// head and nowhere else. They stay in `BUILTINS` above so they are never
+/// PATH-resolved (a machine with a real `getenv` on PATH must not silently
+/// exec it) and so `is_external_source` keeps classifying them as non-external
+/// for taint. This list is what makes a *statement-position* use an error
+/// (SB5073) instead of falling through to `sash_exec` and aborting at runtime
+/// with `sash: bug: bare command passed to sash_exec`.
+///
+/// `argv` is deliberately absent — DD#60's `argv [N] a` out-param form is a
+/// legal statement. The other value intrinsics (`len`, `keys`, `join`,
+/// `toupper`, `random`, …) are not in `BUILTINS` at all, so they already get
+/// SB5011 in statement position.
+const VALUE_ONLY_INTRINSICS: &[&str] = &[
+    "getenv",
+    "status",
+    "getpid",
+    "getppid",
+    "getcpid",
+    "getcwd",
+    "epochseconds",
+    "argc",
+    "arg",
+    "signum",
+    "dtoi",
+    "itod",
+];
+
 fn collect_functions(stmts: &[Statement], funcs: &mut HashSet<String>) {
     for stmt in stmts {
         if let StmtKind::Function(f) = &stmt.kind {
@@ -2263,24 +2290,50 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
         ));
         return;
     }
-    let name = expr_literal_str(&c.name);
-    // DD#14: `exec` replaces the running program (or manipulates its fds). Its
-    // target — the first argument, for the replace form — must be resolvable at
-    // compile time exactly like a command head; the fd-only form (`exec >file`)
-    // has no target. Validate the target here (the `exec` head itself is a
-    // BUILTIN, so it passes the resolvability check below).
-    if name == "exec" {
-        check_exec_target(c, diags);
-        return;
+    check_command_head(expr_literal_str(&c.name), c, stmt, funcs, diags);
+}
+
+/// Name-keyed half of `check_cmd_in_stmt`: everything that depends on *which*
+/// command this is, once the head is known to be a literal.
+fn check_command_head(
+    name: &str,
+    c: &Command,
+    stmt: &Statement,
+    funcs: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    match name {
+        // DD#14: `exec` replaces the running program (or manipulates its fds).
+        // Its target — the first argument, for the replace form — must be
+        // resolvable at compile time exactly like a command head; the fd-only
+        // form (`exec >file`) has no target. (The `exec` head itself is a
+        // BUILTIN, so it passes the resolvability check below.)
+        "exec" => return check_exec_target(c, diags),
+        // DD#14 fd-manipulation: `close N` closes a file descriptor. Its single
+        // argument must be a literal non-negative fd number — the same
+        // discipline as a `N>&M` dup target (no dynamic/variable fd).
+        "close" => return check_close_arg(c, diags),
+        // A value-producing intrinsic (`$(getenv NAME)`, `$(status)`, …) is
+        // legal only as a command-substitution head. In statement position its
+        // value has nowhere to go, and it used to fall through to `sash_exec`
+        // and abort at runtime on an internal assertion.
+        n if VALUE_ONLY_INTRINSICS.contains(&n) => {
+            diags.push(Diagnostic::error_span(
+                c.name.span,
+                "SB5073",
+                format!(
+                    "`{name}` is a value intrinsic — it produces a value and is only \
+                     valid inside a command substitution, e.g. `x=$({name}{})`. A bare \
+                     statement would discard the value",
+                    if c.args.is_empty() { "" } else { " …" }
+                ),
+            ));
+            return;
+        }
+        "" => return,
+        _ => {}
     }
-    // DD#14 fd-manipulation: `close N` closes a file descriptor. Its single
-    // argument must be a literal non-negative fd number — the same discipline
-    // as a `N>&M` dup target (no dynamic/variable fd, DD#23-style).
-    if name == "close" {
-        check_close_arg(c, diags);
-        return;
-    }
-    if name.is_empty() || is_valid_command(name, funcs) {
+    if is_valid_command(name, funcs) {
         return;
     }
     diags.push(Diagnostic::error_span(

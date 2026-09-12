@@ -1005,9 +1005,16 @@ pub struct VersionState {
 /// external command.
 pub(crate) fn value_intrinsic_arity(name: &str) -> Option<usize> {
     match name {
-        "len" | "keys" | "toupper" | "tolower" | "basename" | "dirname" => Some(1),
-        "match" => Some(2),
+        // Nullary: the value comes from a global or a syscall, never an
+        // argument. Without an entry here an extra argument was silently
+        // discarded (`$(getpid X)` yielded the pid).
+        "status" | "getpid" | "getppid" | "getcwd" | "epochseconds" | "argc" | "signum"
+        | "random" => Some(0),
+        "len" | "keys" | "toupper" | "tolower" | "basename" | "dirname" | "getenv" => Some(1),
+        "match" | "dtoi" | "itod" => Some(2),
         "sub" | "gsub" => Some(3),
+        // `arg` is genuinely variadic (DD#60: `$(arg N)` / `$(arg N DEFAULT)`),
+        // as are `join` and `echo`, so they have no fixed arity to check.
         _ => None,
     }
 }

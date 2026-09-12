@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=129
+plan=144
 echo "1..$plan" >&3
 
 set +e
@@ -600,6 +600,56 @@ run_sash 'a=x; echo $(len a b)'
 # 55.45 a correct-arity call still compiles + runs
 run_sash 's=hello; echo $(len s)'
 [[ $rc = 0 && $out = 5 && -z $err ]]; chk 55.45
+
+# ── via.*: every value intrinsic has an arity, and none is a statement ──
+# The SB4045 table above covered only len/sub/toupper/…; the *other* value
+# intrinsics (getenv, status, getpid, argc, dtoi, …) had no arity entry and no
+# context check at all. Extra arguments were silently discarded, and a bare
+# statement fell through to `sash_exec`, so an ACCEPTED program printed
+# `sash: bug: bare command passed to sash_exec` at runtime. Front-end — all modes.
+
+# via.1-5 wrong arity in `$( )` is SB4045, not a silent ignore
+run_sash 'x=$(getenv); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.1
+run_sash 'x=$(getenv HOME EXTRA); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.2
+run_sash 'x=$(getpid 7); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.3
+run_sash 'x=$(argc 7); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.4
+# dtoi takes 2 (digits, value) — one arg is as wrong as three
+run_sash 'x=$(dtoi 2); echo $x'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk via.5
+
+# via.6-9 a value intrinsic in STATEMENT position is SB5073, never an ICE
+run_sash 'getenv HOME'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.6
+run_sash 'status'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.7
+run_sash 'getpid'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.8
+run_sash 'epochseconds'
+[[ $rc != 0 && -z $out && $err == *SB5073* && $err != *"sash: bug"* ]]; chk via.9
+
+# via.10-12 the legitimate forms are untouched
+# native,c only: janet exec's the getpid-class instead of implementing it
+# (filed, deferred: janet-getpid-class-intrinsics).
+if in_modes native,c; then
+    run_sash 'x=$(getenv HOME)
+attest x [[ -n $x ]]
+echo ok'
+    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.10
+    run_sash 'p=$(getpid); if (( p > 0 )); then echo ok; fi'
+    [[ $rc = 0 && $out = "ok" && -z $err ]]; chk via.11
+else
+    skip_chk via.10; skip_chk via.11
+fi
+# via.12 `argv` is NOT value-only — DD#60's out-param statement form stays legal
+run_sash 'array a
+argv a
+n=$(len a)
+echo "n=$n"'
+[[ $rc = 0 && $out == n=* && -z $err ]]; chk via.12
 
 # ── DD#95: mixing `&&` and `||` in one list is ambiguous ──
 # The two contexts grouped the same text differently — inside `[[ ]]` `&&` binds
