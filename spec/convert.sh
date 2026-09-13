@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=110
+plan=117
 echo "1..$plan" >&3
 
 set +e
@@ -735,6 +735,60 @@ one() { echo "$1 $#"; }'
 run_convert '#!/bin/bash
 echo "$HOME $HOME"'
 [[ $rc = 0 && $out == *'echo "$home $home"'* && -z $err ]]; chk conv.x9
+
+# ── DD#80 subscripts ─────────────────────────────────────────
+# bash evaluates every subscript arithmetically; sash takes a direct key. The
+# bash idioms convert to sash that does not compile unless the subscript is
+# rewritten (SB4030 for a bare name, SB4041 for an expression).
+
+# 57.86 a bare name subscript on an array is a variable read → $i
+run_convert '#!/bin/bash
+declare -a a=(10 20 30)
+i=1
+echo "${a[i]}"'
+[[ $rc = 0 && $out == *'echo "${a[$i]}"'* && -z $err ]]; chk 57.86
+
+# 57.87 an expression subscript becomes explicit arithmetic
+run_convert '#!/bin/bash
+declare -a a=(10 20 30)
+i=1
+echo "${a[i+1]}"'
+[[ $rc = 0 && $out == *'${a[$(( i+1 ))]}'* && -z $err ]]; chk 57.87
+
+# 57.88 a nested subscript nests as an expansion, not as arithmetic.
+# tree-sitter-bash cannot parse this form at all — it yields an ERROR node —
+# so the rewrite runs off the raw text.
+run_convert '#!/bin/bash
+declare -a a=(10 20 30)
+echo "${a[a[0]]}"'
+[[ $rc = 0 && $out == *'${a[${a[0]}]}'* && -z $err ]]; chk 57.88
+
+# 57.89 an integer literal is already a direct key — untouched
+run_convert '#!/bin/bash
+declare -a a=(10 20 30)
+echo "${a[5]}"'
+[[ $rc = 0 && $out == *'echo "${a[5]}"'* && -z $err ]]; chk 57.89
+
+# 57.90 a bareword key on a map is already direct — untouched
+run_convert '#!/bin/bash
+declare -A m
+m[foo]=1
+echo "${m[foo]}"'
+[[ $rc = 0 && $out == *'echo "${m[foo]}"'* && $out != *'${m[$foo]}'* && -z $err ]]; chk 57.90
+
+# 57.91 an already-direct $var subscript is left alone (not double-dollared)
+run_convert '#!/bin/bash
+declare -a a=(10 20 30)
+i=1
+echo "${a[$i]}"'
+[[ $rc = 0 && $out == *'echo "${a[$i]}"'* && $out != *'$$'* && -z $err ]]; chk 57.91
+
+# 57.92 `@` in a subscript is a splat, not a ${var@X} transformation — it must
+# not draw the MANUAL note (it did before the subscript work)
+run_convert '#!/bin/bash
+declare -a a=(1 2)
+echo "${a[@]}"'
+[[ $rc = 0 && $out != *'parameter transformation'* && -z $err ]]; chk 57.92
 
 set -e
 tally

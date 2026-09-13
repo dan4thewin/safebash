@@ -1,3 +1,37 @@
+## ══ STATUS (2026-09-13) — DD#80 subscripts in the converter ══
+
+**Journal 293.** `converter-braced-subscript-index` **done**. Sweep
+**4405 passing, 9 skipped, 0 failing, 0 flips** (+7 specs, `57.86`–`57.92`).
+
+`sash-convert` now rewrites bash arithmetic subscripts to DD#80 direct keys:
+`${a[i]}` → `${a[$i]}`, `${a[i+1]}` → `${a[$(( i+1 ))]}`, `${a[a[0]]}` →
+`${a[${a[0]}]}`. Integer literals and map barewords are already direct and are
+left alone — `CollectionPass` now also tracks which names were declared `-A`,
+since a bareword key means opposite things on a map and on an array.
+
+**Two things the filing did not anticipate, both worth knowing:**
+
+1. **tree-sitter-bash 0.25 cannot parse `${a[a[0]]}`.** It yields an `ERROR`
+   node instead of an `expansion`, so no tree-dispatching pass can ever see
+   it. `walk_node` has an `ERROR` arm that runs the rewrite off the raw span
+   text and returns early. This is almost certainly not the only construct the
+   grammar is blind to; it is the only one a spec happened to catch.
+
+2. **`${a[@]}` was drawing a spurious `# MANUAL: ${var@X}` note** —
+   pre-existing, from testing `inner.contains('@')` when `@` in a subscript is
+   a splat. So the converter has been telling people to hand-convert the most
+   common array idiom in bash. MANUAL markers are advisory, so nothing
+   measured it. Fixed (`is_param_transform`), pinned by `57.92`.
+
+**→ New for DG: `notes/tasks/converter-string-var-arithmetic.md` (P2,
+blocked).** The converter emits non-compiling sash for plain
+`i=1; echo $(( i + 1 ))` — bash's implicit string→int coercion has no
+converter policy, so SB4030. Not a subscript issue (`${a[$(( i+1 ))]}` is the
+correct spelling and fails for the same general reason). Four options costed;
+recommendation is **infer `int i=1` when every assignment to the name is a
+numeric literal, falling back to a `# MANUAL:` marker** — the only option
+that neither invents a value nor diverges from bash. DG's call.
+
 ## ══ STATUS (2026-09-13) — the regex man-page section (and what writing it found) ══
 
 **Journal 292.** `docs-regex-dialect-writeup` **done**. Sweep unchanged at

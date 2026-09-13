@@ -78,10 +78,14 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         patches: &mut patches,
         prefix_lines: &mut prefix_lines,
         names: HashSet::new(),
+        maps: HashSet::new(),
         declared: HashSet::new(),
     };
     pass.walk(tree.root_node(), src);
-    let collections = pass.names;
+    let collections = Names {
+        all: pass.names,
+        maps: pass.maps,
+    };
 
     // Walk the CST
     walk_node(
@@ -124,7 +128,7 @@ fn walk_node(
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
     annotate: bool,
-    collections: &HashSet<String>,
+    collections: &Names,
 ) {
     match node.kind() {
         "declaration_command" => {
@@ -198,6 +202,24 @@ fn walk_node(
         }
         "word" => {
             convert_tilde_word(node, source, patches, prefix_lines);
+        }
+        // tree-sitter-bash 0.25 cannot parse a nested subscript — `${a[a[0]]}`
+        // yields an ERROR node spanning the whole expansion instead of an
+        // `expansion`. The text is still exact, so the DD#80 rewrite applies
+        // unchanged. Returning early skips the recursion, which would
+        // otherwise patch the malformed children underneath this span.
+        "ERROR" => {
+            let text = node_text(node, source);
+            if let Some(inner) = text.strip_prefix("${").and_then(|t| t.strip_suffix('}')) {
+                if let Some(replacement) = subscript_expansion(inner, collections) {
+                    patches.push(Patch::replace_node(
+                        node,
+                        replacement,
+                        Some(text.to_string()),
+                    ));
+                    return;
+                }
+            }
         }
         _ => {}
     }
@@ -1116,7 +1138,7 @@ fn convert_expansion(
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
-    collections: &HashSet<String>,
+    collections: &Names,
 ) {
     let text = node_text(node, source);
 
@@ -1159,6 +1181,14 @@ fn convert_expansion(
                 return;
             }
         }
+        if let Some(replacement) = subscript_expansion(inner, collections) {
+            patches.push(Patch::replace_node(
+                node,
+                replacement,
+                Some(text.to_string()),
+            ));
+            return;
+        }
     }
 
     // ${var-x} → ${var:-x}  (but not ${var:-x} which already has the colon)
@@ -1194,7 +1224,7 @@ fn convert_expansion(
     // ${var@X} → MANUAL
     if text.contains('@') && text.starts_with("${") && text.ends_with('}') {
         let inner = &text[2..text.len() - 1];
-        if inner.contains('@') {
+        if is_param_transform(inner) {
             let line = node.start_position().row;
             prefix_lines.push((line, "# MANUAL: ${var@X} parameter transformation not supported in sash — use ${var^^}/${var,,} for case".into()));
         }
@@ -1202,6 +1232,98 @@ fn convert_expansion(
 }
 
 // ── Arithmetic side-effect extraction (DD#57) ─────────────────
+
+/// DD#80: `${a[K]}` takes a **direct** key — an integer literal, `$var`, an
+/// expansion, a quoted string, or (maps only) a clean-identifier bareword.
+/// Bash evaluates every subscript arithmetically instead, so the idioms it
+/// accepts convert to sash that does not compile: `${a[i]}` is SB4030 (bare
+/// string in arithmetic) and `${a[i+1]}` / `${a[a[0]]}` are SB4041 (ambiguous
+/// braced index).
+///
+/// Returns the rewritten `${…}` text, or `None` to leave the expansion alone.
+///
+/// `inner` is the text between `${` and `}`.
+fn subscript_expansion(inner: &str, collections: &Names) -> Option<String> {
+    let open = inner.find('[')?;
+    if !inner.ends_with(']') {
+        return None;
+    }
+    let name = &inner[..open];
+    if name.is_empty() || !is_clean_ident(name) {
+        return None;
+    }
+    let key = &inner[open + 1..inner.len() - 1];
+    let rewritten = subscript_key(key, collections.maps.contains(name))?;
+    Some(format!("${{{}[{}]}}", name, rewritten))
+}
+
+/// The key half of [`subscript_expansion`]. `None` means "already direct,
+/// leave it".
+fn subscript_key(key: &str, is_map: bool) -> Option<String> {
+    // Already direct: an expansion, a quoted literal, or a splat. An integer
+    // literal is direct too, and is by far the common case.
+    if key.is_empty()
+        || key.starts_with('$')
+        || key.starts_with('"')
+        || key.starts_with('\'')
+        || key == "@"
+        || key == "*"
+        || is_int_literal(key)
+    {
+        return None;
+    }
+    // A bareword key on a map is already a direct key — that is the one place
+    // DD#80 keeps the bare spelling. On an array the same text is a variable
+    // read in bash, so it has to become one here.
+    if is_clean_ident(key) {
+        return if is_map {
+            None
+        } else {
+            Some(format!("${}", key))
+        };
+    }
+    // A nested subscript `b[…]` is a value, so it nests as an expansion rather
+    // than opening arithmetic: `${a[${b[0]}]}`. Anything else is an expression
+    // and gets explicit arithmetic. Per DD#66 the arithmetic form is the safe
+    // default for an ambiguous name, since an int-indexed array is what bash
+    // meant.
+    if let Some(open) = key.find('[') {
+        if key.ends_with(']') && is_clean_ident(&key[..open]) {
+            return Some(format!("${{{}}}", key));
+        }
+    }
+    Some(format!("$(( {} ))", key))
+}
+
+/// `${var@X}` — the parameter-transformation form, which sash does not have.
+/// `@` also appears as a splat subscript (`${a[@]}`, `${a[@]:1}`), which is a
+/// different construct entirely and must not draw the MANUAL note.
+fn is_param_transform(inner: &str) -> bool {
+    let Some((base, op)) = inner.rsplit_once('@') else {
+        return false;
+    };
+    if op.len() != 1 || !op.starts_with(|c: char| c.is_ascii_alphabetic()) {
+        return false;
+    }
+    let base = base.split_once('[').map_or(base, |(name, _)| name);
+    is_clean_ident(base)
+}
+
+/// A bash/sash identifier: leading letter or `_`, then alphanumerics or `_`.
+fn is_clean_ident(s: &str) -> bool {
+    let mut chars = s.chars();
+    match chars.next() {
+        Some(c) if c.is_ascii_alphabetic() || c == '_' => {}
+        _ => return false,
+    }
+    chars.all(|c| c.is_ascii_alphanumeric() || c == '_')
+}
+
+/// A decimal integer literal, optionally signed.
+fn is_int_literal(s: &str) -> bool {
+    let digits = s.strip_prefix('-').unwrap_or(s);
+    !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit())
+}
 
 /// If a variable_assignment has an arithmetic_expansion whose inner expression
 /// contains an assignment (e.g. `y=$((x=10))`), extract the side-effect as a
@@ -1226,7 +1348,7 @@ fn convert_expansion(
 ///
 /// `None` leaves the expansion alone: `${##…}` is a prefix strip, not a
 /// length, and a non-identifier base is some other form entirely.
-fn length_expansion(rest: &str, collections: &HashSet<String>) -> Option<String> {
+fn length_expansion(rest: &str, collections: &Names) -> Option<String> {
     if rest.is_empty() || rest.starts_with('#') {
         return None;
     }
@@ -1240,9 +1362,18 @@ fn length_expansion(rest: &str, collections: &HashSet<String>) -> Option<String>
     Some(match subscript {
         Some("@") | Some("*") => format!("$(len {})", base),
         Some(index) => format!("$(strlen ${{{}[{}]}})", base, index),
-        None if collections.contains(base) => format!("$(strlen ${{{}[0]}})", base),
+        None if collections.all.contains(base) => format!("$(strlen ${{{}[0]}})", base),
         None => format!("$(strlen ${})", base),
     })
+}
+
+/// What the pre-pass learned about names, threaded through the rewrite walk.
+pub(crate) struct Names {
+    /// Every name used as a collection anywhere in the script.
+    all: HashSet<String>,
+    /// The subset declared `declare -A` / `local -A`, i.e. maps. A map
+    /// subscript is a key, not an arithmetic index (DD#80).
+    maps: HashSet<String>,
 }
 
 /// The pre-pass state: what names are collections, and which constructs need
@@ -1253,6 +1384,10 @@ struct CollectionPass<'a> {
     /// Every name used as a collection anywhere in the script, for
     /// [`length_expansion`].
     names: HashSet<String>,
+    /// The subset of `names` declared `declare -A` / `local -A`, i.e. maps.
+    /// A map subscript is a key, not an arithmetic index, so it converts
+    /// differently (DD#80) — see [`subscript_expansion`].
+    maps: HashSet<String>,
     /// Names that already carry a keyword at this point in the source, so the
     /// keyword is introduced once, at the first construct that mentions each.
     declared: HashSet<String>,
@@ -1329,15 +1464,14 @@ impl CollectionPass<'_> {
     fn declaration(&mut self, node: Node, source: &[u8]) {
         let mut cursor = node.walk();
         let children: Vec<Node> = node.children(&mut cursor).collect();
-        let is_collection = children.iter().any(|c| {
-            c.kind() == "word" && {
-                let t = node_text(*c, source);
-                t.starts_with('-') && t.contains(['a', 'A'])
-            }
+        let flag = children.iter().find_map(|c| {
+            let t = node_text(*c, source);
+            (c.kind() == "word" && t.starts_with('-') && t.contains(['a', 'A'])).then_some(t)
         });
-        if !is_collection {
+        let Some(flag) = flag else {
             return;
-        }
+        };
+        let is_map = flag.contains('A');
         for child in &children {
             let name = match child.kind() {
                 "variable_name" => Some(node_text(*child, source).to_string()),
@@ -1345,6 +1479,9 @@ impl CollectionPass<'_> {
                 _ => None,
             };
             if let Some(name) = name {
+                if is_map {
+                    self.maps.insert(name.clone());
+                }
                 self.introduce(&name);
             }
         }
