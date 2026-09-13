@@ -1,3 +1,34 @@
+## ══ STATUS (2026-09-13) — two regex limitations, one of which was lying ══
+
+**Journal 294.** Sweep **4413 passing, 9 skipped, 0 failing, 0 flips**.
+
+**1. The interior-NUL limitation is now written down.** DG decided it YAGNI on
+2026-09-10, but the filing's gate ("stated in the DD#63 regex documentation")
+was never closed, and the man-page section from journal 292 shipped without
+it — the one regex divergence that returns a **wrong answer silently**
+instead of rejecting. Re-measured first: `strlen` on `a\0bcd` is 5, `=~ cd`
+is false, `gsub` is a no-op. Now in `DD63` (addendum, with the runtime detail)
+and `docs/sash.1` (§REGULAR EXPRESSIONS, "Interior NUL bytes"). The filing's
+own repro used `$(len s)` and no longer compiled — corrected.
+
+**2. `regex-literal-double-paren` defect 1 fixed.** `[[ $s =~ ^((a))$ ]]` was
+rejected as "expected `]]`" — naming a delimiter the input does not lack.
+`parse_binary_rhs` now checks for `Tok::DblParen` after the `=~` operand word
+and says the real cause. The `[[ … { … } ]]` dispatch form improved from the
+same edit (both route through `parse_binary_rhs` — DD#71's "the `=~` RHS is
+an ordinary operand word" paying off). Specs `39.32`–`39.35`.
+
+**The man page had been documenting the misleading message as if it were the
+rule.** Updated to state the real trigger: adjacency, not nesting —
+`^(a(b))$` has the same depth and compiles.
+
+**→ Still open for DG on that task (now `blocked`):** whether an unquoted `=~`
+pattern may contain `((` at all. Lifting it means the `=~` RHS tracks paren
+depth like `scan_word_chars` does for subscripts — small and local, but it
+widens what a bare word may contain against a real `$(( ))` ambiguity. The fix
+above forecloses nothing; it just makes leaving the restriction in place
+cheaper.
+
 ## ══ STATUS (2026-09-13) — DD#80 subscripts in the converter ══
 
 **Journal 293.** `converter-braced-subscript-index` **done**. Sweep

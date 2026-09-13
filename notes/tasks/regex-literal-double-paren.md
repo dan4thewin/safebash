@@ -1,9 +1,10 @@
 ---
-status: ready
+status: blocked
 priority: P3
 depends:
 gates:
-  - "`[[ $s =~ ^((a))$ ]]` either compiles or is rejected by a diagnostic that names the real cause"
+  - "DONE: rejected by a diagnostic that names the real cause (SB4014, 2026-09-13)"
+  - "DG decides whether an unquoted `=~` pattern may contain `((` at all"
 ---
 
 # An unquoted regex containing `((` is rejected as "expected `]]`"
@@ -49,3 +50,37 @@ construct; only one spelling of it is unreachable.
 and the workaround under "Quoting", so the behaviour is at least not a
 surprise. That is a stopgap, not a resolution: the manpage currently
 documents a misleading diagnostic as if it were a rule.
+
+## Defect 1 fixed 2026-09-13 (journal 294)
+
+`parse_binary_rhs` now checks, after the `=~` operand word, whether the
+scanner is sitting on `Tok::DblParen`, and says so:
+
+```
+error [SB4014] `((` in an unquoted regex is read as the arithmetic opener
+`$(( … ))`, so the pattern ends before it — quote the pattern
+(`=~ '^((a))$'`) or separate the parens (`^(a(b))$`)
+```
+
+Both the plain test and the `[[ … { … } ]]` dispatch form route through
+`parse_binary_rhs`, so both improved from one edit. Specs `39.32`–`39.35`:
+the message names the cause and no longer says "expected `]]`" (32), the
+trigger is adjacency rather than depth (33), the quoted spelling still
+matches (34), and the dispatch form reports the same cause instead of a
+parse cascade (35).
+
+`docs/sash.1` §REGULAR EXPRESSIONS "Quoting" updated — it had been
+documenting the misleading message as though it were the rule, and now
+states the adjacency trigger instead.
+
+## Defect 2 still open — DG's call
+
+Whether an unquoted `=~` pattern may contain `((` at all. Nothing about the
+fix above forecloses it; if the restriction is lifted the new arm simply
+stops firing. The cost of lifting it is that the `=~` RHS would have to
+track paren depth the way `scan_word_chars` already tracks `[`/`]` depth for
+subscripts, which widens what a bare word may contain, against a real
+ambiguity with `$(( ))`.
+
+Worth noting from the fix: the restriction is now **stated** rather than
+merely encountered, which lowers the cost of leaving it in place.

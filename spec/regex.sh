@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=80
+plan=84
 echo "1..$plan" >&3
 
 set +e
@@ -540,6 +540,32 @@ if [[ $s =~ ^[ab]{4} ]]; then echo Y; else echo N; fi'
 run_sash 's=ababababab
 if [[ $s =~ (ab)(ab) ]]; then echo Y; else echo N; fi'
 [[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.31
+
+# ── a literal `((` in an unquoted pattern ────────────────────
+# The lexer takes `((` as the arithmetic opener, so an unquoted pattern ends
+# there. That is a real restriction; it used to be reported as "expected `]]`",
+# which names a delimiter the input does not lack.
+
+# 39.32 the diagnostic names the actual cause, not a missing `]]`
+run_sash 's=abc
+if [[ $s =~ ^((a))$ ]]; then echo Y; else echo N; fi'
+[[ $rc != 0 && $err == *'SB4014'* && $err == *'arithmetic opener'* \
+   && $err != *"expected \`]]\`"* ]]; chk 39.32
+
+# 39.33 the trigger is adjacency, not nesting depth — this compiles
+run_sash 's=ab
+if [[ $s =~ ^(a(b))$ ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.33
+
+# 39.34 the quoted spelling of the same pattern is accepted and matches
+run_sash "s=a
+if [[ \$s =~ '^((a))\$' ]]; then echo Y; else echo N; fi"
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.34
+
+# 39.35 the dispatch form reports the same cause rather than a parse cascade
+run_sash 's=abc
+[[ $s =~ ^((a)) { echo HIT } || { echo MISS } ]]'
+[[ $rc != 0 && $err == *'SB4014'* && $err == *'arithmetic opener'* ]]; chk 39.35
 
 set -e
 tally

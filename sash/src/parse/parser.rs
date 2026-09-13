@@ -1452,7 +1452,23 @@ fn parse_binary_rhs(
         // DD#71: the `=~` RHS is an operand word (metachars literal, quote/
         // $-aware, absorbed to the next whitespace/`]]`). No bespoke regex
         // collector.
-        parse_operand_word(scanner)?
+        let word = parse_operand_word(scanner)?;
+        // An unquoted pattern that contains `((` ends the word there, because
+        // the lexer has already taken the two parens as the arithmetic
+        // opener. Left alone this surfaces as "expected `]]`" from
+        // `parse_test_command`, which names a delimiter the input does not
+        // lack — say what actually happened instead.
+        if matches!(scanner.peek().token, Tok::DblParen) {
+            return Err(parse_error(
+                span,
+                "SB4014",
+                "`((` in an unquoted regex is read as the arithmetic opener \
+                 `$(( … ))`, so the pattern ends before it — quote the pattern \
+                 (`=~ '^((a))$'`) or separate the parens (`^(a(b))$`)"
+                    .to_string(),
+            ));
+        }
+        word
     } else {
         parse_test_operand(scanner, span)?
     };

@@ -532,13 +532,16 @@ take: a space, a
 .RB \[dq] # \[dq],
 or a doubled
 .RB \[dq] (( \[dq]
-\(em which an unquoted pattern hands to the arithmetic lexer, so
+\(em which an unquoted pattern hands to the arithmetic lexer, ending the
+pattern there, so
 .RB \[dq] "=~ ^((a))$" \[dq]
-is rejected with
-.RB \[dq] "expected ']]'" \[dq]
+is rejected
+.RB ( SB4014 )
 while
 .RB \[dq] "=~ '^((a))$'" \[dq]
-is fine. A single
+is fine. The trigger is adjacency, not nesting \(em
+.RB \[dq] "^(a(b))$" \[dq]
+has the same depth and compiles. A single
 .RB \[dq] ( \[dq]
 needs no quoting.
 .RB \[dq] "=~ '^(a|b)$'" \[dq]
