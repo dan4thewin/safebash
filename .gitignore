@@ -39,3 +39,19 @@ spec/.trace/
 *.profraw
 notes/tmux-*.log
 spec.db
+
+# spec harness artifacts. Specs source common.sh, which does `cd $(mktemp -d)`,
+# so these are only ever strays from an interrupted or pre-tmpdir run. Four of
+# them (out, err, .input.sh, a stale 31.4 draft) had been committed by accident
+# and one more was nearly re-added by a `git add -A` on 2026-09-13.
+spec/out
+spec/err
+spec/.input.sh
+spec/.input.sash
+spec/.converted.sash
+spec/.output.sash
+spec/.out.c
+spec/.binary
+spec/gcc.err
+spec/test_bin
+spec/cl_fd_out
