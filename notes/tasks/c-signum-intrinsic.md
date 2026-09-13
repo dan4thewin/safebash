@@ -1,6 +1,6 @@
 ---
 title: "c backend doesn't implement the `signum` value intrinsic (emits a TODO stub)"
-status: ready
+status: done
 scope: c/janet backends only (native complete)
 priority: P3
 kind: bug
@@ -51,3 +51,16 @@ native uses `externs.signum`).
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+## Re-measured 2026-09-13 — closed
+
+```
+$ SASH_MODE=c  echo $(( (signum) ))
+rc=0  out=[0]              # identical to native
+```
+
+The **c** half was done on 2026-08-20 and recorded in the note at the top of
+this file; the task nonetheless stayed `ready` because its remaining gate was
+the **janet** one, and janet was removed by DD#104. Nothing was left to do.
+
+A task should not outlive the backend its last open gate names.

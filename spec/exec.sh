@@ -11,12 +11,15 @@
 # The target CMD is resolved and constrained exactly like a command head
 # (DD#23): a literal, compile-time-resolvable external path; a variable /
 # expansion target is rejected (SB5011), as are tainted args without attest
-# (DD#24). `exec` is native-only for now (the c backend emits no exec), so
-# this suite runs only in native mode.
+# (DD#24).
+#
+# Both backends. The c backend gained `exec` alongside this un-gating; before
+# that it emitted a `/* TODO command */` no-op, so `exec CMD` silently fell
+# through to the following statements and `exec > file` un-did its own
+# redirect via the per-command restore.
 set -eu
 . common.sh
 setup exec
-[[ ${SASH_MODE:-native} != native ]] && exit 0
 plan=19
 echo "1..$plan" >&3
 

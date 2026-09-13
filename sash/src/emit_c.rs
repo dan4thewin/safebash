@@ -1786,6 +1786,19 @@ fn emit_wait_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
 /// arm. Phase 6 adds LetExit (the post-arith-test status setter).
 /// Other builtins emit a `TODO` comment so the C still compiles and
 /// the unsupported area is visible.
+/// DD#14: `exec > file` with no command is *persistent* fd manipulation — it
+/// rebinds the running process's descriptors for the rest of the program. The
+/// per-command save/restore that wraps every other command would undo it on
+/// the very next line, which is how this silently misrouted output back to the
+/// original stdout. Mirrors native `emit_exec_redirects_only`, which likewise
+/// applies the redirects and discards the saved fds.
+///
+/// Only the *success* path suppresses the restore. If the open fails there is
+/// no persistent redirect to keep, so that branch restores and aborts as usual.
+fn is_persistent_exec(kind: &BuiltinCmd, args: &[SsaValue]) -> bool {
+    matches!(kind, BuiltinCmd::Exec) && args.is_empty()
+}
+
 fn emit_command(
     e: &mut Emit,
     name: &str,
@@ -1811,9 +1824,11 @@ fn emit_command(
         emit_redirects_guarded(e, redirects, types)
     };
 
+    let persistent = is_persistent_exec(kind, args);
+
     let Some(rf) = failure else {
         emit_command_body(e, name, kind, args, checked, types);
-        if !saved.is_empty() {
+        if !saved.is_empty() && !persistent {
             emit_restore(e, &saved);
         }
         return;
@@ -1856,7 +1871,7 @@ fn emit_redirect_guarded_body(
     }
     writeln!(e.out, "    }} else {{").unwrap();
     emit_command_body(e, name, kind, args, checked, types);
-    if !saved.is_empty() {
+    if !saved.is_empty() && !is_persistent_exec(kind, args) {
         emit_restore(e, saved);
     }
     writeln!(e.out, "    }}").unwrap();
@@ -1897,11 +1912,37 @@ fn emit_command_body(
         // status=0, test_result=1.
         BuiltinCmd::LetExit => emit_let_exit(e, args, types),
         _ => {
-            if !emit_builtin_extra(e, name, kind, args, checked, types) {
+            if !emit_process_builtin(e, kind, args, checked, types)
+                && !emit_builtin_extra(e, name, kind, args, checked, types)
+            {
                 writeln!(e.out, "    /* TODO command: {} ({:?}) */", name, kind).unwrap();
             }
         }
     }
+}
+
+/// Process / fd primitives, split out of `emit_command_body` to keep that
+/// dispatcher under the complexity gate. Returns false for anything it does
+/// not handle, so the caller falls through to `emit_builtin_extra`.
+///
+/// DD#14 `exec` has two forms, split on whether a command was given:
+/// `exec CMD args…` replaces the process image (never returns), while
+/// `exec > file` is redirect-only and its redirects were already applied
+/// persistently by `emit_command`, so nothing is left but to report success.
+fn emit_process_builtin(
+    e: &mut Emit,
+    kind: &BuiltinCmd,
+    args: &[SsaValue],
+    checked: bool,
+    types: &VarTypes,
+) -> bool {
+    match kind {
+        BuiltinCmd::Exec => emit_exec_builtin(e, args, types),
+        BuiltinCmd::Close => emit_close_builtin(e, args, checked, types),
+        BuiltinCmd::TableDelete => emit_table_delete_c(e, args, types),
+        _ => return false,
+    }
+    true
 }
 
 /// __let_exit: take the value of an arithmetic test (string holding
@@ -1947,6 +1988,105 @@ fn emit_exec(e: &mut Emit, name: &str, args: &[SsaValue], checked: bool, types: 
         .unwrap();
     }
     emit_signal_exit_check(e);
+}
+
+/// `unset m[key]` — delete one entry. The transform emits this as the internal
+/// `__table_delete` sigil with `[Var(map), Literal(key)]` (cmd_handlers.rs:180).
+/// Mirrors native `emit_table_delete` (dispatch.rs:935), including its
+/// `args.len() >= 2` guard. Without this the sigil fell through to the `_ =>`
+/// TODO arm and `unset m[k]` was a silent no-op in the C backend: the key
+/// stayed present, `len` was unchanged, and the value still read back.
+fn emit_table_delete_c(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+    if args.len() < 2 {
+        return;
+    }
+    let SsaValue::Var(name) = &args[0] else {
+        return;
+    };
+    let table_expr = lookup_table_var(&name.name, types);
+    let (kp, kl) = lower_value_as_str(e, &args[1], types);
+    writeln!(
+        e.out,
+        "    sash_table_delete((SashTable*){table_expr}, {kp}, {kl});"
+    )
+    .unwrap();
+}
+
+/// DD#14 `close N` — `close(2)` the fd. Void; sets `$?` from the result
+/// (0 ok / 1 fail) and, per DD#55, a *bare* failed close aborts while a caught
+/// (`if` / `||`) or `-`-suppressed one does not. Mirrors native `handle_close`
+/// (inst_handlers.rs:979), including its defensive empty-args branch — the
+/// validator guarantees exactly one literal fd, but neither backend relies on
+/// that. Diagnostic: `<argv0>: close: <fd>: <reason>`.
+fn emit_close_builtin(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
+    let Some(arg) = args.first() else {
+        writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
+        return;
+    };
+    let fd = lower_value_as_int(e, arg, types);
+    let t = e.fresh();
+    writeln!(e.out, "    i64 {t}_r = sash_close({fd});").unwrap();
+    writeln!(
+        e.out,
+        "    __exit_status = ({t}_r < 0) ? 1 : 0; __test_result = ({t}_r < 0) ? 0 : 1;"
+    )
+    .unwrap();
+    if !checked {
+        return;
+    }
+    // Second diagnostic segment is the fd as written; only a literal has a
+    // spelling to quote, matching native's `SsaValue::Literal` arm.
+    let (p2, l2) = match arg {
+        SsaValue::Literal(lit) => (format!("\"{}\"", c_escape(lit)), lit.len().to_string()),
+        _ => ("0".to_string(), "0".to_string()),
+    };
+    writeln!(
+        e.out,
+        "    if ({t}_r < 0) {{ sash_emsg(\"close\", 5, {p2}, {l2}); goto {abort}; }}",
+        abort = abort_target(e)
+    )
+    .unwrap();
+}
+
+/// DD#14 `exec`. Mirrors native `emit_exec` (dispatch.rs:425), which splits on
+/// the same condition.
+///
+/// With a command, `args` is the **whole** argv — `args[0]` is the program,
+/// not a separate `name` (the `name` here is the literal string "exec").
+/// That is why this cannot reuse `emit_argv`, which prepends a `name` literal
+/// as argv[0]. Native's `build_argv_on_stack` lowers every element the same
+/// way, and neither backend expands an `@a` splat here.
+///
+/// `sash_exec` is declared `noreturn`; the `sash_exit(127)` after it is the
+/// execve-failed path, matching native's `finalize_exec`.
+fn emit_exec_builtin(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
+    if args.is_empty() {
+        // Redirect-only form: `emit_command` already applied the redirects
+        // without a restore. $? = 0, like native.
+        writeln!(e.out, "    __exit_status = 0; __test_result = 1;").unwrap();
+        return;
+    }
+    let t = e.fresh();
+    let argv = format!("{}_argv", t);
+    let mut ptrs: Vec<String> = Vec::with_capacity(args.len());
+    for arg in args {
+        let (ptr, len) = lower_value_as_str(e, arg, types);
+        // DD#99 stage 7: the length is known here but lost at execve.
+        writeln!(e.out, "    sash_argv_guard({ptr}, {len});").unwrap();
+        ptrs.push(ptr);
+    }
+    writeln!(
+        e.out,
+        "    const char* {argv}[] = {{ {}, (const char*)0 }};",
+        ptrs.join(", ")
+    )
+    .unwrap();
+    writeln!(
+        e.out,
+        "    sash_exec((const char* const*){argv}, sash_envp);"
+    )
+    .unwrap();
+    writeln!(e.out, "    sash_exit(127);").unwrap();
 }
 
 /// DD#56: after an external command, if the program arms a `signal N EXIT`

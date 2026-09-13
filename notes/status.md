@@ -1,3 +1,47 @@
+## ══ STATUS (2026-09-13) — four bugs behind one un-gating ══
+
+**C-backend `exec`/`close`/`unset m[k]` implemented; a heap-corruption bug in
+the map runtime fixed.** Journal 278. Sweep **4138 passing, 29 skipped, 0
+failing**, zero flips, **+31 specs**.
+
+DG's direction was "known bugs, worst first, then the sweep." The worst filed
+bug (`c-exec-support`) was real; fixing it and dropping `spec/exec.sh`'s
+native-only guard surfaced three more.
+
+| # | bug | scope | was |
+|---|---|---|---|
+| 1 | `BuiltinCmd::Exec` unimplemented in c | c backend | `exec CMD` ran nothing; `exec > file` un-did its own redirect |
+| 2 | `BuiltinCmd::Close` unimplemented in c | c backend | `close 9` exited 0 instead of aborting with EBADF |
+| 3 | `BuiltinCmd::TableDelete` unimplemented in c | c backend | `unset m[k]` a silent no-op |
+| 4 | `TABLE_DELETED` sentinel mishandled | **runtime, both backends** | `get` faulted (EFAULT); `set` wrote through a wild pointer → **SIGSEGV** |
+
+**#4 is the serious one.** `table_find_slot_inner` returns the first DELETED
+(−2) slot when a key is absent, but `sash_table_get` tested only for EMPTY
+(−1) and `sash_table_set` tested `!= EMPTY` — so the sentinel was used as a
+live entry index. Reachable from ordinary shell code (set a key, unset it,
+repeat) and live in **both** backends. Both guards now test `idx < 0`.
+
+It hid because a *never-set* key is fine — the bug needs an absent key whose
+probe chain crosses a deleted slot. And bug #3 masked it in c: spec `80.23`
+*passed* in c while both were broken, because a no-op `unset` left the entry
+live.
+
+`spec/exec.sh` is now un-gated (19 tests in c). New specs `80.22`–`80.27`
+(both modes) pin delete / re-set / churn against bash.
+
+**Filed, not fixed — needs a DG call:** `fail-open-todo-arms-in-emit-c` (P1).
+Bugs #1–#3 all came from `emit_c`'s `_ =>` arm emitting a *TODO comment* for
+an unimplemented builtin, so the C compiles and the statement silently
+vanishes — a fail-open default in a fail-closed compiler. Three options
+written up (hard error / runtime abort / exhaustive match); (C)+(A) compose
+and are the only ones that prevent recurrence rather than report it.
+
+**Next, per DG's order:** `bug-c-end-exit` (`END { }` skipped when the main
+body ends via `exit N`, c only), then `c-compound-pipeline-stage` (a user
+function as a pipeline stage → rc 127 in c, unblocks `pipe_functions.sh`),
+then un-gate `brace.sh` (27 tests; all eight constructs already verified
+identical).
+
 ## ══ STATUS (2026-09-13) — a pure capture costs zero syscalls ══
 
 **`$(f)` over a pure body is now a userspace buffer.** Journal 277. Sweep

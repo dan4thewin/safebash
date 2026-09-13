@@ -10,7 +10,7 @@
 set -eu
 . common.sh
 setup subscript
-plan=21
+plan=27
 echo "1..$plan" >&3
 
 set +e
@@ -110,6 +110,73 @@ run_sash 'fn f { echo $@[0]; }; f a b c'
 # 80.21 `$*[i]` likewise
 run_sash 'fn f { echo $*[0]; }; f a b c'
 [[ $rc != 0 && -z $out && $err == *SB5031* ]]; chk 80.21
+
+# ── G. reading a key after `unset m[K]`. The open-addressed table marks a
+# removed slot with a DELETED sentinel distinct from EMPTY, and the probe
+# returns the first DELETED slot it crossed when the key is absent. Both
+# `sash_table_get` and `sash_table_set` tested only for EMPTY, so the -2
+# sentinel was used as a live entry index: get dereferenced
+# `entries.add(-2 as usize)` (garbage ptr/len → EFAULT on the next write) and
+# set *wrote* through it (heap corruption → SIGSEGV under churn). Runtime, so
+# both backends were affected identically. ──
+
+# 80.22 a deleted key reads as the empty string, like bash
+run_sash 'map m=([a]=1 [b]=2)
+unset m[a]
+echo "[${m[a]}]"'
+[[ $rc = 0 && $out = '[]' && -z $err ]]; chk 80.22
+
+# 80.23 re-setting a deleted key reclaims the slot: new value, live count
+# back to 2. Before the fix `set` took the update branch on the sentinel and
+# live_count stayed 1.
+run_sash 'map m=([a]=1 [b]=2)
+unset m[a]
+m[a]=9
+echo "[${m[a]}] n=$(( (len m) ))"'
+[[ $rc = 0 && $out = '[9] n=2' && -z $err ]]; chk 80.23
+
+# 80.24 deleting every key then adding a fresh one — the new key is readable
+# and an absent key still reads empty (the probe crosses two DELETED slots)
+run_sash 'map m=([a]=1 [b]=2)
+unset m[a]
+unset m[b]
+m[c]=3
+echo "n=$(( (len m) )) c=${m[c]} a=[${m[a]}]"'
+[[ $rc = 0 && $out = 'n=1 c=3 a=[]' && -z $err ]]; chk 80.24
+
+# 80.25 set/unset the same key in a loop. Repeated slot reclamation; before
+# the fix this returned the last-written value from the dead entry.
+run_sash 'map m=()
+int i=0
+while (( i < 40 )); do
+  m[k]="$i"
+  unset m[k]
+  (( i = i + 1 ))
+done
+echo "n=$(( (len m) )) k=[${m[k]}]"'
+[[ $rc = 0 && $out = 'n=0 k=[]' && -z $err ]]; chk 80.25
+
+# 80.26 churn with a live neighbour, enough iterations to force table_grow
+# compaction. This is the case that segfaulted on the wild write.
+run_sash 'map m=()
+int i=0
+while (( i < 30 )); do
+  m[x]="$i"
+  m[y]="$i"
+  unset m[x]
+  (( i = i + 1 ))
+done
+echo "n=$(( (len m) )) y=${m[y]} x=[${m[x]}]"'
+[[ $rc = 0 && $out = 'n=1 y=29 x=[]' && -z $err ]]; chk 80.26
+
+# 80.27 `keys` and `len` agree with the reads after a delete (the c backend
+# emitted no `__table_delete` at all, so `unset m[K]` was a silent no-op there
+# and this reported n=3 with all three keys)
+run_sash 'map m=([a]=1 [b]=2 [c]=3)
+unset m[b]
+echo "n=$(( (len m) ))"
+for k in $(keys m); do echo "k=$k"; done'
+[[ $rc = 0 && $out = $'n=2\nk=a\nk=c' && -z $err ]]; chk 80.27
 
 set -e
 tally

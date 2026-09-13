@@ -38,3 +38,23 @@ termination with native.
 Coverage-grinding `emit_cmdsubst_pipe_while_read` (journal 197). spec
 coverage.sh cov.61 is guarded `in_modes native` because of this divergence;
 un-guard it once fixed.
+
+## Re-measured 2026-09-13 — premise obsolete, repro no longer compiles
+
+The filed repro is rejected by *both* backends now:
+
+```
+$ for x in $(/bin/echo a b c); do attest x [[ -n $x ]]; echo "$x"; done
+error [SB5020] tainted command substitution used without attest
+```
+
+The language tightened underneath the filing (the repro still says `bless`,
+which predates the `attest` rename). The DD#28/#40 `for x in $(cmd)` →
+`cmd | while read x` transform may no longer be reachable by this route at
+all.
+
+**This does not clear the task** — it clears the *evidence*. Either the EOF
+extra-iteration still exists behind some still-legal construct, or the
+construct that exposed it is gone and the task is void. Deciding which needs
+a fresh repro, not a status flip. Left `ready` with the premise flagged so
+the next reader does not re-run a repro that cannot compile.

@@ -1690,7 +1690,12 @@ pub unsafe extern "C" fn sash_table_set(
     );
 
     let idx = *(*t).indices.add(pos as usize);
-    if idx != TABLE_EMPTY {
+    // `table_find_slot_inner` returns the first DELETED slot in the probe
+    // chain when the key is absent, so a negative `idx` here is either
+    // TABLE_EMPTY (-1) or TABLE_DELETED (-2) — both mean "not present, insert
+    // here". Testing only `!= TABLE_EMPTY` treated the -2 sentinel as a live
+    // entry index and wrote val_ptr/val_len through `entries.add(-2 as usize)`.
+    if idx >= 0 {
         let e = &mut *(*t).entries.add(idx as usize);
         e.val_ptr = val_ptr;
         e.val_len = val_len;
@@ -1749,7 +1754,12 @@ pub unsafe extern "C" fn sash_table_get(
     );
 
     let idx = indices[pos as usize];
-    if idx == TABLE_EMPTY {
+    // Negative is TABLE_EMPTY or TABLE_DELETED — both mean "absent", which
+    // reads as the empty string (bash). Testing only `== TABLE_EMPTY` let the
+    // -2 sentinel through and dereferenced `entries.add(-2 as usize)`, so any
+    // absent key whose probe chain crossed a deleted slot returned a garbage
+    // (ptr, len) and the subsequent write faulted with EFAULT.
+    if idx < 0 {
         *out_len = 0;
         return core::ptr::null();
     }

@@ -1,6 +1,6 @@
 ---
 title: "c backend: emit the `exec` builtin (currently native-only)"
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
@@ -49,3 +49,27 @@ reference.
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+
+## Done (2026-09-13, journal 278)
+
+`exec` implemented in `emit_c.rs` (`emit_exec_builtin` + `is_persistent_exec`),
+`close` implemented (`emit_close_builtin`), and `spec/exec.sh` un-gated — all
+**19** pass in c, byte-identical diagnostics to native.
+
+Both c gates met. Notes on the implementation:
+
+- **redirect-only form**: the suppression of the per-command save/restore had
+  to go in `emit_command` (the caller applies the redirects in the c emitter,
+  unlike native where `emit_exec` owns them). Only the *success* path
+  suppresses; an open failure still restores and aborts.
+- **replace form**: `args` is the whole argv — `args[0]` is the program and
+  `name` is the literal "exec" — so `emit_argv` (which prepends `name`) is not
+  reusable. Matches native `build_argv_on_stack`; neither backend expands a
+  splat here.
+
+The `close` gate was found by un-gating, not by the filing: `exec.sh` went
+18/19 and the one failure (`cl.2`) was `close`, which had the same missing-arm
+cause.
+
+The two **janet** gates are void — that backend was removed (DD#104).

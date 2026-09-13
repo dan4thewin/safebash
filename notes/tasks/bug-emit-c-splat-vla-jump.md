@@ -50,3 +50,15 @@ c differential-oracle backend only; native and janet unaffected. Add a
 c-mode spec (e.g. under glob_splat.sh or a new emit_c regression) once
 fixed. Until then, DD#73's `glob.sh` g.3 observes array-glob elements via
 for-in rather than an external splat, so it does not depend on this bug.
+
+## Re-measured 2026-09-13 — already done
+
+The filed repro, verbatim:
+
+```
+$ SASH_MODE=c  /usr/bin/touch z; array a=(x y); /usr/bin/printf "[%s]" @{a:?x}
+rc=0  out=[[x][y]]         # identical to native
+```
+
+gcc no longer reports "jump into scope of identifier with variably modified
+type". Fixed by unrelated work at an unrecorded point.

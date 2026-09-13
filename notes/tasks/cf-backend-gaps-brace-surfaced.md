@@ -46,3 +46,26 @@ janet emits conditions from the AST, so it bypasses the SSA
 fixed native+c. spec errors.sh cc.1-4 are guarded `native,c`; widen to
 janet once janet's `&&`/`||` condition evaluation matches. Reproduces with
 `/bin/true`/`/bin/false`.
+
+## Re-measured 2026-09-13 — every c gate passes; only the un-gating remains
+
+All seven constructs this task names, run in c mode and compared against
+native. **Every one is byte-identical:**
+
+| construct | c | native |
+|---|---|---|
+| `elif` | `two` | `two` |
+| `continue` | `a c` | `a c` |
+| `break` | `a` | `a` |
+| `&&` condition | `both` | `both` |
+| `\|\|` condition | `either` | `either` |
+| list condition (`if /bin/true && /bin/true`) | `listcond` | `listcond` |
+| C-style `for (( ; ; ))` | `c=0 c=1 c=2` | `c=0 c=1 c=2` |
+| `until (( ))` | `i=0 i=1 i=2` | `i=0 i=1 i=2` |
+
+The janet gates are void (DD#104).
+
+So the code gap is gone and only the task's last gate is outstanding: **drop
+brace.sh's native-only guard.** Until that happens, 27 tests are withheld
+from c coverage for a defect that no longer exists — the sweep flatters the
+c backend by exactly that much.

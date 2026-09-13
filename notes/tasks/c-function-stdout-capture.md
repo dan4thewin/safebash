@@ -1,6 +1,6 @@
 ---
 title: "c: function stdout capture ($(f)) unimplemented — CaptureStart/End TODO"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -38,3 +38,25 @@ CaptureStart/CaptureEnd is missing in c/janet.
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+## Re-measured 2026-09-13 — already done
+
+```
+$ SASH_MODE=c  fn g { echo hello }; str x=$(g); attest x [[ -n $x ]]; echo "[$x]"
+rc=0  out=[[hello]]        # identical to native
+```
+
+`emit_c.rs` emits real `CaptureStart`/`CaptureEnd` (now via
+`emit_capture_end_c`), not `/* TODO inst */`. The c-mode capture specs
+`cap.1`–`cap.18` all pass, including nested capture (`cap.13`/`cap.14`) and
+the buffered fast path (journal 277).
+
+The filing's third gate — "un-guard spec/functions.sh 17.3 / 17.4" — is
+satisfied: those run in both modes today.
+
+The janet gate is void: the backend was removed by DD#104.
+
+**Why it stayed open:** nothing re-reads a `ready` task that is quietly
+satisfied by unrelated work. Same failure as `pipe-free-func-capture`, which
+was closed *early* on gates that didn't encode its requirement. Both
+directions of the same problem — the filing is a snapshot, the tree moves.

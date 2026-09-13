@@ -1,6 +1,6 @@
 ---
 title: "c parity: a `-> int` function used in `|| :` (discard) fails to compile/run"
-status: ready
+status: done
 scope: c/janet backends only (native complete)
 priority: P3
 kind: bug
@@ -54,3 +54,15 @@ it through the SSA `||` path correctly; the c/janet emitters need the same.
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+## Re-measured 2026-09-13 — already done
+
+The filed repro, verbatim:
+
+```
+$ SASH_MODE=c  fn f -> int { return 3 }; f || :; echo done
+rc=0  out=[done]           # identical to native
+```
+
+The emitted C compiles and runs. The janet half is void (DD#104 removed the
+backend).
