@@ -1,3 +1,35 @@
+## ══ STATUS (2026-09-13) — END routing, DD#89 bare exit, brace un-gated ══
+
+**Journal 279.** Sweep **4170 passing, 28 skipped, 0 failing**. One flip, the
+intended one (`c:56.31 skipped → passing`); **+31**.
+
+| # | bug | scope | was |
+|---|---|---|---|
+| 5 | `exit N` skipped the END block | c backend | `END { }` + `exit 5` ran no cleanup; native routes through END |
+| 6 | bare `exit` kept the previous status | c backend | violates **DD#89** ("no argument → `exit 0`"); `- /bin/false; exit` → 1 in c, 0 in native |
+| — | `brace.sh` native-only guard | spec | premise was never true — 27/27 pass in c, first try |
+
+Bug #6 was **in the same six lines** as #5 and nothing pointed at it: the C
+emitter's doc comment asserted "bare `exit` keeps the previous status", which
+is the rule DD#89 decided against, and the code implemented the comment.
+
+`brace.sh`'s guard is the second stale native-only gate in two sessions
+(`exec.sh` was the first). A native-only guard is a *claim* about the backend,
+and because the guard suppresses the evidence, nothing re-checks it.
+
+**Measured, already filed, left alone:** the c backend emits no DD#55
+`<argv0>: <cmd>: command failed (exit N)` diagnostic for an external-command
+abort (it does emit the `cd:` errno one). That is
+`dd55-abort-channel-remaining`; `spec/errors.sh` guards those stderr
+assertions `native`-only on purpose.
+
+**Next:** `c-compound-pipeline-stage` — a `fn` or `{ }` group as a pipeline
+stage reaches `sash_exec("__compound_5", …)` in c and dies with `sash: bug:
+bare command passed to sash_exec`. Native routes it through the DD#14
+`__compound_<id>` mechanism; the C emitter has no handling for it. This is a
+feature, not a one-line divergence, and it unblocks `pipe_functions.sh` (11
+tests).
+
 ## ══ STATUS (2026-09-13) — four bugs behind one un-gating ══
 
 **C-backend `exec`/`close`/`unset m[k]` implemented; a heap-corruption bug in

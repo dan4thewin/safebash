@@ -1,6 +1,6 @@
 ---
 title: "c/janet control-flow gaps surfaced by DD#68 brace specs (elif, continue, until, list-cond)"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -69,3 +69,13 @@ So the code gap is gone and only the task's last gate is outstanding: **drop
 brace.sh's native-only guard.** Until that happens, 27 tests are withheld
 from c coverage for a defect that no longer exists — the sweep flatters the
 c backend by exactly that much.
+
+
+## Done (2026-09-13, journal 279)
+
+`spec/brace.sh`'s native-only guard removed — **27/27 pass in c**, confirming
+the measurement that all eight constructs (elif, continue, break, `&&`, `||`,
+list condition, C-style `for`, `until`) are byte-identical between the
+backends. The premise of the guard ("the c backend has a control-flow gap")
+was already false when it was written down; nothing needed fixing, only
+un-gating.

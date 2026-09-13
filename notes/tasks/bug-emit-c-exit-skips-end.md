@@ -1,6 +1,6 @@
 ---
 title: "bug: c backend — `exit N` in the main body skips the END block"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -65,3 +65,25 @@ This is a c-oracle divergence (native is the regression gate). It was latent —
 no c test exercised a main-body `exit N` with an END block until 56.31, because
 `$?`-in-END was blocked by the validator (SB5012) until DD#56's `$?`-availability
 fix (journal 237).
+
+
+## Done (2026-09-13, journal 279)
+
+Fixed in `emit_c.rs::emit_exit`, exactly as the fix sketch describes: route to
+`_blk_<end_id>` when an END block exists and `e.cur_block < eb`, otherwise the
+direct `goto __exit`. `__end_status` is now set **only** on the direct path —
+on the routing path the END block's own prologue captures the code, and
+setting it twice would have been harmless but misleading. `spec/signals.sh`
+56.31 un-gated; it passes in both modes.
+
+**A second bug was in the same function.** DD#89 line 18 says "No argument →
+`exit 0`", but the c emitter left `__exit_status` untouched for a bare `exit`
+(its doc comment even asserted the wrong rule: "Bare `exit` keeps the previous
+status"). So `- /bin/false` followed by `exit` exited **1** in c and **0** in
+native. New specs 56.34 / 56.35 pin it in both modes.
+
+Not fixed here, and separately filed: with an END block or without, the c
+backend still emits no DD#55 `<argv0>: <cmd>: command failed (exit N)`
+diagnostic for an external-command abort (it does emit the `cd:` errno one).
+That is `dd55-abort-channel-remaining`, and the errors.sh specs already guard
+those stderr assertions `native`-only on purpose.

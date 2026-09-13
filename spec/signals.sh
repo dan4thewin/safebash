@@ -1,7 +1,7 @@
 #!/bin/bash
 # DD#56 — signals and END block
 . common.sh
-plan=23
+plan=25
 setup signals
 
 set +e
@@ -132,14 +132,26 @@ run_sash 'END { /bin/echo "s=$?" }
 /bin/false'
 [[ $rc != 0 && $out == *"s=1"* && -z $err ]]; chk 56.30
 
-# 56.31 `exit N` → `$?` in END is N (the requested exit code). native only: the
-# c backend's `exit N` in the main body skips the END block (a pre-existing DD#56
-# gap — filed bug-emit-c-exit-skips-end); native routes it through END.
-if in_modes native; then
-    run_sash 'END { /bin/echo "s=$?" }
+# 56.31 `exit N` → `$?` in END is N (the requested exit code). Both modes as of
+# the c-backend fix: c's emit_exit went straight to the final `__exit` label and
+# skipped END entirely; it now routes through the END block carrying the code,
+# like native.
+run_sash 'END { /bin/echo "s=$?" }
 exit 5'
-    [[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk 56.31
-else skip_chk 56.31; fi
+[[ $rc = 5 && $out == *"s=5"* && -z $err ]]; chk 56.31
+
+# 56.34 DD#89: a bare `exit` is `exit 0`, NOT "keep the previous status". The c
+# backend left __exit_status untouched, so a bare exit after a `-`-suppressed
+# failure exited 1 there and 0 in native. END sees 0 too.
+run_sash 'END { /bin/echo "s=$?" }
+- /bin/false
+exit'
+[[ $rc = 0 && $out == *"s=0"* && -z $err ]]; chk 56.34
+
+# 56.35 the same bare exit with no END block — the exit code itself is 0
+run_sash '- /bin/false
+exit'
+[[ $rc = 0 && -z $out && -z $err ]]; chk 56.35
 
 # 56.32 normal exit → `$?` in END is the last command's status (0 here)
 run_sash 'END { /bin/echo "s=$?" }

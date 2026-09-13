@@ -5,12 +5,10 @@ set -eu
 . common.sh
 setup brace
 # DD#68 is a PARSER-ONLY feature: the brace and `then/do` forms build the
-# identical If/While/For IR, so native (the IR reference) is authoritative.
-# Run native only — the c backend has a pre-existing control-flow gap
-# (until / `(( ))`) that the keyword forms hit identically; see
-# cf-backend-gaps-brace-surfaced. (Same native-only pattern
-# as convert.sh.)
-[[ ${SASH_MODE:-native} != native ]] && exit 0
+# identical If/While/For IR. It was native-only on the belief that the c
+# backend had a control-flow gap (until / `(( ))`) that these forms hit; all
+# eight constructs were later measured byte-identical between the backends, so
+# the guard was stale and is gone. Running both modes keeps it that way.
 plan=27
 echo "1..$plan" >&3
 

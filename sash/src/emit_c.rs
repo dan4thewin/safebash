@@ -2384,17 +2384,34 @@ fn emit_echo(e: &mut Emit, args: &[SsaValue], checked: bool, types: &VarTypes) {
     }
 }
 
-/// Exit: mirrors codegen's exit lowering. `exit N` becomes
-/// `__exit_status = N; goto __exit;`. Bare `exit` keeps the
-/// previous status. Int-typed arg passes through; string-typed
-/// arg routes through `sash_atoi`.
+/// Exit: mirrors native `emit_exit` (codegen/dispatch.rs:972). Int-typed arg
+/// passes through; string-typed arg routes through `sash_atoi`.
+///
+/// DD#89: no argument → `exit 0`. This previously left `__exit_status`
+/// untouched ("keeps the previous status"), so a bare `exit` after a
+/// suppressed failure exited 1 in the C backend and 0 in native.
+///
+/// DD#56: from the main body the exit routes *through* the END block carrying
+/// the code — END runs, and its prologue captures the code into
+/// `__end_status`, which the final `__exit` label returns. Going straight to
+/// `__exit` skipped END entirely, so `END { }` + `exit N` ran no cleanup.
+/// Inside END (or with no END block) the exit is direct, and there
+/// `__end_status` must be set here so an `exit N` *inside* END overrides the
+/// triggering status.
 fn emit_exit(e: &mut Emit, args: &[SsaValue], types: &VarTypes) {
-    if let Some(arg) = args.first() {
-        let int_expr = lower_value_as_int(e, arg, types);
-        writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
+    match args.first() {
+        Some(arg) => {
+            let int_expr = lower_value_as_int(e, arg, types);
+            writeln!(e.out, "    __exit_status = {};", int_expr).unwrap();
+        }
+        None => writeln!(e.out, "    __exit_status = 0;").unwrap(),
     }
-    // DD#56: `exit N` inside END overrides the triggering status; keep
-    // __end_status in sync (the final exit reads it when an END block exists).
+    if let Some(eb) = e.end_block {
+        if e.cur_block < eb {
+            writeln!(e.out, "    goto _blk_{};", eb).unwrap();
+            return;
+        }
+    }
     writeln!(e.out, "    __end_status = __exit_status;").unwrap();
     writeln!(e.out, "    goto __exit;").unwrap();
 }
