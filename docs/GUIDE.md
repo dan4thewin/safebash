@@ -9,7 +9,7 @@ compilers and Rust, but not necessarily deep expertise in either.
 **A note on authorship:** This guide was written by an AI (Claude,
 Anthropic) working under the direction of DG, the human creator of
 safebash. The AI wrote the prose and the code; DG directed the
-effort and made design decisions. See the Prologue of `JOURNAL.md`
+effort and made design decisions. See `notes/journal/001-prologue.md`
 for a fuller account of how this collaboration works.
 
 ---
@@ -88,50 +88,62 @@ bash script.bash → sash-convert → script.sh (review) → sash → binary
 safebash/
 ├── sash/                  — The compiler (Rust crate)
 │   ├── src/
-│   │   ├── main.rs        — Entry point, linking
-│   │   ├── lib.rs         — Library entry
-│   │   ├── lower.rs       — CST → IR lowering with coercions
-│   │   ├── ir.rs          — IR definitions (Stmt, Expr)
+│   │   ├── main.rs        — 4-line wrapper calling sash::cli_main()
+│   │   ├── lib.rs         — CLI entry, pipeline driver
+│   │   ├── parse/         — hand-written lexer + recursive descent → AST
+│   │   │   ├── logos_tokens.rs — the logos `Tok` enum
+│   │   │   ├── lexer.rs   — Scanner (peek/peek_n/next)
+│   │   │   ├── parser.rs  — recursive descent → Program
+│   │   │   ├── expr.rs    — words, strings, expansions, subscripts
+│   │   │   ├── arith.rs   — `(( ))` / `$(( ))`, DD#58 sexpr calls
+│   │   │   └── error.rs   — parse_error helpers
+│   │   ├── ir.rs          — IR definitions (the AST the parser yields)
+│   │   ├── validate.rs    — structural rules + taint + positionals + splat
 │   │   ├── type_check.rs  — Type checking (int vs string)
-│   │   ├── transform.rs   — IR → SSA transformation
-│   │   ├── ssa.rs         — SSA representation
-│   │   ├── ssa_printer.rs — SSA pretty-printing
-│   │   ├── codegen.rs     — Cranelift code generation (~4200 lines)
-│   │   ├── taint.rs       — Flow-sensitive taint analysis
-│   │   ├── validator.rs   — Validation orchestrator
-│   │   ├── rule.rs        — Rule trait
-│   │   ├── rules/         — Validation rules (SB4001–SB5002)
-│   │   ├── diagnostic.rs  — Error reporting
+│   │   ├── resolve.rs     — DD#23 command resolution
+│   │   ├── transform/     — IR → SSA (entry, statements, control_flow,
+│   │   │                    expressions, functions, pipelines, handlers)
+│   │   ├── ssa.rs         — SSA representation and printing
+│   │   ├── ssa_taint.rs   — SSA-level taint verification
+│   │   ├── codegen/       — Cranelift code generation (entry, values,
+│   │   │                    commands, arithmetic, dispatch, redirects,
+│   │   │                    setup, types, handlers)
+│   │   ├── emit_c.rs      — C oracle backend
 │   │   ├── emit_ir.rs     — IR capture (inert Janet data)
-│   │   ├── emit_source.rs — Source emission modes
-│   │   ├── printer.rs     — Source printer
-│   │   └── known_externals.rs — Auto-attest patterns
+│   │   ├── regex_validate.rs — DD#39/#63 regex validation
+│   │   └── diagnostic.rs  — Error reporting
 │   └── tests/
 │       ├── codegen_tests.rs  — codegen correctness
 │       ├── e2e_tests.rs      — end-to-end compilation and execution
+│       ├── c_tests.rs        — the C backend
+│       ├── brush_compat_tests.rs — Brush compatibility
 │       └── taint_spec_tests.rs — taint model
 ├── sash-convert/          — Bash → sash-native converter
 │   └── src/
 │       ├── main.rs        — CLI entry point
-│       └── convert.rs     — CST-walking conversion engine
-├── sash-rt/               — Runtime library (#![no_std], rustix, no libc)
-│   └── src/lib.rs         — ~2300 lines
+│       ├── convert.rs     — tree-sitter-bash CST → sash-native source
+│       └── known_externals.rs — Auto-attest patterns
+├── sash-rt/               — Runtime library (#![no_std], rustix, no libc).
+│                            A SEPARATE cargo workspace — build it with
+│                            `(cd sash-rt && cargo build --release)`.
 ├── sash-expand/           — Expansion utilities
-├── docs/                  — Design docs (GUIDE, TIMELINE)
+├── sash-rt-tests/         — Runtime test harness
+├── docs/                  — GUIDE, TIMELINE, sash.1
 ├── notes/                 — iwe knowledge graph (journal, decisions, tasks)
 ├── audit/                 — Adversarial review results
 │   └── run-1/             — 5 models, 3 passes, remediation done
-├── spec/                  — Spec test suite (236 passing)
+├── spec/                  — Spec test suite (41 files; results in spec.db)
 ├── contrib/               — Vendored: plan9port-regexp, freertos-heap4
 ├── suites/                — brush/oils test runners
 ├── exp/                   — Git submodule (safebash-exp, optional)
 └── mkfile                 — Plan 9 mk build system (build, test, clean)
 ```
 
-The tree-sitter grammar lives externally at
-`~/src/tree-sitter-bash-safebash` — a fork of tree-sitter-bash with
-sash extensions (int, const, array, map, attest, fn,
-`${var:s/re/str/}`).
+**The compiler has no tree-sitter dependency.** `sash-convert` uses *stock*
+`tree-sitter-bash 0.25`, and it uses it on *bash* input — the language it
+reads, not the language it writes. The old `~/src/tree-sitter-bash-safebash`
+fork drove a pipeline that commit `1c0e64a` deleted, and is no longer part
+of the build.
 
 ---
 
@@ -154,7 +166,8 @@ sash extensions (int, const, array, map, attest, fn,
        │
   [4]  │  Lower
        ▼
- lower.rs → IR (ir.rs) with coercions
+ parse/ already yielded the IR (ir.rs); coercions are applied
+ by the parser and the transform — there is no separate lowering pass
        │
   [5]  │  Type check
        ▼
@@ -162,7 +175,7 @@ sash extensions (int, const, array, map, attest, fn,
        │
   [6]  │  Transform
        ▼
- transform.rs → SSA (ssa.rs): versioning, phi nodes, basic blocks, CFG
+ transform/ → SSA (ssa.rs): versioning, phi nodes, basic blocks, CFG
        │
   [7]  │  Fold
        ▼
@@ -170,13 +183,13 @@ sash extensions (int, const, array, map, attest, fn,
        │
   [8]  │  Codegen
        ▼
- codegen.rs → Cranelift IR → object code (.o)
+ codegen/ → Cranelift IR → object code (.o)
        │     Declares extern functions from sash-rt
        │     Embeds .sash_source ELF section
        │
   [9]  │  Link
        ▼
- main.rs invokes ld → object + libsash_rt.a → static ELF binary
+ lib.rs invokes ld → object + libsash_rt.a → static ELF binary
 ```
 
 ### Phase 1: Parse
@@ -264,17 +277,23 @@ value) or `attest k v in m [[ … ]]` (map, binds key and value). A failing
 element aborts; an empty collection passes vacuously. Scalar `attest` on
 a collection is a type error.
 
-### Phase 4: Lower
+### Phase 4: Lower — no longer a phase
 
-`lower.rs` converts CST → IR. This is where coercions happen:
+There is no lowering pass. The recursive-descent parser produces `ir.rs`
+types directly, so the CST→IR step commit `1c0e64a` removed had nothing
+left to do.
 
-- `declare` → typed declarations (int, array, map)
-- `let` → `(( ))`
-- Glob patterns → regex
-- Backticks → `$()`
-- `[ ]` → `[[ ]]`
+The coercions that pass used to perform now happen in two places:
 
-Also drives `emit_source.rs` for `--emit-source` output.
+- **In the parser**, where a surface spelling has a single IR form —
+  `declare` → typed declarations (int, array, map), `let` → `(( ))`,
+  backticks → `$()`, `[ ]` → `[[ ]]`.
+- **In the transform**, where the choice depends on types or on
+  resolution — glob→regex for a pattern, int/string conversion, command
+  resolution (DD#23, `resolve.rs`).
+
+The step numbering below is kept as-is so that phase names in the journal
+and in diagnostics still line up.
 
 ### Phase 5: Type Check
 
@@ -288,16 +307,16 @@ is a compile-time error.
 
 ### Phase 6: Transform
 
-`transform.rs` converts IR → SSA. Variable versioning, phi nodes at
+`transform/` converts IR → SSA. Variable versioning, phi nodes at
 merge points, basic blocks with explicit terminators, control flow
 graph construction. Function inlining. Arithmetic evaluation.
 
 ### Phases 7–9: Fold, Codegen, Link
 
-Constant folding, then `codegen.rs` (~4200 lines) lowers SSA to
-Cranelift IR. Declares extern functions from `sash-rt`. Embeds the
-original source in a `.sash_source` ELF section. Finally, `main.rs`
-invokes `ld` to link the object with `libsash_rt.a` into a fully
+Constant folding, then `codegen/` lowers SSA to Cranelift IR. Declares
+extern functions from `sash-rt`. `codegen/entry.rs::embed_sash_source`
+embeds the original source in a `.sash_source` ELF section. Finally,
+`lib.rs` invokes `ld` to link the object with `libsash_rt.a` into a fully
 static ELF binary.
 
 ---
@@ -312,8 +331,8 @@ Assignment, Declaration, Command, Pipeline, List (&&/||), If, While,
 For, Case (the `[[ ]]` dispatch form, DD#66), Function, Redirected,
 Subshell, Group, ArithmeticCommand.
 
-Subshell exists in the IR for bash-mode input but is coerced during
-lowering into sash primitives (DD#38).
+Subshell exists in the IR for bash-mode input; the transform coerces it
+into sash primitives (DD#38).
 
 ### Expression types (ExprKind)
 
@@ -347,7 +366,7 @@ compile-time constant.
 
 ## Runtime (sash-rt)
 
-`sash-rt/src/lib.rs` (~2500 lines) — a `#![no_std]` Rust crate.
+`sash-rt/src/lib.rs` (~3750 lines) — a `#![no_std]` Rust crate.
 Uses `rustix` for raw Linux syscalls. No libc dependency.
 
 ### Entry point
@@ -381,6 +400,28 @@ via the engine's `Reprog.nsub`; a non-participating group is empty),
 clears the array on entry, and returns the boolean. `sub`/`gsub`
 replacements expand `\0`–`\9` backrefs and `\\`; any other `\<char>` is a
 compile error (SB4033).
+
+**Two boundaries are worth knowing, because they are the whole dialect's
+sharp edges.** Full treatment in `sash.1` §REGULAR EXPRESSIONS.
+
+The engine is **byte-oriented**, not character-oriented: `.` consumes one
+byte, so `é` needs `..`. That is not a design choice so much as a
+consequence of `sash-rt/csrc/lib9.h`, whose `chartorune` is an eight-line
+ASCII-only stub — the single most user-visible divergence from bash, and
+the one least visible in the source.
+
+A regex operation examines its subject only **up to the first interior
+NUL**; bytes past it are neither matched nor replaced, and the operation
+reports success. Everything else the engine cannot do is *rejected*
+(SB5023); this and the unsupported POSIX bracket classes (`[[:alpha:]]`,
+read as an ordinary bracket expression) are the only two that fail
+quietly. Documented deliberately rather than fixed — see DD#63's addendum
+and `notes/tasks/limitation-regex-stops-at-interior-nul.md`.
+
+Counted repetition (`{n}`, `{n,m}`, `{n,}`) caps each bound at **32**;
+33 or more is rejected. The cap is a memory-safety bound, not an
+arbitrary limit: `regcomp.c` sizes its instruction array from the pattern,
+and an unbounded count overran it (journal 290).
 
 ### I/O
 
@@ -440,6 +481,20 @@ associative arrays (DD#33).
 Cranelift → static ELF binary. No libc, no dynamic linker. Result
 is a ~16KB statically linked executable.
 
+### C (the oracle)
+
+`emit_c.rs` — `--emit-c` writes C on stdout instead of an object. The C is
+compiled by `gcc` and linked against the same `libsash_rt.a` as the native
+backend, so the two share a runtime and differ only in how the SSA reaches
+machine code.
+
+This is not a portability story; it is a **differential oracle**. The whole
+spec suite runs twice, once per mode (`SASH_MODE=native` and `SASH_MODE=c`),
+and a divergence between them localises a bug to one backend without a
+reference implementation having to exist. It is the reason a codegen
+regression usually announces itself as a single failing spec in one mode
+rather than as a wrong answer in both.
+
 ### IR capture
 
 `emit_ir.rs` — `--emit-ir` writes the IR as an **inert Janet data
@@ -457,10 +512,21 @@ omission; and tags are IR node names, never an interpretation
 (`attest` is `{:kind :command :name "attest"}`) — interpretation
 belongs to the consumer.
 
+### Manifest
+
+`--manifest` prints the program's external-command manifest: every binary
+the program can execve, resolved to an absolute path at compile time
+(DD#23). It is what makes a compiled script auditable without running it.
+
 ### Source emission
 
-`emit_source.rs` — emit coerced sash-native source. Three modes:
-`--emit-source`, `--annotate`, `--extract`.
+`--extract <binary>` prints the `.sash_source` section that
+`codegen/entry.rs::embed_sash_source` writes into every binary, so a
+compiled program always carries the source it was built from.
+
+`--emit-source` and `--annotate` are **sash-convert** flags, not `sash`
+flags (DD#57) — `sash` rejects them and says so. Source transformation is
+the converter's job; the compiler only compiles.
 
 ---
 
@@ -472,10 +538,20 @@ Test files in `sash/tests/`:
 |------|---------------|
 | `codegen_tests.rs` | Compile bash snippets to native, run, check output |
 | `e2e_tests.rs` | Positive (compile+run), negative (expect errors), coercion, annotation, extract, auto-attest |
+| `c_tests.rs` | The `--emit-c` backend |
 | `taint_spec_tests.rs` | Taint model: rejection of tainted reads, attest runtime enforcement, DD#46 positionals |
 | `brush_compat_tests.rs` | Brush shell compatibility |
 
 Build and run: `mk test` (Plan 9 mk, not make).
+
+**The authoritative gate is the spec suite, not the Rust tests.** `cd spec
+&& bash run.sh` runs every `spec/*.sh` in both the native and C modes and
+accumulates results in `spec.db` (SQLite, repo root, untracked — every run
+rewrites it wholesale, and `runs` records a `commit_hash` per test so the
+database is its own history). Several Rust integration tests currently fail
+or hang at HEAD on surfaces that have since been retired; see
+`notes/tasks/rust-tests-hang-on-retired-surfaces.md`. Always run the Rust
+suites under `timeout`.
 
 ---
 
@@ -510,8 +586,19 @@ the validator without diagnostics.
 
 ## For New Contributors
 
-1. Read `JOURNAL.md` prologue (first 40 lines).
-2. Read this guide.
-3. Run `mk test` to verify everything passes.
-4. Pick a task from `TODO.md`.
-5. Follow the completion checklist in `AGENTS.md`.
+1. Read `notes/journal/001-prologue.md`. It sets the tone for everything
+   else.
+2. Read `notes/status.md` — the current priority and what was just
+   finished. Read it first every session, not just the first one.
+3. Read this guide.
+4. Run the spec suite (`cd spec && bash run.sh`) to see where the tree
+   stands. That is the authoritative gate; `mk test` currently does not
+   pass at HEAD (see the Tests section).
+5. Read `notes/decisions/` before changing any behaviour that might be
+   deliberate. It is the authoritative record of what is intentional
+   versus what is a gap — and the safe subset is defined by those
+   decisions, not by any single prose document.
+6. Pick a task from `notes/tasks/`. **Re-measure the filing against the
+   binary before acting on it** — a filing is a snapshot of a moving
+   tree, and a surprising number of them have aged out.
+7. Follow the completion checklist in `AGENTS.md`.

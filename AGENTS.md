@@ -100,7 +100,7 @@ on a consequential fork violates Decision authority.
 - **exp/** — git submodule → safebash-exp (historical experiments, not needed for build)
 - **spec.db** — SQLite database of all spec test results (repo root,
   **untracked and gitignored** — a local development artifact, not in git)
-- **57 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#69)
+- **95 design decisions** in `notes/decisions/` (one file per DD, numbered up to DD#107)
 - **1 adversarial audit** completed (5 models, 3 passes, remediation done)
 - **tree-sitter**: not used by the main compiler (hand-written parser). The
   `sash-convert` crate uses **stock** `tree-sitter-bash 0.25` on bash input.
@@ -155,14 +155,22 @@ preprocessor and global `ARITH_MAP` are gone.)
   - `pipelines.rs` — pipeline decomposition
   - `resolution.rs` — DD#23 command resolution
   - `helpers.rs` — phi insertion, positional scanning
+  - `stmt_handlers.rs` / `cmd_handlers.rs` / `expr_handlers.rs` — the
+    per-kind arms split out of the dispatchers above
+  - `capture_purity.rs` — picks the buffer vs memfd capture path per site
+- `resolve.rs` — DD#23 command resolution (absolute paths, manifest)
 - `ssa.rs` — SSA representation (and printing)
-- `codegen/` — Cranelift code generation (8 files)
-  - `entry.rs` — compile_to_object, compile_ssa, lower_inst dispatch
+- `codegen/` — Cranelift code generation (12 files)
+  - `entry.rs` — compile_to_object, compile_ssa, lower_inst dispatch,
+    `embed_sash_source` (the `.sash_source` ELF section)
   - `types.rs` — VarSlot, ExternFuncs, InstCtx
   - `arithmetic.rs` — emit_arith_op
   - `commands.rs` — lower_echo, lower_exec (fork/exec path)
+  - `dispatch.rs` — the `[[ … { … } ]]` dispatch form (DD#66)
+  - `setup.rs` — prologue, runtime init, extern declarations
   - `tests.rs` — [[ ]] test expressions
-  - `values.rs` — lower_value, lower_value_as_int
+  - `values.rs` / `value_handlers.rs` — lower_value, lower_value_as_int
+  - `inst_handlers.rs` — per-instruction arms
   - `redirects.rs` — fd save/restore
 - `validate.rs` — IR validation: structural rules + taint (`check_taint`) +
   positionals + argv-splat (absorbed the old `rules/`, `taint.rs`,
@@ -170,10 +178,18 @@ preprocessor and global `ARITH_MAP` are gone.)
 - `ssa_taint.rs` — SSA taint verification
 - `regex_validate.rs` — DD#39/#63 regex validation
 - `diagnostic.rs` — error reporting
-- `emit_c.rs` — C oracle backend; `emit_janet.rs` — Janet backend
-- `emit_source.rs` — text for the `.sash_source` ELF section (dormant
-  coercion-patch passthrough; see the module note)
-- `oracle.rs` — oracle (bash-comparison) test harness glue
+- `emit_c.rs` — C backend (`--emit-c`), the differential oracle: the spec
+  suite runs twice, `SASH_MODE=native` and `SASH_MODE=c`, and a divergence
+  localises a bug to one backend
+- `emit_ir.rs` — `--emit-ir`, the IR as inert Janet data (DD#104)
+
+**Gone, despite what older notes say:** `emit_janet.rs` (the in-tree Janet
+backend, removed by DD#104 in favour of the `--emit-ir` seam),
+`emit_source.rs` (the `.sash_source` text now comes from
+`codegen/entry.rs::embed_sash_source`), and `oracle.rs`. There is no
+`printer.rs`, `ssa_printer.rs`, `lower.rs`, `validator.rs`, `rule.rs`,
+`rules/`, `taint.rs`, or `known_externals.rs` under `sash/src` either —
+`known_externals.rs` belongs to `sash-convert`.
 
 ### Key docs
 
@@ -281,12 +297,15 @@ four minutes; with them, milliseconds. They cost ~95 MB of local disk.
 ### Rust tests
 
 Tests live in `sash/tests/`:
-- `codegen_tests.rs` (266) — codegen correctness
-- `e2e_tests.rs` (138) — end-to-end compilation and execution
-- `oracle_tests.rs` (59) — compare output against Bash
-- `janet_tests.rs` (38) — Janet backend
+- `codegen_tests.rs` (256) — codegen correctness
+- `e2e_tests.rs` (130) — end-to-end compilation and execution
+- `c_tests.rs` (66) — the `--emit-c` backend
 - `brush_compat_tests.rs` (52) — Brush compatibility
 - `taint_spec_tests.rs` (42) — taint/attest scenarios
+
+`oracle_tests.rs` and `janet_tests.rs` **no longer exist** (counts above
+re-measured 2026-09-13; the previous list was stale on both names and
+numbers).
 
 ## Code index
 
@@ -598,7 +617,7 @@ The pre-commit hook reports both columns side-by-side, ranked by
 | high cc, low cog      | wide dispatcher (match on enum, lex table)| accept as-is — no refactor needed |
 | low cc, high cog      | hidden nesting (cc structurally blind)    | investigate — cc was masking it |
 | high both             | genuine refactor target                   | refactor |
-| double-failure at 2×  | cc > 11.7 AND cog > 8.8 — the gate cohort | priority refactor |
+| double-failure at 2×  | cc > 2×mean AND cog > 2×mean — the gate cohort | priority refactor |
 
 The `// cyclo-allow:` annotation convention is retired (commit
 2026-06-05). Cognitive scoring eliminates the need for per-function
@@ -622,7 +641,17 @@ dispatchers (delta ≤ −15) are exempted by construction — no manual
 annotation needed.
 
 The means recalculate per commit (a ratchet: as the codebase
-refactors down, the bar tightens). Pre-existing violators remain
+refactors down, the bar tightens). **Do not hard-code them anywhere** —
+measured 2026-09-13 over `sash/src` they are **cc 4.04 / cog 2.05** across
+1735 functions, so the 3× bar sits at **12.1 / 6.2**, materially tighter
+than the numbers older notes quote. Re-measure rather than quote:
+
+```sh
+sqlite3 .indexnudge-rust.db "SELECT AVG(cyclomatic), AVG(cognitive)
+  FROM symbols WHERE kind IN ('function','method')
+  AND cyclomatic IS NOT NULL AND file LIKE 'sash/src/%';"
+```
+ Pre-existing violators remain
 silent until edited, at which point they must come down to spec.
 **No file is exempt.** (The previous `emit_janet.rs` carve-out was
 retired 2026-06-06: deferral was entrenching the violation rather

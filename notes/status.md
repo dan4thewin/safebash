@@ -1,3 +1,41 @@
+## ══ STATUS (2026-09-13) — GUIDE.md and AGENTS.md were a pipeline behind ══
+
+**Journal 295.** `guide-architecture-stale-cst` **done**. Docs-only; sweep
+unchanged at **4413 passing, 9 skipped, 0 failing**.
+
+The filing named three stale lines and added "worth a single pass over the
+whole document". The note was the task; the three lines were a sample.
+
+**What the pass found, beyond the filing:**
+
+- The crate tour named **ten files that do not exist** and omitted `parse/`
+  — the entire front end — along with `resolve.rs`, `ssa_taint.rs`,
+  `regex_validate.rs` and `emit_c.rs`.
+- **The C backend was not in the Backends section at all.** Half the spec
+  suite runs through it. Now documented as the differential oracle it is.
+- "Phase 4: Lower" described a deleted pass. Rewritten to say where the
+  coercions went rather than deleted — "where do coercions happen" is a
+  question a reader still has.
+- "For New Contributors" pointed at `JOURNAL.md` and `TODO.md` (neither
+  exists) and told people to run `mk test` (which hangs at HEAD). Rewritten
+  around `notes/status.md`, the spec suite, `notes/decisions/`, and
+  **re-measure the filing before acting on it**.
+
+**→ `AGENTS.md` corrected too, and one item there matters beyond tidiness.**
+It listed `emit_janet.rs` / `emit_source.rs` / `oracle.rs` and
+`oracle_tests.rs` / `janet_tests.rs` (none exist), had every Rust test count
+wrong, and said "57 design decisions … up to DD#69" against an actual 95 up
+to DD#107. The consequential one: it **hard-coded the complexity means as
+cc 12.46 / cog 6.58**, which are now **4.04 / 2.05** — so the documented 3×
+bar reads 37/20 where the real gate is 12.1/6.2. Anyone sizing a refactor
+against the quoted figures is ~3× too generous and finds out at the commit
+hook. Replaced with the query, and a note not to quote a ratcheting
+threshold by value.
+
+**Both gates verified mechanically**, not by reading: every `*.rs` named in
+the structure block exists, and every file in `sash/src` is named. Those two
+checks took thirty seconds to write and would have caught two-thirds of it.
+
 ## ══ STATUS (2026-09-13) — two regex limitations, one of which was lying ══
 
 **Journal 294.** Sweep **4413 passing, 9 skipped, 0 failing, 0 flips**.
