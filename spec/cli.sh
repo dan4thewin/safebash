@@ -10,7 +10,7 @@ set -eu
 . common.sh
 setup cli
 set +e
-plan=19
+plan=23
 echo "1..$plan" >&3
 
 SASH=$(command -v "${SASH:-sash}")
@@ -92,7 +92,7 @@ extract_text=$($SASH --extract 2>&1 >/dev/null)
 
 # cli.13 the usage text covers every advertised flag
 missing=""
-for f in -c -o --emit-ir --emit-c --manifest --extract --no-taint --trace --sysroot=; do
+for f in -c -o --emit-ir --emit-c --manifest --extract --no-taint --trace --sysroot= --heap-size=; do
     [[ $help_text == *"$f"* ]] || missing="$missing $f"
 done
 [[ -z $missing ]]; chk cli.13
@@ -122,6 +122,34 @@ err=$($SASH u.sash -o 2>&1 >/dev/null); rc=$?
 # rather than degrading to a plain "unrecognized option"
 err=$($SASH --annotate u.sash 2>&1 >/dev/null); rc=$?
 [[ $rc != 0 && $err == *"sash-convert"* ]]; chk cli.19
+
+# ── DD#107 --heap-size ────────────────────────────────────────────────
+# The heap size is compiled in, never read from the environment: safebash
+# goes out of its way to keep $PATH and friends from steering a running
+# binary, and a $SASH_HEAP would be a way back in. So the *flag* is the
+# whole surface, and a bad operand has to be caught here, at compile time.
+
+# cli.20 a non-numeric size is rejected rather than parsed as 0 and
+# silently producing a binary that cannot allocate anything
+# The assertion names the size diagnostic specifically: every one of these
+# operands is also rejected by the unknown-flag path when --heap-size is not
+# recognised at all, so a bare "exited nonzero" would pass without the flag
+# ever existing.
+err=$($SASH --heap-size=abc u.sash -o h1 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"expected a positive size"* && ! -e h1 ]]; chk cli.20
+
+# cli.21 ...as is a zero or overflowing size. Clamping would hand back a
+# heap that differs from the one asked for, and the mismatch would only
+# surface later as an unexplained out-of-memory.
+err=$($SASH --heap-size=0 u.sash -o h2 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"expected a positive size"* && ! -e h2 ]]; chk cli.21
+err=$($SASH --heap-size=99999999999999999999 u.sash -o h3 2>&1 >/dev/null); rc=$?
+[[ $rc != 0 && $err == *"expected a positive size"* && ! -e h3 ]]; chk cli.22
+
+# cli.23 a valid size compiles: the flag carries its value in the same
+# token, so it must be prefix-matched and not read as an unknown flag
+$SASH --heap-size=8M u.sash -o h4 >/dev/null 2>&1; rc=$?
+[[ $rc = 0 && -e h4 ]]; chk cli.23
 
 set -e
 tally

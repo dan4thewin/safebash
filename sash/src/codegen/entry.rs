@@ -99,6 +99,7 @@ pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool)
         .expect("ObjectBuilder");
     let mut module = ObjectModule::new(obj_builder);
 
+    super::setup::define_heap_size(&mut module);
     let externs = super::setup::declare_runtime_functions(&mut module);
     let (literals, space_id, nl_id) =
         super::setup::intern_literals(&mut module, program, bash_source, trace);

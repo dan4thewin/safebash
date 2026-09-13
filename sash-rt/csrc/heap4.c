@@ -31,6 +31,20 @@ static BlockLink_t *pxEnd;     /* sentinel end (at top of heap) */
 static size_t xFreeBytesRemaining;
 static int xInitialized = 0;
 
+/* The heap reservation, in bytes.
+ *
+ * WEAK on purpose: this is the default, and the compiler emits a STRONG
+ * definition of the same symbol when `--heap-size` is given, which the
+ * linker prefers. That keeps the size compiled *into* the binary rather
+ * than read from the environment — safebash deliberately prevents the
+ * environment from altering runtime behaviour (the taint rules exist for
+ * exactly this), and a heap size read from $SASH_HEAP would be a way
+ * back in.
+ *
+ * The region is mapped MAP_NORESERVE, so pages are committed only when
+ * touched: a large reservation costs address space, not memory. */
+__attribute__((weak)) size_t sash_heap_size = 256UL * 1024 * 1024;
+
 /* Initialize the heap from an externally provided region */
 void sash_heap_init(void *heap, size_t heap_size) {
     BlockLink_t *first;

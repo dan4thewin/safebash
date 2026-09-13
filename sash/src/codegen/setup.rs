@@ -1469,3 +1469,21 @@ pub(super) fn intern_string(
     literals.insert(s.to_string(), data_id);
     data_id
 }
+
+/// Define the strong `sash_heap_size` that displaces the runtime's weak
+/// 256 MB default at link time (`--heap-size`). Emitted only when the flag
+/// was given, so an ordinary build carries no such symbol and keeps the
+/// default. Little-endian: both supported targets (x86_64, aarch64) are.
+pub(crate) fn define_heap_size(module: &mut ObjectModule) {
+    let Some(bytes) = crate::get_heap_size() else {
+        return;
+    };
+    let data_id = module
+        .declare_data("sash_heap_size", Linkage::Export, false, false)
+        .expect("declare sash_heap_size");
+    let mut desc = DataDescription::new();
+    desc.define((bytes as u64).to_le_bytes().to_vec().into_boxed_slice());
+    module
+        .define_data(data_id, &desc)
+        .expect("define sash_heap_size");
+}

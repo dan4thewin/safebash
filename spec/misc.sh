@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=34
+plan=36
 echo "1..$plan" >&3
 
 set +e
@@ -190,12 +190,20 @@ run_sash 'x=$!; y=$(getcpid); [[ $x == $y ]] && echo Y'
 # ── Heap exhaustion and slurp limits (bug-heap-exhaustion-silent-segv) ──
 # The runtime heap is a fixed region and heap_4 returns NULL when it is
 # exhausted. Nothing checked, so the next write dereferenced NULL and the
-# program died with SIGSEGV, silently. These pin "fail loudly" — the
-# capacity question itself is a separate, open decision for DG.
+# program died with SIGSEGV, silently. These pin "fail loudly"; DD#107
+# settles the capacity question (256 MB default, `--heap-size` to change it).
+#
+# hp.1-hp.3 compile with a deliberately tiny heap. Exhaustion is then a
+# property of the *stated* ceiling rather than of whatever the default
+# happens to be, so raising the default cannot silently stop testing the
+# failure path — which is exactly what the old, capacity-dependent form
+# would have done when DD#107 landed.
   /usr/bin/printf 'a\0%.0s' $(seq 1 20000) > hp_big.nul
   /usr/bin/printf 'x%.0s' $(seq 1 70000) > hp_wide.nul
   /usr/bin/printf '\0' >> hp_wide.nul
   /usr/bin/printf 'y%.0s' $(seq 1 30000) >> hp_wide.nul
+
+  export SASH_CFLAGS=--heap-size=1M
 
   # hp.1 exceeding the heap is a clean diagnostic, not a segfault. 139 is
   # SIGSEGV; the point of the test is that the status is NOT 139.
@@ -218,6 +226,8 @@ read a < hp_big.nul
 echo $(len a)'
   [[ $rc != 0 && $rc != 139 && $rerr == *"out of memory"* ]]; chk hp.3
 
+  unset SASH_CFLAGS
+
   # hp.4 `sash_read_all` used to stop at a fixed 64 KiB, silently handing
   # back a prefix. A 100 KB stream with one separator must yield BOTH
   # elements — under the cap the tail was simply gone.
@@ -235,6 +245,31 @@ attest x in a [[ -n $x ]]
 str e="${a[0]}"
 echo $(strlen $e)'
   [[ $rc = 0 && $out = "70000" && -z $err ]]; chk hp.5
+
+  # hp.6 DD#107: the default reservation absorbs 50k elements. The same
+  # program is an out-of-memory abort under hp.1's 1 MB heap, so this pins
+  # the raised default and not merely "some allocation succeeded".
+  run_sash 'array a=()
+int i=0
+while (( i < 50000 )) {
+  a[$i]="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  i=$(( i + 1 ))
+}
+echo $(len a)'
+  [[ $rc = 0 && $out = "50000" && -z $rerr ]]; chk hp.6
+
+  # hp.7 ...and `--heap-size` moves that ceiling: 30000 elements abort under
+  # 1 MB (hp.1) and succeed under 16 MB. The flag is compiled in, so this
+  # also pins that the emitted strong `sash_heap_size` displaces the weak
+  # default in heap4.c at link time, in whichever backend is under test.
+  SASH_CFLAGS=--heap-size=16M run_sash 'array a=()
+int i=0
+while (( i < 30000 )) {
+  a[$i]="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+  i=$(( i + 1 ))
+}
+echo $(len a)'
+  [[ $rc = 0 && $out = "30000" && -z $rerr ]]; chk hp.7
 
 set -e
 tally

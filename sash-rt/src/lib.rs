@@ -940,19 +940,34 @@ extern "C" {
     pub fn sash_malloc(n: usize) -> *mut u8;
 }
 
-const HEAP_SIZE: usize = 1024 * 1024; // 1MB, no BSS cost
+extern "C" {
+    /// The heap reservation in bytes. Defined **weakly** in `heap4.c` at
+    /// 256 MB; the compiler emits a strong definition when `--heap-size` is
+    /// given, and the linker prefers that one. Compiled in rather than read
+    /// from the environment on purpose — see the comment in `heap4.c`.
+    static sash_heap_size: usize;
+}
 
 /// Called from _start before main. mmap anonymous region, init heap4.
+///
+/// `NORESERVE` is what makes a large default affordable: the kernel commits
+/// pages only as they are touched, so RSS still tracks real use and the
+/// reservation costs address space alone. The heap is a single contiguous
+/// region — heap_4 has one `xStart`/`pxEnd` sentinel pair and cannot span
+/// discontiguous mappings — so this reservation is a hard ceiling, not a
+/// starting size. Exceeding it is a clean `sash: out of memory`, never a
+/// segfault.
 #[no_mangle]
 pub unsafe extern "C" fn sash_init_heap() {
+    let size = sash_heap_size;
     let ptr = rustix::mm::mmap_anonymous(
         core::ptr::null_mut(),
-        HEAP_SIZE,
+        size,
         rustix::mm::ProtFlags::READ | rustix::mm::ProtFlags::WRITE,
-        rustix::mm::MapFlags::PRIVATE,
+        rustix::mm::MapFlags::PRIVATE | rustix::mm::MapFlags::NORESERVE,
     )
     .expect("sash: mmap failed for heap");
-    sash_heap_init(ptr as *mut u8, HEAP_SIZE);
+    sash_heap_init(ptr as *mut u8, size);
 }
 
 /// DD#32: check SASH_TRACE env var at startup

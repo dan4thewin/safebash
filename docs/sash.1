@@ -91,6 +91,35 @@ it is read positionally.
 .TP
 .B \-\-trace
 Enable tracing in the emitted binary.
+Native backend only, and opt\-in twice over: the flag compiles the trace
+sites in, and
+.B SASH_TRACE=1
+activates them at run time. A binary built without it ignores the
+variable.
+.TP
+.BI \-\-heap\-size= size
+Set the runtime heap reservation, as a byte count with an optional
+.BR K ,
+.BR M ,
+or
+.B G
+suffix \(em for example
+.BR 512K ,
+.BR 64M ,
+.BR 2G .
+Default 256M (DD#107).
+.
+The heap is a single fixed region, so this is a hard ceiling rather than a
+starting size; exceeding it is a clean
+.B sash: out of memory
+diagnostic with a non\-zero status, never a segfault. The region is mapped
+.BR MAP_NORESERVE ,
+so a large reservation costs address space rather than memory.
+.
+The size is compiled into the binary and is deliberately
+.B not
+readable from the environment: there is no
+.BR $SASH_HEAP .
 .
 .SS Taint bypasses
 See DD#82. These weaken the guarantee that

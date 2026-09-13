@@ -2,5 +2,24 @@ title: DD#32 — Honest trace + embedded source
 status: partial
 
 `.sash_source` ELF section embeds sash-native source (implemented).
-`SASH_TRACE=1` runtime trace showing evaluated values and branch outcomes (designed, not built).
 `sash --extract <binary>` dumps the embedded source.
+
+Runtime trace, in two halves:
+
+- **Branch and loop outcomes — implemented** (native backend only).
+  Compile with `--trace`, then run with `SASH_TRACE=1`; each branch and
+  loop terminator writes `+ <kind> → <label>` to stderr. Specs
+  `tr.1`-`tr.3` in `spec/trace.sh`. `--trace` is a no-op for `--emit-c`.
+- **Evaluated values — designed, not built.** This is what keeps the
+  status `partial`.
+
+Tracing is opt-in **at compile time**: a binary built without `--trace`
+carries no trace sites, so `SASH_TRACE` cannot make it emit anything.
+That ordering is deliberate — the environment can only activate machinery
+the build already chose to include, never introduce it (DD#107 applies
+the same rule to the heap size).
+
+> Corrected 2026-09-13. This file previously said the whole runtime trace
+> was "designed, not built", which was false from the moment `--trace`
+> landed and had already been repeated back as a gap by the adversarial
+> audit (`audit/dd-audit/audit-gemini-pro.md`).

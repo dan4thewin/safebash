@@ -6,8 +6,13 @@ gates:
   - commit
 
 `SASH_TRACE=1` should produce a runtime trace showing evaluated values
-and branch outcomes. DD#32 status is partial — embedded source is
-implemented, runtime trace is designed but not built.
+and branch outcomes.
+
+> **Done for branch/loop outcomes** (`--trace` + `SASH_TRACE=1`, native
+> backend, specs `tr.1`-`tr.3`). The text below describes the original
+> scope; the *evaluated values* half is still unbuilt and is what keeps
+> DD#32 at `partial`. It was left reading "designed but not built" long
+> after the branch half shipped — corrected 2026-09-13.
 
 Trace output to stderr. Show:
 - Variable assignments with evaluated values

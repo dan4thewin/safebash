@@ -29,6 +29,21 @@ pub(crate) fn get_sysroot() -> Option<String> {
     SYSROOT.lock().unwrap().clone()
 }
 
+static HEAP_SIZE: Mutex<Option<usize>> = Mutex::new(None);
+
+/// Record the `--heap-size` operand for the backends to bake in.
+pub(crate) fn set_heap_size(bytes: usize) {
+    *HEAP_SIZE.lock().unwrap() = Some(bytes);
+}
+
+/// The compiled-in heap reservation, or `None` to leave the runtime's weak
+/// 256 MB default in place. Deliberately a *compile-time* setting: safebash
+/// keeps the environment from steering a running binary, so there is no
+/// `$SASH_HEAP` counterpart to this flag.
+pub(crate) fn get_heap_size() -> Option<usize> {
+    *HEAP_SIZE.lock().unwrap()
+}
+
 /// Cache of squashfs file listings (path → set of files)
 static SQUASHFS_CACHE: Mutex<Option<std::collections::HashSet<String>>> = Mutex::new(None);
 
@@ -85,6 +100,7 @@ Usage: sash [OPTION]... <script.sh>
   --extract <binary>  print the .sash_source section of BINARY
   --no-taint          disable all taint checking (DD#82 escape hatch)
   --trace             compile in runtime tracing (DD#32)
+  --heap-size=<size>  heap reservation, e.g. 512K, 64M, 2G (default 256M)
   --sysroot=<path>    resolve external commands under PATH";
 
 /// Every `--` flag the driver accepts. An unknown one used to be collected
@@ -107,7 +123,9 @@ const KNOWN_FLAGS: &[&str] = &[
 const CONVERTER_FLAGS: &[&str] = &["--emit-source", "--annotate", "--nolint"];
 
 fn is_known_flag(flag: &str) -> bool {
-    KNOWN_FLAGS.contains(&flag) || flag.starts_with("--sysroot=")
+    KNOWN_FLAGS.contains(&flag)
+        || flag.starts_with("--sysroot=")
+        || flag.starts_with("--heap-size=")
 }
 
 pub fn cli_main(args: Vec<String>) {
@@ -193,6 +211,45 @@ fn apply_and_check_flags(flags: &[&str]) {
     for flag in flags {
         if let Some(path) = flag.strip_prefix("--sysroot=") {
             set_sysroot(path.to_string());
+        }
+        if let Some(size) = flag.strip_prefix("--heap-size=") {
+            set_heap_size(parse_heap_size(size));
+        }
+    }
+}
+
+/// Split a size operand into its digit run and its multiplier.
+fn heap_size_scale(spec: &str) -> (&str, usize) {
+    let body = &spec[..spec.len().saturating_sub(1)];
+    match spec.as_bytes().last() {
+        Some(b'K' | b'k') => (body, 1024),
+        Some(b'M' | b'm') => (body, 1024 * 1024),
+        Some(b'G' | b'g') => (body, 1024 * 1024 * 1024),
+        _ => (spec, 1),
+    }
+}
+
+/// Parse a `--heap-size=` operand into bytes.
+///
+/// Rejects junk, zero, and overflow rather than clamping: a heap that
+/// silently differs from the one asked for would resurface much later as an
+/// unexplained `out of memory`, far from its cause.
+fn parse_heap_size(spec: &str) -> usize {
+    let (digits, scale) = heap_size_scale(spec);
+    let bytes = if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        None
+    } else {
+        digits
+            .parse::<usize>()
+            .ok()
+            .and_then(|n| n.checked_mul(scale))
+    };
+    match bytes {
+        Some(n) if n > 0 => n,
+        _ => {
+            eprintln!("sash: --heap-size={spec}: expected a positive size like 512K, 64M, or 2G");
+            eprintln!("{USAGE}");
+            std::process::exit(1);
         }
     }
 }

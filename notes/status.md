@@ -1,3 +1,66 @@
+## ══ STATUS (2026-09-13) — heap capacity settled (DD#107) ══
+
+**The heap is 256 MB, compiled in, `--heap-size=<size>` to change it.**
+Journal 274. Sweep **4071 passing, 29 skipped, 0 failing**, zero flips.
+
+`bug-heap-exhaustion-silent-segv` is **closed** — its fail-loudly half
+shipped 2026-09-12, and DG has now taken option **B** for capacity. The
+old ceiling was ~5 000 30-byte array elements (not "1 MB of payload" —
+growth needs old array + new array + payload live at once). It absorbs
+200 000 now. `MAP_NORESERVE` keeps hello-world's peak RSS at 340 kB,
+unchanged from the 1 MB heap: the reservation costs address space.
+
+**No `$SASH_HEAP`, deliberately.** DG: *"we go out of our way to prevent
+things like PATH from altering runtime behavior so compiled-in seems
+better."* A heap size in the environment would let anything that controls
+the environment shrink a binary's heap until it aborts, without touching
+the program — the same reason bare `$HOME` is rejected in favour of
+`$(getenv HOME)`. Mechanism: `heap4.c` defines `sash_heap_size` **weakly**
+at 256 MB; `--heap-size` emits a **strong** definition into the generated
+object (Cranelift data natively, a C global under `--emit-c`) and the
+linker prefers it. Unused, the flag costs nothing.
+
+`hp.1`-`hp.3` were rewritten to compile against `--heap-size=1M`. They
+pinned exhaustion by building 30 000 elements, which now *succeeds* — they
+would have stayed green while testing nothing. Exhaustion is now pinned to
+a **stated** ceiling. `hp.6`/`hp.7` and `cli.13`/`cli.20`-`cli.23` are new.
+
+**`SASH_TRACE` works and was already opt-in** (DG asked). `--trace`
+compiles the sites in; `SASH_TRACE=1` activates them; without `--trace`
+the variable is ignored — the environment can only switch on machinery the
+build included. Branch/loop outcomes only (`tr.1`-`tr.3`, native); values
+are unbuilt, which is what keeps DD#32 `partial`. **DD#32 said none of it
+was built**, and the adversarial audit reported that back as a gap
+(`audit-gemini-pro.md`); corrected, along with the task body.
+
+### Found while answering that
+
+- **`bug-aarch64-trace-init-missing`** (P3) — aarch64's `_start` calls
+  `sash_init_heap` but not `sash_trace_init`, so `--trace` compiles in
+  trace sites that can never fire. x86_64 calls both. Filed, not fixed:
+  different defect, different fix.
+- **The heap filing's option A was false.** It claimed heap_4 supports
+  `vPortDefineHeapRegions`-style multi-region init. The vendored copy has
+  one `xStart`/`pxEnd` pair and a one-region `sash_heap_init`. Corrected
+  in place; A is now `heap-multi-region-growth` (P3), still real, just
+  allocator surgery rather than configuration.
+
+### Next up
+
+Unchanged from the 2026-09-13 list below, minus the heap item:
+
+1. **Native** — the two `sash-rt` capture bugs (`sash_capture` /
+   `sash_capture_status` / `sash_capture_end`: 64 KiB truncation and
+   one-newline-vs-all strip, both to route through `sash_read_all`); then
+   `bug-convert-hash-array-conflation`, `dollar-lt-file-forks` (blocked),
+   `bug-emit-c-exit-skips-end`, `cli-usage-and-unknown-flags` — that last
+   filing is **stale too**: it predicts a complexity-gate trip at
+   `parse_cli_args` 11/10, but the function is 2/1 today.
+2. **The c gaps** — the 29 c-mode skips.
+3. **The test work** — `r47-validate-rs-per-rule-tests`,
+   `audit-string-keyed-builtin-dispatch`, `eliminate-ice-arms-via-types`,
+   all three still awaiting honest re-estimation.
+
 ## ══ STATUS (2026-09-13) — two silent coercions closed ══
 
 **DD#105: a string intrinsic rejects an int-typed operand.**

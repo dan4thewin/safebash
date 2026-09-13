@@ -1,9 +1,8 @@
 ---
-status: blocked
+status: done
 priority: P1
 kind: bug
 depends: []
-blocked-on: "DG — capacity (options A/B). The fail-loudly half (C) is done."
 ---
 
 # Heap exhaustion is a silent SIGSEGV: the heap is a fixed 1 MB and
@@ -114,9 +113,16 @@ Note also the 64 KiB **stack** buffer in a `#![no_std]` runtime.
 The bug must be fixed; *how* is the fork.
 
 **A. Grow the heap on demand.** On `sash_malloc` returning NULL, mmap
-another region and add it to heap_4's free list (heap_4 supports multiple
-regions via `vPortDefineHeapRegions`-style init). Programs become limited
+another region and add it to heap_4's free list. Programs become limited
 by the machine, as users expect of a compiled program.
+
+> **Correction (2026-09-13).** This option originally claimed heap_4
+> "supports multiple regions via `vPortDefineHeapRegions`-style init".
+> **It does not.** The vendored `sash-rt/csrc/heap4.c` has a single
+> `xStart`/`pxEnd` sentinel pair and a one-region
+> `sash_heap_init(void*, size_t)`; heap_5 is the multi-region variant
+> upstream. A is allocator surgery, not configuration. The estimate
+> below was written against the false claim.
 *Cost:* most work; heap_4 multi-region init needs care; the failure path
 still needs option C for genuine OOM.
 
@@ -186,9 +192,39 @@ is untouched and still needs DG.
 Specs `hp.1`–`hp.5` in `spec/misc.sh` (native,c; janet runs on the Janet VM,
 not sash-rt). Sweep 5183/38/549, zero non-janet failures, zero flips.
 
-### Still open for DG
+## Closed 2026-09-13 — option B, as DD#107
 
-The ceiling is still 1 MB — it now announces itself instead of crashing,
-but a 10 000-element array still cannot be built. **Options A and B above
-are unchanged and still need a decision.** This is the part that makes the
-difference between "honest" and "works".
+DG chose **B**, 256 MB, with the size compiled in rather than read from
+the environment and a flag to change it. See `DD107-heap-capacity` for the
+reasoning; the short form is that safebash deliberately prevents the
+environment from steering a running binary, so a `$SASH_HEAP` would have
+been a way back in.
+
+- `heap4.c` defines `sash_heap_size` **weakly** at 256 MB;
+  `sash_init_heap` maps that much with `MAP_NORESERVE`.
+- `sash --heap-size=<size>` (`K`/`M`/`G` suffixes) emits a **strong**
+  definition of the same symbol, which the linker prefers. Both backends:
+  a Cranelift data object natively, a C global under `--emit-c`.
+- Invalid operands are rejected at compile time — junk, zero, and
+  overflow — rather than clamped.
+
+### Measured after
+
+| case                              | 1 MB heap          | 256 MB default |
+|-----------------------------------|--------------------|----------------|
+| 5 000-element array build         | `5000`             | `5000`         |
+| 10 000-element array build        | out of memory      | `10000`        |
+| 200 000-element array build       | out of memory      | `200000`       |
+| hello-world peak RSS              | 340 kB             | 340 kB         |
+
+`NORESERVE` is what makes the last row hold: the reservation costs
+address space, not memory.
+
+Specs: `hp.1`-`hp.3` were rewritten to compile against an explicit
+`--heap-size=1M` so that exhaustion is pinned to a *stated* ceiling —
+otherwise raising the default would have silently stopped them testing
+the failure path at all. `hp.6`/`hp.7` and `cli.13`/`cli.20`-`cli.23` are
+new.
+
+**A remains open** as `heap-multi-region-growth` (P3): the ceiling is
+distant now, but it is still a ceiling.
