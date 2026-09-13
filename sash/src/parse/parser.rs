@@ -1919,7 +1919,7 @@ fn parse_regex_mutation(
     validate_static_sed_re(body, span)?;
     let subject = quoted_var_subject(var_name, span);
     let value =
-        super::expr::build_sed_sub(body, subject, span).ok_or_else(|| sed_malformed_err(span))?;
+        super::expr::build_sed_sub(body, subject, span)?.ok_or_else(|| sed_malformed_err(span))?;
     Ok(Some(Statement {
         kind: StmtKind::Assignment(Assignment {
             name: var_name.to_string(),

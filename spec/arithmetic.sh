@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=190
+plan=203
 echo "1..$plan" >&3
 
 set +e
@@ -841,6 +841,76 @@ run_sash 'for (( i = 0, j = 10; i < 3; i++ )); do echo $i$j; done'
 [[ $rc = 0 && $out = "010
 110
 210" && -z $err ]]; chk 94.10
+
+# ── 31.40–31.52 malformed arithmetic is an error, never a silent value ──
+#
+# Two defects, one family. The Pratt parser's operand position recovered
+# silently to `0` (`parse_prefix_atom`), and the double-quoted-string path
+# then threw away whatever diagnostic did survive
+# (`emit_string_part` ... `.unwrap_or(ArithExpr::Literal(0))`). Together they
+# made `"$(( 1 + ))"` print 1 and `"$(( 1 +* 2 ))"` print 0 — wrong answers
+# from input bash rejects outright. The identical expression OUTSIDE quotes
+# was already a hard error, so the two positions disagreed.
+
+# 31.40 a dangling binary operator → SB4020, not the LHS
+run_sash 'int x=$(( 1 + )); echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.40
+
+# 31.41 ... and identically inside a double-quoted string (used to print 1)
+run_sash 'echo "$(( 1 + ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.41
+
+# 31.42 an operator where an operand is owed → SB4020 (used to print 0)
+run_sash 'echo "$(( 1 +* 2 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.42
+
+# 31.43 the diagnostic names the offending token rather than being generic
+run_sash 'echo "$(( 1 +* 2 ))"'
+[[ $rc != 0 && $err == *"operand"* ]]; chk 31.43
+
+# 31.44 a garbage operand in a string → SB4035, the same code as unquoted
+run_sash 'echo "$(( @@@ ))"'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.44
+
+# 31.45 quoted and unquoted positions agree on the diagnostic code
+run_sash 'int x=$(( @@@ )); echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB4035* ]]; chk 31.45
+
+# 31.46 `$( )` inside `$(( ))` is rejected in a string too. Bash evaluates a
+# nested command substitution here; sash rejects it in every other position,
+# and this one used to be a silent 0 instead of joining them.
+run_sash 'echo "$(( $(getpid) > 0 ))"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.46
+
+# 31.47 a malformed arith inside a `${var:-WORD}` default word (the default is
+# a full interpolating word, so it reaches the same parser)
+run_sash 'x=abc; echo "${x:-$(( 1 + ))}"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.47
+
+# 31.48 ... and inside a `${var:s/RE/SUB/}` replacement word
+run_sash 'x=abcd; echo "${x:s/b/$(( 1 + ))/}"'
+[[ $rc != 0 && -z $out && $err == *SB4020* ]]; chk 31.48
+
+# ── the gate the above must not break: valid arithmetic still compiles ──
+
+# 31.49 a well-formed expansion in a string is unaffected
+run_sash 'echo "$(( 1 + 2 ))"'
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk 31.49
+
+# 31.50 an empty `$(( ))` is 0, as in bash — the empty-expression early return
+# is what lets an EOF in *operand* position be an error
+run_sash 'echo "$(( ))"'
+[[ $rc = 0 && $out = "0" && -z $err ]]; chk 31.50
+
+# 31.51 `for (( ;; ))` reaches the arith parser as a run of bare separators;
+# it must stay a legitimately empty expression, not an owed operand
+run_sash 'for (( ;; )); do echo hi; break; done'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 31.51
+
+# 31.52 the other empty C-style `for` segments keep working
+run_sash 'int i=0; for (( ; i<2; i++ )); do echo "$i"; done'
+[[ $rc = 0 && $out = "0
+1" && -z $err ]]; chk 31.52
 
 set -e
 tally

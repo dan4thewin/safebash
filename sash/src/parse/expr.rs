@@ -20,17 +20,23 @@ use crate::ir::*;
 
 /// Single/double/ansi-c quoted arms of `parse_expr`, factored out to keep
 /// the main word loop under the complexity gate.
-fn parse_quoted_arm(scanner: &mut Scanner, tok: &Tok, span: Span, parts: &mut Vec<Expr>) {
+fn parse_quoted_arm(
+    scanner: &mut Scanner,
+    tok: &Tok,
+    span: Span,
+    parts: &mut Vec<Expr>,
+) -> Result<(), Diagnostic> {
     scanner.next();
     let kind = match tok {
         Tok::SingleQuoted(s) => ExprKind::SingleQuoted(s.clone()),
         Tok::DoubleQuoted(parts_tok) => {
-            ExprKind::DoubleQuoted(string_parts_to_exprs(parts_tok, span, scanner))
+            ExprKind::DoubleQuoted(string_parts_to_exprs(parts_tok, span, scanner)?)
         }
         Tok::AnsiCQuoted(s) => ExprKind::Literal(s.clone()),
         _ => unreachable!("parse_quoted_arm called with non-quoted token"),
     };
     parts.push(Expr { kind, span });
+    Ok(())
 }
 
 /// `$`-expansion and flat-backtick arms of `parse_expr`, factored out to
@@ -47,7 +53,7 @@ fn parse_expansion_arm(
         Tok::Dollar(name) => parse_dollar_arm(scanner, name.clone(), span, start, parts),
         Tok::DollarBrace(content) => {
             scanner.next();
-            parts.push(parse_parameter_expansion(content, span));
+            parts.push(parse_parameter_expansion(content, span)?);
         }
         Tok::DollarParen => {
             scanner.next();
@@ -142,7 +148,7 @@ fn parse_word_parts(scanner: &mut Scanner, mode: AbsorbMode) -> Result<Expr, Dia
                 parts.push(parse_word_arm(scanner, w, span)?);
             }
             Tok::SingleQuoted(_) | Tok::DoubleQuoted(_) | Tok::AnsiCQuoted(_) => {
-                parse_quoted_arm(scanner, &tok, span, &mut parts);
+                parse_quoted_arm(scanner, &tok, span, &mut parts)?;
             }
             Tok::Dollar(_)
             | Tok::DollarBrace(_)
@@ -293,10 +299,10 @@ fn parse_splat_op(
     span: Span,
 ) -> Result<(&'static str, Option<Box<Expr>>), Diagnostic> {
     if let Some(rest) = after.strip_prefix('-') {
-        return Ok(("arrvals_default", Some(parse_default_word(rest, span))));
+        return Ok(("arrvals_default", Some(parse_default_word(rest, span)?)));
     }
     if let Some(rest) = after.strip_prefix('?') {
-        return Ok(("arrvals_abort", optional_splat_word(rest, span)));
+        return Ok(("arrvals_abort", optional_splat_word(rest, span)?));
     }
     if let Some(rest) = after.strip_prefix('~') {
         return parse_elide_splat_op(rest, name, span);
@@ -313,11 +319,11 @@ fn parse_splat_op(
 
 /// `@{a:?[WORD]}` operand: the WORD if present, else `None` (bare `@{a:?}`
 /// aborts with no message word).
-fn optional_splat_word(rest: &str, span: Span) -> Option<Box<Expr>> {
+fn optional_splat_word(rest: &str, span: Span) -> Result<Option<Box<Expr>>, Diagnostic> {
     if rest.is_empty() {
-        None
+        Ok(None)
     } else {
-        Some(parse_default_word(rest, span))
+        Ok(Some(parse_default_word(rest, span)?))
     }
 }
 
@@ -452,20 +458,28 @@ fn parts_to_expr(parts: Vec<Expr>) -> Result<Expr, Diagnostic> {
 // ── Double-quoted string interpolation ───────────────────────────
 
 /// Convert lexer StringParts to IR Exprs for double-quoted strings.
-pub fn string_parts_to_exprs(parts: &[StringPart], span: Span, _scanner: &Scanner) -> Vec<Expr> {
+pub fn string_parts_to_exprs(
+    parts: &[StringPart],
+    span: Span,
+    _scanner: &Scanner,
+) -> Result<Vec<Expr>, Diagnostic> {
     let mut result = Vec::new();
     let mut i = 0;
     while i < parts.len() {
-        i += emit_string_part(&parts[i..], span, &mut result);
+        i += emit_string_part(&parts[i..], span, &mut result)?;
     }
-    result
+    Ok(result)
 }
 
 /// Convert the next [StringPart] (and possibly the one after it,
 /// for $arr[idx] lookahead) into one or more Exprs appended to
 /// `result`. Returns the number of input parts consumed (1 or 2).
-fn emit_string_part(parts_from_here: &[StringPart], span: Span, result: &mut Vec<Expr>) -> usize {
-    match &parts_from_here[0] {
+fn emit_string_part(
+    parts_from_here: &[StringPart],
+    span: Span,
+    result: &mut Vec<Expr>,
+) -> Result<usize, Diagnostic> {
+    Ok(match &parts_from_here[0] {
         StringPart::Literal(s) => {
             result.push(Expr {
                 kind: ExprKind::Literal(s.clone()),
@@ -479,7 +493,7 @@ fn emit_string_part(parts_from_here: &[StringPart], span: Span, result: &mut Vec
             if let Some(advance) =
                 try_emit_array_subscript_in_string(parts_from_here, name, span, result)
             {
-                return advance;
+                return Ok(advance);
             }
             result.push(Expr {
                 kind: ExprKind::SimpleExpansion(name.clone()),
@@ -488,7 +502,7 @@ fn emit_string_part(parts_from_here: &[StringPart], span: Span, result: &mut Vec
             1
         }
         StringPart::Expansion(content) => {
-            result.push(parse_parameter_expansion(content, span));
+            result.push(parse_parameter_expansion(content, span)?);
             1
         }
         StringPart::CommandSub(content) => {
@@ -496,15 +510,17 @@ fn emit_string_part(parts_from_here: &[StringPart], span: Span, result: &mut Vec
             1
         }
         StringPart::ArithSub(content) => {
-            let arith = super::arith::parse_arith_str(content.trim(), span)
-                .unwrap_or(crate::ir::ArithExpr::Literal(0));
+            // A malformed `$(( … ))` inside a double-quoted string used to be
+            // swallowed into a literal 0 here, so `"$(( 1 +* 2 ))"` printed 0
+            // while the identical expression outside quotes was a hard error.
+            let arith = super::arith::parse_arith_str(content.trim(), span)?;
             result.push(Expr {
                 kind: ExprKind::Arithmetic(Box::new(arith)),
                 span,
             });
             1
         }
-    }
+    })
 }
 
 /// If `parts_from_here` starts with `$name` followed by a literal
@@ -700,32 +716,32 @@ fn bareword_shortcut_expansion(stmts: &[Statement], span: Span) -> Option<Expr> 
 //   ${var@X}        → rejected (SB4015)
 
 /// Parse ${...} content into an IR ParameterExpansion.
-pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
+pub fn parse_parameter_expansion(content: &str, span: Span) -> Result<Expr, Diagnostic> {
     let bytes = content.as_bytes();
 
     if let Some(e) = try_braced_splat(content, span) {
-        return e;
+        return Ok(e);
     }
     if let Some(e) = try_strlen_or_arrlen(content, bytes, span) {
-        return e;
+        return Ok(e);
     }
     if let Some(e) = try_indirection_or_arrkeys(content, bytes, span) {
-        return e;
+        return Ok(e);
     }
 
     let (name, name_end) = scan_param_name(content);
     if name_end >= bytes.len() {
-        return Expr::param(name, None, None, span);
+        return Ok(Expr::param(name, None, None, span));
     }
 
-    if let Some(e) = try_subscript(content, name, name_end, span) {
-        return e;
+    if let Some(e) = try_subscript(content, name, name_end, span)? {
+        return Ok(e);
     }
 
     let rest = &content[name_end..];
 
-    if let Some(e) = parse_cell_operator(rest, name, span) {
-        return e;
+    if let Some(e) = parse_cell_operator(rest, name, span)? {
+        return Ok(e);
     }
 
     // DG (2026-08-29): no ambiguity. Reaching here means there is trailing
@@ -735,7 +751,7 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
     // sentinel `unrecognized` operator so `rejected_param_operator_diag` rejects
     // it (SB4047): the compiler must never emit code for input it doesn't fully
     // understand.
-    Expr::param(
+    Ok(Expr::param(
         name,
         Some("unrecognized"),
         Some(Box::new(Expr {
@@ -743,17 +759,20 @@ pub fn parse_parameter_expansion(content: &str, span: Span) -> Expr {
             span,
         })),
         span,
-    )
+    ))
 }
 
 /// The operator-suffixed `${name OP…}` forms: `:s/…` sed, `:off:len`
 /// substring, `@X` transforms, and the standard `:-`/`:=`/`#`/`%`/… operators.
 /// Returns `None` for a bare `${name}` (empty/unmatched `rest`).
-fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
-    try_sed_op(rest, name, span)
+fn parse_cell_operator(rest: &str, name: &str, span: Span) -> Result<Option<Expr>, Diagnostic> {
+    if let Some(e) = try_sed_op(rest, name, span)?
         .or_else(|| try_substring_op(rest, name, span))
         .or_else(|| try_at_transform(rest, name, span))
-        .or_else(|| parse_standard_operator(rest, name, span))
+    {
+        return Ok(Some(e));
+    }
+    parse_standard_operator(rest, name, span)
 }
 
 /// `${@…}` / `${*…}` are braced spellings of the `$@` / `$*` splat — bare
@@ -816,18 +835,25 @@ fn scan_param_name(content: &str) -> (&str, usize) {
 
 /// `${var[idx]}` — `@`/`*` produce arrvals (or chained operator); literal
 /// index produces a `Subscript` expression.
-fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Option<Expr> {
+fn try_subscript(
+    content: &str,
+    name: &str,
+    name_end: usize,
+    span: Span,
+) -> Result<Option<Expr>, Diagnostic> {
     if content.as_bytes()[name_end] != b'[' {
-        return None;
+        return Ok(None);
     }
     // DD#80: capture the index balanced across `[] {} ()` and skipping quotes,
     // so a `]` inside a nested `${…}` / `$(( … ))` / quoted key does not close
     // the subscript early. `close` is the byte index of the matching `]`.
-    let (idx, close) = capture_balanced_subscript(content, name_end)?;
+    let Some((idx, close)) = capture_balanced_subscript(content, name_end) else {
+        return Ok(None);
+    };
     let after_bracket = &content[close + 1..];
 
     if idx == "@" || idx == "*" {
-        return Some(splat_subscript_expr(name, after_bracket, span));
+        return Ok(Some(splat_subscript_expr(name, after_bracket, span)));
     }
 
     // DD#80: re-parse the index as a full expression so an explicit nested
@@ -838,13 +864,13 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     let index = Box::new(parse_subscript_index(&idx, span));
 
     if after_bracket.is_empty() {
-        return Some(Expr {
+        return Ok(Some(Expr {
             kind: ExprKind::Subscript {
                 name: name.to_string(),
                 index,
             },
             span,
-        });
+        }));
     }
 
     // `${a[i]OP}` — a trailing operator applies to the *cell* value. DG: a
@@ -853,7 +879,12 @@ fn try_subscript(content: &str, name: &str, name_end: usize, span: Span) -> Opti
     // substring (`:o:l`), and sed (`:s/`) all lower for a cell (edge 4); the
     // pruned families (`#`/`%`/`/`/`@X`) reject on their operator string exactly
     // as for a scalar, and any other `:`-led op rejects as `cell_string_op`.
-    Some(subscript_operator_expr(name, index, after_bracket, span))
+    Ok(Some(subscript_operator_expr(
+        name,
+        index,
+        after_bracket,
+        span,
+    )?))
 }
 
 /// Capture the `[ … ]` subscript index that starts at `content[open] == '['`,
@@ -945,42 +976,65 @@ fn is_bare_dollar_subscript(s: &str) -> bool {
 /// `$(sub|gsub "${a[i]}" …)`; substring `:o:l` carries the index (the transform
 /// builds a cell-reading `Substring` node); every other operator parses as the
 /// scalar form so `#`/`%`/`/`/`@X` reject identically.
-fn subscript_operator_expr(name: &str, index: Box<Expr>, after: &str, span: Span) -> Expr {
-    // DD#84: `:~` (elide) joins `:-`/`:?` as a cell disposition.
-    if after.starts_with(":-") || after.starts_with(":?") || after.starts_with(":~") {
-        let mut expr = parse_standard_operator(after, name, span)
-            .unwrap_or_else(|| Expr::param(name, None, None, span));
-        attach_cell_index(&mut expr, index);
-        return expr;
-    }
+fn subscript_operator_expr(
+    name: &str,
+    index: Box<Expr>,
+    after: &str,
+    span: Span,
+) -> Result<Expr, Diagnostic> {
     // Sed on a cell (`${a[i]:s/RE/SUB/}`) desugars to `$(sub|gsub "${a[i]}" RE
     // SUB)` — the cell read as the subject — reusing the scalar `$(sub)`
-    // machinery (edge 4). A cell behaves like a string variable (DG).
+    // machinery (edge 4). A cell behaves like a string variable (DG). It is the
+    // one family that *consumes* the index (as the subject) rather than
+    // attaching it, which is why it cannot share the tail below.
     if let Some(body) = after.strip_prefix(":s/") {
         let subject = quoted_cell_expr(name, index, span);
         return build_sed_or_malformed(body, subject, name, after, span);
     }
+    let mut expr = cell_attaching_operator(name, after, span)?;
+    attach_cell_index(&mut expr, index);
+    Ok(expr)
+}
+
+/// The `${a[i]OP}` families that parse as their scalar form and then have the
+/// cell index attached by the caller. Split out of `subscript_operator_expr`
+/// to keep that dispatcher under the complexity gate; `:s/` is deliberately
+/// absent (it consumes the index instead of attaching it).
+fn cell_attaching_operator(name: &str, after: &str, span: Span) -> Result<Expr, Diagnostic> {
+    // DD#84: `:~` (elide) joins `:-`/`:?` as a cell disposition.
+    let is_disposition =
+        after.starts_with(":-") || after.starts_with(":?") || after.starts_with(":~");
+    if is_disposition {
+        return Ok(scalar_op_or_bare(
+            parse_standard_operator(after, name, span)?,
+            name,
+            span,
+        ));
+    }
     if after.starts_with(':') {
         // substring (`:o:l`) on a cell — carry the cell index; the transform
         // builds a `Substring` node that reads the cell as the source (edge 4).
-        // A cell behaves like a string variable (DG).
-        if let Some(mut expr) = try_substring_op(after, name, span) {
-            attach_cell_index(&mut expr, index);
-            return expr;
-        }
-        // Any other `:`-led op that isn't substring/sed/`:-`/`:?` has no cell
-        // lowering — reject explicitly (SB4039) rather than silently drop.
-        let mut expr = Expr::param(name, Some("cell_string_op"), None, span);
-        attach_cell_index(&mut expr, index);
-        return expr;
+        // A cell behaves like a string variable (DG). Any other `:`-led op that
+        // isn't substring/sed/`:-`/`:?` has no cell lowering — reject
+        // explicitly (SB4039) rather than silently drop.
+        return Ok(try_substring_op(after, name, span)
+            .unwrap_or_else(|| Expr::param(name, Some("cell_string_op"), None, span)));
     }
     // `#`/`##`/`%`/`%%`/`/`-family/`@X`: parse as the scalar operator so the
     // same reject fires; the index rides along but the operator rejects first.
-    let mut expr = try_at_transform(after, name, span)
-        .or_else(|| parse_standard_operator(after, name, span))
-        .unwrap_or_else(|| Expr::param(name, None, None, span));
-    attach_cell_index(&mut expr, index);
-    expr
+    if let Some(expr) = try_at_transform(after, name, span) {
+        return Ok(expr);
+    }
+    Ok(scalar_op_or_bare(
+        parse_standard_operator(after, name, span)?,
+        name,
+        span,
+    ))
+}
+
+/// A parsed scalar operator, or a bare `${name}` when `rest` matched none.
+fn scalar_op_or_bare(parsed: Option<Expr>, name: &str, span: Span) -> Expr {
+    parsed.unwrap_or_else(|| Expr::param(name, None, None, span))
 }
 
 /// Attach a cell subscript to a freshly-parsed `${name OP}` expansion, turning
@@ -1008,23 +1062,34 @@ fn splat_subscript_expr(name: &str, after_bracket: &str, span: Span) -> Expr {
 /// to `$(sub|gsub "$var" RE SUB)` with RE/SUB parsed as interpolating words
 /// (so `$x` in a field expands). A payload missing either mandatory `/`
 /// field delimiter is malformed: return a `s_malformed` sentinel that the
-/// validator turns into SB4032 — the `${…}` value path cannot itself raise
-/// a parse diagnostic.
-fn try_sed_op(rest: &str, name: &str, span: Span) -> Option<Expr> {
-    let body = rest.strip_prefix(":s/")?;
+/// validator turns into SB4032. (A malformed `$(( … ))` *inside* one of the
+/// RE/SUB words is a different matter — that is a real parse diagnostic and
+/// propagates out, which is why this path is fallible.)
+fn try_sed_op(rest: &str, name: &str, span: Span) -> Result<Option<Expr>, Diagnostic> {
+    let Some(body) = rest.strip_prefix(":s/") else {
+        return Ok(None);
+    };
     let subject = quoted_var_expr(name, span);
-    Some(build_sed_or_malformed(body, subject, name, rest, span))
+    Ok(Some(build_sed_or_malformed(
+        body, subject, name, rest, span,
+    )?))
 }
 
 /// Build `$(sub|gsub SUBJECT RE SUB)` from a `:s/RE/SUB/` payload with the given
 /// interpolating `subject` (a scalar `"$var"` or a cell `"${a[i]}"`), or the
 /// `s_malformed` sentinel (→ SB4032) when a `/` delimiter is missing. Shared by
 /// the scalar and cell sed forms.
-fn build_sed_or_malformed(body: &str, subject: Expr, name: &str, rest: &str, span: Span) -> Expr {
-    if let Some(expr) = build_sed_sub(body, subject, span) {
-        return expr;
+fn build_sed_or_malformed(
+    body: &str,
+    subject: Expr,
+    name: &str,
+    rest: &str,
+    span: Span,
+) -> Result<Expr, Diagnostic> {
+    if let Some(expr) = build_sed_sub(body, subject, span)? {
+        return Ok(expr);
     }
-    Expr {
+    Ok(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
             operator: Some("s_malformed".to_string()),
@@ -1036,7 +1101,7 @@ fn build_sed_or_malformed(body: &str, subject: Expr, name: &str, rest: &str, spa
             taint_off: false,
         }),
         span,
-    }
+    })
 }
 
 /// `"${a[i]}"` as a single interpolating argument — the cell read as a sed
@@ -1100,29 +1165,48 @@ fn split_sed_edit(body: &str) -> Option<(&str, &str, &str, &str)> {
 /// become interpolating double-quoted words (`$x` expands); regex
 /// metacharacters are ordinary literal bytes. `g` in the flags selects
 /// `gsub`. Returns `None` for a malformed (missing-delimiter) payload.
-pub(crate) fn build_sed_sub(body: &str, subject: Expr, span: Span) -> Option<Expr> {
+pub(crate) fn build_sed_sub(
+    body: &str,
+    subject: Expr,
+    span: Span,
+) -> Result<Option<Expr>, Diagnostic> {
     let mut value = subject;
     let mut rest = body;
     loop {
-        let (re, sub, flags, after) = split_sed_edit(rest)?;
-        value = build_one_sed_sub(re, sub, flags, value, span);
+        let Some((re, sub, flags, after)) = split_sed_edit(rest) else {
+            return Ok(None);
+        };
+        value = build_one_sed_sub(re, sub, flags, value, span)?;
         // DD#96: `,` chains edits, applied left to right — the next edit's
         // subject is this one's result. Only `s///` chains.
         let after = after.trim_start();
         if after.is_empty() {
-            return Some(value);
+            return Ok(Some(value));
         }
-        rest = after.strip_prefix(',')?.trim_start().strip_prefix("s/")?;
+        let Some(next) = after
+            .strip_prefix(',')
+            .map(str::trim_start)
+            .and_then(|r| r.strip_prefix("s/"))
+        else {
+            return Ok(None);
+        };
+        rest = next;
     }
 }
 
 /// One `$(sub|gsub SUBJECT RE SUB)` call. RE/SUB become interpolating
 /// double-quoted words (`$x` expands); `g` in this edit's own flags selects
 /// `gsub`, so a flag binds to its edit rather than the whole chain.
-fn build_one_sed_sub(re: &str, sub: &str, flags: &str, subject: Expr, span: Span) -> Expr {
+fn build_one_sed_sub(
+    re: &str,
+    sub: &str,
+    flags: &str,
+    subject: Expr,
+    span: Span,
+) -> Result<Expr, Diagnostic> {
     let cmd_name = if flags.contains('g') { "gsub" } else { "sub" };
-    let re_expr = *parse_default_word(re, span);
-    let sub_expr = *parse_default_word(sub, span);
+    let re_expr = *parse_default_word(re, span)?;
+    let sub_expr = *parse_default_word(sub, span)?;
     let cmd = Statement {
         kind: StmtKind::Command(Command {
             name: Expr {
@@ -1133,10 +1217,10 @@ fn build_one_sed_sub(re: &str, sub: &str, flags: &str, subject: Expr, span: Span
         }),
         span,
     };
-    Expr {
+    Ok(Expr {
         kind: ExprKind::CommandSubstitution(vec![cmd]),
         span,
-    }
+    })
 }
 
 /// `${var:offset}` / `${var:offset:length}` — substring.
@@ -1190,9 +1274,9 @@ fn try_at_transform(rest: &str, name: &str, span: Span) -> Option<Expr> {
 /// Standard parameter-expansion operators (`:-`, `:+`, `:=`, `:?`, `#`, `##`,
 /// `%`, `%%`, `/`, `//`, `/#`, `/%`). The slash family compiles the glob
 /// pattern to a regex and packs it as `pattern\0replacement` for the runtime.
-fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
+fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Result<Option<Expr>, Diagnostic> {
     if let Some(peeled) = rest.strip_prefix(":!") {
-        return Some(parse_trusted_operator(peeled, name, span));
+        return Ok(Some(parse_trusted_operator(peeled, name, span)?));
     }
     parse_disposition_operator(rest, name, span)
 }
@@ -1205,19 +1289,21 @@ fn parse_standard_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
 /// could never be seen. What follows is re-parsed with the colon PUT BACK —
 /// `:-W` (empty or unset) and `-W` (unset only) are different operators, and
 /// dropping it would silently change which one `${x:!-W}` means.
-fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Expr {
+fn parse_trusted_operator(peeled: &str, name: &str, span: Span) -> Result<Expr, Diagnostic> {
     // `${x:!}` — no disposition at all: the value, trusted. Identical to a bare
     // `${x}` but for the flag, which is exactly the intent.
     if peeled.is_empty() {
-        return trusted(Expr::param(name, None, None, span));
+        return Ok(trusted(Expr::param(name, None, None, span)));
     }
-    match parse_disposition_operator(&format!(":{peeled}"), name, span) {
-        Some(e) => trusted(e),
-        // `${x:!foo}` — `!` followed by something that is not a disposition.
-        // It must not quietly degrade to a trusted bare `${x}`; carry the raw
-        // text on a sentinel the validator rejects (mirrors `s_malformed`).
-        None => Expr::param(name, Some("trust_malformed"), None, span),
-    }
+    Ok(
+        match parse_disposition_operator(&format!(":{peeled}"), name, span)? {
+            Some(e) => trusted(e),
+            // `${x:!foo}` — `!` followed by something that is not a disposition.
+            // It must not quietly degrade to a trusted bare `${x}`; carry the raw
+            // text on a sentinel the validator rejects (mirrors `s_malformed`).
+            None => Expr::param(name, Some("trust_malformed"), None, span),
+        },
+    )
 }
 
 /// Set the DD#91 `!` modifier on an already-parsed expansion.
@@ -1228,16 +1314,22 @@ fn trusted(mut e: Expr) -> Expr {
     e
 }
 
-fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr> {
+fn parse_disposition_operator(
+    rest: &str,
+    name: &str,
+    span: Span,
+) -> Result<Option<Expr>, Diagnostic> {
     let (op, operand_str) = split_operator(rest);
-    let op_str = op?;
+    let Some(op_str) = op else {
+        return Ok(None);
+    };
     // DD#65: the `/`-family glob-replace is dropped. Give it a distinct
     // operator (`glob_replace`) so `check_rejected_param_expansion` can reject
     // it (SB4034) without touching the kept `:s/` sed op, which shares the raw
     // `/`//` operator strings. No glob→regex lowering — it never reaches codegen.
     let is_slash_op = matches!(op_str.as_str(), "/" | "//" | "/#" | "/%");
     if is_slash_op {
-        return Some(Expr {
+        return Ok(Some(Expr {
             kind: ExprKind::ParameterExpansion(ParameterExpansion {
                 name: name.to_string(),
                 operator: Some("glob_replace".to_string()),
@@ -1251,11 +1343,13 @@ fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr
                 taint_off: false,
             }),
             span,
-        });
+        }));
     }
     // DD#65: the `${var:-WORD}` default is a full interpolating word.
     let operand = if op_str == ":-" {
-        operand_str.map(|s| parse_default_word(&s, span))
+        operand_str
+            .map(|s| parse_default_word(&s, span))
+            .transpose()?
     } else {
         operand_str.map(|s| {
             Box::new(Expr {
@@ -1264,7 +1358,7 @@ fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr
             })
         })
     };
-    Some(Expr {
+    Ok(Some(Expr {
         kind: ExprKind::ParameterExpansion(ParameterExpansion {
             name: name.to_string(),
             operator: Some(op_str),
@@ -1273,7 +1367,7 @@ fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr
             taint_off: false,
         }),
         span,
-    })
+    }))
 }
 
 /// DD#65: the `${var:-WORD}` default is a double-quoted-string body whose
@@ -1284,14 +1378,14 @@ fn parse_disposition_operator(rest: &str, name: &str, span: Span) -> Option<Expr
 /// still be encoded via a `$'…'` C-string (e.g. `$'a\x7db'` → `a}b`). The
 /// result is an `ExprKind::DoubleQuoted`, identical to a real double-quoted
 /// word. Empty → empty literal.
-fn parse_default_word(s: &str, span: Span) -> Box<Expr> {
+fn parse_default_word(s: &str, span: Span) -> Result<Box<Expr>, Diagnostic> {
     let mut scanner = Scanner::new(s);
     let parts = scanner.scan_default_body();
-    let exprs = string_parts_to_exprs(&parts, span, &scanner);
-    Box::new(Expr {
+    let exprs = string_parts_to_exprs(&parts, span, &scanner)?;
+    Ok(Box::new(Expr {
         kind: ExprKind::DoubleQuoted(exprs),
         span,
-    })
+    }))
 }
 
 fn parse_subscript_operator(name: &str, after: &str, span: Span) -> Option<Expr> {

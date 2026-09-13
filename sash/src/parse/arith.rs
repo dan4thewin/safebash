@@ -205,6 +205,12 @@ pub fn parse_arith_str(input: &str, span: Span) -> Result<ArithExpr, Diagnostic>
         return Ok(ArithExpr::Literal(0));
     }
     let tokens = tokenize_arith(trimmed);
+    // A run of nothing but separators is a legitimately empty expression — the
+    // C-style `for (( ;; ))` header reaches here as `;;`. Returning 0 for it
+    // here is what lets an EOF in *operand* position below be a hard error.
+    if tokens.iter().all(|t| matches!(t, ATok::Sep | ATok::Comma)) {
+        return Ok(ArithExpr::Literal(0));
+    }
     let mut parser = ArithParser {
         tokens,
         pos: 0,
@@ -1013,8 +1019,10 @@ impl ArithParser {
                 // `${var:OP…}` — parse the body with the real parameter-expansion
                 // parser and import the result as an rvalue value (DD#77).
                 self.advance();
-                let expr = crate::parse::expr::parse_parameter_expansion(body, self.span);
-                Some(Ok(ArithExpr::Expansion(Box::new(expr))))
+                Some(
+                    crate::parse::expr::parse_parameter_expansion(body, self.span)
+                        .map(|expr| ArithExpr::Expansion(Box::new(expr))),
+                )
             }
             _ => None,
         }
@@ -1051,12 +1059,18 @@ impl ArithParser {
                 self.advance();
                 Err(arith_bad_literal_error(self.span, &s))
             }
-            Some(_) => {
-                // Unknown token — try to recover
-                self.advance();
-                Ok(ArithExpr::Literal(0))
-            }
-            None => Ok(ArithExpr::Literal(0)),
+            // An operand is owed here. Recovering silently to 0 turned a
+            // malformed expression into a *wrong answer* rather than an error:
+            // `$(( 1 +* 2 ))` became 0 and `$(( 1 + ))` became 1, both of which
+            // bash rejects outright. Both cases are now a hard SB4020.
+            Some(tok) => Err(arith_error(
+                self.span,
+                format!("expected an operand in arithmetic expression, found {tok:?}"),
+            )),
+            None => Err(arith_error(
+                self.span,
+                "arithmetic expression ends where an operand is expected".to_string(),
+            )),
         }
     }
 

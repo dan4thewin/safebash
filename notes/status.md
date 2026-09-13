@@ -1,3 +1,53 @@
+## ══ STATUS (2026-09-13) — arithmetic: two silent-`0` recoveries removed ══
+
+**Journal 286.** Sweep **4330 passing, 9 skipped, 0 failing**, 0 flips
+(4304 + 26). One task closed, one filed for DG.
+
+**`$(( 1 + ))` printed `1`.** Two independent defects, each masking the
+other's reach:
+
+| input | before | now |
+|---|---|---|
+| `$(( 1 + ))` | **1** | SB4020 |
+| `$(( 1 +* 2 ))` | **0** | SB4020 |
+| `"$(( @@@ ))"` | **0** | SB4035 |
+| `"$(( $(f) + 1 ))"` | **0** | SB4020 |
+
+1. `parse_prefix_atom` **consumed** an unusable operand token and returned
+   `0`. Consuming it is why DD#72's `reject_trailing_token` — the check
+   built for exactly this — never fired.
+2. `emit_string_part` did `parse_arith_str(…).unwrap_or(Literal(0))`, so
+   *every* arith diagnostic inside a double-quoted string was discarded.
+   The same expression outside quotes was already a hard error, so the two
+   positions disagreed.
+
+Fixing (2) meant making the parameter-expansion layer fallible — 13
+signatures through `parse_default_word` / `build_sed_sub` /
+`parse_disposition_operator` / `try_subscript` / `parse_parameter_expansion`.
+That layer was infallible by construction and a doc comment said so, but
+the parser threads `Result<_, Diagnostic>` everywhere else, so this applies
+an existing convention rather than choosing a new one.
+
+`for (( ;; ))` reaches the arith parser as bare separators and needed an
+explicit all-separators early return, or the new EOF error would have
+broken it. Specs 31.49–31.52 pin that and the other unchanged behaviour.
+
+**Found while re-measuring `cmdsub-followups-taint-intrinsics-c`**, which
+is now **closed** — all three gates met. The C backend's Phase-4 cmdsub-exec
+TODO is implemented (zero `TODO` markers emitted; `$(/usr/bin/printf hi)`
+captures `hi` in C, byte-identical to native), and `$(getpid)`-class
+intrinsics work in every cmdsub position.
+
+**For DG:** `arith-cmdsub-support.md` — bash evaluates `$(( $(cmd) + 1 ))`;
+sash now rejects it *consistently* rather than in four of five positions,
+but that is not the same as having decided it. Three options, with the taint
+consequence spelled out.
+
+**Also re-measured, already fixed by DD#107's heap work** (no code change
+needed): `bug-capture-64k` (200 KB capture exact; the 64 KiB boundary exact
+at 65535/65536/65537) and `bug-cmdsub-trailing-newlines` (all trailing
+newlines stripped, matching bash).
+
 ## ══ STATUS (2026-09-13) — converter: `${#…}` conflation + missing DD#97 keyword ══
 
 **Journal 285.** Sweep **4304 passing, 9 skipped, 0 failing**, 0 flips

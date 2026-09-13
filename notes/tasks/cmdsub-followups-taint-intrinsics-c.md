@@ -1,6 +1,6 @@
 ---
 title: "cmdsub follow-ups: unblessed-external ICE vs clean SB5020, getpid-class intrinsics, C Phase-4 exec"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -58,3 +58,22 @@ partial (resolution runs in transform, after the front-end taint pass).
 Split into three threads (filed): `advance-dd23-resolution`,
 `tighten-cmdsub-taint-execve`, `implement-getpid-builtins`. The C cmdsub
 exec (Phase-4 TODO) remains pure implementation and stays in *this* task.
+
+## Closed 2026-09-13 — re-measured, all three gates met
+
+Gate 1 (unblessed-external ICE) closed 2026-09-08, as noted above.
+
+Gate 2 (**intrinsics in cmdsub**) is no longer reproducible: `$(getpid)` works
+bare (`echo "$(getpid)"`), through an assignment (`x=$(getpid)`), and as an
+arith-sexpr operand (`$(( (getpid) > 0 ))`). No "bare command passed to
+sash_exec".
+
+Gate 3 (**C cmdsub exec**) is **implemented**. `--emit-c` on a script
+containing `s=$(/usr/bin/printf hi)` emits **zero** `TODO` markers, and the
+linked C binary prints `[hi]` — byte-identical to native. The Phase-4 TODO is
+gone.
+
+Re-measuring this one is also what surfaced journal 286's two arithmetic
+bugs: the probe used to demonstrate gate 2 contained `$(( $(getpid) > 0 ))`,
+which printed `0`. See `arith-cmdsub-support.md` for the language-surface
+question that fell out of it.
