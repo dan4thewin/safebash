@@ -318,8 +318,21 @@ fn value_is_tainted(
         SsaValue::ArraySplat { array, disposition } => splat_taint(array, disposition, taint),
 
         // Always-tainted: program argv is external input by construction; a
-        // multi-statement/pipeline `$(…)` body captures external output.
-        SsaValue::ArgvIndex(_) | SsaValue::CmdSubstBody { .. } => Taint::Tainted,
+        // multi-statement/pipeline `$(…)` body captures external output; and
+        // `$(<file)` is the contents of a file, which is external input in
+        // exactly the same sense.
+        //
+        // The slurp case must be asserted here rather than inherited. It used
+        // to desugar to `$(cat file)` and so was tainted only as a *side
+        // effect* of being an external-command capture. Lowering it to a direct
+        // read leaves that path, and note what is NOT wanted: the child value
+        // is the *path*, so falling through to the any-tainted composite rule
+        // below would make `$(<f.txt)` — a literal path — read CLEAN. That is a
+        // hole straight through the taint model, which is why this variant is
+        // listed explicitly and why the match is exhaustive.
+        SsaValue::ArgvIndex(_) | SsaValue::CmdSubstBody { .. } | SsaValue::SlurpFile(_) => {
+            Taint::Tainted
+        }
 
         // Var-rooted: taint inherited from the named variable's status.
         SsaValue::Var(vref)

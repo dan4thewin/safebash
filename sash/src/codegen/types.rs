@@ -96,6 +96,7 @@ pub(super) struct ExternFuncs {
     pub(super) file_same_dev: cranelift_module::FuncId,
     pub(super) chdir: cranelift_module::FuncId,
     pub(super) getcwd: cranelift_module::FuncId,
+    pub(super) slurp_file: cranelift_module::FuncId,
     pub(super) toupper_all: cranelift_module::FuncId,
     pub(super) tolower_all: cranelift_module::FuncId,
     pub(super) getpid: cranelift_module::FuncId,

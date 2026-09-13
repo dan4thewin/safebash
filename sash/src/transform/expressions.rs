@@ -9,19 +9,36 @@ use crate::ssa::*;
 
 pub(super) fn expr_to_value(expr: &Expr, state: &VersionState) -> SsaValue {
     match &expr.kind {
-        ExprKind::Literal(s) => SsaValue::Literal(s.clone()),
+        // Literal text, with or without quotes: no expansion either way.
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
         ExprKind::SimpleExpansion(var) => simple_expansion_to_value(var, state),
-        ExprKind::SingleQuoted(s) => SsaValue::Literal(s.clone()),
         ExprKind::Arithmetic(a) => {
             super::expr_handlers::handle_structured_arithmetic(a, expr, state)
         }
         ExprKind::ParameterExpansion(pe) => parameter_expansion_to_value(pe, state),
-        ExprKind::DoubleQuoted(parts) => dq_to_value(parts, state),
-        ExprKind::AssocArray(pairs) => assoc_array_to_value(pairs, state),
         ExprKind::Subscript { name, index } => subscript_to_value(name, index, state),
+        ExprKind::SlurpFile(path) => SsaValue::SlurpFile(Box::new(expr_to_value(path, state))),
+        // Forms built from a sequence of child expressions.
+        ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_) => composite_to_value(&expr.kind, state),
+        _ => super::expr_handlers::handle_command_substitution(expr, state),
+    }
+}
+
+/// The forms whose value is assembled from a sequence of children.
+///
+/// Total only over the variants [`expr_to_value`] routes here, which is safe
+/// because that match names them explicitly: a new `ExprKind` reaches the
+/// command-substitution fallback there, never this function.
+fn composite_to_value(kind: &ExprKind, state: &VersionState) -> SsaValue {
+    match kind {
+        ExprKind::DoubleQuoted(parts) => dq_to_value(parts, state),
         ExprKind::Concat(parts) => concat_to_value(parts, state),
         ExprKind::Array(elems) => lower_array_literal(elems, state),
-        _ => super::expr_handlers::handle_command_substitution(expr, state),
+        ExprKind::AssocArray(pairs) => assoc_array_to_value(pairs, state),
+        _ => unreachable!("not a composite expression"),
     }
 }
 
@@ -475,30 +492,45 @@ fn try_array_single_glob(vals: &[SsaValue]) -> Option<SsaValue> {
 }
 
 /// Convert an expression to a simple string representation.
+/// Render an expression back to something close to its source text.
+///
+/// Three families, and the arms are grouped by them: forms whose text is
+/// their own content, forms built by joining rendered children, and forms
+/// with no faithful single-line rendering, for which a placeholder naming the
+/// construct stands in. The two helpers re-match on the kind and are total
+/// only over the variants routed to them — safe because *this* match stays
+/// exhaustive, so a new `ExprKind` is a compile error here first.
 pub(super) fn expr_to_string(expr: &Expr) -> String {
     match &expr.kind {
         ExprKind::Literal(s) => s.clone(),
         ExprKind::SimpleExpansion(var) => format!("${}", var),
         ExprKind::SingleQuoted(s) => format!("'{}'", s),
-        ExprKind::DoubleQuoted(parts) => {
-            let mut s = String::from("\"");
-            for p in parts {
-                s.push_str(&expr_to_string(p));
-            }
-            s.push('"');
-            s
-        }
         ExprKind::ParameterExpansion(pe) => {
-            let mut s = format!("${{{}", pe.name);
-            if let Some(op) = &pe.operator {
-                s.push_str(op);
-            }
-            s.push('}');
-            s
+            format!("${{{}{}}}", pe.name, pe.operator.as_deref().unwrap_or(""))
         }
-        ExprKind::CommandSubstitution(_) => "$(...)".to_string(),
-        ExprKind::Arithmetic(_) => "$(( ... ))".to_string(),
+        ExprKind::SlurpFile(path) => format!("$(<{})", expr_to_string(path)),
+        ExprKind::Subscript { name, index } => {
+            format!("${{{}[{}]}}", name, expr_to_string(index))
+        }
+        ExprKind::DoubleQuoted(_)
+        | ExprKind::Concat(_)
+        | ExprKind::Array(_)
+        | ExprKind::AssocArray(_) => joined_form_to_string(&expr.kind),
+        ExprKind::CommandSubstitution(_) | ExprKind::Arithmetic(_) | ExprKind::Test(_) => {
+            opaque_form_to_string(&expr.kind).to_string()
+        }
+    }
+}
+
+/// The forms rendered by joining their children, optionally inside a
+/// delimiter pair. See [`expr_to_string`] for why the fallthrough is safe.
+fn joined_form_to_string(kind: &ExprKind) -> String {
+    match kind {
         ExprKind::Concat(parts) => parts.iter().map(expr_to_string).collect(),
+        ExprKind::DoubleQuoted(parts) => {
+            let inner: String = parts.iter().map(expr_to_string).collect();
+            format!("\"{}\"", inner)
+        }
         ExprKind::Array(elems) => {
             let inner: Vec<String> = elems.iter().map(expr_to_string).collect();
             format!("({})", inner.join(" "))
@@ -510,9 +542,17 @@ pub(super) fn expr_to_string(expr: &Expr) -> String {
                 .collect();
             format!("({})", inner.join(" "))
         }
-        ExprKind::Subscript { name, index } => {
-            format!("${{{}[{}]}}", name, expr_to_string(index))
-        }
-        ExprKind::Test(_) => "[[ ... ]]".to_string(),
+        _ => unreachable!("not a joined form"),
+    }
+}
+
+/// The forms with no faithful single-line rendering: the text names the
+/// construct rather than reproducing it. See [`expr_to_string`].
+fn opaque_form_to_string(kind: &ExprKind) -> &'static str {
+    match kind {
+        ExprKind::CommandSubstitution(_) => "$(...)",
+        ExprKind::Arithmetic(_) => "$(( ... ))",
+        ExprKind::Test(_) => "[[ ... ]]",
+        _ => unreachable!("not an opaque form"),
     }
 }

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=54
+plan=65
 echo "1..$plan" >&3
 
 set +e
@@ -560,6 +560,106 @@ str o=$(outer)
 attest o [[ -n $o ]]
 echo "[$o]"'
   [[ $rc = 0 && $out = "[outer-inner-payload]" && -z $rerr ]]; chk cap.18
+# ── `$(<file)` — the slurp form (DD-less; see dollar-lt-file-forks) ──
+# It used to be desugared at PARSE time into `$(cat file)`, so a supposedly
+# self-contained static binary acquired a runtime dependency on /usr/bin/cat
+# and forked a process. The whole reason the spelling exists in bash is that
+# it does NOT fork.
+
+printf 'one\ntwo\n' > sf.txt
+
+# sl.1 the value is unchanged by the rewrite: contents with every trailing
+# newline stripped, exactly as a `$( )` capture strips them.
+run_sash 's=$(<sf.txt)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[one
+two]" && -z $err ]]; chk sl.1
+
+# sl.2 THE point of the change, asserted through behaviour the harness can
+# see in both modes: a failed slurp reports the FILE, and never `cat` or the
+# DD#55 "command failed" wording. Both of those can only appear if an external
+# command was forked, so their absence is the no-fork property. (Grepping the
+# binary for `/usr/bin/cat` would be more direct, but the harness deletes
+# test_bin before the assertion runs, and the C path builds it under a
+# different name.)
+run_sash 's=$(</nonexistent/sash/slurp)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc != 0 && $rerr != *cat* && $rerr != *"command failed"* ]]; chk sl.2
+
+# sl.3 strips EVERY trailing newline, not one — shared with the capture path
+# (`sash_capture_drain`) rather than reimplemented, so the two cannot drift.
+printf 'x\n\n\n' > sn.txt
+run_sash 's=$(<sn.txt)
+attest s [[ -n $s ]]
+echo "len=$(strlen $s)"'
+[[ $rc = 0 && $out = "len=1" && -z $err ]]; chk sl.3
+
+# sl.4 a file with no trailing newline at all is not truncated.
+printf 'no-newline' > sw.txt
+run_sash 's=$(<sw.txt)
+attest s [[ -n $s ]]
+echo "len=$(strlen $s)"'
+[[ $rc = 0 && $out = "len=10" && -z $err ]]; chk sl.4
+
+# sl.5 an empty file yields the empty string (and `${s:!}` is the sanctioned
+# way to use a value that is legitimately empty).
+: > se.txt
+run_sash 's=$(<se.txt)
+echo "len=$(strlen ${s:!})"'
+[[ $rc = 0 && $out = "len=0" && -z $err ]]; chk sl.5
+
+# sl.6 the path may be an expansion, not just a literal.
+run_sash 'f=sf.txt
+s=$(<$f)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[one
+two]" && -z $err ]]; chk sl.6
+
+# sl.7 THE TAINT GATE. File contents are external input. While the form
+# desugared to `$(cat …)` this was inherited for free from being an external
+# capture; a direct read leaves that path, so taint must be re-asserted. A
+# regression here is a hole straight through the taint model, not a cosmetic
+# slip.
+run_sash 's=$(<sf.txt)
+echo "$s"'
+[[ $rc != 0 && $err == *"SB5020"* ]]; chk sl.7
+
+# sl.8 ...and in a `[[ ]]` operand too, which is a read position. This one
+# regressed during the rewrite (the taint dispatcher has a `_` fall-through,
+# so the new node was silently LEGAL there) and is the reason the test exists.
+run_sash 'if [[ $(<sf.txt) = "one" ]]; then echo y; else echo n; fi'
+[[ $rc != 0 && $err == *"SB5020"* ]]; chk sl.8
+
+# sl.9 a missing file ABORTS rather than yielding an empty string. bash warns
+# and continues with ""; sash will not hand the program a value it did not
+# read. The diagnostic names the FILE (it used to name /usr/bin/cat).
+run_sash 's=$(</nonexistent/sash/slurp)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 1 && $rerr == *"/nonexistent/sash/slurp"* && $rerr == *"No such file"* ]]; chk sl.9
+
+# sl.10 a directory also aborts with the path named. `open` SUCCEEDS on a
+# directory (it is `read` that fails EISDIR), so without an explicit check
+# this fell through to a generic "read failed" naming nothing.
+mkdir -p sdir
+run_sash 's=$(<sdir)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 1 && $rerr == *"sdir"* && $rerr == *"Is a directory"* ]]; chk sl.10
+
+# sl.11 A FILE WHOSE NAME LOOKS LIKE AN OPTION. This is the sharpest
+# discriminator, and a third bug the desugar caused: `$(<-n)` became
+# `cat -n`, so `-n` was parsed as a FLAG, cat read stdin instead, and the
+# slurp yielded nothing. bash reads the file. Any filename reaching a real
+# argv is an argument-injection surface; a direct open has no argv at all.
+printf 'SECRET\n' > ./-n
+run_sash 's=$(<-n)
+attest s [[ -n $s ]]
+echo "[$s]"'
+[[ $rc = 0 && $out = "[SECRET]" && -z $err ]]; chk sl.11
 
 set -e
 tally

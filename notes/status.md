@@ -1,3 +1,65 @@
+## ══ STATUS (2026-09-13) — `$(<file)` no longer execs `/usr/bin/cat` ══
+
+**Journal 284.** Sweep **4292 passing, 9 skipped, 0 failing**, 0 flips —
+4270 + 22 new rows (`sl.1`–`sl.11` in both modes). Task
+`dollar-lt-file-forks` closed.
+
+**Unblocked without noticing.** The task was blocked on `sash_read_all`'s
+64 KiB silent truncation. That closed 2026-09-13 with DD#107 (256 MB heap,
+real error handling). Re-checking the blocker before starting the work is
+what found it.
+
+**`$(<file)` was literally `$(cat file)`** — synthesised in
+`parse_slurp_form`, with the comment saying so. The spelling exists in bash
+*because* it does not fork; ours forked, execed `/usr/bin/cat`, and embedded
+that path in a "static" binary. That is a runtime dependency on the target
+machine (and, under DD#23, on the build host) that nothing in the source
+mentions. DD#99 had since put it on the common path — every migrated
+`mapfile -t` is `s=$(<f); matchall …`.
+
+Now a first-class node: `ExprKind::SlurpFile` → `SsaValue::SlurpFile` → **one
+`sash_slurp_file` call in both backends**. It delegates the trailing-newline
+strip to `sash_capture_drain` — the same code the general `$( )` capture uses
+— so the backends cannot drift, and `bug-cmdsub-trailing-newlines` will change
+both paths at once if it ever lands. Same move as the `[[ ]]` comparators.
+
+**Gates:** 1 execve (was 2), zero clone/pipe; value byte-identical (5/1/10/0);
+zero `/usr/bin/cat` in either backend's binary; **still tainted**, spanned
+SB5020.
+
+**Two more bugs the desugar was hiding.**
+
+1. **Argument injection via filename.** A file named `-n`: `$(<-n)` became
+   `cat -n`, `cat` read **stdin** instead, slurp yielded nothing. bash yields
+   the contents. A direct `open` has no argv to inject into. This is `sl.11`,
+   and it was found only because fail-first was weak (1 of 10) and I went
+   looking for a sharper discriminator.
+2. **A taint hole I introduced, caught by a before/after matrix.**
+   `[[ $(<f) = x ]]` was rejected before and silently **accepted** after —
+   `check_expr_taint` has a `_` fall-through. No existing test would have
+   said a word. Fixed; pinned as `sl.8`.
+
+**Exhaustive matches paid for themselves.** The new variants broke 6 compile
+sites — including `ssa_taint.rs`, which *forced* the taint call: `SlurpFile`'s
+child is the **path**, so the any-tainted-composite rule would have judged
+`$(<f.txt)` **clean**. The six integration points with `_` fall-throughs all
+failed **silently** and each had to be found by running something.
+
+**Complexity gate, two fair catches and one artifact.** The new variant forced
+an arm into three dispatchers. `expr_to_string` (cc 17) and `resolve_expr`
+(cog 7 — two `for` loops and an `if let` inside arms) were fair and are now
+9/1 and 10/1. `expr_to_value` was cc 13 / **cog 1** — thirteen delegating
+arms, nothing to simplify — and had to be split anyway, because the
+dispatcher exemption (`delta ≤ -15`) is unreachable for a pure dispatcher
+until cc ≥ 16 while rejection starts at 12.1. **Nine functions sit in that
+dead zone.** Filed with a recommendation:
+`notes/tasks/complexity-gate-dispatcher-dead-zone.md`. Gate not touched.
+
+**For DG:** `notes/tasks/dollar-lt-file-policy.md` — `$(<f)` on a missing
+file **aborts** (bash warns and yields `""`); behaviour preserved, but it is
+now our decision and wants a DD. Also whether `$(<f)` should word-split in
+`for-in` at all, and a diagnostic wording change there.
+
 ## ══ STATUS (2026-09-13) — fail-open C arms closed; `<&`/`<>` implemented ══
 
 **Journal 283.** Sweep **4270 passing, 9 skipped, 0 failing**, 0 flips (all 22

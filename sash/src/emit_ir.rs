@@ -486,6 +486,7 @@ fn expr(e: &Expr, ind: usize, out: &mut String) {
         | ExprKind::ParameterExpansion(_)
         | ExprKind::Subscript { .. }
         | ExprKind::CommandSubstitution(_)
+        | ExprKind::SlurpFile(_)
         | ExprKind::Arithmetic(_)
         | ExprKind::Test(_) => expr_composite(&e.kind, i, out),
     }
@@ -497,6 +498,7 @@ fn expr_composite(k: &ExprKind, i: usize, out: &mut String) {
         ExprKind::ParameterExpansion(p) => ex_param(p, i, out),
         ExprKind::Subscript { name, index } => ex_subscript(name, index, i, out),
         ExprKind::CommandSubstitution(body) => ex_cmdsub(body, i, out),
+        ExprKind::SlurpFile(path) => ex_slurp(path, i, out),
         ExprKind::Arithmetic(a) => ex_arithmetic(a, i, out),
         ExprKind::Test(t) => ex_test(t, i, out),
         ExprKind::Literal(_)
@@ -565,6 +567,12 @@ fn ex_subscript(name: &str, index: &Expr, i: usize, out: &mut String) {
 fn ex_cmdsub(body: &[Statement], i: usize, out: &mut String) {
     out.push_str("{:kind :command-substitution :body ");
     stmt_list(body, i + 34, out);
+    out.push('}');
+}
+
+fn ex_slurp(path: &Expr, i: usize, out: &mut String) {
+    out.push_str("{:kind :slurp-file :path ");
+    expr(path, i + 25, out);
     out.push('}');
 }
 

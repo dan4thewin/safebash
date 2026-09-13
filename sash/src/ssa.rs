@@ -536,6 +536,17 @@ pub enum SsaValue {
         body: Vec<crate::ir::Statement>,
         redirects: Vec<crate::ir::Redirect>,
     },
+    /// `$(<file)` — slurp a file's contents. The inner value is the **path**.
+    ///
+    /// Not a `CmdSubst`: it forks nothing and execs nothing. It lowers to a
+    /// single `sash_slurp_file` call, which opens/reads/closes and strips
+    /// trailing newlines through the same drain the general capture uses, so
+    /// the two cannot drift on that rule.
+    ///
+    /// **Tainted**, and deliberately so: file contents are external input. The
+    /// old `$(cat file)` desugar got that for free by being an external
+    /// capture; here it must be asserted (`ssa_taint.rs`).
+    SlurpFile(Box<SsaValue>),
     /// Concatenation of multiple values (from double-quoted strings
     /// with mixed literal and variable parts).
     Concat(Vec<SsaValue>),
@@ -749,6 +760,11 @@ impl SsaValue {
             SsaValue::ElideEmpty { source, .. } => vec![source],
             SsaValue::Trusted { source } => vec![source],
             SsaValue::Substring { source, .. } => vec![source],
+            // The child is the *path*. It must be reachable here so the literal
+            // interner sees it (a `$(<f.txt)` path that is never interned
+            // panics in codegen), even though taint deliberately does NOT
+            // inherit from it — see `ssa_taint.rs`.
+            SsaValue::SlurpFile(path) => vec![path],
             _ => return None,
         })
     }

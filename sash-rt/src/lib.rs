@@ -3655,6 +3655,75 @@ pub extern "C" fn sash_read_all(fd: i64) -> (*mut u8, usize) {
     (buf, total)
 }
 
+/// `$(<file)` — the slurp form. Open, read to EOF, close, strip trailing
+/// newlines.
+///
+/// The whole reason this spelling exists in bash is that it does **not**
+/// fork. sash used to desugar it to `$(cat file)` at parse time, which both
+/// spawned a process and silently gave the static binary a runtime dependency
+/// on `/usr/bin/cat`.
+///
+/// The strip is delegated to `sash_capture_drain` rather than reimplemented,
+/// so the slurp and the general `$( )` capture cannot drift on the
+/// trailing-newline rule — they are literally the same code.
+///
+/// Failure to open **aborts**. The alternative (bash's: warn and yield the
+/// empty string) would hand the program a fabricated value; sash's standing
+/// rule is to fail loudly rather than answer with something it did not read.
+/// That also matches what the `cat` desugar did, so this is not a behaviour
+/// change — only the diagnostic improves, naming the file instead of `cat`.
+#[unsafe(no_mangle)]
+pub extern "C" fn sash_slurp_file(
+    path_ptr: *const u8,
+    path_len: i64,
+    out_len: *mut i64,
+) -> *mut u8 {
+    let len = path_len as usize;
+    if path_ptr.is_null() || len >= 4095 {
+        sash_panic_slurp(path_ptr, path_len);
+    }
+    let mut buf: [u8; 4096] = [0; 4096];
+    unsafe { core::ptr::copy_nonoverlapping(path_ptr, buf.as_mut_ptr(), len) };
+    buf[len] = 0;
+    let cstr = unsafe { core::ffi::CStr::from_ptr(buf.as_ptr() as *const core::ffi::c_char) };
+    let opened = match rustix::fs::open(cstr, rustix::fs::OFlags::RDONLY, rustix::fs::Mode::empty())
+    {
+        Ok(f) => f,
+        Err(e) => {
+            // `sash_emsg` appends the reason from SASH_LAST_ERRNO, so recording
+            // it here is what turns "cannot read file: error 0" into the real
+            // "No such file or directory".
+            set_last_errno(e);
+            sash_panic_slurp(path_ptr, path_len)
+        }
+    };
+    // A directory opens fine with O_RDONLY on Linux; it is `read` that fails,
+    // with EISDIR. Catching it here keeps the diagnostic specific ("<path>:
+    // cannot read file: Is a directory") instead of falling through to the
+    // generic `sash_panic_read`, which knows no path.
+    if let Ok(st) = rustix::fs::fstat(&opened) {
+        if rustix::fs::FileType::from_raw_mode(st.st_mode) == rustix::fs::FileType::Directory {
+            set_last_errno(rustix::io::Errno::ISDIR);
+            sash_panic_slurp(path_ptr, path_len);
+        }
+    }
+    let fd = rustix::fd::IntoRawFd::into_raw_fd(opened) as i64;
+    let (data, total) = sash_capture_drain(fd);
+    sash_close(fd);
+    unsafe { *out_len = total as i64 };
+    data
+}
+
+/// A file named in `$(<file)` that cannot be opened. Named separately from
+/// `sash_panic_read` so the message can carry the path.
+#[cold]
+#[inline(never)]
+fn sash_panic_slurp(path_ptr: *const u8, path_len: i64) -> ! {
+    let msg = b"cannot read file";
+    sash_emsg(path_ptr, path_len, msg.as_ptr(), msg.len() as i64);
+    sash_exit(1);
+}
+
 /// A failed `read` is not EOF. Reporting it as EOF handed the caller a
 /// short value that looked like a complete one.
 #[cold]

@@ -633,6 +633,16 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_getcwd", Linkage::Import, &getcwd_sig)
         .expect("declare sash_getcwd");
 
+    // sash_slurp_file(path_ptr, path_len, out_len_ptr) -> ptr
+    let mut slurp_sig = module.make_signature();
+    slurp_sig.params.push(AbiParam::new(I64)); // path ptr
+    slurp_sig.params.push(AbiParam::new(I64)); // path len
+    slurp_sig.params.push(AbiParam::new(I64)); // out_len ptr
+    slurp_sig.returns.push(AbiParam::new(I64)); // result ptr
+    let slurp_file_func = module
+        .declare_function("sash_slurp_file", Linkage::Import, &slurp_sig)
+        .expect("declare sash_slurp_file");
+
     // Case conversion functions: (s_ptr, s_len, out_ptr) -> result_len
     let mut case_sig = module.make_signature();
     case_sig.params.push(AbiParam::new(I64));
@@ -822,6 +832,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         file_same_dev: file_same_dev_func,
         chdir: chdir_func,
         getcwd: getcwd_func,
+        slurp_file: slurp_file_func,
         toupper_all: toupper_all_func,
         tolower_all: tolower_all_func,
         getpid: getpid_func,

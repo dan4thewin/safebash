@@ -242,26 +242,32 @@ fn resolve_expr(e: &mut Expr, funcs: &HashSet<String>, diags: &mut Vec<Diagnosti
     match &mut e.kind {
         ExprKind::CommandSubstitution(stmts) => resolve_stmts(stmts, funcs, diags),
         ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) | ExprKind::Array(parts) => {
-            for p in parts {
-                resolve_expr(p, funcs, diags);
-            }
+            resolve_each(parts.iter_mut(), funcs, diags)
         }
-        ExprKind::AssocArray(pairs) => {
-            for (_, v) in pairs {
-                resolve_expr(v, funcs, diags);
-            }
+        ExprKind::AssocArray(pairs) => resolve_each(pairs.iter_mut().map(|(_, v)| v), funcs, diags),
+        ExprKind::Subscript { index, .. } | ExprKind::SlurpFile(index) => {
+            resolve_expr(index, funcs, diags)
         }
-        ExprKind::Subscript { index, .. } => resolve_expr(index, funcs, diags),
         ExprKind::ParameterExpansion(pe) => {
-            if let Some(operand) = &mut pe.operand {
-                resolve_expr(operand, funcs, diags);
-            }
+            resolve_each(pe.operand.iter_mut().map(|b| &mut **b), funcs, diags)
         }
         ExprKind::Test(t) => resolve_test_expr(t, funcs, diags),
         ExprKind::Literal(_)
         | ExprKind::SingleQuoted(_)
         | ExprKind::SimpleExpansion(_)
         | ExprKind::Arithmetic(_) => {}
+    }
+}
+
+/// Resolve every expression a form holds, whatever the shape of its
+/// container — a slice, the values of a pair list, or an `Option`.
+fn resolve_each<'a>(
+    exprs: impl Iterator<Item = &'a mut Expr>,
+    funcs: &HashSet<String>,
+    diags: &mut Vec<Diagnostic>,
+) {
+    for e in exprs {
+        resolve_expr(e, funcs, diags);
     }
 }
 

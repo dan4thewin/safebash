@@ -89,6 +89,15 @@ pub(super) fn lower_value(
         SsaValue::CmdSubstBody { .. } => {
             panic!("ICE: CmdSubstBody should have been lifted during transform");
         }
+        SsaValue::SlurpFile(path) => lower_slurp_file_value(
+            path,
+            builder,
+            module,
+            vars,
+            literals,
+            externs,
+            exit_status_var,
+        ),
         SsaValue::ArraySplat { array, .. } => {
             panic!(
                 "ICE: ArraySplat (@{}) must be expanded by the argv builder, \
@@ -819,6 +828,42 @@ fn lower_table_key_value(
 /// -on-int panic and lets a numeric loop counter be an Int slot (the previous
 /// `str_ptr()+atoi` assumed every index var was a string — a convention between
 /// the loop-lowering and this read, not a type-level guarantee).
+/// `$(<file)` — one `sash_slurp_file` call. No fork, no pipe, no `/usr/bin/cat`.
+///
+/// The path is an ordinary value, so `$(<$f)` works with no extra machinery.
+/// A missing file aborts inside the runtime (it cannot fabricate contents),
+/// which is what the old `cat` desugar did too — only the diagnostic changes.
+#[allow(clippy::too_many_arguments)]
+fn lower_slurp_file_value(
+    path: &SsaValue,
+    builder: &mut FunctionBuilder,
+    module: &mut ObjectModule,
+    vars: &HashMap<String, VarSlot>,
+    literals: &HashMap<String, cranelift_module::DataId>,
+    externs: &ExternFuncs,
+    exit_status_var: Option<Variable>,
+) -> (cranelift_codegen::ir::Value, cranelift_codegen::ir::Value) {
+    let (path_ptr, path_len) = lower_value(
+        path,
+        builder,
+        module,
+        vars,
+        literals,
+        externs,
+        exit_status_var,
+    );
+    let out_slot =
+        builder.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 8, 3));
+    let out_addr = builder.ins().stack_addr(I64, out_slot, 0);
+    let func_ref = module.declare_func_in_func(externs.slurp_file, builder.func);
+    let call = builder
+        .ins()
+        .call(func_ref, &[path_ptr, path_len, out_addr]);
+    let ptr = builder.inst_results(call)[0];
+    let len = builder.ins().stack_load(I64, out_slot, 0);
+    (ptr, len)
+}
+
 fn index_var_to_int(
     index: &VarRef,
     builder: &mut FunctionBuilder,

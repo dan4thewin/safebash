@@ -247,6 +247,11 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_getppid(void);").unwrap();
     writeln!(out, "extern i64 sash_random(void);").unwrap();
     writeln!(out, "extern char* sash_getcwd(i64* out_len);").unwrap();
+    writeln!(
+        out,
+        "extern const char* sash_slurp_file(const char* p, i64 l, i64* out_len);"
+    )
+    .unwrap();
     // Phase 4 — external exec
     writeln!(
         out,
@@ -1359,6 +1364,21 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
         }
         SsaValue::CmdSubstBody { .. } => {
             panic!("ICE: CmdSubstBody should have been lifted during transform")
+        }
+        // `$(<file)` — one runtime call, the same one native emits, so the two
+        // backends cannot drift on slurp semantics (strip rule, error handling).
+        SsaValue::SlurpFile(path) => {
+            let (pp, pl) = lower_value_as_str(e, path, types);
+            let t = e.fresh();
+            writeln!(
+                e.out,
+                "    i64 {t}_l; const char* {t}_p = sash_slurp_file({pp}, {pl}, &{t}_l);",
+                t = t,
+                pp = pp,
+                pl = pl
+            )
+            .unwrap();
+            (format!("{}_p", t), format!("{}_l", t))
         }
         SsaValue::ArraySplat { array, .. } => panic!(
             "ICE: ArraySplat (@{array}) must be expanded by the argv builder, \

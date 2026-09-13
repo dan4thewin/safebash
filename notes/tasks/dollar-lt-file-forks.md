@@ -1,9 +1,9 @@
 ---
 title: "`$(<file)` forks instead of reading the file directly"
-status: blocked
+status: done
 priority: P2
 kind: bug
-depends: [bug-heap-exhaustion-silent-segv]
+depends: []
 gates:
   - "`s=$(<f)` emits an open/read/close, with no fork and no pipe"
   - "the value is byte-identical to today's (trailing newline stripped)"
@@ -118,3 +118,82 @@ exhaustion at ~12 KB of payload. Both are filed together as
 `bug-heap-exhaustion-silent-segv` (P1), which must land first.
 
 The rest of this filing stands unchanged, including the taint gate.
+
+## Unblocked 2026-09-13
+
+`bug-heap-exhaustion-silent-segv` closed: option C landed 2026-09-12 and
+option B as **DD#107** (256 MB heap) on 2026-09-13. `sash_read_all` now grows
+a heap buffer with real error handling — the 64 KiB truncation that blocked
+this task is gone.
+
+## Done 2026-09-13
+
+`$(<file)` is now a first-class node end to end: `ExprKind::SlurpFile` →
+`SsaValue::SlurpFile` → one `sash_slurp_file` call in **both** backends. The
+`cat` desugar in `parse_slurp_form` is gone.
+
+All four gates verified on the live binary:
+
+| gate | result |
+|---|---|
+| no fork, no pipe | `strace` shows **1** execve (the program), zero clone/pipe — was 2 |
+| value byte-identical | `a\nb\nc\n`→5, `x\n\n\n`→1, no-trailing→10, empty→0 |
+| no `/usr/bin/cat` in the binary | `strings \| grep -c` → 0, both backends |
+| still tainted | spanned SB5020 at the use site |
+
+### One runtime function, not two inline lowerings
+
+`sash_slurp_file(path, len, &out_len)` opens `O_RDONLY`, `fstat`s to reject a
+directory explicitly, then delegates the trailing-newline strip to
+**`sash_capture_drain`** — literally the same code the general `$( )` capture
+uses. The backends cannot drift, and if `bug-cmdsub-trailing-newlines` ever
+changes the strip rule it changes both paths at once.
+
+The `fstat` is not defensive padding: `open(O_RDONLY)` **succeeds** on a
+directory and it is `read` that fails `EISDIR`, which fell through to the
+path-less `sash_panic_read`. Failure paths also `set_last_errno` — `sash_emsg`
+appends the errno reason, and without it the message reads `error 0`.
+
+### Taint had to be asserted, not inherited
+
+`SsaValue::SlurpFile`'s child is the **path**, so the any-tainted-composite
+rule would have made `$(<f.txt)` — a literal path — read **clean**. It is
+listed explicitly in the always-tainted arm of `ssa_taint.rs` alongside
+`ArgvIndex` and `CmdSubstBody`. The exhaustive match there is what forced the
+decision to be made rather than defaulted.
+
+### Two more bugs the desugar was hiding
+
+**Argument injection via filename.** A file named `-n`: `$(<-n)` became
+`cat -n`, `cat` parsed it as a **flag**, read stdin instead, and the slurp
+yielded nothing (`attest: s failed the gate`). bash yields the file contents.
+Any filename reaching a real argv is an injection surface; a direct `open` has
+no argv at all. Pinned as `sl.11`, the sharpest discriminator in the set.
+
+**A taint hole introduced and caught mid-work.** `[[ $(<f) = x ]]` was
+rejected before the rewrite and silently **accepted** after, because
+`check_expr_taint` has a `_` fall-through. Found by diffing an 11-case
+before/after behaviour matrix against stashed HEAD — not by any test that
+existed. Fixed, and pinned as `sl.8`.
+
+That is the shape of the whole change: adding `ExprKind::SlurpFile` broke 4
+compile sites and `SsaValue::SlurpFile` broke 2, and every one of those was a
+**decision surfaced**. The six integration points with `_` fall-throughs all
+failed **silently** and each had to be found by testing.
+
+### Specs
+
+`sl.1`–`sl.11` in `spec/misc.sh`, unguarded in both modes. Fail-first on
+revert fails exactly **2** per mode: `sl.2` (the diagnostic mentions neither
+`cat` nor "command failed") and `sl.11` (the `-n` filename). The other nine
+pass either way by design — they pin the *byte-identical* gate and the taint
+behaviour, which the fix was required not to change.
+
+### Left for DG
+
+`$(<f)` on a missing file **aborts** in sash; bash warns and yields `""`. The
+pre-existing sash behaviour is preserved, but now that `$(<f)` is first-class
+rather than a `cat` desugar, the divergence deserves ratifying in a DD. Also:
+the `for w in $(<f)` diagnostic moved from "tainted command substitution" to
+"tainted variable $w" — both reject, wording changed. Filed in
+`notes/tasks/dollar-lt-file-policy.md`.

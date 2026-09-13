@@ -4350,6 +4350,12 @@ fn is_taint_source(expr: &Expr) -> bool {
             parts.iter().any(is_taint_source)
         }
         ExprKind::AssocArray(pairs) => pairs.iter().any(|(_, v)| is_taint_source(v)),
+        // `$(<file)` — file contents are external input. This is the IR-level
+        // twin of the `ssa_taint.rs` rule; it earns the SPANNED SB5020 at the
+        // use site. Without it the value is still caught (the SSA backstop
+        // fires) but only as an unspanned "SSA taint backstop" message, which
+        // is a worse diagnostic for the same program.
+        ExprKind::SlurpFile(_) => true,
         _ => false,
     }
 }
@@ -4474,6 +4480,18 @@ fn check_expr_taint(expr: &Expr, tainted: &HashSet<String>, diags: &mut Vec<Diag
         // tainted read inside a `$( )` operand is a use without attest. These
         // were previously unchecked (the arm was missing).
         ExprKind::Test(t) => check_test_taint(t, tainted, diags),
+        // `$(<file)` at a read site is a bare use of external data, exactly
+        // like `$(getenv X)`. It was covered for free while the form desugared
+        // to `$(cat file)` (an external capture); lowering it to a direct read
+        // left that path, and the `_` fall-through below made
+        // `[[ $(<f) = x ]]` silently LEGAL. Reinstated explicitly.
+        ExprKind::SlurpFile(_) => diags.push(Diagnostic::error_span(
+            expr.span,
+            "SB5020",
+            "tainted file contents `$(<…)` used without attest — assign it \
+             to a variable and attest before use"
+                .to_string(),
+        )),
         _ => {}
     }
 }
@@ -6619,6 +6637,10 @@ fn check_expr_reads(expr: &Expr, known: &HashSet<String>, sink: &mut ReadSink) {
         // (their name is collected as in-scope), so anything you assign is fine;
         // a pure read (`$(( y + 1 ))`, the index `i` in `a[i]`) is not.
         ExprKind::Arithmetic(a) => check_arith_reads(a, expr.span, known, sink),
+        // `$(<$f)` — the path is a read of `f`. Without this arm the `_`
+        // fall-through made it invisible, so SB5050 called `f` a dead variable
+        // and SB5031 would have missed a typo'd path.
+        ExprKind::SlurpFile(path) => check_expr_reads(path, known, sink),
         _ => {}
     }
 }

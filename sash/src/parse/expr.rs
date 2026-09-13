@@ -1462,22 +1462,17 @@ fn try_first_word_shortcut(
     }
 }
 
-/// `$(<file)` — slurp a file via `cat`. Caller has just consumed `(`.
+/// `$(<file)` — the slurp form. Caller has just consumed `(`.
+///
+/// Yields a real `ExprKind::SlurpFile`. It previously desugared to
+/// `$(cat file)` here, which is why a static binary containing `$(<f)`
+/// carried a runtime dependency on `/usr/bin/cat`.
 fn parse_slurp_form(scanner: &mut Scanner, span: Span) -> Result<Expr, Diagnostic> {
     scanner.next();
     let file_expr = parse_expr(scanner)?;
     expect_rparen(scanner, span)?;
     Ok(Expr {
-        kind: ExprKind::CommandSubstitution(vec![Statement {
-            kind: StmtKind::Command(Command {
-                name: Expr {
-                    kind: ExprKind::Literal("cat".to_string()),
-                    span: Span { line: 0, col: 0 },
-                },
-                args: vec![file_expr],
-            }),
-            span: Span { line: 0, col: 0 },
-        }]),
+        kind: ExprKind::SlurpFile(Box::new(file_expr)),
         span,
     })
 }

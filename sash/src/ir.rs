@@ -268,6 +268,11 @@ pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
         // pruned-operator SB4034 reject) apply inside arithmetic too. Without
         // this, `$(( ${s:?…} ))` bypassed the reject and ICE'd in codegen.
         ExprKind::Arithmetic(arith) => walk_arith_expansions(arith, f),
+        // `$(<file)` — the path is an ordinary expression and may itself be an
+        // expansion (`$(<$f)`), so expr-level checks must reach it. Omitting
+        // this arm is silent: the walker has a `_` fall-through, so the subtree
+        // would simply never be visited.
+        ExprKind::SlurpFile(path) => walk_expr_tree(path, f),
         _ => {}
     }
 }
@@ -963,6 +968,15 @@ pub enum ExprKind {
 
     /// $(command)
     CommandSubstitution(Vec<Statement>),
+
+    /// `$(<file)` — the slurp form. A first-class node, NOT a desugar.
+    ///
+    /// It used to be rewritten at parse time into `$(cat file)`, which forked
+    /// a process and embedded `/usr/bin/cat` in a supposedly self-contained
+    /// static binary. The entire point of the spelling in bash is that it does
+    /// not fork, so the syntax was promising an optimization the
+    /// implementation inverted.
+    SlurpFile(Box<Expr>),
 
     /// $((expr)) — structured arithmetic expression
     Arithmetic(Box<ArithExpr>),
