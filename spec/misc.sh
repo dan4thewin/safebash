@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=65
+plan=76
 echo "1..$plan" >&3
 
 set +e
@@ -660,6 +660,62 @@ run_sash 's=$(<-n)
 attest s [[ -n $s ]]
 echo "[$s]"'
 [[ $rc = 0 && $out = "[SECRET]" && -z $err ]]; chk sl.11
+
+# ---- non-ASCII source bytes round-trip (mojibake bug) ----------------------
+# Every byte-at-a-time literal scanner built its String with
+# `push(byte as char)`, which reads a byte as a Latin-1 code point and
+# re-encodes it: 0xC3 became U+00C3 = C3 83. So `caf<C3><A9>` in the source
+# became `caf<C3><83><C2><A9>` in the binary -- every non-ASCII literal
+# outside single quotes was double-encoded. It survived because the
+# corruption is self-consistent: two corrupted strings still compare equal,
+# so only output bytes (or a byte length) reveal it.
+
+# utf8.1 unquoted word
+run_sash 'echo café'
+[[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.1
+# utf8.2 double-quoted
+run_sash 'echo "café"'
+[[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.2
+# utf8.3 single-quoted -- the one path that was already correct (it slices the
+# source range and decodes once). Pinned so a future refactor keeps it.
+run_sash "echo 'café'"
+[[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.3
+# utf8.4 through an assignment and an expansion
+run_sash 'v=café
+echo $v'
+[[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.4
+# utf8.5 embedded in a longer double-quoted string with an expansion
+run_sash 'v=café
+echo "x $v y"'
+[[ $rc = 0 && $out = "x café y" && -z $err ]]; chk utf8.5
+# utf8.6 byte length, not character count: strlen is documented as the BYTE
+# length. This reported 7 for a 5-byte string.
+run_sash 'v=café
+echo $(strlen $v)'
+[[ $rc = 0 && $out = "5" && -z $err ]]; chk utf8.6
+# utf8.7 a 3-byte sequence (CJK) and a 4-byte one (emoji)
+run_sash 'echo 日🎉'
+[[ $rc = 0 && $out = "日🎉" && -z $err ]]; chk utf8.7
+# utf8.8 $'...' escapes that spell one UTF-8 character must reassemble. Each
+# escape used to be pushed as its own char, so two bytes became four.
+run_sash "echo \$'caf\\xc3\\xa9'"
+[[ $rc = 0 && $out = "café" && -z $err ]]; chk utf8.8
+# utf8.9 $'...' ASCII escapes still work alongside the byte path
+run_sash "echo \$'a\\tb'"
+[[ $rc = 0 && $out = "$(printf 'a\tb')" && -z $err ]]; chk utf8.9
+# utf8.10 equality still holds -- it did even while both sides were corrupt,
+# which is exactly why this went unnoticed
+run_sash 'v=café
+if [[ $v = café ]]; then echo ok; else echo no; fi'
+[[ $rc = 0 && $out = "ok" && -z $err ]]; chk utf8.10
+# utf8.11 the regex engine is BYTE-oriented (lib9.h's chartorune is an
+# ASCII-only stub), so `.` matches one byte, not one character. bash in a
+# UTF-8 locale matches one character. A real divergence, and now a coherent
+# one: it used to disagree with BOTH models because the subject was
+# double-encoded.
+run_sash 'v=é
+if [[ $v =~ ^..$ ]]; then echo two-bytes; else echo no; fi'
+[[ $rc = 0 && $out = "two-bytes" && -z $err ]]; chk utf8.11
 
 set -e
 tally

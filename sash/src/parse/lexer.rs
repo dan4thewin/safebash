@@ -1201,6 +1201,25 @@ impl Scanner {
         }
     }
 
+    /// Append the character at `self.pos` to `out`, advancing past its full
+    /// UTF-8 sequence. `out.push(byte as char)` reads each byte as a Latin-1
+    /// code point and re-encodes it (`0xC3` -> `U+00C3` -> `C3 83`), which
+    /// double-encodes every non-ASCII literal in the source. Slicing the whole
+    /// sequence and decoding it once matches `scan_single_quoted`.
+    fn push_source_char(&mut self, out: &mut String) {
+        let b = self.source[self.pos];
+        let len = match b {
+            0x00..=0x7F => 1,
+            0xC0..=0xDF => 2,
+            0xE0..=0xEF => 3,
+            0xF0..=0xF7 => 4,
+            _ => 1,
+        };
+        let end = (self.pos + len).min(self.source.len());
+        out.push_str(&String::from_utf8_lossy(&self.source[self.pos..end]));
+        self.pos = end;
+    }
+
     /// Walk a double-quoted-string body from `self.pos`, splitting it into
     /// literal runs and `$…`/`` `…` `` expansion parts. When `stop_at_dquote`
     /// the body ends at the next `"` (an ordinary `"…"` string); otherwise a
@@ -1214,8 +1233,7 @@ impl Scanner {
                 b'$' => self.scan_dq_dollar(&mut parts, &mut literal),
                 b'`' => self.scan_dq_backtick(&mut parts, &mut literal),
                 _ => {
-                    literal.push(self.source[self.pos] as char);
-                    self.pos += 1;
+                    self.push_source_char(&mut literal);
                 }
             }
         }
@@ -1436,21 +1454,12 @@ impl Scanner {
 
     /// Scan $'...' ANSI-C quoted string (opening $' already consumed).
     fn scan_ansi_c_quoted(&mut self, start: usize) -> SpannedToken {
-        let mut result = String::new();
-        while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
-            if self.source[self.pos] == b'\\' && self.pos + 1 < self.source.len() {
-                self.pos += 1;
-                self.consume_ansi_c_escape(&mut result);
-            } else {
-                result.push(self.source[self.pos] as char);
-                self.pos += 1;
-            }
-        }
+        let bytes = self.scan_ansi_c_bytes();
         if self.pos < self.source.len() {
             self.pos += 1; // skip closing '
         }
         SpannedToken {
-            token: Tok::AnsiCQuoted(result),
+            token: Tok::AnsiCQuoted(String::from_utf8_lossy(&bytes).into_owned()),
             span: LexSpan {
                 start,
                 end: self.pos,
@@ -1458,28 +1467,55 @@ impl Scanner {
         }
     }
 
+    /// True when `self.pos` starts a `\<byte>` escape with a byte to follow.
+    fn at_escape_lead(&self) -> bool {
+        self.source[self.pos] == b'\\' && self.pos + 1 < self.source.len()
+    }
+
+    /// Body of `$'…'` from `self.pos` to the closing `'`, which is left
+    /// unconsumed.
+    ///
+    /// Accumulates raw bytes rather than `char`s. `\xC3\xA9` is two escapes
+    /// that together spell one UTF-8 character; pushing each as a `char` would
+    /// re-encode them separately (`U+00C3 U+00A9` = four bytes). Decoding the
+    /// finished byte string once is what `scan_single_quoted` does too.
+    fn scan_ansi_c_bytes(&mut self) -> Vec<u8> {
+        let mut bytes: Vec<u8> = Vec::new();
+        while self.pos < self.source.len() && self.source[self.pos] != b'\'' {
+            if self.at_escape_lead() {
+                self.pos += 1;
+                self.consume_ansi_c_escape(&mut bytes);
+                continue;
+            }
+            bytes.push(self.source[self.pos]);
+            self.pos += 1;
+        }
+        bytes
+    }
+
     /// `\…` body inside `$'…'`. `self.pos` points at the byte after `\`.
     /// Tries `simple_escape` first, then `\0NNN` octal and `\xHH` hex,
     /// then falls back to literal `\<byte>` passthrough.
-    fn consume_ansi_c_escape(&mut self, out: &mut String) {
+    fn consume_ansi_c_escape(&mut self, out: &mut Vec<u8>) {
         let c = self.source[self.pos];
         if let Some(ch) = simple_escape(c) {
-            out.push(ch);
+            let mut buf = [0u8; 4];
+            out.extend_from_slice(ch.encode_utf8(&mut buf).as_bytes());
             self.pos += 1;
             return;
         }
         match c {
             b'0' => {
                 self.pos += 1;
-                out.push(self.scan_ansi_c_octal() as char);
+                out.push(self.scan_ansi_c_octal());
             }
             b'x' => {
                 self.pos += 1;
-                out.push(self.scan_ansi_c_hex() as char);
+                out.push(self.scan_ansi_c_hex());
             }
             other => {
-                out.push('\\');
-                out.push(other as char);
+                out.push(b'\\');
+                out.push(other);
                 self.pos += 1;
             }
         }
@@ -1636,8 +1672,7 @@ impl Scanner {
                     self.pos += 1;
                 }
                 _ => {
-                    word.push(b as char);
-                    self.pos += 1;
+                    self.push_source_char(word);
                 }
             }
         }

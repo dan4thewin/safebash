@@ -1,3 +1,52 @@
+## ══ STATUS (2026-09-13) — `echo café` printed `cafÃ©` ══
+
+**Journal 291.** Sweep **4398 passing, 9 skipped, 0 failing**, 0 flips.
+
+Every non-ASCII byte in sash source outside single quotes was
+**double-encoded**. `push(byte as char)` is a Latin-1 decode followed by a
+UTF-8 encode: `0xC3` → `U+00C3` → `C3 83`. So `café` (5 bytes) became 7 bytes
+in the binary. Three sites: the double-quoted body, the bare-word scanner,
+and `$'…'`. Assignments and expansions inherited it.
+
+`scan_single_quoted` was correct all along — it slices the source range and
+`from_utf8_lossy`s once. The right pattern was thirty lines above a broken
+site.
+
+**Why it survived:** the corruption is a function, so everything internally
+consistent still works. `[[ $v = café ]]` passed the whole time — both sides
+mangled identically. Only leaving the program's own frame catches it:
+**writing bytes out**, or **asking the length**. `$(strlen café)` returned 7.
+
+Fix: a `push_source_char` helper (whole UTF-8 sequence, `from_utf8_lossy`),
+three call sites. `$'…'` needed more — `\xc3\xa9` is two escapes spelling
+one character, so it now accumulates `Vec<u8>` and decodes once, which makes
+it agree with bash.
+
+Specs `utf8.1`–`utf8.11` in `spec/misc.sh` (plan 65→76). `utf8.3` pins the
+single-quote path that was *already right*; `utf8.6` the byte length;
+`utf8.10` the equality that kept passing and proved nothing.
+
+**Found by** the `docs-regex-dialect-writeup` gate ("verify each claim
+against the binary"). `café =~ ^caf.$` matched neither the byte model nor
+the character model — an answer fitting *no* coherent model means the error
+is further back than the thing under test. A C harness against the shipped
+`regcomp.c` returned the right answer, which cleared the engine and pointed
+at the subject.
+
+**Dialect consequence:** regex is now coherently **byte**-oriented
+(`lib9.h`'s `chartorune` is an ASCII-only stub), so `.` matches one byte
+where bash matches one character. A real divergence, for the manpage.
+
+**Note for DG:** the complexity-gate means have ratcheted well below the
+numbers AGENTS.md quotes. Over `sash/src` they are now **cc 4.04 / cog 2.06**
+(1733 functions), not 12.46 / 6.58 — so the 3× bar is **12.1 / 6.2**. The
+gate caught `scan_ansi_c_quoted` at cc=6/cog=7 on this commit; refactored
+(extracted `scan_ansi_c_bytes` + `at_escape_lead`), not bypassed. AGENTS.md's
+quoted means are stale.
+
+**Next:** still `docs-regex-dialect-writeup` — probing is done, the
+`.SH REGULAR EXPRESSIONS` section of `docs/sash.1` is not yet written.
+
 ## ══ STATUS (2026-09-13) — regex: a heap overflow reachable from the environment ══
 
 **Journal 290.** Sweep **4376 passing, 9 skipped, 0 failing**, 0 flips.
