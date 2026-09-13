@@ -392,14 +392,15 @@ echo "[$x]"'
 two
 three]" && -z $rerr ]]; chk cap.11
 
-  # cap.12 KNOWN DIVERGENCE, pinned deliberately. The capture sink is a
+  # cap.12 a DELIBERATE divergence from bash, pinned. The capture sink is a
   # regular file, so a body probing its own stdout sees a file where bash
   # sees a pipe: bash prints PIPE here, sash prints NOTPIPE. Measured on
-  # both sides — the pipe runtime printed PIPE. This is the price of the
-  # memfd, and the only observable difference it introduces; `-t 1` still
-  # agrees with bash (NOTTY both). The alternative was an unconditional
-  # hang past 64 KiB (cap.7/cap.8). If this call is ever reversed, this
-  # spec flips and says so out loud instead of drifting unnoticed.
+  # both sides — the pipe runtime printed PIPE. It is the only observable
+  # difference the memfd introduces; `-t 1` still agrees (NOTTY both), and
+  # the alternative was an unconditional hang past 64 KiB (cap.7/cap.8).
+  # Matching bash byte-for-byte is not a project goal, so this is a choice
+  # and not a debt — pinned so that reversing it flips a spec out loud
+  # rather than letting the delta become folklore.
   run_sash 'fn emit {
   if [[ -p /dev/stdout ]]; then
     echo PIPE

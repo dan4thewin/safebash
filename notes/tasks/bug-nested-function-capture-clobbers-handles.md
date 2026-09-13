@@ -50,30 +50,53 @@ hence the generic `read failed` rather than anything that names the cause.
 Nothing rejects this at compile time, and there is no DD covering it, so it
 is a gap rather than a deliberate restriction.
 
-## Options
+## It is a sequencing problem, not an architectural one
 
-**A. Give the runtime a capture stack.** `sash_capture_start` pushes,
-`sash_capture_end` pops; codegen stops carrying handles at all. Removes the
-slots and the whole class of clobbering, and shrinks the SSA surface.
-*Cost:* changes the ABI of both entry points, so the Cranelift signatures,
-`ExternFuncs`, and `emit_c` all move together. Depth bound has to be picked
-(fixed array vs. heap).
+DG's read, and it is correct: **sash inlines function bodies**, so capture
+nesting depth is known at compile time. The validator says so out loud —
 
-**B. One slot pair per capture site.** Nesting depth is known statically, so
-allocate distinct Cranelift variables / distinct C locals per site.
-*Cost:* codegen-only and the ABI is untouched, but it keeps the handles in
-generated code, which is the thing that made this possible. C needs unique
-names per site.
+```
+SB5037: recursive call to 'down' is not supported — sash inlines functions,
+so only a direct self tail-call (`return down …`) is allowed (it lowers to
+a loop); rewrite other recursion as a loop
+```
 
-**C. Reject nested capture in `validate.rs`.** A diagnostic instead of a
-runtime `read failed`.
-*Cost:* not a fix; bash supports this. Only worth it as a stopgap if A/B are
-deferred, and it would need a DD to say the subset excludes it.
+Recursion is rejected, and the one permitted form (direct self tail-call)
+lowers to a *loop*, which re-enters a capture site sequentially rather than
+nesting it. There is no construct that produces a dynamic capture depth.
 
-**Recommendation: A.** The bug exists because generated code owns state that
-is naturally the runtime's, and B leaves that ownership where it is. A also
-makes `CaptureStart`/`CaptureEnd` nullary-ish, which removes the two-i64
-return dance in three places.
+That kills the case for a runtime-owned stack. A stack exists to handle a
+depth you cannot know; here you can always know it. Codegen already emits
+the whole program as one Cranelift function with all bodies inlined as
+blocks (`entry.rs:119` allocates one variable set for the lot) — so the
+inner and outer captures are plainly visible in one instruction stream, and
+the only defect is that they were handed the same two variables.
+
+**Fix: one slot pair per capture site.** Walk the SSA, number the capture
+sites, allocate `capture_saved_var_N` / `capture_handle_var_N` per site in
+`setup::allocate_variables`, and carry the index on `SsaInst::CaptureStart`
+/ `CaptureEnd` so each end pairs with its own start. In C, the same index
+names `__cap_saved_N` / `__cap_handle_N`. No ABI change, no runtime change,
+no new concept.
+
+Equivalently and more cheaply, the slots could be saved/restored around an
+inner capture, since an inner pair's lifetime is strictly contained in the
+outer's — but per-site slots need no ordering argument to be correct, so
+they are the better version of the same idea.
+
+### Rejected: a runtime capture stack
+
+The first draft of this note recommended moving the handles into a runtime
+stack, on the reasoning that "generated code owns state that is naturally
+the runtime's". That argument does not survive the inlining fact: the state
+is static, and a stack would pay an ABI change across Cranelift signatures,
+`ExternFuncs`, and `emit_c` to dynamically track something the compiler
+already knows. Recorded so the reasoning is not re-derived.
+
+### Rejected: reject nested capture in `validate.rs`
+
+A diagnostic instead of `read failed`. Not a fix, and not needed once the
+above is a slot-numbering exercise.
 
 ## Gates
 

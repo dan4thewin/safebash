@@ -100,8 +100,9 @@ after. I measured both sides rather than reasoning about them, because a
 claim about what the old build did is worth exactly as much as the run that
 produced it.
 
-That is a genuine divergence from bash, and the project's north star is
-byte-identical output, so it is not mine to wave away. It is narrow —
+That is a genuine divergence from bash. I flagged it as needing sign-off on
+north-star grounds; see the addendum — that goal was retired, so this is a
+choice to document rather than a debt. It is narrow —
 `-t 1` still agrees (`NOTTY` both), and it takes a body deliberately
 probing `/dev/stdout` to see it — and the thing it buys is the removal of
 an unconditional hang. But narrow is not zero. `cap.12` pins the current
@@ -145,3 +146,80 @@ The filing was written by measuring one reproduction and describing it. The
 fix needed the *class*. Reproducing is necessary and is not sufficient; the
 next question after "does it reproduce" is "what else is in this class",
 and `cap.8` is what that question costs when nobody asks it.
+
+## Addendum — connecting the dots DG asked about
+
+DG pushed back on two things. Both were right, and both needed a
+measurement rather than an argument.
+
+### "Byte-identical with bash" is not the goal any more
+
+I flagged the `-p /dev/stdout` divergence as needing sign-off on the
+grounds that the north star is byte-identical output. That goal was
+abandoned a while back — bash has too many indefensible quirks. So the
+divergence is not the event I framed it as. `cap.12` still earns its place
+as a pin, but as documentation of a deliberate choice, not as a debt.
+
+Worth noting what went wrong in my reasoning: I invoked a project goal from
+memory and built an escalation on top of it. The same failure mode as
+trusting a stale filing, one level up — a *principle* is a snapshot too.
+
+### A kernel-held buffer means syscalls — so what does it actually cost?
+
+The honest answer is **nothing**, and I should have measured before DG had
+to ask. 1000-line captured function, `strace -c`:
+
+| syscall        | pipe (pre-fix) | memfd (post-fix) |
+|----------------|---------------:|-----------------:|
+| `write`        |          3 002 |            3 002 |
+| `read`         |              3 |                3 |
+| `dup2`         |              2 |                2 |
+| `dup`          |              1 |                1 |
+| `close`        |              3 |                2 |
+| `pipe`         |              1 |                — |
+| `memfd_create` |              — |                1 |
+| `lseek`        |              — |                1 |
+| **total**      |      **3 014** |        **3 014** |
+
+Identical. The memfd traded `pipe` plus a `close` for `memfd_create` plus
+an `lseek`. It neither added nor removed a syscall from the hot path.
+
+Which means the syscall cost DG is objecting to **is not the sink at all**
+— it is the 3 002 `write`s the body performs, and those happen whether or
+not anything is capturing. They predate all of this work.
+
+Note the ratio: 1 000 `echo "line-$i"` statements produce **3 002** writes.
+Three per echo — the literal `line-`, the interpolated number, the newline.
+That is its own finding, independent of capture.
+
+### So DG's buffer is a different prize, and a bigger one
+
+I had been treating "buffer" and "memfd" as competing answers to one
+question. They answer different ones:
+
+- **memfd** makes the general case *correct*. Externals, redirects, any
+  body at all — no hang, no wall.
+- **a userspace buffer** makes the provable case *free*. Not 3 014 syscalls
+  down to 12: down to **zero**.
+
+They compose as a fast path and a fallback, chosen at compile time.
+
+And the objection I raised against the buffer — that keying on "fd == 1"
+swallows a redirect — evaporates once the choice is made at *emission*
+time rather than at runtime. Because bodies are inlined, codegen already
+knows which `sash_write` calls sit inside a captured region. It can emit a
+buffer append for those instead of a write, and simply *not take the fast
+path* for a body containing a redirect or an external command. The runtime
+never has to guess what fd 1 currently means, because nobody asks it.
+
+The static knowledge required is the same knowledge that already rejects
+recursion (SB5037) and drives inlining.
+
+### The two open items turn out to be one change
+
+The nested-capture bug wants capture sites numbered, each carrying its own
+handle slots instead of sharing one global pair. The buffer fast path wants
+capture sites to carry a buffer handle and to know which writes belong to
+them. That is the same plumbing: **give each capture site its own
+identity and its own state.** Doing either one alone would build most of
+the other.

@@ -146,7 +146,8 @@ The sink is a regular file, so `[[ -p /dev/stdout ]]` inside a captured body
 is now `NOTPIPE` where bash says `PIPE` (and where sash itself said `PIPE`
 before — measured, not assumed). `-t 1` still agrees with bash. Pinned as
 `cap.12` so a reversal flips a spec rather than going unnoticed.
-**Outstanding: DG has not signed off on this divergence.**
+Matching bash byte-for-byte is not a project goal, so this is a documented
+choice rather than an outstanding debt.
 
 ### Separate bug found
 

@@ -38,17 +38,45 @@ and the interleaving is correct by construction (`cap.11`).
 | in-process ~500 KB (`cap.7`)       | hang (rc 124) | `508889` | `508889` |
 | external in body 100 KB (`cap.8`)  | hang (rc 124) | `100000` | `100000` |
 
-### Needs DG: an accepted divergence
+### A documented divergence
 
 The sink is a regular file, so a body probing its own stdout sees one.
 `[[ -p /dev/stdout ]]` inside `$(f)` is `NOTPIPE`; bash says `PIPE`, and so
 did sash before this change — measured on both sides, not reasoned about.
-`-t 1` still agrees with bash. Narrow, but the north star is byte-identical
-output, so it is not mine to wave away. It buys removal of an unconditional
-hang. Pinned as `cap.12` so a reversal flips a spec instead of the delta
-becoming folklore. The alternatives that keep the pipe do not survive: a
-larger pipe moves the wall to 1 MB and leaves it a wall; forking the body is
-bash-exact but costs assignment visibility, a language-surface change.
+`-t 1` still agrees. I escalated this as needing sign-off on the grounds
+that the north star is byte-identical output; **that goal was retired a
+while back** (bash has too many indefensible quirks), so it is a choice to
+document, not a debt. Pinned as `cap.12`. The alternatives that keep the
+pipe do not survive anyway: a larger pipe moves the wall to 1 MB and leaves
+it a wall; forking the body is bash-exact but costs assignment visibility.
+
+### Next: capture sites get their own identity
+
+DG's two pushbacks converge on one change.
+
+**The syscall objection was aimed at the wrong thing.** Measured, 1000-line
+captured function: pipe = **3014** syscalls total, memfd = **3014**. The
+memfd traded `pipe`+`close` for `memfd_create`+`lseek` and touched nothing
+else. The cost is the body's **3002 `write`s** — three per `echo "line-$i"`
+— which happen capture or no capture. So the buffer DG wants is not a rival
+to the memfd; it is a different and larger prize: **zero** syscalls, not
+twelve. memfd keeps the general case correct; a buffer makes the provable
+case free.
+
+My objection to the buffer (keying on "fd == 1" swallows a redirect)
+evaporates when the choice is made at *emission* time. Bodies are inlined,
+so codegen already knows which `sash_write`s sit inside a capture — and can
+decline the fast path for a body holding a redirect or an external command.
+The runtime never guesses what fd 1 means because nobody asks it.
+
+**And nested capture is just a sequencing bug**, as DG read it. SB5037 says
+it outright: recursion is rejected *because* sash inlines functions, and the
+one legal self tail-call lowers to a loop. Depth is always static, so the
+runtime stack I recommended was over-engineering; per-site slots suffice.
+Filing corrected.
+
+Both items want the same plumbing: **give each capture site its own
+identity and its own state.** Either one alone builds most of the other.
 
 ### New bug found
 
