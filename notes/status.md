@@ -1,3 +1,35 @@
+## ══ STATUS (2026-09-13) — the retired bracket forms convert now ══
+
+**Journal 296.** `converter-retire-bracket-splat` **done**. Sweep
+**4422 passing, 9 skipped, 0 failing, 0 flips** (+9 specs, `57.93`–`57.101`).
+Round-trip verified: converted output compiles and is byte-identical to bash.
+
+`${a[@]}` / `${a[*]}` / `${!a[@]}` are rejected by the compiler (SB4038) and
+the converter was passing them through, so any bash script using an array —
+most of them — converted to something that would not compile.
+
+**There is no lookup table.** The three sash spellings are not
+interchangeable: `@a` is a splat legal only as a for-in source, `$(join a)` is
+a scalar, `$(keys m)` is a splat that cannot be joined at all (SB5025). So
+`"${a[@]}"` has four right answers by context — `@a` in a for-in source,
+`$(join a)` for `echo` and for value contexts, and a MANUAL for any other
+command argument (the same SB5032 wall `"$@"` hits; still DG's call in
+`converter-splat-empty-case`).
+
+**Gate 3 was stale:** it asked for `${#a[@]}` → `${#a}`, which is itself
+retired. The only target is `$(len a)`, which the converter already emitted.
+Pinned by `57.101` — the one new spec that passed under fail-first.
+
+**A third wrong-diagnostic-by-shared-arm, fixed:** `${!a[@]}` drew
+`# MANUAL: ${!var} indirect expansion`. It is not indirect expansion, it is
+the keys form, which sash supports for maps. The check was
+`starts_with("${!")`. Same shape as SB5011 (journal 288) and "expected `]]`"
+(294). `57.99` asserts the new note **and the absence of the old one**.
+
+**Declined, deliberately:** `$a[@]` / `$a[*]` (named in gates 1–2). Bash
+reads those as `$a` followed by literal `[@]`, and tree-sitter agrees.
+Converting them would invent a meaning bash does not give them.
+
 ## ══ STATUS (2026-09-13) — GUIDE.md and AGENTS.md were a pipeline behind ══
 
 **Journal 295.** `guide-architecture-stale-cst` **done**. Docs-only; sweep

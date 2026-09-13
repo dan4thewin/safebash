@@ -1181,6 +1181,10 @@ fn convert_expansion(
                 return;
             }
         }
+        if let Some((name, kind)) = bracket_splat(inner) {
+            convert_bracket_splat(node, name, kind, source, patches, prefix_lines, collections);
+            return;
+        }
         if let Some(replacement) = subscript_expansion(inner, collections) {
             patches.push(Patch::replace_node(
                 node,
@@ -1232,6 +1236,132 @@ fn convert_expansion(
 }
 
 // ── Arithmetic side-effect extraction (DD#57) ─────────────────
+
+/// DD#75 retired the `[@]`/`[*]` bracket forms (SB4038). Recognises
+/// `${a[@]}`, `${a[*]}`, `${!a[@]}` and `${!a[*]}`, returning the collection
+/// name and which form it was: `@` splat, `*` join, `!` keys.
+///
+/// `${#a[@]}` is *not* handled here — it reaches [`length_expansion`] first,
+/// which already answers `$(len a)`.
+fn bracket_splat(inner: &str) -> Option<(&str, char)> {
+    let (body, keys) = match inner.strip_prefix('!') {
+        Some(rest) => (rest, true),
+        None => (inner, false),
+    };
+    let open = body.find('[')?;
+    let name = &body[..open];
+    if !is_clean_ident(name) {
+        return None;
+    }
+    let sub = &body[open + 1..body.strip_suffix(']')?.len()];
+    if sub != "@" && sub != "*" {
+        return None;
+    }
+    Some((name, if keys { '!' } else { sub.chars().next()? }))
+}
+
+/// What replaces a retired bracket form depends on where it sits, because the
+/// sash spellings are not interchangeable: `@a` is a splat and is legal only
+/// as a for-in source, `$(join a)` is a scalar, and `$(keys m)` is a splat
+/// that cannot be joined at all (SB5025).
+fn convert_bracket_splat(
+    node: Node,
+    name: &str,
+    kind: char,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+    collections: &Names,
+) {
+    // A form that is a whole quoted word carries its quotes into the rewrite —
+    // `"@a"` is rejected (SB5026) and `"$(join a)"` would be redundant. A form
+    // spliced into a larger string (`"pre${a[@]}"`) is not a whole word, and
+    // only the expansion itself is replaced.
+    let target = match node.parent() {
+        Some(p) if p.kind() == "string" && p.child_count() == 3 => p,
+        _ => node,
+    };
+    let whole_arg = target
+        .parent()
+        .is_some_and(|p| p.kind() == "command" || p.kind() == "for_statement");
+    let quoted_join = target.id() != node.id() && kind == '*';
+    let in_for = for_in_header_loop(node).is_some();
+    let line = node.start_position().row;
+
+    if kind == '!' {
+        if !in_for {
+            prefix_lines.push((
+                line,
+                format!(
+                    "# MANUAL: `${{!{name}[@]}}` outside a for-in header — `$(keys {name})` is a \
+                 splat and cannot be joined or passed as an argument (SB5025). Iterate it, \
+                 or build the string you need in the loop"
+                ),
+            ));
+            return;
+        }
+        if collections.maps.contains(name) {
+            patches.push(Patch::replace_node(target, format!("$(keys {name})"), None));
+        } else {
+            // An indexed array's "keys" are its indices 0..len-1, and sash has
+            // no index-range sugar. Guessing a C-style loop would change the
+            // program's shape, so say what the author has to write.
+            prefix_lines.push((
+                line,
+                format!(
+                    "# MANUAL: `${{!{name}[@]}}` on an indexed array yields the indices 0..len-1; \
+                 sash has no index-range sugar. Use `for (( i = 0; i < $(len {name}); i++ ))`, \
+                 or iterate the values with `for v in @{name}`"
+                ),
+            ));
+        }
+        return;
+    }
+
+    // `"${a[*]}"` is the joined string even in a for-in header — it is one
+    // word, so the loop runs once. `${a[@]}` and unquoted `${a[*]}` are the
+    // elements.
+    if in_for && !quoted_join {
+        patches.push(Patch::replace_node(target, format!("@{name}"), None));
+        return;
+    }
+
+    // Outside a for-in header a splat is only legal into a command, and there
+    // bash's empty case has no faithful sash spelling — the same wall `"$@"`
+    // hits (SB5032). `echo` is the exception: it rejects a splat outright
+    // (SB5030) and directs to a join, which is what bash's quoted form
+    // produces anyway. `[*]` is always the joined string, so it never lands
+    // here.
+    if kind == '@' && whole_arg && enclosing_command_name(node, source).is_some_and(|c| c != "echo")
+    {
+        prefix_lines.push((
+            line,
+            format!(
+                "# MANUAL: `${{{name}[@]}}` as a command argument — an empty array would run the \
+             command with too few arguments, so state the empty case: `@{{{name}:-WORD}}` or \
+             `@{{{name}:?WORD}}` (SB5032). Use `$(join {name})` if one joined argument was meant"
+            ),
+        ));
+        return;
+    }
+    patches.push(Patch::replace_node(target, format!("$(join {name})"), None));
+}
+
+/// The name of the command this node is an argument of, if it is one.
+fn enclosing_command_name<'a>(node: Node, source: &'a [u8]) -> Option<&'a str> {
+    let mut current = node.parent();
+    while let Some(p) = current {
+        if p.kind() == "command" {
+            let mut cursor = p.walk();
+            let name = p
+                .children(&mut cursor)
+                .find(|c| c.kind() == "command_name")?;
+            return Some(node_text(name, source));
+        }
+        current = p.parent();
+    }
+    None
+}
 
 /// DD#80: `${a[K]}` takes a **direct** key — an integer literal, `$var`, an
 /// expansion, a quoted string, or (maps only) a clean-identifier bareword.

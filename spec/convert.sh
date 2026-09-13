@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=117
+plan=126
 echo "1..$plan" >&3
 
 set +e
@@ -789,6 +789,70 @@ run_convert '#!/bin/bash
 declare -a a=(1 2)
 echo "${a[@]}"'
 [[ $rc = 0 && $out != *'parameter transformation'* && -z $err ]]; chk 57.92
+
+# ── DD#75 retired bracket forms ──────────────────────────────
+# `${a[@]}` / `${a[*]}` / `${!a[@]}` are rejected by the compiler (SB4038).
+# What replaces one depends on context: `@a` is a splat and is legal only as
+# a for-in source, `$(join a)` is a scalar, and `$(keys m)` is a splat that
+# cannot be joined at all (SB5025).
+
+# 57.93 a for-in source becomes the bare splat, quotes and all
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+for v in "${a[@]}"; do echo "$v"; done'
+[[ $rc = 0 && $out == *'for v in @a;'* && $out != *'[@]'* && -z $err ]]; chk 57.93
+
+# 57.94 a value context becomes the join
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+x="${a[@]}"'
+[[ $rc = 0 && $out == *'x=$(join a)'* && -z $err ]]; chk 57.94
+
+# 57.95 `echo` takes the join — it rejects a splat outright (SB5030), and the
+# join is what bash'"'"'s quoted form produces anyway
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+echo "${a[@]}"'
+[[ $rc = 0 && $out == *'echo $(join a)'* && -z $err ]]; chk 57.95
+
+# 57.96 `[*]` is the joined string everywhere
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+echo "${a[*]}"'
+[[ $rc = 0 && $out == *'echo $(join a)'* && -z $err ]]; chk 57.96
+
+# 57.97 spliced into a larger string, only the expansion is replaced
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+echo "pre${a[@]}post"'
+[[ $rc = 0 && $out == *'"pre$(join a)post"'* && -z $err ]]; chk 57.97
+
+# 57.98 a map'"'"'s keys in a for-in header become $(keys m)
+run_convert '#!/bin/bash
+declare -A m=([x]=1)
+for k in "${!m[@]}"; do echo "$k"; done'
+[[ $rc = 0 && $out == *'for k in $(keys m);'* && -z $err ]]; chk 57.98
+
+# 57.99 an indexed array'"'"'s "keys" are indices, and sash has no index-range
+# sugar — say so rather than invent a loop shape
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+for i in "${!a[@]}"; do echo "$i"; done'
+[[ $rc = 0 && $out == *'MANUAL'* && $out == *'index-range'* \
+   && $out != *'indirect expansion'* && -z $err ]]; chk 57.99
+
+# 57.100 a splat into an external command has no faithful mechanical answer —
+# an empty array would run it with too few arguments (SB5032)
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+/bin/grep foo "${a[@]}"'
+[[ $rc = 0 && $out == *'MANUAL'* && $out == *'SB5032'* && -z $err ]]; chk 57.100
+
+# 57.101 `${#a[@]}` already reached the length path — still $(len a)
+run_convert '#!/bin/bash
+declare -a a=(1 2 3)
+echo "${#a[@]}"'
+[[ $rc = 0 && $out == *'$(len a)'* && -z $err ]]; chk 57.101
 
 set -e
 tally
