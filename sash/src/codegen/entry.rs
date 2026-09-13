@@ -122,8 +122,7 @@ pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool)
         let test_result_var = fs.test_result_var;
         let exit_status_var = fs.exit_status_var;
         let pipe_read_fd_var = fs.pipe_read_fd_var;
-        let capture_saved_var = fs.capture_saved_var;
-        let capture_pipe_var = fs.capture_pipe_var;
+        let capture_slots = fs.capture_slots;
         let saved_end_status_var = fs.saved_end_status_var;
         let end_cl_block = fs.end_cl_block;
 
@@ -151,8 +150,7 @@ pub fn compile_ssa(program: &SsaProgram, bash_source: Option<&str>, trace: bool)
             test_result_var,
             exit_status_var,
             pipe_read_fd_var,
-            capture_saved_var,
-            capture_pipe_var,
+            capture_slots: &capture_slots,
             saved_end_status_var,
             end_cl_block,
             space_id,
@@ -191,8 +189,7 @@ struct EmitCtx<'a, 'b> {
     test_result_var: cranelift_frontend::Variable,
     exit_status_var: cranelift_frontend::Variable,
     pipe_read_fd_var: cranelift_frontend::Variable,
-    capture_saved_var: cranelift_frontend::Variable,
-    capture_pipe_var: cranelift_frontend::Variable,
+    capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
     saved_end_status_var: cranelift_frontend::Variable,
     end_cl_block: Option<cranelift_codegen::ir::Block>,
     space_id: cranelift_module::DataId,
@@ -307,8 +304,7 @@ fn emit_block_insts(
                 test_result_var: ctx.test_result_var,
                 exit_status_var: ctx.exit_status_var,
                 pipe_read_fd_var: ctx.pipe_read_fd_var,
-                capture_saved_var: ctx.capture_saved_var,
-                capture_pipe_var: ctx.capture_pipe_var,
+                capture_slots: ctx.capture_slots,
                 redirect_stack,
                 end_cl_block: ctx.end_cl_block,
                 program: ctx.program,

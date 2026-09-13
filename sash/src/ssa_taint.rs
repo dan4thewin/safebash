@@ -138,7 +138,7 @@ fn classify_inst_def(
         } => {
             taint.insert(var_key(target), read_line_taint(*clean_pipe));
         }
-        SsaInst::CaptureEnd { target, tainted } => {
+        SsaInst::CaptureEnd { target, tainted, .. } => {
             // A `$(user_fn)` capture is optimistically Clean (DD#24); a
             // multi-statement/pipeline `$(…)` body captures external output
             // and is Tainted. The upstream CST taint pass
@@ -165,7 +165,7 @@ fn classify_inst_def(
         | SsaInst::MapFromArray { .. } // DD#99: ditto — the map is as tainted as its source array
         | SsaInst::MatchInto { .. } // fills a clean array (subject is clean); CST pass governs array taint
         | SsaInst::ArgvFill { .. } // fills a tainted array (DD#61 bulk-read source); CST pass governs
-        | SsaInst::CaptureStart
+        | SsaInst::CaptureStart { .. }
         | SsaInst::AttestAll { .. } // validates in place; AttestRetag defines the clean version
         | SsaInst::Pipeline { .. } => {}
     }

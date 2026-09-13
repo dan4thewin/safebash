@@ -136,8 +136,10 @@ pub(super) struct InstCtx<'a> {
     pub(super) test_result_var: cranelift_frontend::Variable,
     pub(super) exit_status_var: cranelift_frontend::Variable,
     pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
-    pub(super) capture_saved_var: cranelift_frontend::Variable,
-    pub(super) capture_pipe_var: cranelift_frontend::Variable,
+    /// One `(saved_stdout, capture_handle)` slot pair per capture site, indexed
+    /// by `SsaInst::CaptureStart { site }`. A single shared pair let a nested
+    /// capture clobber the enclosing one.
+    pub(super) capture_slots: &'a [(cranelift_frontend::Variable, cranelift_frontend::Variable)],
     pub(super) redirect_stack: &'a mut Vec<Vec<super::redirects::SavedFd>>,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
     pub(super) program: &'a crate::ssa::SsaProgram,
@@ -159,8 +161,7 @@ pub(super) struct FuncState {
     pub(super) test_result_var: cranelift_frontend::Variable,
     pub(super) exit_status_var: cranelift_frontend::Variable,
     pub(super) pipe_read_fd_var: cranelift_frontend::Variable,
-    pub(super) capture_saved_var: cranelift_frontend::Variable,
-    pub(super) capture_pipe_var: cranelift_frontend::Variable,
+    pub(super) capture_slots: Vec<(cranelift_frontend::Variable, cranelift_frontend::Variable)>,
     pub(super) saved_end_status_var: cranelift_frontend::Variable,
     pub(super) end_cl_block: Option<cranelift_codegen::ir::Block>,
 }

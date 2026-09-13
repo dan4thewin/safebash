@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -111,3 +111,30 @@ above is a slot-numbering exercise.
 That test happened to nest two captures for unrelated reasons and failed;
 the pre-fix build failed identically, which is what identified it as
 pre-existing rather than a regression.
+
+## Fixed 2026-09-13
+
+Per-site slots, as DG read it. `SsaInst::CaptureStart`/`CaptureEnd` carry a
+`site: u32`, handed out by `VersionState::alloc_capture_site()` at each of
+the two lowering points (`capture_func_into`, `capture_body_into`) *before*
+the body is lowered, so a nested capture inside the body gets a different
+number.
+
+Native: `FuncState.capture_slots` is a `Vec<(Variable, Variable)>` sized by
+`SsaProgram::capture_site_count()`, threaded to `InstCtx` as a slice.
+C: `__cap_saved_N` / `__cap_handle_N` per site. No ABI change, no runtime
+change — `sash_capture_start`/`end` are untouched.
+
+Specs `cap.13` (two deep) and `cap.14` (three deep) verified failing before
+the change. `cap.15`/`cap.16` are guards that pass on both sides;
+`cap.15` also records an asymmetry worth remembering — `$(cmd)` on an
+*external* never uses `CaptureStart`/`CaptureEnd` at all (it forks and
+drains via `emit_cmdsub_exec`), so it never consumed a site and could not
+collide.
+
+Sweep 4103 passing, 29 skipped, 0 failing, zero flips, +8 specs.
+
+Worth noting the limitation was **documented but never filed**. The C
+emitter carried the comment "No nesting (single capture-state pair),
+matching native's single capture_saved/pipe vars" — an accurate description
+of a bug, sitting in the source, read as a design note.

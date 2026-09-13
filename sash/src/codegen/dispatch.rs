@@ -33,8 +33,7 @@ impl SsaInst {
         let externs = ctx.externs;
         let test_result_var = ctx.test_result_var;
         let exit_status_var = ctx.exit_status_var;
-        let capture_saved_var = ctx.capture_saved_var;
-        let capture_pipe_var = ctx.capture_pipe_var;
+        let capture_slots = ctx.capture_slots;
         match self {
             SsaInst::Assign { target, value } => {
                 return super::inst_handlers::handle_assign(target, value, builder, module, ctx);
@@ -100,18 +99,20 @@ impl SsaInst {
             SsaInst::ArgvFill { array, start } => {
                 return super::inst_handlers::handle_argv_fill(array, *start, builder, module, ctx);
             }
-            SsaInst::CaptureStart => {
-                // Call sash_capture_start() → (saved_fd, pipe_read_fd)
-                // Store both in the capture Cranelift variables
+            SsaInst::CaptureStart { site } => {
+                // Call sash_capture_start() → (saved_fd, capture_handle).
+                // Each site owns its slot pair, so an inner capture cannot
+                // overwrite the handles an enclosing one still needs.
+                let (saved_var, handle_var) = capture_slots[*site as usize];
                 let cap_ref = module.declare_func_in_func(externs.capture_start, builder.func);
                 let call = builder.ins().call(cap_ref, &[]);
                 let saved = builder.inst_results(call)[0];
-                let pipe_rd = builder.inst_results(call)[1];
-                builder.def_var(capture_saved_var, saved);
-                builder.def_var(capture_pipe_var, pipe_rd);
+                let handle = builder.inst_results(call)[1];
+                builder.def_var(saved_var, saved);
+                builder.def_var(handle_var, handle);
             }
-            SsaInst::CaptureEnd { target, .. } => {
-                return self.emit_capture_end(target, builder, module, ctx);
+            SsaInst::CaptureEnd { site, target, .. } => {
+                return self.emit_capture_end(*site, target, builder, module, ctx);
             }
             SsaInst::Test(test_expr) => {
                 let result = lower_test_expr(
@@ -1095,6 +1096,7 @@ impl SsaInst {
 
     fn emit_capture_end(
         &self,
+        site: u32,
         target: &VarRef,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -1102,13 +1104,12 @@ impl SsaInst {
     ) -> bool {
         let vars = &mut *ctx.vars;
         let externs = ctx.externs;
-        let capture_saved_var = ctx.capture_saved_var;
-        let capture_pipe_var = ctx.capture_pipe_var;
-        // Call sash_capture_end(saved_fd, pipe_read_fd) → (ptr, len)
-        let saved = builder.use_var(capture_saved_var);
-        let pipe_rd = builder.use_var(capture_pipe_var);
+        let (saved_var, handle_var) = ctx.capture_slots[site as usize];
+        // Call sash_capture_end(saved_fd, capture_handle) → (ptr, len)
+        let saved = builder.use_var(saved_var);
+        let handle = builder.use_var(handle_var);
         let cap_ref = module.declare_func_in_func(externs.capture_end, builder.func);
-        let call = builder.ins().call(cap_ref, &[saved, pipe_rd]);
+        let call = builder.ins().call(cap_ref, &[saved, handle]);
         let ptr = builder.inst_results(call)[0];
         let len = builder.inst_results(call)[1];
         let sv = vars[&target.display()];

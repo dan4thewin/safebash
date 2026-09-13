@@ -377,9 +377,21 @@ fn emit_main(e: &mut Emit, ssa: &SsaProgram) {
     writeln!(e.out, "    i64 __end_status = 0;").unwrap();
     writeln!(e.out, "    (void)__end_status;").unwrap();
     // Function/multi-statement stdout capture ($(f), $(a; b)): the saved
-    // stdout fd + pipe read fd between CaptureStart and CaptureEnd.
-    writeln!(e.out, "    i64 __cap_saved = 0; i64 __cap_pipe = -1;").unwrap();
-    writeln!(e.out, "    (void)__cap_saved; (void)__cap_pipe;").unwrap();
+    // stdout fd + capture handle between CaptureStart and CaptureEnd, one
+    // pair per capture site. Captures nest, and a single shared pair let the
+    // inner one clobber the outer's handles.
+    for site in 0..ssa.capture_site_count() {
+        writeln!(
+            e.out,
+            "    i64 __cap_saved_{site} = 0; i64 __cap_handle_{site} = -1;"
+        )
+        .unwrap();
+        writeln!(
+            e.out,
+            "    (void)__cap_saved_{site}; (void)__cap_handle_{site};"
+        )
+        .unwrap();
+    }
     // DD#20 lastpipe: a capturing pipeline stashes its final stage's
     // read-end here; ReadLine/ReadLineMulti/Mapfile with fd=-1 consume it.
     writeln!(e.out, "    i64 __pipe_read_fd = -1;").unwrap();
@@ -770,28 +782,32 @@ fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarT
 }
 
 /// Capture family sub-dispatcher for `emit_inst` (CaptureStart / CaptureEnd).
-/// A function/multi-statement `$(…)` capture: CaptureStart redirects stdout to
-/// a pipe (saving the state in __cap_saved/__cap_pipe), the body runs, and
-/// CaptureEnd restores stdout, reads the pipe, and stores it into the target.
-/// Mirrors native emit_capture_end (dispatch.rs:1249). No nesting (single
-/// capture-state pair), matching native's single capture_saved/pipe vars.
+/// A function/multi-statement `$(…)` capture: CaptureStart points stdout at a
+/// memfd (saving the state in `__cap_saved_N`/`__cap_handle_N` for site `N`),
+/// the body runs, and CaptureEnd restores stdout, drains the handle, and stores
+/// the bytes into the target. Mirrors native emit_capture_end. Captures nest,
+/// so the slot pair is per-site — sharing one pair let an inner capture
+/// clobber the enclosing one.
 fn emit_capture_inst(e: &mut Emit, inst: &SsaInst) -> bool {
     match inst {
-        SsaInst::CaptureStart => {
+        SsaInst::CaptureStart { site } => {
             let t = e.fresh();
             writeln!(
                 e.out,
-                "    sash_ii {t} = sash_capture_start(); __cap_saved = {t}.a; __cap_pipe = {t}.b;",
-                t = t
+                "    sash_ii {t} = sash_capture_start(); \
+                 __cap_saved_{site} = {t}.a; __cap_handle_{site} = {t}.b;",
+                t = t,
+                site = site
             )
             .unwrap();
         }
-        SsaInst::CaptureEnd { target, .. } => {
+        SsaInst::CaptureEnd { site, target, .. } => {
             let t = e.fresh();
             writeln!(
                 e.out,
-                "    sash_pair {t} = sash_capture_end(__cap_saved, __cap_pipe);",
-                t = t
+                "    sash_pair {t} = sash_capture_end(__cap_saved_{site}, __cap_handle_{site});",
+                t = t,
+                site = site
             )
             .unwrap();
             let base = c_var_name(&target.name, target.version);

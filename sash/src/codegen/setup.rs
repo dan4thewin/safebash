@@ -1122,8 +1122,7 @@ pub(super) fn allocate_variables(
         test_result_var: ambient.test_result_var,
         exit_status_var: ambient.exit_status_var,
         pipe_read_fd_var: ambient.pipe_read_fd_var,
-        capture_saved_var: ambient.capture_saved_var,
-        capture_pipe_var: ambient.capture_pipe_var,
+        capture_slots: declare_capture_slots(builder, program),
         saved_end_status_var: ambient.saved_end_status_var,
         end_cl_block,
     }
@@ -1284,8 +1283,6 @@ struct AmbientVars {
     exit_status_var: cranelift_frontend::Variable,
     saved_end_status_var: cranelift_frontend::Variable,
     pipe_read_fd_var: cranelift_frontend::Variable,
-    capture_saved_var: cranelift_frontend::Variable,
-    capture_pipe_var: cranelift_frontend::Variable,
 }
 
 fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> AmbientVars {
@@ -1306,10 +1303,30 @@ fn declare_ambient_vars(builder: &mut cranelift_frontend::FunctionBuilder) -> Am
         saved_end_status_var: decl(builder),
         // Pipe read fd for pipe-while-read pattern (fd from captured pipeline)
         pipe_read_fd_var: decl(builder),
-        // Capture state vars for $(func) capture
-        capture_saved_var: decl(builder),
-        capture_pipe_var: decl(builder),
     }
+}
+
+/// Declare one `(saved_stdout, capture_handle)` variable pair per capture site.
+/// Sites are numbered by the transform, so the count is just the high-water
+/// mark; nesting depth is static because sash inlines functions and rejects
+/// recursion (SB5037), which is why per-site slots replace a runtime stack.
+fn declare_capture_slots(
+    builder: &mut cranelift_frontend::FunctionBuilder,
+    program: &SsaProgram,
+) -> Vec<(cranelift_frontend::Variable, cranelift_frontend::Variable)> {
+    use cranelift_codegen::ir::InstBuilder;
+
+    let n = program.capture_site_count();
+    let zero = builder.ins().iconst(I64, 0);
+    (0..n)
+        .map(|_| {
+            let saved = builder.declare_var(I64);
+            let handle = builder.declare_var(I64);
+            builder.def_var(saved, zero);
+            builder.def_var(handle, zero);
+            (saved, handle)
+        })
+        .collect()
 }
 
 /// Initialize positional parameters ($1-$9, $@, $#, $0, $$, $?, $!) from argv.

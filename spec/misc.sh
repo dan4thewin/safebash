@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=48
+plan=52
 echo "1..$plan" >&3
 
 set +e
@@ -412,6 +412,81 @@ str x=$(emit)
 attest x [[ -n $x ]]
 echo "[$x]"'
   [[ $rc = 0 && $out = "[NOTPIPE]" && -z $rerr ]]; chk cap.12
+
+  # Nested capture: `o=$(h)` where `h` itself contains `i=$(g)`. Both
+  # backends held the capture handles in ONE pair of slots, so the inner
+  # CaptureStart overwrote the outer's and the outer CaptureEnd restored an
+  # already-closed fd — `sash: read failed`, rc 1. Each capture site now
+  # owns its own slot pair. Depth is always static: sash inlines functions
+  # and rejects recursion (SB5037), so no runtime stack is needed.
+
+  # cap.13 two deep
+  run_sash 'fn g {
+  echo inner
+}
+fn h {
+  str i=$(g)
+  attest i [[ -n $i ]]
+  echo "outer-$i"
+}
+str o=$(h)
+attest o [[ -n $o ]]
+echo "[$o]"'
+  [[ $rc = 0 && $out = "[outer-inner]" && -z $rerr ]]; chk cap.13
+
+  # cap.14 three deep — one level would pass with a save/restore hack that
+  # still only has one slot pair; this needs genuinely distinct slots
+  run_sash 'fn a {
+  echo A
+}
+fn b {
+  str x=$(a)
+  attest x [[ -n $x ]]
+  echo "B-$x"
+}
+fn c {
+  str y=$(b)
+  attest y [[ -n $y ]]
+  echo "C-$y"
+}
+str z=$(c)
+attest z [[ -n $z ]]
+echo "[$z]"'
+  [[ $rc = 0 && $out = "[C-B-A]" && -z $rerr ]]; chk cap.14
+
+  # cap.15 an inner capture of an EXTERNAL inside an outer function capture.
+  # A NON-REGRESSION guard: it passes on both sides, because `$(cmd)` on an
+  # external does not use CaptureStart/CaptureEnd at all — it forks and
+  # drains (emit_cmdsub_exec), so it never consumed a capture site and could
+  # not collide. Kept because that asymmetry is easy to forget, and because
+  # it is exactly the shape the buffer fast path has to reason about: the
+  # outer body yields its value with echo, the external output arrives via
+  # an inner capture, so the outer never has a fork on its own stdout.
+  run_sash 'fn wrap {
+  str t=$(/bin/printf "ext")
+  attest t [[ -n $t ]]
+  echo "got-$t"
+}
+str o=$(wrap)
+attest o [[ -n $o ]]
+echo "[$o]"'
+  [[ $rc = 0 && $out = "[got-ext]" && -z $rerr ]]; chk cap.15
+
+  # cap.16 two sibling (non-nested) captures in sequence. Also a guard —
+  # sequential reuse of one slot pair was always fine. It pins that
+  # per-site numbering did not break the common case.
+  run_sash 'fn p {
+  echo one
+}
+fn q {
+  echo two
+}
+str a=$(p)
+str b=$(q)
+attest a [[ -n $a ]]
+attest b [[ -n $b ]]
+echo "[$a][$b]"'
+  [[ $rc = 0 && $out = "[one][two]" && -z $rerr ]]; chk cap.16
 
 set -e
 tally

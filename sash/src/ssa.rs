@@ -331,12 +331,25 @@ pub enum SsaInst {
     /// argv[start..argc] (0-indexed). Auto-declares and taints the array
     /// (a bulk-read source, like `read`; DD#61).
     ArgvFill { array: String, start: i64 },
-    /// Start capturing stdout (for $(func) capture)
-    CaptureStart,
-    /// End capturing, assign captured output to target. `tainted` marks a
-    /// capture of *external* output (a multi-statement/pipeline `$(…)` body) —
-    /// its target is tainted, unlike a `$(user_fn)` capture (clean by DD#24).
-    CaptureEnd { target: VarRef, tainted: bool },
+    /// Start capturing stdout (for $(func) capture). `site` identifies this
+    /// capture uniquely within the program, so a `CaptureEnd` pairs with its
+    /// own start rather than with whichever start ran most recently. Captures
+    /// nest (`o=$(h)` where `h` contains `i=$(g)`), and a single shared pair of
+    /// handle slots let the inner capture clobber the outer's — the outer then
+    /// restored a closed fd (`bug-nested-function-capture-clobbers-handles`).
+    /// Depth is always static: sash inlines functions and rejects recursion
+    /// (SB5037), so numbering the sites at lowering time is sufficient and no
+    /// runtime stack is needed.
+    CaptureStart { site: u32 },
+    /// End capturing, assign captured output to target. `site` matches the
+    /// paired `CaptureStart`. `tainted` marks a capture of *external* output
+    /// (a multi-statement/pipeline `$(…)` body) — its target is tainted, unlike
+    /// a `$(user_fn)` capture (clean by DD#24).
+    CaptureEnd {
+        site: u32,
+        target: VarRef,
+        tainted: bool,
+    },
     /// Multi-stage pipeline: cmd1 | cmd2 | ...
     Pipeline {
         stages: Vec<(String, Vec<SsaValue>, Vec<crate::ir::Redirect>)>,
@@ -873,6 +886,20 @@ pub struct SsaProgram {
 }
 
 impl SsaProgram {
+    /// Highest `CaptureStart`/`CaptureEnd` site number in the program, plus
+    /// one — i.e. how many capture slot pairs a backend must allocate. Zero
+    /// when the program captures nothing.
+    pub fn capture_site_count(&self) -> usize {
+        let mut max: Option<u32> = None;
+        for block in self.blocks.values() {
+            for inst in &block.insts {
+                if let SsaInst::CaptureStart { site } | SsaInst::CaptureEnd { site, .. } = inst {
+                    max = Some(max.map_or(*site, |m| m.max(*site)));
+                }
+            }
+        }
+        max.map_or(0, |m| m as usize + 1)
+    }
     pub fn new() -> Self {
         Self {
             blocks: BTreeMap::new(),
@@ -1033,6 +1060,11 @@ pub struct VersionState {
     /// look like an external use before its definition).
     pub lowering_fn_template: bool,
     pub externally_used: std::cell::RefCell<std::collections::HashSet<String>>,
+
+    /// Next unused `SsaInst::CaptureStart`/`CaptureEnd` site number. Handed out
+    /// once per `$( … )` capture that is lowered, so each capture owns its own
+    /// handle slots instead of sharing one program-wide pair.
+    pub next_capture_site: u32,
 }
 
 /// Fixed argument count for a value-producing intrinsic (`len`, `sub`, …) when
@@ -1086,7 +1118,15 @@ impl VersionState {
             external_deps: std::cell::RefCell::new(std::collections::BTreeSet::new()),
             lowering_fn_template: false,
             externally_used: std::cell::RefCell::new(std::collections::HashSet::new()),
+            next_capture_site: 0,
         }
+    }
+
+    /// Reserve a capture site number for one `$( … )` capture.
+    pub fn alloc_capture_site(&mut self) -> u32 {
+        let site = self.next_capture_site;
+        self.next_capture_site += 1;
+        site
     }
 
     /// Define a new version of a variable.

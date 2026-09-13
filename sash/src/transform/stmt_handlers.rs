@@ -1227,7 +1227,12 @@ pub(super) fn capture_func_into(
     // call's args), matching the plain-call and pipeline-stage paths.
     super::cmd_handlers::check_callee_arity(fname, &body, arg_values.len(), state);
 
-    ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
+    // One site number per capture, reserved before the body is lowered so a
+    // nested capture inside the body gets a different one.
+    let site = state.alloc_capture_site();
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::CaptureStart { site });
     // DD#81: capture uses the same args-array model as inline_function_call
     // (save_caller_args + setup_callee_args), not the old $1..$9 positional
     // model — so the callee body's `${args[i]}` / `$N` resolve to the passed
@@ -1251,6 +1256,7 @@ pub(super) fn capture_func_into(
     ssa.block_mut(restore_block)
         .insts
         .push(SsaInst::CaptureEnd {
+            site,
             target,
             tainted: false,
         });
@@ -1273,7 +1279,10 @@ pub(super) fn capture_body_into(
     ssa: &mut SsaProgram,
     block: BlockId,
 ) -> BlockId {
-    ssa.block_mut(block).insts.push(SsaInst::CaptureStart);
+    let site = state.alloc_capture_site();
+    ssa.block_mut(block)
+        .insts
+        .push(SsaInst::CaptureStart { site });
 
     // Subshell isolation: snapshot every var the body assigns, restore after.
     let assigned = collect_assigned_vars(body);
@@ -1293,6 +1302,7 @@ pub(super) fn capture_body_into(
     ssa.block_mut(restore_block)
         .insts
         .push(SsaInst::CaptureEnd {
+            site,
             target,
             // Match the CST decision exactly (else the SSA-taint backstop ICEs): the
             // capture is tainted iff the body runs an external / getenv / arg / argv.
