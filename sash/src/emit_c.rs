@@ -175,6 +175,16 @@ fn emit_prologue(out: &mut String) {
     writeln!(out, "extern i64 sash_pow(i64 base, i64 exp);").unwrap();
     writeln!(
         out,
+        "extern i64 sash_file_newer(const char* p1, i64 l1, const char* p2, i64 l2);"
+    )
+    .unwrap();
+    writeln!(
+        out,
+        "extern i64 sash_file_same_dev(const char* p1, i64 l1, const char* p2, i64 l2);"
+    )
+    .unwrap();
+    writeln!(
+        out,
         "extern i64 sash_file_test(const char* p, i64 l, i64 op);"
     )
     .unwrap();
@@ -1335,15 +1345,38 @@ fn lower_value_as_str_aggregate(e: &mut Emit, value: &SsaValue, types: &VarTypes
             let n = lower_value_as_int(e, inner, types);
             ("(const char*)0".to_string(), n)
         }
-        _ => {
-            writeln!(
-                e.out,
-                "    /* TODO lower_value_as_str: {:?} */",
-                std::mem::discriminant(value)
-            )
-            .unwrap();
-            ("\"\"".to_string(), "0".to_string())
+        // The five below cannot reach a scalar value lowering: each is either
+        // lifted out of value position during transform or expanded by an
+        // argv/list builder. Native ICEs on exactly these
+        // (codegen/values.rs:81-115); c mirrors it arm for arm. This used to
+        // be a `/* TODO */` comment returning an empty string, which would
+        // have turned a lowering bug into a silently empty value.
+        SsaValue::FuncCall { name, .. } => {
+            panic!("ICE: FuncCall should have been lifted during transform: {name}")
         }
+        SsaValue::IntFuncCall { name, .. } => {
+            panic!("ICE: IntFuncCall should have been lifted during transform: {name}")
+        }
+        SsaValue::CmdSubstBody { .. } => {
+            panic!("ICE: CmdSubstBody should have been lifted during transform")
+        }
+        SsaValue::ArraySplat { array, .. } => panic!(
+            "ICE: ArraySplat (@{array}) must be expanded by the argv builder, \
+             not lowered as a scalar value"
+        ),
+        SsaValue::ElideEmpty { .. } => panic!(
+            "ICE: ElideEmpty (:~) must be expanded by a list builder, \
+             not lowered as a scalar value"
+        ),
+        // Everything else is handled by the caller (`lower_value_as_str`) and
+        // only reaches here if that dispatch is wrong — a compiler bug, not a
+        // program the user can write. ICE rather than emit a value we did not
+        // compute.
+        other => panic!(
+            "ICE: {:?} is owned by lower_value_as_str and must not reach the \
+             aggregate fallback",
+            std::mem::discriminant(other)
+        ),
     }
 }
 
@@ -2603,10 +2636,14 @@ fn lower_test_expr(e: &mut Emit, test: &SsaTest, types: &VarTypes) -> String {
     }
 }
 
-/// Lower a binary test. String ops (=, ==, !=) → sash_strcmp; regex (`=~`) →
-/// sash_regex_match. Numeric ops never reach here (user ones rejected by
-/// SB5019; synthesized loop bounds use the `(( ))` arith path). Other ops
-/// (<, >, -nt, -ot, -ef) are not yet implemented in the C backend.
+/// Lower a binary test. Mirrors native `codegen/tests.rs::lower_test_binary`
+/// arm for arm — string equality (=, ==, !=) and ordering (<, >) via
+/// `sash_strcmp`, regex (`=~`) via `sash_regex_match`, and the file
+/// comparisons (-nt, -ot, -ef) via `sash_file_newer`/`sash_file_same_dev`.
+/// Numeric ops never reach here (user ones rejected by SB5019; synthesized
+/// loop bounds use the `(( ))` arith path), so the fall-through is an ICE —
+/// it used to emit a `/* TODO */` comment and return constant 0, which made
+/// `[[ a < b ]]` silently false in c while native and bash said true.
 fn lower_test_binary(
     e: &mut Emit,
     left: &SsaValue,
@@ -2630,10 +2667,21 @@ fn lower_test_binary(
         // engine in libsash_rt (same as native; `\w`/`\d`/`\s` supported).
         // Returns 1 ⇔ match. Subject is the LHS, pattern the RHS.
         "=~" => format!("(sash_regex_match({}, {}, {}, {}))", lp, ll, rp, rl),
-        _ => {
-            writeln!(e.out, "    /* TODO test binary op: {} */", op).unwrap();
-            "0".to_string()
-        }
+        // Byte ordering, not locale collation: the runtime is locale-free, so
+        // this is `LC_ALL=C` bash. Same `sash_strcmp` native uses.
+        "<" => format!(
+            "((sash_strcmp({}, {}, {}, {})) < 0 ? 1 : 0)",
+            lp, ll, rp, rl
+        ),
+        ">" => format!(
+            "((sash_strcmp({}, {}, {}, {})) > 0 ? 1 : 0)",
+            lp, ll, rp, rl
+        ),
+        "-nt" => format!("(sash_file_newer({}, {}, {}, {}))", lp, ll, rp, rl),
+        // `a -ot b` is `b -nt a` — operands swapped, as in native.
+        "-ot" => format!("(sash_file_newer({}, {}, {}, {}))", rp, rl, lp, ll),
+        "-ef" => format!("(sash_file_same_dev({}, {}, {}, {}))", lp, ll, rp, rl),
+        other => panic!("ICE: unimplemented test operator: {}", other),
     }
 }
 
@@ -2705,15 +2753,14 @@ fn ir_expr_as_str(e: &mut Emit, expr: &crate::ir::Expr, types: &VarTypes) -> CSt
             }
             (acc_ptr, acc_len)
         }
-        _ => {
-            writeln!(
-                e.out,
-                "    /* TODO ir_expr_as_str: {:?} */",
-                std::mem::discriminant(&expr.kind)
-            )
-            .unwrap();
-            ("\"\"".to_string(), "0".to_string())
-        }
+        // Only the four literal/expansion forms above can appear where this
+        // helper is used; anything else is a lowering bug. ICE rather than
+        // emit an empty string for a value we did not compute.
+        _ => panic!(
+            "ICE: {:?} reached ir_expr_as_str, which handles only literal and \
+             simple-expansion forms",
+            std::mem::discriminant(&expr.kind)
+        ),
     }
 }
 
@@ -2783,14 +2830,15 @@ fn emit_param_expansion(
         "arrkeys" => emit_arr_keys_joined(e, operator, &s_ptr, operand),
         "glob" | "glob_regex" => emit_glob_c(e, operator, operand),
         // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
-        // op here; `:-` is `SsaValue::DefaultValue`, and every dropped op
-        // rejects at parse (SB4034). The `:s/` sed op (`/`//`) is not yet
-        // supported in the C backend (falls through to the TODO stub).
+        // op here; `:-` is `SsaValue::DefaultValue`, the `:s/` sed op is a
+        // `SsaValue::RegexReplace`, and every dropped op is given a distinct
+        // operator name at parse (`glob_replace`, `arrvals_<op>`) and rejected
+        // by SB4034 before codegen.
         "substring" => emit_substring_c(e, &s_ptr, &s_len, operand),
-        _ => {
-            writeln!(e.out, "    /* TODO param expansion op: {} */", operator).unwrap();
-            ("\"\"".to_string(), "0".to_string())
-        }
+        // So reaching here means the validator let a pruned operator through —
+        // a compiler bug. This used to emit a comment and return an empty
+        // string, which turned that bug into a silently empty expansion.
+        other => panic!("ICE: unimplemented parameter expansion operator: {other}"),
     }
 }
 
@@ -3139,9 +3187,8 @@ fn try_process_intrinsic_c(e: &mut Emit, name: &str) -> Option<CStr> {
 }
 
 /// Mirrors `handle_cmdsub` from codegen/value_handlers.rs:691.
-/// Tries native intrinsics first (getenv, epochseconds, etc.); on
-/// non-intrinsic name, falls through to a TODO that defers to
-/// Phase 4's external-exec path.
+/// Tries native intrinsics first (getenv, epochseconds, etc.), then the
+/// external exec/capture path.
 fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTypes) -> CStr {
     if let Some(SsaValue::Literal(name)) = argv.first() {
         if let Some(result) = try_native_intrinsic_c(e, name, argv, types) {
@@ -3149,8 +3196,11 @@ fn emit_cmdsub(e: &mut Emit, argv: &[SsaValue], suppressed: bool, types: &VarTyp
         }
         return emit_cmdsub_exec_c(e, name, &argv[1..], suppressed, types);
     }
-    writeln!(e.out, "    /* TODO cmdsub: non-literal cmd (Phase 4) */").unwrap();
-    ("\"\"".to_string(), "0".to_string())
+    // A non-literal head (`$( $c hi )`) is rejected by SB5011 in validate.rs,
+    // the same rule statement position has always had, so reaching here means
+    // the validator let one through. This used to emit a comment and capture
+    // the empty string.
+    panic!("ICE: command substitution with a non-literal head reached codegen")
 }
 
 /// External `$(cmd args…)` capture: build argv, fork/exec and capture stdout

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=92
+plan=97
 echo "1..$plan" >&3
 
 set +e
@@ -114,7 +114,41 @@ run_sash 'echo hello | grep hello'
 run_sash 'echo hello | wc -c'
 [[ $rc = 0 && -n $out && -z $err ]]; chk 23.8
 
-# --- DD#14 compound redirects ---
+# 23.20 a dynamic command head is SB5011 in STATEMENT position...
+run_sash 'c=echo
+$c hi'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 23.20
+
+# 23.21 ...and equally inside a COMMAND SUBSTITUTION. It was not: the head
+# check only ran on statements, so `$($c hi)` was accepted, then aborted at
+# runtime in native ("bare command passed to sash_exec") and silently
+# captured the empty string in c. DD#23 is a property of a command head,
+# not of the position the command appears in.
+run_sash 'c=echo
+x=$($c hi)
+attest x [[ -n $x ]]
+echo "$x"'
+[[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk 23.21
+
+# 23.22 nested: the inner head is still caught, and reported once.
+run_sash 'c=echo
+x=$(/bin/echo "$($c hi)")
+attest x [[ -n $x ]]
+echo "$x"'
+[[ $rc != 0 && -z $out && $(grep -c SB5011 <<< "$err") = 1 ]]; chk 23.22
+
+# 23.23 a literal head inside a command substitution is still fine.
+run_sash 'x=$(/bin/echo hi)
+attest x [[ -n $x ]]
+echo "$x"'
+[[ $rc = 0 && $out = "hi" && -z $err ]]; chk 23.23
+
+# 23.24 a VALUE INTRINSIC inside `$( )` must NOT be dragged through the
+# statement-position rules, where it is SB5073.
+run_sash 'n=$(argc)
+echo "$n"'
+[[ $rc = 0 && $out = "1" && -z $err ]]; chk 23.24
+
 # --- DD#14 compound redirects ---
 
 # 14.4 for...done > file → rejected (SB4021)

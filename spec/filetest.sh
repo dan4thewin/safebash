@@ -1,5 +1,5 @@
 #!/bin/bash
-# spec/filetest.sh — [[ -OP FILE ]] unary file tests. Bash-compatible
+# spec/filetest.sh — [[ ]] file tests and binary comparisons. Bash-compatible
 # semantics for the whole operator set. Section A pins -N, which compares
 # WHOLE SECONDS with `>=` and ignores nanoseconds entirely (bash test.c);
 # sash previously used a strict `>` plus a nanosecond tiebreak and answered
@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=36
+plan=44
 echo "1..$plan" >&3
 
 set +e
@@ -147,5 +147,46 @@ run_sash 'if [[ -u nosuch ]]; then echo yes; else echo no; fi'
 # test that shares the letter.
 run_sash 'if [[ g? "hi" ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.36
+
+# ── D. binary comparisons ────────────────────────────────────────────
+# `<`/`>`/`-nt`/`-ot`/`-ef` were implemented in native and fell through
+# to a `/* TODO */` arm in the C backend, which returned constant 0 — so
+# every one of them was silently FALSE in c while native and bash said
+# true. Nothing pinned them in either backend. These run unguarded in
+# BOTH modes on purpose: a mode guard here is what let the gap survive.
+
+# D1-D3 string ordering is a BYTE compare (the runtime is locale-free,
+# so this is LC_ALL=C bash), via the same sash_strcmp native uses.
+run_sash 'if [[ abc < abd ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.37
+
+run_sash 'if [[ abd < abc ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.38
+
+run_sash 'if [[ abd > abc ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.39
+
+# D4 uppercase sorts before lowercase on bytes ('Z' 0x5A < 'a' 0x61).
+# Under a collating locale bash would answer the other way; this pins
+# that sash is byte-ordered.
+run_sash 'if [[ Z < a ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.40
+
+# D5-D6 -nt / -ot on mtime.
+touch -d '@1700000000' b_old; touch -d '@1700009000' b_new
+run_sash 'if [[ b_new -nt b_old ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.41
+
+run_sash 'if [[ b_old -ot b_new ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.42
+
+# D7-D8 -ef is same dev+inode, so a hard link is "yes" and a distinct
+# file with identical content is "no".
+ln b_old b_link
+run_sash 'if [[ b_old -ef b_link ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.43
+
+run_sash 'if [[ b_old -ef b_new ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.44
 
 tally

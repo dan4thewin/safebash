@@ -2313,7 +2313,79 @@ fn check_commands(stmts: &[Statement], funcs: &HashSet<String>, diags: &mut Vec<
     }
 }
 
+/// Visit the command substitutions in a statement's own expressions, WITHOUT
+/// descending into their bodies.
+///
+/// `walk_all_exprs` would descend, and `check_commands` recursion descends too,
+/// so using that here would report a nested `$( $( … ) )` twice. A shallow walk
+/// plus the existing recursion visits each body exactly once.
+fn for_each_cmdsub_shallow(stmt: &Statement, f: &mut dyn FnMut(&[Statement])) {
+    stmt.direct_exprs(&mut |e| cmdsub_expr_walk(e, f));
+}
+
+/// The expression half of `for_each_cmdsub_shallow`: hand a command
+/// substitution's body to `f` without walking into it.
+fn cmdsub_expr_walk(expr: &Expr, f: &mut dyn FnMut(&[Statement])) {
+    match &expr.kind {
+        ExprKind::CommandSubstitution(stmts) => f(stmts),
+        ExprKind::DoubleQuoted(parts) | ExprKind::Concat(parts) => cmdsub_expr_walk_each(parts, f),
+        ExprKind::Array(elems) => cmdsub_expr_walk_each(elems, f),
+        ExprKind::Subscript { index, .. } => cmdsub_expr_walk(index, f),
+        _ => {}
+    }
+}
+
+fn cmdsub_expr_walk_each(exprs: &[Expr], f: &mut dyn FnMut(&[Statement])) {
+    for e in exprs {
+        cmdsub_expr_walk(e, f);
+    }
+}
+
+/// DD#23 head-resolvability inside `$( … )`, and nothing else.
+fn check_cmdsub_heads(stmts: &[Statement], diags: &mut Vec<Diagnostic>) {
+    for stmt in stmts {
+        check_cmdsub_heads_in_stmt(stmt, diags);
+    }
+}
+
+/// One statement's worth: its own head, its child bodies, and the bodies of
+/// any command substitutions in its expressions.
+fn check_cmdsub_heads_in_stmt(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    check_cmdsub_head_literal(stmt, diags);
+    for body in stmt.child_bodies() {
+        check_cmdsub_heads(body, diags);
+    }
+    for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
+}
+
+/// Reject a non-literal command head (DD#23).
+fn check_cmdsub_head_literal(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
+    let StmtKind::Command(c) = &stmt.kind else {
+        return;
+    };
+    if matches!(&c.name.kind, ExprKind::Literal(_)) {
+        return;
+    }
+    diags.push(Diagnostic::error_span(
+        c.name.span,
+        "SB5011",
+        "a command name must be a literal path — a variable or expansion \
+         can't be resolved at compile time; use the literal path, or \
+         `/usr/bin/env` for a runtime tool"
+            .to_string(),
+    ));
+}
+
 fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<Diagnostic>) {
+    // DD#23 applies to a command substitution's head too. `$c hi` in statement
+    // position was rejected while `$($c hi)` was accepted, then aborted at
+    // runtime in native ("bare command passed to sash_exec") and silently
+    // captured the empty string in c.
+    //
+    // Only the head-must-be-literal rule carries over, NOT the rest of
+    // `check_command_head`: a value intrinsic is SB5073 in statement position
+    // and is exactly the right thing inside `$( )`.
+    for_each_cmdsub_shallow(stmt, &mut |inner| check_cmdsub_heads(inner, diags));
     let StmtKind::Command(c) = &stmt.kind else {
         for body in stmt.child_bodies() {
             check_commands(body, funcs, diags);
