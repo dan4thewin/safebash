@@ -1,3 +1,29 @@
+## ══ STATUS (2026-09-13) — SB5011 told two different mistakes apart ══
+
+**Journal 288.** Sweep **4342 passing, 9 skipped, 0 failing**, 0 flips.
+One task closed.
+
+`a-b=1` was told "a variable or expansion can't be resolved at compile
+time" — naming a cause the line does not contain. A malformed assignment
+and a DD#23 runtime-chosen command (`$x foo`) both reach the same
+non-`Literal`-head arm, because an unquoted `=` splits the word into a
+`Concat`, and the arm could only describe one of them.
+
+Split by the question that actually separates them: is there an expansion
+to the *left* of the `=`? If not, the word is a failed assignment and the
+target is named (`` `a-b` is not a valid variable name… ``). If so
+(`9x[$i]=1`), the word really does contain an expansion and keeps the
+original wording. Code stays SB5011 — the existing `aw.*` specs assert the
+code and deliberately not the text, which is what left the text free.
+
+Specs `aw.21`–`aw.26`; fail-first predicted 21/22/23 failing **and**
+24/25/26 passing, and got exactly that.
+
+**Next up.** The `next` queue: `audit-taint-bypass-report` (P2 hardening),
+`converter-positional-use-needs-bless` (P2), `docs-regex-dialect-writeup`,
+`oracle-blessall-mapfile`, `s9-manpage` (`docs/sash.1` still documents the
+retired flag surface).
+
 ## ══ STATUS (2026-09-13) — `--trace` was dead on aarch64; startup unified ══
 
 **Journal 287.** Sweep **4330 passing, 9 skipped, 0 failing**, 0 flips.

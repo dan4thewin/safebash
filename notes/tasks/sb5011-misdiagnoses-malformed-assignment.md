@@ -1,6 +1,6 @@
 ---
 title: "SB5011 blames a variable/expansion for a word that has neither"
-status: ready
+status: done
 priority: P4
 kind: diagnostic
 depends: []
@@ -59,3 +59,21 @@ is not a valid variable name. Otherwise keep the current text.
 `dup-is-identifier-leading-digit`. Pinned indirectly by `spec/assign_words.sh`
 `aw.11`–`aw.15` and `aw.20`, which assert the code but deliberately not the
 wording.
+
+## Resolution (2026-09-13, commit pending)
+
+Fixed in `sash/src/validate.rs`: `bad_command_head_diag` chooses between two
+messages using `malformed_assignment_target`, which accumulates literal parts
+of the `Concat` head up to the first `Literal("=")` and returns `None` if any
+non-literal appears in that prefix.
+
+Both gates met. Gate 1: `a-b=1`, `9x=1`, `0=1`, `a]b[=1` now report
+`` `<target>` is not a valid variable name, so this is neither an assignment
+nor a runnable command — a name is letters, digits and `_`, and cannot start
+with a digit`` (specs `aw.21`-`aw.23`). Gate 2: `$x foo` keeps the
+literal-path wording (`aw.24`), as does `9x[$i]=1`, whose head really does
+contain an expansion (`aw.25`). `aw.26` pins that an `=` in an argument
+(`echo a=b`) is untouched.
+
+Code remains SB5011; `aw.11`-`aw.15` and `aw.20` assert the code only.
+Journal 288.

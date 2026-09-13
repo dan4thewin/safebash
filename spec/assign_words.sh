@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup assign_words
-plan=20
+plan=26
 echo "1..$plan" >&3
 
 set +e
@@ -111,6 +111,47 @@ echo "$x"'
 #       `a]b[` used to pass as assignment targets.
 run_sash 'a]b[=1'
 [[ $rc != 0 && -z $out && $err == *'SB5011'* ]]; chk aw.20
+
+# ── aw.21-aw.25 SB5011 names the cause the line actually has ──
+#
+# A malformed assignment (`a-b=1`) and a runtime-chosen command (`$x foo`)
+# both reach `check_cmd_in_stmt` as a non-`Literal` head, and both used to
+# get the dynamic-head message — telling the author of a line containing no
+# variable and no expansion that "a variable or expansion can't be resolved
+# at compile time". aw.11-aw.15 and aw.20 above pin the CODE; these pin that
+# the two arrivals are now told apart.
+
+# aw.21 a malformed target is named, and the message does not claim there is
+#       an expansion in a line that has none
+run_sash 'a-b=1'
+[[ $rc != 0 && -z $out && $err == *'SB5011'* && $err == *'a-b'* \
+   && $err == *'not a valid variable name'* && $err != *'expansion'* ]]; chk aw.21
+
+# aw.22 the leading-digit target likewise
+run_sash '9x=1
+echo "${9x}"'
+[[ $rc != 0 && -z $out && $err == *'9x'* && $err == *'not a valid variable name'* ]]; chk aw.22
+
+# aw.23 and the bracket-soup target
+run_sash 'a]b[=1'
+[[ $rc != 0 && -z $out && $err == *'a]b['* && $err == *'not a valid variable name'* ]]; chk aw.23
+
+# aw.24 the genuine DD#23 dynamic head KEEPS the original wording — the fix
+#       distinguishes the arrivals rather than widening the message
+run_sash 'x=/bin/echo
+$x foo'
+[[ $rc != 0 && -z $out && $err == *'SB5011'* && $err == *'literal path'* \
+   && $err == *'expansion'* ]]; chk aw.24
+
+# aw.25 an expansion LEFT of the `=` is a word that really does contain one,
+#       so it keeps the dynamic-head wording too
+run_sash 'array a=()
+9x[$i]=1'
+[[ $rc != 0 && -z $out && $err == *'SB5011'* && $err == *'literal path'* ]]; chk aw.25
+
+# aw.26 an `=` in an ARGUMENT is not an assignment attempt and still runs
+run_sash 'echo a=b'
+[[ $rc = 0 && $out = "a=b" && -z $err ]]; chk aw.26
 
 set -e
 tally

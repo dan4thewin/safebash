@@ -2396,17 +2396,65 @@ fn check_cmd_in_stmt(stmt: &Statement, funcs: &HashSet<String>, diags: &mut Vec<
     // other expansion (`$x foo`) is a runtime-chosen command — reject it here
     // rather than letting it reach `sash_exec` at runtime.
     if !matches!(&c.name.kind, ExprKind::Literal(_)) {
-        diags.push(Diagnostic::error_span(
-            c.name.span,
-            "SB5011",
-            "a command name must be a literal path — a variable or expansion \
-             can't be resolved at compile time; use the literal path, or \
-             `/usr/bin/env` for a runtime tool"
-                .to_string(),
-        ));
+        diags.push(bad_command_head_diag(&c.name));
         return;
     }
     check_command_head(expr_literal_str(&c.name), c, stmt, funcs, diags);
+}
+
+/// SB5011 for a command head that is not a literal. Two very different words
+/// arrive here, and they want different explanations.
+///
+/// The arm was written for the DD#23 case — `$x foo`, a runtime-chosen command
+/// — but a word that *looks* like an assignment and whose target is not a valid
+/// identifier also lands here, because the `=` splits it into a `Concat` and so
+/// it is not a `Literal` either. Telling the author of `a-b=1` that "a variable
+/// or expansion can't be resolved at compile time" names a cause the line does
+/// not have: there is no variable and no expansion in it.
+fn bad_command_head_diag(name: &Expr) -> Diagnostic {
+    if let Some(target) = malformed_assignment_target(&name.kind) {
+        return Diagnostic::error_span(
+            name.span,
+            "SB5011",
+            format!(
+                "`{target}` is not a valid variable name, so this is neither an \
+                 assignment nor a runnable command — a name is letters, digits \
+                 and `_`, and cannot start with a digit"
+            ),
+        );
+    }
+    Diagnostic::error_span(
+        name.span,
+        "SB5011",
+        "a command name must be a literal path — a variable or expansion \
+         can't be resolved at compile time; use the literal path, or \
+         `/usr/bin/env` for a runtime tool"
+            .to_string(),
+    )
+}
+
+/// The intended target of a word that looks like an assignment: literal text,
+/// then an unquoted `=`. `a-b=1` parses as a command whose name is
+/// `Concat([Literal("a-b"), Literal("="), Literal("1")])`, so the target is the
+/// literal run before the `=`.
+///
+/// An expansion to the *left* of the `=` (`9x[$i]=1`) returns `None` — that word
+/// really does contain an expansion, so the dynamic-head wording fits it.
+fn malformed_assignment_target(kind: &ExprKind) -> Option<String> {
+    let ExprKind::Concat(parts) = kind else {
+        return None;
+    };
+    let mut target = String::new();
+    for part in parts {
+        match &part.kind {
+            ExprKind::Literal(text) if text == "=" => {
+                return (!target.is_empty()).then_some(target);
+            }
+            ExprKind::Literal(text) => target.push_str(text),
+            _ => return None,
+        }
+    }
+    None
 }
 
 /// Name-keyed half of `check_cmd_in_stmt`: everything that depends on *which*
