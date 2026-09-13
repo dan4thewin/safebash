@@ -41,9 +41,21 @@ impl Patch {
         replacement: String,
         original: Option<String>,
     ) -> Self {
+        Patch::replace_span(node.start_byte(), node.end_byte(), replacement, original)
+    }
+
+    /// Replace an explicit byte range. Needed when the span to replace is
+    /// not exactly a node: a command carrying a here-string must stop
+    /// short of the `<<<`, which another patch is moving.
+    fn replace_span(
+        start: usize,
+        end: usize,
+        replacement: String,
+        original: Option<String>,
+    ) -> Self {
         Patch {
-            start: node.start_byte(),
-            end: node.end_byte(),
+            start,
+            end,
             replacement,
             prefix_line: None,
             original,
@@ -202,6 +214,16 @@ fn walk_node(
         }
         "word" => {
             convert_tilde_word(node, source, patches, prefix_lines);
+        }
+        // DD#83 removed here-strings. `<<<` is exactly a pipe in sash (no
+        // subshell on either side, so a binding the consumer makes still
+        // survives), and the word moves to the front of the statement.
+        // Returning early skips the recursion into that word: its patches
+        // were already applied to the copy being moved, and applying them
+        // again here would collide with the deletion below.
+        "herestring_redirect" => {
+            convert_herestring(node, source, patches, prefix_lines, annotate, collections);
+            return;
         }
         // tree-sitter-bash 0.25 cannot parse a nested subscript — `${a[a[0]]}`
         // yields an ERROR node spanning the whole expansion instead of an
@@ -523,7 +545,11 @@ fn read_args(node: Node, name_node: Node, source: &[u8]) -> (Vec<String>, Vec<St
     let mut cursor = node.walk();
     let args = node
         .children(&mut cursor)
-        .filter(|c| c.is_named() && *c != name_node && c.kind() != "variable_assignment");
+        .filter(|c| c.is_named() && *c != name_node && c.kind() != "variable_assignment")
+        // A here-string is a redirect, not an argument — tree-sitter just
+        // files it under `command` (see `herestring_child`). Counting it
+        // made `read v <<< "$x"` look like a computed target.
+        .filter(|c| c.kind() != "herestring_redirect");
     for child in args {
         match classify_read_arg(node_text(child, source)) {
             ReadArg::Flag(f) => flags.push(f),
@@ -590,9 +616,15 @@ fn convert_read(
         prefix_lines.push((line, reason));
         return;
     }
-    let original = node_text(node, source).to_string();
+    let end = span_end_before_herestring(node, source);
+    let original = node_text(node, source)[..end - node.start_byte()].to_string();
     let replacement = format!("readline {}", names[0]);
-    patches.push(Patch::replace_node(node, replacement, Some(original)));
+    patches.push(Patch::replace_span(
+        node.start_byte(),
+        end,
+        replacement,
+        Some(original),
+    ));
     if !has_empty_ifs_prefix(node, source) {
         prefix_lines.push((line, "# CHECK: bash `read` strips leading/trailing IFS whitespace; `readline` keeps the line verbatim (`IFS= read -r` was the exact equivalent)".into()));
     }
@@ -637,12 +669,176 @@ fn convert_mapfile(
         prefix_lines.push((line, mapfile_manual_reason(cmd, &flags)));
         return;
     };
-    let original = node_text(span, source).to_string();
+    // A here-string on the mapfile itself is being moved to the front of
+    // the statement, so stop short of it rather than swallowing it:
+    // `mapfile -t a <<< "$x"` becomes `echo $x | tr … | read a`.
+    let end = span_end_before_herestring(span, source);
+    let original = node_text(span, source)[..end - span.start_byte()].to_string();
     let replacement = format!(
         "/usr/bin/tr \"\\n\" \"\\0\"{} | read {}",
         redirect, names[0]
     );
-    patches.push(Patch::replace_node(span, replacement, Some(original)));
+    patches.push(Patch::replace_span(
+        span.start_byte(),
+        end,
+        replacement,
+        Some(original),
+    ));
+}
+
+// ── Here-strings: `consumer <<< WORD` → `producer | consumer` (DD#83) ──
+
+/// The `<<<` child of a command, if any.
+///
+/// tree-sitter-bash puts a here-string redirect *inside* the `command`
+/// node, unlike `<` and `>`, which wrap the command in a
+/// `redirected_statement`. Every pass that walks a command's children
+/// therefore sees `<<<` as an argument unless it looks for it.
+fn herestring_child<'a>(node: Node<'a>) -> Option<Node<'a>> {
+    let mut cursor = node.walk();
+    let found = node
+        .children(&mut cursor)
+        .find(|c| c.kind() == "herestring_redirect");
+    found
+}
+
+/// The end of `node`'s span with any trailing here-string (and the blanks
+/// in front of it) excluded. A rewrite that replaces a whole command must
+/// stop here, or it swallows the `<<<` that the here-string rewrite is
+/// separately moving to the front.
+fn span_end_before_herestring(node: Node, source: &[u8]) -> usize {
+    match herestring_child(node) {
+        Some(hs) => leading_blank_start(hs, source),
+        None => node.end_byte(),
+    }
+}
+
+/// Byte offset at which the blanks preceding `node` begin.
+fn leading_blank_start(node: Node, source: &[u8]) -> usize {
+    let mut at = node.start_byte();
+    while at > 0 && (source[at - 1] == b' ' || source[at - 1] == b'\t') {
+        at -= 1;
+    }
+    at
+}
+
+/// Render `node`'s text with the converter's own rewrites applied to a
+/// copy of it.
+///
+/// A here-string word moves to the front of the statement, so it cannot be
+/// patched where it sits — the patches have to be applied to the text
+/// being moved. `prefix_lines` is shared with the caller because the
+/// rewrite never changes which line a statement starts on.
+fn render_subtree(
+    node: Node,
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) -> String {
+    let mut sub = Vec::new();
+    walk_node(node, source, &mut sub, prefix_lines, annotate, collections);
+    let text = node_text(node, source);
+    let base = node.start_byte();
+    sub.sort_by_key(|p| (p.start, p.end));
+    let mut out = String::with_capacity(text.len());
+    let mut pos = base;
+    for patch in &sub {
+        if patch.start < pos {
+            continue;
+        }
+        out.push_str(&text[pos - base..patch.start - base]);
+        out.push_str(&patch.replacement);
+        pos = patch.end;
+    }
+    out.push_str(&text[pos - base..]);
+    out
+}
+
+/// The sash command that produces what bash's `<<< WORD` feeds in.
+///
+/// `<<<` expands the word and appends a newline, without word-splitting.
+/// sash `echo` does exactly that — it never word-splits, so the bash
+/// quoting carries over unchanged rather than having to be interpreted.
+///
+/// Two cases are not `echo`:
+///
+/// * A `$(…)` word. `echo $(cmd)` does not compile — a tainted command
+///   substitution cannot be used inline (SB5020) — so the substituted
+///   command becomes the producer directly. That also matches the taint
+///   model, which tracks the pipe rather than a capture.
+/// * The literal word `-n`. Both bash's and sash's `echo` read that as the
+///   retired no-newline flag (SB5059 for the bare spelling, silence for
+///   the quoted one), so neither spelling prints `-n`.
+fn herestring_producer(
+    word: Node,
+    source: &[u8],
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) -> String {
+    if let Some(inner) = sole_command_substitution(word, source) {
+        return render_subtree(inner, source, prefix_lines, annotate, collections);
+    }
+    let text = render_subtree(word, source, prefix_lines, annotate, collections);
+    if matches!(text.as_str(), "-n" | "\"-n\"" | "'-n'") {
+        return "printf \"%s\\n\" -n".to_string();
+    }
+    format!("echo {}", text)
+}
+
+/// The command inside a here-string word that is nothing but a command
+/// substitution — `$(ls)` or `"$(ls)"`. Returns the substituted command,
+/// which becomes the pipeline's producer.
+fn sole_command_substitution<'a>(word: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
+    let sub = match word.kind() {
+        "command_substitution" => word,
+        "string" if word.named_child_count() == 1 => {
+            let only = word.named_child(0)?;
+            (only.kind() == "command_substitution" && only.end_byte() + 1 == word.end_byte())
+                .then_some(only)?
+        }
+        _ => return None,
+    };
+    let text = node_text(sub, source);
+    let inner = text.strip_prefix("$(")?.strip_suffix(')')?;
+    (!inner.trim().is_empty()).then_some(())?;
+    // The substituted command is every named child between `$(` and `)`;
+    // one child is the overwhelmingly common case and the only one whose
+    // text can be lifted verbatim.
+    (sub.named_child_count() == 1).then(|| sub.named_child(0))?
+}
+
+fn convert_herestring(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) {
+    let line = node.start_position().row;
+    let Some(word) = node.named_child(0) else {
+        return;
+    };
+    let Some(statement) = node.parent() else {
+        return;
+    };
+    let produces_capture = sole_command_substitution(word, source).is_some();
+    let producer = herestring_producer(word, source, prefix_lines, annotate, collections);
+    patches.push(Patch::insert_at(
+        statement.start_byte(),
+        &format!("{} | ", producer),
+    ));
+    patches.push(Patch::replace_span(
+        leading_blank_start(node, source),
+        node.end_byte(),
+        String::new(),
+        Some(node_text(node, source).to_string()),
+    ));
+    if produces_capture {
+        prefix_lines.push((line, "# CHECK: `<<< \"$(cmd)\"` collapsed cmd's trailing newlines to one; the pipe passes them through".into()));
+    }
 }
 
 fn mapfile_manual_reason(cmd: &str, flags: &[String]) -> String {
@@ -1831,7 +2027,11 @@ fn apply_patches(
 ) -> String {
     // Sort patches by start position
     let mut sorted: Vec<&Patch> = patches.iter().collect();
-    sorted.sort_by_key(|p| p.start);
+    // Tie-break on `end` so a zero-width insertion at X is emitted before
+    // a replacement that starts at X and consumes forward. Without it the
+    // here-string rewrite (insert the producer at the statement start,
+    // rewrite the consumer in place) depends on push order.
+    sorted.sort_by_key(|p| (p.start, p.end));
 
     // Build line→prefix_lines map
     let mut line_prefixes: std::collections::BTreeMap<usize, Vec<&str>> =

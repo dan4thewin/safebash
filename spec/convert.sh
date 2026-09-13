@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=126
+plan=135
 echo "1..$plan" >&3
 
 set +e
@@ -853,6 +853,64 @@ run_convert '#!/bin/bash
 declare -a a=(1 2 3)
 echo "${#a[@]}"'
 [[ $rc = 0 && $out == *'$(len a)'* && -z $err ]]; chk 57.101
+
+# ── here-strings: `consumer <<< WORD` → `producer | consumer` (DD#83) ──
+
+# 57.102 the plain form — `<<<` is exactly a pipe in sash
+run_convert '#!/bin/bash
+x=hello
+cat <<< "$x"'
+[[ $rc = 0 && $out == *'echo "$x" | cat'* && $out != *'<<<'* && -z $err ]]; chk 57.102
+
+# 57.103 the consumer keeps its own arguments, and they stay on the right
+run_convert '#!/bin/bash
+x=hello
+grep -c foo <<< "$x"'
+[[ $rc = 0 && $out == *'echo "$x" | grep -c foo'* && -z $err ]]; chk 57.103
+
+# 57.104 a `$(…)` word pipes the command directly — `echo $(cmd)` does not
+# compile (SB5020, tainted substitution inline), so there is no other form
+run_convert '#!/bin/bash
+grep foo <<< "$(ls)"'
+[[ $rc = 0 && $out == *'ls | grep foo'* && $out != *'echo'* && -z $err ]]; chk 57.104
+
+# 57.105 …and that swap is a real divergence: `$(…)` collapses trailing
+# newlines, the pipe does not
+run_convert '#!/bin/bash
+grep foo <<< "$(ls)"'
+[[ $rc = 0 && $out == *'CHECK'* && $out == *'trailing newline'* ]]; chk 57.105
+
+# 57.106 the common idiom — a compound consumer is a `redirected_statement`,
+# so the producer goes in front of the whole loop
+run_convert '#!/bin/bash
+while read -r l; do echo "$l"; done <<< "$(printf "a\nb\n")"'
+# (the CHECK note quotes `<<<`, so pin the absence of the *redirect*)
+[[ $rc = 0 && $out == *'| while readline l'* && $out != *'done <<<'* && -z $err ]]; chk 57.106
+
+# 57.107 `read v <<< "$x"` converts — the here-string is a redirect, not a
+# computed target (it used to draw the DD#99 "not a plain name" MANUAL)
+run_convert '#!/bin/bash
+x=hello
+read v <<< "$x"'
+[[ $rc = 0 && $out == *'echo "$x" | readline v'* \
+   && $out != *'not a plain name'* && -z $err ]]; chk 57.107
+
+# 57.108 a literal word needs no quoting — sash `echo` never word-splits
+run_convert '#!/bin/bash
+cat <<< literal'
+[[ $rc = 0 && $out == *'echo literal | cat'* && -z $err ]]; chk 57.108
+
+# 57.109 except `-n`, which both bash and sash read as the retired
+# no-newline flag (SB5059) rather than as text
+run_convert '#!/bin/bash
+cat <<< -n'
+[[ $rc = 0 && $out == *'printf "%s\n" -n | cat'* && $out != *'echo -n'* && -z $err ]]; chk 57.109
+
+# 57.110 another redirect on the same statement still binds the consumer
+run_convert '#!/bin/bash
+x=hello
+cat <<< "$x" > out'
+[[ $rc = 0 && $out == *'echo "$x" | cat  > out'* || $out == *'echo "$x" | cat > out'* ]]; chk 57.110
 
 set -e
 tally

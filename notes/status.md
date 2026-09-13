@@ -1,3 +1,41 @@
+## ══ STATUS (2026-09-13) — here-strings convert now ══
+
+**Journal 297.** `converter-herestring-to-pipe` **done**. Sweep
+**4431 passing, 9 skipped, 0 failing, 0 flips** (+9, `57.102`–`57.110`).
+Round-trip byte-identical to bash. Fail-first predicted 9, observed 9.
+
+`cmd <<< WORD` → `producer | cmd`. DD#83 removed `<<<` (SB4050) and the
+converter passed it through.
+
+**The filing's `$(sub)` recommendation was right for the wrong reason.** It
+preferred `cmd <<< "$(sub)"` → `sub | cmd` as "fewer moving parts, same
+bytes". Not the same bytes — bash's `$(…)` collapses trailing newlines and
+`<<<` re-adds one, so `while read … done <<< "$(printf 'a\n\n\n')"` iterates
+**once** in bash and **three times** through a pipe. And not a preference:
+`echo $(sub) | cmd` does not compile (SB5020, tainted substitution inline).
+The pipe is the only form; the converter now emits a `# CHECK:` naming the
+divergence. Measuring the *rejected* option is what produced the note.
+
+**One literal word is not `echo`:** `cat <<< -n` → `printf "%s\n" -n | cat`.
+Both bash's and sash's `echo` read `-n` as the retired flag regardless of
+quoting (SB5059 bare, silent when quoted). Only `-n` — `echo -e` prints `-e`,
+and `echo $x` with `x=-n` prints `-n` (sash does no runtime flag parsing;
+bash does, so sash is the faithful one here).
+
+## Two bugs found underneath
+
+**`read v <<< "$x"` drew a false MANUAL** ("target is not a plain name",
+DD#99). tree-sitter-bash puts a here-string redirect *inside* the `command`
+node — unlike `<` and `>`, which wrap it in a `redirected_statement` — so
+`read_args` counted it as an argument. `mapfile` had the same hole. Now one
+named helper, `herestring_child`. `57.107` pins the absence of the note.
+
+**Patch ordering was push-order-dependent.** `apply_patches` sorted by `start`
+alone; at equal `start` a consuming replacement could sort before a zero-width
+insertion, driving `pos` *backwards* and re-emitting consumed source. Silent
+garbage, not a crash. Now `(start, end)`. Latent before this change — the
+here-string rewrite is the first pass to emit both shapes at one byte.
+
 ## ══ STATUS (2026-09-13) — the retired bracket forms convert now ══
 
 **Journal 296.** `converter-retire-bracket-splat` **done**. Sweep
