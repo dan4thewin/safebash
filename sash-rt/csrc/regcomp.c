@@ -33,6 +33,7 @@ static	int	lexdone;
 static	int	nclass;
 static	Reclass*classp;
 static	Reinst*	freep;
+static	Reinst*	freeend;	/* one past the last usable slot */
 static	int	errors;
 static	Rune	yyrune;		/* last lex'd rune */
 static	Reclass*yyclassp;	/* last lex'd class */
@@ -117,6 +118,14 @@ rcerror(char *s)
 static	Reinst*
 newinst(int t)
 {
+	/* The instruction buffer is sized up front in regcomp1 and never
+	 * grows, so every producer has to stay inside it. Nothing checked
+	 * that until 2026-09-13, when a {n,m} bound was found writing past
+	 * the end of the allocation: the size was derived from the pattern
+	 * LENGTH while counted repetition expands by the BOUND. A missed
+	 * case must fail as a diagnostic, not as heap corruption. */
+	if(freep >= freeend)
+		rcerror("expression too complex");
 	freep->type = t;
 	freep->u2.left = 0;
 	freep->u1.right = 0;
@@ -645,15 +654,39 @@ static	Reprog*
 regcomp1(char *s, int literal, int dot_type)
 {
 	int token;
+	size_t nslots;
 	Reprog *volatile pp;
 
-	/* get memory for the program */
-	pp = malloc(sizeof(Reprog) + 6*sizeof(Reinst)*strlen(s));
+	/* get memory for the program.
+	 *
+	 * Six instructions per pattern character is Pike's original budget,
+	 * and it holds for every operator he wrote, because each of them
+	 * emits a bounded number of instructions for the characters it
+	 * consumes. DD#39's {n,m} does not: `a{1,32}` is seven characters
+	 * that expand to thirty-two copies of the preceding atom. The
+	 * expansion is driven by the bound, so it has to be budgeted from
+	 * the bound.
+	 *
+	 * parsecounted caps both n and m at 32, and each copy costs one
+	 * operand instruction plus an operator that emits at most two, so a
+	 * single repetition adds at most 96. 128 per `{` leaves margin, and
+	 * newinst enforces the limit regardless. */
+	{
+		size_t slen = strlen(s);
+		const char *q;
+
+		nslots = 6*slen + 8;
+		for(q = s; *q; q++)
+			if(*q == '{')
+				nslots += 128;
+	}
+	pp = malloc(sizeof(Reprog) + nslots*sizeof(Reinst));
 	if(pp == 0){
 		regerror("out of memory");
 		return 0;
 	}
 	freep = pp->firstinst;
+	freeend = pp->firstinst + nslots;
 	classp = pp->class;
 	errors = 0;
 
@@ -675,6 +708,7 @@ regcomp1(char *s, int literal, int dot_type)
 	pushator(START-1);
 	{
 	char *prev_atom_start = exprp;
+	int prev_was_group = 0;
 	while(1){
 		char *atom_start = exprp; /* source pos before this lex */
 		token = lex(literal, dot_type);
@@ -686,6 +720,18 @@ regcomp1(char *s, int literal, int dot_type)
 			 * prev_atom_start points to where the preceding atom started.
 			 */
 			int i;
+			/* The re-lex below reads exactly ONE token per copy, so the
+			 * atom it repeats is a single token. After a group,
+			 * prev_atom_start points at the group's LAST atom, not at
+			 * the group: `(ab){2}` repeated `b` and produced `(ab)b`,
+			 * which silently answered the wrong question — it reported
+			 * no match on "ababababab", where bash matches. Reject it
+			 * rather than answer wrongly; supporting it means replaying
+			 * a token SPAN, which is a language-surface decision. */
+			if(prev_was_group){
+				rcerror("counted repetition of a ( ) group is not supported");
+				return 0;
+			}
 			char *after_count = exprp; /* past the } */
 			if(rep_min == 0){
 				operator(QUEST); /* make existing copy optional */
@@ -730,6 +776,7 @@ regcomp1(char *s, int literal, int dot_type)
 			operand(token);
 		if((token&0300) != OPERATOR)
 			prev_atom_start = atom_start;
+		prev_was_group = (token == RBRA);
 	}
 	}
 

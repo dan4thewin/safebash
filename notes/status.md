@@ -1,3 +1,52 @@
+## ══ STATUS (2026-09-13) — regex: a heap overflow reachable from the environment ══
+
+**Journal 290.** Sweep **4376 passing, 9 skipped, 0 failing**, 0 flips.
+One task filed for DG.
+
+Probing the regex dialect for `docs-regex-dialect-writeup` (whose gate is
+"verify each claim against the binary") crashed the compiler: `a{1,17}`
+tripped a glibc malloc assertion. `a{1,16}` was fine.
+
+`regcomp1` sizes its arena at `6*sizeof(Reinst)*strlen(s)` — Pike's
+per-character budget, an invariant every operator *he* wrote maintains by
+construction. DD#39's `{n,m}` is ours and doesn't: six characters in,
+seventeen atom copies out. The budget was never re-derived when the feature
+landed.
+
+**It was not just a compiler crash.** A pattern need not be a literal —
+`p=$(getenv RE); [[ $s =~ $p ]]` compiles, and `sash-rt` ships the same
+`regcomp.c`. `RE='a{1,17}'` against 34 `a`s printed **`N`** (sash-rt's own
+heap absorbs the overflow instead of asserting); `a{2,32}` killed the
+process. Environment-controlled input, silently wrong answers.
+
+Three fixes in `sash-rt/csrc/regcomp.c` + `sash/build.rs`:
+
+- **Sizing**: `6*strlen + 8`, plus 128 slots per `{`.
+- **Guard** (the one that matters): `newinst` bounds-checks `freep` against a
+  new `freeend` and `rcerror`s. The arithmetic is now a performance decision,
+  not a correctness one — a future expanding construct that skips the budget
+  gets a diagnostic, not a corrupt heap.
+- **Build**: `sash/build.rs` had no `cargo:rerun-if-changed` for the
+  out-of-package C sources and was linking a **stale object** — the first
+  post-fix test still crashed identically. `sash-rt/build.rs` already had the
+  loop, with a comment recording the same incident under DD#63.
+
+**Second bug found on the way**: `(ab){2}` → `N`, bash `Y`. `(` and `)` are
+operators, so `prev_atom_start` after a group points at its *last* atom; the
+expansion built `(ab)b`. Shipping, silent. Now **rejected** with a
+diagnostic; supporting it means replaying a token span, which changes the
+language surface → **`notes/tasks/regex-counted-group.md`, DG's call.**
+
+Specs `39.20`–`39.31` (plan 68→80). `39.27` first passed for the wrong
+reason — `RE` was exported in the probe shell; `env -u RE` failed it. It now
+sets and unsets its own env.
+
+**Next:** resume `docs-regex-dialect-writeup` — the probing is largely done
+(measured: `{n,m}` both bounds capped at 32, `{n,}` unbounded; `\d \w \s \D
+\W \S` supported, a deliberate divergence from bash ERE; no lookaround, no
+backrefs, no POSIX classes, no `\b`), and needs writing into a
+`.SH REGULAR EXPRESSIONS` section of `docs/sash.1`.
+
 ## ══ STATUS (2026-09-13) — converter positionals: three bugs behind a feature ══
 
 **Journal 289.** Sweep **4352 passing, 9 skipped, 0 failing**, 0 flips.

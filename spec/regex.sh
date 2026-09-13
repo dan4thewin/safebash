@@ -6,7 +6,7 @@
 set -eu
 . common.sh
 setup regex
-plan=68
+plan=80
 echo "1..$plan" >&3
 
 set +e
@@ -450,6 +450,96 @@ n=2" && -z $err ]]; chk 63.mi4
 run_sash 'if match abc "a" { - echo hit }
 echo "$(len a)"'
 [[ $rc != 0 && -z $out && $err == *SB5039* ]]; chk 63.mi5
+
+# ── 39.20-39.31 DD#39 counted repetition: the instruction buffer ──────────
+#
+# `regcomp1` sized its instruction buffer at 6 slots per pattern CHARACTER —
+# Pike's budget, correct for every operator he wrote. `{n,m}` is a sash
+# addition and expands by the BOUND, not the length: `a{1,32}` is seven
+# characters that emit thirty-two copies of the preceding atom. Past
+# `a{1,16}` the expansion wrote off the end of the allocation.
+#
+# What that looked like: the compiler died in glibc malloc; a binary built
+# with a smaller bound and handed a larger one at RUNTIME answered `a{1,17}`
+# with "no match" against a string of 34 a's, or was killed outright. A
+# pattern can come from `$(getenv …)`, so the input was not even trusted.
+
+# 39.20 the first bound past the old budget
+run_sash 's=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ a{1,17} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.20
+
+# 39.21 the largest bound parsecounted accepts
+run_sash 's=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ a{1,32} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.21
+
+# 39.22 a non-zero minimum takes the other expansion branch
+run_sash 's=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ a{2,32} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.22
+
+# 39.23 a zero minimum takes the third (QUEST-the-original) branch
+run_sash 's=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ a{0,32} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.23
+
+# 39.24 exact count at the cap
+run_sash 's=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ ^a{32} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.24
+
+# 39.25 the cap itself still rejects, and says so
+run_sash 's=aaa
+if [[ $s =~ a{33} ]]; then echo Y; else echo N; fi'
+[[ $rc != 0 && -z $out && $err == *'repetition count too large'* ]]; chk 39.25
+
+# 39.26 many repetitions in one pattern — the budget is per-repetition, so a
+#       pattern full of them must still compile
+run_sash 's=aaa
+if [[ $s =~ a{32}a{32}a{32}a{32}a{32}a{32}a{32}a{32} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "N" && -z $err ]]; chk 39.26
+
+# 39.27 a RUNTIME pattern with a large bound. This is the one that matters:
+#       the pattern is tainted input, and before the fix it silently answered
+#       the wrong question or killed the process.
+export RE='a{1,32}'
+run_sash 'p=$(getenv RE)
+attest p [[ -n $p ]]
+s=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+if [[ $s =~ $p ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.27
+unset RE
+
+# ── 39.28-39.31 counted repetition of a group is rejected, not mis-answered ──
+#
+# The re-lex reads exactly ONE token per copy, so after a group
+# `prev_atom_start` pointed at the group's LAST atom: `(ab){2}` repeated `b`
+# and built `(ab)b`. That reported no match on "ababababab", where bash
+# matches — a wrong answer with no diagnostic. Whether to support it (which
+# means replaying a token span) is a language-surface question; until then it
+# must fail loudly. See notes/tasks/regex-counted-group.md.
+
+# 39.28 the reported shape
+run_sash 's=ababababab
+if [[ $s =~ (ab){2} ]]; then echo Y; else echo N; fi'
+[[ $rc != 0 && -z $out && $err == *'group is not supported'* ]]; chk 39.28
+
+# 39.29 an alternation group too
+run_sash 's=ababababab
+if [[ $s =~ (a|b){4} ]]; then echo Y; else echo N; fi'
+[[ $rc != 0 && -z $out && $err == *'group is not supported'* ]]; chk 39.29
+
+# 39.30 a BRACKET class is a single token and keeps working — the reject is
+#       scoped to `( )`, not to "anything before a brace"
+run_sash 's=ababababab
+if [[ $s =~ ^[ab]{4} ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.30
+
+# 39.31 a group NOT followed by a count is unaffected
+run_sash 's=ababababab
+if [[ $s =~ (ab)(ab) ]]; then echo Y; else echo N; fi'
+[[ $rc = 0 && $out = "Y" && -z $err ]]; chk 39.31
 
 set -e
 tally
