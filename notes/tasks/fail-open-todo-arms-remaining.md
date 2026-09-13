@@ -1,6 +1,7 @@
 ---
 title: "fail-open `/* TODO */` arms remain in emit_c.rs (the P1 fix covered only command dispatch)"
-status: ready
+status: done
+completed: 2026-09-13
 priority: P2
 kind: bug
 depends: []
@@ -52,3 +53,39 @@ backend implements cmdsub exec (currently `/* TODO cmdsub exec … (Phase 4) */`
 → empty capture)"*. That is **done** — `emit_cmdsub_exec_c` exists and now
 carries the DD#55 diagnostic. Its other gate about `$(argc)` / `$(signum)` also
 measures clean (0 TODO arms). That task needs re-measuring before any work.
+
+## Completion (2026-09-13)
+
+Closed by **enumeration, not probing**. `SsaValue` has 28 variants;
+`lower_value_as_str` + `lower_value_as_str_aggregate` handled 21. Of the 8
+missing, 3 (`CaseConvert`, `RegexReplace`, `RegexMatch`) are intercepted
+upstream by `lower_string_transform_c` and never reach the dispatcher, and
+the other 5 (`FuncCall`, `IntFuncCall`, `CmdSubstBody`, `ArraySplat`,
+`ElideEmpty`) are exactly native's ICE set in `codegen/values.rs`. Mirrored
+those 5 as explicit ICE arms plus an ICE terminal. Same treatment for
+`ir_expr_as_str`, the parameter-expansion operator dispatch, `emit_cmdsub`'s
+non-literal head, and (with the `<&`/`<>` work) the redirect fall-through —
+the last one.
+
+**One arm turned out to be a validator gap, not a codegen gap.** The
+non-literal cmdsub head: `$c hi` in statement position is SB5011, but
+`$($c hi)` was **accepted**, then aborted at runtime in native
+(`sash: bug: bare command passed to sash_exec`) and silently captured the
+empty string in c. `check_cmd_in_stmt` only ever visited
+`StmtKind::Command`, and `child_bodies()` returns empty for
+Assignment/Declaration/Command, so command-substitution bodies — which live
+inside *expressions* — were never walked.
+
+The first fix over-rejected: running the full `check_commands` on cmdsub
+bodies turned `$(getenv HOME)` and `$(argc)` into SB5073 ("value intrinsic
+in statement position"), which is exactly right in statement position and
+exactly wrong inside `$( )`. **Only the head-must-be-literal rule
+transfers.** Narrowed to a dedicated `check_cmdsub_heads`; spec `23.24`
+pins that value intrinsics inside `$( )` are not dragged through statement
+rules.
+
+Specs `23.20`–`23.24` (`spec/commands.sh`, plan 92 → 97), including `23.22`
+(nested `$( $( $x ) )` is reported exactly once — the walker is
+deliberately shallow because `check_cmdsub_heads` already recurses).
+
+Nothing reached an ICE across the 4270-test sweep.

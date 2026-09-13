@@ -1,6 +1,7 @@
 ---
 title: "`<&` and `<>` redirects are accepted but wrong in BOTH backends"
-status: ready
+status: done
+completed: 2026-09-13
 priority: P2
 kind: bug
 depends: []
@@ -73,3 +74,31 @@ compiles and silently does the wrong thing.
 `spec/coverage.sh:100` (cov.86-88) already pins that a `>&`/`<&` target which
 isn't a plain fd number is **rejected**. So the malformed case has coverage
 and the well-formed case does not — which is how this survived.
+
+## Completion (2026-09-13)
+
+DG chose **implement** over reject. Both ops now work in both backends.
+
+- **`<&N` is the same operation as `>&N`** — `dup2(N, fd)`. They differ only
+  in the fd they default to, which `default_fd_for_op` already decides. So
+  `emit_dup_output` was renamed `emit_dup_fd` in both backends and `DupInput`
+  routed to it. No new runtime call.
+- **`<>` needed a runtime flag code**: `3 => O_RDWR|O_CREAT` in
+  `sash_redirect` (create if absent, **do not truncate** — that is bash).
+- **A second bug fell out of testing against bash**: `<>` was defaulting to
+  **fd 1**. Bash defaults it to **fd 0**, because `<>` is a `<` form. With fd
+  1, `echo xy <> f` overwrote the head of the file and looked plausible
+  (`cat f` showed `xy` followed by the tail of the old content); bash prints
+  `xy` to stdout and leaves the file untouched. `ex.14` pins this.
+- The c redirect fall-through — the **last** fail-open `/* TODO */` arm in
+  `emit_c.rs` — is now an ICE.
+
+**Correction to the filing above:** the original text claimed native "maps
+`DupInput` onto `Read` flags and opens a file named `9`". That was a
+misreading of `default_fd_for_op` (which fd to default *to*) as
+`open_flags_for_op`. Native **no-opped** both redirects, same as c.
+
+Specs `ex.12`–`ex.15` (`spec/exec.sh`, plan 19 → 23), unguarded in both
+modes. Fail-first: reverting the three source files failed exactly 3 of 4
+in each mode (`ex.15`, create-if-absent, passes without the fix because the
+shell harness leaves the file behind).

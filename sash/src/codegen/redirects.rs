@@ -89,8 +89,8 @@ pub(super) fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput => 0,
-        _ => 1,
+        // `<>` is a `<` form: bash defaults it to stdin, not stdout.
+        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
     }
 }
 
@@ -139,21 +139,25 @@ fn emit_one_redirect(
             vars,
         );
     }
-    if redir.op == RedirectOp::DupOutput {
-        emit_dup_output(fd_val, &redir.target, builder, module, externs);
+    // `>&N` and `<&N` are the same operation — dup2(N, fd). They differ only
+    // in which fd they default to, which `default_fd_for_op` already handles.
+    if matches!(redir.op, RedirectOp::DupOutput | RedirectOp::DupInput) {
+        emit_dup_fd(fd_val, &redir.target, builder, module, externs);
     }
     None
 }
 
-/// open(2) flags for the three open-and-dup2 redirect ops.
+/// open(2) flags for the four open-and-dup2 redirect ops.
 /// (1 = O_WRONLY|O_CREAT|O_TRUNC, 2 = O_WRONLY|O_CREAT|O_APPEND,
-/// 0 = O_RDONLY — interpreted by the `redirect`/`redirect_s` runtime.)
+/// 0 = O_RDONLY, 3 = O_RDWR|O_CREAT — interpreted by the
+/// `redirect`/`redirect_s` runtime.)
 fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write => Some(1),
         RedirectOp::Append => Some(2),
         RedirectOp::Read => Some(0),
+        RedirectOp::ReadWrite => Some(3),
         _ => None,
     }
 }
@@ -201,8 +205,9 @@ fn emit_open_redirect(
     Some((failed, path_ptr, path_len))
 }
 
-/// `>&N` — dup2(target_fd, fd). Non-literal targets default to fd 2.
-fn emit_dup_output(
+/// `>&N` / `<&N` — dup2(target_fd, fd). Non-literal targets default to fd 2
+/// (cov.86-88 reject a non-numeric fd-dup target, so that arm is defensive).
+fn emit_dup_fd(
     fd_val: cranelift_codegen::ir::Value,
     target: &crate::ir::Expr,
     builder: &mut FunctionBuilder,

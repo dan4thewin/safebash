@@ -7,7 +7,7 @@
 set -eu
 . common.sh
 setup filetest
-plan=44
+plan=46
 echo "1..$plan" >&3
 
 set +e
@@ -188,5 +188,18 @@ run_sash 'if [[ b_old -ef b_link ]]; then echo yes; else echo no; fi'
 
 run_sash 'if [[ b_old -ef b_new ]]; then echo yes; else echo no; fi'
 [[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.44
+
+# D9 -nt resolves SUB-SECOND. bash compares timespec (nanoseconds), not
+# whole seconds, so two files 1 ms apart inside the SAME whole second
+# still order. A seconds-granularity implementation passes ft.41 and
+# fails here, which is the only reason this test exists.
+touch -d '@1700000000.000000000' b_ns1; touch -d '@1700000000.001000000' b_ns2
+run_sash 'if [[ b_ns2 -nt b_ns1 ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "yes" && -z $err ]]; chk ft.45
+
+# D10 ... and the same pair is NOT newer the other way (strict >, and no
+# accidental symmetry from a truncating compare).
+run_sash 'if [[ b_ns1 -nt b_ns2 ]]; then echo yes; else echo no; fi'
+[[ $rc = 0 && $out = "no" && -z $err ]]; chk ft.46
 
 tally

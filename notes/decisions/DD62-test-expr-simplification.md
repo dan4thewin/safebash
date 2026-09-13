@@ -141,3 +141,30 @@ useless."
   dataflow one. The price (a forgot-to-assign-on-one-branch logic bug
   reads the zero value instead of erroring) is the same price Go pays for
   a meaningful zero value. SB5031. See task `reject-undeclared-scalar-read`.
+
+## Addendum (DG, 2026-09-13) — `<` and `>` are a byte compare
+
+`[[ a < b ]]` / `[[ a > b ]]` order operands by **unsigned byte value**,
+i.e. `memcmp`/`strcmp` order — equivalently bash under `LC_ALL=C`. There
+is no locale-sensitive collation: the runtime is locale-free (no libc, no
+`setlocale`, no `LC_COLLATE`), so byte order is the only ordering it can
+express, and it is the only one that is reproducible across machines.
+
+Consequence worth stating explicitly, because it is where a collating
+locale would answer differently: **all upper-case ASCII sorts before all
+lower-case** — `[[ Z < a ]]` is **true** (0x5A < 0x61). A `en_US.UTF-8`
+bash says false. Spec `ft.40` pins this.
+
+The same byte rule governs `==`/`!=` (decision 1 above) — those were
+always `sash_strcmp` — so ordering and equality are now consistent with
+each other. Both backends share the one runtime comparator.
+
+Related: the file-age operators `-nt` / `-ot` compare mtime and `-ef`
+compares (device, inode); `-nt`/`-ot` compare at **nanosecond**
+(timespec) resolution with a strict `>`, which is what bash does — verified
+three-way on files 1 ms apart inside the same whole second. (`-N` is the
+operator with the `>=` subtlety; see `bug-file-test-N-diverges-from-bash`,
+closed.) Both backends share the one runtime comparator, so c inherited
+that correction for free. They are grouped here
+only because they landed with `<`/`>` — c implemented none of the five
+until 2026-09-13, silently answering **false** for every one.

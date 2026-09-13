@@ -1406,14 +1406,19 @@ fn emit_var_value(e: &mut Emit, vref: &VarRef, types: &VarTypes) -> CStr {
 fn emit_c_argv_value(e: &mut Emit, value: &SsaValue) -> CStr {
     match value {
         SsaValue::ArgvIndex(idx_ref) => {
-            let iv = c_var_name(&idx_ref.name, idx_ref.version);
+            // Parity with native `index_var_to_int`: an Int slot is read
+            // directly. Hard-coding `sash_atoi({iv}_ptr, {iv}_len)` would
+            // name slots an int var does not have (`declare_vars` emits one
+            // C variable for Int, two for String) — a C compile error the
+            // moment an index var is an int counter.
+            let idx = lower_var_as_int_c(idx_ref);
             let t = e.fresh();
             writeln!(
                 e.out,
-                "    i64 {t}_i = sash_atoi({iv}_ptr, {iv}_len); i64 {t}_l; \
+                "    i64 {t}_i = {idx}; i64 {t}_l; \
                  const char* {t}_p = sash_argv_get({t}_i, &{t}_l);",
                 t = t,
-                iv = iv
+                idx = idx
             )
             .unwrap();
             (format!("{}_p", t), format!("{}_l", t))
@@ -3379,8 +3384,8 @@ fn default_fd_for_op(op: &crate::ir::RedirectOp) -> u32 {
     use crate::ir::RedirectOp;
     match op {
         RedirectOp::Write | RedirectOp::Append | RedirectOp::DupOutput => 1,
-        RedirectOp::Read | RedirectOp::DupInput => 0,
-        _ => 1,
+        // `<>` is a `<` form: bash defaults it to stdin, not stdout.
+        RedirectOp::Read | RedirectOp::DupInput | RedirectOp::ReadWrite => 0,
     }
 }
 
@@ -3393,6 +3398,8 @@ fn open_flags_for_op(op: &crate::ir::RedirectOp) -> Option<i64> {
         RedirectOp::Write => Some(1),
         RedirectOp::Append => Some(2),
         RedirectOp::Read => Some(0),
+        // 3 = O_RDWR|O_CREAT (no truncate) — bash's `<>`.
+        RedirectOp::ReadWrite => Some(3),
         _ => None,
     }
 }
@@ -3410,10 +3417,14 @@ fn emit_one_redirect(
         return emit_open_redirect(e, fd, &r.target, flags, types);
     }
     match r.op {
-        RedirectOp::DupOutput => emit_dup_output(e, fd, &r.target),
-        _ => {
-            writeln!(e.out, "    /* TODO redirect op: {:?} */", r.op).unwrap();
-        }
+        // `>&N` and `<&N` are the same dup2(N, fd); they differ only in the fd
+        // they default to, which `default_fd_for_op` already decides.
+        RedirectOp::DupOutput | RedirectOp::DupInput => emit_dup_fd(e, fd, &r.target),
+        // Write/Append/Read/ReadWrite were taken by open_flags_for_op above, so
+        // every variant is now accounted for and this is a compiler bug. It used
+        // to emit a comment, which silently dropped the redirect and left the
+        // command running on the wrong fd.
+        other => panic!("ICE: unhandled redirect op reached emit_redirect: {other:?}"),
     }
     None
 }
@@ -3467,7 +3478,7 @@ fn emit_open_redirect(
 /// `>&N` — dup2(target_fd, fd). Mirrors emit_dup_output
 /// (codegen/redirects.rs:163). Non-literal targets default to fd 2
 /// (matches codegen behaviour).
-fn emit_dup_output(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
+fn emit_dup_fd(e: &mut Emit, fd: i64, target: &crate::ir::Expr) {
     let target_fd: i64 = match &target.kind {
         crate::ir::ExprKind::Literal(s) => s.parse().unwrap_or(2),
         _ => 2,

@@ -1,6 +1,7 @@
 ---
 title: "c-backend parity: argv-index read should be is_int-total (emit_c.rs:1244)"
-status: ready
+status: done
+completed: 2026-09-13
 priority: P3
 kind: parity
 depends: []
@@ -33,3 +34,23 @@ instead of `sash_atoi(_ptr,_len)` — mirroring `index_var_to_int`.
 
 Found by the atoi audit (journal 173, DG follow-up "see that the only atoi is
 within string interpolation"). Native is clean; this is the C twin.
+
+## Completion (2026-09-13)
+
+`emit_c_argv_value` now routes the index through the existing
+`lower_var_as_int_c`, which already carries the native `index_var_to_int`
+rule (Int slot read directly, String slot `atoi`'d). The hard-coded
+`sash_atoi({iv}_ptr, {iv}_len)` named slots an int var does not have —
+`declare_vars` emits **one** C variable for Int and **two** for String — so
+an int `__fi` would have been a C compile error, not a wrong answer.
+
+Verified a true no-op today: `__fi` is still a String var, and the generated
+C is **byte-identical** to HEAD for both `for a in $(argv)` and
+`$(arg $i)`, which is why no spec test can distinguish it. That is the
+"no regression" gate; the parity gate is the code path.
+
+Noted in passing, **not** fixed (no bug, no filing): the `"arg"` intrinsic
+in `emit_c` lowers its index with `lower_value_as_str`, so `$(arg $i)` on an
+int `i` emits an `itoa`-then-`atoi` round trip. Native does the same. It is
+a missed optimisation on a cold path, identical in both backends, so it is
+not a divergence.

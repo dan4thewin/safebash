@@ -434,6 +434,9 @@ pub extern "C" fn sash_redirect(fd: i64, path: *const u8, flags: i64) -> i64 {
             2 => rustix::fs::OFlags::WRONLY
                 .union(rustix::fs::OFlags::CREATE)
                 .union(rustix::fs::OFlags::APPEND),
+            // `<>` (RedirectOp::ReadWrite): read/write, create if absent, and
+            // do NOT truncate — bash's semantics for the form.
+            3 => rustix::fs::OFlags::RDWR.union(rustix::fs::OFlags::CREATE),
             _ => return -1,
         };
         let mode = rustix::fs::Mode::from_raw_mode(0o666);

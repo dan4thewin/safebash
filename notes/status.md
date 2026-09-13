@@ -1,3 +1,75 @@
+## ══ STATUS (2026-09-13) — fail-open C arms closed; `<&`/`<>` implemented ══
+
+**Journal 283.** Sweep **4270 passing, 9 skipped, 0 failing**, 0 flips (all 22
+new tests are additions, nothing changed status). c **2066 → 2085**, native
+**2166 → 2185**.
+
+**Three bugs found, all the same shape.** DG asked a scoping question — *what
+native and C work remains before the test redux?* — and re-measuring the
+backlog against the live binary (rather than trusting the filings) turned up
+three fail-open `/* TODO */` arms in `emit_c.rs`: arms that emit a comment,
+return an empty value, compile cleanly, and **assert a value the compiler
+never computed**. The earlier P1 (`bf96d25`) had covered only command dispatch.
+
+**1. `[[ a < b ]]` was constant `false` in c — five operators, not two.**
+Native's `lower_test_binary` implements `<`, `>`, `-nt`, `-ot`, `-ef`; c
+handled only `=`/`==`/`!=`/`=~`. Fixed via the **same runtime comparators
+native uses** (`sash_strcmp`, plus newly-externed `sash_file_newer` /
+`sash_file_same_dev`) so the backends cannot drift. `ft.37`–`ft.46`
+(`spec/filetest.sh`, plan 36 → 46). Fail-first failed **exactly 6 of 8** —
+`ft.38` and `ft.44` are negative cases, which a constant-`false` arm answers
+right by accident.
+
+Byte ordering is now pinned: **2026-09-13 addendum to DD#62** (byte compare,
+`LC_ALL=C`, so `[[ Z < a ]]` is true — `ft.40`). While writing it I went to
+record `-nt` as whole-seconds and measured instead: it is **nanosecond**
+(timespec) in bash and in both our backends. `ft.45`/`ft.46` pin it.
+
+**2. The DD#23 head check never ran inside `$( )`.** `$c hi` is SB5011 in
+statement position, but `$($c hi)` was *accepted* → native runtime-abort,
+c silent empty capture. `check_cmd_in_stmt` only visited `StmtKind::Command`
+and `child_bodies()` is empty for Assignment/Declaration/Command, so cmdsub
+bodies (which live inside **expressions**) were never walked. The first fix
+over-rejected: the full `check_commands` turned `$(getenv HOME)` into SB5073
+("value intrinsic in statement position"), right in statement position and
+wrong inside `$( )`. **Only the head-literal rule transfers.** `23.20`–`23.24`
+(plan 92 → 97); `23.24` pins the distinction, `23.22` pins single-reporting.
+
+**3. `<&` and `<>` were accepted and silently did nothing in BOTH backends.**
+DG chose implement. `<&N` is the same op as `>&N` (`dup2`), differing only in
+default fd, so one emitter (`emit_dup_fd`) serves both; `<>` needed runtime
+flag code `3 = O_RDWR|O_CREAT` (create, **don't** truncate). Testing against
+bash then found a second bug: **`<>` defaults to fd 0, not 1** — it is a `<`
+form. With fd 1 it overwrote the head of the file and looked plausible.
+`ex.12`–`ex.15` (`spec/exec.sh`, plan 19 → 23); `ex.14` is the fd-0 test.
+
+**The remaining arms were closed by enumeration, not probing.** `SsaValue` has
+28 variants; c handled 21; of the 8 missing, 3 are intercepted upstream and 5
+are exactly native's ICE set. Those 5 plus an ICE terminal, and the same for
+`ir_expr_as_str`, the param-expansion dispatch, `emit_cmdsub` and the redirect
+fall-through — **`emit_c.rs` now has no fail-open arm**. Nothing hit an ICE
+across 4270 tests.
+
+**Also closed:** `c-argv-index-isint-parity` (P3) — `emit_c_argv_value` now
+routes through `lower_var_as_int_c` instead of hard-coding
+`sash_atoi({iv}_ptr,{iv}_len)`, which named slots an int var does not have.
+Verified byte-identical C output today (`__fi` is still a string var), so it
+is parity, not behaviour.
+
+**Tasks closed:** `bug-c-string-ordering-always-false` (P1),
+`fail-open-todo-arms-remaining` (P2), `bug-fd-dup-input-redirects-broken`
+(P2), `c-argv-index-isint-parity` (P3).
+
+**Standing lesson.** All three bugs were found by measuring a construct nobody
+had pinned. `[[ a < b ]]` had no spec test in any backend, ever, across 4270
+tests. **The absence of a spec test is not evidence of correctness — it is the
+absence of evidence.**
+
+**Deferred by DG, not forgotten:** `ssa-taint-full-backstop` (explicitly
+deferred hardening), `heap-multi-region-growth` (undecided),
+`join-dynamic-separator` (would retire SB5074 / reverse DD#106 — its own
+session).
+
 ## ══ STATUS (2026-09-13) — DD#55 channel complete in c; PATH twins closed ══
 
 **Journal 282.** Sweep **4232 passing, 9 skipped, 0 failing**. 17 flips (55.30

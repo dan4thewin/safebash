@@ -1,6 +1,7 @@
 ---
 title: "`[[ a < b ]]` / `[[ a > b ]]` silently evaluate false in the C backend"
-status: ready
+status: done
+completed: 2026-09-13
 priority: P1
 kind: bug
 depends: []
@@ -66,3 +67,34 @@ the current locale's collation, but sash is locale-free and `sash_strcmp` is a
 byte compare. Byte ordering is the right choice here (it matches `LC_ALL=C`
 bash and keeps the runtime locale-free) but it should be stated in the DD
 rather than left implicit.
+
+## Completion (2026-09-13)
+
+The gap was **five** operators, not two. Native's `lower_test_binary`
+(`codegen/tests.rs`) implements `<`, `>`, `-nt`, `-ot`, `-ef`; c handled only
+`=`/`==`/`!=`/`=~` and dropped all five through a fail-open arm returning
+constant **false**. Implemented in c via the already-externed `sash_strcmp`
+plus newly-externed `sash_file_newer` / `sash_file_same_dev` — the same
+runtime comparators native uses, so the two backends cannot drift. The c
+fall-through is now an ICE, matching native.
+
+Specs `ft.37`–`ft.46` (`spec/filetest.sh`, plan 36 → 46). Fail-first on the
+first eight: native passed all of them already, and c failed **exactly 6 of
+8** — `ft.38` and `ft.44` are the negative cases, which a constant-`false`
+arm answers correctly by accident. Predicting that 6 in advance is what
+distinguishes a test that measures the fix from one that measures the
+weather.
+
+`ft.45`/`ft.46` were added afterwards to pin that `-nt` resolves at
+**nanosecond** granularity (two files 1 ms apart inside the same whole
+second still order, and not symmetrically) — verified three-way against
+bash. A seconds-truncating implementation passes `ft.41` and fails those.
+
+Byte ordering is now pinned in a DD, per DG: see the 2026-09-13 addendum to
+`notes/decisions/DD62-test-expr-simplification.md`. `ft.40` (`[[ Z < a ]]`
+→ yes) is the test that would fail under a collating locale.
+
+**Standing lesson.** This bug survived the entire life of the project behind
+"nobody writes that". `[[ a < b ]]` had no spec test in *any* backend, ever.
+The absence of a spec test is not evidence of correctness — it is the
+absence of evidence.

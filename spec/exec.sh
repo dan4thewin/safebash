@@ -20,7 +20,7 @@
 set -eu
 . common.sh
 setup exec
-plan=19
+plan=23
 echo "1..$plan" >&3
 
 set +e
@@ -102,6 +102,39 @@ run_sash 'exec 9> foo; exec 9>&-'
 [[ $rc != 0 && -z $out && $err == *SB4048* ]]; chk cl.8
 
 
+# ── `<&` and `<>` ────────────────────────────────────────────────────
+# Both were ACCEPTED and silently did nothing: c dropped the redirect
+# through a fail-open `/* TODO */` arm, and native had no arm for either
+# op so the save happened and the redirect never did. The command then
+# ran on the wrong fd. bash answers all four of these.
+
+# ex.12 `<&N` duplicates an input fd, exactly as `>&N` does for output.
+printf 'hello\n' > ddf
+run_sash 'exec 9< ddf
+readline line <&9
+attest line [[ -n $line ]]
+echo "got:$line"'
+[[ $rc = 0 && $out = "got:hello" && -z $err ]]; chk ex.12
+
+# ex.13 `<>` opens read/write; reading through it sees the content.
+printf 'hello\n' > rwf
+run_sash 'readline line <> rwf
+attest line [[ -n $line ]]
+echo "got:$line"'
+[[ $rc = 0 && $out = "got:hello" && -z $err ]]; chk ex.13
+
+# ex.14 `<>` defaults to fd 0, NOT fd 1 — it is a `<` form. So this
+# writes to stdout and leaves the file alone. Defaulting it to 1 (the
+# first implementation) silently overwrote the head of the file.
+printf 'ABCDEFGH\n' > rwk
+run_sash 'echo xy <> rwk'
+[[ $rc = 0 && $out = "xy" && -z $err && $(cat rwk) = "ABCDEFGH" ]]; chk ex.14
+
+# ex.15 `<>` creates a file that does not exist (and does not truncate,
+# which ex.14 covers).
+rm -f rwnew
+run_sash 'echo made <> rwnew'
+[[ $rc = 0 && -f rwnew && -z $err ]]; chk ex.15
 
 set -e
 tally
