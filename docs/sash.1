@@ -491,6 +491,40 @@ The engine has no
 .BR REG_ICASE .
 Fold both sides instead:
 .RB \[dq] "match $(tolower $x) $(tolower $pat)" \[dq].
+.SS Interior NUL bytes
+A regex operation examines its subject only
+.B up to the subject's first interior NUL byte.
+Bytes after that are neither matched nor replaced, and are preserved
+unchanged. Like the POSIX bracket classes above, this boundary
+.B does not announce itself:
+the operation reports success and returns a wrong answer.
+.PP
+This applies to
+.RB \[dq] "[[ =~ ]]" \[dq],
+.BR match ,
+.BR matchall ,
+.BR sub ,
+.BR gsub ,
+and the
+.RB \[dq] ${x:s/\[u2026]/\[u2026]/} \[dq]
+and
+.RB \[dq] "x =~ s/\[u2026]/\[u2026]/" \[dq]
+mutation forms. A scalar itself is byte\-transparent \(em
+.B strlen
+counts the whole string, and NULs survive assignment, pipes, redirects and
+command substitution. It is only the regex engine, which is C\-string based,
+that stops early.
+.PP
+In practice a NUL is the
+.B record separator
+(DD#99), and text within one record does not contain one. If a scalar holds
+NULs it is mid\-split, and the operation to reach for is
+.B read
+or
+.BR matchall ,
+which work on the fields, not
+.RB \[dq] =~ \[dq]
+on the joined subject.
 .SS Quoting
 The pattern is an ordinary argument \(em one word \(em not a specially parsed
 field. Quote it whenever it contains characters the shell would otherwise

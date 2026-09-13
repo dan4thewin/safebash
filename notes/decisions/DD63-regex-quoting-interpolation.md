@@ -304,3 +304,47 @@ the auto-declaring `var` inside the if-condition expression
 untouched code.
 
 Specs: `regex.sh` 63.mi1-63.mi5.
+
+## Addendum (2026-09-13) — the subject stops at its first interior NUL
+
+Documenting a boundary DG decided to keep (2026-09-10, YAGNI). Not a change
+in behavior; it has always been this way.
+
+Every regex operation in this family — `[[ =~ ]]`, `match`, `matchall`,
+`sub`, `gsub`, `${x:s/…/…/}`, `x =~ s/…/…/` — reads its subject as a **C
+string** and examines it only **up to the first interior NUL**. Bytes past
+that are neither matched nor replaced, and are preserved unchanged. The
+operation reports success.
+
+```sh
+nul=$'\0'
+s="a${nul}bcd"
+echo "$(strlen $s)"        # 5 — the scalar is byte-transparent
+[[ $s =~ cd ]]             # false; the bytes are there
+u=$(gsub $s "cd" "Z")      # unchanged, strlen 5
+```
+
+The length is not lost at the runtime boundary — `sash_regex_replace` and the
+`sash_regex_match*` family all receive an explicit `str_len` and build a
+correct slice. The truncation is one level down, in the Plan 9
+`regcomp9`/`regexec9` API, which takes a `char *` and has no length parameter.
+
+**Like the POSIX bracket classes, this boundary does not announce itself.**
+Everything else the engine cannot do is rejected (SB5023); this returns a
+wrong answer quietly. That is why it is stated here and in
+`docs/sash.1` (§REGULAR EXPRESSIONS, "Interior NUL bytes") rather than left
+to be discovered.
+
+Coherent with DD#99, where a NUL is the **record separator**: text within one
+record does not contain one, and a scalar that holds NULs is mid-split. The
+operation to reach for there is `read` or `matchall`, which work on the
+fields, not `=~` on the joined subject. `matchall` (above) is what removed
+this from the critical path — the DD#99 `mapfile -m` migration routed around
+it rather than through it.
+
+If it is ever reconsidered, the candidate fix is **segment on NUL**: split the
+subject at NULs, run the regex per segment, rejoin with the NULs intact —
+contained to `sash-rt/src/lib.rs`, and it makes a NUL a hard match boundary
+rather than merely a stopping point. Care needed so a non-global `s///` still
+means "first match across the whole subject". Full discussion:
+`notes/tasks/limitation-regex-stops-at-interior-nul.md`.

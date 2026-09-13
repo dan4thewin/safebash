@@ -1,6 +1,6 @@
 ---
 title: "limitation: regex ops see only up to the first interior NUL"
-status: documented-limitation
+status: done
 priority: P3
 kind: limitation
 depends: []
@@ -19,7 +19,7 @@ wrong answer.
 ```sh
 nul=$'\0'
 s="a${nul}bcd"
-echo "$(len s)"                  # 5 — the scalar itself is fine
+echo "$(strlen $s)"              # 5 — the scalar itself is fine
 [[ $s =~ cd ]]                   # FALSE. The bytes are there.
 u=$(gsub $s "cd" "Z")            # u = "a\0bcd"  — no substitution
 w=${s:s/cd/Q/}                   # w = "a\0bcd"  — no substitution
@@ -37,7 +37,7 @@ form. No diagnostic in any of them.
 
 ## Why it matters now
 
-Scalars are byte-transparent and **can** hold interior NULs (measured: `len`
+Scalars are byte-transparent and **can** hold interior NULs (measured: `strlen`
 is correct, and they survive pipes, redirects and command substitution). DD#99
 makes NUL the one field separator, so NUL-bearing scalars go from an oddity to
 the normal intermediate value. The idiom the design leans on —
@@ -83,7 +83,7 @@ stage 5.
 
 ## Decided 2026-09-10 (DG): YAGNI — document as a limitation
 
-Re-verified at HEAD: still live. `len=5` on `a\0bcd`, but `[[ $s =~ cd ]]` is
+Re-verified at HEAD: still live. `strlen=5` on `a\0bcd`, but `[[ $s =~ cd ]]` is
 false and `$(gsub $s "cd" "Z")` returns the subject unchanged, both silently.
 
 **Not fixed, deliberately.** Two things changed after it was filed:
@@ -122,3 +122,23 @@ Rejected alternatives: a length-aware engine (means replacing or forking
 `regexec9` — general, but far larger than the problem); and rejecting a
 NUL-bearing subject outright, which was attractive when NUL scalars were
 exotic but would now reject ordinary DD#99 programs.
+
+## Gate closed 2026-09-13 (journal 293)
+
+"The limitation is stated in the DD#63 regex documentation" — done, in two
+places: `notes/decisions/DD63-regex-quoting-interpolation.md` (addendum) and
+`docs/sash.1` §REGULAR EXPRESSIONS, subsection "Interior NUL bytes". The
+man-page section (journal 292) was written before this task was in view, so
+it shipped without the one divergence that returns a wrong answer silently
+rather than rejecting.
+
+Re-verified at HEAD before writing: `strlen` on `a\0bcd` is 5, `[[ $s =~ cd ]]`
+is false, `$(gsub $s "cd" "Z")` returns the subject unchanged. Still live,
+still silent.
+
+**Correction to this filing:** its repro used `$(len s)`, which is now
+`$(strlen $s)` — `len` is collection-only (DD#75), so the filing's own example
+no longer compiles. Fixed above.
+
+The second gate — "revisit if a real program needs to match across a NUL" —
+stays open by construction; nothing has needed it.
