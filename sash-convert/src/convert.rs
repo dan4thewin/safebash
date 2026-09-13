@@ -5,6 +5,7 @@
 /// sash-native source.
 use crate::known_externals;
 use crate::ScFinding;
+use std::collections::HashSet;
 use tree_sitter::Node;
 
 /// A source-level patch: insert or replace text.
@@ -20,6 +21,18 @@ struct Patch {
 }
 
 impl Patch {
+    /// A zero-width insertion at `at`. Patches nested inside the same
+    /// construct still apply, because this consumes none of the source.
+    fn insert_at(at: usize, replacement: &str) -> Self {
+        Patch {
+            start: at,
+            end: at,
+            replacement: replacement.to_string(),
+            prefix_line: None,
+            original: None,
+        }
+    }
+
     /// Replace `node`'s source span with `replacement`. `original` is
     /// captured for --annotate; pass None when the original isn't
     /// already in hand.
@@ -57,6 +70,19 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
     // the preceding command.
     inject_attest_hints(tree.root_node(), src, &mut prefix_lines);
 
+    // Two things have to be settled before any expansion is rewritten: which
+    // names are collections (`${#a}` means something different if `a` is one
+    // — see `length_expansion`), and where bash declared one implicitly so a
+    // DD#97 keyword has to be introduced.
+    let mut pass = CollectionPass {
+        patches: &mut patches,
+        prefix_lines: &mut prefix_lines,
+        names: HashSet::new(),
+        declared: HashSet::new(),
+    };
+    pass.walk(tree.root_node(), src);
+    let collections = pass.names;
+
     // Walk the CST
     walk_node(
         tree.root_node(),
@@ -64,6 +90,7 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         &mut patches,
         &mut prefix_lines,
         annotate,
+        &collections,
     );
 
     // Add CHECK hints from shellcheck SC2086 findings
@@ -88,6 +115,7 @@ fn walk_node(
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
     annotate: bool,
+    collections: &HashSet<String>,
 ) {
     match node.kind() {
         "declaration_command" => {
@@ -117,7 +145,7 @@ fn walk_node(
             convert_simple_expansion(node, source, patches);
         }
         "expansion" => {
-            convert_expansion(node, source, patches, prefix_lines);
+            convert_expansion(node, source, patches, prefix_lines, collections);
         }
         "for_statement" if node.child(0).is_some_and(|c| c.kind() == "select") => {
             let line = node.start_position().row;
@@ -168,7 +196,7 @@ fn walk_node(
     // Recurse into children
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        walk_node(child, source, patches, prefix_lines, annotate);
+        walk_node(child, source, patches, prefix_lines, annotate, collections);
     }
 }
 
@@ -942,6 +970,7 @@ fn convert_expansion(
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
+    collections: &HashSet<String>,
 ) {
     let text = node_text(node, source);
 
@@ -973,17 +1002,12 @@ fn convert_expansion(
             }
             return;
         }
-        // DD#75 §4: the bash `${#x}` length sugar is retired in sash-native →
-        // `$(len x)`. Strip any subscript (`[@]`/`[*]`/`[i]`) — `len` dispatches
-        // on the whole collection. `${#}` (empty) is the arg count, handled
-        // above; `${##…}` (prefix strip) has `#` twice, excluded.
+        // DD#75 §4: the bash `${#x}` length sugar is retired in sash-native.
+        // `${#}` (empty) is the arg count, handled above.
         if let Some(rest) = inner.strip_prefix('#') {
-            if !rest.is_empty() && !rest.starts_with('#') {
-                let base = rest.split('[').next().unwrap_or(rest);
-                if !base.is_empty() && base.chars().all(|c| c.is_alphanumeric() || c == '_') {
-                    patches.push(Patch::replace_node(node, format!("$(len {})", base), None));
-                    return;
-                }
+            if let Some(replacement) = length_expansion(rest, collections) {
+                patches.push(Patch::replace_node(node, replacement, None));
+                return;
             }
         }
     }
@@ -1034,6 +1058,188 @@ fn convert_expansion(
 /// contains an assignment (e.g. `y=$((x=10))`), extract the side-effect as a
 /// separate `(( x=10 ))` statement on the preceding line and leave the variable
 /// assigned to the result.
+/// bash's `${#…}` sugar collapses four different questions into one
+/// spelling family, and the old converter collapsed them further by stripping
+/// the subscript — so `${#a}` (bash: 1) and `${#a[@]}` (bash: 3) both became
+/// `$(len a)`. After DD#75 split `len` from `strlen`, each row is expressible:
+///
+/// | bash             | meaning                  | sash                |
+/// |------------------|--------------------------|---------------------|
+/// | `${#s}`          | byte length of a scalar  | `$(strlen $s)`      |
+/// | `${#a}`          | byte length of element 0 | `$(strlen ${a[0]})` |
+/// | `${#a[@]}`/`[*]` | element count            | `$(len a)`          |
+/// | `${#a[i]}`       | byte length of element i | `$(strlen ${a[i]})` |
+///
+/// The subscript decides every row but the bare one, which depends on whether
+/// the name is a collection — hence `collections`. A wrong guess there cannot
+/// pass silently: `$a` on a collection is SB5064 and `s[0]` on a scalar is
+/// SB5068, both naming the fix.
+///
+/// `None` leaves the expansion alone: `${##…}` is a prefix strip, not a
+/// length, and a non-identifier base is some other form entirely.
+fn length_expansion(rest: &str, collections: &HashSet<String>) -> Option<String> {
+    if rest.is_empty() || rest.starts_with('#') {
+        return None;
+    }
+    let (base, subscript) = match rest.split_once('[') {
+        Some((b, sub)) => (b, Some(sub.strip_suffix(']')?)),
+        None => (rest, None),
+    };
+    if base.is_empty() || !base.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(match subscript {
+        Some("@") | Some("*") => format!("$(len {})", base),
+        Some(index) => format!("$(strlen ${{{}[{}]}})", base, index),
+        None if collections.contains(base) => format!("$(strlen ${{{}[0]}})", base),
+        None => format!("$(strlen ${})", base),
+    })
+}
+
+/// The pre-pass state: what names are collections, and which constructs need
+/// a DD#97 keyword introduced.
+struct CollectionPass<'a> {
+    patches: &'a mut Vec<Patch>,
+    prefix_lines: &'a mut Vec<(usize, String)>,
+    /// Every name used as a collection anywhere in the script, for
+    /// [`length_expansion`].
+    names: HashSet<String>,
+    /// Names that already carry a keyword at this point in the source, so the
+    /// keyword is introduced once, at the first construct that mentions each.
+    declared: HashSet<String>,
+}
+
+impl CollectionPass<'_> {
+    /// DD#97: a collection is introduced by the `array`/`map` keyword, but
+    /// bash declares implicitly — `a=(x y z)`, `a[0]=x`, `mapfile -t a` and
+    /// `read -a a` all create an array with no declaration to convert. Left
+    /// alone they convert to a program that does not compile: SB5055 for the
+    /// literal, SB5068 for the subscript.
+    ///
+    /// `declare -a`/`-A` already convert to `array`/`map`
+    /// (see `convert_declaration`), so names they cover are left alone.
+    ///
+    /// Pre-order recursion is source order, which is what "first mention"
+    /// means here.
+    fn walk(&mut self, node: Node, source: &[u8]) {
+        match node.kind() {
+            "variable_assignment" => self.assignment(node, source),
+            "declaration_command" => self.declaration(node, source),
+            "command" => self.command(node, source),
+            _ => {}
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            self.walk(child, source);
+        }
+    }
+
+    /// Record `name` as a collection. Returns whether this mention is the one
+    /// that has to carry the keyword.
+    fn introduce(&mut self, name: &str) -> bool {
+        self.names.insert(name.to_string());
+        self.declared.insert(name.to_string())
+    }
+
+    /// `array a` on its own line, for the forms that cannot take the keyword
+    /// inline — a subscripted assignment or a command that fills an array.
+    fn declare_before(&mut self, node: Node, name: &str) {
+        if self.introduce(name) {
+            self.prefix_lines
+                .push((node.start_position().row, format!("array {}", name)));
+        }
+    }
+
+    /// `a=(x y z)` takes the keyword inline; `a[0]=x` needs its own line.
+    fn assignment(&mut self, node: Node, source: &[u8]) {
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let Some(target) = children.first() else {
+            return;
+        };
+        if target.kind() == "subscript" {
+            if let Some(name) = child_variable_name(*target, source) {
+                self.declare_before(node, &name);
+            }
+            return;
+        }
+        if target.kind() != "variable_name" || !children.iter().any(|c| c.kind() == "array") {
+            return;
+        }
+        let name = node_text(*target, source).to_string();
+        if self.introduce(&name) {
+            // A zero-width insert, so patches on words *inside* the literal
+            // (tilde expansion, say) still apply.
+            self.patches
+                .push(Patch::insert_at(node.start_byte(), "array "));
+        }
+    }
+
+    /// `declare -a`/`-A`, including combined flags like `-ra`, and the
+    /// `declare -a a=(x y)` form that nests the name in an assignment.
+    fn declaration(&mut self, node: Node, source: &[u8]) {
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let is_collection = children.iter().any(|c| {
+            c.kind() == "word" && {
+                let t = node_text(*c, source);
+                t.starts_with('-') && t.contains(['a', 'A'])
+            }
+        });
+        if !is_collection {
+            return;
+        }
+        for child in &children {
+            let name = match child.kind() {
+                "variable_name" => Some(node_text(*child, source).to_string()),
+                "variable_assignment" => child_variable_name(*child, source),
+                _ => None,
+            };
+            if let Some(name) = name {
+                self.introduce(&name);
+            }
+        }
+    }
+
+    /// `mapfile`/`readarray` fill an array, and so does `read -a`.
+    fn command(&mut self, node: Node, source: &[u8]) {
+        let mut cursor = node.walk();
+        let children: Vec<Node> = node.children(&mut cursor).collect();
+        let Some(name_node) = children.iter().find(|c| c.kind() == "command_name") else {
+            return;
+        };
+        let words: Vec<&Node> = children.iter().filter(|c| c.kind() == "word").collect();
+        let has_a_flag = words.iter().any(|w| {
+            let t = node_text(**w, source);
+            t.starts_with('-') && t.contains('a')
+        });
+        let fills_array = match node_text(*name_node, source) {
+            "mapfile" | "readarray" => true,
+            "read" => has_a_flag,
+            _ => return,
+        };
+        if !fills_array {
+            return;
+        }
+        for word in words {
+            let t = node_text(*word, source).to_string();
+            if !t.starts_with('-') && t.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                self.declare_before(node, &t);
+            }
+        }
+    }
+}
+
+/// The `variable_name` a node holds directly, as an owned string — the cursor
+/// a tree-sitter child search needs cannot outlive the borrow otherwise.
+fn child_variable_name(node: Node, source: &[u8]) -> Option<String> {
+    let mut cursor = node.walk();
+    let found = node
+        .children(&mut cursor)
+        .find(|n| n.kind() == "variable_name")?;
+    Some(node_text(found, source).to_string())
+}
+
 fn convert_arith_side_effect(
     node: Node,
     source: &[u8],

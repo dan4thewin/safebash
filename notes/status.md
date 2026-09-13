@@ -1,3 +1,49 @@
+## ══ STATUS (2026-09-13) — converter: `${#…}` conflation + missing DD#97 keyword ══
+
+**Journal 285.** Sweep **4304 passing, 9 skipped, 0 failing**, 0 flips
+(4292 + 12 new; convert.sh is native-only). Two task files closed.
+
+**`${#a}` and `${#a[@]}` are different questions** — element 0's byte length
+vs. the element count — and `sash-convert` answered both `$(len a)`, printing
+3 where bash prints 1. All four rows now land:
+
+| bash | means | emits |
+|---|---|---|
+| `${#s}` | byte length of a scalar | `$(strlen $s)` |
+| `${#a}` | byte length of element 0 | `$(strlen ${a[0]})` |
+| `${#a[@]}`/`[*]` | element count | `$(len a)` |
+| `${#a[i]}` | byte length of element i | `$(strlen ${a[i]})` |
+
+The bare row is the only one whose meaning depends on the variable's *type*,
+so a pre-pass collects the names bash declares as collections. **A wrong guess
+cannot pass silently** — `$a` on a collection is SB5064, `s[0]` on a scalar is
+SB5068, both naming the fix — which is the only reason a heuristic was
+acceptable here.
+
+**The filing had rotted.** It said the scalar case was "correct only by
+coincidence"; by today DD#75 had made `len` collection-only, so `$(len s)` was
+**SB4030 — output that does not compile**. The compiler split and the
+converter was never told.
+
+**A spec was holding the bug in place.** `57.13c` asserted *both* halves of
+the conflation as the expectation, so the suite was green throughout. Rewritten
+in place — same id, correct assertion, comment saying what it used to require.
+Note it produces **no flip**: it passed before and passes now, only the meaning
+changed. "0 flips" cannot see that.
+
+**Second bug, found by demanding an end-to-end demonstration.** The converted
+program would not compile, for an unrelated reason: **the converter never
+introduced the DD#97 `array`/`map` keyword**. Explicit `declare -a` worked, but
+bash declares *implicitly* — `a=(x y z)`, `a[0]=x`, `mapfile -t a`, `read -a a`
+— which is how most real scripts build an array. Three symptoms, one cause, one
+fix: introduce the keyword at first mention, inline as a zero-width insert for
+a literal (so patches on words inside it still apply), on its own line for the
+forms that cannot take it inline. Filed as
+`notes/tasks/bug-convert-no-collection-keyword.md`.
+
+Round trip now matches bash exactly (`1 3 3 1 5`). Fail-first predicted ten
+failures on revert and observed exactly those ten.
+
 ## ══ STATUS (2026-09-13) — `$(<file)` no longer execs `/usr/bin/cat` ══
 
 **Journal 284.** Sweep **4292 passing, 9 skipped, 0 failing**, 0 flips —

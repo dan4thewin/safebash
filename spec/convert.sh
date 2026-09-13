@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=88
+plan=100
 echo "1..$plan" >&3
 
 set +e
@@ -167,11 +167,14 @@ run_convert '#!/bin/bash
 echo ${1} ; for x in ${@}; do echo $x; done ; echo ${#}'
 [[ $rc = 0 && $out == *'$(arg 1)'* && $out == *'$(argv)'* && $out == *'$(($(argc) - 1))'* && -z $err ]]; chk 57.13b
 
-# 57.13c ${#x} length sugar → $(len x) (DD#75 §4; strips any subscript). ${#}
-# (arg count) is unaffected — it still maps to $(($(argc) - 1)) above.
+# 57.13c ${#x} length sugar (DD#75 §4). This spec used to assert the bug: it
+# required `${#arr}` AND `${#s}` to become `$(len …)`, which conflated the
+# element count with a byte length and — after DD#75 made `len` collection-only
+# — emitted a program that did not compile. The subscript says which question
+# is being asked; see 57.74–57.78. `${#}` (arg count) is unaffected.
 run_convert '#!/bin/bash
 arr=(a b c); echo ${#arr}; s=hi; echo ${#s}; echo ${#arr[@]}'
-[[ $rc = 0 && $out == *'$(len arr)'* && $out == *'$(len s)'* && $out != *'${#'* && -z $err ]]; chk 57.13c
+[[ $rc = 0 && $out == *'$(strlen ${arr[0]})'* && $out == *'$(strlen $s)'* && $out == *'$(len arr)'* && $out != *'${#'* && -z $err ]]; chk 57.13c
 
 # conv.f1 $@ inside a function is preserved (function-local, DD#46)
 run_convert '#!/bin/bash
@@ -535,6 +538,104 @@ printf 'aa\nbb\n' | ./.binary > out 2>>err
 rc=$?; out=$(<out); err=$(<err)
 [[ $rc = 0 && $out == '[aa]
 [bb]' && -z $err ]]; chk 57.73
+
+# --- DD#75 §4 + DD#97: the four `${#…}` questions, and the keyword ---
+
+# bash collapses four different questions into one spelling family, and the
+# converter used to collapse them further by stripping the subscript: `${#a}`
+# (bash: 1) and `${#a[@]}` (bash: 3) both became `$(len a)`. `${#s}` on a
+# scalar became `$(len s)`, which since DD#75 does not even compile.
+
+# 57.74 `${#a[@]}` / `${#a[*]}` — element count
+run_convert '#!/bin/bash
+a=(x y z)
+echo "${#a[@]}"
+echo "${#a[*]}"'
+[[ $rc = 0 && $out == *'$(len a)'* && $out != *'strlen'* && -z $err ]]; chk 57.74
+
+# 57.75 bare `${#a}` on an array — byte length of ELEMENT 0, not the count
+run_convert '#!/bin/bash
+a=(x y z)
+echo "${#a}"'
+[[ $rc = 0 && $out == *'$(strlen ${a[0]})'* && $out != *'$(len a)'* && -z $err ]]; chk 57.75
+
+# 57.76 bare `${#s}` on a scalar — byte length of the scalar
+run_convert '#!/bin/bash
+s=hello
+echo "${#s}"'
+[[ $rc = 0 && $out == *'$(strlen $s)'* && $out != *'len s'* && -z $err ]]; chk 57.76
+
+# 57.77 `${#a[i]}` — byte length of one element
+run_convert '#!/bin/bash
+a=(x yy zzz)
+echo "${#a[1]}"'
+[[ $rc = 0 && $out == *'$(strlen ${a[1]})'* && $out != *'$(len a)'* && -z $err ]]; chk 57.77
+
+# 57.78 the two spellings no longer convert to the same thing
+run_convert '#!/bin/bash
+a=(x y z)
+echo "${#a}"
+echo "${#a[@]}"'
+[[ $rc = 0 && $out == *'$(strlen ${a[0]})'* && $out == *'$(len a)'* && -z $err ]]; chk 57.78
+
+# 57.79 `${##…}` is a prefix strip, not a length — left alone
+run_convert '#!/bin/bash
+p=aabb
+echo "${p##a}"'
+[[ $rc = 0 && $out == *'${p##a}'* && $out != *'strlen'* && $out != *'len '* && -z $err ]]; chk 57.79
+
+# 57.80 DD#97: bash declares an array implicitly; the keyword is introduced
+run_convert '#!/bin/bash
+a=(x y z)'
+[[ $rc = 0 && $out == *'array a=(x y z)'* && -z $err ]]; chk 57.80
+
+# 57.81 a subscripted assignment cannot take the keyword inline
+run_convert '#!/bin/bash
+a[0]=x'
+[[ $rc = 0 && $out == *'array a'* && $out == *'a[0]=x'* && -z $err ]]; chk 57.81
+
+# 57.82 an already-declared name does not get a second keyword
+run_convert '#!/bin/bash
+declare -A m
+m[k]=v'
+[[ $rc = 0 && $out == *'map m'* && $out != *'array m'* && -z $err ]]; chk 57.82
+
+# 57.83 mapfile fills an array, so its target needs declaring too
+run_convert '#!/bin/bash
+mapfile -t c < f'
+[[ $rc = 0 && $out == *'array c'* && -z $err ]]; chk 57.83
+
+# 57.84 ROUND TRIP: all four rows compile and agree with bash (1 3 3 1 5)
+rc=-1 out="" err=""
+cat > .input.sh <<'SH'
+#!/bin/bash
+a=(x y z)
+s=hello
+echo "${#a}"
+echo "${#a[@]}"
+echo "${#a[*]}"
+echo "${#a[1]}"
+echo "${#s}"
+SH
+sash-convert .input.sh 2>err > .converted.sash
+sash .converted.sash -o .binary 2>>err
+./.binary > out 2>>err
+rc=$?; out=$(<out); err=$(<err)
+[[ $rc = 0 && $out == $'1\n3\n3\n1\n5' && -z $err ]]; chk 57.84
+
+# 57.85 ROUND TRIP: a subscripted assignment compiles and runs
+rc=-1 out="" err=""
+cat > .input.sh <<'SH'
+#!/bin/bash
+a[0]=x
+a[1]=y
+echo "${a[1]}"
+SH
+sash-convert .input.sh 2>err > .converted.sash
+sash .converted.sash -o .binary 2>>err
+./.binary > out 2>>err
+rc=$?; out=$(<out); err=$(<err)
+[[ $rc = 0 && $out = "y" && -z $err ]]; chk 57.85
 
 
 set -e
