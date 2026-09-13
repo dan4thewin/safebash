@@ -1,6 +1,6 @@
 ---
 title: sash-convert — top-level positional USES need a bless the converter can't author
-status: ready
+status: done
 priority: P2
 kind: feature
 depends: []
@@ -104,3 +104,33 @@ a conservative MANUAL marker on all reads is simpler and safe).
 - `sash-convert/src/convert.rs` (convert_simple_expansion, convert_expansion,
   splat_replace_node; the `$HOME` hoist is the model)
 - spec/argv.sh av.s5/av.n5 (the taint-on-use behaviour the converter must respect)
+
+## Resolution (2026-09-13, journal 289)
+
+Implemented as resolved, in `sash-convert/src/convert.rs`, for both the bare
+(`$1`) and braced (`${1}`) spellings:
+
+- `positional_hoist` emits `argN=$(arg N); attest argN [[ -n $argN ]]` plus a
+  `# MANUAL:` marker, and rewrites the use to `$argN`. The marker convention
+  in the codebase is `# MANUAL:`, not the `# MANUAL(sash-convert):` this task
+  proposed — matched the existing convention.
+- `convert_splat` handles `$@`/`$*`. In a for-in header it emits `$(argv 1)`
+  and inserts ` attest x [[ -n $x ]];` right after `do` (an insertion, not a
+  prefix line, so a one-line `for …; do …; done` works and no `#` comment
+  swallows the rest of the loop).
+- Identical hoists on one line are emitted once.
+
+**Three bugs were found while implementing it** — see journal 289: `$#`
+converted to `$(($(argc) - 1))` and printed −1; `for x in "$@"` converted to
+`$(argv)` and iterated argv[0] as well; and the 2nd+ expansion in a
+double-quoted string had its preceding space deleted (a tree-sitter-bash span
+quirk, affecting `$HOME` and every rewritten family).
+
+Both gates met. Specs `conv.x1`-`conv.x9` round-trip the conversion — convert,
+compile, run with `a b c`, compare to bash — and `57.13a`/`57.13b`/`conv.q1`
+were updated, two of them having pinned the old wrong output.
+
+The **command-argument splat** (`cmd "$@"`) is split out as
+`converter-splat-empty-case.md`: SB5032 postdates DG's resolution and makes
+the proposed scaffold non-compiling, and no available spelling matches bash's
+empty-argument-list behaviour. It carries a MANUAL marker, satisfying gate 1.

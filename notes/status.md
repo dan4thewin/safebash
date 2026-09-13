@@ -1,3 +1,40 @@
+## ══ STATUS (2026-09-13) — converter positionals: three bugs behind a feature ══
+
+**Journal 289.** Sweep **4352 passing, 9 skipped, 0 failing**, 0 flips.
+Two tasks closed, one filed for DG.
+
+Implementing DG's 2026-07-08 resolution on
+`converter-positional-use-needs-bless` (hoist + placeholder attest + MANUAL)
+turned up three shipped bugs in `sash-convert`:
+
+- **`$#` printed −1.** It emitted `$(($(argc) - 1))`; a command substitution
+  is not an arithmetic operand, and until journal 286 the arith parser
+  recovered it as literal `0`. The DD#58 sexpr `(argc)` is the spelling.
+- **`for x in "$@"` ran one extra iteration**, with the program's own path as
+  the first value: `$(argv)` includes argv[0] (DD#60), bash's `"$@"` is
+  argv[1:]. `conv.q1` had pinned the bug.
+- **`echo "$1 $1"` lost the space.** Stock tree-sitter-bash 0.25 gives the
+  2nd+ `simple_expansion` in a string a span including the preceding
+  whitespace, so rewriting it deleted the separator — in every expansion
+  family the converter touches, `$HOME` included.
+
+Found by **round-tripping**: `conv.x1`-`conv.x9` convert, compile the
+conversion, run it with `a b c`, and compare to bash. Every existing substring
+assertion passed the whole time — `57.13b` asserted the exact text that
+printed −1.
+
+Also closed `oracle-blessall-mapfile` (done 2026-08-20; filed in the retired
+`bless` vocabulary) and corrected the stale native-guard comment it left in
+`spec/taint.sh`.
+
+**For DG:** `converter-splat-empty-case.md` — `cmd "$@"` has no faithful
+conversion, because SB5032 (which postdates the resolution) requires stating
+the empty case and neither spelling matches bash's "run with zero arguments".
+Currently MANUAL-only.
+
+**Next up.** `docs-regex-dialect-writeup` (P2), `audit-taint-bypass-report`
+(P2, shape needs DG), `s9-manpage`/`docs/sash.1` retired flag surface.
+
 ## ══ STATUS (2026-09-13) — SB5011 told two different mistakes apart ══
 
 **Journal 288.** Sweep **4342 passing, 9 skipped, 0 failing**, 0 flips.

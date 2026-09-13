@@ -105,6 +105,15 @@ pub fn convert(source: &str, sc_findings: &[ScFinding], annotate: bool) -> Strin
         }
     }
 
+    // Two reads of the same source on one line (`echo "$1 $1"`, `echo "$HOME"
+    // "$HOME"`) each request the same hoist. Emitting it twice is valid but is
+    // pure noise, and the noise scales with how often the script reads the
+    // value. Identical text on the same target line is one line.
+    {
+        let mut seen = std::collections::HashSet::new();
+        prefix_lines.retain(|(line, text)| seen.insert((*line, text.clone())));
+    }
+
     // Apply patches to source
     apply_patches(source, &patches, &prefix_lines, annotate)
 }
@@ -142,7 +151,7 @@ fn walk_node(
             let _ = text; // pass through unchanged
         }
         "simple_expansion" => {
-            convert_simple_expansion(node, source, patches);
+            convert_simple_expansion(node, source, patches, prefix_lines);
         }
         "expansion" => {
             convert_expansion(node, source, patches, prefix_lines, collections);
@@ -901,31 +910,35 @@ fn convert_tilde_word(
     });
 }
 
-fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+fn convert_simple_expansion(
+    node: Node,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
     // DD#46/DD#60: positionals are function-local. Inside a function body
     // they are the caller's args (clean) and pass through unchanged; only
     // top-level positionals are rewritten to the argv/arg/argc builtins.
     let in_function = has_ancestor_kind(node, "function_definition");
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
+        let start = expansion_start(node, child, source);
+        let end = node.end_byte();
         match child.kind() {
             "variable_name" => {
                 let name = node_text(child, source);
                 // Numeric positional parameter: $0 → $(arg 0), $N → $(arg N).
                 if name.chars().all(|c| c.is_ascii_digit()) {
                     if !in_function {
-                        let replacement = format!("$(arg {})", name);
-                        patches.push(Patch::replace_node(node, replacement, None));
+                        patches.push(positional_hoist(start, end, name));
                     }
                 } else if let Some(env) = crate::known_externals::lookup_env_var(name) {
                     // Known env var: $HOME → $(getenv HOME) + attest
                     let var = name.to_lowercase();
-                    let _line = node.start_position().row + 1;
-                    let _getenv = format!("$(getenv {})", name);
                     // Emit: var=$(getenv NAME); attest var [[ $var =~ pattern ]]
                     patches.push(Patch {
-                        start: node.start_byte(),
-                        end: node.end_byte(),
+                        start,
+                        end,
                         replacement: format!("${}", var),
                         prefix_line: Some(format!(
                             "{}=$(getenv {}); attest {} [[ ${} =~ {} ]]",
@@ -940,22 +953,26 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
                     continue;
                 }
                 let name = node_text(child, source);
-                // DD#60: $@/$* → $(argv) (array splat); $# → user-arg count
+                // DD#60: $@/$* → $(argv 1) (array splat); $# → user-arg count
                 // ($(argc) is C argc, so subtract the program-name slot).
                 // A splat is unquoted in sash-native (DD#22), so when the
                 // splat sits inside a double-quoted string ("$@") replace
                 // the whole string to drop the quotes.
                 match name {
-                    "@" | "*" => {
-                        let target = splat_replace_node(node);
-                        patches.push(Patch::replace_node(target, "$(argv)".to_string(), None));
-                    }
+                    "@" | "*" => convert_splat(node, start, source, patches, prefix_lines),
                     "#" => {
-                        patches.push(Patch::replace_node(
-                            node,
-                            "$(($(argc) - 1))".to_string(),
-                            None,
-                        ));
+                        // `(argc)` is the DD#58 arithmetic sexpr call. The
+                        // command-substitution spelling `$(argc)` is not an
+                        // arithmetic operand: it used to parse as literal 0,
+                        // so a converted `$#` printed **-1**, and it is now a
+                        // hard SB4020.
+                        patches.push(Patch {
+                            start,
+                            end,
+                            replacement: "$(( (argc) - 1 ))".to_string(),
+                            prefix_line: None,
+                            original: None,
+                        });
                     }
                     _ => {}
                 }
@@ -963,6 +980,135 @@ fn convert_simple_expansion(node: Node, source: &[u8], patches: &mut Vec<Patch>)
             _ => {}
         }
     }
+}
+
+/// The byte offset of the `$` that opens this expansion.
+///
+/// Not `node.start_byte()`. Stock tree-sitter-bash 0.25 gives the second and
+/// later `simple_expansion` nodes inside one double-quoted string a span that
+/// includes the preceding whitespace: in `"$1 $1"` the second node spans
+/// `" $1"` and in `"$HOME $HOME"` it spans `" $HOME"`. Replacing that span
+/// deletes the separator, so `echo "$1 $1"` converted to `echo "$a$a"` — a
+/// silent change to the program's output, in every expansion family the
+/// converter rewrites.
+///
+/// The name child's own start is exact, and a `simple_expansion` is always a
+/// `$` immediately followed by the name, so step back one byte and check.
+fn expansion_start(node: Node, child: Node, source: &[u8]) -> usize {
+    let candidate = child.start_byte().saturating_sub(1);
+    if source.get(candidate) == Some(&b'$') {
+        candidate
+    } else {
+        node.start_byte()
+    }
+}
+
+/// The placeholder attest predicate. Permissive enough that the converted
+/// script builds, weak enough that leaving it in place is visibly wrong.
+const PLACEHOLDER_PREDICATE: &str = "-n";
+
+/// A top-level `$N` read, hoisted to a named variable with a placeholder
+/// attest — the `$HOME` model above.
+///
+/// `$(arg N)` is tainted (DD#60), so the inline substitution the converter
+/// used to emit could never compile: every use raised SB5020. Emitting a
+/// scaffold that builds, plus a MANUAL marker, beats emitting output whose
+/// only feedback is a diagnostic the reader has to reverse-engineer.
+fn positional_hoist(start: usize, end: usize, index: &str) -> Patch {
+    let var = format!("arg{index}");
+    Patch {
+        start,
+        end,
+        replacement: format!("${var}"),
+        prefix_line: Some(format!(
+            "{var}=$(arg {index}); attest {var} [[ {PLACEHOLDER_PREDICATE} ${var} ]]  \
+             # MANUAL: tighten this predicate — sash-convert cannot know what ${index} must look like"
+        )),
+        original: None,
+    }
+}
+
+/// `$@` / `$*`. In a for-in header this is the iterate-the-arguments idiom and
+/// converts mechanically; anywhere else it is a splat into a command, where
+/// bash's empty case has no sash spelling and the author must choose one.
+fn convert_splat(
+    node: Node,
+    start: usize,
+    source: &[u8],
+    patches: &mut Vec<Patch>,
+    prefix_lines: &mut Vec<(usize, String)>,
+) {
+    let target = splat_replace_node(node, start);
+    let Some(loop_node) = for_in_header_loop(node) else {
+        // DD#22/SB5032: `cmd @a` is rejected because an empty array would run
+        // the command with too few arguments, and the two spellings that state
+        // the empty case (`@{a:-WORD}`, `@{a:?WORD}`) both diverge from bash,
+        // which runs the command with zero arguments. There is no faithful
+        // mechanical answer, so say so rather than pick one silently.
+        prefix_lines.push((
+            node.start_position().row,
+            "# MANUAL: `\"$@\"` as a command argument — snapshot it (`argv 1 a`; \
+             `attest e in a [[ -n $e ]]`) and pass `@{a:-WORD}` or `@{a:?WORD}`, \
+             which states what an empty argument list should do (SB5032)"
+                .into(),
+        ));
+        return;
+    };
+
+    // DD#60: `$(argv)` includes argv[0], the program name. Bash's `"$@"` is
+    // argv[1:], so the slice form is the faithful one — `$(argv)` iterated one
+    // extra time, with the program's own path as the first value.
+    patches.push(Patch {
+        start: if target.id() == node.id() {
+            start
+        } else {
+            target.start_byte()
+        },
+        end: target.end_byte(),
+        replacement: "$(argv 1)".to_string(),
+        prefix_line: None,
+        original: None,
+    });
+
+    // The loop variable is tainted per-iteration (DD#60 Q5), so the body needs
+    // a leading attest. Insert it after `do` rather than as a prefix line: a
+    // one-line `for …; do …; done` has no line of its own to prefix, and a
+    // trailing `#` comment there would swallow the rest of the loop.
+    let (Some(var), Some(body)) = (
+        loop_node.child_by_field_name("variable"),
+        loop_node.child_by_field_name("body"),
+    ) else {
+        return;
+    };
+    let Some(do_tok) = body.child(0) else {
+        return;
+    };
+    let name = node_text(var, source);
+    patches.push(Patch::insert_at(
+        do_tok.end_byte(),
+        &format!(" attest {name} [[ {PLACEHOLDER_PREDICATE} ${name} ]];"),
+    ));
+    prefix_lines.push((
+        loop_node.start_position().row,
+        format!(
+            "# MANUAL: tighten the attest predicate on `{name}` — sash-convert \
+             cannot know what an argument must look like"
+        ),
+    ));
+}
+
+/// The `for_statement` this node is the word-list of, if any. A node inside the
+/// loop *body* is not in the header and returns `None`.
+fn for_in_header_loop(node: Node) -> Option<Node> {
+    let mut current = node.parent();
+    while let Some(p) = current {
+        if p.kind() == "for_statement" {
+            let body = p.child_by_field_name("body")?;
+            return (node.start_byte() < body.start_byte()).then_some(p);
+        }
+        current = p.parent();
+    }
+    None
 }
 
 fn convert_expansion(
@@ -979,16 +1125,19 @@ fn convert_expansion(
     if text.starts_with("${") && text.ends_with('}') {
         let inner = &text[2..text.len() - 1];
         let in_function = has_ancestor_kind(node, "function_definition");
+        // The braced spellings are the same positionals as the bare ones, so
+        // they take the same treatment — hoist + placeholder attest, the
+        // argv[1:] slice, and the `(argc)` sexpr. `${…}` is matched on its own
+        // text here, so its span is exact and needs no `expansion_start`.
         if inner.chars().all(|c| c.is_ascii_digit()) {
             if !in_function {
-                patches.push(Patch::replace_node(node, format!("$(arg {})", inner), None));
+                patches.push(positional_hoist(node.start_byte(), node.end_byte(), inner));
             }
             return;
         }
         if inner == "@" || inner == "*" {
             if !in_function {
-                let target = splat_replace_node(node);
-                patches.push(Patch::replace_node(target, "$(argv)".to_string(), None));
+                convert_splat(node, node.start_byte(), source, patches, prefix_lines);
             }
             return;
         }
@@ -996,7 +1145,7 @@ fn convert_expansion(
             if !in_function {
                 patches.push(Patch::replace_node(
                     node,
-                    "$(($(argc) - 1))".to_string(),
+                    "$(( (argc) - 1 ))".to_string(),
                     None,
                 ));
             }
@@ -1503,10 +1652,10 @@ fn sig_to_num(name: &str) -> Option<u8> {
 /// that contains nothing else (`"$@"`), return the enclosing string node so
 /// the replacement drops the quotes — sash-native splats are bare (DD#22).
 /// Otherwise return the node itself.
-fn splat_replace_node(node: Node) -> Node {
+fn splat_replace_node(node: Node, start: usize) -> Node {
     if let Some(parent) = node.parent() {
         if parent.kind() == "string"
-            && parent.start_byte() + 1 == node.start_byte()
+            && parent.start_byte() + 1 == start
             && parent.end_byte() == node.end_byte() + 1
         {
             return parent;

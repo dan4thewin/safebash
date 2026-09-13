@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=100
+plan=110
 echo "1..$plan" >&3
 
 set +e
@@ -157,15 +157,19 @@ diff -q .converted.sash .extracted.sash > /dev/null 2>&1
 
 # --- DD#57 / DD#60: Positional conversion ---
 
-# 57.13 top-level $1 → $(arg 1)
+# 57.13 top-level $1 → a hoisted `arg1=$(arg 1)` + placeholder attest.
+# `$(arg 1)` is tainted (DD#60), so the inline substitution this spec used to
+# assert could never compile — every use raised SB5020.
 run_convert '#!/bin/bash
 echo $1'
-[[ $rc = 0 && $out == *'$(arg 1)'* && -z $err ]]; chk 57.13a
+[[ $rc = 0 && $out == *'arg1=$(arg 1); attest arg1 [[ -n $arg1 ]]'* \
+   && $out == *'MANUAL'* && $out == *'echo $arg1'* && -z $err ]]; chk 57.13a
 
-# 57.13b ${1} → $(arg 1), ${@} → $(argv), ${#} → $(($(argc) - 1))
+# 57.13b ${1} → the same hoist, ${@} → $(argv 1), ${#} → $(( (argc) - 1 ))
 run_convert '#!/bin/bash
 echo ${1} ; for x in ${@}; do echo $x; done ; echo ${#}'
-[[ $rc = 0 && $out == *'$(arg 1)'* && $out == *'$(argv)'* && $out == *'$(($(argc) - 1))'* && -z $err ]]; chk 57.13b
+[[ $rc = 0 && $out == *'arg1=$(arg 1)'* && $out == *'$(argv 1)'* \
+   && $out == *'$(( (argc) - 1 ))'* && -z $err ]]; chk 57.13b
 
 # 57.13c ${#x} length sugar (DD#75 §4). This spec used to assert the bug: it
 # required `${#arr}` AND `${#s}` to become `$(len …)`, which conflated the
@@ -191,10 +195,16 @@ run_convert '#!/bin/bash
 n() { echo "$#"; }'
 [[ $rc = 0 && $out == *'"$#"'* && $out != *'argc'* && -z $err ]]; chk conv.f3
 
-# conv.q1 top-level for-in over "$@" → bare $(argv) (quotes dropped, DD#22)
+# conv.q1 top-level for-in over "$@" → bare $(argv 1) (quotes dropped, DD#22)
+#
+# `$(argv 1)`, not `$(argv)`: DD#60 says `$(argv)` includes argv[0], the
+# program name, while bash's "$@" is argv[1:]. The old output iterated one
+# extra time with the program's own path as the first value. The body gains a
+# leading attest because the loop variable is tainted per-iteration.
 run_convert '#!/bin/bash
 for x in "$@"; do echo "$x"; done'
-[[ $rc = 0 && $out == *'for x in $(argv)'* && -z $err ]]; chk conv.q1
+[[ $rc = 0 && $out == *'for x in $(argv 1)'* && $out != *'for x in $(argv)'* \
+   && $out == *'do attest x [[ -n $x ]];'* && $out == *'MANUAL'* && -z $err ]]; chk conv.q1
 
 # --- DD#57: Trap conversion ---
 
@@ -637,6 +647,94 @@ sash .converted.sash -o .binary 2>>err
 rc=$?; out=$(<out); err=$(<err)
 [[ $rc = 0 && $out = "y" && -z $err ]]; chk 57.85
 
+
+# ── conv.x1-x9 DD#60 positionals: converted output runs, and agrees with bash ──
+#
+# The gate on `converter-positional-use-needs-bless` is "output either compiles
+# or carries a MANUAL marker". These go further and round-trip it: convert,
+# compile the conversion, run it with `a b c`, and compare against what bash
+# printed for the same script. A substring assertion on converted text cannot
+# catch a conversion that compiles and prints the wrong thing — and three of
+# these did exactly that.
+
+# conv.x1 a hoisted positional round-trips
+run_convert '#!/bin/bash
+echo "$1"'
+converted=$out
+run_sash "$converted" a b c
+[[ $rc = 0 && $out = "a" && -z $err ]]; chk conv.x1
+
+# conv.x2 two expansions in one string keep the separator between them.
+#
+# Stock tree-sitter-bash 0.25 gives the SECOND simple_expansion inside a
+# string a span that includes the preceding whitespace ("$1 $1" → the second
+# node is " $1"), so rewriting that span silently deleted the space: this
+# printed "aa". Every expansion family the converter rewrites was affected.
+run_convert '#!/bin/bash
+echo "$1 $2"'
+converted=$out
+run_sash "$converted" a b c
+[[ $rc = 0 && $out = "a b" && -z $err ]]; chk conv.x2
+
+# conv.x3 the same source twice — separator kept, and the hoist is emitted once
+run_convert '#!/bin/bash
+echo "$1 $1"'
+converted=$out
+[[ $(grep -c 'arg1=\$(arg 1)' <<<"$converted") = 1 ]]; chk conv.x3a
+run_sash "$converted" a b c
+[[ $rc = 0 && $out = "a a" && -z $err ]]; chk conv.x3b
+
+# conv.x4 $# is the user-arg count, not -1.
+#
+# The converter emitted `$(($(argc) - 1))`. A command substitution is not an
+# arithmetic operand: it parsed as literal 0, so this printed **-1** — a
+# wrong answer, silently, since the argv trio landed. `(argc)` is the DD#58
+# arithmetic sexpr spelling.
+run_convert '#!/bin/bash
+echo "$#"'
+converted=$out
+run_sash "$converted" a b c
+[[ $rc = 0 && $out = "3" && -z $err ]]; chk conv.x4
+
+# conv.x5 for-in over "$@" iterates the USER arguments only.
+#
+# `$(argv)` includes argv[0] (DD#60), so the old output ran one extra
+# iteration with the program's own path as the first value. Bash's "$@" is
+# argv[1:] — that is `$(argv 1)`.
+run_convert '#!/bin/bash
+for x in "$@"; do echo "$x"; done'
+converted=$out
+run_sash "$converted" a b c
+[[ $rc = 0 && $out = "a
+b
+c" && -z $err ]]; chk conv.x5
+
+# conv.x6 the same, written across lines and braced, with an empty arg list
+run_convert '#!/bin/bash
+for x in "${@}"; do
+  echo "[$x]"
+done'
+converted=$out
+run_sash "$converted"
+[[ $rc = 0 && -z $out && -z $err ]]; chk conv.x6
+
+# conv.x7 a splat into a command carries a MANUAL marker — bash runs the
+# command with zero arguments when "$@" is empty, and neither sash spelling
+# that states the empty case (`@{a:-WORD}`, `@{a:?WORD}`) does that, so there
+# is no faithful mechanical conversion to emit.
+run_convert '#!/bin/bash
+/bin/echo "$@"'
+[[ $rc = 0 && $out == *'MANUAL'* && $out == *'SB5032'* && -z $err ]]; chk conv.x7
+
+# conv.x8 function-local positionals still pass through untouched (DD#46)
+run_convert '#!/bin/bash
+one() { echo "$1 $#"; }'
+[[ $rc = 0 && $out == *'echo "$1 $#"'* && $out != *'arg1='* && -z $err ]]; chk conv.x8
+
+# conv.x9 a known env var twice in one string also keeps its separator
+run_convert '#!/bin/bash
+echo "$HOME $HOME"'
+[[ $rc = 0 && $out == *'echo "$home $home"'* && -z $err ]]; chk conv.x9
 
 set -e
 tally
