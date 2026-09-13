@@ -99,7 +99,18 @@ impl SsaInst {
             SsaInst::ArgvFill { array, start } => {
                 return super::inst_handlers::handle_argv_fill(array, *start, builder, module, ctx);
             }
-            SsaInst::CaptureStart { site } => {
+            SsaInst::CaptureStart {
+                site,
+                buffered: true,
+            } => {
+                // Pure site: collect into a userspace buffer. No fd is
+                // created and no slot is used, so stdout is never redirected
+                // — `sash_write` diverts at the fd-1 boundary instead.
+                let _ = site;
+                let cap_ref = module.declare_func_in_func(externs.capture_start_buf, builder.func);
+                builder.ins().call(cap_ref, &[]);
+            }
+            SsaInst::CaptureStart { site, .. } => {
                 // Call sash_capture_start() → (saved_fd, capture_handle).
                 // Each site owns its slot pair, so an inner capture cannot
                 // overwrite the handles an enclosing one still needs.
@@ -111,8 +122,13 @@ impl SsaInst {
                 builder.def_var(saved_var, saved);
                 builder.def_var(handle_var, handle);
             }
-            SsaInst::CaptureEnd { site, target, .. } => {
-                return self.emit_capture_end(*site, target, builder, module, ctx);
+            SsaInst::CaptureEnd {
+                site,
+                buffered,
+                target,
+                ..
+            } => {
+                return self.emit_capture_end(*site, *buffered, target, builder, module, ctx);
             }
             SsaInst::Test(test_expr) => {
                 let result = lower_test_expr(
@@ -1097,6 +1113,7 @@ impl SsaInst {
     fn emit_capture_end(
         &self,
         site: u32,
+        buffered: bool,
         target: &VarRef,
         builder: &mut FunctionBuilder,
         module: &mut ObjectModule,
@@ -1104,12 +1121,18 @@ impl SsaInst {
     ) -> bool {
         let vars = &mut *ctx.vars;
         let externs = ctx.externs;
-        let (saved_var, handle_var) = ctx.capture_slots[site as usize];
-        // Call sash_capture_end(saved_fd, capture_handle) → (ptr, len)
-        let saved = builder.use_var(saved_var);
-        let handle = builder.use_var(handle_var);
-        let cap_ref = module.declare_func_in_func(externs.capture_end, builder.func);
-        let call = builder.ins().call(cap_ref, &[saved, handle]);
+        // Both paths yield (ptr, len) with trailing newlines already stripped,
+        // so only the call differs — everything downstream is shared.
+        let call = if buffered {
+            let cap_ref = module.declare_func_in_func(externs.capture_end_buf, builder.func);
+            builder.ins().call(cap_ref, &[])
+        } else {
+            let (saved_var, handle_var) = ctx.capture_slots[site as usize];
+            let saved = builder.use_var(saved_var);
+            let handle = builder.use_var(handle_var);
+            let cap_ref = module.declare_func_in_func(externs.capture_end, builder.func);
+            builder.ins().call(cap_ref, &[saved, handle])
+        };
         let ptr = builder.inst_results(call)[0];
         let len = builder.inst_results(call)[1];
         let sv = vars[&target.display()];

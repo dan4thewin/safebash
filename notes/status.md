@@ -1,3 +1,45 @@
+## ══ STATUS (2026-09-13) — a pure capture costs zero syscalls ══
+
+**`$(f)` over a pure body is now a userspace buffer.** Journal 277. Sweep
+**4107 passing, 29 skipped, 0 failing**, zero flips, +4 specs.
+
+A 1000-line captured function: **3014 syscalls → 4** (`execve`, one heap
+`mmap`, and the two writes of the program's own final `echo`). The capture
+itself is zero.
+
+**DG's purity rule, implemented in `transform/capture_purity.rs`:** a site is
+disqualified iff a fork inherits *this* capture's stdout. A body that merely
+wraps an external (`fn emit { /bin/cat f; }`) is out; a body that consumes
+external output through an inner `$( )` and yields its value with `echo` is
+**in**, because the inner capture hands its child a pipe of its own. Impure
+means: a pipeline, a redirect, or a command head containing `/` (DD#23).
+Calls recurse into function bodies; a visiting set makes a malformed program
+fall back to impure rather than hang the compiler.
+
+**The runtime is a stack, not a flag.** An impure capture can nest inside a
+pure one, and it really does redirect fd 1 — so `sash_capture_start` pushes a
+*transparent* frame that suspends diversion, popped on end. Depth is static
+(SB5037 bans recursion), so a fixed array suffices.
+
+**Journal 276's objection was right about its mechanism and wrong about the
+idea.** "The sink must stay an fd" holds only if the decision is made at
+*runtime* on the fd number. Made at emission time, the compiler already knows
+whether the body forks or redirects, and both objections evaporate.
+
+**One observable changed, deliberately and visibly.** A buffered site never
+redirects fd 1, so a pure body probing its own stdout sees the caller's real
+stdout (PIPE) where an impure one still sees a memfd (NOTPIPE). I proposed
+concealing this by disqualifying bodies that mention `/dev/stdout` or `-t`.
+DG rejected it — *"it should be observable rather than a taboo we only do
+when we won't be caught."* `cap.12` and `cap.17` pin both halves side by
+side. The exact sweep delta was two rows out of 4132.
+
+**`cap.18` was vacuous on its first draft** and passed with the mechanism it
+guards deleted. An external's writes reach fd 1 from a forked child and never
+pass through `sash_write`, so they cannot be mis-diverted either way; the
+test needs an *in-process* write to have anything to get wrong. Fail-first is
+not a formality even when the test looks like one.
+
 ## ══ STATUS (2026-09-13) — the capture sink stops being a pipe ══
 
 **The `$(f)` deadlock is fixed.** Journal 276. Sweep **4095 passing, 29

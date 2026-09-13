@@ -389,8 +389,34 @@ compile error (SB4033).
 
 ### Process management
 
-`sash_exec` — execve with absolute path (no PATH walk; DD#23). `sash_capture_start`/
-`sash_capture_end` — command substitution via pipe + fork.
+`sash_exec` — execve with absolute path (no PATH walk; DD#23).
+
+Command substitution has **two** capture paths, chosen per site at compile
+time by `transform::capture_purity`:
+
+* `sash_capture_start_buf` / `sash_capture_end_buf` — the fast path. The body
+  is *pure*: nothing in it forks onto this capture's stdout and nothing
+  rebinds fd 1. Output is collected in a userspace buffer, fd 1 is never
+  redirected, and the capture costs **zero syscalls**. `sash_write` diverts
+  at the `fd == 1` boundary.
+* `sash_capture_start` / `sash_capture_end` — the general path. fd 1 is
+  pointed at a **memfd** (not a pipe: a captured body runs in-process with
+  nobody draining, so a pipe self-deadlocks past 64 KiB). Used whenever the
+  body contains a pipeline, a redirect, or a bare external.
+
+A body may contain an external and still be pure, so long as the external's
+output arrives through an *inner* `$( )` — that child gets a pipe of its own.
+Only a fork inheriting *this* capture's stdout disqualifies a site.
+
+The runtime keeps a **stack** of capture frames, because an impure capture
+can nest inside a pure one: the memfd path pushes a transparent frame that
+suspends buffer diversion for its duration. Depth is static (SB5037 rejects
+recursion, and functions are inlined).
+
+One consequence is deliberately observable: a pure body probing its own
+stdout (`[[ -p /dev/stdout ]]`, `-t 1`) sees the caller's real stdout, while
+an impure one sees a regular file. Specs `cap.12` and `cap.17` pin both
+halves. See journal 277.
 
 ### Environment
 

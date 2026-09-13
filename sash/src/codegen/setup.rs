@@ -716,6 +716,24 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_function("sash_capture_end", Linkage::Import, &cap_end_sig)
         .expect("declare");
 
+    // sash_capture_start_buf() -> void  (pure site: no fd, no syscall)
+    let cap_start_buf_sig = module.make_signature();
+    let capture_start_buf_func = module
+        .declare_function(
+            "sash_capture_start_buf",
+            Linkage::Import,
+            &cap_start_buf_sig,
+        )
+        .expect("declare");
+
+    // sash_capture_end_buf() -> (ptr, len)
+    let mut cap_end_buf_sig = module.make_signature();
+    cap_end_buf_sig.returns.push(AbiParam::new(I64));
+    cap_end_buf_sig.returns.push(AbiParam::new(I64));
+    let capture_end_buf_func = module
+        .declare_function("sash_capture_end_buf", Linkage::Import, &cap_end_buf_sig)
+        .expect("declare");
+
     // sash_split_into_array(ptr, len, delim, terminator, table) → void
     let mut split_arr_sig = module.make_signature();
     split_arr_sig.params.push(AbiParam::new(I64)); // ptr
@@ -815,6 +833,8 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         glob_regex: glob_regex_func,
         capture_start: capture_start_func,
         capture_end: capture_end_func,
+        capture_start_buf: capture_start_buf_func,
+        capture_end_buf: capture_end_buf_func,
         split_into_array: split_into_array_func,
         map_from_array: map_from_array_func,
         read_all: read_all_func,

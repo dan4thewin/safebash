@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=52
+plan=54
 echo "1..$plan" >&3
 
 set +e
@@ -332,7 +332,9 @@ echo $(strlen $x)'
   # blocks, but is still an fd, so redirects and forked children still work.
   # Pre-fix these three hit the hang guard (rc 124), not a wrong answer.
 
-  # cap.7 in-process writes past the pipe buffer: ~450 KB from echo alone
+  # cap.7 in-process writes past the pipe buffer: ~450 KB from echo alone.
+  # This body is *pure*, so it also exercises userspace buffer growth from
+  # the 256-byte initial allocation up to ~500 KB.
   run_sash 'fn emit {
   int i=0
   while (( i < 20000 )); do
@@ -392,15 +394,26 @@ echo "[$x]"'
 two
 three]" && -z $rerr ]]; chk cap.11
 
-  # cap.12 a DELIBERATE divergence from bash, pinned. The capture sink is a
-  # regular file, so a body probing its own stdout sees a file where bash
-  # sees a pipe: bash prints PIPE here, sash prints NOTPIPE. Measured on
-  # both sides — the pipe runtime printed PIPE. It is the only observable
-  # difference the memfd introduces; `-t 1` still agrees (NOTTY both), and
-  # the alternative was an unconditional hang past 64 KiB (cap.7/cap.8).
-  # Matching bash byte-for-byte is not a project goal, so this is a choice
-  # and not a debt — pinned so that reversing it flips a spec out loud
-  # rather than letting the delta become folklore.
+  # cap.12 / cap.17 are a PAIR. They pin a split that is deliberately
+  # OBSERVABLE: what a captured body sees when it probes its own stdout
+  # depends on which capture path the compiler chose for it.
+  #
+  # A *pure* body — one that provably never forks onto this capture's
+  # stdout and never rebinds fd 1 — is collected in a userspace buffer.
+  # Nothing is redirected at all; `sash_write` diverts at the fd-1
+  # boundary. So fd 1 is still the caller's real stdout, and the body sees
+  # whatever the caller had. An *impure* body still points fd 1 at a memfd,
+  # and sees a regular file.
+  #
+  # The tempting alternative was to hide this by disqualifying any body
+  # that mentions /dev/stdout or uses -t, so the optimization would be
+  # unobservable. DG rejected that: the two paths genuinely differ, and a
+  # rule that only conceals the difference where someone might look is a
+  # taboo, not a design. Pin both halves instead, out loud.
+  #
+  # cap.12 pure body: fd 1 is the caller's stdout. Under the spec harness
+  # that is a pipe, so this prints PIPE — which is also what bash prints.
+  # (Agreeing with bash is a side effect here, not the goal.)
   run_sash 'fn emit {
   if [[ -p /dev/stdout ]]; then
     echo PIPE
@@ -411,7 +424,26 @@ three]" && -z $rerr ]]; chk cap.11
 str x=$(emit)
 attest x [[ -n $x ]]
 echo "[$x]"'
-  [[ $rc = 0 && $out = "[NOTPIPE]" && -z $rerr ]]; chk cap.12
+  [[ $rc = 0 && $out = "[PIPE]" && -z $rerr ]]; chk cap.12
+
+  # cap.17 the other half: the SAME probe in a body disqualified from the
+  # buffer by a bare external. fd 1 is a memfd, so the probe sees a regular
+  # file and prints NOTPIPE where bash prints PIPE. Adding or removing the
+  # external is what moves this answer — that is the split, stated.
+  # This half passes on both sides of the fast path (it is the behaviour
+  # every capture had before); cap.12 is the one that moved.
+  run_sash 'fn emit {
+  /bin/true
+  if [[ -p /dev/stdout ]]; then
+    echo PIPE
+  else
+    echo NOTPIPE
+  fi
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo "[$x]"'
+  [[ $rc = 0 && $out = "[NOTPIPE]" && -z $rerr ]]; chk cap.17
 
   # Nested capture: `o=$(h)` where `h` itself contains `i=$(g)`. Both
   # backends held the capture handles in ONE pair of slots, so the inner
@@ -487,6 +519,37 @@ attest a [[ -n $a ]]
 attest b [[ -n $b ]]
 echo "[$a][$b]"'
   [[ $rc = 0 && $out = "[one][two]" && -z $rerr ]]; chk cap.16
+
+  # cap.18 an IMPURE capture nested inside a PURE one, where the inner body
+  # also writes IN-PROCESS. This is the case the runtime capture stack
+  # exists for, and the in-process write is the whole point of it.
+  #
+  # The outer site is buffered, so `sash_write` is diverting fd-1 writes
+  # into memory. The inner site then genuinely redirects fd 1 to a memfd —
+  # so for its duration the diversion must stop, or the inner `echo` lands
+  # in the OUTER string and the inner capture comes back empty.
+  # `sash_capture_start` pushes a transparent frame to suspend it, and
+  # `sash_capture_end` pops.
+  #
+  # The `/bin/true` is load-bearing: it is what disqualifies `deep` from
+  # the buffer. The `echo` is equally load-bearing, and this test was
+  # VACUOUS without it — an earlier draft used `/bin/cat` as the whole
+  # inner body and passed with the suspend deleted, because an external's
+  # writes go straight to fd 1 from a forked child and never pass through
+  # `sash_write` at all. Only an in-process write can be mis-diverted.
+  run_sash 'fn deep {
+  /bin/true
+  echo inner-payload
+}
+fn outer {
+  str d=$(deep)
+  attest d [[ -n $d ]]
+  echo "outer-$d"
+}
+str o=$(outer)
+attest o [[ -n $o ]]
+echo "[$o]"'
+  [[ $rc = 0 && $out = "[outer-inner-payload]" && -z $rerr ]]; chk cap.18
 
 set -e
 tally

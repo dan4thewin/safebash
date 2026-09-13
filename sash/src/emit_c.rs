@@ -126,6 +126,8 @@ fn emit_prologue(out: &mut String) {
         "extern sash_pair sash_capture_end(i64 saved, i64 pipe_r);"
     )
     .unwrap();
+    writeln!(out, "extern void sash_capture_start_buf(void);").unwrap();
+    writeln!(out, "extern sash_pair sash_capture_end_buf(void);").unwrap();
     writeln!(out).unwrap();
     writeln!(out, "/* sash-rt C ABI (Phase 4) */").unwrap();
     writeln!(
@@ -790,7 +792,16 @@ fn emit_array_append_c(e: &mut Emit, array: &str, value: &SsaValue, types: &VarT
 /// clobber the enclosing one.
 fn emit_capture_inst(e: &mut Emit, inst: &SsaInst) -> bool {
     match inst {
-        SsaInst::CaptureStart { site } => {
+        SsaInst::CaptureStart {
+            site,
+            buffered: true,
+        } => {
+            // Pure site: a userspace buffer, no fd and no slot. See
+            // `transform::capture_purity`.
+            let _ = site;
+            writeln!(e.out, "    sash_capture_start_buf();").unwrap();
+        }
+        SsaInst::CaptureStart { site, .. } => {
             let t = e.fresh();
             writeln!(
                 e.out,
@@ -801,40 +812,54 @@ fn emit_capture_inst(e: &mut Emit, inst: &SsaInst) -> bool {
             )
             .unwrap();
         }
-        SsaInst::CaptureEnd { site, target, .. } => {
-            let t = e.fresh();
-            writeln!(
-                e.out,
-                "    sash_pair {t} = sash_capture_end(__cap_saved_{site}, __cap_handle_{site});",
-                t = t,
-                site = site
-            )
-            .unwrap();
-            let base = c_var_name(&target.name, target.version);
-            match target.var_type {
-                VarType::Int => {
-                    writeln!(
-                        e.out,
-                        "    {base} = sash_atoi({t}.ptr, {t}.len);",
-                        base = base,
-                        t = t
-                    )
-                    .unwrap();
-                }
-                VarType::String => {
-                    writeln!(
-                        e.out,
-                        "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
-                        base = base,
-                        t = t
-                    )
-                    .unwrap();
-                }
-            }
-        }
+        SsaInst::CaptureEnd {
+            site,
+            buffered,
+            target,
+            ..
+        } => emit_capture_end_c(e, *site, *buffered, target),
         _ => return false,
     }
     true
+}
+
+/// `CaptureEnd` for the C backend. Both capture paths yield a `sash_pair` of
+/// (ptr, len) with trailing newlines already stripped, so only the call
+/// differs — the assignment to the target is shared.
+fn emit_capture_end_c(e: &mut Emit, site: u32, buffered: bool, target: &VarRef) {
+    let t = e.fresh();
+    if buffered {
+        writeln!(e.out, "    sash_pair {t} = sash_capture_end_buf();", t = t).unwrap();
+    } else {
+        writeln!(
+            e.out,
+            "    sash_pair {t} = sash_capture_end(__cap_saved_{site}, __cap_handle_{site});",
+            t = t,
+            site = site
+        )
+        .unwrap();
+    }
+    let base = c_var_name(&target.name, target.version);
+    match target.var_type {
+        VarType::Int => {
+            writeln!(
+                e.out,
+                "    {base} = sash_atoi({t}.ptr, {t}.len);",
+                base = base,
+                t = t
+            )
+            .unwrap();
+        }
+        VarType::String => {
+            writeln!(
+                e.out,
+                "    {base}_ptr = {t}.ptr; {base}_len = {t}.len;",
+                base = base,
+                t = t
+            )
+            .unwrap();
+        }
+    }
 }
 
 /// Attest family sub-dispatcher for `emit_inst` (Attest / AttestAll / AttestRetag).

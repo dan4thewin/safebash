@@ -111,6 +111,14 @@ include!("inner.rs");
 
 #[no_mangle]
 pub extern "C" fn sash_write(fd: i64, buf: *const u8, len: i64) -> i64 {
+    // A *pure* `$( … )` captures into memory, not a kernel object. Every
+    // in-process write to stdout funnels through here, so this one branch is
+    // the whole diversion. See the buffered-capture block below.
+    if fd == 1 {
+        if let Some(n) = capture_buf_append(buf, len as usize) {
+            return n;
+        }
+    }
     let slice = unsafe { core::slice::from_raw_parts(buf, len as usize) };
     let fd = unsafe { BorrowedFd::borrow_raw(fd as i32) };
     match rustix::io::write(fd, slice) {
@@ -845,6 +853,139 @@ pub extern "C" fn sash_capture_drain(fd: i64) -> (*mut u8, usize) {
     }
     unsafe { *buf.add(total) = 0 };
     (buf, total)
+}
+
+// ── Buffered capture: the zero-syscall fast path ─────────────────────
+//
+// `$( … )` over a *pure* body — one that never forks a process onto the
+// capture's own stdout and never rebinds fd 1 — needs no kernel object at
+// all. The compiler proves purity (`capture_body_is_pure` in `transform/`)
+// and emits `sash_capture_start_buf`/`sash_capture_end_buf` in place of the
+// memfd pair. Because every in-process stdout write funnels through
+// `sash_write`, diverting there collects the body's entire output without a
+// single syscall: the measured cost of a 1000-line captured function drops
+// from 3014 syscalls to 0.
+//
+// The *stack* is what makes nesting correct, and it is the reason an impure
+// capture may still sit inside a pure one. An impure inner capture really
+// does point fd 1 at a memfd, so for its duration the outer buffer must stop
+// swallowing writes — otherwise the inner body's output would land in the
+// outer's string. `sash_capture_start` therefore pushes a *transparent*
+// frame that suspends diversion, and pops it on end. Equally, an external
+// command inside a pure body is only safe because it is itself inside an
+// inner `$( )` whose fork gets a pipe rather than our stdout; a bare external
+// disqualifies the site at compile time.
+//
+// Depth is static: sash inlines functions and rejects recursion (SB5037), so
+// no construct produces dynamic capture nesting. A fixed array is sufficient
+// and an overflow is a compiler bug, not user input.
+
+const CAPTURE_STACK_MAX: usize = 64;
+const CAPTURE_BUF_INITIAL: usize = 256;
+
+#[derive(Clone, Copy)]
+struct CaptureFrame {
+    /// `false` is a transparent frame: fd 1 is genuinely redirected, so
+    /// writes must reach the kernel rather than any enclosing buffer.
+    buffered: bool,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+}
+
+static mut CAPTURE_STACK: [CaptureFrame; CAPTURE_STACK_MAX] = [CaptureFrame {
+    buffered: false,
+    ptr: core::ptr::null_mut(),
+    len: 0,
+    cap: 0,
+}; CAPTURE_STACK_MAX];
+static mut CAPTURE_DEPTH: usize = 0;
+
+fn capture_push(frame: CaptureFrame) {
+    unsafe {
+        if CAPTURE_DEPTH >= CAPTURE_STACK_MAX {
+            let fd = BorrowedFd::borrow_raw(2);
+            let _ = rustix::io::write(fd, b"sash: bug: capture nesting exceeded 64\n");
+            rustix::runtime::exit_group(99);
+        }
+        CAPTURE_STACK[CAPTURE_DEPTH] = frame;
+        CAPTURE_DEPTH += 1;
+    }
+}
+
+fn capture_pop() -> CaptureFrame {
+    unsafe {
+        if CAPTURE_DEPTH == 0 {
+            let fd = BorrowedFd::borrow_raw(2);
+            let _ = rustix::io::write(fd, b"sash: bug: capture end without start\n");
+            rustix::runtime::exit_group(99);
+        }
+        CAPTURE_DEPTH -= 1;
+        CAPTURE_STACK[CAPTURE_DEPTH]
+    }
+}
+
+/// Absorb a stdout write into the active buffered capture, if there is one.
+/// `Some(n)` means the bytes were taken and the caller must not also write
+/// them; `None` means the write goes to the fd as usual — either no capture
+/// is live, or the innermost one is transparent.
+fn capture_buf_append(buf: *const u8, len: usize) -> Option<i64> {
+    unsafe {
+        if CAPTURE_DEPTH == 0 {
+            return None;
+        }
+        let frame = &mut CAPTURE_STACK[CAPTURE_DEPTH - 1];
+        if !frame.buffered {
+            return None;
+        }
+        // The `+ 1` reserves the DD#87 NUL terminator up front, so the
+        // terminating write in `sash_capture_end_buf` can never need a grow.
+        let needed = frame.len + len + 1;
+        if needed > frame.cap {
+            let mut new_cap = frame.cap;
+            while new_cap < needed {
+                new_cap *= 2;
+            }
+            let grown = sash_crealloc(frame.ptr, new_cap);
+            if grown.is_null() {
+                sash_panic_oom(new_cap);
+            }
+            frame.ptr = grown;
+            frame.cap = new_cap;
+        }
+        core::ptr::copy_nonoverlapping(buf, frame.ptr.add(frame.len), len);
+        frame.len += len;
+        Some(len as i64)
+    }
+}
+
+/// Begin a buffered capture. No syscall, no fd: stdout stays exactly as it
+/// is, and `sash_write` diverts into this frame until the matching end.
+#[no_mangle]
+pub extern "C" fn sash_capture_start_buf() {
+    let ptr = unsafe { sash_alloc(CAPTURE_BUF_INITIAL) };
+    capture_push(CaptureFrame {
+        buffered: true,
+        ptr,
+        len: 0,
+        cap: CAPTURE_BUF_INITIAL,
+    });
+}
+
+/// End a buffered capture, yielding (ptr, len) with trailing newlines
+/// stripped — the same contract as `sash_capture_drain`, so the two capture
+/// paths are interchangeable to the caller. The strip is a length decrement
+/// rather than a copy.
+#[no_mangle]
+pub extern "C" fn sash_capture_end_buf() -> (*mut u8, usize) {
+    let frame = capture_pop();
+    let mut total = frame.len;
+    // Bash strips *every* trailing newline from a command substitution.
+    while total > 0 && unsafe { *frame.ptr.add(total - 1) } == b'\n' {
+        total -= 1;
+    }
+    unsafe { *frame.ptr.add(total) = 0 };
+    (frame.ptr, total)
 }
 
 /// Like `sash_capture`, but also writes the child's exit status through
@@ -2790,6 +2931,14 @@ pub extern "C" fn sash_capture_start() -> (i64, i64) {
     // `dup2` makes fd 1 share `cap`'s file description, so the offset `cap` sees
     // also advances for writes made through fd 1 — including a forked child's.
     sash_dup2(cap, 1);
+    // Suspend any enclosing buffered capture: fd 1 now really is redirected,
+    // so writes belong to this memfd, not to the outer string.
+    capture_push(CaptureFrame {
+        buffered: false,
+        ptr: core::ptr::null_mut(),
+        len: 0,
+        cap: 0,
+    });
     (saved, cap)
 }
 
@@ -2800,6 +2949,8 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, cap_fd: i64) -> (*mut u8, 
     // Restore original stdout
     sash_dup2(saved_stdout, 1);
     sash_close(saved_stdout);
+    // Resume an enclosing buffered capture, if any.
+    capture_pop();
 
     if cap_fd < 0 {
         return (core::ptr::null_mut(), 0);

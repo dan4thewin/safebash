@@ -107,6 +107,8 @@ pub(super) struct ExternFuncs {
     pub(super) glob_regex: cranelift_module::FuncId,
     pub(super) capture_start: cranelift_module::FuncId,
     pub(super) capture_end: cranelift_module::FuncId,
+    pub(super) capture_start_buf: cranelift_module::FuncId,
+    pub(super) capture_end_buf: cranelift_module::FuncId,
     pub(super) split_into_array: cranelift_module::FuncId,
     pub(super) map_from_array: cranelift_module::FuncId,
     pub(super) read_all: cranelift_module::FuncId,

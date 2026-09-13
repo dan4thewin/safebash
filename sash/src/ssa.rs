@@ -340,13 +340,21 @@ pub enum SsaInst {
     /// Depth is always static: sash inlines functions and rejects recursion
     /// (SB5037), so numbering the sites at lowering time is sufficient and no
     /// runtime stack is needed.
-    CaptureStart { site: u32 },
+    ///
+    /// `buffered` selects the zero-syscall path: when the body provably never
+    /// forks onto this capture's stdout and never rebinds fd 1
+    /// (`transform::capture_purity`), the output is collected in a userspace
+    /// buffer and no kernel object is created at all. Otherwise stdout is
+    /// pointed at a memfd, as before.
+    CaptureStart { site: u32, buffered: bool },
     /// End capturing, assign captured output to target. `site` matches the
     /// paired `CaptureStart`. `tainted` marks a capture of *external* output
     /// (a multi-statement/pipeline `$(…)` body) — its target is tainted, unlike
     /// a `$(user_fn)` capture (clean by DD#24).
     CaptureEnd {
         site: u32,
+        /// Mirrors the paired `CaptureStart` — see there.
+        buffered: bool,
         target: VarRef,
         tainted: bool,
     },
@@ -893,7 +901,8 @@ impl SsaProgram {
         let mut max: Option<u32> = None;
         for block in self.blocks.values() {
             for inst in &block.insts {
-                if let SsaInst::CaptureStart { site } | SsaInst::CaptureEnd { site, .. } = inst {
+                if let SsaInst::CaptureStart { site, .. } | SsaInst::CaptureEnd { site, .. } = inst
+                {
                     max = Some(max.map_or(*site, |m| m.max(*site)));
                 }
             }

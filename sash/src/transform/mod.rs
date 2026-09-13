@@ -10,6 +10,7 @@
 //! 2. Command name resolution uses compile-time PATH only (DD#23)
 //! 3. Phi nodes don't merge tainted/clean values incorrectly
 
+mod capture_purity;
 mod cmd_handlers;
 mod control_flow;
 mod expr_handlers;

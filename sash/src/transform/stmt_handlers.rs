@@ -1230,9 +1230,10 @@ pub(super) fn capture_func_into(
     // One site number per capture, reserved before the body is lowered so a
     // nested capture inside the body gets a different one.
     let site = state.alloc_capture_site();
+    let buffered = super::capture_purity::capture_body_is_pure(&body, &state.function_bodies);
     ssa.block_mut(block)
         .insts
-        .push(SsaInst::CaptureStart { site });
+        .push(SsaInst::CaptureStart { site, buffered });
     // DD#81: capture uses the same args-array model as inline_function_call
     // (save_caller_args + setup_callee_args), not the old $1..$9 positional
     // model — so the callee body's `${args[i]}` / `$N` resolve to the passed
@@ -1257,6 +1258,7 @@ pub(super) fn capture_func_into(
         .insts
         .push(SsaInst::CaptureEnd {
             site,
+            buffered,
             target,
             tainted: false,
         });
@@ -1280,9 +1282,10 @@ pub(super) fn capture_body_into(
     block: BlockId,
 ) -> BlockId {
     let site = state.alloc_capture_site();
+    let buffered = super::capture_purity::capture_body_is_pure(body, &state.function_bodies);
     ssa.block_mut(block)
         .insts
-        .push(SsaInst::CaptureStart { site });
+        .push(SsaInst::CaptureStart { site, buffered });
 
     // Subshell isolation: snapshot every var the body assigns, restore after.
     let assigned = collect_assigned_vars(body);
@@ -1303,6 +1306,7 @@ pub(super) fn capture_body_into(
         .insts
         .push(SsaInst::CaptureEnd {
             site,
+            buffered,
             target,
             // Match the CST decision exactly (else the SSA-taint backstop ICEs): the
             // capture is tainted iff the body runs an external / getenv / arg / argv.
