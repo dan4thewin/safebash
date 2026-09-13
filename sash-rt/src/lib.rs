@@ -808,63 +808,42 @@ fn write_i64(buf: &mut [u8], val: i64) -> usize {
 }
 
 // ═══════════════════════════════════════════════════════════════
-// sash_capture
+// Capture
 // ═══════════════════════════════════════════════════════════════
 
+/// Drain a capture pipe to EOF and apply bash's `$( )` rule.
+///
+/// The one place that rule lives. There were four copies of this loop —
+/// `sash_capture`, `sash_capture_status`, `sash_capture_end`, and an inline
+/// one emitted by native codegen — and they had drifted into disagreeing
+/// with each other and with bash on both counts:
+///
+/// * Three read into a fixed **64 KiB** buffer and stopped. That is not even
+///   silent truncation in practice: the reader stops, the pipe fills, and the
+///   child dies of SIGPIPE, so `x=$(cat 100kb)` failed with exit 141 rather
+///   than returning a short string.
+/// * Two stripped only **one** trailing newline. Bash strips them all, so
+///   `$(printf 'a\n\n\n')` was `"a\n\n"` where bash gives `"a"`.
+///
+/// Reads via `sash_read_all`, which grows on the heap, retries `EINTR`, and
+/// aborts on a real error instead of reporting it as EOF.
+///
+/// Always returns a non-null, NUL-terminated buffer; empty output is a valid
+/// empty string rather than a null pointer the caller has to remember about.
 #[no_mangle]
-pub extern "C" fn sash_capture(
-    argv: *const *const u8,
-    envp: *const *const u8,
-    out_len: *mut i64,
-) -> *const u8 {
-    unsafe {
-        let mut pipe_fds = [0i64; 2];
-        if sash_pipe(pipe_fds.as_mut_ptr()) < 0 {
-            *out_len = 0;
-            return core::ptr::null();
-        }
-        let pipe_r = pipe_fds[0];
-        let pipe_w = pipe_fds[1];
-
-        let pid = sash_fork();
-        if pid == 0 {
-            sash_close(pipe_r);
-            sash_dup2(pipe_w, 1);
-            sash_close(pipe_w);
-            sash_exec(argv, envp);
-        } else if pid > 0 {
-            sash_close(pipe_w);
-
-            let mut result = [0u8; 65536];
-            let mut total = 0usize;
-            loop {
-                let n = sash_read(
-                    pipe_r,
-                    result.as_mut_ptr().add(total),
-                    (result.len() - total) as i64,
-                );
-                if n <= 0 {
-                    break;
-                }
-                total += n as usize;
-            }
-            sash_close(pipe_r);
-            let _ = sash_wait(pid);
-
-            if total > 0 && result[total - 1] == b'\n' {
-                total -= 1;
-            }
-
-            let buf = sash_alloc(total + 1);
-            core::ptr::copy_nonoverlapping(result.as_ptr(), buf, total);
-            *buf.add(total) = 0;
-            *out_len = total as i64;
-            buf as *const u8
-        } else {
-            *out_len = 0;
-            core::ptr::null()
-        }
+pub extern "C" fn sash_capture_drain(fd: i64) -> (*mut u8, usize) {
+    let (buf, len) = sash_read_all(fd);
+    if buf.is_null() {
+        let empty = unsafe { alloc_cstr(0) };
+        return (empty, 0);
     }
+    let mut total = len;
+    // Bash strips *every* trailing newline from a command substitution.
+    while total > 0 && unsafe { *buf.add(total - 1) } == b'\n' {
+        total -= 1;
+    }
+    unsafe { *buf.add(total) = 0 };
+    (buf, total)
 }
 
 /// Like `sash_capture`, but also writes the child's exit status through
@@ -902,29 +881,10 @@ pub extern "C" fn sash_capture_status(
         }
         sash_close(pipe_w);
 
-        let mut result = [0u8; 65536];
-        let mut total = 0usize;
-        loop {
-            let n = sash_read(
-                pipe_r,
-                result.as_mut_ptr().add(total),
-                (result.len() - total) as i64,
-            );
-            if n <= 0 {
-                break;
-            }
-            total += n as usize;
-        }
+        let (buf, total) = sash_capture_drain(pipe_r);
         sash_close(pipe_r);
         *out_status = sash_wait(pid);
 
-        if total > 0 && result[total - 1] == b'\n' {
-            total -= 1;
-        }
-
-        let buf = sash_alloc(total + 1);
-        core::ptr::copy_nonoverlapping(result.as_ptr(), buf, total);
-        *buf.add(total) = 0;
         *out_len = total as i64;
         buf as *const u8
     }
@@ -2826,35 +2786,8 @@ pub extern "C" fn sash_capture_end(saved_stdout: i64, pipe_read: i64) -> (*mut u
     sash_dup2(saved_stdout, 1);
     sash_close(saved_stdout);
 
-    // Read all captured data
-    let mut buf = [0u8; 65536];
-    let mut total = 0usize;
-    loop {
-        let n = sash_read(
-            pipe_read,
-            unsafe { buf.as_mut_ptr().add(total) },
-            (buf.len() - total) as i64,
-        );
-        if n <= 0 {
-            break;
-        }
-        total += n as usize;
-    }
+    let (ptr, total) = sash_capture_drain(pipe_read);
     sash_close(pipe_read);
-
-    // Strip trailing newlines (bash convention)
-    while total > 0 && buf[total - 1] == b'\n' {
-        total -= 1;
-    }
-
-    if total == 0 {
-        return (core::ptr::null_mut(), 0);
-    }
-
-    let ptr = unsafe { alloc_cstr(total) };
-    unsafe {
-        core::ptr::copy_nonoverlapping(buf.as_ptr(), ptr, total);
-    }
     (ptr, total)
 }
 

@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup misc
-plan=36
+plan=42
 echo "1..$plan" >&3
 
 set +e
@@ -270,6 +270,59 @@ while (( i < 30000 )) {
 }
 echo $(len a)'
   [[ $rc = 0 && $out = "30000" && -z $rerr ]]; chk hp.7
+
+# ── Command-substitution capture (sash_capture_drain) ──────────────────
+# Three runtime functions and one inline codegen path each had their own
+# copy of "drain the pipe and apply bash's $( ) rule", and the copies had
+# drifted apart and away from bash. They now share `sash_capture_drain`.
+  /usr/bin/printf 'x%.0s' $(seq 1 100000) > cap_big.txt
+
+  # cap.1 a capture larger than the 64 KiB pipe buffer returns all of it.
+  # The old fixed 64 KiB reader stopped there, so this did not truncate
+  # quietly — the reader went away, the child took SIGPIPE, and the whole
+  # program died with exit 141.
+  run_sash 'str x=$(/bin/cat cap_big.txt)
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "100000" && -z $rerr ]]; chk cap.1
+
+  # cap.2 ...and specifically not the SIGPIPE status
+  [[ $rc != 141 ]]; chk cap.2
+
+  # cap.3 bash strips EVERY trailing newline from $( ), not just one.
+  # `$(printf 'a\n\n\n')` is "a" in bash; this returned "a\n\n" (len 3).
+  run_sash 'str x=$(/bin/printf "a\n\n\n")
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "1" && -z $rerr ]]; chk cap.3
+
+  # cap.4 output that is nothing but newlines strips to the empty string
+  # rather than keeping the ones past the first
+  run_sash 'str x=$(/bin/printf "\n\n\n")
+attest x [[ -z $x ]]
+echo "[$x]"'
+  [[ $rc = 0 && $out = "[]" && -z $rerr ]]; chk cap.4
+
+  # cap.5 interior newlines are untouched — only *trailing* ones go
+  run_sash 'str x=$(/bin/printf "a\nb\n\n")
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "3" && -z $rerr ]]; chk cap.5
+
+  # cap.6 capturing a user function's stdout goes through a different
+  # runtime entry point (sash_capture_end). A NON-REGRESSION guard, not a
+  # fixed bug: that path already stripped newlines correctly, and it
+  # passes on both sides of the fix. It guards the reroute onto the shared
+  # drain. Its 64 KiB half is untestable — a function body runs in-process,
+  # so a capture past the pipe buffer deadlocks before truncation can
+  # apply (bug-fn-capture-pipe-deadlock). Hence the small payload.
+  run_sash 'fn emit {
+  /bin/printf "hello\n\n\n"
+}
+str x=$(emit)
+attest x [[ -n $x ]]
+echo $(strlen $x)'
+  [[ $rc = 0 && $out = "5" && -z $rerr ]]; chk cap.6
 
 set -e
 tally

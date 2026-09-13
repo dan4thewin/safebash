@@ -1,3 +1,59 @@
+## ══ STATUS (2026-09-13) — capture collapsed onto one drain ══
+
+**Two capture bugs fixed; a third found and blocked on DG.**
+Journal 275. Sweep **4083 passing, 29 skipped, 0 failing**, zero flips.
+
+The filing said "truncate at 64 KiB". It was worse: the reader stopped,
+the child took **SIGPIPE**, and DD#55 aborted the program with
+`/bin/cat: command failed (exit 141)` — blaming the one component that
+behaved correctly. Both backends. `$(cat 100kb)` now returns all of it.
+
+Second: bash strips **every** trailing newline from `$( )`; two copies
+stripped one, so `$(printf 'a\n\n\n')` was `a\n\n` where bash gives `a`.
+A byte-for-byte divergence in something as ordinary as capturing output.
+
+**There were four copies of that loop, not three.** `grep 65536` found a
+fourth in the *compiler* — `codegen/value_handlers.rs` emitted ~45 lines
+of inline Cranelift IR with the same two bugs, and it is the path most
+native programs take. Only `sash_capture_end` stripped newlines correctly
+(a `while` where the others had an `if`). All four now call one
+`sash_capture_drain`, built on `sash_read_all`.
+
+**`sash_capture` was dead** — declared, stored in `ExternFuncs`, never
+called, and the field carried `#[allow(dead_code)]` so the compiler had
+already noticed and been silenced. Superseded by `sash_capture_status`.
+Deleted; the slot is now `capture_drain`.
+
+### Blocked on DG
+
+**`bug-fn-capture-pipe-deadlock`** (P2) — `$(f)` on a user function hangs
+forever above 64 KiB. There is no fork: the body runs in-process writing
+to a pipe nobody drains, so its own `write` blocks waiting for a reader
+that cannot start until it returns. Pre-existing; the 64 KiB reader had
+been hiding it (the truncation on that path was *unreachable*).
+
+The fix is a fork with a semantic consequence: **A** fork the body — what
+bash does, kills the deadlock, but a forked body's variable assignments
+stop being visible to the caller, a language-surface change needing a DD.
+**B** spill to a temp file — removes the limit without changing what
+`$(f)` means (**recommended**). **D** detect and abort — not a fix, but
+turns a hang into an honest error and composes with A or B later.
+
+`cap.6` is labelled in the spec as a **non-regression guard**, not proof
+of a fix: it passes on both sides, and its payload stays under the pipe
+buffer because the larger case cannot run at all until the above lands.
+
+### Next up
+
+1. **Native** — `bug-convert-hash-array-conflation`,
+   `dollar-lt-file-forks` (blocked), `bug-emit-c-exit-skips-end`,
+   `cli-usage-and-unknown-flags` (its complexity prediction is stale:
+   `parse_cli_args` is 2/1 today, not 11/10).
+2. **The c gaps** — the 29 c-mode skips.
+3. **The test work** — `r47-validate-rs-per-rule-tests`,
+   `audit-string-keyed-builtin-dispatch`, `eliminate-ice-arms-via-types`,
+   all three still awaiting honest re-estimation.
+
 ## ══ STATUS (2026-09-13) — heap capacity settled (DD#107) ══
 
 **The heap is 256 MB, compiled in, `--heap-size=<size>` to change it.**

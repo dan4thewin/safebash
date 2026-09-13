@@ -173,15 +173,14 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         .declare_data("sash_trace_flag", Linkage::Import, true, false)
         .expect("declare sash_trace_flag");
 
-    // sash_capture(argv, envp, &out_len) -> ptr
-    let mut capture_sig = Signature::new(CallConv::SystemV);
-    capture_sig.params.push(AbiParam::new(I64)); // argv
-    capture_sig.params.push(AbiParam::new(I64)); // envp
-    capture_sig.params.push(AbiParam::new(I64)); // &out_len
-    capture_sig.returns.push(AbiParam::new(I64)); // buf ptr
-    let capture_func = module
-        .declare_function("sash_capture", Linkage::Import, &capture_sig)
-        .expect("declare sash_capture");
+    // sash_capture_drain(fd) -> (ptr, len)
+    let mut capture_drain_sig = Signature::new(CallConv::SystemV);
+    capture_drain_sig.params.push(AbiParam::new(I64)); // fd
+    capture_drain_sig.returns.push(AbiParam::new(I64)); // buf ptr
+    capture_drain_sig.returns.push(AbiParam::new(I64)); // len
+    let capture_drain_func = module
+        .declare_function("sash_capture_drain", Linkage::Import, &capture_drain_sig)
+        .expect("declare sash_capture_drain");
 
     // strlen(ptr) -> len
     let mut strlen_sig = Signature::new(CallConv::SystemV);
@@ -758,7 +757,7 @@ pub(super) fn declare_runtime_functions(module: &mut ObjectModule) -> ExternFunc
         arith_overflow: arith_overflow_func,
         run: run_func,
         getenv: getenv_func,
-        capture: capture_func,
+        capture_drain: capture_drain_func,
         strlen: strlen_func,
         default_value: default_value_func,
         fork: fork_func,

@@ -837,51 +837,16 @@ fn emit_cmdsub_exec(
 
     builder.ins().call(close_ref, &[write_fd]);
 
-    // Allocate a 64KB capture buffer on the heap
-    let buf_size = builder.ins().iconst(I64, 65536);
-    let alloc_ref = module.declare_func_in_func(externs.alloc, builder.func);
-    let alloc_call = builder.ins().call(alloc_ref, &[buf_size]);
-    let buf_ptr = builder.inst_results(alloc_call)[0];
-
-    // Read loop
-    let total_var = builder.declare_var(I64);
-    let zero_total = builder.ins().iconst(I64, 0);
-    builder.def_var(total_var, zero_total);
-
-    let read_hdr = builder.create_block();
-    let read_body = builder.create_block();
-    let read_done = builder.create_block();
-
-    builder.ins().jump(read_hdr, &[]);
-
-    // Read header: call sash_read
-    builder.switch_to_block(read_hdr);
-    let total_val = builder.use_var(total_var);
-    let remaining = builder.ins().isub(buf_size, total_val);
-    let cur_ptr = builder.ins().iadd(buf_ptr, total_val);
-    let read_ref = module.declare_func_in_func(externs.read, builder.func);
-    let read_call = builder.ins().call(read_ref, &[read_fd, cur_ptr, remaining]);
-    let n_read = builder.inst_results(read_call)[0];
-
-    let zero_check = builder.ins().iconst(I64, 0);
-    let got_data = builder
-        .ins()
-        .icmp(IntCC::SignedGreaterThan, n_read, zero_check);
-    builder.ins().brif(got_data, read_body, &[], read_done, &[]);
-
-    // Read body: accumulate
-    builder.switch_to_block(read_body);
-    builder.seal_block(read_body);
-    let new_total = builder.ins().iadd(total_val, n_read);
-    builder.def_var(total_var, new_total);
-    builder.ins().jump(read_hdr, &[]);
-
-    // Seal read_hdr after both predecessors (parent_block jump + read_body jump)
-    builder.seal_block(read_hdr);
-
-    // Read done: close read fd, wait, strip trailing newline
-    builder.switch_to_block(read_done);
-    builder.seal_block(read_done);
+    // Drain the pipe. This was ~45 lines of inline IR: a fixed 64 KiB
+    // buffer, a read loop that stopped when it was full, and a strip of a
+    // single trailing newline. Both halves were wrong — the child died of
+    // SIGPIPE once the reader stopped, and bash strips *every* trailing
+    // newline — and the same two bugs were copied across three runtime
+    // functions. `sash_capture_drain` is now the only implementation.
+    let drain_ref = module.declare_func_in_func(externs.capture_drain, builder.func);
+    let drain_call = builder.ins().call(drain_ref, &[read_fd]);
+    let buf_ptr = builder.inst_results(drain_call)[0];
+    let result_len = builder.inst_results(drain_call)[1];
 
     builder.ins().call(close_ref, &[read_fd]);
 
@@ -898,27 +863,6 @@ fn emit_cmdsub_exec(
             emit_cmdsub_abort_check(cmd_status, argv_values, builder, module, literals, externs);
         }
     }
-
-    // Strip trailing newline (shell convention for $(...))
-    let final_total = builder.use_var(total_var);
-    let one_val = builder.ins().iconst(I64, 1);
-    let last_pos = builder.ins().isub(final_total, one_val);
-    let last_byte_ptr = builder.ins().iadd(buf_ptr, last_pos);
-    let last_byte = builder.ins().load(
-        cranelift_codegen::ir::types::I8,
-        MemFlags::new(),
-        last_byte_ptr,
-        0,
-    );
-    let last_byte_i64 = builder.ins().uextend(I64, last_byte);
-    let newline = builder.ins().iconst(I64, 10);
-    let is_newline = builder.ins().icmp(IntCC::Equal, last_byte_i64, newline);
-    let stripped_len = builder.ins().isub(final_total, one_val);
-    let result_len = builder.ins().select(is_newline, stripped_len, final_total);
-
-    // Handle empty output (total=0): don't try to strip
-    let is_empty = builder.ins().icmp(IntCC::Equal, final_total, zero_total);
-    let result_len = builder.ins().select(is_empty, zero_total, result_len);
 
     (buf_ptr, result_len)
 }

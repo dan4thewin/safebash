@@ -47,8 +47,7 @@ pub(super) struct ExternFuncs {
     pub(super) arith_overflow: cranelift_module::FuncId,
     pub(super) run: cranelift_module::FuncId,
     pub(super) getenv: cranelift_module::FuncId,
-    #[allow(dead_code)]
-    pub(super) capture: cranelift_module::FuncId,
+    pub(super) capture_drain: cranelift_module::FuncId,
     pub(super) strlen: cranelift_module::FuncId,
     pub(super) default_value: cranelift_module::FuncId,
     // Composable process primitives (Design Decision #14)
