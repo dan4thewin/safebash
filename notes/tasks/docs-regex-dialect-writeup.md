@@ -1,6 +1,6 @@
 ---
 title: "docs: full write-up of the regex dialect (man page)"
-status: ready
+status: done
 priority: P2
 kind: docs
 depends: []
@@ -54,3 +54,57 @@ the DDs.
 - `notes/tasks/bug-regex-blind-past-interior-nul.md` — a real bug (wrong
   answers past an interior NUL), not a dialect question
 - `notes/tasks/limitation-regex-stops-at-interior-nul.md`
+
+## Closed 2026-09-13
+
+`docs/sash.1` now has a `.SH REGULAR EXPRESSIONS` section between TEST
+OPERATORS and SASH-CONVERT. Every claim in it was measured against the
+binary, and none was transcribed from a DD.
+
+All five gates met:
+
+- **engine + posture** — states Plan 9 / Rob Pike, deliberate, Thompson
+  NFA (linear match time, no catastrophic backtracking), and that POSIX
+  compliance is not a goal.
+- **supported surface** — `{n}` / `{n,m}` / `{n,}` with each bound capped
+  at 32, and `\d \D \w \W \s \S`. Also `\xNN`, which the task did not
+  list but DD#63 adds and the binary accepts.
+- **divergences with their spelling** — `\-` for a literal hyphen in a
+  bracket (`[ab-]` is rejected). `\{` and `\[` are not called out
+  separately: measured, a backslash makes *any* metacharacter literal, so
+  the section states the general rule instead of three instances of it.
+- **unsupported surface** — lookahead, lookbehind, non-capturing groups,
+  backreferences, POSIX character classes, `\b`, counted repetition of a
+  group, empty alternatives, case-insensitive matching.
+- **verified against the binary** — this gate is what earned the section
+  its content. Probing found three things the DDs do not say:
+
+## What the probing turned up
+
+Running the dialect against the binary rather than reading about it found
+**two bugs and one lexer collision**, all now fixed or filed:
+
+1. **A heap overflow in `{n,m}`** reachable from a runtime pattern —
+   journal 290, fixed.
+2. **`(ab){2}` silently matched the wrong thing** — journal 290, now
+   rejected; `notes/tasks/regex-counted-group.md` for DG.
+3. **Every non-ASCII literal in sash source was double-encoded** —
+   journal 291, fixed. Found because `café =~ ^caf.$` fit neither the byte
+   model nor the character model.
+4. **`[[ $s =~ ^((a))$ ]]` is rejected** as "expected `]]`" —
+   `notes/tasks/regex-literal-double-paren.md`, filed.
+
+## Corrections to the source material
+
+- DD#39's top section still says there is no `{n,m}`. There is; the
+  clarification further down is the current text. Not edited here (a DD
+  is a record, and the 2026-09-11 clarification already supersedes it),
+  but a reader of the top section alone will be misled.
+- The task's "Source material" note that `regexec.c` and `regaux.c` are
+  byte-identical to upstream still holds. `regcomp.c` now diverges in one
+  more place than the note lists: besides `parsecounted` and
+  `bldshortclass`, it has the `newinst` bounds check and the group-repeat
+  rejection from journal 290.
+- **`lib9.h` is the third modified file** and the note omits it. Its
+  `chartorune` is an ASCII-only stub, which is *the* reason the dialect is
+  byte-oriented — the single most user-visible divergence in the section.

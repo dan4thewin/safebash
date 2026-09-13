@@ -1,3 +1,42 @@
+## ══ STATUS (2026-09-13) — the regex man-page section (and what writing it found) ══
+
+**Journal 292.** `docs-regex-dialect-writeup` **done**. Sweep unchanged at
+**4398 passing, 9 skipped, 0 failing**.
+
+`docs/sash.1` now has `.SH REGULAR EXPRESSIONS` between TEST OPERATORS and
+SASH-CONVERT. All five gates met; every claim measured against the binary,
+none transcribed from a DD.
+
+**The task's gate — "each claim is verified against the binary, not against
+DD text" — found four defects:**
+
+1. the `{n,m}` heap overflow (journal 290, fixed);
+2. `(ab){2}` silently matching the wrong thing (290, now rejected);
+3. every non-ASCII literal double-encoded (291, fixed);
+4. `[[ $s =~ ^((a))$ ]]` rejected as "expected `]]`" — a literal `((` goes
+   to the arithmetic lexer. **Filed:
+   `notes/tasks/regex-literal-double-paren.md`.**
+
+**Corrections to the source material** (recorded in the closed task):
+DD#39's top section still denies `{n,m}` exists; the task's own note on
+which files diverge from upstream Plan 9 **omits `lib9.h`**, whose
+eight-line ASCII-only `chartorune` stub is the reason the dialect is
+byte-oriented — the most user-visible divergence in the section.
+
+**One divergence is not like the others:** every unsupported construct is
+*rejected* (SB5023) except `[[:alpha:]]`, which is read as an ordinary
+bracket expression plus the literal `:]` and so **silently fails to
+match**. Called out explicitly in the man page.
+
+**Open for DG (2 new):** `regex-counted-group.md` (keep the `(ab){2}`
+rejection, or support it by replaying a token span) and
+`regex-literal-double-paren.md` (the diagnostic misdiagnoses regardless;
+whether to *accept* `((` in a bare word is the surface question).
+
+**Next:** back to the `notes/tasks/` queue — `audit-taint-bypass-report`
+(P2; its "Shape (to design with DG)" section is an explicit design fork,
+to be deferred not decided), then the P3 converter cohort.
+
 ## ══ STATUS (2026-09-13) — `echo café` printed `cafÃ©` ══
 
 **Journal 291.** Sweep **4398 passing, 9 skipped, 0 failing**, 0 flips.

@@ -342,6 +342,187 @@ write
 not
 .RB \[dq] [[\ $a\ \-eq\ $b\ ]] \[dq].
 .
+.SH REGULAR EXPRESSIONS
+Regexes appear in
+.RB \[dq] "[[ $v =~ RE ]]" \[dq],
+in the
+.BR match ,
+.BR sub ,
+and
+.B gsub
+builtins, and in the
+.RB \[dq] s/RE/SUB/ \[dq]
+sugar.
+.PP
+The engine is
+.BR "Rob Pike's Plan\ 9 regexp" ,
+used deliberately. It is a Thompson NFA: no backtracking, so match time is
+linear in the subject and no pattern can be made to blow up exponentially.
+.B POSIX compliance is not a goal.
+A handful of additions have been made for convenience, not for conformance.
+Expect a close relative of bash's
+.BR =~ ,
+not a drop\-in replacement; the differences are listed below and are
+intentional.
+.SS Core
+.TP
+.B . * + ? | ( ) ^ $
+As in POSIX ERE.
+.B .
+matches any byte except newline;
+.B ^
+and
+.B $
+anchor at the subject's start and end.
+.TP
+.B [abc] [a\-c] [^abc]
+Bracket expressions, with ranges and negation.
+.TP
+.B \e.
+A backslash makes any metacharacter literal.
+.SS Additions
+These are
+.B not
+in POSIX ERE and are
+.B not
+accepted by
+.BR bash (1).
+.TP
+.BI { n } "\fR, \fP" { n , m } "\fR, \fP" { n ,}
+Counted repetition of the preceding atom. Each bound is at most
+.BR 32 ;
+a larger one is rejected
+.RB ( "repetition count too large" ).
+The open form
+.BI { n ,}
+is unbounded above.
+.TP
+.B \ed \eD \ew \eW \es \eS
+Digit, word, and whitespace classes, and their complements.
+.TP
+.BI \ex NN
+The byte with hex value
+.IR NN ,
+exactly two digits. Lets a pattern hold any literal byte \(em a delimiter, a
+space, a control character \(em without quoting gymnastics. A non\-hex digit
+after
+.B \ex
+is an error.
+.SS Divergences from bash
+.TP
+.B Matching is byte\-oriented.
+.B .
+consumes one byte, not one character, so
+.RB \[dq] "é =~ ^.$" \[dq]
+is false and
+.RB \[dq] "é =~ ^..$" \[dq]
+is true.
+.BR bash (1)
+in a UTF\-8 locale matches whole characters. Literal non\-ASCII text in a
+pattern still works, because both sides are the same bytes. This matches
+.BR strlen ,
+which is likewise a byte count.
+.TP
+.B POSIX character classes are not supported.
+.RB \[dq] [[:alpha:]] \[dq]
+is read as an ordinary bracket expression followed by the literal text
+.RB \[dq] :] \[dq],
+so it
+.B silently fails to match
+rather than being rejected. Use
+.B \ew
+or an explicit range. This is the one unsupported construct that does not
+announce itself.
+.TP
+.B No backreferences in a pattern.
+.B \e1
+is the literal character
+.BR 1 ,
+so
+.RB \[dq] "(a)\e1" \[dq]
+matches
+.RB \[dq] a1 \[dq],
+not
+.RB \[dq] aa \[dq].
+.RB ( sub
+and
+.B gsub
+do take
+.B \e0
+\-
+.B \e9
+in the
+.IR replacement ;
+that is a different position.)
+.TP
+.B No lookahead, lookbehind, or non\-capturing groups.
+.RB \[dq] (?= \[dq],
+.RB \[dq] (?<= \[dq],
+and
+.RB \[dq] (?: \[dq]
+are rejected
+.RB ( SB5023 ).
+.TP
+.B No word boundary.
+.B \eb
+is the literal character
+.BR b .
+.TP
+.B A literal hyphen in a bracket must be escaped.
+Write
+.RB \[dq] [ab\e\-] \[dq];
+.RB \[dq] [ab\-] \[dq]
+is rejected as a malformed range.
+.TP
+.B No counted repetition of a group.
+.RB \[dq] (ab){2} \[dq]
+is rejected. Write
+.RB \[dq] (ab)(ab) \[dq].
+.TP
+.B No empty alternative.
+.RB \[dq] (a|) \[dq]
+is rejected;
+.BR bash (1)
+accepts it. Write
+.RB \[dq] (a)? \[dq].
+.TP
+.B No case\-insensitive matching.
+The engine has no
+.BR REG_ICASE .
+Fold both sides instead:
+.RB \[dq] "match $(tolower $x) $(tolower $pat)" \[dq].
+.SS Quoting
+The pattern is an ordinary argument \(em one word \(em not a specially parsed
+field. Quote it whenever it contains characters the shell would otherwise
+take: a space, a
+.RB \[dq] # \[dq],
+or a doubled
+.RB \[dq] (( \[dq]
+\(em which an unquoted pattern hands to the arithmetic lexer, so
+.RB \[dq] "=~ ^((a))$" \[dq]
+is rejected with
+.RB \[dq] "expected ']]'" \[dq]
+while
+.RB \[dq] "=~ '^((a))$'" \[dq]
+is fine. A single
+.RB \[dq] ( \[dq]
+needs no quoting.
+.RB \[dq] "=~ '^(a|b)$'" \[dq]
+is literal,
+.RB \[dq] "=~ \[dq]^$p$\[dq]" \[dq]
+interpolates, and
+.RB \[dq] "=~ $p" \[dq]
+takes the whole pattern from a variable. Single quotes are the usual choice,
+since a regex is full of characters that mean something to both languages.
+.SS Validation
+A pattern that is a compile\-time literal is compiled by the same engine
+during compilation, so a malformed one is a
+.B compile
+error
+.RB ( SB5023 ).
+A pattern that comes from a variable is compiled at run time; a malformed one
+then exits with status 2.
+.
 .SH SASH-CONVERT
 .B sash\-convert
 .RB [ \-\-annotate ]
