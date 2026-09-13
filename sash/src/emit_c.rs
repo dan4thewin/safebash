@@ -3495,7 +3495,19 @@ fn emit_pipeline_stage(
         BuiltinCmd::Noop => {
             writeln!(e.out, "        sash_exit(0);").unwrap();
         }
-        _ => emit_pipeline_exec(e, name, args, types),
+        // DD#14: a compound command (fn body, `{ }` group, loop) used as a
+        // pipeline stage. The transform lowers the body into its own SSA block
+        // and names the stage `__compound_<id>`; native jumps to that block in
+        // the child (inst_handlers.rs:170). The C emitter already lays every
+        // SSA block down as a `_blk_<id>:` label inside the same function, so
+        // the child branch is a plain `goto`. Without this the stage name fell
+        // through to `emit_pipeline_exec` and became
+        // `sash_exec("__compound_2", …)`, which the runtime rejects with
+        // `sash: bug: bare command passed to sash_exec`.
+        _ => match name.strip_prefix("__compound_") {
+            Some(id) => writeln!(e.out, "        goto _blk_{};", id).unwrap(),
+            None => emit_pipeline_exec(e, name, args, types),
+        },
     }
 
     writeln!(e.out, "    }}").unwrap();
@@ -3970,10 +3982,16 @@ fn emit_readline_body(e: &mut Emit, target: &VarRef, fd: i64) {
     let base = c_var_name(&target.name, target.version);
     writeln!(e.out, "    {0}_ptr = {1}.ptr;", base, t).unwrap();
     writeln!(e.out, "    {0}_len = {1}.len;", base, t).unwrap();
-    // EOF iff returned ptr is NULL.
+    // EOF iff the returned ptr is NULL — the runtime distinguishes true EOF
+    // (NULL, 0) from an empty line (non-NULL, 0). This is the *loop
+    // condition*: `while readline x` branches on __test_result, so assigning
+    // __exit_status here left the condition reading whatever the previous
+    // statement had set, and the loop never noticed EOF at all — a body that
+    // survived an empty read spun forever. Mirrors native
+    // (codegen/dispatch.rs:emit_readline_body).
     writeln!(
         e.out,
-        "    __exit_status = ({t}.ptr == (const char*)0) ? 1 : 0;",
+        "    __test_result = ({t}.ptr != (const char*)0) ? 1 : 0;",
         t = t
     )
     .unwrap();

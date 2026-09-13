@@ -1399,9 +1399,15 @@ fn emit_readline_body(
     let sv = &ctx.vars[&target.display()];
     builder.def_var(sv.str_ptr(), ptr);
     builder.def_var(sv.str_len(), len);
-    // Set test_result: 1 if we got data (len > 0), 0 if EOF
+    // Set test_result: 1 if a line was read, 0 at EOF. The runtime
+    // distinguishes the two by the *pointer*, not the length: true EOF
+    // returns (NULL, 0) while an empty line returns (non-NULL, 0)
+    // (sash-rt/src/lib.rs:1482). Testing `len > 0` treated a blank line as
+    // EOF and silently truncated the input at it, which contradicts DD#99 —
+    // `readline` is byte-for-byte `IFS= read -r`, and that succeeds on an
+    // empty line.
     let zero = builder.ins().iconst(I64, 0);
-    let got_data = builder.ins().icmp(IntCC::SignedGreaterThan, len, zero);
+    let got_data = builder.ins().icmp(IntCC::NotEqual, ptr, zero);
     let result = builder.ins().uextend(I64, got_data);
     builder.def_var(ctx.test_result_var, result);
 }

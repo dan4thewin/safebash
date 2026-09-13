@@ -1,3 +1,64 @@
+## ══ STATUS (2026-09-13) — compound stages in c; a blank line ate the input ══
+
+**Journal 280.** Sweep **4199 passing, 26 skipped, 0 failing**. All 29 flips
+intended (two un-gates recovered, 27 new tests); **+29**, skips down from 28.
+
+| # | bug | scope | was |
+|---|---|---|---|
+| 7 | compound pipeline stage unimplemented | c backend | `fn f { … } \| cat` → `sash: bug: bare command passed to sash_exec`, rc 127/141 |
+| 8 | `readline` EOF written to `__exit_status` | c backend | the loop branches on `__test_result` → condition constant → **infinite loop**, not the filed "extra iteration" |
+| 9 | `readline` EOF tested with `len > 0` | **native** | a blank line read as EOF → **silent truncation** of the input at the first one |
+
+**Bug 9 is the serious one.** `sash_read_line` returns `(NULL, 0)` at true EOF
+but `(non-NULL, 0)` for an empty line, and says so in a comment. Native tested
+the *length*, which cannot tell them apart:
+
+```
+printf "a\n\nb\n" | while IFS= read -r x; do echo "[$x]"; done
+bash:   [a] [] [b]
+native: [a]            ← exit 0, no diagnostic
+```
+
+**DD#99 settles it without asking DG:** the DD fixes `readline` as
+*byte-for-byte* `IFS= read -r`, in those words, and that succeeds on an empty
+line. Decision-tree step 1. Both backends now test `ptr != NULL` and both match
+bash.
+
+Backend-vs-backend parity could not have caught this: **both** backends were
+wrong, in opposite directions, in the same six lines — native stopped a line
+early, c never stopped. Bash was the only oracle, and only for an input (an
+interior blank line) that no spec contained.
+
+Bug 7 was three lines: the c emitter already lays every SSA block down as a
+`_blk_<id>:` label, so native's `jump(compound_cl)` has an exact analogue in
+`goto _blk_<id>`. Finding bug 8 cost the rest of the session — it surfaced only
+because un-gating `pipe_functions.sh` left one straggler, and the straggler was
+not about compound stages at all.
+
+**Two more stale native-only guards** (`wordsplit.sh:rl.7`,
+`commands.sh:14.46`), both gated on bug 8, both un-gated. That is **five** in
+three sessions. `14.46`'s comment named the mechanism — "does not terminate
+under the c backend" — so the hang was documented in the repo for as long as it
+existed. **A skip is a silent bug report**: it suppresses the evidence that
+would refute it, so it never expires. When a guard encodes a known defect, the
+defect needs a task and the guard should point at it.
+
+**Un-gated:** `pipe_functions.sh` (11), `rl.7`, `14.46`. **New specs:**
+`pf.12`–`pf.15`, `rt99.15`–`rt99.18` (`rt99.18` is labelled a control — it
+passed unfixed, because the one-shot `readline` never consulted the predicate).
+
+Remaining native-only spec files are all legitimate: `convert.sh` (88,
+backend-independent), `trace.sh` (3, `--trace` is native-only by design).
+
+**For DG:**
+- `fail-open-todo-arms-in-emit-c` (P1) — still awaiting a call. The `_ =>` arm
+  emits a C *comment* for an unimplemented builtin, so the statement silently
+  vanishes. Caused three of the nine bugs.
+- **New:** `spec/wordsplit.sh` declares `plan=118` and runs 123. Pre-existing
+  and unrelated, so untouched — but `plan` exists to catch silently lost tests
+  and a stale one has stopped doing that. Suggest a sweep of every spec file's
+  plan count as its own task.
+
 ## ══ STATUS (2026-09-13) — END routing, DD#89 bare exit, brace un-gated ══
 
 **Journal 279.** Sweep **4170 passing, 28 skipped, 0 failing**. One flip, the

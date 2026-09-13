@@ -528,15 +528,12 @@ echo ok'
 [[ $rc = 0 && $out = "ok" && -z $err ]]; chk rl.6
 
 # rl.7 works as a `while` condition, one line per iteration.
-# Native only: the identical `while read v` shape also fails in c, so this is
-# a pre-existing backend gap, not a `readline` one.
-if in_modes native; then
-    run_sash 'printf "a\nb\n" | while readline v { attest v p?; echo "[$v]" }'
-    [[ $rc = 0 && $out = "[a]
+# Both backends. This was native-only because the c emitter wrote the EOF
+# result to __exit_status while the loop condition branches on __test_result,
+# so the condition read a stale value and the loop never ended.
+run_sash 'printf "a\nb\n" | while readline v { attest v p?; echo "[$v]" }'
+[[ $rc = 0 && $out = "[a]
 [b]" && -z $err ]]; chk rl.7
-else
-    skip_chk rl.7
-fi
 
 # rl.8 takes no flags — it is a distinct construct, not a flag surface
 run_sash 'echo hi | readline -r v

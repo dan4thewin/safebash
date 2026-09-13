@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup commands
-plan=88
+plan=92
 echo "1..$plan" >&3
 
 set +e
@@ -462,20 +462,13 @@ if read ARR < wl5.txt {
 # 14.46 control: `while readline v` is the replacement and still compiles.
 # The redirect goes on the producing side — `while readline v < f` re-opens
 # `f` every iteration and never advances, in sash exactly as in bash.
-# native only, matching wordsplit.sh rl.7: a `while readline` consumer fed by
-# a non-function producer does not terminate under the c backend. That is a
-# pre-existing backend gap (the identical `while read v` shape fails the same
-# way), not something this check introduced.
-if in_modes native; then
-    run_sash '/usr/bin/printf "a\nb\n" | while readline v {
+# Both backends, as of the __test_result fix (see wordsplit.sh rl.7).
+run_sash '/usr/bin/printf "a\nb\n" | while readline v {
   attest v [[ $v =~ ^.*$ ]]
   echo "got $v"
 }'
-    [[ $rc = 0 && $out = "got a
+[[ $rc = 0 && $out = "got a
 got b" && -z $rerr ]]; chk 14.46
-else
-    skip_chk 14.46
-fi
 
 # ── DD#99: the retired read/mapfile surfaces have no implementation ──
 #
@@ -558,6 +551,50 @@ run_sash 'array a=()
 attest x in a [[ -n $x ]]
 echo "${a[0]}-${a[1]}"'
 [[ $rc = 0 && $out = "p-q" && -z $err ]]; chk rt99.14
+
+# ── DD#99: an empty line is a value, not EOF ──────────────────────────
+#
+# DD#99 fixes `readline` as byte-for-byte `IFS= read -r`, and that succeeds on
+# an empty line, binding "". The runtime already draws the line: sash_read_line
+# returns (NULL, 0) at true EOF but (non-NULL, 0) for an empty line. Both
+# backends used to ignore the pointer — native tested `len > 0` and so treated
+# an interior blank line as EOF, silently truncating the input there; c wrote
+# the answer to the wrong variable entirely and never stopped. Bash is the
+# oracle for all four.
+
+# rt99.15 an interior empty line is bound and the loop continues
+run_sash '/usr/bin/printf "a\n\nb\n" | while readline v {
+  attest v [[ -z $v || -n $v ]]
+  echo "[$v]"
+}'
+[[ $rc = 0 && $out = "[a]
+[]
+[b]" && -z $rerr ]]; chk rt99.15
+
+# rt99.16 …including a leading one
+run_sash '/usr/bin/printf "\nx\n" | while readline v {
+  attest v [[ -z $v || -n $v ]]
+  echo "[$v]"
+}'
+[[ $rc = 0 && $out = "[]
+[x]" && -z $rerr ]]; chk rt99.16
+
+# rt99.17 the loop still ends at true EOF — three lines, three iterations
+run_sash 'int n=0
+/usr/bin/printf "a\n\nb\n" | while readline v {
+  attest v [[ -z $v || -n $v ]]
+  (( n = n + 1 ))
+}
+echo "n=$n"'
+[[ $rc = 0 && $out = "n=3" && -z $rerr ]]; chk rt99.17
+
+# rt99.18 control: the one-shot `readline` never consulted the EOF predicate,
+# so it bound "" correctly even before the fix. It pins that down.
+printf '\nsecond\n' > rt99.blank
+run_sash 'readline x < rt99.blank
+attest x [[ -z $x || -n $x ]]
+echo "[$x]"'
+[[ $rc = 0 && $out = "[]" && -z $err ]]; chk rt99.18
 
 
 set -e

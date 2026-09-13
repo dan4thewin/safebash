@@ -1,6 +1,6 @@
 ---
 title: "c backend: implement compound (group/for/if/function) pipeline stages"
-status: ready
+status: done
 priority: P2
 kind: bug
 depends: []
@@ -59,3 +59,28 @@ c/janet gap. `spec/pipe_functions.sh` is therefore **native-only guarded**
 The janet backend is removed. This task was filed against both
 backends; the **c** half is still real and still open — it shows up
 as one of the c-mode skips. The janet half is gone, not fixed.
+
+
+## Completed 2026-09-13
+
+The c emitter now mirrors native. `emit_pipeline_stage` (`sash/src/emit_c.rs`)
+falls through to `emit_pipeline_exec` only when the stage name is a real
+command; a `__compound_<id>` name instead emits `goto _blk_<id>;` inside the
+forked child. That works because the c backend already lays every SSA block
+down as a `_blk_<id>:` label in the same function, so native's
+`builder.ins().jump(compound_cl, &[])` (`codegen/inst_handlers.rs:170`) has an
+exact one-line analogue — the whole fix is three lines.
+
+Before: `sash_exec("__compound_2", …)` → `sash: bug: bare command passed to
+sash_exec`, rc 127 for a function stage and 141 for a `{ }` group.
+
+Verified at parity with native across function-as-first-stage,
+function-as-second-stage, `{ }` group, loop-inside-function, two adjacent
+compound stages, compound-in-the-middle-of-three, nonzero exit propagation,
+and splat argv on either side of the compound stage (the `goto` jumps *out of*
+the child's block rather than into a VLA scope, so the
+`bug-emit-c-splat-vla-jump` hazard does not apply).
+
+`spec/pipe_functions.sh` is un-gated as a result: 11 existing tests plus
+`pf.12`–`pf.15` now run in both backends. Fail-first: reverting `emit_c.rs`
+fails all 15 in c and none in native.

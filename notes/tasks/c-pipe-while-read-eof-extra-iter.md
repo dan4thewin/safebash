@@ -1,6 +1,6 @@
 ---
 title: "c backend: for-in-cmdsubst (pipe-while-read) does an extra empty iteration at EOF"
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -58,3 +58,23 @@ extra-iteration still exists behind some still-legal construct, or the
 construct that exposed it is gone and the task is void. Deciding which needs
 a fresh repro, not a status flip. Left `ready` with the premise flagged so
 the next reader does not re-run a repro that cannot compile.
+
+
+## Completed 2026-09-13 — the premise was understated, not obsolete
+
+Grooming had marked this task's repro obsolete (SB5020 now rejects
+`for x in $(cmd)`). Un-gating `spec/pipe_functions.sh` produced a fresh one,
+and the real defect was worse than "an extra empty iteration":
+
+`emit_readline_body` (`sash/src/emit_c.rs`) wrote the EOF answer to
+`__exit_status`, but a `while readline v` loop branches on `__test_result`.
+The condition therefore read whatever the *previous* statement had left there.
+It was never a trailing iteration — EOF was simply never observed, and a body
+that survived an empty read spun forever. The filed symptom appeared only
+because `attest` aborted on the first empty value and stopped the loop by
+accident; with an always-true gate the program hangs.
+
+Fixed by setting `__test_result` from the runtime's actual EOF signal (see
+`notes/journal/280-*.md` — the predicate itself was also wrong, in *both*
+backends). `spec/wordsplit.sh:rl.7` and `spec/commands.sh:14.46`, both gated
+native-only on this bug, are un-gated.

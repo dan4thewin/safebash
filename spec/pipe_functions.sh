@@ -3,15 +3,15 @@
 # pipeline). A `Command` stage that names a known function must run as a forked
 # compound child (like a `{ }` group), not be exec'd as a bare command.
 #
-# NATIVE-ONLY: compound pipeline stages (DD#14) are native-only infra; the
-# c backend has no compound-pipeline-stage support at all (a group stage
-# already fails there).
-# Same native-only pattern as brace.sh / convert.sh.
+# Both backends. This was native-only while the c backend had no
+# compound-pipeline-stage support: a `__compound_<id>` stage name fell through
+# to `sash_exec("__compound_2", …)` and died with `sash: bug: bare command
+# passed to sash_exec`. The c emitter now jumps to the compound block's
+# `_blk_<id>:` label in the forked child, mirroring native's jump.
 set -eu
 . common.sh
 setup pipe_functions
-[[ ${SASH_MODE:-native} != native ]] && exit 0
-plan=11
+plan=15
 echo "1..$plan" >&3
 
 set +e
@@ -75,6 +75,43 @@ f | grep b'
 run_sash 'fn f { echo a; echo b }
 f | while readline x; do attest x [[ -n $x ]]; echo "got $x"; done'
 [[ $rc = 0 && $out = $'got a\ngot b' && -z $err ]]; chk pf.11
+
+# ── compound stages in both backends ──────────────────────────────────
+#
+# A compound stage is lowered to its own SSA block and named `__compound_<id>`.
+# Native jumps to that block in the forked child; the c emitter now emits the
+# matching `goto _blk_<id>`. Before that it fell through to the external-exec
+# path and died with `sash: bug: bare command passed to sash_exec`.
+
+# pf.12 a function stage's exit status becomes the pipeline status.
+# The DD#55 `command failed` diagnostic is native-only for now
+# (c-dd55-abort-channel), so only native asserts on stderr.
+run_sash 'fn bad { exit 3 }
+bad | /bin/cat'
+[[ $rc = 3 && -z $out ]] &&
+  { ! in_modes native || [[ $rerr == *"command failed (exit 3)"* ]]; }; chk pf.12
+
+# pf.13 a loop inside the function stage
+run_sash 'fn gen {
+  int i=0
+  while (( i < 3 )) {
+    echo "n$i"
+    (( i = i + 1 ))
+  }
+}
+gen | /bin/cat'
+[[ $rc = 0 && $out = $'n0\nn1\nn2' && -z $rerr ]]; chk pf.13
+
+# pf.14 two compound stages back to back
+run_sash 'fn a { echo hi }
+fn b { /bin/cat }
+a | b'
+[[ $rc = 0 && $out = "hi" && -z $rerr ]]; chk pf.14
+
+# pf.15 a compound stage in the middle of a three-stage pipeline
+run_sash 'fn mid { /bin/cat }
+/bin/echo m | mid | /bin/cat'
+[[ $rc = 0 && $out = "m" && -z $rerr ]]; chk pf.15
 
 set -e
 tally
