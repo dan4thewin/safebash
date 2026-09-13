@@ -1167,6 +1167,25 @@ extern "C" {
     fn main() -> i64;
 }
 
+/// The startup sequence, called from `_start` on every architecture.
+///
+/// It exists so the sequence is written **once**. The two `_start` bodies are
+/// per-architecture assembly and cannot share code, and while each enumerated
+/// the init calls itself they drifted: aarch64 called `sash_init_heap` but not
+/// `sash_trace_init`, so `sash_trace_flag` stayed 0 and every trace site
+/// compiled in by `--trace` (DD#32) tested false. `sash --trace` on aarch64
+/// produced a binary that was larger, slower and silent — a feature reporting
+/// success and doing nothing. Adding an init step now means editing this
+/// function rather than one assembly block per architecture.
+///
+/// `sash_argc`/`sash_argv`/`sash_envp` must already be stored: `_start` does
+/// that before the call, and `sash_trace_init` reads `sash_envp`.
+#[no_mangle]
+pub unsafe extern "C" fn sash_startup() {
+    unsafe { sash_init_heap() };
+    sash_trace_init();
+}
+
 #[cfg(target_arch = "x86_64")]
 #[unsafe(naked)]
 #[no_mangle]
@@ -1179,8 +1198,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "mov [rip + sash_argv], rsi",
         "lea rax, [rsp + rdi*8 + 16]",
         "mov [rip + sash_envp], rax",
-        "call sash_init_heap",
-        "call sash_trace_init",
+        "call sash_startup",
         "call main",
         "mov rdi, rax",
         "mov eax, 60",
@@ -1204,7 +1222,7 @@ pub unsafe extern "C" fn _start() -> ! {
         "add x1, x1, #16",
         "adrp x2, sash_envp",
         "str x1, [x2, :lo12:sash_envp]",
-        "bl sash_init_heap",
+        "bl sash_startup",
         "bl main",
         "mov x8, #93",
         "svc #0",

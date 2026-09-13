@@ -1,5 +1,5 @@
 ---
-status: ready
+status: done
 priority: P3
 kind: bug
 depends: []
@@ -40,3 +40,50 @@ x86_64 already satisfies: `sash_envp` must be stored first, which it is.
 
 2026-09-13, reading `_start` while implementing DD#107's heap
 reservation — DG asked whether `SASH_TRACE` was implemented at all.
+
+## Fixed 2026-09-13 (commit follows journal 287)
+
+Re-measured: confirmed exactly as filed. aarch64 `_start` had
+`bl sash_init_heap` and no `bl sash_trace_init`.
+
+Fixed by taking the third gate seriously rather than adding the missing
+line. The startup sequence now lives in **one** place — a plain Rust
+`sash_startup()` that calls `sash_init_heap` then `sash_trace_init` — and
+each `_start` does a single `call`/`bl sash_startup`. The two assembly
+bodies no longer enumerate init steps, so they cannot disagree about them
+again. Adding an init step is now a one-line edit in Rust.
+
+Both symbols turned out to be referenced **only** from the two `_start`
+blocks (nothing in `sash/`, `emit_c.rs`, or the spec suite), so the C
+backend needed no change: it links `libsash_rt.a` and uses the same
+`_start`.
+
+### Verified
+
+- x86_64 `--trace` end to end: `SASH_TRACE=1` on a `--trace` binary emits
+  `+ branch → if.then`; unset emits nothing. `tr.1`–`tr.3` pass.
+- Full sweep 4330 passing, 9 skipped, 0 failing, 0 flips. This is the
+  broad gate that matters here: *every* compiled binary now goes through
+  `sash_startup`, so a mistake in it would have been a mass failure.
+- `sash-rt` warning count unchanged (10 before, 10 after).
+
+### NOT verified, and cannot be from this host
+
+The gate "`tr.1`–`tr.3` pass on aarch64" is **unmet**. This machine is
+x86_64 with no aarch64 hardware, no `qemu-user`, and no
+`aarch64-linux-gnu-gcc`; `sash-rt` vendors C sources (Plan 9 regex,
+heap4, `setjmp.S`) through `cc-rs`, so even a compile-only cross build
+needs that toolchain, and installing it needs root, which this session
+does not have. Adding the rustup target alone is not sufficient (it was
+added, tried, and removed again).
+
+So the aarch64 change — `bl sash_init_heap` → `bl sash_startup` — is
+reviewed but not executed. The risk is low (both are `#[no_mangle]
+extern "C"` symbols and `bl` to either is the same instruction form, so
+there is no new assembly shape), but it is not zero, and it should be
+run on real aarch64 hardware before that gate is called met.
+
+No spec was added. The suite runs on x86_64 only, so a spec for this bug
+could not fail on the architecture that runs it — and the drift is now
+prevented structurally rather than detected. No existing spec reads repo
+source, so a source-invariant test would also be without precedent here.

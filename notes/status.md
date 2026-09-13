@@ -1,3 +1,36 @@
+## ══ STATUS (2026-09-13) — `--trace` was dead on aarch64; startup unified ══
+
+**Journal 287.** Sweep **4330 passing, 9 skipped, 0 failing**, 0 flips.
+One task closed.
+
+aarch64 `_start` called `sash_init_heap` but never `sash_trace_init`, so
+`sash_trace_flag` stayed 0 and every `--trace` site tested false: a binary
+that was larger, slower and **silent**. x86_64 called both.
+
+Fixed at the cause rather than the symptom. The startup sequence now lives
+in one plain-Rust `sash_startup()`; each `_start` makes a single
+`call`/`bl` to it and keeps only the ABI-specific part (stashing
+`argc`/`argv`/`envp`). The two assembly bodies no longer enumerate init
+steps, so they cannot disagree about them again. Both symbols were
+referenced *only* from those two blocks, so the C backend needed no change.
+
+**Gate not met, and not meetable here:** "`tr.1`–`tr.3` pass on aarch64".
+No aarch64 hardware, no `qemu-user`, no `aarch64-linux-gnu-gcc` — and
+`sash-rt` vendors C through `cc-rs`, so even a compile-only cross build
+needs that toolchain, which needs root. The aarch64 edit
+(`bl sash_init_heap` → `bl sash_startup`) is reviewed, not run. **Someone
+should run `spec/trace.sh` on real aarch64 hardware.** Recorded in the task
+file rather than ticked.
+
+x86_64 *is* fully verified: `SASH_TRACE=1` on a `--trace` binary emits
+`+ branch → if.then`, unset emits nothing, and every compiled binary in the
+suite now goes through `sash_startup` — which is what makes 0 flips
+meaningful here.
+
+No spec added: the suite runs on x86_64, so a spec for an aarch64-only bug
+would pass for the wrong reason, and the drift is now prevented by
+construction rather than detected.
+
 ## ══ STATUS (2026-09-13) — arithmetic: two silent-`0` recoveries removed ══
 
 **Journal 286.** Sweep **4330 passing, 9 skipped, 0 failing**, 0 flips
