@@ -159,7 +159,8 @@ run_sash 'echo $PATH'
 # Construction-restriction and attest-form checks are front-end (validate /
 # type_check) and fire in every backend, so they run cross-mode. The
 # attest-all *runtime* tests need mapfile + attest enforcement, which the c
-# (SSA) oracle elides; those are guarded to native.
+# (SSA) oracle gained on 2026-08-20 — they are cross-mode too, and no test in
+# this file is native-guarded.
 
 # --- Cross-mode: construction restriction (a tainted value may not enter
 #     an array via literal, += append, or a[i]= subscript). ---

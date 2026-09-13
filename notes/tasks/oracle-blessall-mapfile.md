@@ -1,6 +1,6 @@
 ---
 title: C/Janet oracle support for bless-all + mapfile
-status: ready
+status: done
 scope: c/janet backends only (native complete)
 priority: P2
 kind: feature
@@ -49,3 +49,28 @@ bless-form errors SB4030, binder rules SB5020) DO run in every backend
   `emit_bless_all` / `emit_bless_retag`.
 - Runtime table helpers already declared in emit_c: `sash_table_len`,
   `sash_table_value`, `sash_table_key`.
+
+## Resolution (re-measured 2026-09-13)
+
+**Gates 1-3 are done** — landed 2026-08-20, before the `bless` -> `attest`
+rename, which is why this filing reads as open: it is written entirely in the
+retired vocabulary. `SsaInst::BlessAll` does not exist anywhere in `sash/src`;
+the instruction is `AttestAll`.
+
+Measured against the live binary:
+
+- `emit_c` implements `ReadArray`, `Mapfile`, `RedirectPush`/`RedirectPop`
+  and `AttestAll` (`sash/src/emit_c.rs` lines 58-59, 418, 720, 1758-1769,
+  1888-1889, 2023-2065). No `TODO` arm remains for any of them.
+- `spec/taint.sh` has **zero** `in_modes native` guards; every DD#61 runtime
+  test (60.9-60.12, 60.15-60.18, 60.21-60.23, 60.25, 60.29, 60.31) runs
+  cross-mode. The nine remaining `c:` skips in `spec.db` are `104.1`-`104.4`,
+  `32.1`-`32.2` and `57.46a`-`57.46c` — unrelated.
+
+A stale comment in `spec/taint.sh` still claimed the runtime tests were
+"guarded to native", contradicting the note 120 lines below it; corrected in
+the same commit.
+
+**Gate 4 (janet) is split out**, not met: whether the janet IR oracle should
+grow attest-all is part of DG's undecided decoupled-janet question, and all
+`janet-*` tasks are deferred behind it. See `notes/tasks/` for that cohort.
