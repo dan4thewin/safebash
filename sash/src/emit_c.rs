@@ -2449,8 +2449,8 @@ fn emit_param_expansion(
         // Phase 5: arrlen / arrkeys / arrvals — table-based vars.
         // The var's _ptr slot holds the table pointer; _len holds 0.
         "arrlen" => emit_arrlen(e, &s_ptr),
-        "arrvals" | "arrjoin" => emit_arr_values_joined(e, &s_ptr, operand),
-        "arrkeys" => emit_arr_keys_joined(e, &s_ptr, operand),
+        "arrvals" | "arrjoin" => emit_arr_values_joined(e, operator, &s_ptr, operand),
+        "arrkeys" => emit_arr_keys_joined(e, operator, &s_ptr, operand),
         "glob" | "glob_regex" => emit_glob_c(e, operator, operand),
         // DD#65: only `substring` (`:off:len`) survives as a ParamExpansion
         // op here; `:-` is `SsaValue::DefaultValue`, and every dropped op
@@ -3560,25 +3560,37 @@ fn emit_arrlen(e: &mut Emit, table_expr: &str) -> CStr {
 /// Sep encoded in operand (default = single space). Phase 5: walk
 /// the table by index, concatenate values with sep into a
 /// stack-allocated buffer.
-fn emit_arr_values_joined(e: &mut Emit, table_expr: &str, sep_operand: &str) -> CStr {
-    let sep = arrjoin_separator(sep_operand);
+fn emit_arr_values_joined(
+    e: &mut Emit,
+    operator: &str,
+    table_expr: &str,
+    sep_operand: &str,
+) -> CStr {
+    let sep = arrjoin_separator(operator, sep_operand);
     emit_arr_join_loop(e, table_expr, sep, /* keys = */ false)
 }
 
 /// `${!arr[@]}` — array keys joined by sep.
-fn emit_arr_keys_joined(e: &mut Emit, table_expr: &str, sep_operand: &str) -> CStr {
-    let sep = arrjoin_separator(sep_operand);
+fn emit_arr_keys_joined(e: &mut Emit, operator: &str, table_expr: &str, sep_operand: &str) -> CStr {
+    let sep = arrjoin_separator(operator, sep_operand);
     emit_arr_join_loop(e, table_expr, sep, /* keys = */ true)
 }
 
-/// Decode the arrjoin / arrvals_<sep> operator's separator-encoding
-/// hint. Empty → single space. Otherwise the operand is a literal
-/// separator string.
-fn arrjoin_separator(operand: &str) -> &str {
-    if operand.is_empty() {
-        " "
-    } else {
+/// The separator for a join: `arrjoin` uses its operand, everything else
+/// (`arrvals`, `arrkeys`) uses a single space. Mirrors the native backend's
+/// `intern_join_separator`.
+///
+/// Dispatching on the *operator* is load-bearing. Keying on "the operand is
+/// empty" instead conflated two different things — `$(join a)`, which has no
+/// separator and means a space, and `$(join a "")`, which has an explicitly
+/// empty one and means straight concatenation. The c backend joined the
+/// latter with spaces while native concatenated, so the two backends
+/// disagreed on the same source.
+fn arrjoin_separator<'a>(operator: &str, operand: &'a str) -> &'a str {
+    if operator == "arrjoin" {
         operand
+    } else {
+        " "
     }
 }
 

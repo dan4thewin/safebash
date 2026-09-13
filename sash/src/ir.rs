@@ -224,6 +224,34 @@ pub fn walk_all_exprs(stmt: &Statement, f: &mut impl FnMut(&Expr)) {
     }
 }
 
+/// The literal text of a word, or `None` when the word is not a compile-time
+/// literal.
+///
+/// A bare, single-quoted or double-quoted literal yields its **value** (not
+/// its source form), and `''`/`""` yield the empty string. Anything richer —
+/// an expansion, a concatenation, a command substitution — yields `None`.
+///
+/// `None` is the whole point. The predecessor of this function fell back to
+/// rendering the expression's *source text*, so `$(join a "$sep")` silently
+/// joined with the four characters `"$sep"`. A slot that requires a
+/// compile-time constant must be able to say "this is not one" rather than
+/// invent a plausible string. Callers that need a constant pair this with a
+/// validator rejection, so the `None` case never reaches lowering.
+pub fn literal_word_text(expr: &Expr) -> Option<String> {
+    match &expr.kind {
+        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => Some(s.clone()),
+        ExprKind::DoubleQuoted(parts) => match parts.as_slice() {
+            [] => Some(String::new()),
+            [p] => match &p.kind {
+                ExprKind::Literal(s) => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
 /// Walk an expression tree, visiting the node and all sub-expressions.
 pub fn walk_expr_tree(expr: &Expr, f: &mut impl FnMut(&Expr)) {
     f(expr);

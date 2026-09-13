@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup errors
-plan=150
+plan=173
 echo "1..$plan" >&3
 
 set +e
@@ -595,6 +595,100 @@ argv a
 n=$(len a)
 echo "n=$n"'
 [[ $rc = 0 && $out == n=* && -z $err ]]; chk via.12
+
+# ── `join`'s separator is fixed at compile time (SB5074) ──
+# The SSA operand is a compile-time String, so a non-literal separator had
+# nothing to lower to — the transform rendered the argument's *source text*
+# instead, and `$(join a "$sep")` silently joined with the four characters
+# `"$sep"`. A wrong answer, not a crash. Front-end — all modes.
+
+run_sash 'array a=(x y)
+sep=-
+echo $(join a $sep)'
+[[ $rc != 0 && -z $out && $err == *SB5074* ]]; chk jsep.1
+run_sash 'array a=(x y)
+sep=-
+echo $(join a "$sep")'
+[[ $rc != 0 && -z $out && $err == *SB5074* ]]; chk jsep.2
+run_sash 'array a=(x y)
+echo $(join a "$(echo -)")'
+[[ $rc != 0 && -z $out && $err == *SB5074* ]]; chk jsep.3
+
+# jsep.4-7 every literal spelling still works, including the empty separator
+run_sash 'array a=(x y)
+echo $(join a -)'
+[[ $rc = 0 && $out = "x-y" && -z $err ]]; chk jsep.4
+run_sash 'array a=(x y)
+echo $(join a ", ")'
+[[ $rc = 0 && $out = "x, y" && -z $err ]]; chk jsep.5
+run_sash 'array a=(x y)
+echo $(join a "")'
+[[ $rc = 0 && $out = "xy" && -z $err ]]; chk jsep.6
+run_sash 'array a=(x y)
+echo $(join a)'
+[[ $rc = 0 && $out = "x y" && -z $err ]]; chk jsep.7
+
+# ── a string intrinsic on an int operand is a type error (SB4030) ──
+# `$(toupper $n)` on an `int n=42` used to yield "42" — the implicit coercion
+# the type system exists to prevent — and `$(strlen $n)` answered a question
+# about a decimal rendering the source never asked for. `join`/`len` already
+# rejected a mistyped operand; these did not. The test is the operand's TYPE,
+# not its spelling. Front-end — all modes.
+
+run_sash 'int n=42
+echo $(toupper $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.1
+run_sash 'int n=42
+echo $(tolower $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.2
+run_sash 'int n=42
+echo $(strlen $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.3
+run_sash 'int n=42
+echo $(basename $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.4
+run_sash 'int n=42
+echo $(dirname $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.5
+
+# sint.6-9 every string slot is checked, not just the subject
+run_sash 'int n=42
+echo $(match $n "4")'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.6
+run_sash 's=abc
+int n=4
+echo $(match $s $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.7
+run_sash 'int n=42
+echo $(sub $n "4" "9")'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.8
+run_sash 's=abc
+int n=9
+echo $(gsub $s "b" $n)'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.9
+
+# sint.10-12 int-ness is a type, not a spelling: arithmetic, an int-returning
+# intrinsic and an `int array` element are all caught
+run_sash 'echo $(strlen $(( 1 + 41 )))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.10
+run_sash 'echo $(toupper $(getpid))'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.11
+run_sash 'int array a=(1 2 3)
+echo $(strlen ${a[0]})'
+[[ $rc != 0 && -z $out && $err == *SB4030* ]]; chk sint.12
+
+# sint.13-16 strings are untouched, and double-quoting stays the sanctioned
+# conversion (a bare numeric literal is a string in bash, and stays one here)
+run_sash 'echo $(toupper abc)'
+[[ $rc = 0 && $out = "ABC" && -z $err ]]; chk sint.13
+run_sash 'echo $(strlen 42)'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk sint.14
+run_sash 'int n=42
+echo $(strlen "$n")'
+[[ $rc = 0 && $out = "2" && -z $err ]]; chk sint.15
+run_sash 'array a=(abc d)
+echo $(toupper ${a[0]})'
+[[ $rc = 0 && $out = "ABC" && -z $err ]]; chk sint.16
 
 # ── DD#95: mixing `&&` and `||` in one list is ambiguous ──
 # The two contexts grouped the same text differently — inside `[[ ]]` `&&` binds

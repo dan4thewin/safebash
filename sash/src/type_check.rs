@@ -816,6 +816,74 @@ fn check_int_string_ops(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeEr
     check_int_redirect_target(stmt, env, errors);
 }
 
+/// How many **leading** arguments of a string intrinsic are string operands.
+///
+/// Every string slot is a leading argument, so a count is enough: the only
+/// trailing operands are the array targets of the 3-arg `match`/`matchall`
+/// forms, which a count of 2 excludes.
+///
+/// `join` is absent deliberately — its first operand is a collection
+/// (SB4030 via `check_join_operand`) and its separator must already be a
+/// literal (SB5074), so neither slot can hold an int.
+fn string_operand_slots(name: &str) -> Option<usize> {
+    match name {
+        "toupper" | "tolower" | "strlen" | "basename" | "dirname" | "getenv" => Some(1),
+        "match" | "matchall" => Some(2),
+        "sub" | "gsub" => Some(3),
+        _ => None,
+    }
+}
+
+/// A string intrinsic applied to an int-typed operand is a type error.
+///
+/// `$(toupper $n)` on an `int n=42` used to yield `"42"` — the int was
+/// silently rendered as text, exactly the implicit coercion the type system
+/// exists to prevent, and `$(strlen $n)` answered a question about a decimal
+/// rendering the source never asked for. `join`/`len` already rejected a
+/// mistyped operand (SB4030); these did not.
+///
+/// The test is the operand's *type*, not its spelling, so it also catches
+/// `$(( … ))`, an int-returning intrinsic like `$(getpid)`, and an element of
+/// an `int array`. A double-quoted operand is String by construction, which
+/// keeps `"$n"` available as the explicit conversion — the same escape the
+/// substring diagnostic above recommends.
+fn check_string_intrinsic_operands(
+    c: &Command,
+    span: Span,
+    env: &TypeEnv,
+    errors: &mut Vec<TypeError>,
+) {
+    let name = expr_to_name(&c.name);
+    let Some(slots) = string_operand_slots(&name) else {
+        return;
+    };
+    for arg in c.args.iter().take(slots) {
+        if expr_type(arg, env) != VarType::Int {
+            continue;
+        }
+        errors.push(TypeError {
+            message: int_operand_message(&name, arg),
+            span,
+        });
+    }
+}
+
+/// The SB4030 message for an int operand of a string intrinsic, naming the
+/// variable when the operand is a plain expansion.
+fn int_operand_message(name: &str, arg: &Expr) -> String {
+    let operand = match &arg.kind {
+        ExprKind::SimpleExpansion(v) => format!("`{v}` is an int variable"),
+        ExprKind::Subscript { .. } => "that element is int-typed".to_string(),
+        ExprKind::Arithmetic(_) => "an arithmetic expansion is int-typed".to_string(),
+        _ => "that operand is int-typed".to_string(),
+    };
+    format!(
+        "`{name}` is a string operation but {operand} — an int is not \
+         implicitly text. Convert explicitly by double-quoting the operand, \
+         e.g. `$({name} \"${{…}}\" …)`"
+    )
+}
+
 /// A redirect target is a filesystem path, so an int variable there is a type
 /// error rather than a codegen panic.
 fn check_int_redirect_target(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<TypeError>) {
@@ -915,6 +983,7 @@ fn check_subscript_in_stmt(stmt: &Statement, env: &TypeEnv, errors: &mut Vec<Typ
             check_join_operand(c, stmt.span, env, errors);
             check_keys_operand(c, stmt.span, env, errors);
             check_len_operand(c, stmt.span, env, errors);
+            check_string_intrinsic_operands(c, stmt.span, env, errors);
             for arg in &c.args {
                 check_subscript_types(arg, env, errors);
             }
@@ -1258,6 +1327,7 @@ fn check_command(c: &Command, span: Span, env: &mut TypeEnv, errors: &mut Vec<Ty
     // DD#33: check subscript key types in command args
     check_join_operand(c, span, env, errors);
     check_keys_operand(c, span, env, errors);
+    check_string_intrinsic_operands(c, span, env, errors);
     for arg in &c.args {
         check_subscript_types(arg, env, errors);
     }

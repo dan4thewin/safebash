@@ -1,3 +1,66 @@
+## ══ STATUS (2026-09-13) — two silent coercions closed ══
+
+**DD#105: a string intrinsic rejects an int-typed operand.**
+**DD#106: `join`'s separator must be a compile-time literal.**
+Journal 273. Sweep **4059 passing, 29 skipped, 0 failing**, zero flips.
+
+**The "Next up" list below had aged.** Checked against the live binary
+rather than the file: `bug-getenv-status-unvalidated` was already fixed
+2026-09-12 (`$(getenv)` → SB4045, bare `getenv` → SB5073) and the
+regex-NUL item is a documented limitation. The one real item, DG's
+decision #3, had **no task file at all**.
+
+**`toupper`/`tolower`/`strlen`/`basename`/`dirname`/`match`/`sub`/`gsub`
+silently coerced an int operand** — `$(strlen $n)` on `int n=42`
+returned 2, the digit count of a rendering the source never asked for.
+`join`/`len`/`${n:1:2}`/int-redirect-target already said SB4030; these
+were the hole. DG chose the **broad** scope — key on the operand's
+*type*, so `$(( … ))`, `$(getpid)` and `int array` elements are caught
+too. `"$n"` stays legal as the explicit conversion, the same escape the
+substring diagnostic already recommends.
+
+Registering it cost a build: a command inside `$( )` is reached via
+`check_subscript_types` → `check_subscript_in_stmt`, **not**
+`check_command`. That is why `join`/`len`/`keys` appear in both — it
+reads as redundancy until you skip it.
+
+**`$(join a "$sep")` printed `x"$sep"y`** — the separator's source text,
+quotes and all. A wrong answer, not a crash: the SSA operand is a
+compile-time `String`, so `strip_word_quotes` fell back to rendering the
+expression. DG chose reject-now (SB5074), measured against zero corpus
+cost, with the dynamic separator filed as `join-dynamic-separator`.
+
+**DG's question changed the fix.** Asked whether `strip_word_quotes` had
+a legitimate use at all, the answer was no — so instead of diagnosing
+the bad case and leaving the fallback for the next caller, the helper is
+gone, replaced by `ir::literal_word_text` returning `Option<String>`
+with no fallback. A constant-only slot can now say "this is not one"
+instead of inventing one. `check_join_arity` → `check_join_form`,
+because it now checks two things.
+
+**The spec found a third bug.** Pinning `$(join a "")` exposed a backend
+divergence: native concatenated, `--emit-c` joined with spaces.
+`emit_c::arrjoin_separator` keyed on "is the operand empty", conflating
+`$(join a)` (no separator → space) with `$(join a "")` (explicitly empty
+→ concatenate). Native keyed on the *operator* and was right; c now
+matches. Fixed — it was invisible from the native side and sits in the
+backend queued as the next work area.
+
+### Next up — DG's order, re-measured
+
+1. **Native** — the two `sash-rt` capture bugs (64 KiB truncation;
+   one-newline-vs-all strip, both routing through `sash_read_all`), and
+   `bug-heap-exhaustion-silent-segv`, which is **blocked on DG**: the
+   fail-loudly half is done, the capacity half (options A/B) needs a
+   call. Then the P2 bugs still queued: `bug-convert-hash-array-conflation`,
+   `dollar-lt-file-forks` (blocked), `bug-emit-c-exit-skips-end`,
+   `cli-usage-and-unknown-flags` (will trip the complexity gate —
+   refactor, don't skip).
+2. **The c gaps** — the 29 c-mode skips, tracked by the ready `c-*`
+   tasks.
+3. **The test work** — `r47-validate-rs-per-rule-tests` and the other
+   two filings still awaiting honest re-estimation.
+
 ## ══ STATUS (2026-09-13) — janet decoupled: `--emit-ir` in, backend out ══
 
 **DG: split janet off entirely so native/c stop paying the janet tax.**
@@ -70,9 +133,11 @@ remove lingers with its last verdict. We purged rather than fixed the
 view, so this will recur — stale rows are detectable by a `commit_hash`
 older than the newest in `runs`.
 
-### Next up — DG's order
+### Next up — DG's order (SUPERSEDED — see the 273 section above)
 
 **Finish the native work, then close the c gaps, then the test work.**
+(The three native items named below were re-measured on 2026-09-13: two
+were already resolved, and the third was unfiled. Use the list above.)
 
 1. **Native** — `string-intrinsics-reject-int-vars` (DG's decision #3:
    `toupper $n` where `n=42` silently yields `"42"`; `join n ","` already

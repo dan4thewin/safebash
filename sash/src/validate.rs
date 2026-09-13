@@ -5110,33 +5110,68 @@ pub fn check_len_operands(program: &Program) -> Vec<Diagnostic> {
     diags
 }
 
-/// `$(join …)` arity: a collection and an optional separator. `$(join)` (0 args)
+/// `$(join …)` form: arity (SB5040) and a literal separator (SB5074).
+///
+/// Arity: a collection and an optional separator. `$(join)` (0 args)
 /// previously reached the transform and **panicked the compiler**
 /// (`ICE: join requires at least one argument`); more than 2 args silently
-/// dropped the extras. Reject both here (SB5040) so the transform's arity is
-/// guaranteed.
-pub fn check_join_arity(program: &Program) -> Vec<Diagnostic> {
+/// dropped the extras. Rejecting both here guarantees the transform's arity.
+///
+/// Separator: the SSA operand is a compile-time `String`, so a non-literal
+/// separator has nothing to lower to — it was being rendered as *source text*
+/// (`$(join a "$sep")` joined with the four characters `"$sep"`). Rejecting
+/// it here guarantees `ir::literal_word_text` succeeds in the transform.
+pub fn check_join_form(program: &Program) -> Vec<Diagnostic> {
     let mut diags = Vec::new();
     for stmt in program
         .statements
         .iter()
         .chain(program.end_block.iter().flatten())
     {
-        crate::ir::walk_all_exprs(stmt, &mut |e| flag_join_arity(e, &mut diags));
+        crate::ir::walk_all_exprs(stmt, &mut |e| {
+            flag_join_arity(e, &mut diags);
+            flag_join_separator(e, &mut diags);
+        });
     }
     diags
 }
 
-fn flag_join_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
-    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+/// SB5074: `$(join arr SEP)` where `SEP` is not a compile-time literal.
+fn flag_join_separator(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let Some(c) = join_call(expr) else {
         return;
     };
-    let Some(StmtKind::Command(c)) = stmts.first().map(|s| &s.kind) else {
+    let Some(sep) = c.args.get(1) else {
         return;
     };
-    if expr_literal_str(&c.name) != "join" {
+    if crate::ir::literal_word_text(sep).is_some() {
         return;
     }
+    diags.push(Diagnostic::error_span(
+        sep.span,
+        "SB5074",
+        "`join`'s separator is fixed at compile time, so it must be a literal \
+         — an expansion cannot be used here. Write the separator directly, \
+         e.g. `$(join a \",\")`"
+            .to_string(),
+    ));
+}
+
+/// The `join` command inside a `$( )`, if this expression is one.
+fn join_call(expr: &Expr) -> Option<&Command> {
+    let ExprKind::CommandSubstitution(stmts) = &expr.kind else {
+        return None;
+    };
+    let StmtKind::Command(c) = stmts.first().map(|s| &s.kind)? else {
+        return None;
+    };
+    (expr_literal_str(&c.name) == "join").then_some(c)
+}
+
+fn flag_join_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let Some(c) = join_call(expr) else {
+        return;
+    };
     if c.args.is_empty() || c.args.len() > 2 {
         diags.push(Diagnostic::error_span(
             expr.span,

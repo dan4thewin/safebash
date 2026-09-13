@@ -300,7 +300,15 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
     // Array first, separator second (least-surprise, collection-first —
     // consistent with `len`/`keys`).
     let (arr_expr, sep) = if c.args.len() >= 2 {
-        (&c.args[0], strip_word_quotes(&c.args[1]))
+        // INVARIANT: validate::flag_join_separator (SB5074) rejects a
+        // non-literal separator before transform. The predecessor of this
+        // call fell back to the argument's *source text*, so
+        // `$(join a "$sep")` silently joined with the four characters
+        // `"$sep"` — a wrong answer, not a crash.
+        let Some(sep) = crate::ir::literal_word_text(&c.args[1]) else {
+            unreachable!("join separator literal guaranteed by validate::flag_join_separator");
+        };
+        (&c.args[0], sep)
     } else if c.args.len() == 1 {
         (&c.args[0], " ".to_string())
     } else {
@@ -321,26 +329,6 @@ fn join_intrinsic(c: &Command, state: &VersionState) -> SsaValue {
         var: v,
         operator: "arrjoin".to_string(),
         operand: sep,
-    }
-}
-
-/// Strip a single layer of quotes from a word, yielding its literal VALUE
-/// (not its source form): a bare/single/double-quoted literal yields its
-/// text, an empty `''`/`""` yields the empty string; anything richer falls
-/// back to `expr_to_string`. Used for `read`/`echo` separator/flag words so
-/// `read -d ''` sees an empty value (→ NUL), not the quote characters.
-pub(super) fn strip_word_quotes(expr: &Expr) -> String {
-    match &expr.kind {
-        ExprKind::Literal(s) | ExprKind::SingleQuoted(s) => s.clone(),
-        ExprKind::DoubleQuoted(parts) => match parts.as_slice() {
-            [] => String::new(),
-            [p] => match &p.kind {
-                ExprKind::Literal(s) => s.clone(),
-                _ => expr_to_string(expr),
-            },
-            _ => expr_to_string(expr),
-        },
-        _ => expr_to_string(expr),
     }
 }
 
