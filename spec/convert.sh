@@ -6,7 +6,7 @@ set -eu
 # Run only in native mode to avoid 3× redundancy.
 [[ ${SASH_MODE:-native} != native ]] && exit 0
 setup convert
-plan=145
+plan=153
 echo "1..$plan" >&3
 
 set +e
@@ -974,6 +974,61 @@ if [ "${#s}" -gt 0 ]; then echo y; fi'
 run_convert '#!/bin/bash
 if [ x = y ]; then echo y; fi'
 [[ $rc = 0 && $out == *'if [[ x = y ]]; then echo y; fi'* && -z $err ]]; chk 57.120
+
+# ── Every other whole-node replacement, audited after 57.116 (DD#83 note) ──
+# A handler that replaces its whole node must splice its children's patches
+# itself. These four were all corrupting output the same way.
+
+# 57.121 `declare -i n=$?` — was `int n=$?$(status)`
+run_convert '#!/bin/bash
+declare -i n=$?
+echo $n'
+[[ $rc = 0 && $out == *'int n=$(status)'* && $out != *'n=$?$'* && -z $err ]]; chk 57.121
+
+# 57.122 a declaration value holding a known env var
+run_convert '#!/bin/bash
+declare -a a=("$HOME")
+echo "${a[0]}"'
+[[ $rc = 0 && $out == *'array a=("$home")'* && $out == *'home=$(getenv HOME)'* ]]; chk 57.122
+
+# 57.123 `let` — was `(( x = $? ))$(status)"`
+run_convert '#!/bin/bash
+true
+let "x = $?"
+echo $x'
+[[ $rc = 0 && $out == *'(( x = (status) ))'* && $out != *'))$'* && -z $err ]]; chk 57.123
+
+# 57.124 `let` is an arithmetic context, so the operand takes the sexpr form
+run_convert '#!/bin/bash
+s=abc
+let "y = ${#s}"
+echo $y'
+[[ $rc = 0 && $out == *'(( y = (strlen $s) ))'* && $out != *'${#s}'* ]]; chk 57.124
+
+# 57.125 a mapfile redirect carries onto `tr` in its *converted* form
+run_convert '#!/bin/bash
+mapfile -t b < "$HOME"
+echo "${b[0]}"'
+[[ $rc = 0 && $out == *'< "$home"'* && $out != *'< "$HOME"'* ]]; chk 57.125
+
+# 57.126 `${#s}` in arithmetic — `$(strlen …)` there is SB4020, a command
+# substitution is not an arithmetic operand.
+run_convert '#!/bin/bash
+s=abc
+echo $(( ${#s} + 1 ))'
+[[ $rc = 0 && $out == *'$(( (strlen $s) + 1 ))'* && $out != *'$(strlen'* ]]; chk 57.126
+
+# 57.127 …and the collection count
+run_convert '#!/bin/bash
+a=(1 2 3)
+echo $(( ${#a[@]} + 1 ))'
+[[ $rc = 0 && $out == *'$(( (len a) + 1 ))'* && $out != *'$(len'* ]]; chk 57.127
+
+# 57.128 outside arithmetic the command-substitution spelling is still right
+run_convert '#!/bin/bash
+s=abc
+echo "${#s}"'
+[[ $rc = 0 && $out == *'$(strlen $s)'* && $out != *'(( '* ]]; chk 57.128
 
 set -e
 tally

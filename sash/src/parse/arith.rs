@@ -1148,10 +1148,24 @@ impl ArithParser {
     /// Check if current token could start a function argument (for sexpr detection).
     /// More restrictive than is_expr_start: excludes binary operators that
     /// would indicate this is grouping, not a function call.
+    ///
+    /// The subscript and parameter-expansion forms are operands and can
+    /// never be read as a binary operator, so admitting them adds no
+    /// grouping ambiguity: a real grouping cannot have a `Var` juxtaposed
+    /// with a second operand. Leaving them out made SB4035 recommend
+    /// `${a[i]}` and then SB4020 reject it inside `(strlen …)`.
     fn is_func_arg_start(&self) -> bool {
         matches!(
             self.peek(),
-            Some(ATok::Num(_) | ATok::Var(_) | ATok::DollarVar(_) | ATok::LParen)
+            Some(
+                ATok::Num(_)
+                    | ATok::Var(_)
+                    | ATok::DollarVar(_)
+                    | ATok::LParen
+                    | ATok::Subscript(_, _)
+                    | ATok::BareSubscript(_, _)
+                    | ATok::ParamExpansion(_)
+            )
         )
     }
 }

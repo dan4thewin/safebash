@@ -646,6 +646,24 @@ fn is_arith_int_intrinsic(name: &str) -> bool {
     name == "len" || name == "strlen"
 }
 
+/// One arith sexpr operand as the `ExprKind` the intrinsic builder expects.
+/// `None` for a shape that cannot be rebuilt — `validate::check_arith_sexpr_arity`
+/// (SB4045) rejects those, so this never silently yields a wrong answer.
+fn intrinsic_operand_kind(a: &ArithExpr) -> Option<ExprKind> {
+    Some(match a {
+        ArithExpr::Var(n) => ExprKind::Literal(n.clone()),
+        ArithExpr::DollarVar(n) => ExprKind::SimpleExpansion(n.clone()),
+        ArithExpr::Literal(n) => ExprKind::Literal(n.to_string()),
+        // `${a[i]}` / `${m[k]}` — a normal-expansion rvalue imported into
+        // arithmetic. `expr_to_value` already lowers the inner `Expr`, so
+        // hand it over whole rather than rebuilding it.
+        ArithExpr::Expansion(inner) => inner.kind.clone(),
+        // `(strlen ($s))` — redundant grouping around an operand.
+        ArithExpr::Paren(inner) => return intrinsic_operand_kind(inner),
+        _ => return None,
+    })
+}
+
 /// Rebuild a `Command` for an int intrinsic from its arith sexpr args, so the
 /// normal intrinsic builder can consume it. Only simple name/number operands
 /// are supported (`len a`, `len $a`); a complex operand returns `None` (the
@@ -660,14 +678,8 @@ fn is_arith_int_intrinsic(name: &str) -> bool {
 fn reconstruct_intrinsic_command(name: &str, args: &[ArithExpr]) -> Option<Command> {
     let mut cmd_args = Vec::with_capacity(args.len());
     for a in args {
-        let kind = match a {
-            ArithExpr::Var(n) => ExprKind::Literal(n.clone()),
-            ArithExpr::DollarVar(n) => ExprKind::SimpleExpansion(n.clone()),
-            ArithExpr::Literal(n) => ExprKind::Literal(n.to_string()),
-            _ => return None,
-        };
         cmd_args.push(Expr {
-            kind,
+            kind: intrinsic_operand_kind(a)?,
             span: Span::new(0, 0),
         });
     }

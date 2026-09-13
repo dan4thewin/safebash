@@ -3,7 +3,7 @@
 set -eu
 . common.sh
 setup arithmetic
-plan=205
+plan=211
 echo "1..$plan" >&3
 
 set +e
@@ -414,6 +414,32 @@ int n=$(( (g) )); echo $n'
 # sx.23 retired dtoi/itod take the ordinary unknown-callee path, not SB4030
 run_sash 'echo $(( (itod 2 5) ))'
 [[ $rc != 0 && -z $out && $err == *SB5011* ]]; chk sx.23
+
+# ── sexpr intrinsic operands and arity (silent 0 before) ──
+# sx.26 a cell operand: SB4035 recommended `${a[i]}` and SB4020 then rejected
+# it inside `(strlen …)`, so this spelling had nowhere to go.
+run_sash 'array a=(10 200 3)
+echo $(( (strlen ${a[1]}) ))'
+[[ $rc = 0 && $out = 3 && -z $err ]]; chk sx.26
+# sx.27 redundant grouping around an operand
+run_sash 's=abcde
+echo $(( (strlen ($s)) ))'
+[[ $rc = 0 && $out = 5 && -z $err ]]; chk sx.27
+# sx.28 `(len a)` on a cell-bearing array still counts elements
+run_sash 'array a=(10 200 3)
+echo $(( (len a) + (strlen ${a[1]}) ))'
+[[ $rc = 0 && $out = 6 && -z $err ]]; chk sx.28
+# sx.29 wrong arity is SB4045 — the same code `$(strlen a b)` reports, not a
+# different one for the sexpr spelling
+run_sash 's=abcde
+echo $(( (strlen $s $s) ))'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk sx.29
+# sx.30 …and zero args
+run_sash 'echo $(( (strlen) ))'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk sx.30
+# sx.31 an operand the transform cannot rebuild is rejected, not silently 0
+run_sash 'echo $(( (strlen (getpid)) ))'
+[[ $rc != 0 && -z $out && $err == *SB4045* ]]; chk sx.31
 
 # ── array/map subscripts as an rvalue in arithmetic (`${…}` value-import) ──
 # BUG: `${a[i]}` in `(( ))` read a bogus variable named "a[i]" → 0. `${…}` is a

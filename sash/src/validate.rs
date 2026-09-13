@@ -406,6 +406,96 @@ fn check_cmdsub_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
     }
 }
 
+/// SB4045 for the sexpr spelling: `(len a)` / `(strlen $s)` inside `$(( … ))`
+/// must have the arity and the operand shape the transform can lower.
+///
+/// Both were silently 0. The transform rebuilds a `Command` from the sexpr
+/// args and hands it to the ordinary intrinsic builder; when the rebuild
+/// fails it falls back to the *user* int-function path, which finds no body
+/// for a name like `strlen` and yields 0. `$(strlen a b)` has reported SB4045
+/// all along — only `$(( (strlen a b) ))` was quiet, and the same mistake must
+/// not answer to two different codes depending on spelling.
+fn check_arith_sexpr_arity(expr: &Expr, diags: &mut Vec<Diagnostic>) {
+    let ExprKind::Arithmetic(a) = &expr.kind else {
+        return;
+    };
+    walk_arith_intrinsic_calls(a, &mut |name, args| {
+        if let Some(complaint) = arith_intrinsic_complaint(name, args) {
+            diags.push(Diagnostic::error_span(expr.span, "SB4045", complaint));
+        }
+    });
+}
+
+/// The SB4045 complaint for one arith sexpr call, or `None` if it is fine.
+fn arith_intrinsic_complaint(name: &str, args: &[ArithExpr]) -> Option<String> {
+    if name != "len" && name != "strlen" {
+        return None;
+    }
+    if args.len() != 1 {
+        return Some(format!(
+            "`{name}` expects 1 argument but got {} — a value intrinsic must be \
+             called with its exact arity",
+            args.len()
+        ));
+    }
+    if arith_intrinsic_operand_ok(&args[0]) {
+        return None;
+    }
+    Some(format!(
+        "`{name}` operand isn't a name or a value in an arithmetic call. Use a \
+         variable (`{name} $x`), a cell (`{name} ${{a[i]}}`), or capture the \
+         computed operand first: `t=$(( … ))` then `({name} $t)`."
+    ))
+}
+
+/// The operand shapes the transform's `reconstruct_intrinsic_command` rebuilds.
+fn arith_intrinsic_operand_ok(a: &ArithExpr) -> bool {
+    match a {
+        ArithExpr::Var(_)
+        | ArithExpr::DollarVar(_)
+        | ArithExpr::Literal(_)
+        | ArithExpr::Expansion(_) => true,
+        ArithExpr::Paren(inner) => arith_intrinsic_operand_ok(inner),
+        _ => false,
+    }
+}
+
+/// Invoke `f(name, args)` for each sexpr `FuncCall` in an `ArithExpr` tree.
+fn walk_arith_intrinsic_calls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
+    match a {
+        ArithExpr::FuncCall { name, args } => {
+            f(name, args);
+            for arg in args {
+                walk_arith_intrinsic_calls(arg, f);
+            }
+        }
+        ArithExpr::BinOp { left, right, .. } => {
+            walk_arith_intrinsic_calls(left, f);
+            walk_arith_intrinsic_calls(right, f);
+        }
+        ArithExpr::UnaryOp { operand, .. } => walk_arith_intrinsic_calls(operand, f),
+        ArithExpr::Assign { value, .. } | ArithExpr::CompoundAssign { value, .. } => {
+            walk_arith_intrinsic_calls(value, f)
+        }
+        ArithExpr::Ternary {
+            cond,
+            true_val,
+            false_val,
+        } => {
+            walk_arith_intrinsic_calls(cond, f);
+            walk_arith_intrinsic_calls(true_val, f);
+            walk_arith_intrinsic_calls(false_val, f);
+        }
+        ArithExpr::Comma(exprs) => {
+            for e in exprs {
+                walk_arith_intrinsic_calls(e, f);
+            }
+        }
+        ArithExpr::Paren(inner) => walk_arith_intrinsic_calls(inner, f),
+        _ => {}
+    }
+}
+
 /// SB5070: an array splat in a *scalar* operand of a value intrinsic.
 ///
 /// DD#22/#69 give a splat one argument per element, and `sub`/`gsub`/
@@ -1605,6 +1695,7 @@ fn check_stmt_value_rules(stmt: &Statement, diags: &mut Vec<Diagnostic>) {
     let attest_preds = attest_arith_predicates(stmt);
     walk_all_exprs(stmt, &mut |expr| {
         check_cmdsub_arity(expr, diags);
+        check_arith_sexpr_arity(expr, diags);
         check_cmdsub_splat_operand(expr, diags);
         if !attest_preds.contains(&(expr as *const Expr)) {
             check_arith_value_mutation(expr, diags);

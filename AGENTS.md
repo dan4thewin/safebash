@@ -266,6 +266,12 @@ file is +N; in a dual-mode file it is +2N. A green sweep whose total is not
 what you predicted means specs collided, vanished, or were skipped -- the
 collision above was found only that way.
 
+**`plan=` inside a spec file is per-mode, not per-sweep.** It is +N even in a
+dual-mode file -- the file runs once per mode and `plan` is compared against
+that one run's index. Setting it to +2N gives a *passing* file that prints
+`[plan=217, ran=211]`; `common.sh` notes the mismatch rather than failing on
+it, so only the predicted total catches it.
+
 Query with:
 
 ```sql

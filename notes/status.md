@@ -1,3 +1,76 @@
+## ══ STATUS (2026-09-13) — the overlapping-patch audit, and five bugs under it ══
+
+**Journal 299.** Sweep **4465 passing, 9 skipped, 0 failing, 0 flips** (+14:
+8 converter native-only, 6 arith × 2 modes). Fail-first predicted 7 converter
+failures (57.128 is a control that passes clean) and 6 arith × 2 — all as
+observed.
+
+Journal 297 wrote down a bug shape in the abstract. Journal 298 found a second
+instance by accident and said "writing it down is not the same as checking for
+it." **This was the check. Four more instances.**
+
+## The corruption (the cheap find)
+
+A handler that replaces its **whole node** and a patch produced **inside** that
+node cannot both be applied — the inner patch re-emits bytes the outer one
+already consumed. Silent, not an error.
+
+| input | was |
+|---|---|
+| `declare -i n=$?` | `int n=$?$(status)` |
+| `declare -a a=("$HOME")` | `array a=("$HOME")$home")` |
+| `let "x = $?"` | `(( x = $? ))$(status)"` |
+| `mapfile -t a < "$HOME"` | `… < "$HOME" \| read a$home"` |
+
+Fixed by composition (`render_range`, new shared helper) in
+`convert_declaration`, `convert_command`'s `let` arm, `convert_mapfile` and the
+`trap` arms — plus a **structural backstop** in `apply_patches` that drops any
+patch contained in an earlier patch's span. A future handler that forgets to
+compose now *loses* a conversion (a bug the spec suite catches) instead of
+corrupting the file.
+
+## Five bugs underneath, in a chain
+
+Fixing the `let` arm required deciding what `let "x = ${#s}"` converts to. Each
+answer exposed the next layer:
+
+1. **`${#…}` in arithmetic did not compile.** `$(( ${#s} + 1 ))` converted to
+   `$(( $(strlen $s) + 1 ))` — SB4020, a command substitution is not an
+   arithmetic operand. `length_expansion` now takes the context.
+2. **The sexpr the fix emits was rejected by the parser.** `(strlen ${a[1]})`
+   → SB4020, while **SB4035 explicitly recommends `${a[i]}`**.
+   `is_func_arg_start` omitted `Subscript`/`BareSubscript`/`ParamExpansion`.
+   They are operands, never binary operators, so admitting them adds no
+   grouping ambiguity.
+3. **A cell operand then evaluated to 0.** `reconstruct_intrinsic_command`
+   returns `None` for a complex operand and the caller falls back to the *user*
+   int-function path, which finds no body for `strlen` and yields 0. **Same
+   sentence as yesterday's `getcpid`: a fallback written for one category of
+   name, reached by a name from another.**
+4. **A parenthesised operand too** — `(strlen ($s))` → 0.
+5. **Wrong arity in an arith sexpr was accepted silently.** `$(strlen a b)` has
+   reported SB4045 all along; `$(( (strlen a b) ))` reported nothing, because
+   `check_cmdsub_arity` matches `CommandSubstitution` and a sexpr is
+   `Arithmetic`.
+
+**One process note.** I wrote (5) in `type_check.rs` first. It worked and
+reported **SB4030**, because that is the code `type_check` emits for
+everything — so the identical user error answered to two codes depending on
+spelling. That is the defect I had just finished complaining about,
+reintroduced in the fix for it. Moved to `validate.rs` next to
+`check_cmdsub_arity`.
+
+**Second process note.** `plan=` in a spec file is **per-mode**, not
+per-sweep. I set arithmetic's to 217 (205 + 6×2) when it should be 211;
+`common.sh` reports `[plan=…, ran=…]` rather than failing, so only predicting
+the total caught it.
+
+## Nothing new is open for DG
+
+All six were bug-policy mandatory. The one judgement call — widening
+`is_func_arg_start` — is settled by SB4035's own message, which has been
+promising `${a[i]}` works.
+
 ## ══ STATUS (2026-09-13) — keyword specials, and two silent-corruption bugs ══
 
 **Journal 298.** `converter-special-var-sugar` **done**. Sweep **4445 passing,

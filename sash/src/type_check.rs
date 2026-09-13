@@ -298,7 +298,7 @@ fn bare_map_subscript_error(name: &str, span: Span) -> TypeError {
 /// Walk an `ArithExpr` tree; for every sexpr `FuncCall` whose callee produces a
 /// string, emit a type error.
 fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<TypeError>) {
-    walk_arith_funccalls(a, &mut |name| {
+    walk_arith_funccalls(a, &mut |name, _args| {
         if is_sexpr_string_producer(name, env) {
             errors.push(TypeError {
                 message: format!(
@@ -312,11 +312,11 @@ fn check_arith_sexpr(a: &ArithExpr, span: Span, env: &TypeEnv, errors: &mut Vec<
     });
 }
 
-/// Invoke `f(name)` for each `FuncCall` name in an `ArithExpr` tree.
-fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str)) {
+/// Invoke `f(name, args)` for each `FuncCall` in an `ArithExpr` tree.
+fn walk_arith_funccalls(a: &ArithExpr, f: &mut impl FnMut(&str, &[ArithExpr])) {
     match a {
         ArithExpr::FuncCall { name, args } => {
-            f(name);
+            f(name, args);
             for arg in args {
                 walk_arith_funccalls(arg, f);
             }

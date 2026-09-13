@@ -144,13 +144,19 @@ fn walk_node(
 ) {
     match node.kind() {
         "declaration_command" => {
-            convert_declaration(node, source, patches, prefix_lines);
+            if convert_declaration(node, source, patches, prefix_lines, annotate, collections) {
+                return;
+            }
         }
         "command" => {
-            convert_command(node, source, patches, prefix_lines, annotate);
+            if convert_command(node, source, patches, prefix_lines, annotate, collections) {
+                return;
+            }
         }
         "unset_command" => {
-            convert_unset_command(node, source, patches);
+            if convert_unset_command(node, source, patches) {
+                return;
+            }
         }
         "test_command" => {
             if convert_test_command(node, source, patches, prefix_lines, annotate, collections) {
@@ -257,16 +263,20 @@ fn walk_node(
 
 // ── Declaration conversions ───────────────────────────────────
 
+/// Returns true when the whole node was replaced — the caller must then
+/// not recurse into the children (see `convert_test_command`).
 fn convert_declaration(
     node: Node,
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
-) {
+    annotate: bool,
+    collections: &Names,
+) -> bool {
     let mut cursor = node.walk();
     let children: Vec<Node> = node.children(&mut cursor).collect();
     if children.is_empty() {
-        return;
+        return false;
     }
 
     let keyword_node = children[0];
@@ -292,14 +302,14 @@ fn convert_declaration(
             line,
             "# MANUAL: declare -n (nameref) not supported in sash".into(),
         ));
-        return;
+        return false;
     }
 
     // export → MANUAL
     if keyword_text == "export" {
         let line = node.start_position().row;
         prefix_lines.push((line, "# MANUAL: export — env isolation in sash (DD#53), use /usr/bin/env for per-command env".into()));
-        return;
+        return false;
     }
 
     // Determine target keywords
@@ -330,7 +340,7 @@ fn convert_declaration(
     let needs_conversion = is_declare || is_readonly || is_local;
 
     if !needs_conversion {
-        return;
+        return false;
     }
 
     // Find the assignment part (everything after keyword + flags)
@@ -344,12 +354,24 @@ fn convert_declaration(
         break;
     }
 
-    if let Some(start) = assign_start {
-        let assign_text = std::str::from_utf8(&source[start..node.end_byte()])
-            .unwrap_or("")
-            .trim();
-        if !assign_text.is_empty() {
-            parts.push(assign_text);
+    // The value side can hold anything the converter rewrites — a known env
+    // var, a positional, `$?` — so it has to be the converted text.
+    let mut sub_prefix = Vec::new();
+    let assign_text = assign_start.map(|start| {
+        render_range(
+            node,
+            source,
+            start,
+            node.end_byte(),
+            &mut sub_prefix,
+            annotate,
+            collections,
+        )
+    });
+    if let Some(ref text) = assign_text {
+        let text = text.trim();
+        if !text.is_empty() {
+            parts.push(text);
         }
     }
 
@@ -358,12 +380,19 @@ fn convert_declaration(
 
     if replacement != original {
         patches.push(Patch::replace_node(node, replacement, Some(original)));
+        prefix_lines.append(&mut sub_prefix);
+        return true;
     }
+    false
 }
 
 // ── Command conversions ───────────────────────────────────────
 
-fn convert_unset_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
+/// Returns true when the whole node was replaced. `unset` takes bare
+/// names, so there is nothing inside it for the converter to rewrite —
+/// but the caller must still skip the children, since any patch under a
+/// replaced node corrupts the output.
+fn convert_unset_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) -> bool {
     // unset var → var=""
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
@@ -372,21 +401,25 @@ fn convert_unset_command(node: Node, source: &[u8], patches: &mut Vec<Patch>) {
             let original = node_text(node, source).to_string();
             let replacement = format!("{}=\"\"", var_name);
             patches.push(Patch::replace_node(node, replacement, Some(original)));
-            break;
+            return true;
         }
     }
+    false
 }
 
+/// Returns true when the whole node was replaced — the caller must then
+/// not recurse into the children.
 fn convert_command(
     node: Node,
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
-    _annotate: bool,
-) {
+    annotate: bool,
+    collections: &Names,
+) -> bool {
     let name_node = match node.child_by_field_name("name") {
         Some(n) => n,
-        None => return,
+        None => return false,
     };
     let name = node_text(name_node, source);
     let line = node.start_position().row;
@@ -396,16 +429,22 @@ fn convert_command(
         "let" => {
             let original = node_text(node, source).to_string();
             let mut exprs = Vec::new();
+            let mut sub_prefix = Vec::new();
             let mut cursor = node.walk();
             for child in node.children(&mut cursor) {
                 if child.is_named() && child != name_node {
-                    let t = node_text(child, source);
+                    // The expression is arithmetic (`in_arithmetic` knows
+                    // `let`), so `$?` becomes `(status)` and `${#s}`
+                    // becomes `(strlen $s)` — the sexpr spellings.
+                    let t = render_subtree(child, source, &mut sub_prefix, annotate, collections);
                     let t = t.trim_matches('"').trim_matches('\'');
                     exprs.push(t.to_string());
                 }
             }
             let replacement = format!("(( {} ))", exprs.join(", "));
             patches.push(Patch::replace_node(node, replacement, Some(original)));
+            prefix_lines.append(&mut sub_prefix);
+            return true;
         }
 
         // MANUAL annotations for unconvertible commands
@@ -456,7 +495,15 @@ fn convert_command(
         // rewrite; every other spelling gets a MANUAL note rather than a
         // guess.
         "read" => convert_read(node, name_node, source, patches, prefix_lines),
-        "mapfile" | "readarray" => convert_mapfile(node, name_node, source, patches, prefix_lines),
+        "mapfile" | "readarray" => convert_mapfile(
+            node,
+            name_node,
+            source,
+            patches,
+            prefix_lines,
+            annotate,
+            collections,
+        ),
 
         // Mechanical: trap → signal N DISPOSITION
         "trap" => {
@@ -477,6 +524,7 @@ fn convert_command(
                         .collect();
                     if !lines.is_empty() {
                         patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
+                        return true;
                     }
                 } else if arg_text == "-" {
                     // trap - SIG → signal N DFL
@@ -488,6 +536,7 @@ fn convert_command(
                         .collect();
                     if !lines.is_empty() {
                         patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
+                        return true;
                     }
                 } else if arg_text == ":" {
                     // trap : SIG → signal N FLAG
@@ -499,6 +548,7 @@ fn convert_command(
                         .collect();
                     if !lines.is_empty() {
                         patches.push(Patch::replace_node(node, lines.join("\n"), Some(original)));
+                        return true;
                     }
                 } else {
                     // trap 'handler' SIG → MANUAL
@@ -513,6 +563,7 @@ fn convert_command(
 
         _ => {}
     }
+    false
 }
 
 // ── DD#99: the read family ────────────────────────────────────
@@ -636,12 +687,12 @@ fn convert_read(
 /// carry onto `tr`. `mapfile -t a < f` is a `redirected_statement`, and
 /// replacing only the command would re-bind `< f` to `read`. None means
 /// the redirect shape is not one we can move.
-fn mapfile_target<'a>(node: Node<'a>, source: &[u8]) -> Option<(Node<'a>, String)> {
+fn mapfile_target<'a>(node: Node<'a>, source: &[u8]) -> Option<(Node<'a>, Option<Node<'a>>)> {
     let Some(parent) = node.parent() else {
-        return Some((node, String::new()));
+        return Some((node, None));
     };
     if parent.kind() != "redirected_statement" {
-        return Some((node, String::new()));
+        return Some((node, None));
     }
     let mut cursor = parent.walk();
     let redirects: Vec<Node> = parent
@@ -650,9 +701,9 @@ fn mapfile_target<'a>(node: Node<'a>, source: &[u8]) -> Option<(Node<'a>, String
     let [redirect] = redirects[..] else {
         return None;
     };
-    let text = node_text(redirect, source);
-    text.starts_with('<')
-        .then(|| (parent, format!(" {}", text)))
+    node_text(redirect, source)
+        .starts_with('<')
+        .then_some((parent, Some(redirect)))
 }
 
 fn convert_mapfile(
@@ -661,6 +712,8 @@ fn convert_mapfile(
     source: &[u8],
     patches: &mut Vec<Patch>,
     prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
 ) {
     let line = node.start_position().row;
     let cmd = node_text(name_node, source);
@@ -676,6 +729,15 @@ fn convert_mapfile(
     // `mapfile -t a <<< "$x"` becomes `echo $x | tr … | read a`.
     let end = span_end_before_herestring(span, source);
     let original = node_text(span, source)[..end - span.start_byte()].to_string();
+    // `mapfile -t a < "$HOME"` — the redirect word is carried onto `tr`,
+    // so it must be carried in its converted form.
+    let redirect = match redirect {
+        Some(r) => format!(
+            " {}",
+            render_subtree(r, source, prefix_lines, annotate, collections)
+        ),
+        None => String::new(),
+    };
     let replacement = format!(
         "/usr/bin/tr \"\\n\" \"\\0\"{} | read {}",
         redirect, names[0]
@@ -771,6 +833,32 @@ fn render_children(
         source,
         prefix_lines,
     )
+}
+
+/// Render the byte range `[from, to)` of `node`'s subtree with the
+/// converter's own rewrites applied to a copy.
+///
+/// For a handler that replaces its whole node but builds the replacement
+/// out of part of the source text: that text has to be the *converted*
+/// text, or the inner rewrites are either lost or — worse — emitted
+/// alongside the outer one and duplicate the source.
+fn render_range(
+    node: Node,
+    source: &[u8],
+    from: usize,
+    to: usize,
+    prefix_lines: &mut Vec<(usize, String)>,
+    annotate: bool,
+    collections: &Names,
+) -> String {
+    let mut sub = Vec::new();
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_node(child, source, &mut sub, prefix_lines, annotate, collections);
+    }
+    sub.retain(|p| p.start >= from && p.end <= to);
+    let text = std::str::from_utf8(&source[from..to]).unwrap_or("");
+    splice_patches(text, from, &mut sub, source, prefix_lines)
 }
 
 /// Apply `patches` (absolute byte offsets) to `text`, which starts at
@@ -1236,12 +1324,19 @@ fn canonical_special(name: &str, arith: bool) -> Option<&'static str> {
 
 /// Whether `node` sits inside an arithmetic context — `$(( … ))`, a bare
 /// `(( … ))` statement, or a C-style `for (( … ))` header.
-fn in_arithmetic(node: Node) -> bool {
+fn in_arithmetic(node: Node, source: &[u8]) -> bool {
     let mut cur = node.parent();
     while let Some(n) = cur {
         match n.kind() {
             "arithmetic_expansion" | "c_style_for_statement" => return true,
             "compound_statement" if n.child(0).is_some_and(|c| c.kind() == "((") => return true,
+            // `let "x = $?"` is arithmetic too, but tree-sitter sees a
+            // plain command whose arguments happen to be strings.
+            "command" => {
+                return n
+                    .child_by_field_name("name")
+                    .is_some_and(|c| node_text(c, source) == "let");
+            }
             _ => {}
         }
         cur = n.parent();
@@ -1293,7 +1388,7 @@ fn convert_simple_expansion(
                 // punctuation is input sugar. These three are process-wide,
                 // not positional, so they convert inside a function body too
                 // — unlike $@/$*/$# below, which are the caller's args.
-                if let Some(keyword) = canonical_special(name, in_arithmetic(node)) {
+                if let Some(keyword) = canonical_special(name, in_arithmetic(node, source)) {
                     patches.push(Patch::replace_span(
                         start,
                         end,
@@ -1506,7 +1601,9 @@ fn convert_expansion(
         // DD#75 §4: the bash `${#x}` length sugar is retired in sash-native.
         // `${#}` (empty) is the arg count, handled above.
         if let Some(rest) = inner.strip_prefix('#') {
-            if let Some(replacement) = length_expansion(rest, collections) {
+            if let Some(replacement) =
+                length_expansion(rest, collections, in_arithmetic(node, source))
+            {
                 patches.push(Patch::replace_node(node, replacement, None));
                 return;
             }
@@ -1808,7 +1905,7 @@ fn is_int_literal(s: &str) -> bool {
 ///
 /// `None` leaves the expansion alone: `${##…}` is a prefix strip, not a
 /// length, and a non-identifier base is some other form entirely.
-fn length_expansion(rest: &str, collections: &Names) -> Option<String> {
+fn length_expansion(rest: &str, collections: &Names, arith: bool) -> Option<String> {
     if rest.is_empty() || rest.starts_with('#') {
         return None;
     }
@@ -1819,11 +1916,16 @@ fn length_expansion(rest: &str, collections: &Names) -> Option<String> {
     if base.is_empty() || !base.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return None;
     }
+    // In arithmetic the DD#58 sexpr is the only spelling that parses: a
+    // command substitution is not an arithmetic operand (SB4020).
+    let (open, close) = if arith { ("(", ")") } else { ("$(", ")") };
     Some(match subscript {
-        Some("@") | Some("*") => format!("$(len {})", base),
-        Some(index) => format!("$(strlen ${{{}[{}]}})", base, index),
-        None if collections.all.contains(base) => format!("$(strlen ${{{}[0]}})", base),
-        None => format!("$(strlen ${})", base),
+        Some("@") | Some("*") => format!("{}len {}{}", open, base, close),
+        Some(index) => format!("{}strlen ${{{}[{}]}}{}", open, base, index, close),
+        None if collections.all.contains(base) => {
+            format!("{}strlen ${{{}[0]}}{}", open, base, close)
+        }
+        None => format!("{}strlen ${}{}", open, base, close),
     })
 }
 
@@ -2166,6 +2268,22 @@ fn apply_patches(
     // here-string rewrite (insert the producer at the statement start,
     // rewrite the consumer in place) depends on push order.
     sorted.sort_by_key(|p| (p.start, p.end));
+    // Backstop: a patch inside an earlier patch's span cannot be expressed
+    // in the output. Emitting it anyway re-emits source the outer patch
+    // already consumed — which is silent corruption, not an error, and is
+    // how `if [ "$1" = x ]` once converted to `if [[ $1 = x ]]$arg1" = x ]`.
+    // Every handler that replaces a whole node now splices its children's
+    // patches in itself; this keeps a future one from corrupting output.
+    {
+        let mut reach = 0usize;
+        sorted.retain(|p| {
+            if p.start < reach {
+                return false;
+            }
+            reach = reach.max(p.end);
+            true
+        });
+    }
 
     // Build line→prefix_lines map
     let mut line_prefixes: std::collections::BTreeMap<usize, Vec<&str>> =
